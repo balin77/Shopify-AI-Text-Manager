@@ -670,9 +670,9 @@ export const ROADMAP: RoadmapEntry[] = [
     shippedOn: "2026-04",
     title: { en: "Image manager and variant galleries", de: "Bildverwaltung und Varianten-Galerien", es: "Gestor de imágenes y galerías por variante" },
     body: {
-      en: "A gallery per variant with images, videos and 3D models, bulk upload that assigns files by their name, WebP conversion, and a storefront gallery that follows the selected variant.",
-      de: "Eine Galerie pro Variante mit Bildern, Videos und 3D-Modellen, Massen-Upload mit Zuordnung über den Dateinamen, WebP-Umwandlung und eine Storefront-Galerie, die der gewählten Variante folgt.",
-      es: "Una galería por variante con imágenes, vídeos y modelos 3D, subida masiva que asigna los archivos por su nombre, conversión a WebP y una galería en la tienda que sigue a la variante elegida.",
+      en: "A gallery per variant, bulk upload that assigns files by their name, drag and drop between galleries, WebP conversion, and a storefront gallery that follows the selected variant.",
+      de: "Eine Galerie pro Variante, Massen-Upload mit Zuordnung über den Dateinamen, Ziehen und Ablegen zwischen Galerien, WebP-Umwandlung und eine Storefront-Galerie, die der gewählten Variante folgt.",
+      es: "Una galería por variante, subida masiva que asigna los archivos por su nombre, arrastrar y soltar entre galerías, conversión a WebP y una galería en la tienda que sigue a la variante elegida.",
     },
     notes: "Re-dated 2026-05 -> 2026-04 on the git record: the manager and the first theme app extension both landed 2026-04-20/21 (VariantImageManager.tsx, extensions .../variant-gallery.liquid), and that week is also when the app first changed the SHOPPER-facing store rather than the admin. Video/3D media and the match-key generator followed through May.",
   },
@@ -741,9 +741,9 @@ export const ROADMAP: RoadmapEntry[] = [
     shippedOn: "2026-08",
     title: { en: "Readable by AI assistants", de: "Lesbar für KI-Assistenten", es: "Legible para asistentes de IA" },
     body: {
-      en: "agents.md and llms.txt generated from your catalogue, a robots.txt check for AI crawlers, structured data including video, catalogue readiness, and visits from AI assistants counted without cookies.",
-      de: "agents.md und llms.txt aus Ihrem Katalog, eine robots.txt-Prüfung für KI-Crawler, strukturierte Daten inklusive Videos, Katalog-Bereitschaft und Besuche von KI-Assistenten — ohne Cookies gezählt.",
-      es: "agents.md y llms.txt generados desde su catálogo, una revisión de robots.txt para rastreadores de IA, datos estructurados incluidos los vídeos, preparación del catálogo y visitas desde asistentes de IA contadas sin cookies.",
+      en: "agents.md and llms.txt generated from your catalogue, a robots.txt check for AI crawlers, a check of the markup your storefront really serves, catalogue readiness, and visits from AI assistants counted without cookies.",
+      de: "agents.md und llms.txt aus Ihrem Katalog, eine robots.txt-Prüfung für KI-Crawler, eine Prüfung des Markups, das Ihre Storefront wirklich ausliefert, Katalog-Bereitschaft und Besuche von KI-Assistenten — ohne Cookies gezählt.",
+      es: "agents.md y llms.txt generados desde su catálogo, una revisión de robots.txt para rastreadores de IA, una comprobación del marcado que su tienda sirve de verdad, preparación del catálogo y visitas desde asistentes de IA contadas sin cookies.",
     },
   },
   {
@@ -794,9 +794,9 @@ export const ROADMAP: RoadmapEntry[] = [
     shippedOn: "2026-07",
     title: { en: "Bulk editor", de: "Bulk-Editor", es: "Editor masivo" },
     body: {
-      en: "A spreadsheet over the whole shop with CSV in and out, and a pass that fills only the missing translations.",
-      de: "Eine Tabelle über den ganzen Shop mit CSV-Export und -Import, und ein Durchgang, der nur die fehlenden Übersetzungen ergänzt.",
-      es: "Una hoja sobre toda la tienda con CSV de entrada y salida, y una pasada que rellena solo las traducciones que faltan.",
+      en: "A spreadsheet over the whole shop: paste a block from Excel, undo with Ctrl+Z, import a CSV with a preview of what would change, and fill only the missing translations in one pass.",
+      de: "Eine Tabelle über den ganzen Shop: einen Block aus Excel einfügen, mit Strg+Z zurücknehmen, eine CSV mit Vorschau der Änderungen importieren und in einem Durchgang nur die fehlenden Übersetzungen ergänzen.",
+      es: "Una hoja sobre toda la tienda: pegue un bloque desde Excel, deshaga con Ctrl+Z, importe un CSV con vista previa de lo que cambiaría y rellene en una pasada solo las traducciones que faltan.",
     },
   },
   {
@@ -898,11 +898,11 @@ export const ROADMAP: RoadmapEntry[] = [
     shippedOn: "2026-01",
     title: { en: "Every AI run, on the record", de: "Jeder KI-Lauf, nachvollziehbar", es: "Cada ejecución de IA, registrada" },
     body: {
-      en: "A page listing what ran, what it cost you in time, what the AI was asked and what it answered — including the runs that failed.",
-      de: "Eine Seite mit dem, was gelaufen ist, wie lange es gedauert hat, was die KI gefragt wurde und was sie geantwortet hat — auch bei fehlgeschlagenen Läufen.",
-      es: "Una página con lo que se ejecutó, cuánto tardó, qué se le pidió a la IA y qué respondió — incluidas las ejecuciones fallidas.",
+      en: "A page listing what ran, how long it took, what the AI was asked and what it answered — and where a run failed, which items and which languages it was.",
+      de: "Eine Seite mit dem, was gelaufen ist, wie lange es gedauert hat, was die KI gefragt wurde und was sie geantwortet hat — und wo ein Lauf scheiterte, welche Artikel und welche Sprachen es waren.",
+      es: "Una página con lo que se ejecutó, cuánto tardó, qué se le pidió a la IA y qué respondió — y donde una ejecución falló, qué artículos y qué idiomas fueron.",
     },
-    notes: "app.tasks.tsx 2026-01-09, expandable prompt/answer 2026-01-14, the model name on each task 2026-03-23. Everything long-running in the app reports here.",
+    notes: "app.tasks.tsx 2026-01-09, expandable prompt/answer 2026-01-14, the model name on each task 2026-03-23. The 2026-08-23 pass is what the body's second half describes: a partly failed run no longer ends silently, the translation family names the locales that failed, and the counts are phrased in the merchant's own language rather than as '3 of 40 row(s) failed'.",
   },
   {
     id: "security-foundation",
@@ -918,6 +918,34 @@ export const ROADMAP: RoadmapEntry[] = [
     },
     notes: "AES-256-GCM key encryption, the mandatory GDPR webhooks and the rate-limited Shopify API gateway all landed 2026-01-13/14 — before the first merchant, not after the first incident.",
   },
+  {
+    id: "plans-billing",
+    visibility: "public",
+    status: "shipped",
+    area: "platform",
+    shippedOn: "2026-01",
+    title: { en: "Plans, trial and billing", de: "Pläne, Testphase und Abrechnung", es: "Planes, prueba y facturación" },
+    body: {
+      en: "Free, Basic, Pro and Max with a seven-day trial: choose, upgrade or downgrade inside Shopify, and see what a tier unlocks before paying for it.",
+      de: "Free, Basic, Pro und Max mit sieben Tagen Testphase: in Shopify wählen, wechseln oder herabstufen — und vor dem Bezahlen sehen, was eine Stufe freischaltet.",
+      es: "Free, Basic, Pro y Max con siete días de prueba: elegir, subir o bajar de plan dentro de Shopify, y ver qué desbloquea cada nivel antes de pagarlo.",
+    },
+    notes: "Added 2026-09-17: the whole commercial surface was missing from this list although half the later features reference plan gating. Four tiers 2026-01-13, billing routes 01-14, trial banner 01-27; matured 2026-05 (the advertised 7-day trial through appSubscriptionCreate with a trial-once guard, and upgrade/downgrade without duplicate subscriptions).",
+  },
+  {
+    id: "content-cache",
+    visibility: "public",
+    status: "shipped",
+    area: "platform",
+    shippedOn: "2026-01",
+    title: { en: "Lists that open instantly", de: "Listen, die sofort aufgehen", es: "Listas que abren al instante" },
+    body: {
+      en: "Your catalogue is mirrored locally, so lists and languages open without waiting on Shopify. Edits made in Shopify arrive by webhook, and a reload button covers the rest.",
+      de: "Ihr Katalog wird lokal gespiegelt, damit Listen und Sprachen ohne Wartezeit aufgehen. Änderungen aus Shopify kommen per Webhook an, für den Rest gibt es eine Neu-laden-Schaltfläche.",
+      es: "Su catálogo se refleja localmente, así las listas y los idiomas abren sin esperar a Shopify. Los cambios hechos en Shopify llegan por webhook, y un botón de recarga cubre el resto.",
+    },
+    notes: "Added 2026-09-17. Cache + webhooks 2026-01-10, reload buttons 01-14, incremental sync on page load 02-12. In 2026-05 the initial import was decoupled from the browser and given a progress bar with counts, plus plan-aware sync and an automatic re-sync on upgrade.",
+  },
   // LAST among the 2026-01 entries on purpose: the shipped list sorts by month
   // and keeps file order within one, so this renders at the very bottom — the
   // oldest thing on the page, which is where a beginning belongs.
@@ -929,9 +957,9 @@ export const ROADMAP: RoadmapEntry[] = [
     shippedOn: "2026-01",
     title: { en: "The project starts", de: "Start des Projekts", es: "Comienza el proyecto" },
     body: {
-      en: "8 January 2026: an empty app, a Shopify session, and one question — why does a shop that sells in five languages have to be written five times? Everything above this line is the answer so far.",
-      de: "8. Januar 2026: eine leere App, eine Shopify-Sitzung und eine Frage — warum muss ein Shop, der in fünf Sprachen verkauft, fünfmal geschrieben werden? Alles über dieser Zeile ist die bisherige Antwort.",
-      es: "8 de enero de 2026: una aplicación vacía, una sesión de Shopify y una pregunta — ¿por qué una tienda que vende en cinco idiomas tiene que escribirse cinco veces? Todo lo que está por encima de esta línea es la respuesta hasta ahora.",
+      en: "8 January 2026, first commit: an empty app with a Shopify session. Everything listed above was built after that date.",
+      de: "8. Januar 2026, erster Commit: eine leere App mit einer Shopify-Sitzung. Alles, was darüber steht, entstand danach.",
+      es: "8 de enero de 2026, primer commit: una aplicación vacía con una sesión de Shopify. Todo lo que está arriba se construyó después.",
     },
     notes: "First commit 2026-01-08, 'Initial commit: Shopify AI Text Manager'. Deliberately carries no commit count: a number in a public body goes stale the same week. Its position is the one thing to preserve when editing this block — see the comment above it.",
   },
@@ -1006,6 +1034,20 @@ export const ROADMAP: RoadmapEntry[] = [
     notes: "Theme content viewer 2026-01-12, primary-language writes through themeFilesUpsert 2026-02-16. The app writes only files it owns — it never edits the merchant's theme code.",
   },
   {
+    id: "metaobjects-translate",
+    visibility: "public",
+    status: "shipped",
+    area: "structure",
+    shippedOn: "2026-02",
+    title: { en: "Metaobjects become content", de: "Metaobjekte werden zu Inhalt", es: "Los metaobjetos pasan a ser contenido" },
+    body: {
+      en: "The entries behind size charts, care instructions and colour swatches got their own tab — listed, synced and translatable in one pass like any other content.",
+      de: "Die Einträge hinter Größentabellen, Pflegehinweisen und Farbmustern bekamen einen eigenen Reiter — aufgelistet, synchronisiert und in einem Durchgang übersetzbar wie jeder andere Inhalt.",
+      es: "Las entradas tras las guías de tallas, las instrucciones de cuidado y las muestras de color tuvieron su propia pestaña — listadas, sincronizadas y traducibles de una vez como cualquier otro contenido.",
+    },
+    notes: "Added 2026-09-17 to correct a mis-dating: metaobjects arrived 2026-02-23/24 (tab, DB sync, full CRUD, Translate All, Pro/Max gating). The 2026-08 metaobjects-editor card is the REWORK — every field editable rather than just the label, taxonomy references, type deletion — not the arrival.",
+  },
+  {
     id: "silent-failures",
     visibility: "public",
     status: "shipped",
@@ -1046,6 +1088,80 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "No todo debe traducirse — un nombre de marca, un número de modelo, un SKU. Un botón copia el original tal cual.",
     },
     notes: "2026-04-18, extended to product options and alt texts within two days. The blue marking of primary fields whose translation is missing came in the same change, and AI translation errors started showing on the field instead of in a banner.",
+  },
+
+  // Added 2026-09-17 by a gap analysis against the git log. File position
+  // inside the shipped block carries no meaning — the page sorts by month —
+  // so these sit together rather than being threaded in by date.
+  {
+    id: "structured-data",
+    visibility: "public",
+    status: "shipped",
+    area: "seo",
+    shippedOn: "2026-05",
+    title: { en: "Rich results without touching the theme", de: "Rich Results, ohne das Theme anzufassen", es: "Resultados enriquecidos sin tocar el tema" },
+    body: {
+      en: "Product, breadcrumb and organisation markup delivered by an app block, so a search result can carry price, availability and ratings.",
+      de: "Produkt-, Breadcrumb- und Organisations-Markup über einen App-Block ausgeliefert, damit ein Suchtreffer Preis, Verfügbarkeit und Bewertungen tragen kann.",
+      es: "Marcado de producto, migas de pan y organización entregado por un bloque de la app, para que un resultado de búsqueda pueda llevar precio, disponibilidad y valoraciones.",
+    },
+    notes: "Added 2026-09-17: structured-data.service.ts and its own theme extension landed 2026-05-18, three months before the AEO section, and the aeo card had been carrying the credit. FAQ, Review and GTIN followed 2026-07; the crawl-based check of what the storefront REALLY serves is 2026-08-09.",
+  },
+  {
+    id: "media-video-3d",
+    visibility: "public",
+    status: "shipped",
+    area: "media",
+    shippedOn: "2026-05",
+    title: { en: "Videos, 3D models and YouTube per variant", de: "Videos, 3D-Modelle und YouTube pro Variante", es: "Vídeos, modelos 3D y YouTube por variante" },
+    body: {
+      en: "A variant's gallery is not only photographs: upload a video or a 3D model, or paste a YouTube or Vimeo link, and the storefront gallery shows it with the rest.",
+      de: "Die Galerie einer Variante besteht nicht nur aus Fotos: Video oder 3D-Modell hochladen oder einen YouTube- oder Vimeo-Link einfügen — die Storefront-Galerie zeigt es mit.",
+      es: "La galería de una variante no es solo fotos: suba un vídeo o un modelo 3D, o pegue un enlace de YouTube o Vimeo, y la galería de la tienda lo muestra con lo demás.",
+    },
+    notes: "Added 2026-09-17, split out of image-manager (April), whose card promised these although they arrived 2026-05-20 — uploads, per-variant YouTube/Vimeo, 3D via a parallel metafield, media-type thumbnails, lightbox 05-21. Their VideoObject markup for Google is 2026-08-18.",
+  },
+  {
+    id: "theme-picker",
+    visibility: "public",
+    status: "shipped",
+    area: "translations",
+    shippedOn: "2026-07",
+    title: { en: "Work on any theme, not just the live one", de: "An jedem Theme arbeiten, nicht nur am aktiven", es: "Trabajar en cualquier tema, no solo en el activo" },
+    body: {
+      en: "Prepare the texts of an unpublished redesign while the shop keeps running on the current theme — with a guard that stops a write landing in the wrong one.",
+      de: "Die Texte eines unveröffentlichten Redesigns vorbereiten, während der Shop auf dem aktuellen Theme weiterläuft — mit einer Sperre, die einen Schreibvorgang im falschen Theme verhindert.",
+      es: "Preparar los textos de un rediseño sin publicar mientras la tienda sigue con el tema actual — con una protección que evita que una escritura acabe en el tema equivocado.",
+    },
+    notes: "Added 2026-09-17. 2026-07-06: merchant-selectable theme with theme-scoped enumeration and sync, plus the cross-theme write guard; the published theme is pinned to the top of the picker (07-08).",
+  },
+  {
+    id: "accessibility-audit",
+    visibility: "public",
+    status: "shipped",
+    area: "seo",
+    shippedOn: "2026-07",
+    title: { en: "Accessibility and best practices, measured", de: "Barrierefreiheit und Best Practices, gemessen", es: "Accesibilidad y buenas prácticas, medidas" },
+    body: {
+      en: "The run that measures speed also reports accessibility and best-practice scores — and the missing alt texts it finds go straight to the AI that writes them.",
+      de: "Der Lauf, der die Geschwindigkeit misst, meldet auch Barrierefreiheit und Best Practices — und die fehlenden Alt-Texte, die er findet, gehen direkt an die KI, die sie schreibt.",
+      es: "La ejecución que mide la velocidad informa también de accesibilidad y buenas prácticas — y los textos alternativos que faltan van directos a la IA que los escribe.",
+    },
+    notes: "Added 2026-09-17. 2026-07-22 fetches both from the same PSI run, 07-23 surfaces the checks PSI leaves grey, 07-24 adds app-native alt-text coverage warnings wired to alt-text generation.",
+  },
+  {
+    id: "media-library-alt",
+    visibility: "public",
+    status: "shipped",
+    area: "media",
+    shippedOn: "2026-08",
+    title: { en: "An alt text for every file", de: "Ein Alt-Text für jede Datei", es: "Un texto alternativo para cada archivo" },
+    body: {
+      en: "Collection images, article images and everything else in your file library became editable and translatable — not only the photos that hang on a product.",
+      de: "Kollektionsbilder, Artikelbilder und alles andere in Ihrer Dateibibliothek wurden bearbeitbar und übersetzbar — nicht nur die Fotos, die an einem Produkt hängen.",
+      es: "Imágenes de colección, de artículo y todo lo demás en su biblioteca de archivos pasaron a ser editables y traducibles — no solo las fotos que cuelgan de un producto.",
+    },
+    notes: "Added 2026-09-17. 2026-08-13: a cache and sync for the shop's MediaImage library, the read_files/write_files scope that made every alt text writable, and the whole library in the bulk editor's image rows; collection and article image alt texts 08-14.",
   },
 
   // ── Dropped (kept as the record of why) ───────────────────────────────
