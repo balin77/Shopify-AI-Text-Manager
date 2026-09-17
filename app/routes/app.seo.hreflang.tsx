@@ -186,6 +186,11 @@ function TypeCoverageRow({
           <Text as="span" variant="bodyMd">{label}</Text>
           {measured ? (
             <Badge tone={scoreTone(type.coveragePct) as any}>{`${type.coveragePct}%`}</Badge>
+          ) : type.known ? (
+            // Cached, but nothing of it is publishable. Badging that "Not
+            // scanned" above a hint saying it WAS scanned and has nothing to
+            // translate is the collapse this row exists to avoid.
+            <Badge tone="info">{h.typeNothingToTranslate}</Badge>
           ) : (
             <Badge tone="attention">{h.typeNotScanned}</Badge>
           )}
@@ -246,6 +251,10 @@ function LocaleCoverageCard({
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? loc.missing : loc.missing.slice(0, VISIBLE_MISSING);
   const overallGaps = fieldGapLine(loc.fieldGaps, h, uiLocale);
+  // With nothing publishable there is no percentage to state. A red 0% over
+  // "0 of 0" beside per-type rows that all say "nothing to translate" is a
+  // defect report about an empty catalogue.
+  const measured = loc.publishableScanned > 0;
 
   return (
     <Card>
@@ -255,16 +264,30 @@ function LocaleCoverageCard({
             <Text as="h3" variant="headingMd">
               {loc.name} ({loc.locale})
             </Text>
-            <Badge tone={scoreTone(loc.coveragePct) as any}>{`${loc.coveragePct}%`}</Badge>
+            {measured && (
+              <Badge tone={scoreTone(loc.coveragePct) as any}>{`${loc.coveragePct}%`}</Badge>
+            )}
           </InlineStack>
-          <Text as="span" variant="bodySm" tone="subdued">
-            {h.coverageSummary
-              .replace("{translated}", formatNumber(loc.translated, uiLocale))
-              .replace("{total}", formatNumber(loc.publishableScanned, uiLocale))}
-          </Text>
+          {measured && (
+            <Text as="span" variant="bodySm" tone="subdued">
+              {h.coverageSummary
+                .replace("{translated}", formatNumber(loc.translated, uiLocale))
+                .replace("{total}", formatNumber(loc.publishableScanned, uiLocale))}
+            </Text>
+          )}
         </InlineStack>
 
-        <ProgressBar progress={loc.coveragePct} tone={progressTone(loc.coveragePct)} size="small" />
+        {measured ? (
+          <ProgressBar
+            progress={loc.coveragePct}
+            tone={progressTone(loc.coveragePct)}
+            size="small"
+          />
+        ) : (
+          <Text as="p" variant="bodySm" tone="subdued">
+            {h.localeNothingPublishable}
+          </Text>
+        )}
 
         {overallGaps && (
           <Text as="p" variant="bodySm" tone="subdued">
@@ -289,9 +312,12 @@ function LocaleCoverageCard({
           ))}
         </BlockStack>
 
-        <Divider />
+        {/* Nothing publishable ⇒ no missing section at all. "All scanned
+            content is fully translated" is a true sentence about an empty set
+            and a false claim to the merchant reading it. */}
+        {measured && <Divider />}
 
-        {loc.missingTotal === 0 ? (
+        {!measured ? null : loc.missingTotal === 0 ? (
           <Text as="p" variant="bodySm" tone="subdued">
             {h.allTranslated}
           </Text>

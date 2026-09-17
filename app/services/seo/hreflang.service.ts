@@ -18,13 +18,16 @@
  * tabs). The arithmetic lives in hreflang-coverage.shared.ts; this module only
  * reads the cache and hands it over.
  *
- * QUERY COUNT, as a function of the L published secondary locales: 13 + L.
- * Thirteen fixed catalog reads, all issued together — per audited type a
- * publishable count, a page of rows and an id-only "which of these have a body"
- * read, plus one unfiltered product count — and then exactly ONE grouped
- * translation read per locale, grouping by (resourceId, key) so the per-type
- * AND per-field gaps both fall out of that single read. Never fan out per
- * (locale, type): that is L x 4 round trips for an answer one query contains.
+ * QUERY COUNT, as a function of the L published secondary locales: 13 + L, and
+ * 13 when nothing is publishable. Thirteen fixed catalog reads, all issued
+ * together — per audited type a publishable count, a page of rows and an
+ * id-only "which of these have a body" read, plus one unfiltered product count
+ * — and then exactly ONE grouped translation read per locale, grouping by
+ * (resourceId, key) so the per-type AND per-field gaps both fall out of that
+ * single read. Never fan out per (locale, type): that is L x 4 round trips for
+ * an answer one query contains. Each of those L reads is SCOPED TO THE SCANNED
+ * IDS, so the whole pass is bounded by the scan cap rather than by the size of
+ * the shop's translation table.
  *
  * The "stale" dimension of the roadmap entry is deliberately NOT here:
  * ContentTranslation has a `digest` column but no `outdated` one, so whether a
@@ -168,6 +171,18 @@ export async function analyzeHreflang(
         // Only keys whose PRIMARY value exists can be missing — a meta
         // description that is empty in the primary locale is not a translation
         // gap, it is content nobody wrote.
+        //
+        // The three short columns are trimmed by requiredKeysFor; the BODY
+        // cannot be, and the limit is stated rather than implied. Its presence
+        // comes from a SQL `<> ''`, which has no trim, so a description holding
+        // only spaces reads as present and demands a translation nobody can
+        // make. Trimming it would mean loading up to 8000 unbounded TEXT
+        // columns into a web request to derive one boolean — and would close
+        // only a SLIVER of the class it looks like it closes: `<p></p>` from a
+        // rich-text editor is the common "visually empty" body and survives a
+        // trim untouched. So body presence is COLUMN-level here, deliberately,
+        // and the module does not pretend the cheap test is the content-level
+        // one.
         requiredKeys: requiredKeysFor({
           title: r.title,
           body: bodyIds.has(r.id) ? "x" : null, // presence only; the text is never loaded
@@ -284,14 +299,39 @@ export async function analyzeHreflang(
   base.totalPublishable = items.length;
   base.capped = typeScans.some((s) => s.capped);
 
-  if (items.length === 0) return base;
+  // Nothing cached of ANY audited type: there is nothing to say and no scan to
+  // report, so the route's "sync your content first" is the honest answer.
+  if (!typeScans.some((s) => s.known)) return base;
 
   const resourceTypes = Object.values(RESOURCE_TYPE);
   const trackedKeys: string[] = [...TRANSLATION_KEYS];
+  // The scanned ids, which BOUND the grouped read below. Every id is a GID, so
+  // this is also what makes the read's rows map back onto a scanned item.
+  const scannedIds = items.map((i) => i.id);
 
   // ---- Coverage per secondary locale ----
   const coverage: LocaleCoverage[] = [];
   for (const loc of secondary) {
+    // With a known cache but nothing publishable in it — an all-DRAFT product
+    // catalogue, say — there is no id to ask about, so the per-locale read is
+    // SKIPPED rather than issued against an empty id list. The per-type rows
+    // still render (each one says which of the two states it is in), which is
+    // the answer that early return used to throw away: a shop with cached
+    // content was told nothing was cached.
+    if (scannedIds.length === 0) {
+      coverage.push(
+        computeLocaleCoverage({
+          locale: loc.locale,
+          name: loc.name,
+          items,
+          typeScans,
+          translatedKeys: new Map(),
+          missingListCap: MISSING_LIST_CAP,
+        }),
+      );
+      continue;
+    }
+
     // ONE grouped read per locale — the whole per-type/per-field answer comes
     // out of this single query. Grouping by (resourceId, key) rather than by
     // resourceId alone is what makes the field dimension free: GIDs are
@@ -317,6 +357,15 @@ export async function analyzeHreflang(
         shop,
         locale: loc.locale,
         marketId: "",
+        // SCOPED TO THE SCANNED IDS, and that is not an optimisation detail:
+        // it is what keeps this read bounded by the same scan cap the catalog
+        // reads are bounded by. Unscoped, a shop with 40 000 translated
+        // products hands back four rows per product PER LOCALE — a result set
+        // that grows with the catalogue while the answer it feeds is capped at
+        // 2000 per type, i.e. exactly the memory blow-up the id-only companion
+        // reads above exist to avoid. At most scanned x 4 rows now, and the
+        // (shop, resourceId, locale, marketId) index carries the lookup.
+        resourceId: { in: scannedIds },
         resourceType: { in: resourceTypes },
         key: { in: trackedKeys },
         NOT: { value: "" },

@@ -3193,6 +3193,8 @@ export const es: Translation = {
       typeNotScanned: "Sin analizar",
       typeNotScannedHint: "No hay nada en caché para este tipo de contenido, así que no entra en el porcentaje: o tu tienda no tiene ninguno, o todavía no se ha sincronizado aquí.",
       typeNothingPublishable: "No hay nada de este tipo visible en tu tienda, así que no hay nada que traducir.",
+      typeNothingToTranslate: "Nada que traducir",
+      localeNothingPublishable: "Todavía no hay nada visible en tu tienda que traducir, así que no hay cobertura que medir para este idioma.",
       typeCapped: "{scanned} de {total} revisados",
       nothingCached: "Todavía no hay contenido en caché, así que no hay nada que medir. Sincroniza tu contenido y vuelve a abrir esta página.",
       fieldGapsTitle: "Campos que aún faltan",

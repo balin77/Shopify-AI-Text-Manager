@@ -3208,6 +3208,8 @@ export const en: Translation = {
       typeNotScanned: "Not scanned",
       typeNotScannedHint: "Nothing is cached for this content type, so it is not part of the percentage — either your store has none, or it has not been synced here yet.",
       typeNothingPublishable: "Nothing of this type is visible in your storefront, so there is nothing to translate.",
+      typeNothingToTranslate: "Nothing to translate",
+      localeNothingPublishable: "Nothing in your storefront is visible to translate yet, so there is no coverage to measure for this language.",
       typeCapped: "{scanned} of {total} checked",
       nothingCached: "No content is cached yet, so there is nothing to measure. Sync your content and open this page again.",
       fieldGapsTitle: "Fields still missing",

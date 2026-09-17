@@ -3214,6 +3214,8 @@ export const de = {
       typeNotScanned: "Nicht geprüft",
       typeNotScannedHint: "Für diesen Inhaltstyp liegt nichts im Cache, er fließt deshalb nicht in den Prozentwert ein — entweder hat dein Shop keine, oder sie wurden hier noch nicht synchronisiert.",
       typeNothingPublishable: "Von diesem Typ ist nichts im Shop sichtbar, es gibt also nichts zu übersetzen.",
+      typeNothingToTranslate: "Nichts zu übersetzen",
+      localeNothingPublishable: "In deinem Shop ist noch nichts sichtbar, was übersetzt werden könnte — für diese Sprache gibt es deshalb keine Abdeckung zu messen.",
       typeCapped: "{scanned} von {total} geprüft",
       nothingCached: "Es liegen noch keine Inhalte im Cache, es gibt also nichts zu messen. Synchronisiere deine Inhalte und öffne diese Seite erneut.",
       fieldGapsTitle: "Diese Felder fehlen noch",

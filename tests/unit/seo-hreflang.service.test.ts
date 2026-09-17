@@ -249,6 +249,68 @@ describe("analyzeHreflang", () => {
     expect(byType.article.known).toBe(false); // nothing cached at all
   });
 
+  it("a cache with NOTHING publishable still reports its per-type scan, and asks the DB nothing", async () => {
+    const admin = makeAdmin([
+      { locale: "en", name: "English", primary: true, published: true },
+      { locale: "de", name: "German", primary: false, published: true },
+    ]);
+    // 12 cached products, every one of them DRAFT, and no other type cached.
+    // The early return used to throw the whole scan away here and the page
+    // then told a merchant with a cached catalogue that nothing was cached.
+    const groupByCalls = { n: 0 };
+    const db = makeDb({ anyProducts: 12, counts: { products: 0 }, groupByCalls });
+
+    const r = await analyzeHreflang("h14.myshopify.com", { db, admin });
+
+    expect(r.totalPublishable).toBe(0);
+    expect(r.coverage).toHaveLength(1);
+    const de = r.coverage[0];
+    expect(de.publishableScanned).toBe(0);
+    expect(de.missingTotal).toBe(0);
+    const byType = Object.fromEntries(de.byType.map((t) => [t.resourceType, t]));
+    expect(byType.product).toMatchObject({ known: true, scanned: 0 });
+    expect(byType.page.known).toBe(false);
+    // No id to ask about ⇒ no per-locale read at all.
+    expect(groupByCalls.n).toBe(0);
+  });
+
+  it("returns no coverage at all when NO audited type is cached", async () => {
+    const admin = makeAdmin([
+      { locale: "en", name: "English", primary: true, published: true },
+      { locale: "de", name: "German", primary: false, published: true },
+    ]);
+    const groupByCalls = { n: 0 };
+    const db = makeDb({ groupByCalls });
+
+    const r = await analyzeHreflang("h15.myshopify.com", { db, admin });
+
+    // The route renders "nothing is cached yet" off an empty coverage list;
+    // a locale card full of "not scanned" rows would say the same thing four
+    // times and still not name the one action that changes it.
+    expect(r.coverage).toEqual([]);
+    expect(groupByCalls.n).toBe(0);
+  });
+
+  it("SCOPES the grouped read to the scanned ids, so it cannot outgrow the scan cap", async () => {
+    const admin = makeAdmin([
+      { locale: "en", name: "English", primary: true, published: true },
+      { locale: "de", name: "German", primary: false, published: true },
+    ]);
+    const groupByArgs: any[] = [];
+    const db = makeDb({
+      products: [full("gid-P1", "P1")],
+      pages: [full("gid-PG1", "PG1", "body")],
+      groupByArgs,
+    });
+
+    await analyzeHreflang("h16.myshopify.com", { db, admin });
+
+    expect(groupByArgs).toHaveLength(1);
+    // Unscoped, this read returns four rows per translated resource in the
+    // whole shop — while the answer it feeds is capped at 2000 per type.
+    expect(groupByArgs[0].where.resourceId).toEqual({ in: ["gid-P1", "gid-PG1"] });
+  });
+
   it("counts the GLOBAL layer only — a market override is not the locale's URL", async () => {
     const groupByArgs: any[] = [];
     const admin = makeAdmin([
