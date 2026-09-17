@@ -295,6 +295,63 @@ function termAppearsIn(
 }
 
 /**
+ * The fixed rendering a rule offers for ONE locale, with a base-language
+ * fallback.
+ *
+ * Glossary rules are stored under the locale the merchant typed, and the
+ * lookup used to be an exact match — so a rule recorded under `de` never fired
+ * for a `de-CH` translation, on a shop where `de-CH` is the only German there
+ * is. That is the common case, not the edge one: a merchant records their
+ * house terminology once, per language.
+ *
+ * The two are NOT merged, and the order is the whole point: an exact entry
+ * wins outright, and the base language applies only where the rule has none.
+ * A `de-CH` rule overriding the `de` rule is how a merchant says "in
+ * Switzerland we call it something else"; folding both into the prompt would
+ * hand the model two contradictory instructions for one term and make that
+ * entry unexpressible.
+ *
+ * It only ever widens DOWNWARDS (`de` reaches `de-CH`), never up: a
+ * Swiss-specific wording must not leak into generic German.
+ *
+ * Subtags are dropped ONE at a time from the right, so `zh-Hant-TW` asks
+ * `zh-Hant` before `zh`. Jumping straight to the root would invert the rule
+ * this function exists to state - the more specific `zh-Hant` entry, which
+ * `isValidLocale` accepts as a locale in its own right, would lose to the
+ * generic one.
+ *
+ * An empty or whitespace-only value is "no rule" (that is what normalize
+ * stores), so an exact entry holding one does NOT shadow the base entry. The
+ * flip side, stated rather than hidden: there is therefore no way to say
+ * "translate FREELY in de-CH" once a `de` rule exists - clearing the de-CH
+ * field re-inherits it. Expressing that needs a sentinel and a glossary-editor
+ * affordance to go with it; recording an opt-out the editor renders as blank
+ * would be worse than not having one.
+ *
+ * Own-property lookups only, because the key comes off the wire and
+ * `translations["constructor"]` is not a translation.
+ */
+export function glossaryValueForLocale(
+  translations: Record<string, string>,
+  locale: string,
+): string | undefined {
+  const at = (key: string): string | undefined => {
+    if (!key || !Object.prototype.hasOwnProperty.call(translations, key)) return undefined;
+    const v = translations[key];
+    return typeof v === "string" && v.trim() ? v : undefined;
+  };
+
+  let key = locale;
+  for (;;) {
+    const hit = at(key);
+    if (hit !== undefined) return hit;
+    const cut = key.lastIndexOf("-");
+    if (cut <= 0) return undefined;
+    key = key.slice(0, cut);
+  }
+}
+
+/**
  * Builds the sanitized glossary directive block for the given source texts and
  * target locales, or "" when nothing applies.
  *
@@ -305,6 +362,9 @@ function termAppearsIn(
  * - An empty `targetLocales` means "all locales are potentially in play" (the
  *   bulk-all path does not always enumerate them), so every fixed translation
  *   is included.
+ * - A target is resolved through `glossaryValueForLocale`, so a rule stored
+ *   under `de` reaches a `de-CH` translation while a `de-CH` rule still
+ *   overrides it.
  */
 export function buildGlossaryDirective(
   rules: GlossaryRule[],
@@ -336,12 +396,37 @@ export function buildGlossaryDirective(
       continue;
     }
 
+    // Resolve per TARGET locale, not per stored entry: a rule recorded under
+    // `de` has to reach a `de-CH` translation (see glossaryValueForLocale).
+    // With no targets ("all locales in play") there is nothing to resolve
+    // against, so every stored rendering goes in as before.
+    const entries: Array<readonly [string, string | undefined]> =
+      locales.size > 0
+        ? [...locales].map((l) => [l, glossaryValueForLocale(rule.translations, l)] as const)
+        : Object.entries(rule.translations);
+
+    // One line per distinct RENDERING, naming every locale it covers -
+    // deliberately not one line per target. `MAX_TERMS_IN_PROMPT` counts
+    // RULES, so once a stored `de` value reaches `de`, `de-CH` and `de-AT`,
+    // a per-target line would multiply the block by the shop's locale count
+    // behind a cap that cannot see it - the token blow-up that cap exists to
+    // prevent. Grouping also states the truth more plainly: it is one piece of
+    // terminology, and these are the languages it holds in.
+    const byRendering = new Map<string, string[]>();
+    for (const [locale, value] of entries) {
+      if (!value) continue;
+      const covered = byRendering.get(value);
+      if (covered) covered.push(locale);
+      else byRendering.set(value, [locale]);
+    }
+
     let ruleUsed = false;
-    for (const [locale, value] of Object.entries(rule.translations)) {
-      if (locales.size > 0 && !locales.has(locale)) continue;
+    for (const [value, covered] of byRendering) {
       const tgt = sanitizePromptInput(value, { allowNewlines: false });
       if (!tgt) continue;
-      fixed.push(`- Always translate "${src}" as "${tgt}" (${locale})${cs}`);
+      // Labelled with the locales being translated INTO, which is what the
+      // model acts on - `de` on a `de-CH` line would read as a third language.
+      fixed.push(`- Always translate "${src}" as "${tgt}" (${covered.join(", ")})${cs}`);
       ruleUsed = true;
     }
     if (ruleUsed) used++;
@@ -422,8 +507,11 @@ export function buildGlossaryGenerationDirective(
     }
 
     // Only the language actually being written. A value for another locale
-    // would be a foreign word dropped into the text.
-    const value = locale ? rule.translations[locale] : undefined;
+    // would be a foreign word dropped into the text. Base-language fallback
+    // for the same reason as the translation directive: writing `de-CH` must
+    // see the shop's `de` house term, or the merchant's own word is
+    // paraphrased in exactly the language they recorded it for.
+    const value = locale ? glossaryValueForLocale(rule.translations, locale) : undefined;
     const tgt = value ? sanitizePromptInput(value, { allowNewlines: false }) : "";
     if (tgt) {
       preferred.push(`- Refer to "${src}" as "${tgt}" — that is the shop's own wording; do not substitute a synonym`);

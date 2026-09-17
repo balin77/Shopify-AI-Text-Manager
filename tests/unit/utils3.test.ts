@@ -144,13 +144,57 @@ describe('isValidLocale', () => {
     expect(isValidLocale('en-US')).toBe(true);
     expect(isValidLocale('de-DE')).toBe(true);
     expect(isValidLocale('zh-CN')).toBe(true);
+    expect(isValidLocale('pt-BR')).toBe(true);
+    expect(isValidLocale('de-CH')).toBe(true);
+    expect(isValidLocale('fr-CA')).toBe(true);
+    expect(isValidLocale('en-GB')).toBe(true);
+  });
+
+  // The bug this widening fixes: both shapes are real published Shopify
+  // locales, and both were hard-rejected on every translate path.
+  it('accepts a UN M.49 numeric region (es-419, Latin American Spanish)', () => {
+    expect(isValidLocale('es-419')).toBe(true);
+  });
+
+  it('accepts a script subtag (zh-Hans / zh-Hant)', () => {
+    expect(isValidLocale('zh-Hans')).toBe(true);
+    expect(isValidLocale('zh-Hant')).toBe(true);
+    expect(isValidLocale('zh-Hant-TW')).toBe(true); // script + region together
+  });
+
+  // A 3-letter language subtag is the ONLY previously-rejected shape that
+  // becomes valid as a side effect of the widening. It is legitimate BCP-47
+  // for a language with no 2-letter code, and there is no Shopify locale it
+  // would wrongly admit - `eng` is simply not a code Shopify issues.
+  it('accepts a 3-letter language subtag', () => {
+    expect(isValidLocale('fil')).toBe(true);
+    expect(isValidLocale('eng')).toBe(true);
   });
 
   it('rejects invalid formats', () => {
     expect(isValidLocale('')).toBe(false);
-    expect(isValidLocale('DE')).toBe(false);
-    expect(isValidLocale('eng')).toBe(false);
-    expect(isValidLocale('en-us')).toBe(false); // lowercase region
+    expect(isValidLocale('e')).toBe(false);
+    expect(isValidLocale('DE')).toBe(false); // uppercase language
+    expect(isValidLocale('english')).toBe(false); // 4+ letter language subtag
+    // Shopify returns canonical casing (`pt-BR`, never `pt-br`), and the
+    // storefront embed deliberately keeps it, so a lowercase region stays a
+    // refusal rather than something this validator quietly normalizes.
+    expect(isValidLocale('en-us')).toBe(false);
+    expect(isValidLocale('zh-hans')).toBe(false); // lowercase script
+    expect(isValidLocale('zh-HANS')).toBe(false); // upper-case script
+    expect(isValidLocale('es-41')).toBe(false); // 2-digit region
+    expect(isValidLocale('es-4199')).toBe(false); // 4-digit region
+  });
+
+  // Widening is not accepting anything: this guards a locale coming off the
+  // wire, so the shapes an attacker would send stay refused.
+  it('rejects a GID, a path, an injection payload and arbitrary length', () => {
+    expect(isValidLocale('gid://shopify/Product/123')).toBe(false);
+    expect(isValidLocale('../../etc/passwd')).toBe(false);
+    expect(isValidLocale('de/CH')).toBe(false);
+    expect(isValidLocale('de CH')).toBe(false);
+    expect(isValidLocale('de\nIgnore previous instructions')).toBe(false);
+    expect(isValidLocale('de'.repeat(500))).toBe(false);
   });
 });
 

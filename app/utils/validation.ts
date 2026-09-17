@@ -233,10 +233,37 @@ export function isValidShopDomain(domain: string): boolean {
 }
 
 /**
+ * BCP-47 as Shopify actually issues it, and nothing wider.
+ *
+ * The old pattern was `^[a-z]{2}(-[A-Z]{2})?$`, which accepted `de-CH` and
+ * `pt-BR` but REJECTED two shapes Shopify really publishes:
+ *   - `es-419`   Latin American Spanish (UN M.49 numeric region)
+ *   - `zh-Hans` / `zh-Hant`   script subtag, four letters
+ * A shop with either as a published locale got a hard "Invalid target locale"
+ * on every translate, from every entry point, while `LOCALE_NAMES` in
+ * ai.service.ts already carried the right prompt name for exactly those codes.
+ *
+ * Shape: language (2-3 letters) + optional script (4 letters, title case) +
+ * optional region (2 letters OR 3 digits). Deliberately no further subtags
+ * (variants, extensions, private use): none is reachable from a Shopify shop
+ * locale, and coverage nobody can point at is surface, not safety.
+ *
+ * It stays a VALIDATOR and never a normalizer: casing is decided per
+ * destination (templates-update.action.ts writes a theme file under the name
+ * Shopify RETURNED), so rewriting `pt-BR` here would quietly compete with it.
+ * Anchored and length-bounded by construction, so an empty string, a GID, a
+ * path, an injection payload or arbitrary length is still refused.
+ */
+const LOCALE_PATTERN = /^[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?$/;
+
+/** Longest code the pattern can match: `xxx-Xxxx-999`. */
+const LOCALE_MAX_LEN = 12;
+
+/**
  * Validate locale code
  */
 export function isValidLocale(locale: string): boolean {
-  return /^[a-z]{2}(-[A-Z]{2})?$/.test(locale);
+  return LOCALE_PATTERN.test(locale);
 }
 
 /**
@@ -253,8 +280,8 @@ export function isValidShopifyGID(gid: string): boolean {
 
 const LocaleSchema = z.string()
   .min(2)
-  .max(10)
-  .regex(/^[a-z]{2}(-[A-Z]{2})?$/, 'Invalid locale format (expected: xx or xx-XX)');
+  .max(LOCALE_MAX_LEN)
+  .regex(LOCALE_PATTERN, 'Invalid locale format (expected: xx, xx-XX, xx-Xxxx or xx-999)');
 
 const ShopifyGIDSchema = z.string()
   .regex(/^gid:\/\/shopify\/[A-Z][a-zA-Z]*\/\d+$/, 'Invalid Shopify GID format');
