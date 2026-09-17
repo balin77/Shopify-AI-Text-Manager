@@ -18,6 +18,49 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { handleCreateContent } from "~/actions/content/create.actions";
 import { __resetCreateIdempotency } from "~/utils/create-idempotency.server";
 
+/**
+ * The post-create CACHE SYNC is stubbed, and that is not tidiness — it is what
+ * makes this file testable at all. `syncNewResource` hands the new id to the
+ * real sync services, which use the real Prisma client (`~/db.server`) rather
+ * than the `db` on the handler context, so every full create reached for a
+ * Postgres nobody starts for a unit test. The handler was right about it (a
+ * failed sync is a note, not a failed create) and returned — after ~8s of
+ * retry inside the sync plus Prisma's connect timeout. One create fitted into
+ * the 10s budget by luck; the two-create test never did, and the file's cost
+ * was a database's absence rather than anything it asserts.
+ *
+ * Mocked per SERVICE rather than per method so a future test that creates a
+ * collection, article, blog or metaobject cannot silently reintroduce the
+ * dependency. What the stub must NOT do is swallow the distinction the
+ * handler draws: the sync's failure mode is asserted explicitly below, by
+ * making it throw on purpose.
+ */
+const syncStub = vi.hoisted(() => ({ failWith: null as string | null }));
+vi.mock("~/services/product-sync.service", () => ({
+  ProductSyncService: class {
+    async syncSingleProduct() {
+      if (syncStub.failWith) throw new Error(syncStub.failWith);
+    }
+  },
+}));
+vi.mock("~/services/content-sync.service", () => ({
+  ContentSyncService: class {
+    async syncSingleCollection() {}
+    async syncSingleArticle() {}
+    async syncSingleBlog() {}
+  },
+}));
+vi.mock("~/services/background-sync.service", () => ({
+  BackgroundSyncService: class {
+    async syncSinglePage() {}
+  },
+}));
+vi.mock("~/services/metaobject-sync.service", () => ({
+  MetaobjectSyncService: class {
+    async syncMetaobjectsForType() {}
+  },
+}));
+
 /** Minimal stand-in for the unified handler's context. */
 function makeCtx(options: {
   plan?: string;
@@ -77,6 +120,7 @@ async function body(response: unknown): Promise<Record<string, unknown>> {
 beforeEach(() => {
   __resetCreateIdempotency();
   vi.clearAllMocks();
+  syncStub.failWith = null;
 });
 
 describe("plan gates", () => {
@@ -231,6 +275,25 @@ describe("idempotency ordering", () => {
     const retry = await body(await handleCreateContent(ctx, form({ title: "A shirt" }, { requestId: "r3" })));
     expect(retry).toEqual(first);
     expect(retry.errorCode).toBeUndefined();
+  });
+
+  it("a FAILED cache sync is a note on a successful create, never a failure", async () => {
+    // §1.6, and the one mistake this whole flow exists to avoid: the object
+    // is already in Shopify, so reporting an error here invites a second
+    // click and thus a real duplicate. Asserted on purpose now — until the
+    // sync was stubbed, the only thing exercising this branch was the
+    // absence of a Postgres server, which is not a test.
+    syncStub.failWith = "db down";
+    const ctx = makeCtx();
+    const result = await body(await handleCreateContent(ctx, form({ title: "A shirt" }, { requestId: "r10" })));
+
+    expect(result.success).toBe(true);
+    expect(result.id).toBe("gid://shopify/Product/1");
+    expect(result.synced).toBe(false);
+    // And the retry still gets that result rather than creating again.
+    const retry = await body(await handleCreateContent(ctx, form({ title: "A shirt" }, { requestId: "r10" })));
+    expect(retry).toEqual(result);
+    expect(createCalls(ctx)).toBe(1);
   });
 
   it("does not dedupe when no request id was sent", async () => {
