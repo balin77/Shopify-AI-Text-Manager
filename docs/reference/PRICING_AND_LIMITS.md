@@ -159,3 +159,39 @@ Proof) statt dauerhaft niedriger Preise. Kein Grandfathering-Aufwand (noch
 keine Kunden).
 
 ---
+
+---
+
+## Nachtrag 2026-09-17 — „AI kostet uns nichts" gilt nur noch fuer BYO
+
+Jeder Befund oben argumentiert aus einer Praemisse: *AI-Tokens sind BYO, also
+hat dieser App keine variablen AI-Kosten*. Diese Praemisse bleibt fuer den
+BYO-Modus wahr und wird fuer den geplanten **Managed-Key-Modus** falsch —
+siehe [docs/plans/PLAN_MANAGED_AI_KEY.md](../plans/PLAN_MANAGED_AI_KEY.md) und
+die Roadmap-Eintraege `managed-ai-key`, `ai-usage-metering`,
+`managed-ai-pricing`.
+
+Was davon beruehrt wird, und was nicht:
+
+- **Befund 2 (Locales unbegrenzt)** — die Begruendung („Zusatzsprachen kosten
+  uns nichts") gilt weiter fuer BYO. Im Managed-Modus kosten sie etwas, aber
+  die Grenze ist dort das **Monatsbudget**, nicht eine Sprachzahl. Das USP
+  bleibt damit unveraendert formulierbar; `maxLocales: Infinity` bleibt.
+- **Preisstrategie-Entscheid 2026-05 („Preise nicht breit senken, Marge in
+  Leistung investieren")** — unveraendert. Der Managed-Modus senkt keinen
+  Preis, er ist ein **Aufpreis** auf denselben Tarif.
+- **Neu und nicht durch dieses Dokument gedeckt:** eine zweite Achse neben dem
+  Plan (Key-Quelle), ein Provider-Kosten-Budget pro Tarif, und ein
+  Margen-Guard als Test. Diese Zahlen stehen im Plan, nicht hier, weil sie erst
+  nach der Messung (`ai-usage-metering`) endgueltig sind.
+- **Der Kostentreiber-Satz oben** („realer Kostentreiber ist DB-Storage &
+  Sync/Compute, nicht AI") ist ab dem Managed-Modus nur noch die halbe
+  Wahrheit: fuer Managed-Shops ist AI ein direkter, pro Shop messbarer
+  Rechnungsposten — der erste in dieser App, der mit der Nutzung mitwaechst und
+  nicht mit dem Katalog.
+
+Der Free-Tarif bekommt bewusst **kein monatliches** Managed-Budget, sondern
+eine einmalige Probe von rund 350 Aktionen (ein voller Durchlauf ueber das, was
+Free ueberhaupt freischaltet). Ein monatliches Freikontingent von 2 EUR waere
+mehr AI-Volumen gewesen als der bezahlte Basic-Tarif bekommt, und es skaliert
+mit Installationen statt mit Kunden — Begruendung mit Zahlen in §10 des Plans.
