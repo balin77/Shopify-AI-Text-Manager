@@ -918,6 +918,23 @@ export const ROADMAP: RoadmapEntry[] = [
     },
     notes: "AES-256-GCM key encryption, the mandatory GDPR webhooks and the rate-limited Shopify API gateway all landed 2026-01-13/14 — before the first merchant, not after the first incident.",
   },
+  // LAST among the 2026-01 entries on purpose: the shipped list sorts by month
+  // and keeps file order within one, so this renders at the very bottom — the
+  // oldest thing on the page, which is where a beginning belongs.
+  {
+    id: "project-start",
+    visibility: "public",
+    status: "shipped",
+    area: "platform",
+    shippedOn: "2026-01",
+    title: { en: "The project starts", de: "Start des Projekts", es: "Comienza el proyecto" },
+    body: {
+      en: "8 January 2026: an empty app, a Shopify session, and one question — why does a shop that sells in five languages have to be written five times? Everything above this line is the answer so far.",
+      de: "8. Januar 2026: eine leere App, eine Shopify-Sitzung und eine Frage — warum muss ein Shop, der in fünf Sprachen verkauft, fünfmal geschrieben werden? Alles über dieser Zeile ist die bisherige Antwort.",
+      es: "8 de enero de 2026: una aplicación vacía, una sesión de Shopify y una pregunta — ¿por qué una tienda que vende en cinco idiomas tiene que escribirse cinco veces? Todo lo que está por encima de esta línea es la respuesta hasta ahora.",
+    },
+    notes: "First commit 2026-01-08, 'Initial commit: Shopify AI Text Manager'. Deliberately carries no commit count: a number in a public body goes stale the same week. Its position is the one thing to preserve when editing this block — see the comment above it.",
+  },
   {
     id: "three-languages",
     visibility: "public",
