@@ -207,12 +207,13 @@ export const es: MarketingTranslation = {
   roadmap: {
     title: "Hoja de ruta",
     intro:
-      "Qué se está construyendo, qué viene después y qué se está sopesando. El orden dentro de cada sección es la prioridad; no hay fechas, porque una fecha pública que se retrasa se lee como una promesa rota.",
+      "Qué viene después, qué se está sopesando y qué solo se construye cuando alguien lo pide. El orden dentro de cada sección es la prioridad; no hay fechas, porque una fecha pública que se retrasa se lee como una promesa rota.",
     note: "Esta página se genera desde el mismo archivo en el que vive el plan de desarrollo — cuando allí cambia un estado, cambia aquí.",
     sections: {
       inProgress: "En curso",
       planned: "A continuación",
       considering: "En estudio",
+      onRequest: "Solo a petición",
       shipped: "Entregado recientemente",
     },
     shippedOn: "Entregado",
@@ -223,6 +224,7 @@ export const es: MarketingTranslation = {
       seo: "SEO",
       aeo: "Descubrimiento por IA",
       media: "Imágenes y medios",
+      ads: "Publicidad",
       structure: "Estructura",
       platform: "Plataforma",
       website: "Esta web",

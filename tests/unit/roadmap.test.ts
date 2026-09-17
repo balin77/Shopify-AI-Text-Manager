@@ -13,7 +13,7 @@ describe("roadmap", () => {
   });
 
   it("never names an entry after a status — the page prefixes section anchors, but the test pins it too", () => {
-    const statuses = ["shipped", "in-progress", "planned", "considering", "dropped"];
+    const statuses = ["shipped", "in-progress", "planned", "considering", "on-request", "dropped"];
     for (const entry of ROADMAP) {
       expect(statuses, entry.id).not.toContain(entry.id);
       expect(entry.id, entry.id).not.toMatch(/^status-/);

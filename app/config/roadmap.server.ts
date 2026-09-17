@@ -29,13 +29,24 @@
  *   (`target`, free text like "2027"). The first roadmap carried quarters for
  *   everything and every one of them slipped; a public date that slips reads
  *   as a broken promise, while an ordered list reads as priorities.
+ * - ON-REQUEST is not a weaker "considering": it is a decision. The thing is
+ *   understood, it is buildable, and it is not being built speculatively —
+ *   somebody has to ask for it. Saying so publicly is better than parking it
+ *   under "considering", where a merchant reads it as "coming eventually" and
+ *   waits instead of writing in.
  * - A DROPPED entry stays, with the reason in `notes`. The reason is the
  *   valuable part — it stops the same idea from being re-proposed without the
  *   argument that killed it (see content-templates).
  * - Order within a status is priority order: the website keeps it.
  */
 
-export type RoadmapStatus = "shipped" | "in-progress" | "planned" | "considering" | "dropped";
+export type RoadmapStatus =
+  | "shipped"
+  | "in-progress"
+  | "planned"
+  | "considering"
+  | "on-request"
+  | "dropped";
 
 export type RoadmapArea =
   | "ai"
@@ -44,6 +55,7 @@ export type RoadmapArea =
   | "seo"
   | "aeo"
   | "media"
+  | "ads"
   | "structure"
   | "platform"
   | "website";
@@ -83,26 +95,24 @@ export interface InternalRoadmapEntry extends RoadmapEntryBase {
 export type RoadmapEntry = PublicRoadmapEntry | InternalRoadmapEntry;
 
 export const ROADMAP: RoadmapEntry[] = [
-  // ── In progress ───────────────────────────────────────────────────────
+  // ── Planned (priority order) ──────────────────────────────────────────
   {
-    id: "website-media",
+    id: "seo-score-tracking",
     visibility: "public",
-    status: "in-progress",
-    area: "website",
+    status: "planned",
+    area: "seo",
     title: {
-      en: "Screenshots and walkthrough videos on this site",
-      de: "Screenshots und Video-Rundgänge auf dieser Website",
-      es: "Capturas y vídeos guiados en esta web",
+      en: "SEO score over time",
+      de: "SEO-Score im Zeitverlauf",
+      es: "Puntuación SEO a lo largo del tiempo",
     },
     body: {
-      en: "Every image position on this site is a placeholder today. The screenshots and five short videos are being produced.",
-      de: "Jede Bildposition auf dieser Website ist heute ein Platzhalter. Die Screenshots und fünf kurze Videos entstehen gerade.",
-      es: "Cada posición de imagen de esta web es hoy un marcador. Las capturas y cinco vídeos cortos se están produciendo.",
+      en: "Every nightly check is already stored. It will read as a line, so a change to the shop is visible without remembering last week's number.",
+      de: "Jede nächtliche Prüfung wird bereits gespeichert. Sie wird als Linie lesbar, damit eine Änderung am Shop sichtbar wird, ohne sich die Zahl der Vorwoche zu merken.",
+      es: "Cada revisión nocturna ya se guarda. Se leerá como una línea, para que un cambio en la tienda se vea sin recordar el número de la semana pasada.",
     },
-    notes: "Slots in app/config/marketing-images.ts and marketing-videos.ts; the alt texts there are the shooting brief.",
+    notes: "FIRST in this list 2026-09-17: it is the only entry here that is already SOLD. The DATA is already there: SeoScoreSnapshot is written by the nightly audit with plan-based retention (plans.ts scoreHistoryDays: Pro 30, Max 365), and getAuditTrend() in audit.service.ts exists — with no caller. SeoKeywordSnapshot is likewise written and never displayed. The plan tab already SELLS 'Score-Verlauf: {days} Tage' (SettingsPlanTab.tsx), so this is owed, not optional: the chart is the whole remaining work. No chart library is needed or wanted — an inline SVG line stays hydration-safe. Crawl diff (two snapshots) is shipped separately.",
   },
-
-  // ── Planned (priority order) ──────────────────────────────────────────
   {
     id: "tone-presets",
     visibility: "public",
@@ -131,11 +141,11 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "Traducciones programadas",
     },
     body: {
-      en: "Fill the missing translations of a filter set on a schedule, so a catalogue that grows daily is never behind in a language.",
-      de: "Die fehlenden Übersetzungen einer Auswahl nach Zeitplan ergänzen, damit ein täglich wachsender Katalog in keiner Sprache hinterherhinkt.",
-      es: "Completar las traducciones que faltan de una selección según un horario, para que un catálogo que crece a diario nunca se quede atrás en un idioma.",
+      en: "Changed texts are already refreshed on their own. This finds what was NEVER translated — a product added yesterday — and fills it on a schedule.",
+      de: "Geänderte Texte werden bereits von selbst aufgefrischt. Dies findet, was NIE übersetzt wurde — ein gestern angelegtes Produkt — und ergänzt es nach Zeitplan.",
+      es: "Los textos modificados ya se renuevan solos. Esto encuentra lo que NUNCA se tradujo — un producto añadido ayer — y lo completa según un horario.",
     },
-    notes: "Building blocks exist: the manual 'add missing translations' run (/app/bulk/translate, task bulkEditorTranslate) and a daily sweep (translation-drift-auto-run.service.ts). The sweep only acts on CHANGED primary text; a new product or never-translated, unchanged content is not picked up. This entry is the schedule on top of the manual run.",
+    notes: "Deliberately distinct from the Max auto-translation: that one is triggered by a CHANGED primary text (translation-drift-auto-run.service.ts + reconcileAfterPrimarySave), so content that was never translated and never changed is invisible to it forever. This is the manual /app/bulk/translate run (task bulkEditorTranslate, the candidate scan in missing-translations.server.ts) on a schedule. Store the FILTER, never the row ids, or the run never reaches the products that did not exist when it was set up. Needs its own cost cap: unattended AI calls on the merchant's key.",
   },
   {
     id: "translation-dashboard",
@@ -143,32 +153,16 @@ export const ROADMAP: RoadmapEntry[] = [
     status: "planned",
     area: "translations",
     title: {
-      en: "Translation coverage dashboard",
-      de: "Übersetzungs-Dashboard",
-      es: "Panel de cobertura de traducciones",
+      en: "What exactly is still missing per language",
+      de: "Was pro Sprache genau noch fehlt",
+      es: "Qué falta exactamente en cada idioma",
     },
     body: {
-      en: "One view of how complete every language is, per content type — what is missing, what went stale, what was refreshed.",
-      de: "Eine Ansicht, wie vollständig jede Sprache pro Inhaltstyp ist — was fehlt, was veraltet war, was erneuert wurde.",
-      es: "Una vista de lo completo que está cada idioma por tipo de contenido — qué falta, qué quedó obsoleto, qué se renovó.",
+      en: "The language coverage already gives you a percentage per language. It will say what is behind it — per content type and per field — and mark the translations whose source text has moved on.",
+      de: "Die Sprachabdeckung nennt heute einen Prozentwert je Sprache. Künftig sagt sie, was dahintersteckt — pro Inhaltstyp und Feld — und markiert die Übersetzungen, deren Ausgangstext weitergezogen ist.",
+      es: "La cobertura por idioma ya da un porcentaje. Dirá qué hay detrás — por tipo de contenido y por campo — y marcará las traducciones cuyo texto original ha cambiado.",
     },
-    notes: "Partial precursors: the hreflang audit's LocaleCoverage (hreflang.service.ts — products/collections/articles/pages only, 'translated' = any of 4 keys, no stale dimension), the per-selection missing list on /app/bulk/translate, and the missing-translation dots in item lists. No per-language overview exists.",
-  },
-  {
-    id: "deepl",
-    visibility: "public",
-    status: "planned",
-    area: "translations",
-    title: {
-      en: "DeepL as a translation provider",
-      de: "DeepL als Übersetzungsanbieter",
-      es: "DeepL como proveedor de traducción",
-    },
-    body: {
-      en: "Use DeepL for translations beside the AI providers, with your own key like everything else in the app.",
-      de: "DeepL neben den KI-Anbietern für Übersetzungen nutzen — mit eigenem Schlüssel, wie alles andere in der App.",
-      es: "Usar DeepL para las traducciones junto a los proveedores de IA, con su propia clave como todo lo demás en la aplicación.",
-    },
+    notes: "NOT a second page: this DEEPENS the hreflang audit's existing LocaleCoverage (hreflang.service.ts), which is where the number already is. Three gaps to close there — it counts one percentage over the UNION of products/collections/articles/pages rather than per type; 'translated' means at least ONE of four keys exists, so a product with only a translated title counts as done; and it has no stale dimension (the digest comparison the sync already does knows it). Metafields, option values, theme texts, metaobjects, policies and menus are outside its scan entirely. A second coverage view would repeat the catalog-readiness/analyzeStore mistake: two numbers for one product in two tabs help nobody.",
   },
   {
     id: "version-history",
@@ -186,25 +180,44 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "Ver lo que decía un campo antes de guardar — suyo o de la IA — y restaurarlo.",
     },
   },
-  {
-    id: "seo-score-tracking",
-    visibility: "public",
-    status: "planned",
-    area: "seo",
-    title: {
-      en: "SEO score over time",
-      de: "SEO-Score im Zeitverlauf",
-      es: "Puntuación SEO a lo largo del tiempo",
-    },
-    body: {
-      en: "Keep the crawl results as a series, so a change to the shop shows up as a line and not as a number you have to remember.",
-      de: "Die Crawl-Ergebnisse als Verlauf behalten, damit eine Änderung am Shop als Linie sichtbar wird und nicht als Zahl, die man sich merken muss.",
-      es: "Conservar los resultados del rastreo como serie, para que un cambio en la tienda aparezca como una línea y no como un número que hay que recordar.",
-    },
-    notes: "The DATA is already there: SeoScoreSnapshot is written by the nightly audit with plan-based retention (plans.ts scoreHistoryDays: Pro 30, Max 365), and getAuditTrend() in audit.service.ts exists — with no caller. SeoKeywordSnapshot is likewise written and never displayed. The plan tab already SELLS 'Score-Verlauf: {days} Tage' (SettingsPlanTab.tsx), so this is owed, not optional: the chart is the whole remaining work. Crawl diff (two snapshots) is shipped separately.",
-  },
 
   // ── Considering ───────────────────────────────────────────────────────
+  {
+    id: "ad-suite",
+    visibility: "public",
+    status: "considering",
+    area: "ads",
+    title: {
+      en: "Advertising, written where your texts already live",
+      de: "Werbung, dort geschrieben, wo Ihre Texte schon liegen",
+      es: "Publicidad, escrita donde ya viven sus textos",
+    },
+    body: {
+      en: "A section of its own for campaign texts and generated images, published to Meta, TikTok and Google Ads — in every language your shop already sells in, from the product texts you already wrote.",
+      de: "Ein eigener Bereich für Kampagnentexte und generierte Bilder, veröffentlicht auf Meta, TikTok und Google Ads — in jeder Sprache, in der Ihr Shop schon verkauft, aus den Produkttexten, die Sie schon geschrieben haben.",
+      es: "Una sección propia para textos de campaña e imágenes generadas, publicada en Meta, TikTok y Google Ads — en cada idioma en el que ya vende, a partir de los textos de producto que ya escribió.",
+    },
+    notes:
+      "The biggest thing on this list: a TAB of its own, not a feature inside an existing one. Three independent halves, and they should be judged separately rather than as one project. (1) GENERATION — ad copy per locale and per market is the app's existing strength turned outward, and image generation (Higgsfield and others) follows the same rule as every AI provider here: the merchant's own key, providers rotate, so no single vendor may be wired into the core. (2) DISTRIBUTION — Meta, TikTok and Google Ads are three separate OAuth flows, three ad-account permission models, three app-review processes and three ad-policy regimes; none of them is 'an API call'. Real money is spent through them, which raises a question this app has never had to answer: what happens when an unattended run is wrong. (3) SCOPE against Shopify — the native Google/Meta/TikTok sales channels already push the CATALOG, so this must be additive and must never produce a second competing product feed for one shop. Overlaps the existing image-generation entry: that one is catalogue imagery (a background for a cut-out), this one is campaign creatives. Keep them apart or fold one in deliberately — do not let both grow half an implementation.",
+  },
+  {
+    id: "product-feeds",
+    visibility: "public",
+    status: "considering",
+    area: "ads",
+    title: {
+      en: "The right variant image in every ad feed",
+      de: "Das richtige Variantenbild in jedem Werbe-Feed",
+      es: "La imagen de variante correcta en cada feed publicitario",
+    },
+    body: {
+      en: "The galleries you assign per variant reach Google, Meta and TikTok as additional images — so an ad for the blue one shows the blue one, from every angle you uploaded.",
+      de: "Die Galerien, die Sie je Variante zuordnen, erreichen Google, Meta und TikTok als zusätzliche Bilder — damit die Anzeige für das blaue Modell auch das blaue zeigt, aus jedem Blickwinkel, den Sie hochgeladen haben.",
+      es: "Las galerías que asigna por variante llegan a Google, Meta y TikTok como imágenes adicionales — para que el anuncio de la azul muestre la azul, desde cada ángulo que subió.",
+    },
+    notes:
+      "MEASURED before writing this (api.update-variant-galleries.tsx:700-715): position 0 of a variant gallery already becomes the NATIVE variant.image, so the FIRST image per variant reaches every sales channel today — the card must not claim otherwise. The gap is the REST of the gallery: positions 1..n live in the custom.variant_gallery_order / custom.variant_external_videos metafields, which no channel feed reads, and Google's additional_image_link (up to 10) is exactly the field they belong in. So the smallest honest version of this is an ADDITIONAL feed beside Shopify's own channel, never a replacement — two full feeds for one shop means duplicate products at the network. Worth checking first whether Shopify's channel apps can be fed the metafield directly, which would make this a mapping rather than a feed. Smaller and far more certain than ad-suite; the two are listed together only because they share an audience.",
+  },
   {
     id: "brand-voice",
     visibility: "public",
@@ -222,7 +235,9 @@ export const ROADMAP: RoadmapEntry[] = [
     },
   },
   {
-    id: "ab-suggestions",
+    // NOT "ab-suggestions": that id read as A/B TESTING, which this is not —
+    // there is no traffic split and no conversion measurement behind it.
+    id: "alternative-versions",
     visibility: "public",
     status: "considering",
     area: "ai",
@@ -255,6 +270,23 @@ export const ROADMAP: RoadmapEntry[] = [
     notes: "Already shipped and therefore removed from the body: readability (readability.ts), thin pages per resource type (onpage.service.ts findThinPages) and EXACT duplicate titles/meta descriptions (crawl.service.ts). Missing: fuzzy similarity across descriptions, and any record of whether a field was ever edited.",
   },
   {
+    id: "user-roles",
+    visibility: "public",
+    status: "considering",
+    area: "platform",
+    title: {
+      en: "Users and permissions",
+      de: "Benutzer und Berechtigungen",
+      es: "Usuarios y permisos",
+    },
+    body: {
+      en: "Tell the people working in one shop apart, and give them different rights — who may generate, who may translate, who may publish.",
+      de: "Die Personen unterscheiden, die in einem Shop arbeiten, und ihnen unterschiedliche Rechte geben — wer generieren, wer übersetzen und wer veröffentlichen darf.",
+      es: "Distinguir a las personas que trabajan en una tienda y darles derechos distintos — quién puede generar, quién traducir y quién publicar.",
+    },
+    notes: "Own entry as of 2026-09-17, and it comes BEFORE approval-workflow rather than inside it. Today the app knows a SHOP, not a person: an embedded session says 'somebody with access opened this', there is no user table, and no write path records who acted. So a review queue could not even name its approver. Open question kept from the old internal entry: own roles, or read Shopify's staff accounts. Also a prerequisite for multi-store.",
+  },
+  {
     id: "approval-workflow",
     visibility: "public",
     status: "considering",
@@ -265,42 +297,11 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "Revisión antes de publicar",
     },
     body: {
-      en: "For shops where one person writes and another approves: AI output lands in a queue instead of in the field.",
-      de: "Für Shops, in denen eine Person schreibt und eine andere freigibt: KI-Texte landen in einer Warteschlange statt im Feld.",
-      es: "Para tiendas donde una persona escribe y otra aprueba: la salida de la IA llega a una cola en lugar de al campo.",
+      en: "For shops where one person writes and another approves: AI output waits in a queue instead of landing in the field. Needs users and permissions first.",
+      de: "Für Shops, in denen eine Person schreibt und eine andere freigibt: KI-Texte warten in einer Warteschlange, statt im Feld zu landen. Setzt Benutzer und Berechtigungen voraus.",
+      es: "Para tiendas donde una persona escribe y otra aprueba: la salida de la IA espera en una cola en lugar de llegar al campo. Requiere antes usuarios y permisos.",
     },
-  },
-  {
-    id: "multi-store",
-    visibility: "public",
-    status: "considering",
-    area: "platform",
-    title: {
-      en: "Several shops in one account",
-      de: "Mehrere Shops in einem Konto",
-      es: "Varias tiendas en una cuenta",
-    },
-    body: {
-      en: "Shared instructions, glossary and settings across the shops of one merchant or agency.",
-      de: "Gemeinsame Anweisungen, Glossar und Einstellungen über die Shops eines Händlers oder einer Agentur hinweg.",
-      es: "Instrucciones, glosario y ajustes compartidos entre las tiendas de un comerciante o agencia.",
-    },
-  },
-  {
-    id: "api-access",
-    visibility: "public",
-    status: "considering",
-    area: "platform",
-    title: {
-      en: "API access",
-      de: "API-Zugang",
-      es: "Acceso por API",
-    },
-    body: {
-      en: "Start translation and generation runs from your own systems.",
-      de: "Übersetzungs- und Generierungsläufe aus eigenen Systemen anstoßen.",
-      es: "Lanzar traducciones y generaciones desde sus propios sistemas.",
-    },
+    notes: "Blocked on user-roles. Two further decisions before any code: the editor's resolve() chain would gain a 'waiting for approval' source that every reader has to handle, and the unattended auto-translation has to be either exempt (then 'nothing goes live unreviewed' is false) or a queue producer (then the automation files daily homework). Decide both before starting.",
   },
   {
     id: "regional-variants",
@@ -350,23 +351,7 @@ export const ROADMAP: RoadmapEntry[] = [
       de: "Hintergründe und Szenen für Produkte, von denen es nur ein Freisteller-Foto gibt.",
       es: "Fondos y escenas para productos de los que solo hay un recorte.",
     },
-  },
-  {
-    id: "integrations",
-    visibility: "public",
-    status: "considering",
-    area: "platform",
-    title: {
-      en: "Notifications and automation hooks",
-      de: "Benachrichtigungen und Automatisierungs-Hooks",
-      es: "Notificaciones y ganchos de automatización",
-    },
-    body: {
-      en: "The app already tells you inside Shopify when a long run is done. Next: the same message by email, and a hook other tools can listen to.",
-      de: "Innerhalb von Shopify meldet die App schon heute, wenn ein langer Lauf fertig ist. Als Nächstes: dieselbe Nachricht per E-Mail und ein Hook, auf den andere Werkzeuge hören können.",
-      es: "Dentro de Shopify la aplicación ya avisa cuando termina una ejecución larga. Lo siguiente: el mismo aviso por correo y un gancho al que otras herramientas puedan escuchar.",
-    },
-    notes: "Was 'Slack notifications' + 'Zapier' in the 2026-01 roadmap. Generic webhook first; a Slack app is a channel, not a feature. The in-app bell (MainNavigation NotificationIcon, api.recently-completed-tasks) is shipped; no email/Slack/outgoing webhook exists.",
+    notes: "CATALOGUE imagery — the picture on the product page. The ad-suite entry also generates images, but those are campaign creatives. If both are ever built, one image-generation plumbing serves both; decide that once, not twice.",
   },
   {
     id: "annual-plans",
@@ -385,6 +370,59 @@ export const ROADMAP: RoadmapEntry[] = [
     },
     notes: "billing.ts already types interval as 'EVERY_30_DAYS' | 'ANNUAL' and billing.server.ts passes it through; every plan is EVERY_30_DAYS and there is no monthly/yearly toggle.",
     ref: "docs/reference/PRICING_AND_LIMITS.md",
+  },
+
+  // ── On request (built when a merchant asks, not speculatively) ────────
+  {
+    id: "api-access",
+    visibility: "public",
+    status: "on-request",
+    area: "platform",
+    title: {
+      en: "API access",
+      de: "API-Zugang",
+      es: "Acceso por API",
+    },
+    body: {
+      en: "Start translation and generation runs from your own systems. Built for the shop that needs it — write to us and tell us what you want to trigger.",
+      de: "Übersetzungs- und Generierungsläufe aus eigenen Systemen anstoßen. Wird für den Shop gebaut, der es braucht — schreiben Sie uns, was Sie auslösen möchten.",
+      es: "Lanzar traducciones y generaciones desde sus propios sistemas. Se construye para la tienda que lo necesita — escríbanos y cuéntenos qué quiere activar.",
+    },
+    notes: "No merchant tokens exist today — every route authenticates as an embedded Shopify session. This is auth, rate limiting, versioning and documentation, i.e. a product of its own; it is not started without a named shop asking for it.",
+  },
+  {
+    id: "multi-store",
+    visibility: "public",
+    status: "on-request",
+    area: "platform",
+    title: {
+      en: "Several shops in one account",
+      de: "Mehrere Shops in einem Konto",
+      es: "Varias tiendas en una cuenta",
+    },
+    body: {
+      en: "Shared instructions, glossary and settings across the shops of one merchant or agency. If you run several shops, tell us — that is what decides whether this gets built.",
+      de: "Gemeinsame Anweisungen, Glossar und Einstellungen über die Shops eines Händlers oder einer Agentur hinweg. Wenn Sie mehrere Shops betreiben, sagen Sie es uns — davon hängt ab, ob das gebaut wird.",
+      es: "Instrucciones, glosario y ajustes compartidos entre las tiendas de un comerciante o agencia. Si gestiona varias tiendas, díganoslo — de eso depende que se construya.",
+    },
+    notes: "Every row in the database is scoped by a single shop string and there is no account or organisation model. Needs user-roles as well. Not speculative work.",
+  },
+  {
+    id: "integrations",
+    visibility: "public",
+    status: "on-request",
+    area: "platform",
+    title: {
+      en: "Notifications outside the app",
+      de: "Benachrichtigungen außerhalb der App",
+      es: "Avisos fuera de la aplicación",
+    },
+    body: {
+      en: "Inside Shopify the app already tells you when a long run is done. By email, or as a hook your own tools can listen to, it is built for whoever asks — tell us which one you need.",
+      de: "Innerhalb von Shopify meldet die App schon heute, wenn ein langer Lauf fertig ist. Per E-Mail oder als Hook für eigene Werkzeuge entsteht es für den, der fragt — sagen Sie uns, was Sie brauchen.",
+      es: "Dentro de Shopify la aplicación ya avisa cuando termina una ejecución larga. Por correo, o como gancho para sus propias herramientas, se construye para quien lo pida — díganos cuál necesita.",
+    },
+    notes: "Was 'Slack notifications' + 'Zapier' in the 2026-01 roadmap; moved to on-request 2026-09-17. The in-app bell (MainNavigation NotificationIcon, api.recently-completed-tasks) is shipped; no email, Slack or outgoing webhook exists. EMAIL is the smaller and more useful half — the Task table already knows its terminal states, so the trigger point exists; what is missing is a sending service, a sender domain with DNS and an unsubscribe path. The outgoing WEBHOOK is the bigger one (URL + secret per shop, signed payloads, retries, a delivery view); the app only does the incoming direction today. A Slack app stays a channel, not a feature.",
   },
 
   // ── Shipped (newest first) ────────────────────────────────────────────
@@ -776,14 +814,6 @@ export const ROADMAP: RoadmapEntry[] = [
 
   // ── Internal: platform, infrastructure, security, pricing ─────────────
   {
-    id: "team-roles",
-    visibility: "internal",
-    status: "considering",
-    area: "platform",
-    title: "Several users per shop with roles",
-    notes: "Prerequisite for approval-workflow and multi-store. Shopify staff accounts already exist; the question is whether the app needs its own roles or reads Shopify's.",
-  },
-  {
     id: "enterprise-tier",
     visibility: "internal",
     status: "considering",
@@ -814,7 +844,7 @@ export const ROADMAP: RoadmapEntry[] = [
     status: "considering",
     area: "platform",
     title: "SSO / SAML",
-    notes: "Only meaningful with team-roles and an enterprise tier.",
+    notes: "Only meaningful with user-roles and an enterprise tier.",
   },
   {
     id: "jsonld-product-group",

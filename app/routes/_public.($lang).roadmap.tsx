@@ -25,6 +25,7 @@ const SECTIONS: Array<{ status: RoadmapStatus; label: keyof MarketingTranslation
   { status: "in-progress", label: "inProgress" },
   { status: "planned", label: "planned" },
   { status: "considering", label: "considering" },
+  { status: "on-request", label: "onRequest" },
   { status: "shipped", label: "shipped" },
 ];
 

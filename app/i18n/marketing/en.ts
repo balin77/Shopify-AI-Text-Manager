@@ -221,12 +221,13 @@ export const en = {
   roadmap: {
     title: "Roadmap",
     intro:
-      "What is being built, what comes next, and what is being weighed. The order inside a section is the priority; there are no dates, because a public date that slips reads as a broken promise.",
+      "What comes next, what is being weighed, and what gets built only when somebody asks for it. The order inside a section is the priority; there are no dates, because a public date that slips reads as a broken promise.",
     note: "This page is rendered from the same file the development plan lives in — when a status changes there, it changes here.",
     sections: {
       inProgress: "In progress",
       planned: "Next",
       considering: "Being considered",
+      onRequest: "On request only",
       shipped: "Recently shipped",
     },
     shippedOn: "Shipped",
@@ -237,6 +238,7 @@ export const en = {
       seo: "SEO",
       aeo: "AI discovery",
       media: "Images and media",
+      ads: "Advertising",
       structure: "Structure",
       platform: "Platform",
       website: "This website",

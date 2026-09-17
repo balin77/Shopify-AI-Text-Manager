@@ -207,12 +207,13 @@ export const de: MarketingTranslation = {
   roadmap: {
     title: "Roadmap",
     intro:
-      "Was gerade gebaut wird, was als Nächstes kommt und was abgewogen wird. Die Reihenfolge innerhalb eines Abschnitts ist die Priorität; Termine gibt es keine, weil ein öffentlicher Termin, der rutscht, wie ein gebrochenes Versprechen wirkt.",
+      "Was als Nächstes kommt, was abgewogen wird und was nur entsteht, wenn jemand danach fragt. Die Reihenfolge innerhalb eines Abschnitts ist die Priorität; Termine gibt es keine, weil ein öffentlicher Termin, der rutscht, wie ein gebrochenes Versprechen wirkt.",
     note: "Diese Seite wird aus derselben Datei erzeugt, in der der Entwicklungsplan steht — ändert sich dort ein Status, ändert er sich hier.",
     sections: {
       inProgress: "In Arbeit",
       planned: "Als Nächstes",
       considering: "In Überlegung",
+      onRequest: "Nur auf Anfrage",
       shipped: "Kürzlich ausgeliefert",
     },
     shippedOn: "Ausgeliefert",
@@ -223,6 +224,7 @@ export const de: MarketingTranslation = {
       seo: "SEO",
       aeo: "KI-Discovery",
       media: "Bilder und Medien",
+      ads: "Werbung",
       structure: "Struktur",
       platform: "Plattform",
       website: "Diese Website",
