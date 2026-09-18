@@ -41,28 +41,46 @@ the managed one profitable by construction**".
 
 | What | Where | Matters because |
 |---|---|---|
-| Key material is read from `AISettings` only | [shared.ts](../../app/routes/api-ai-handlers/shared.ts) `createAIService` | ONE factory, but 17 construction sites bypass it (below) |
+| Key material is read from `AISettings` only | [shared.ts](../../app/routes/api-ai-handlers/shared.ts) `createAIService` | ONE factory — and 16 further `new AIService(...)` sites bypass it, plus 8 that reach it through `TranslationService` (below) |
 | `initializeProvider()` throws `MissingAIKeyError` when the key is empty | [ai.service.ts](../../src/services/ai.service.ts) L271–316 | the structural guarantee §B4 bought — it must SURVIVE this plan |
-| Pre-flight gate `getMissingPreferredKey` / `noAiKeyResponse` (409 `NO_AI_KEY`) | shared.ts L173–213 | 5 call sites; becomes the natural home of the mode/budget decision |
-| Every provider call funnels through `askAI` → `executeAIRequest` | ai.service.ts L1777–1966 | the ONE place a meter can sit; the queue path and the direct path both pass it |
-| `estimateTokens` = `prompt.length/4 + 8192` | ai.service.ts L1765 | an estimate for the RATE limiter, never a cost — it over-counts output by ~10× |
-| Provider responses are reduced to a string | `_executeAIRequestInner` L1969–2150 | real `usage` is returned by 5 of 6 SDKs and **thrown away today** |
-| Rate limits are per PROVIDER and process-global, overwritten from ONE shop's `AISettings` | [ai-queue.service.ts](../../src/services/ai-queue.service.ts) L95–175, single caller [unified-content.actions.ts](../../app/actions/unified-content.actions.ts) L105 | with a SHARED key this becomes a cross-tenant lever: shop A raises the limit for everybody (§9) |
+| Pre-flight gate `getMissingPreferredKey` / `noAiKeyResponse` (409 `NO_AI_KEY`) | shared.ts L172–216 | 5 call sites; becomes the natural home of the mode/budget decision |
+| Every provider call funnels through `executeAIRequest` → `_executeAIRequestInner` | ai.service.ts L1943–2150 | the ONE place a meter can sit. **NOT `askAI`** (L1778): `replayRequest` (L1914, task recovery) calls `executeAIRequest` directly, past the queue, the prompt log and anything `askAI` would carry |
+| `estimateTokens` = `prompt.length/4 + 8192` | ai.service.ts L1764 | an estimate for the RATE limiter, never a cost — it charges a flat 8192 output tokens for every call, an order of magnitude above a typical completion (**assumed** until §4 measures it) |
+| Provider responses are reduced to a string | `_executeAIRequestInner` L1970–2150 | all 11 provider calls live here, and every one **discards the `usage` object its SDK returns** |
+| Rate limits are per PROVIDER and process-global, overwritten from ONE shop's `AISettings` | [ai-queue.service.ts](../../src/services/ai-queue.service.ts) L100–200, single caller [unified-content.actions.ts](../../app/actions/unified-content.actions.ts) L105 | with a SHARED key this becomes a cross-tenant lever: shop A raises the limit for everybody (§9) |
 | `ImageOperationCounter` + `consumeImageOperations` | [imageOperations.server.ts](../../app/utils/imageOperations.server.ts) | the quota pattern to mirror: atomic conditional increment, UTC month, usage-not-entitlement, no cron |
 | `trialConsumedAt` on `AISettings` | [schema.prisma](../../prisma/schema.prisma) L142–150 | the precedent for a once-per-shop grant, including its stated residual (uninstall+redact resets it) |
 | Plan is derived from the Shopify-verified subscription by NAME, then PRICE | [billing.server.ts](../../app/services/billing.server.ts) `getPlanFromSubscription` | the mode must be encoded in the subscription, not in a column a client can write |
 
-**The 17 construction sites.** `new AIService(...)` is called directly in
-`direct-translation-ai.server.ts`, `theme-content-api.server.ts`,
+**The construction sites, counted properly.** `new AIService(...)` appears 17
+times outside tests — but one of them IS the factory (`shared.ts`), so 16
+bypass it: `direct-translation-ai.server.ts`, `theme-content-api.server.ts`,
 `alt-text.action.ts` (×2), `sub-resources.action.ts` (×2),
 `templates-translate-field.action.ts` (×2), `templates-generate.action.ts`,
 `templates-translate-all.action.ts`, `unified-content.actions.ts` (×2),
-`action-context.ts`, `app.seo.performance.tsx`, `shared.ts`,
-`translation.service.ts`, `ai-queue.service.ts`. Each one assembles the six
-key fields itself. A second key source added at only some of them is how a
-merchant gets two different answers from two buttons — the exact shape of the
-`sendImagesToAI` bug this repo already fixed once. **One resolver, every site**
-(§5) is therefore not tidiness, it is the whole correctness argument.
+`action-context.ts`, `app.seo.performance.tsx`, `translation.service.ts`,
+`ai-queue.service.ts`.
+
+That count still understates the work, because `translation.service.ts` only
+forwards a config its OWN callers assemble — 8 further sites, one of which is
+the important one: **[stale-translation-sync.server.ts](../../app/services/translations/stale-translation-sync.server.ts)
+L1981 builds a full six-key config for the detached auto-retranslation**, an AI
+run with no merchant in front of it (§9a). The rest are
+`translation.action.ts` (×4), `alt-text.action.ts` (×2) and
+`action-context.ts`. The honest inventory is "**10 modules assemble an
+`AIServiceConfig` literal**" (`grep "huggingfaceApiKey:"`), not "17 call `new
+AIService`" — and the resolver has to replace all ten.
+
+A second key source added at only some of them is how a merchant gets two
+different answers from two buttons — the exact shape of the `sendImagesToAI`
+bug this repo already fixed once. **One resolver, every site** (§5) is
+therefore not tidiness, it is the whole correctness argument.
+
+**What is NOT a hole:** no AI inference happens outside `AIService` — only
+`ai.service.ts` imports the four SDKs. `api.ai-models.tsx` does call three
+provider APIs directly and decrypts merchant keys to do it, but that is model
+LISTING, not inference: no tokens, no completion, nothing to meter. It needs an
+explicit carve-out in §5's isolation test, not a rewrite.
 
 ---
 
@@ -83,12 +101,19 @@ that costs, concretely, and all of it is a hard requirement of this plan:
    `aiProcessingConsentAt` + `aiProcessingConsentVersion` on `AISettings`, and
    re-asked when the version changes (which it does the day the managed
    sub-processor changes).
-2. **Disclosure**: [privacy.tsx](../../app/routes/privacy.tsx) currently states
-   *"does not provide a shared or operator-owned API key"* — that sentence
-   becomes FALSE on the day this ships and must be rewritten in the same
-   commit, naming the managed sub-processor, the purpose, the no-training
-   commitment and the transfer basis. A privacy page that contradicts the
-   product is a review rejection on its own.
+2. **Disclosure**: [privacy.tsx](../../app/routes/privacy.tsx) §4.1 (L109–116)
+   says content is processed *"only using your own API key"* and that the app
+   *"does not provide a shared or operator-owned API key"* — **three
+   sentences**, not one, all of them false on the day this ships. They are
+   rewritten in the same commit, naming the managed sub-processor, the purpose,
+   the no-training commitment and the transfer basis. A privacy page that
+   contradicts the product is a review rejection on its own. The audit record
+   needs the same treatment:
+   [SHOPIFY_COMPLIANCE_AUDIT.md](../app-store/SHOPIFY_COMPLIANCE_AUDIT.md)
+   L152–160 marks B4 "BEHOBEN (Ansatz A)" and states categorically that *no*
+   code path sends merchant content through an operator account. B4 is not
+   re-opened by this plan — it moves from fix 1 to fix 2 — but the document has
+   to say so, or the next reader trusts a guarantee the code no longer makes.
 3. **No training, no retention** — the managed provider must contractually
    default to no-training on API traffic. This disqualifies HuggingFace
    Inference (no such guarantee, §B4 says so) and free-tier Google.
@@ -103,6 +128,24 @@ that costs, concretely, and all of it is a hard requirement of this plan:
    lives under its own names (`MANAGED_AI_*`, §5) and is read by exactly ONE
    module, which is also the module that enforces consent and budget. A key
    that can only be obtained together with its gate cannot be obtained past it.
+   Residual to clear in the same change: `.env.development.template` and
+   `.env.production.template` still list four of the six forbidden names
+   (empty) — an invitation B4 asked to remove.
+
+6. **Two more things must be settled before a line is written, and the plan
+   was wrong to treat §B4 as settling them.** (a) That audit is *this app's own
+   reading* of PPA §6.1 / the API Terms, written to justify BYO — and the code
+   says the opposite even more flatly: `api-ai-handlers/shared.ts` states
+   "Shopify PPA/API Terms forbid processing merchant content via a
+   shared/operator key". One of those two will be quoted at a reviewer. Cite
+   Shopify's own text, and rewrite that comment in the same commit.
+   (b) **The AI provider's terms are never examined anywhere in this plan.**
+   Serving metered access to our provider account to third parties is the
+   classic "reselling / providing the service to third parties" clause;
+   commercial API terms commonly restrict it or require the operator to be the
+   responsible party for end users. UNVERIFIED — and a hard precondition, with
+   the clause quoted, because it is the kind of thing that kills a feature
+   after it ships rather than before.
 
 Also load-bearing: `initializeProvider()` keeps throwing when it gets no key.
 The managed key is INJECTED into the config by the resolver; `ai.service.ts`
@@ -120,9 +163,12 @@ for EU merchants, cheapest token price that still writes usable multilingual
 marketing copy, vision capability (the app's alt-text and image-aware
 generation paths), and a stable model id.
 
-Prices below are the public list prices found on 2026-09-17 (USD per 1M
-tokens). They are the INPUT to the margin guard in §8, not a claim that they
-will hold — §8 is built so that a price change moves one constant.
+Prices below are public list prices looked up on 2026-09-17 (USD per 1M
+tokens). By this repo's own standard that is a **bare claim, not a
+measurement** — there is no probe route to re-check it in one click, the way
+`api.translation-probe.tsx` re-checks a platform fact. Treat them as dated
+inputs to the guard in §7, owned by the monthly ops re-check in §13, and note
+that two of the four candidates are not in this repo's model config at all.
 
 | Candidate | in / out | Vision | No-training default | Verdict |
 |---|---|---|---|---|
@@ -137,12 +183,26 @@ Three decisions follow from the table:
 - **The managed model is PINNED and the merchant cannot change it.** Provider
   and model selection stay a BYO privilege. Cost control that a customer can
   switch off is not cost control — and a "choose your model" dropdown over our
-  key is an invitation to select Opus.
-- **The default model ids in the repo are already stale** — `deepseek-chat`
-  (retired 2026-07-24) and `gemini-2.0-flash-lite` in
-  [ai-models.config.ts](../../app/config/ai-models.config.ts). That is harmless
-  for BYO (the merchant picks) and would be an outage for managed mode. A model
-  id that we depend on gets a startup check (§10).
+  key is an invitation to select Opus. Pinning needs a **runtime fallback**,
+  though: a startup check can verify that an id is in our price table but not
+  that the provider still serves it, and a model retired at 03:00 does not
+  restart the process. So a second pinned model in the same price table is
+  promoted automatically on a model-not-found error, and the promotion alerts.
+  Note also that `gpt-5-nano` is not in
+  [ai-models.config.ts](../../app/config/ai-models.config.ts) at all
+  (`DEFAULT_MODELS.openai` is `gpt-4o-mini`) — the pinned candidate joins the
+  repo's vocabulary in the same commit.
+- **Model ids in the repo are already stale**, and more of them than the two
+  defaults: `DEFAULT_MODELS` carries `deepseek-chat` and
+  `gemini-2.0-flash-lite`, and `CURATED_MODELS` adds `gemini-1.5-pro/flash`,
+  `gpt-4-turbo`, `o3-mini`, `grok-2-vision-1212` and a `claude-opus-4-0-…` id
+  that is not valid in either the alias or the dated form
+  ([ai-models.config.ts](../../app/config/ai-models.config.ts)). Harmless for
+  BYO (the merchant picks from a live listing), an outage for managed mode. A
+  model id we DEPEND on gets a startup check (§9.6); the rest is a separate
+  tidy-up, named here so it is not discovered as a managed-mode incident. The
+  retirement dates quoted in this section are external facts, re-checkable but
+  not verifiable from the repo.
 - **Quality is measured before the choice is final** (Phase 0, §11): the same
   prompts this app really sends — a product description, a 5-field batch
   translation into 3 locales, an alt text, an SEO title under a character cap —
@@ -160,7 +220,18 @@ the rate limiter and over-counts output by roughly 10×, and the real `usage`
 objects the SDKs return are discarded.
 
 **4.1 Capture real usage at the one chokepoint.** `_executeAIRequestInner`
-returns `{ text, usage }` instead of `string`:
+returns `{ text, usage }` instead of `string`, and the CHARGE is taken in
+`executeAIRequest` — deliberately not in `askAI`, which `replayRequest` skips
+(§1). Two shapes need care rather than a table row:
+
+- **Gemini reads `usageMetadata` at THREE sites**, because the branch obtains
+  its `response` three times (vision, vision-fallback, text-only), and the
+  vision fallback makes **two provider calls inside one invocation**. A single
+  `{text, usage}` cannot express two billed calls — the failed first one has to
+  be added, or it is spend the meter never sees.
+- **HuggingFace** declares `usage` on its chat-completion output too, so the
+  gap is not the SDK but whether the routed provider fills it. Treat a missing
+  field as the estimate case, never as zero.
 
 | Provider | Field |
 |---|---|
@@ -168,6 +239,7 @@ returns `{ text, usage }` instead of `string`:
 | OpenAI, Grok, DeepSeek | `completion.usage.prompt_tokens` / `completion_tokens` |
 | Gemini | `response.usageMetadata.promptTokenCount` / `candidatesTokenCount` |
 | HuggingFace | `response.usage` when present, else estimate |
+| (any branch) | absent or partial → estimate, flagged |
 
 `usage.source` is `"provider"` or `"estimate"`. **An estimate rounds UP** — it
 is the direction that costs us money if it errs, the same rule
@@ -178,7 +250,12 @@ diagnosable instead of mysterious.
 
 **4.2 One price table, one module.** `app/config/ai-pricing.ts`:
 `MODEL_PRICING: Record<provider, Record<modelId, {inMicrosPerMToken,
-outMicrosPerMToken}>>` in **micro-euro** integers (no floats — this is money,
+outMicrosPerMToken}>>` in **micro-euro** integers — which means a
+`USD_PER_EUR` constant exists whether or not anyone names it, since every
+provider lists in USD. It is named, dated and owned here, beside the prices,
+and it carries the same monthly re-check: a table computed at 1.08 understates
+the euro cost by ~14 % if the rate moves to 0.95, which is more than half of
+what the §7 buffer is supposed to absorb (no floats — this is money,
 and the `Task`/logger paths JSON-stringify their values, where a `BigInt`
 throws; Int µ€ tops out at €2,147 per counter row, far past any monthly shop
 total, and is clamped with a warning rather than wrapped). A model the table
@@ -251,7 +328,9 @@ Resolution order, and each step is a decision someone could get wrong:
 4. **Budget** is checked last, because it is the only step that costs a DB
    round trip.
 
-Every one of the 17 construction sites goes through it. `createAIService` in
+Every one of those sites — the 16 direct ones, the 8 behind `TranslationService`
+and the 10 modules that assemble a config literal — goes through it.
+`createAIService` in
 `shared.ts` and `createAIService` in `action-context.ts` become thin wrappers
 over the same call; `theme-content-api.server.ts`,
 `direct-translation-ai.server.ts` and the four template actions stop assembling
@@ -263,32 +342,63 @@ mention a `*_API_KEY` env var or build an `AIServiceConfig` literal.**
 
 ## 6. Phase 2b — enforcement
 
-**Pre-flight.** The existing gate call sites (`api.ai.tsx` covering 11
-handlers, `api.translate-alt-text-template.tsx`,
+**Pre-flight.** The existing gate call sites (`api.ai.tsx`, whose one gate
+covers **19 AI actions** — 23 `case` branches minus the 4 in `NON_AI_ACTIONS`;
+the "11 handlers" in the compliance audit is stale and was copied forward once
+already — plus `api.translate-alt-text-template.tsx`,
 `templates-translate-field.action.ts` ×2, `api.seo-internal-links.tsx`) switch
 from `getMissingPreferredKey` to the resolver and get three new refusal codes.
 All of them are directly POST-reachable, so this is server-side or it is
 nothing — the same rule the `/api/ai` plan gates already follow.
 
-**Charging.** In `askAI`, after the call returns, when `source === "managed"`:
-increment the counter by the computed cost, atomically, in the
-`consumeImageOperations` shape. BYO increments the same row without a cap.
+**The gate is necessary and nowhere near sufficient.** Those five entry points
+cover the interactive paths only. The heaviest AI consumers in this app never
+pass one — see §6a, which is the single most important correction this plan
+received in review. So the decision lives **per AI request**, in
+`executeAIRequest`, and the HTTP gate is only the early, friendly copy of it.
+
+**Charging.** After the call returns, when `source === "managed"`: increment the
+counter by the computed cost, atomically, in the `consumeImageOperations`
+shape. BYO increments the same row without a cap. Two things the first draft
+got wrong here, both in the direction that costs us money:
+
+- **Every provider ATTEMPT is billed, not every logical call.**
+  `AI_SDK_MAX_RETRIES = 2` gives each SDK up to 3 HTTP attempts, and the
+  queue re-enqueues up to 3 more times on rate-limit errors — so one logical
+  call can be nine billed attempts of which the meter would see one. Either
+  meter at the transport boundary, or set `maxRetries: 0` and retry where the
+  meter can see it.
+- **A timed-out call is charged at its worst case, never at zero.**
+  `executeAIRequest` races `_executeAIRequestInner` against a 120 s timer and
+  the losing promise is not cancelled: the provider finishes generating and
+  bills us. That biases the undercount towards the longest, most expensive
+  calls — exactly backwards.
+
+**An `AIService` with no `shop` cannot be metered, so it cannot be managed.**
+`theme-content-api.server.ts` builds one with neither `shop` nor `taskId`,
+which also makes it skip the queue entirely (`askAI` executes directly when
+either is missing). In managed mode that is a refusal, not a free call; the
+call site passes the shop or it stays BYO-only.
 
 **The reservation problem, stated rather than hidden.** A call's cost is not
 knowable before it runs, so a hard cap cannot be exact. The rule: **a call may
 START only while `remaining > 0`**; the overshoot is bounded by
-`MAX_GLOBAL_CONCURRENCY` (4) × the worst-case single call (input ceiling +
-`max_tokens: 8192`), i.e. cents, and it is bounded per shop by the same
-number. A design that instead reserved the worst case up front would refuse the
+`MAX_GLOBAL_CONCURRENCY` × the worst-case single call (input ceiling +
+`max_tokens: 8192`). That constant is a **default of 4 and is env-tunable to
+32** (`AI_QUEUE_CONCURRENCY`), so the bound is whatever the deployment sets —
+which means the managed path needs its OWN per-shop in-flight ceiling (§9.2)
+rather than inheriting a number an ops change can multiply by eight. A design that instead reserved the worst case up front would refuse the
 last 80 % of a budget on every plan, which is the expensive direction of wrong
 for the merchant; a design that only checked afterwards would have no bound at
 all. This is the middle one, and the bound is what the margin guard in §8
 leaves headroom for.
 
-**Degradation is never a half-written save.** A budget refusal happens at the
-gate, before a task row exists. A refusal DURING a bulk run fails per cell
-(`BulkFailure.columnId`, the existing rule), reports the reason once, and
-leaves every already-written cell written — the run is never rolled back.
+**Degradation is never a half-written save — and never a DELETION.** A budget
+refusal at the gate happens before a task row exists. A refusal during a bulk
+run fails per cell (`BulkFailure.columnId`, the existing rule), reports the
+reason once, and leaves every written cell written. And the rule §6a exists
+for: a budget refusal inside a detached repair must be reported as an ABORT,
+never as an entry the AI could not deliver.
 
 **A warning before a wall.** At 80 % the app says so (banner in Settings →
 usage, and once in the task summary). "Your AI volume is used up" arriving with
@@ -296,24 +406,105 @@ no warning, mid-catalogue, is the review nobody wants.
 
 ---
 
+## 6a. Unattended spend — the half the first draft missed entirely
+
+Under BYO, a background run spends the merchant's money and nobody had to think
+about it. Under our key it spends ours, and **none of these paths passes an
+HTTP gate**:
+
+| Path | Trigger | Shape |
+|---|---|---|
+| `reconcileStaleTranslations` → `repairStaleTranslations` | `products/update` / `collections/update` webhook | one AI request **per locale** per changed resource, detached |
+| `reconcileAfterPrimarySave` | every `updateContent` save on a webhook-less type, sub-resources, metaobjects, alt-texts, theme, menus | same, detached, fired from the save |
+| `TranslationDriftAutoRunService` | hourly tick, daily per shop — **no HTTP request at all** | up to `MAX_DRIFT_HANDOVERS` resources × locales |
+| `retranslate.server.ts` flush in `applyBulkDiff` | end of every bulk save | up to `MAX_REPAIR_GROUPS` detached runs × locales |
+| `bulkEditorTranslate`, `seoBulkMeta`, `seo-bulk-fix` | one gated POST, then `void run…()` | hours of spend after the gate already answered |
+| queue + SDK retries | any 429/5xx | up to 9 provider attempts per logical call |
+
+**The worst case needs no deliberate action at all.** A supplier feed or a CSV
+import rewrites descriptions on 2,500 products: `products/update` fires for
+each, the digest gate legitimately passes, and the repair runs 2,500 × 10
+locales = **25,000 AI calls** — more than a whole Max budget, in one afternoon,
+from an event that happened outside this app. The daily drift sweep alone is
+~7,500 calls/month at 10 locales, i.e. a large share of the budget consumed by
+something nobody clicked. And `maxLocales: Infinity` — the USP §7 keeps — is a
+direct, uncapped multiplier on every one of these.
+
+Three rules follow, and the first is not about money:
+
+1. **A budget refusal must never masquerade as a failed translation.** In
+   [stale-translation-sync.server.ts](../../app/services/translations/stale-translation-sync.server.ts)
+   every entry the AI could not deliver lands in `outcome.failed`, and
+   `if (mayPurge && !outcome.startFailed && outcome.failed.length > 0 && …)`
+   then sends `translationsRemove` to Shopify and deletes the local row —
+   where `mayPurge = purgeOnPrimaryChange || autoTranslateExternalChanges` is
+   **always true on exactly the shops managed mode serves**. So a
+   `budgetExceeded` thrown inside the locale loop would be indistinguishable
+   from "the model returned nothing" and would **DELETE the merchant's existing
+   storefront translations because our prepaid budget ran out** — unrecoverably,
+   since the digest baseline has already advanced and the sync can never
+   re-detect them. A budget refusal is therefore modelled as `startFailed` (or
+   its own `aborted` outcome), which that condition already excludes, and a
+   test pins that a budget-refused run leaves every stale row untouched. This
+   is the most expensive bug this plan could have shipped, and it is a
+   one-line condition away in either direction.
+2. **Unattended work gets its own sub-cap.** A per-shop daily ceiling on
+   managed spend from background paths, separate from the period budget, so a
+   webhook storm cannot spend a month in an hour. Interactive work — the
+   merchant sitting there clicking — is never refused while the unattended
+   sub-cap is what is exhausted.
+3. **A refused detached run is VISIBLE.** These paths have no UI; §8's 80 %
+   banner is an interactive-path answer. A budget-refused background run writes
+   a `Task` row with a merchant-readable reason, or the merchant's experience
+   is "the automatic translation silently stopped working" — which is the
+   support ticket that costs more than the tokens.
+
+---
+
 ## 7. Phase 3 — plans, prices and the margin guard
 
-**Shape.** Entitlements stay 4-valued (`Plan`). Key source is a **second axis**,
-not eight plans: `PLAN_CONFIG` is untouched, `MANAGED_AI` is a new table beside
-it, and `BILLING_PLANS` grows a managed variant per paid tier whose Shopify
-subscription NAME and PRICE both differ (`getPlanFromSubscription` resolves by
-name first and by price second — both halves must stay unambiguous, which they
-do as long as no two variants share a price).
+**Shape.** Entitlements stay 4-valued (`Plan`) — every `Record<Plan, …>` in
+the app keeps working. Key source is a **second axis**, not eight plans:
+`PLAN_CONFIG` is untouched and `MANAGED_AI` is a new table beside it.
+
+The billing types cannot stay as they are, though, and the plan should say so
+rather than imply otherwise: `BillingPlan` is `'free'|'basic'|'pro'|'max'` and
+`BILLING_PLANS` is a `Record` over exactly the three paid keys, with
+`getPlanFromSubscription` returning the matched KEY. A managed variant is
+therefore a SECOND map (`MANAGED_BILLING_PLANS`, same three keys) that the
+resolver also consults, returning `{ plan, aiMode }` — not a widened
+`BillingPlan`, which would ripple into every plan-keyed record in the app. Name
+and price must both stay unambiguous across the six paid products, since the
+name match is tried first and the price fallback takes the FIRST match.
 
 Proposed numbers. **The budget column is provider cost, not merchant price** —
 what we are willing to spend for that merchant in a UTC month:
 
 | Plan | today | with managed AI | surcharge | net at worst case¹ | monthly budget | cost share |
 |---|---|---|---|---|---|---|
-| Free | €0 | — (one-time taster, §10) | — | — | ≈350 actions once (≈€0.12–€0.46) | — |
-| Basic | €9.90 | **€19.90** | €10.00 | €8.50 | **€1.50** | 17.6 % |
-| Pro | €19.90 | **€39.90** | €20.00 | €17.00 | **€3.00** | 17.6 % |
-| Max | €59.90 | **€99.90** | €40.00 | €34.00 | **€6.00** | 17.6 % |
+| Free | €0 | — (one-time taster, §10) | — | — | see §10 | — |
+| Basic | €9.90 | **€21.90** | €12.00 | €10.20 | **€1.50** | 14.7 % |
+| Pro | €19.90 | **€39.90** | €20.00 | €17.00 | **€2.50** | 14.7 % |
+| Max | €59.90 | **€99.90** | €40.00 | €34.00 | **€5.00** | 14.7 % |
+
+Two things in that table are consequences, not preferences.
+
+**No price may collide with any other product's price**, current or planned.
+`getPlanFromSubscription` matches the subscription NAME first and falls back to
+the first entry with a matching PRICE — and that fallback exists precisely for
+renamed subscriptions, so it is not hypothetical. The obvious "Basic + AI =
+€19.90" is exactly the collision: €19.90 is Pro's price today, and a renamed
+Basic+AI subscription would resolve to Pro — managed mode silently off,
+entitlements silently up. Hence €21.90. The full set that must stay distinct is
+{9.90, 19.90, 59.90} today, {21.90, 39.90, 99.90} managed, and the v2.0 table
+in PRICING_AND_LIMITS.md {14.90, 29.90, 79.90} if it is ever adopted.
+
+**The budgets are what the guard ALLOWS**, not round numbers chosen first: the
+guard's effective ceiling is `0.20 / 1.25 = 16 %` of net. (The first draft put
+1.50 / 3.00 / 6.00 against surcharges of 10/20/40, which reads as a 17.6 % cost
+share and **fails its own test** — the buffer multiplies the budget, so "below
+20 %" is not the same as "passes". Kept as the worked example of why the guard
+is a test and not a habit.)
 
 ¹ net of Shopify's revenue share taken at its worst case (15 %; it is 0 % below
 $1M/year today, so this is deliberate pessimism).
@@ -325,8 +516,19 @@ average — it is the one number the whole table stands on**):
 | Budget | `gpt-5-nano` | Gemini 3.1 Flash-Lite |
 |---|---|---|
 | €1.50 (Basic) | ≈ 4,500 calls | ≈ 1,100 calls |
-| €3.00 (Pro) | ≈ 9,000 calls | ≈ 2,250 calls |
-| €6.00 (Max) | ≈ 18,000 calls | ≈ 4,500 calls |
+| €2.50 (Pro) | ≈ 7,600 calls | ≈ 1,900 calls |
+| €5.00 (Max) | ≈ 15,100 calls | ≈ 3,800 calls |
+
+**A "call" is not a unit this app can sell, and the merchant-facing figure has
+to admit that.** `translateFieldsToLocalesChunked` packs several fields AND
+several locales into one request and splits at `CHUNK_THRESHOLD_CHARS`, so the
+same work is 30 calls or 3,000 depending on field lengths; and every provider
+runs with `max_tokens: 8192`, i.e. a worst-case call is ~12× the assumed 700
+output tokens. The enforced quantity is therefore µ€ and only µ€ (one answer to
+one question); what the merchant is shown is derived from the MEASURED average
+and stated as a range or in a work unit they recognise ("about 300–500 products
+translated into one language"), never as a single precise-looking action count
+the next long description falsifies.
 
 For orientation: translating a 100-product Basic catalogue into 5 languages is
 ~500 calls; a 500-product Pro catalogue into 5 languages is ~2,500. Both fit,
@@ -341,11 +543,59 @@ fails the build when, for any plan:
 budgetMicros × FX_AND_PRICE_BUFFER (1.25)  >  surchargeNet × MAX_COST_SHARE (0.20)
 ```
 
-with `surchargeNet = (managedPrice − basePrice) × (1 − 0.15)`. The buffer is
-not decoration: the provider bills USD and the merchant pays EUR, list prices
-move, and the §6 overshoot is real. Raising a budget or cutting a price without
-touching the other is what the test exists to stop, and it is the mechanical
-form of the user's own requirement — *the merchant must pay more than we pay*.
+with `surchargeNet = (managedPrice − basePrice) × (1 − 0.15)`.
+
+The 1.25 is **three separate risks wearing one number**, which is exactly the
+shape this repo calls a rule without its failure mode. Split them, size them
+separately and let the test multiply them: `FX_BUFFER` (the provider bills USD,
+we are paid EUR — §4.2's `USD_PER_EUR`), `LIST_PRICE_BUFFER` (a provider raises
+prices mid-period and we cannot re-price until the next billing cycle) and
+`OVERSHOOT_BUFFER` (§6's bound, which is a function of
+`AI_QUEUE_CONCURRENCY` × replicas, not a constant). The 0.15 revenue share is
+likewise an assumption inside a constant: name its source, and check whether
+anything else is withheld from an EUR payout before the guard's whole margin
+argument rests on it.
+
+Raising a budget or cutting a price without touching the other is what the test
+exists to stop, and it is the mechanical form of the requirement this plan
+exists to satisfy — *the merchant must pay more than we pay*.
+
+**Four rules about WHEN a budget exists, each of which is a hole in the first
+draft** — all four were found by review, all four are free money for somebody:
+
+1. **No managed budget during the free trial.** Every paid tier carries
+   `trialDays: 7` and Shopify reports a trialing subscription as `ACTIVE`, so
+   the mirror would read `managedAiActive: true` for a week nobody pays for.
+   Subscribe on the 27th and the calendar-month counter even grants TWO
+   budgets. During `getTrialInfo().inTrial` the managed allowance is the
+   **taster**, not the plan budget — and the `trialConsumedAt` residual (an
+   uninstall + `shop/redact` deletes the whole `AISettings` row and makes the
+   shop trial-eligible again) is 50–100× more expensive here than it is for the
+   taster, so it is stated in euros, not waved at.
+2. **No managed budget on a `test: true` subscription.** In PRODUCTION
+   `getCurrentSubscription` accepts test subscriptions for partner development
+   stores (`allowTest = inTestBilling || isDevStore(admin)`) — a
+   Shopify-verified ACTIVE Max plan that charges €0. Harmless under BYO,
+   real provider spend under managed, and a partner can create dev stores
+   nearly without limit. A test subscription resolves to `managedUnavailable`;
+   the taster is the only managed allowance such a store can reach.
+3. **The budget period is the BILLING period, not the calendar month.** Plans
+   bill `EVERY_30_DAYS` with `APPLY_IMMEDIATELY` proration on switches, while
+   `ImageOperationCounter`'s "YYYY-MM" key is a calendar month. Keeping the
+   calendar key produces: a sign-up on the 31st that gets two full budgets in
+   one billing period (on Max that is 12.00/34.00 = 35 % cost share, 1.76× the
+   guard the whole plan rests on); an upgrade-spend-cancel of ≈€4.87 per shop
+   per month, repeatable; and a downgrade-after-spend at 62 % cost share. So
+   the counter is keyed by the subscription's own period, and a mid-period
+   upgrade does not mint a second budget — the LIMIT is read from the current
+   plan at check time while the USED figure carries over.
+4. **A refund is not a refund of the tokens.** Shopify can refund an app charge
+   and deduct it from the payout; the tokens are spent and non-refundable.
+   Worst case is the full period budget against €0 revenue, the same order as
+   the trial hole. Stance to state in the plan rather than discover: no
+   pro-rata refund of a consumed budget, a support credit is a manual and
+   logged act, and repeated disputes are a reason to refuse managed mode for
+   that shop.
 
 **Deliberately NOT in v1:** usage-based overage billing. Shopify's
 `appUsagePricing` line item (with `cappedAmount`) is the correct instrument and
@@ -380,8 +630,10 @@ subscription.
   the estimate share is non-trivial — that the figure is partly estimated.
 - **The exit is always visible**: "add your own key and continue immediately"
   sits next to the cap message, not three screens away.
-- Consent modal before the first managed call, naming the sub-processor and
-  linking the privacy page.
+- Consent before the first managed call, naming the sub-processor and linking
+  the privacy page. Whatever the surface, the CONTROL is the house one — a
+  `ToggleRow` pill switch, never a plain checkbox (CLAUDE.md's standing
+  instruction) — and it is an explicit act, never pre-set.
 - Every one of these controls obeys the standing settings rule: **a click is a
   draft until Save** — including the mode switch, which additionally has to
   route through Shopify billing rather than writing a column.
@@ -393,6 +645,18 @@ subscription.
 Each of these is a way a shared key loses money or takes the app down, and each
 already has a matching hole in today's code:
 
+0. **The managed bucket must not be fed by `estimateTokens`.** `canExecute`
+   checks the per-provider token window using `prompt.length/4 + 8192`, which
+   charges a flat 8192 output tokens to every call. Configure
+   `MANAGED_AI_TPM` at the provider's real limit and the queue admits roughly a
+   tenth of the capacity we pay for; configure it ten times higher and the
+   first long batch trips the real limit. The managed bucket uses a real input
+   count plus the model's actual `max_tokens`. And the app's aggregate ceiling
+   is worth stating before volume is sold at all: `AI_QUEUE_CONCURRENCY`
+   (default 4) × replicas is roughly one call per second for BYO and managed
+   together — a single Max budget is a meaningful share of a day's global
+   throughput, so how much managed volume can be sold in total is a capacity
+   question, not only a margin one.
 1. **The global rate-limit map is writable from one shop's settings.**
    `updateRateLimits(settings)` writes a PROCESS-WIDE per-provider bucket from
    whichever shop called last, and the fields come from `AISettings`. Under BYO
@@ -405,9 +669,20 @@ already has a matching hole in today's code:
    run cannot own the shared quota for ten minutes.
 3. **A global monthly cap, in its own table.** `ManagedAiGlobalCounter
    { period, costMicros }` — deliberately NOT a sentinel row in the shop-scoped
-   counter (that would break the GDPR coverage guard). When the global cap is
+   counter. (Not because the GDPR guard would fail: that guard
+   [gdpr.service.test.ts](../../tests/unit/gdpr.service.test.ts) checks that
+   every shop-scoped MODEL is purged, and a `shop: "__global__"` row would
+   simply survive `redactShopData`'s exact-match delete. The reason is that a
+   global counter has no tenant and therefore has no business in a per-shop
+   unique key — and a surviving sentinel row that looks like a shop is worse
+   than a separate table in every later audit.) When the global cap is
    hit, managed mode answers `503 managedUnavailable` and alerts; a bug in the
    meter can then cost one configured month's budget, not an unbounded invoice.
+   **Two pools, not one**: a PAID pool sized from the subscriptions actually
+   sold and a smaller TASTER pool. With one pool, a listing spike of free
+   installs spending their tasters would trip the cap on the 18th and 503 every
+   paying merchant for the rest of the month — the plan names free shops as the
+   least accountable population and must not then let them refuse the revenue.
 4. **A kill switch**: `MANAGED_AI_ENABLED=false` turns managed mode off
    globally with an honest message and the BYO path intact.
 5. **Provider-side limits too** — a spend cap and an alert on the operator
@@ -438,7 +713,7 @@ neither is about generosity:
 
 1. **It out-grants the paying tier.** €2 of provider cost buys ≈ 6,000 calls at
    `gpt-5-nano` — more than the €1.50 budget proposed for **paid** Basic
-   (≈ 4,500). A free shop would get more AI than a merchant paying €19.90, and
+   (≈ 4,500). A free shop would get more AI than a merchant paying €21.90, and
    the reason to ever leave Free would be the product limits alone.
 2. **It is 20× what the Free plan can even use.** Free is capped at 50 products
    and 5 collections. Translating that ENTIRE entitled catalogue into five
@@ -450,6 +725,14 @@ neither is about generosity:
    against zero revenue, and free installs are exactly what a good App Store
    listing produces.
 
+   (The "325 calls" is one call per item per locale and is therefore an UPPER
+   bound on the call count and a LOWER one on the cost per call: the app
+   batches fields and locales into one request, so the same work may be 30
+   calls of ten times the size. That is the unit instability §7 describes, and
+   it is why the taster is enforced in µ€ with the action figure as display —
+   the conclusion "€2 is 20× too much" survives it either way, because it is a
+   statement about total euros, not about calls.)
+
 **Therefore, and this is the recommendation:**
 
 - The grant is sized in **AI actions, not euros** — `MANAGED_AI_TASTER_ACTIONS
@@ -457,7 +740,10 @@ neither is about generosity:
   a model change moves cost and not the promise. 350 actions is "one full pass
   over everything Free entitles you to", which is exactly the evaluation the
   Free tier exists for. In money: ≈ **€0.12** at nano, ≈ **€0.46** at
-  Flash-Lite.
+  Flash-Lite — and that second figure is already over the ladder rule below
+  (25 % of €1.50 is €0.375), which is why the grant is the **smaller of** the
+  action count and the ladder ceiling. On an expensive model the merchant gets
+  fewer actions; the ladder is never the thing that bends.
 - It is **once per shop, not monthly** (`period: "taster"`), tracked like
   `trialConsumedAt` — **with the same stated residual**: an uninstall + GDPR
   redact clears it, so a determined merchant can re-grant by reinstalling. That
@@ -496,11 +782,14 @@ AI-included price of your tier.
 - **Phase 1 — resolver + consent + enforcement** (§5, §6, §2), managed mode
   reachable only for an internal allowlist of shops.
 - **Phase 2 — billing variants + UI** (§7, §8) and the margin guard test.
-- **Phase 3 — rails** (§9) before the first external shop. Not after.
+- **Phase 3 — rails** (§9) and the unattended-spend rules (§6a) before the
+  first external shop. Not after: §6a rule 1 is a data-loss guard, so it lands
+  with the enforcement it protects, not with the polish.
 - **Phase 4 — the taster** (§10), which is the marketing moment; the public
   roadmap entry and the App Store listing change here.
 - **Phase 5 — follow-ups**: usage-based overage, a BYO cost view built from the
-  same meter, a per-feature cost breakdown in Tasks.
+  same meter, a per-feature cost breakdown in Tasks, and a recurring quality
+  sample (§13) so "measured once" does not become "measured never again".
 
 Per the working agreement this is a system-relevant change end to end (write
 paths, auth/plan gating, billing, schema): each phase ends with an independent
@@ -514,12 +803,13 @@ review pass before it is called done.
 |---|---|
 | `managed-ai-margin.test.ts` | budget × buffer ≤ surcharge share, per plan — §7 — AND `taster ≤ 0.25 × smallest paid budget` (§10 ladder rule) |
 | `ai-usage-meter.test.ts` | each SDK's usage shape parses; a missing usage object estimates UP and flags `estimatedCalls` |
-| `ai-usage-quota.test.ts` | concurrent charges cannot overbook (mirrors the image-op race test) |
-| `ai-credentials.test.ts` | the gate matrix: byo/managed × consent × budget × kill switch → exactly one decision each |
-| `ai-key-source-isolation.test.ts` | no file outside the resolver reads a `*_API_KEY` env var or builds an `AIServiceConfig` literal — the §B4 structural guarantee |
+| `ai-usage-overshoot.test.ts` | NOT "cannot overbook" — a bare `increment` never can, and unlike `consumeImageOperations` the cost is unknown up front, so the reserve-before predicate does not apply. It pins the §6 bound instead: N concurrent resolvers seeing `remaining > 0` start at most `concurrency` calls, and the settled counter equals the sum of the real costs |
+| `ai-credentials.test.ts` | the gate matrix: byo/managed × consent × budget × kill switch × **trial** × **test subscription** → exactly one decision each |
+| `stale-repair-budget-abort.test.ts` | §6a rule 1: a budget-refused detached repair purges NOTHING (the one that protects merchant data rather than money) |
+| `ai-key-source-isolation.test.ts` | no file outside the resolver reads a `MANAGED_AI_*` env var or builds an `AIServiceConfig` literal — the §B4 structural guarantee. Scope it to the managed names and carve out `api.ai-models.tsx`: a blanket `*_API_KEY` rule would match `SHOPIFY_API_KEY`, which has ~10 legitimate uses |
 | `billing-managed-variants.test.ts` | name→(plan, mode) and price→(plan, mode) round-trip; no two variants share a price |
 | GDPR coverage guard | `AiUsageCounter` is purged by `redactShopData` |
-| `ai-pricing-model-ids.test.ts` | every `MANAGED_AI_MODEL` and every `DEFAULT_MODELS` entry exists in the price table |
+| `ai-pricing-model-ids.test.ts` | `MANAGED_AI_MODEL` exists in the price table. NOT every `DEFAULT_MODELS` entry: HuggingFace Inference has no per-token list price, and demanding one would force a fake number for a provider §3 excludes |
 
 ---
 
@@ -540,6 +830,16 @@ review pass before it is called done.
   status of the managed provider is something we have to watch.
 - **The App Store review will read the privacy page against the product.**
   §2.2 is not optional and not a follow-up commit.
+- **Quality is measured once and never again.** Phase 0's bake-off says
+  nothing about a provider silently updating the model behind the id. The data
+  to notice already exists — `Task` carries `provider`, `aiModel`, the prompt
+  and the response — so a periodic sample against the Phase 0 prompt set is a
+  small, real defence rather than a hope.
+- **A merchant who objects to the sub-processor's jurisdiction has exactly one
+  option: BYO.** That is a defensible answer and it is still a residual, and it
+  comes with an obligation consent versioning does not cover: a DPA normally
+  requires ADVANCE NOTICE of a sub-processor change, which is not the same act
+  as re-asking for consent afterwards.
 - **The pricing record contradicts itself until it is updated.**
   PRICING_AND_LIMITS.md argues limits from "AI costs us nothing". That stays
   true for BYO and becomes false for managed; the document gets the
@@ -550,9 +850,9 @@ review pass before it is called done.
 
 ## 14. Open questions for the owner
 
-1. **Surcharges** — €10 / €20 / €40 on Basic / Pro / Max, i.e. roughly
-   doubling. Higher (better margin, weaker acquisition) or lower with a
-   smaller budget?
+1. **Surcharges** — €12 / €20 / €40 on Basic / Pro / Max (Basic is €12 rather
+   than €10 because €19.90 collides with Pro's price, §7). Higher (better
+   margin, weaker acquisition) or lower with a smaller budget?
 2. **Managed on Free?** The taster says "yes, once". A permanently managed Free
    tier is not proposed — it is an unbounded invitation.
 3. **The taster**: 350 one-time actions (§10, ≈ one full pass over a Free
