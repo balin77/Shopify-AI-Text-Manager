@@ -139,13 +139,27 @@ that costs, concretely, and all of it is a hard requirement of this plan:
    "Shopify PPA/API Terms forbid processing merchant content via a
    shared/operator key". One of those two will be quoted at a reviewer. Cite
    Shopify's own text, and rewrite that comment in the same commit.
-   (b) **The AI provider's terms are never examined anywhere in this plan.**
-   Serving metered access to our provider account to third parties is the
-   classic "reselling / providing the service to third parties" clause;
-   commercial API terms commonly restrict it or require the operator to be the
-   responsible party for end users. UNVERIFIED — and a hard precondition, with
-   the clause quoted, because it is the kind of thing that kills a feature
-   after it ships rather than before.
+   (b) **The AI provider's terms.** Checked 2026-09-18, and the answer is
+   good — but it turns on a distinction the product has to keep visible.
+   OpenAI's Business Terms grant the right to "integrate the Services into
+   Customer Applications and to make Customer Applications available to End
+   Users" while prohibiting "resell[ing] or leas[ing] access to their Account
+   or any End User Account"; Google's API Terms likewise forbid *sublicensing
+   an API for use by third parties* while the ordinary build-an-app case is
+   what the whole developer programme is for. Managed mode is the permitted
+   side: a merchant never receives API access, a key, or a model endpoint —
+   they get app features, and the budget is our internal cost control.
+
+   The rule that follows is about PRESENTATION, not only architecture: the
+   offer is "a plan whose AI is included, with a fair-use volume", never "X
+   tokens for €Y". Selling a metered token quantity is what makes an
+   application look like resold API access, and it is also the unit §7 already
+   refuses for a second reason (a "call" is not stable in this codebase). Two
+   things stay owed before launch: the operator account must be a business/paid
+   tier whose no-training default applies, and we are contractually the
+   responsible party for end-user behaviour — which means the existing
+   `sanitizePromptInput` layer and the usage-policy wording in the merchant
+   terms are compliance obligations here, not hygiene.
 
 Also load-bearing: `initializeProvider()` keeps throwing when it gets no key.
 The managed key is INJECTED into the config by the resolver; `ai.service.ts`
@@ -384,10 +398,20 @@ call site passes the shop or it stays BYO-only.
 knowable before it runs, so a hard cap cannot be exact. The rule: **a call may
 START only while `remaining > 0`**; the overshoot is bounded by
 `MAX_GLOBAL_CONCURRENCY` × the worst-case single call (input ceiling +
-`max_tokens: 8192`). That constant is a **default of 4 and is env-tunable to
-32** (`AI_QUEUE_CONCURRENCY`), so the bound is whatever the deployment sets —
-which means the managed path needs its OWN per-shop in-flight ceiling (§9.2)
-rather than inheriting a number an ops change can multiply by eight. A design that instead reserved the worst case up front would refuse the
+`max_tokens: 8192`), **times the number of web instances**. Two facts settle
+that second factor, and they are settled rather than assumed (owner, 2026-09-18):
+there are two environments, develop and production, and **production runs a
+single instance**. So the bound is real today — one process, one queue, one
+sliding window. It is also *load-bearing*: the queue, its rate-limit window,
+`retranslationsInFlight` and the three auto-run ticks are all in-memory
+singletons, so the day production is scaled to two instances, every one of them
+doubles or races. That is a pre-existing property of the app, not something
+this plan introduces — but managed mode is the first feature where it costs
+money directly, so "single instance" belongs in RAILWAY-SETUP.md as a stated
+precondition rather than as a dashboard setting nobody wrote down.
+`AI_QUEUE_CONCURRENCY` (default 4, tunable to 32) is the other half and moves
+the bound 8× on an ops edit, which is why the managed path still needs its OWN
+per-shop in-flight ceiling (§9.2). A design that instead reserved the worst case up front would refuse the
 last 80 % of a budget on every plan, which is the expensive direction of wrong
 for the merchant; a design that only checked afterwards would have no bound at
 all. This is the middle one, and the bound is what the margin guard in §8
@@ -551,7 +575,7 @@ separately and let the test multiply them: `FX_BUFFER` (the provider bills USD,
 we are paid EUR — §4.2's `USD_PER_EUR`), `LIST_PRICE_BUFFER` (a provider raises
 prices mid-period and we cannot re-price until the next billing cycle) and
 `OVERSHOOT_BUFFER` (§6's bound, which is a function of
-`AI_QUEUE_CONCURRENCY` × replicas, not a constant). The 0.15 revenue share is
+`AI_QUEUE_CONCURRENCY` × instances — one instance today, §6). The 0.15 revenue share is
 likewise an assumption inside a constant: name its source, and check whether
 anything else is withheld from an EUR payout before the guard's whole margin
 argument rests on it.
@@ -653,8 +677,8 @@ already has a matching hole in today's code:
    first long batch trips the real limit. The managed bucket uses a real input
    count plus the model's actual `max_tokens`. And the app's aggregate ceiling
    is worth stating before volume is sold at all: `AI_QUEUE_CONCURRENCY`
-   (default 4) × replicas is roughly one call per second for BYO and managed
-   together — a single Max budget is a meaningful share of a day's global
+   (default 4) on the single production instance is roughly one call per
+   second for BYO and managed together — a single Max budget is a meaningful share of a day's global
    throughput, so how much managed volume can be sold in total is a capacity
    question, not only a margin one.
 1. **The global rate-limit map is writable from one shop's settings.**
@@ -830,6 +854,11 @@ review pass before it is called done.
   status of the managed provider is something we have to watch.
 - **The App Store review will read the privacy page against the product.**
   §2.2 is not optional and not a follow-up commit.
+- **The offer can be worded into a terms problem.** §2.6b: an application that
+  includes AI is permitted, resold API access is not, and the difference a
+  reviewer sees is largely the wording on the plan card. "AI included, fair-use
+  volume" is the safe form; "1,000,000 tokens per month" is not — and it is
+  wrong for a second, independent reason (§7's unit instability).
 - **Quality is measured once and never again.** Phase 0's bake-off says
   nothing about a provider silently updating the model behind the id. The data
   to notice already exists — `Task` carries `provider`, `aiModel`, the prompt
@@ -848,18 +877,50 @@ review pass before it is called done.
 
 ---
 
-## 14. Open questions for the owner
+## 14. Open decisions — and how each one gets closed
 
-1. **Surcharges** — €12 / €20 / €40 on Basic / Pro / Max (Basic is €12 rather
-   than €10 because €19.90 collides with Pro's price, §7). Higher (better
-   margin, weaker acquisition) or lower with a smaller budget?
-2. **Managed on Free?** The taster says "yes, once". A permanently managed Free
-   tier is not proposed — it is an unbounded invitation.
-3. **The taster**: 350 one-time actions (§10, ≈ one full pass over a Free
-   catalogue) — confirmed? And does a small recurring allowance (≈50
-   actions/month) get added on top, or stay out?
-4. **Model quality bar**: if nano is not good enough, is Flash-Lite at ~4× the
-   token cost acceptable at the same prices (cost share ~17.6 % → the budgets
-   in §7 hold, the ACTION counts drop 4×), or do the budgets move?
-5. **Overage**: hard wall in v1 (proposed) or Shopify usage-billing straight
-   away?
+An open question with no way to close it is how a plan stalls. Every one below
+therefore carries a **default that applies if nobody decides**, so the work can
+start; the ones that must be answered before a specific phase say which one.
+
+They fall into four KINDS, and the kind is the method:
+
+**(a) Settled by a measurement we can run ourselves — no external input, no
+opinion.** These are closed by Phase 0 and by nothing else; deciding them by
+discussion now would be inventing numbers.
+
+| Question | How it closes | Blocks |
+|---|---|---|
+| What does one operation really cost? | the meter, 2–4 weeks of real BYO traffic (§4) | the final §7 numbers |
+| Is the cheapest model good enough? | the bake-off on this app's own prompts (§3) | the model pin |
+| How many "actions" is a merchant's month, really? | the same meter, per feature | the merchant-facing figure in §8 |
+
+**(b) Settled by a lookup, not a decision.** Someone reads a document and
+writes down the answer with a date and a link. One is already done:
+
+| Question | Status |
+|---|---|
+| Do the provider's terms permit this? | **closed 2026-09-18** (§2.6b): building an app for end users is permitted, reselling account/API access is not — which is a rule about how the offer is WORDED |
+| Does Shopify's own text support the consent-gate option? | open — quote Shopify, not our own audit (§2.6a) |
+| Is anything besides the 15 % revenue share withheld from an EUR payout? | open — it sits inside the guard's `0.85` (§7) |
+| How many production instances? | **closed 2026-09-18**: two environments, production is a SINGLE instance (§6) |
+
+**(c) Business decisions that are genuinely the owner's** — no measurement
+settles them, and each has a default so nothing waits:
+
+| Question | Default if undecided |
+|---|---|
+| Surcharge level: €12 / €20 / €40 | take it; it is the guard-compliant, collision-free set (§7) |
+| Managed on Free? | no — one-time taster only (§10) |
+| Taster size: 350 actions, one-time | take it, capped by the ladder rule; **no** recurring free allowance in v1 |
+| If the cheap model is not good enough | move up one model and re-derive; prices stay, action counts drop |
+| Overage when the budget is spent | hard wall in v1; Shopify usage-billing is the first follow-up (§7) |
+
+**(d) Decisions that only exist once something is built.** Do not pre-decide
+them: the wording of the cap message, whether the usage card shows a range or a
+number, how loud the 80 % warning is. They belong to the phase that builds the
+screen, with real numbers in hand.
+
+The rule for all four: **a default is not a decision, and the plan says which
+is which.** Anything still on a default when its phase starts gets named in
+that phase's review rather than shipping unnoticed.
