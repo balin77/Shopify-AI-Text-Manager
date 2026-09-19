@@ -99,6 +99,27 @@ describe("classifyWatchedTasks", () => {
     expect(working).toEqual(["a"]);
   });
 
+  it("re-stamps EVERY waiting id while something is alive, not just the live one", () => {
+    // Stamping only the live ids leaves a queued one on its original deadline,
+    // so it settles in the very poll its predecessor goes terminal — which is
+    // the poll its own run starts. Three serial repair groups of one product
+    // lost two of them that way whenever the first run outlasted the bound.
+    const { restamp } = classifyWatchedTasks(["a", "b", "c"], {
+      a: "running",
+      b: MISSING_TASK_STATUS,
+      c: "completed",
+    });
+    expect(restamp).toEqual(["a", "b"]);
+  });
+
+  it("lets the silence clock tick once nothing is alive", () => {
+    const { restamp } = classifyWatchedTasks(["a", "b"], {
+      a: "completed",
+      b: MISSING_TASK_STATUS,
+    });
+    expect(restamp).toEqual([]);
+  });
+
   it("reports a row that EXISTS and is working as alive", () => {
     // Seen alive is evidence, not a guess, and it is what refreshes the
     // deadline: a queue of serial repair runs can legitimately outlast any

@@ -106,7 +106,7 @@ export function classifyWatchedTasks(
   ids: readonly string[],
   statuses: Readonly<Record<string, string>>,
   expired: ReadonlySet<string> = new Set(),
-): { settled: string[]; working: string[]; alive: string[] } {
+): { settled: string[]; working: string[]; alive: string[]; restamp: string[] } {
   const settled: string[] = [];
   const working: string[] = [];
   /** The row EXISTS and has not finished — evidence, not a guess. */
@@ -145,7 +145,13 @@ export function classifyWatchedTasks(
     if (expired.has(id) && !anyAlive) settled.push(id);
     else working.push(id);
   }
-  return { settled, working, alive };
+  // The silence clock only TICKS while nothing is alive. Stamping just the
+  // live ids leaves a queued one on its original deadline, so it settles in
+  // the very poll its predecessor goes terminal — which is the poll its own
+  // run starts. Three serial repair groups of one product lost two of them
+  // that way, on exactly the shops whose first run is slow enough to matter.
+  const restamp = alive.length > 0 ? working : [];
+  return { settled, working, alive, restamp };
 }
 
 /**
@@ -228,11 +234,11 @@ export function useBackgroundTaskRefresh(
 
       const now = Date.now();
       const expired = new Set(ids.filter((id) => now > (deadlines.get(id) ?? Infinity)));
-      const { settled, working, alive } = classifyWatchedTasks(ids, statuses, expired);
-      // Seen alive ⇒ the row exists and is working, so the silence bound does
-      // not apply to it. A task stuck running is ended by the task reaper, not
-      // by this page guessing.
-      for (const id of alive) deadlines.set(id, now + MAX_SILENT_WATCH_MS);
+      const { settled, working, restamp } = classifyWatchedTasks(ids, statuses, expired);
+      // Something is alive ⇒ this page's work is progressing, so the silence
+      // bound does not apply to anything still being waited for. A task stuck
+      // running is ended by the task reaper, not by this page guessing.
+      for (const id of restamp) deadlines.set(id, now + MAX_SILENT_WATCH_MS);
 
       const fresh = settled.filter((id) => !reportedRef.current.has(id));
       for (const id of fresh) reportedRef.current.add(id);
