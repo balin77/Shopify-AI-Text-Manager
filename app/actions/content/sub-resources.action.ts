@@ -624,56 +624,69 @@ export async function handleTranslateSubResourceToAllLocales(
     const allTranslations: Record<string, Record<string, Record<string, string>>> = {}; // locale → resourceId → { key: value }
     const failedLocales: string[] = [];
 
-    for (let localeIdx = 0; localeIdx < targetLocales.length; localeIdx++) {
-      const targetLocale = targetLocales[localeIdx];
+    // ONE AI pass for every language. The values do not vary by locale here —
+    // they are the product's option names, option values and metafield values —
+    // so this used to ask the SAME strings once per language, which on an
+    // eight-language shop was eight requests for one click.
+    // `translateBatchValuesToLocales` chunks on both dimensions, so sixty
+    // metafields still split where they have to and a handful still go in one.
+    const fieldsToTranslate: Record<string, string> = {};
+    for (const item of sourceData) {
+      fieldsToTranslate[`${item.resourceId}::${item.key}`] = item.value;
+    }
+    const values = Object.values(fieldsToTranslate);
+    const keys = Object.keys(fieldsToTranslate);
 
+    if (values.length > 0) {
+      let perLocale: Record<string, string[]> = {};
       try {
-        const fieldsToTranslate: Record<string, string> = {};
-        for (const item of sourceData) {
-          fieldsToTranslate[`${item.resourceId}::${item.key}`] = item.value;
-        }
-
-        const values = Object.values(fieldsToTranslate);
-        const keys = Object.keys(fieldsToTranslate);
-
-        if (values.length > 0) {
-          const translatedValues = await aiService.translateBatchValues(
-            values,
-            primaryLocale,
-            targetLocale,
-            "product options and metafield values"
-          );
-
-          const translations: Record<string, Record<string, string>> = {};
-          for (let i = 0; i < keys.length; i++) {
-            const translated = translatedValues[i];
-            // Skip fields the model didn't return — never write the
-            // untranslated source value back as a "translation" (N-H3).
-            if (!translated) continue;
-            const [resourceId, key] = keys[i].split("::");
-            if (!translations[resourceId]) translations[resourceId] = {};
-            translations[resourceId][key] = translated;
-          }
-
-          allTranslations[targetLocale] = translations;
-
-          // Update progress
-          const progressPercent = Math.round(10 + ((localeIdx + 1) / targetLocales.length) * 50);
-          await db.task.update({
-            where: { id: task.id },
-            data: { progress: progressPercent },
-          });
-        }
+        perLocale = await aiService.translateBatchValuesToLocales(
+          values,
+          primaryLocale,
+          targetLocales,
+          "product options and metafield values",
+        );
       } catch (err) {
-        // Invalid API key: abort — every remaining locale would 401 too. Surface
-        // it so the request fails loudly instead of reporting success with every
-        // locale in failedLocales.
+        // Only a run whose EVERY chunk failed throws, so this is every locale.
+        // An invalid API key aborts instead: every retry would 401 too, and
+        // reporting success with all locales failed hides the real cause.
         if (isAuthError(err)) throw err;
-        logger.error(`[UnifiedContent] Failed to translate sub-resources to ${targetLocale}`, {
+        logger.error("[UnifiedContent] Failed to translate sub-resources", {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });
-        failedLocales.push(targetLocale);
       }
+
+      for (const targetLocale of targetLocales) {
+        const translatedValues = perLocale[targetLocale];
+        // A locale the batch could not deliver at all is a failed locale, the
+        // same as before. A locale it delivered PARTLY keeps what came back: an
+        // entry a chunk missed is "" and falls through the guard below, which is
+        // the same "never write the source as a translation" rule the per-locale
+        // version had.
+        if (!translatedValues) {
+          failedLocales.push(targetLocale);
+          continue;
+        }
+        const translations: Record<string, Record<string, string>> = {};
+        for (let i = 0; i < keys.length; i++) {
+          const translated = translatedValues[i];
+          // Skip fields the model didn't return — never write the
+          // untranslated source value back as a "translation" (N-H3).
+          if (!translated || !translated.trim()) continue;
+          const [resourceId, key] = keys[i].split("::");
+          if (!translations[resourceId]) translations[resourceId] = {};
+          translations[resourceId][key] = translated;
+        }
+        if (Object.keys(translations).length === 0) {
+          failedLocales.push(targetLocale);
+          continue;
+        }
+        allTranslations[targetLocale] = translations;
+      }
+
+      await db.task
+        .update({ where: { id: task.id }, data: { progress: 60 } })
+        .catch(() => undefined);
     }
 
     // Save all translations to Shopify + DB

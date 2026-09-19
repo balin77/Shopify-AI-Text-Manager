@@ -74,6 +74,8 @@ import {
 } from "~/services/bulk-editor/translate-missing.shared";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import { buildTranslateInstructions } from "~/utils/character-limits";
+import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import type { DataResponse } from "~/types/data-response";
 
 /** Fields compact enough for the short-batch prompt — the subset
@@ -103,7 +105,7 @@ interface TranslateJob {
 }
 
 export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<DataResponse> {
-  const { session, admin, db, formData, settings } = ctx;
+  const { session, admin, db, formData, settings, seoLimits, translationMode } = ctx;
   const shop = session.shop;
 
   // Pro gate (Plan §10.7): fan-out AI work — same tier as the SEO bulk fix.
@@ -229,6 +231,14 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     rowType,
     primaryLocale,
     columnsByType,
+    // The merchant's translate instructions. This handler never read them, so
+    // the grid's AI translations ignored the glossary-adjacent wording rules,
+    // the tone and — in `seo_optimized` mode — the per-field length caps that
+    // the SAME fields honour when translated one item at a time. One switch,
+    // two behaviours out of one app.
+    aiInstructions: await db.aIInstructions.findUnique({ where: { shop } }).catch(() => null),
+    seoLimits,
+    translationMode,
   }).catch((err: unknown) => {
     logger.error("[API-AI] Bulk-editor translate crashed", {
       context: "AI",
@@ -381,6 +391,9 @@ interface RunArgs {
   rowType: BulkRowType;
   primaryLocale: string;
   columnsByType: Record<BulkRowType, ColumnDescriptor[]>;
+  aiInstructions: { translateInstructions?: string | null } | null;
+  seoLimits: AIActionContext["seoLimits"];
+  translationMode: AIActionContext["translationMode"];
 }
 
 interface TranslateResultJson {
@@ -410,6 +423,17 @@ interface TranslateResultJson {
 
 async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
   const { db, shop, admin, settings, jobs, units, rowType, primaryLocale, columnsByType } = args;
+  const { aiInstructions, seoLimits, translationMode } = args;
+  /** The merchant's instructions, with the SEO caps for the fields of ONE call.
+   * Built per call because the caps are per field key: a cap for a field this
+   * request does not carry is an instruction about nothing. */
+  const instructionsFor = (fieldKeys: string[]): string | undefined =>
+    buildTranslateInstructions(
+      getInstructionWithDefault(aiInstructions, "translateInstructions"),
+      translationMode,
+      fieldKeys,
+      { limits: seoLimits as unknown as Record<string, number> | null },
+    );
   const contentType = BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType];
   // createAIService(settings, shop, taskId) → every provider call goes through
   // AIQueueService.enqueue (rate limits, per-shop fairness).
@@ -496,6 +520,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
               primaryLocale,
               unionLocales(short),
               contentType,
+              instructionsFor(short.map((c) => c.fieldKey)),
             ),
           );
         } catch (err: unknown) {
@@ -512,7 +537,11 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
               payloadOf(long),
               primaryLocale,
               unionLocales(long),
-              { preserveHtml: true, contextLabel: contentType },
+              {
+                preserveHtml: true,
+                contextLabel: contentType,
+                customInstructions: instructionsFor(long.map((c) => c.fieldKey)),
+              },
             ),
           );
         } catch (err: unknown) {
@@ -541,14 +570,29 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
       }
 
       if (sub.length > 0) {
-        // One call per LOCALE over every sub-resource string of the row: an
-        // option-values cell contributes one string per entry, so the numbered
-        // batch prompt maps back positionally.
-        for (const locale of unionLocales(sub)) {
-          const cellsForLocale = sub.filter((c) => c.locales.includes(locale));
+        // The sub-resource strings of the row, over EVERY language they need at
+        // once. This was one call per locale, not by design but because
+        // `translateBatchValues` takes a single `toLang`: a product with sixty
+        // metafields on an eight-language shop paid eight requests where the
+        // same edit to its title paid one. `translateBatchValuesToLocales`
+        // chunks on both dimensions, so a short set of values still goes in one
+        // request and a long one still splits.
+        //
+        // Grouped by LOCALE SET rather than batched over the union, because the
+        // scan answers per cell: two cells of one row can be missing different
+        // languages, and translating a value into a language no cell asked for
+        // is output paid for and thrown away. Most rows have exactly one group.
+        const byLocaleSet = new Map<string, TranslateJob["cells"]>();
+        for (const cell of sub) {
+          const signature = [...cell.locales].sort().join(",");
+          byLocaleSet.set(signature, [...(byLocaleSet.get(signature) ?? []), cell]);
+        }
+
+        for (const [signature, cellsForSet] of byLocaleSet) {
+          const localesForSet = signature.split(",").filter(Boolean);
           const slices: { cell: TranslateJob["cells"][number]; start: number; length: number }[] = [];
           const values: string[] = [];
-          for (const cell of cellsForLocale) {
+          for (const cell of cellsForSet) {
             const parts = isListValuesColumn(cell.column)
               ? cell.source.split(LIST_DISPLAY_SEPARATOR.trim()).map((v) => v.trim())
               : [cell.source];
@@ -556,31 +600,43 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             values.push(...parts);
           }
           try {
-            const translated = await aiService.translateBatchValues(
+            const perLocale = await aiService.translateBatchValuesToLocales(
               values,
               primaryLocale,
-              locale,
+              localesForSet,
               "product options and metafield values",
+              // A metafield value and an option name are merchant content like a
+              // title is; the instruction that says how to word things has no
+              // reason to hold for one and not the other. No field keys: these
+              // values have no named field, so no SEO cap applies to them.
+              { instructions: instructionsFor([]) },
             );
-            for (const slice of slices) {
-              const parts = translated.slice(slice.start, slice.start + slice.length);
-              // Never substitute the source: a missing entry stays empty and is
-              // reported as a failed cell below.
-              if (parts.length !== slice.length || parts.some((v) => !v || !v.trim())) continue;
-              const merged = isListValuesColumn(slice.cell.column)
-                ? mergeExistingListValues(parts, slice.cell.existingListValuesByLocale?.[locale])
-                : parts[0].trim();
-              collect({ [locale]: { [slice.cell.fieldKey]: merged } });
+            for (const locale of localesForSet) {
+              const translated = perLocale[locale] ?? [];
+              for (const slice of slices) {
+                const parts = translated.slice(slice.start, slice.start + slice.length);
+                // Never substitute the source: a missing entry stays empty and is
+                // reported as a failed cell below. An entry a CHUNK could not
+                // deliver comes back as "" at its own index, which lands here.
+                if (parts.length !== slice.length || parts.some((v) => !v || !v.trim())) continue;
+                const merged = isListValuesColumn(slice.cell.column)
+                  ? mergeExistingListValues(parts, slice.cell.existingListValuesByLocale?.[locale])
+                  : parts[0].trim();
+                collect({ [locale]: { [slice.cell.fieldKey]: merged } });
+              }
             }
           } catch (err: unknown) {
+            // Only a run whose EVERY chunk failed throws; a single bad chunk
+            // leaves its own entries empty instead. So this is the whole group's
+            // failure, in every language it covered.
             if (isAuthError(err)) throw err;
             const message = errorMessage(err);
-            for (const cell of cellsForLocale) {
-              failedCellLocales.add(`${cell.column.id}|${locale}`);
-              // This call translated ONE locale; the other languages of the
-              // same cell are untouched, so the entry says which one failed.
-              failures.push({ rowId: job.rowId, columnId: cell.column.id, locale, message });
-              processed++;
+            for (const cell of cellsForSet) {
+              for (const locale of localesForSet) {
+                failedCellLocales.add(`${cell.column.id}|${locale}`);
+                failures.push({ rowId: job.rowId, columnId: cell.column.id, locale, message });
+                processed++;
+              }
             }
           }
         }
