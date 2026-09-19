@@ -53,6 +53,7 @@ import {
 } from "../../utils/translation-save-lock.server";
 // One shape for "walk past this override", shared with every save path.
 import { marketOverrideKey } from "./market-layer-purge.server";
+import { TRANSLATION_BATCH } from "../../config/constants";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
 import {
@@ -1093,8 +1094,12 @@ const RESOURCE_BATCH = 250;
  * numbered into a single request, so an unbounded group — a product with sixty
  * metafields, an option with fifty values — would build one oversized prompt
  * and get back a truncated list.
+ *
+ * Read from the shared constant rather than stated here: the BATCHED value path
+ * has to honour the same cap, and two copies of it is how one of them came to
+ * ask for 760 numbered strings in a single request.
  */
-const VALUE_BATCH = 40;
+const VALUE_BATCH = TRANSLATION_BATCH.VALUE_BATCH_MAX_ITEMS;
 
 /** `${resourceId}\u0000${locale}\u0000${key}` — one triple of the detection set. */
 function tripleKey(resourceId: string, locale: string, key: string): string {
@@ -2108,6 +2113,17 @@ async function runRetranslation(
     const translationMode: "exact" | "seo_optimized" =
       aiSettings?.translationMode === "seo_optimized" ? "seo_optimized" : "exact";
     const translationService = new TranslationService(provider, aiConfig, shop, task.id);
+    // ONE string for the value path, read by the cross-locale prefetch AND by the
+    // per-locale fallback below. Built once because they must not disagree: with
+    // it on only one of them, the same repair produced instructed or uninstructed
+    // translations depending on which branch happened to answer. No field keys —
+    // a bare value has no named field for an SEO cap to attach to.
+    const valueInstructions = buildTranslateInstructions(
+      getInstructionWithDefault(aiInstructions, "translateInstructions"),
+      translationMode,
+      [],
+      { limits: (aiSettings?.seoLimits ?? null) as Record<string, number> | null },
+    );
 
     // ── ONE AI pass for every language, before the write loop ──────────────
     //
@@ -2162,14 +2178,7 @@ async function runRetranslation(
             asValues.sourceLocale,
             [...candidates.keys()],
             asValues.context,
-            {
-              instructions: buildTranslateInstructions(
-                getInstructionWithDefault(aiInstructions, "translateInstructions"),
-                translationMode,
-                [],
-                { limits: (aiSettings?.seoLimits ?? null) as Record<string, number> | null },
-              ),
-            },
+            { instructions: valueInstructions },
           );
           for (const [locale, translated] of Object.entries(perLocale)) {
             const byEntry = new Map<string, string>();
@@ -2323,6 +2332,7 @@ async function runRetranslation(
                 asValues.sourceLocale,
                 locale,
                 asValues.context,
+                valueInstructions,
               );
             } catch (chunkError: unknown) {
               // Caught PER CHUNK. `translateBatchValues` throws on a length

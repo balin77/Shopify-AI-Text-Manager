@@ -51,14 +51,21 @@ describe("AIService.translateBatchValuesToLocales", () => {
     expect(result.es).toEqual(["Azul", "Marino"]);
   });
 
-  it("refuses an answer whose length drifted, rather than shifting the mapping", async () => {
+  it("never returns a SHORT array, because that shifts the mapping", async () => {
     // A short answer re-points every later value at the wrong resource — silent
-    // corruption, not a missing translation.
+    // corruption, not a missing translation. The locale is emptied, never
+    // shortened, and the sound locale beside it is untouched.
     const { service } = makeService(() => ({ en: ["only one"], es: ["a", "b"] }));
 
-    await expect(
-      service.translateBatchValuesToLocales(["a", "b"], "de", ["en", "es"], "options"),
-    ).rejects.toThrow(/expected 2/);
+    const result = await service.translateBatchValuesToLocales(
+      ["a", "b"],
+      "de",
+      ["en", "es"],
+      "options",
+    );
+
+    expect(result.en).toEqual(["", ""]);
+    expect(result.es).toEqual(["a", "b"]);
   });
 
   it("splits across requests when the languages multiply past the budget", async () => {
@@ -98,6 +105,74 @@ describe("AIService.translateBatchValuesToLocales", () => {
     const all = locales.flatMap((l) => result[l]);
     expect(all.some((v) => v === "")).toBe(true);
     expect(all.some((v) => v !== "")).toBe(true);
+  });
+
+  it("drops ONE badly-shaped locale, never the well-formed ones beside it", async () => {
+    // Throwing on the first bad locale discarded the languages that came back
+    // perfectly — worse than the per-locale calls this replaced, where one bad
+    // answer cost one language.
+    const { service } = makeService(() => ({
+      en: ["Blue", "Red"],
+      es: ["solo uno"], // wrong length
+      fr: ["Bleu", "Rouge"],
+    }));
+
+    const result = await service.translateBatchValuesToLocales(
+      ["Blau", "Rot"],
+      "de",
+      ["en", "es", "fr"],
+      "options",
+    );
+
+    expect(result.en).toEqual(["Blue", "Red"]);
+    expect(result.fr).toEqual(["Bleu", "Rouge"]);
+    // Its entries read as untranslated, which every caller falls back on.
+    expect(result.es).toEqual(["", ""]);
+  });
+
+  it("throws when NO locale came back usable, so the caller's fallback runs", async () => {
+    const { service } = makeService(() => ({ en: ["one"], es: ["uno"] }));
+
+    await expect(
+      service.translateBatchValuesToLocales(["a", "b"], "de", ["en", "es"], "options"),
+    ).rejects.toThrow(/no usable locale/);
+  });
+
+  it("retries per locale when the batched answer does not PARSE", async () => {
+    // Merchant values carry straight double quotes the model does not always
+    // escape. The single-locale prompt has `recoverMalformedStringArray` for
+    // exactly that and it reads a flat array, so it cannot read this shape — the
+    // chunk degrades to the path that owns the recovery instead of failing.
+    let call = 0;
+    const service = Object.create(AIService.prototype) as AIService;
+    const ask = vi.fn(async () => {
+      call++;
+      if (call === 1) return "{ this is not json";
+      return JSON.stringify(["Blue"]);
+    });
+    (service as unknown as { askAI: typeof ask }).askAI = ask;
+
+    const result = await service.translateBatchValuesToLocales(["Blau"], "de", ["en", "es"], "options");
+
+    expect(result.en).toEqual(["Blue"]);
+    expect(result.es).toEqual(["Blue"]);
+    expect(ask).toHaveBeenCalledTimes(3); // the batch, then one per locale
+  });
+
+  it("keeps the numbered list under the item cap even when the characters fit", async () => {
+    // Sixty short values are nothing in CHARACTERS and exactly the list that
+    // comes back merged or renumbered — the count is its own limit.
+    const values = Array.from({ length: 95 }, (_, i) => `Wert ${i}`);
+    const { service, ask } = makeService((prompt) => {
+      const mine = values.filter((v) => prompt.includes(`${v}\n`) || prompt.endsWith(v));
+      return { en: mine.map((v) => `[en] ${v}`), es: mine.map((v) => `[es] ${v}`) };
+    });
+
+    await service.translateBatchValuesToLocales(values, "de", ["en", "es"], "metafields");
+
+    // 95 values at 40 per request is three groups, never one request for 190
+    // numbered strings.
+    expect(ask.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
   it("carries the merchant instructions into the prompt", async () => {

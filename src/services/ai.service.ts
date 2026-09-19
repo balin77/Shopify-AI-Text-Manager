@@ -1126,17 +1126,26 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
     }
 
     const perLocaleBudget = perLocaleSourceBudgetChars();
-    // Value groups whose own output fits ONE locale. A single value larger than
-    // the budget becomes its own group and is still sent: it is one string, the
-    // provider errors loudly if it truly overflows, and splitting a value is not
-    // something this path can do without changing what it means.
+    // Value groups whose own output fits ONE locale, AND that stay under the
+    // item cap. Both limits, because they fail differently: characters decide
+    // whether the answer gets truncated, while the COUNT decides whether the
+    // model keeps the numbering straight — sixty short metafield values are
+    // nothing in characters and exactly the list that comes back merged or
+    // renumbered, which the strict length assertion then rejects whole.
+    // A single value larger than the character budget becomes its own group and
+    // is still sent: it is one string, the provider errors loudly if it truly
+    // overflows, and splitting a value would change what it means.
     const groups: { values: string[]; start: number }[] = [];
     let current: string[] = [];
     let currentChars = 0;
     let start = 0;
     for (const [index, value] of values.entries()) {
       const length = value.length;
-      if (current.length > 0 && currentChars + length > perLocaleBudget) {
+      const full =
+        current.length > 0 &&
+        (currentChars + length > perLocaleBudget ||
+          current.length >= TRANSLATION_BATCH.VALUE_BATCH_MAX_ITEMS);
+      if (full) {
         groups.push({ values: current, start });
         current = [];
         currentChars = 0;
@@ -1263,8 +1272,43 @@ Respond with ONLY this JSON shape (keys = locale codes, each an array of transla
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
     const responseText = await this.askAI(prompt);
-    const parsed = this.parseJSONResponse(responseText) as Record<string, unknown>;
 
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = this.parseJSONResponse(responseText) as Record<string, unknown>;
+    } catch (parseError: unknown) {
+      // The single-locale prompt has `recoverMalformedStringArray` for exactly
+      // this, because merchant values carry straight double quotes and the model
+      // does not always escape them. That recovery reads a FLAT array and cannot
+      // read this shape, so the chunk degrades to the path that has it: one call
+      // per locale, with its parser, its recovery and its 1:1 assertion. It costs
+      // requests only where the batched answer was unusable, and a locale that
+      // fails there fails alone.
+      loggers.ai('warn', '[AI-SERVICE] Multi-locale value batch did not parse — retrying per locale', {
+        locales: targetLocales.length,
+        values: values.length,
+        error: parseError instanceof Error ? parseError.message : String(parseError),
+      });
+      const recovered: Record<string, string[]> = {};
+      for (const locale of targetLocales) {
+        try {
+          recovered[locale] = await this.translateBatchValues(values, fromLang, locale, context, instructions);
+        } catch (localeError: unknown) {
+          if (isAuthError(localeError)) throw localeError;
+          loggers.ai('error', '[AI-SERVICE] Per-locale value retry failed', { locale });
+        }
+      }
+      if (Object.keys(recovered).length === 0) throw parseError;
+      return recovered;
+    }
+
+    // A locale whose array came back the wrong LENGTH is dropped ALONE. Its
+    // entries then read as untranslated and every caller falls back to its own
+    // answer for them — while throwing here would have discarded the languages
+    // that were perfectly well formed in the same response, which is worse than
+    // what the per-locale calls this replaced ever did (there, one bad answer
+    // cost one language). The length itself is non-negotiable: a short array
+    // re-points every later value at the wrong resource.
     const out: Record<string, string[]> = {};
     for (const locale of targetLocales) {
       const list = parsed?.[locale];
@@ -1276,11 +1320,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           expected: values.length,
           got: Array.isArray(list) ? list.length : null,
         });
-        throw new Error(
-          `AI value batch returned ${Array.isArray(list) ? list.length : 'no'} values for ${locale}, expected ${values.length}`,
-        );
+        continue;
       }
       out[locale] = list.map(String);
+    }
+    // Nothing usable at all IS the chunk's failure — the caller's own fallback
+    // has to run rather than be handed an empty map that looks deliberate.
+    if (Object.keys(out).length === 0) {
+      throw new Error(
+        `AI value batch returned no usable locale for ${values.length} value(s)`,
+      );
     }
     return out;
   }
@@ -2079,7 +2128,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // Rough estimate: ~4 characters per token
     // Add output tokens estimate (2000 max_tokens)
     const inputTokens = Math.ceil(prompt.length / 4);
-    const outputTokens = 8192;
+    const outputTokens = TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS;
     return inputTokens + outputTokens;
   }
 
@@ -2311,7 +2360,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const response = await this.huggingface.chatCompletion({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 8192,
+        max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         temperature: 0.7,
       });
       if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
@@ -2360,7 +2409,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       if (hasImages) {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
-          max_tokens: 8192,
+          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
           messages: [{
             role: 'user',
             content: [
@@ -2378,7 +2427,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       } else {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
-          max_tokens: 8192,
+          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
           messages: [{ role: 'user', content: prompt }],
         });
         const textBlock = message.content.find((b) => b.type === 'text');
@@ -2398,7 +2447,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
               { type: 'text' as const, text: prompt },
             ],
           }],
-          max_tokens: 8192,
+          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         });
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         const openaiVisionContent = completion.choices[0].message.content;
@@ -2408,7 +2457,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         const completion = await this.openai.chat.completions.create({
           model: this.getModel(),
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 8192,
+          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         });
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         const openaiContent = completion.choices[0].message.content;
@@ -2427,7 +2476,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
               { type: 'text' as const, text: prompt },
             ],
           }],
-          max_tokens: 8192,
+          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
           temperature: 0.7,
         });
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
@@ -2438,7 +2487,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         const completion = await this.grok.chat.completions.create({
           model: this.getModel(),
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 8192,
+          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
           temperature: 0.7,
         });
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
@@ -2451,7 +2500,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const completion = await this.deepseek.chat.completions.create({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 8192,
+        max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         temperature: 0.7,
       });
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');

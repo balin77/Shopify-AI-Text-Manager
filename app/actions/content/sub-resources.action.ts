@@ -7,6 +7,8 @@
  */
 
 import { data as json } from "react-router";
+import { buildTranslateInstructions } from "~/utils/character-limits";
+import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
@@ -544,7 +546,7 @@ export async function handleTranslateSubResourceToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<DataResponse> {
-  const { admin, session, contentConfig, db, itemId, shopifyContentService, provider, serviceConfig } = ctx;
+  const { admin, session, contentConfig, db, itemId, shopifyContentService, provider, serviceConfig, aiInstructions, translationMode, seoLimits } = ctx;
 
   const sourceDataJson = getFormString(formData, "sourceData");
   const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
@@ -645,6 +647,19 @@ export async function handleTranslateSubResourceToAllLocales(
           primaryLocale,
           targetLocales,
           "product options and metafield values",
+          // An option name and a metafield value are merchant content like a
+          // title is, so the instruction that says how to word things applies
+          // here too — the bulk grid's equivalent call now carries them, and one
+          // setting behaving differently on two screens is the thing to avoid.
+          // No field keys: a bare value has no named field for an SEO cap.
+          {
+            instructions: buildTranslateInstructions(
+              getInstructionWithDefault(aiInstructions, "translateInstructions"),
+              translationMode,
+              [],
+              { limits: seoLimits as unknown as Record<string, number> | null },
+            ),
+          },
         );
       } catch (err) {
         // Only a run whose EVERY chunk failed throws, so this is every locale.

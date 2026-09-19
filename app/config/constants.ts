@@ -162,6 +162,12 @@ export const TRANSLATION_BATCH = {
    * one — `gpt-4-turbo` caps output at 4096, `deepseek-chat` and the Gemini
    * Flash models at 8192, and a HuggingFace endpoint can be lower still.
    * Raising it is a per-provider, per-model capability lookup, not an edit here.
+   *
+   * Every provider branch in `ai.service.ts` reads it (and so does the queue's
+   * token estimate), so the number the requests really carry and the number the
+   * budget is derived from cannot drift — which is the whole point: the threshold
+   * this replaces was a hand-rounded value against this same cap, and it
+   * promised a third more output than the model could emit.
    */
   AI_MAX_OUTPUT_TOKENS,
 
@@ -206,6 +212,23 @@ export const TRANSLATION_BATCH = {
    * conservative average expansion across the supported languages.
    */
   OUTPUT_EXPANSION_FACTOR: 1.3,
+
+  /**
+   * How many bare VALUES go into one prompt, whatever the character budget says.
+   *
+   * The values are NUMBERED into a single request and the answer is mapped back
+   * by index, so the list itself is the fragile part: past a few dozen entries a
+   * model starts merging, renumbering or dropping items, and the strict length
+   * assertion then rejects the whole chunk. A budget in characters cannot see
+   * that — sixty short metafield values are a rounding error in characters and
+   * exactly the payload that comes back miscounted.
+   *
+   * It lives here because BOTH value paths must honour it: the per-locale one in
+   * the stale-translation repair (which had it as a local `VALUE_BATCH`) and the
+   * batched `translateBatchValuesToLocales`, which bypassed it and asked one
+   * request for 760 numbered strings on an eight-language shop.
+   */
+  VALUE_BATCH_MAX_ITEMS: 40,
 
   /**
    * Maximum number of chunk calls issued in parallel. Bounded to avoid
