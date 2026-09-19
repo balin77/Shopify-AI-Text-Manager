@@ -22,15 +22,28 @@
  * untouched bulk field writes nothing at all -- only what is typed is applied,
  * and it is applied to every member.
  *
- * -- STOCK is not bulk-editable, deliberately ---------------------------------
- * Every other field here is a property the variants can genuinely share: a
- * price, a weight, a customs code. A stock level is a COUNT, per variant per
- * location, and `inventorySetQuantities` takes an absolute quantity compared
- * against the one that was loaded. Writing one number across twelve variants
- * would not "set the stock", it would flatten twelve different counts to the
- * same figure -- and it would do it through the one write path in this app
- * that exists to refuse exactly that kind of overwrite. So stock appears for a
- * single variant only, and the panel says why rather than hiding it.
+ * -- STOCK is bulk-editable, and the compare-and-swap is what makes it safe --
+ * "Set every white one to 10" is a real restocking action, and doing it twelve
+ * times by hand is exactly the work this panel exists to remove. What was
+ * never acceptable is COMPUTING a quantity: `inventorySetQuantities` takes an
+ * absolute number compared against the one that was loaded, and a bulk edit
+ * keeps that intact by writing the typed number into every member's OWN edit
+ * key -- one compare-and-swap per variant, N times, refused per variant if
+ * that variant's count moved meanwhile. Nothing is summed, divided or
+ * distributed anywhere on this path.
+ *
+ * The TABLE is where the care goes: every figure in it is a statement about N
+ * variants at once, so a cell is a number only where they agree, `≠` where
+ * they differ and an em dash where it could not be read -- see
+ * `variant-stock-rows.shared.ts`. A sum would read as a total in a row whose
+ * input sets a per-variant number, which is the one misunderstanding that
+ * turns a restock into an overwrite.
+ *
+ * -- SKU and barcode are NOT bulk-editable ------------------------------------
+ * They identify ONE variant. A shared SKU is not a merchant's intent, it is
+ * lost inventory control; a shared barcode scans as the wrong article at the
+ * till. So both are shown, disabled, with the reason beside them rather than
+ * hidden -- a field that disappears when a group is picked reads as a bug.
  */
 
 import { useMemo, useState, type CSSProperties } from "react";
@@ -54,6 +67,13 @@ import { HelpTooltip } from "../HelpTooltip";
 import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData, WEIGHT_UNITS } from "../../contexts/CommerceDataContext";
 import { buildVariantScopes, commonValue, type VariantScope } from "../../services/variant-scope.shared";
+import {
+  buildStockRows,
+  onHandFieldValue,
+  totalCell,
+  type StockCell,
+  type StockRow,
+} from "../../services/variant-stock-rows.shared";
 import {
   UNIT_PRICE_SYMBOLS,
   UNIT_PRICE_UNIT_GROUPS,
@@ -208,25 +228,19 @@ export function CommerceVariantsSection() {
       return next;
     });
 
-  const itemValue = (field: string, fallback = ""): string => {
-    const values = members.map((m) => {
-      const edited = itemEdits[`${m.id}::${field}`];
-      if (edited !== undefined) return edited;
-      const loaded = (m as unknown as Record<string, unknown>)[field];
-      return loaded == null ? fallback : String(loaded);
-    });
-    return commonValue(values) ?? "";
+  /** ONE member's value for an InventoryItem field — the edit, or what was
+   *  loaded. Its own function because the stock table asks per member which
+   *  variants it may write at all, and the aggregate below cannot answer that. */
+  const memberItemValue = (member: (typeof members)[number], field: string, fallback = ""): string => {
+    const edited = itemEdits[`${member.id}::${field}`];
+    if (edited !== undefined) return edited;
+    const loaded = (member as unknown as Record<string, unknown>)[field];
+    return loaded == null ? fallback : String(loaded);
   };
-  const itemMixed = (field: string): boolean => {
-    if (!isBulk) return false;
-    const values = members.map((m) => {
-      const edited = itemEdits[`${m.id}::${field}`];
-      if (edited !== undefined) return edited;
-      const loaded = (m as unknown as Record<string, unknown>)[field];
-      return loaded == null ? "" : String(loaded);
-    });
-    return commonValue(values) === null;
-  };
+  const itemValue = (field: string, fallback = ""): string =>
+    commonValue(members.map((m) => memberItemValue(m, field, fallback))) ?? "";
+  const itemMixed = (field: string): boolean =>
+    isBulk && commonValue(members.map((m) => memberItemValue(m, field))) === null;
 
   const setItem = (field: string, value: string) =>
     setItemEdits((prev) => {
@@ -305,6 +319,26 @@ export function CommerceVariantsSection() {
   const isPhysical =
     itemMixed("requiresShipping") ||
     itemValue("requiresShipping", String(first.requiresShipping ?? true)) === "true";
+
+  /**
+   * The members a stock write can actually address.
+   *
+   * A variant with no InventoryItem has nothing to write to, and one that
+   * keeps no count has no quantity to compare against — an input for either
+   * would queue a write the save can only answer with a warning. They are left
+   * OUT of the table rather than greyed inside it: the rows are per LOCATION,
+   * so a member that cannot be written has no row of its own to grey, and the
+   * line above the table says how many were dropped.
+   *
+   * The EDITED tracking flag, not the loaded one — the same reason the table
+   * is gated on it below: the switch above turns tracking off, and a row that
+   * stayed behind offers a number the save writes first and the untrack then
+   * discards.
+   */
+  const stockMembers = members.filter(
+    (member) => !!member.inventoryItemId && memberItemValue(member, "inventoryTracked", "true") !== "false",
+  );
+  const { rows: stockRows, truncated: stockTruncated } = buildStockRows(stockMembers, data.shopLocations);
 
   /** "Mixed" as a placeholder, so an empty bulk field is not read as "empty". */
   const mixedHint = (mixed: boolean) =>
@@ -750,160 +784,160 @@ export function CommerceVariantsSection() {
                     )}
                   </BlockStack>
 
-          {/* Stock, for ONE variant only -- see the header. */}
-          {isBulk ? (
+          {/* Stock — for ONE variant or for the whole group; see the header. */}
+          {members.every((member) => member.inventoryTracked === null) && !itemMixed("inventoryTracked") && (
             <Text as="p" variant="bodySm" tone="subdued">
-              {(t.stockNotBulk as string) ||
-                "Stock is a count per variant and per location, so it is edited one variant at a time."}
+              {(t.stockUnknown as string) || "Not loaded yet — reload to see the stock."}
             </Text>
-          ) : (
-            <>
-                  {first.inventoryTracked === null && !itemMixed("inventoryTracked") && (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {(t.stockUnknown as string) || "Not loaded yet — reload to see this variant's stock."}
-                    </Text>
-                  )}
+          )}
 
-                  {itemValue("inventoryTracked", "true") === "false" && (
-                    // NOT zero. Shopify keeps no count for this variant, and a
-                    // 0 here would read as "sold out".
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {(t.stockUntracked as string) || "Stock is not tracked for this variant — it can be sold without limit."}
-                    </Text>
-                  )}
+          {itemValue("inventoryTracked", "true") === "false" && (
+            // NOT zero. Shopify keeps no count for these variants, and a 0
+            // here would read as "sold out".
+            <Text as="p" variant="bodySm" tone="subdued">
+              {isBulk
+                ? ((t.stockUntrackedBulk as string) ||
+                  "Stock is not tracked for these variants — they can be sold without limit.")
+                : ((t.stockUntracked as string) ||
+                  "Stock is not tracked for this variant — it can be sold without limit.")}
+            </Text>
+          )}
 
-                  {first.inventoryTracked === true && !first.inventoryItemId && (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {(t.stockNoItem as string) || "This variant has no inventory record, so its stock cannot be edited here."}
-                    </Text>
-                  )}
+          {!isBulk && first.inventoryTracked === true && !first.inventoryItemId && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {(t.stockNoItem as string) || "This variant has no inventory record, so its stock cannot be edited here."}
+            </Text>
+          )}
 
-                  {/* The EDITED flag, not the loaded one: the switch above
-                      turns tracking off, and a table that stays behind still
-                      offers numbers for an item Shopify will stop counting —
-                      numbers the save would write first and the untrack would
-                      then discard. */}
-                  {itemValue("inventoryTracked", "true") === "true" && first.inventoryItemId && (
-                    <BlockStack gap="200">
-                      {/* The heading belongs HERE, over the locations it
-                          describes — above the variant it read as a title for
-                          the prices and the shipping settings too. */}
-                      <InlineStack gap="200" blockAlign="center">
-                        <Text as="h4" variant="headingSm" fontWeight="bold">{(t.stockHeading as string) || "Stock"}</Text>
-                        <HelpTooltip helpKey="commerceStock" />
-                      </InlineStack>
+          {/* Some of the group, not all of it. The table below is about the
+              REST, and a merchant who typed a number into it would otherwise
+              believe it reached twelve variants when it reached nine. */}
+          {isBulk && stockMembers.length > 0 && stockMembers.length < members.length && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {((t.stockSomeNotTracked as string) ||
+                "{n} of {m} variants keep no stock count here and are not in the table — their stock stays as it is.")
+                .replace("{n}", String(members.length - stockMembers.length))
+                .replace("{m}", String(members.length))}
+            </Text>
+          )}
 
-                      {first.levelsTruncated && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {(t.levelsTruncated as string) || "This variant has stock at more locations than were loaded."}
-                        </Text>
-                      )}
-                      {first.levels.length === 0 && data.shopLocations.length === 0 && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {(t.noLevels as string) || "No location holds stock of this variant."}
-                        </Text>
-                      )}
+          {stockMembers.length > 0 && (
+            <BlockStack gap="200">
+              {/* The heading belongs HERE, over the locations it describes —
+                  above the variant it read as a title for the prices and the
+                  shipping settings too. */}
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="h4" variant="headingSm" fontWeight="bold">{(t.stockHeading as string) || "Stock"}</Text>
+                <HelpTooltip helpKey="commerceStock" />
+              </InlineStack>
 
-                      {/* Shopify's own arrangement: one row per location, the
-                          four numbers as columns, and a total. A stacked list
-                          of "Berlin — [20] available: 20" made the merchant
-                          add up their own warehouses. */}
-                      <StockTable
-                        rows={[
-                          ...first.levels.map((level) => ({
-                            key: `${first.id}::${level.locationId}`,
-                            name: level.locationName || level.locationId,
-                            active: level.locationActive,
-                            stocked: true,
-                            unavailable: level.unavailable,
-                            committed: level.committed,
-                            available: level.available,
-                            onHand: level.onHand,
-                          })),
-                          /* Locations the item is not stocked at. Shopify
-                             reports a level only where an item has been
-                             ACTIVATED, so these are absent from `levels` — and
-                             a merchant with three warehouses seeing one row
-                             reasonably concludes the panel is broken.
+              {stockTruncated && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {(t.levelsTruncated as string) || "There is stock at more locations than were loaded."}
+                </Text>
+              )}
+              {stockRows.length === 0 && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {(t.noLevels as string) || "No location holds stock of this."}
+                </Text>
+              )}
 
-                             They get the SAME input as the others rather than
-                             an "activate" button: typing a number is what a
-                             merchant means by "stock it here", and the
-                             activation rides along with the save.
+              {/* What a figure in this table MEANS once it covers several
+                  variants — said once, above it, rather than left to be
+                  inferred from a column of ≠. Without it the on-hand input
+                  reads as a total, and a merchant would type the number they
+                  want across the group into a field that writes it to each
+                  one of them. */}
+              {isBulk && stockRows.length > 0 && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {((t.stockBulkHint as string) ||
+                    "A number under “On hand” is set for EACH of the {n} variants. ≠ means the variants differ here.")
+                    .replace("{n}", String(stockMembers.length))}
+                </Text>
+              )}
 
-                             Suppressed entirely when the level window was cut
-                             off: locations 11+ of a variant stocked at more
-                             than `INVENTORY_LEVEL_PAGE_SIZE` places are
-                             missing from `levels` while present in
-                             `shopLocations`, and would be offered an input
-                             that routes into activation — writing a quantity
-                             over a real one with no compare-and-swap. */
-                          ...(first.levelsTruncated ? [] : data.shopLocations)
-                            .filter((location) => !first.levels.some((l) => l.locationId === location.id))
-                            .map((location) => ({
-                              key: `${first.id}::${location.id}`,
-                              name: location.name,
-                              active: location.isActive && !!first.inventoryItemId,
-                              stocked: false,
-                              unavailable: null,
-                              committed: null,
-                              available: null,
-                              onHand: null,
-                            })),
-                        ]}
-                        edits={edits}
-                        onEdit={(key: string, value: string) => setEdits((prev) => ({ ...prev, [key]: value }))}
-                        disabled={saving}
-                        truncated={first.levelsTruncated}
-                        t={t}
-                      />
-                    </BlockStack>
-                  )}
+              {/* Shopify's own arrangement: one row per location, the four
+                  numbers as columns, and a total. A stacked list of
+                  "Berlin — [20] available: 20" made the merchant add up their
+                  own warehouses.
 
-            </>
+                  The rows come from `buildStockRows`, which is also where the
+                  locations the item is NOT stocked at come from: Shopify
+                  reports a level only where an item has been ACTIVATED, and a
+                  merchant with three warehouses seeing one row reasonably
+                  concludes the panel is broken. They get the same input as the
+                  others rather than an "activate" button — typing a number is
+                  what a merchant means by "stock it here", and the activation
+                  rides along with the save. */}
+              <StockTable
+                rows={stockRows}
+                edits={edits}
+                onEdit={(row: StockRow, value: string) =>
+                  setEdits((prev) => {
+                    const next = { ...prev };
+                    // Every member of the row at once — one edit key each, so
+                    // the save compares each variant against its OWN loaded
+                    // quantity. Nothing is summed or split anywhere.
+                    for (const entry of row.entries) next[entry.key] = value;
+                    return next;
+                  })
+                }
+                disabled={saving}
+                truncated={stockTruncated}
+                t={t}
+              />
+            </BlockStack>
           )}
 
           {/* The variant's own references, UNDER the table. No heading: two
               labelled fields do not need a word above them saying that more
-              detail follows. */}
-          <InlineStack gap="300" blockAlign="start" wrap>
-            <Box minWidth="220px">
-              <TextField
-                label={(t.skuLabel as string) || "SKU (Stock Keeping Unit)"}
-                value={itemValue("sku")}
-                placeholder={mixedHint(itemMixed("sku"))}
-                onChange={(value) => setItem("sku", value)}
-                autoComplete="off"
-                disabled={saving || !first.inventoryItemId}
-              />
-            </Box>
-            <Box minWidth="220px">
-              <TextField
-                label={(t.barcodeLabel as string) || "Barcode (ISBN, UPC, GTIN, etc.)"}
-                value={priceValue("barcode")}
-                placeholder={mixedHint(priceMixed("barcode"))}
-                onChange={(value) => setPrice("barcode", value)}
-                autoComplete="off"
-                disabled={saving}
-              />
-            </Box>
-          </InlineStack>
+              detail follows.
+
+              LOCKED on a group, and the only two fields here that are. Both
+              identify exactly ONE variant: a SKU shared across twelve is lost
+              inventory control, and a shared barcode scans as the wrong
+              article at the till — so "apply what is typed to every member",
+              which is right for a price and a weight, is the one thing these
+              must not do. They keep rendering the value the members agree on
+              (and the "different values" hint where they do not), because a
+              field that vanished when a group is picked reads as a bug and a
+              merchant would go looking for it. */}
+          <BlockStack gap="100">
+            <InlineStack gap="300" blockAlign="start" wrap>
+              <Box minWidth="220px">
+                <TextField
+                  label={(t.skuLabel as string) || "SKU (Stock Keeping Unit)"}
+                  value={itemValue("sku")}
+                  placeholder={mixedHint(itemMixed("sku"))}
+                  onChange={(value) => setItem("sku", value)}
+                  autoComplete="off"
+                  disabled={saving || isBulk || !first.inventoryItemId}
+                />
+              </Box>
+              <Box minWidth="220px">
+                <TextField
+                  label={(t.barcodeLabel as string) || "Barcode (ISBN, UPC, GTIN, etc.)"}
+                  value={priceValue("barcode")}
+                  placeholder={mixedHint(priceMixed("barcode"))}
+                  onChange={(value) => setPrice("barcode", value)}
+                  autoComplete="off"
+                  disabled={saving || isBulk}
+                />
+              </Box>
+            </InlineStack>
+            {isBulk && (
+              // A disabled field with no reason beside it reads as a plan gate
+              // or a defect. One line for the pair, under both of them.
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.skuBarcodeNotBulk as string) ||
+                  "SKU and barcode identify one variant each, so they are edited one variant at a time."}
+              </Text>
+            )}
+          </BlockStack>
         </BlockStack>
       </div>
     </BlockStack>
   );
-}
-
-interface StockRow {
-  key: string;
-  name: string;
-  active: boolean;
-  /** False for a location the item is not activated at — see the caller. */
-  stocked: boolean;
-  unavailable: number | null;
-  committed: number | null;
-  available: number | null;
-  onHand: number | null;
 }
 
 /**
@@ -915,7 +949,11 @@ interface StockRow {
  *
  * A missing number is an em dash, never a zero. `tracked: false` and "never
  * synced" both arrive here as `null`, and 0 would tell a merchant they are
- * sold out of something they can sell without limit.
+ * sold out of something they can sell without limit. Over a GROUP a third
+ * answer joins them: `≠`, for a figure the members disagree about — never the
+ * sum, which would read as a total in a row whose input writes one number per
+ * variant. `buildStockRows` decides which of the three a cell is; this
+ * component only renders it.
  */
 function StockTable({
   rows,
@@ -929,7 +967,10 @@ function StockTable({
   /** The location window was cut off — see the total row. */
   truncated: boolean;
   edits: Record<string, string>;
-  onEdit: (key: string, value: string) => void;
+  /** Takes the ROW, not a key: over a group one input writes one edit key per
+   *  member, and handing out a single key is what would force the caller to
+   *  pick one variant's number to stand for all of them. */
+  onEdit: (row: StockRow, value: string) => void;
   disabled: boolean;
   t: Record<string, unknown>;
 }) {
@@ -963,7 +1004,10 @@ function StockTable({
    * looking switched off.
    */
   const frameRow: CSSProperties = { background: "var(--p-color-bg-surface)" };
-  const num = (value: number | null) => (value == null ? "—" : String(value));
+  /** An em dash for what could not be read, `≠` for what the members disagree
+   *  about. The two are NOT interchangeable: one says "we do not know", the
+   *  other says "we know, and it is not one number". */
+  const num = (value: StockCell) => (value === "mixed" ? "\u2260" : value == null ? "\u2014" : String(value));
 
   /**
    * ALL or nothing. A total is only a total when every row contributed to it.
@@ -972,27 +1016,33 @@ function StockTable({
    * number under the word "Total" — and worse, a different number of rows per
    * column, so "Available" could describe two locations while "On hand"
    * described three. A row that is not stocked contributes 0, which is a known
-   * quantity; a row whose number could not be READ makes the total unknown.
+   * quantity; a row whose number could not be READ makes the total unknown,
+   * and one the members disagree about makes it `≠`.
    */
-  const total = (pick: (row: StockRow) => number | null) => {
-    const values = rows.map((row) => (row.stocked ? pick(row) : 0));
-    return values.some((v) => v == null) ? null : values.reduce((a, b) => (a as number) + (b as number), 0);
-  };
-  /** The on-hand total counts what is TYPED, so the figure moves with the edit. */
-  const onHandTotal = (() => {
-    const values = rows.map((row) => {
-      const edited = edits[row.key];
-      if (edited !== undefined && edited.trim() !== "") {
-        const parsed = Number.parseInt(edited, 10);
-        // A value that does not parse makes the total UNKNOWN rather than
-        // dropping that location out of it — the sum would otherwise fall
-        // while the merchant typed.
-        return Number.isFinite(parsed) ? parsed : null;
-      }
-      return row.stocked ? row.onHand : 0;
-    });
-    return values.some((v) => v == null) ? null : values.reduce((a, b) => (a as number) + (b as number), 0);
-  })();
+  const total = (pick: (row: StockRow) => StockCell) =>
+    // A location nobody stocks holds a real 0 of what these three columns
+    // count — see `totalCell`, which deliberately does not assume that.
+    totalCell(rows.map((row) => (row.stocked === false ? 0 : pick(row))));
+  /** What one row's input shows: the members' common value, or null when they
+   *  differ. Computed once per row and read by both the field and the total. */
+  const fieldValue = (row: StockRow) => onHandFieldValue(row, edits);
+  /** The on-hand total counts what is TYPED, so the figure moves with the edit
+   *  — INCLUDING on a row nothing is stocked at yet, which is how a location
+   *  is stocked for the first time. The "not stocked holds 0" substitution the
+   *  three columns above make would replace that number with a zero and leave
+   *  the total sitting still while the merchant typed. */
+  const onHandTotal = totalCell(
+    rows.map((row): StockCell => {
+      const value = fieldValue(row);
+      if (value === null) return "mixed";
+      if (value.trim() === "") return row.stocked === false ? 0 : null;
+      const parsed = Number.parseInt(value, 10);
+      // A value that does not parse makes the total UNKNOWN rather than
+      // dropping that location out of it — the sum would otherwise fall while
+      // the merchant typed.
+      return Number.isFinite(parsed) ? parsed : null;
+    }),
+  );
 
   return (
     // A plain div rather than a Polaris `Box`, for the one reason that the
@@ -1045,8 +1095,10 @@ function StockTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.key}>
+          {rows.map((row) => {
+            const value = fieldValue(row);
+            return (
+            <tr key={row.id}>
               <td style={firstCell}>
                 <Text as="span" variant="bodySm" tone={row.active ? undefined : "subdued"}>
                   {row.name}
@@ -1060,15 +1112,22 @@ function StockTable({
                     location whose numbers merely could not be read — and the
                     difference is what the whole row is here to show.
 
+                    Over a group there is a third case, and it is the one a
+                    merchant most needs told: SOME of the variants are stocked
+                    here and some are not, so the number they type both sets a
+                    quantity and starts stocking the rest.
+
                     Not on a DEACTIVATED location though: "(inactive) not
                     stocked here" is two answers to one question — an inactive
                     location takes no writes either way, so "(inactive)" alone
                     says it — and together they made the location column wider
                     than the four number columns beside it. */}
-                {!row.stocked && row.active && (
+                {row.stocked !== true && row.active && (
                   <Text as="span" variant="bodySm" tone="subdued">
                     {" "}
-                    {(t.notStockedHere as string) || "not stocked here"}
+                    {row.stocked === "mixed"
+                      ? ((t.notStockedEveryVariant as string) || "not stocked at every variant")
+                      : ((t.notStockedHere as string) || "not stocked here")}
                   </Text>
                 )}
               </td>
@@ -1085,17 +1144,20 @@ function StockTable({
                     align="right"
                     // Empty, not "0", for a location the variant is not
                     // stocked at: a pre-filled 0 would read as "we hold none"
-                    // rather than "we do not stock this here".
-                    value={edits[row.key] ?? (row.stocked ? String(row.onHand ?? "") : "")}
-                    placeholder={row.stocked ? undefined : "–"}
-                    onChange={(value) => onEdit(row.key, value)}
+                    // rather than "we do not stock this here". Empty too where
+                    // the members DISAGREE — showing one of their numbers is
+                    // the lie the whole table is built to avoid.
+                    value={value ?? ""}
+                    placeholder={value === null ? "\u2260" : row.stocked === true ? undefined : "\u2013"}
+                    onChange={(next) => onEdit(row, next)}
                     autoComplete="off"
                     disabled={disabled || !row.active}
                   />
                 </Box>
               </td>
             </tr>
-          ))}
+            );
+          })}
           {/* No total row when the location window was cut off: the rows are
               the first ten of more, and their sum under the word "Total" is a
               number the merchant would decide against. */}
