@@ -2002,7 +2002,7 @@ export const es: Translation = {
       invalidApiKey: "(la clave de API de IA fue rechazada)",
       someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",
       translationsNotMirrored:
-        "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a sincronizar el producto para verlas aquí.",
+        "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
     },
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",

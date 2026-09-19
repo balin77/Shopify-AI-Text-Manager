@@ -64,7 +64,7 @@ const FALLBACK: Record<string, string> = {
   invalidApiKey: "(the AI API key was rejected)",
   someFailed: "Some entries could not be processed — open the task for details.",
   translationsNotMirrored:
-    "{count} translation(s) were saved on Shopify but could not be written to this app's cache — resync the product to see them here.",
+    "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
 };
 
 function phrase(t: any, key: string): string {
@@ -147,7 +147,9 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // some of those rows to the local mirror. NOT a failure of the translation
     // — the storefront serves it — but every editor in this app renders from
     // the mirror, so the merchant would see an empty field and no reason for
-    // it. A resync is the repair, which is why the sentence names one.
+    // it. The advice names the ITEM rather than a product: the repair is
+    // generic over every surface (a page's body, a metaobject field, a theme
+    // key, a menu title), and the Task row already says which resource it was.
     case "translations_not_mirrored": {
       const missed = count(parts[1]);
       if (missed === null) return neutral();
