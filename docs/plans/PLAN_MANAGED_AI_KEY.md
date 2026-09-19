@@ -709,13 +709,8 @@ draft** — all four were found by review, all four are free money for somebody:
    uninstall + `shop/redact` deletes the whole `AISettings` row and makes the
    shop trial-eligible again) is 50–100× more expensive here than it is for the
    taster, so it is stated in euros, not waved at.
-2. **No managed budget on a `test: true` subscription.** In PRODUCTION
-   `getCurrentSubscription` accepts test subscriptions for partner development
-   stores (`allowTest = inTestBilling || isDevStore(admin)`) — a
-   Shopify-verified ACTIVE Max plan that charges €0. Harmless under BYO,
-   real provider spend under managed, and a partner can create dev stores
-   nearly without limit. A test subscription resolves to `managedUnavailable`;
-   the taster is the only managed allowance such a store can reach.
+2. **A shop that pays nothing gets the FREE tier's cost limits, whatever plan
+   it holds** — the owner's rule, 2026-09-19, and §7a is the whole of it.
 3. **The budget period is the BILLING period, not the calendar month.** Plans
    bill `EVERY_30_DAYS` with `APPLY_IMMEDIATELY` proration on switches, while
    `ImageOperationCounter`'s "YYYY-MM" key is a calendar month. Keeping the
@@ -747,6 +742,70 @@ limit, which keeps the story intact), and nobody is migrated.
 
 ---
 
+## 7a. A shop that pays nothing gets Free's COST limits — and nothing else changes
+
+In PRODUCTION `getCurrentSubscription` accepts `test: true` subscriptions for
+partner development stores (`allowTest = inTestBilling || isDevStore(admin)`),
+so a Shopify-verified **ACTIVE Max plan that charges €0** is a normal, expected
+state. Under BYO that is harmless — the merchant's key pays. Under managed it
+is real provider spend against a charge that never happens, and a partner can
+create development stores nearly without limit. This is a bigger hole than the
+Free taster the plan spends a page sizing.
+
+**The rule, decided 2026-09-19:** such a shop is treated as **Free for every
+limit that costs US money**, and is otherwise untouched.
+
+**What is capped** — each resolves at the Free tier's number regardless of the
+subscribed plan: the managed AI budget → the one-time taster only, never a
+period budget; `monthlyImageOperations` → 0; `dailyPageSpeedRuns` → 5;
+`monthlyIndexNowSubmissions` → 0. Those four are exactly the quotas whose
+consumption lands on an invoice of ours — AI tokens, image compute, Google's
+PSI key, IndexNow submissions.
+
+**What is NOT capped, deliberately:**
+
+- **BYO AI stays unlimited.** It costs us nothing, so there is no reason to
+  restrict it — and it is what keeps a development store fully usable for
+  testing every AI path in the app.
+- **Entitlements are untouched.** `maxProducts`, `contentTypes`, the SEO
+  feature flags, `scoreHistoryDays`, `maxTrackedKeywords` and the rest keep
+  whatever the plan says, so a Max feature stays testable on a Max dev store.
+  That is not a softening of the rule but the difference between "costs us
+  money" and "is a feature" — and collapsing the two has a consequence nobody
+  wants: **`getSyncScope` and `planCacheCleanup` read the plan**, so a dev shop
+  resolving to `free` everywhere would make the cleanup DELETE every cached
+  product past 50 on the owner's own test store. A cost cap must never reach a
+  path that deletes data.
+
+**Detection is both signals, and a failed lookup is not one.**
+`isCostCappedShop` answers true when `shop.plan.partnerDevelopment === true`
+OR the active subscription carries `test: true` — the store type and the
+billing reality, because each covers a case the other misses (a dev store with
+no subscription at all; a regular store put into test billing through
+`DEV_PLAN_OVERRIDE_SHOPS`). `isDevStore` is an Admin API call that can fail,
+and a failure counts as **NOT capped**: refusing a paying merchant the AI they
+bought is the expensive error, while the other direction is already bounded by
+the global managed cap (§9.3).
+
+**Where it lives is the whole safety of it.** ONE accessor,
+`costPlanFor(shop)`, returning a `Plan`, consulted by exactly the four cost
+quotas above — they already funnel through `planUtils`, so this changes what
+those accessors are handed rather than adding a gate to every route. No
+entitlement reader may call it, and `getSyncScope`/`planCacheCleanup` must not:
+a test asserts both directions, because the damage from a wrong call here is
+silent and one-way.
+
+**Two things are stated rather than discovered.** The image manager and the
+PageSpeed section become effectively untestable on a development store (0 ops,
+5 runs/day) — the accepted price of the rule, with an explicit
+`COST_CAP_EXEMPT_SHOPS` allowlist as the escape for the one store where the
+owner needs to exercise them for real. And a merchant legitimately running a
+paid plan on a store Shopify reports as `partnerDevelopment` would be capped
+too; that is not a combination a real customer has, but it is the one way this
+rule can be wrong, so it is logged when it fires rather than applied silently.
+
+---
+
 ## 8. Phase 3b — what the merchant sees
 
 **One choice, in two places, with one answer.** The mode is chosen on the plan
@@ -758,10 +817,17 @@ subscription.
   "with AI included" — with the volume stated in the unit the merchant thinks
   in ("≈ 4,500 AI actions per month", derived from the measured average, never
   in tokens).
-- AI tab in managed mode: the six key fields, the provider select and the model
-  select go **read-only with an explanation**, not hidden — hiding them is how
-  a merchant concludes the feature vanished. The per-provider rate-limit fields
-  disappear entirely, because they must not apply (§9).
+- **AI tab in managed mode: HIDDEN, and the stored keys survive untouched**
+  (owner's decision, 2026-09-19 — it supersedes this plan's first cut, which
+  made the fields read-only on the argument that hiding them looks like a
+  feature disappearing). In managed mode the six key fields, the provider
+  select, the model select and the per-provider rate-limit fields are all noise:
+  none of them affects anything, and a screen full of inert inputs invites the
+  merchant to fill them in and wonder why nothing changes. §8a is what makes
+  hiding them safe — and the concern behind the old wording is answered
+  separately: what must stay visible is not the key fields but **the way back**
+  (the mode switch, with one line saying AI is included in this plan and can be
+  swapped for your own key).
 - A **usage card** in Settings → Usage & limits, beside the image-operation
   quota it mirrors: percentage used, reset date, the 80 % warning, and — when
   the estimate share is non-trivial — that the figure is partly estimated.
@@ -774,6 +840,59 @@ subscription.
 - Every one of these controls obeys the standing settings rule: **a click is a
   draft until Save** — including the mode switch, which additionally has to
   route through Shopify billing rather than writing a column.
+
+---
+
+## 8a. Hiding the key tab must not delete what it held
+
+The owner's second half of that decision — *"if the merchant once entered keys,
+they are not deleted; they may want to switch back"* — is the load-bearing one,
+and in this codebase it is not a preference but a bug waiting at a known
+address.
+
+**The trap, verified.** `encryptApiKey("")` returns `null`
+([encryption.server.ts](../../app/utils/encryption.server.ts) L261-266), and
+the generic AI-settings save in
+[app.settings.tsx](../../app/routes/app.settings.tsx) writes **all six key
+columns** — plus `preferredProvider` and `selectedModel` — straight from the
+submitted form on every save. So a hidden tab whose fields are no longer in the
+payload does not leave those columns alone: **the next settings save writes
+`null` over all six.** The merchant switches to managed, changes the app
+language a week later, and their keys are gone — with the way back being six
+credentials they may no longer be able to retrieve.
+
+This is not a hypothetical: the same file already carries the fix for the same
+bug one door down. `saveAppLanguage` is a deliberately NARROW update whose
+comment says it verbatim — *"fields not in the payload (selectedModel, SEO
+suffix) got wiped"*. Hiding the key tab is the identical situation and gets the
+identical treatment.
+
+Five rules:
+
+1. **The key columns are written only by a save that OWNS them.** The AI-key
+   tab's own save action writes the six keys, `preferredProvider` and
+   `selectedModel`; no other settings save may touch those columns. That is
+   already the house pattern (`saveInstructions`, `saveAiVision`,
+   `saveAppLanguage` are each scoped), and it is what makes hiding the tab a UI
+   change rather than a data change.
+2. **Switching to managed writes NOTHING to the key columns.** The mode lives
+   in `aiKeySource` (mirrored from the verified subscription, §5); it is not a
+   reason to clear anything. Encrypted keys stay encrypted at rest, exactly as
+   they are today, and are purged on uninstall/redact like every other shop
+   row — retention is unchanged because nothing new is stored.
+3. **`preferredProvider` and `selectedModel` survive too.** "Back to my own
+   key" means back to the merchant's own SETUP — the provider and model they
+   chose — not back to a default that silently rewrites their choice.
+4. **The way back is never hidden.** The key tab is hidden; the mode switch is
+   not, and neither is the line explaining that AI is included in this plan.
+   Hiding the switch as well is the version that really does look like a
+   vanished feature, and it is also what would strand a merchant at the budget
+   wall (§6's "the exit is always visible").
+5. **The guard is a round-trip test.** `ai-key-preservation.test.ts`: BYO with
+   six keys set → switch to managed → save settings twice through other tabs →
+   switch back → every decrypted key, the provider and the model are
+   byte-identical. It fails today by construction, which is the point of
+   writing it before the UI change.
 
 ---
 
@@ -951,6 +1070,8 @@ review pass before it is called done.
 | `ai-credentials.test.ts` | the gate matrix: byo/managed × consent × budget × kill switch × **trial** × **test subscription** → exactly one decision each |
 | `stale-repair-budget-abort.test.ts` | §6a rule 1: a budget-refused detached repair purges NOTHING (the one that protects merchant data rather than money) |
 | `ai-key-source-isolation.test.ts` | no file outside the resolver reads a `MANAGED_AI_*` env var or builds an `AIServiceConfig` literal — the §B4 structural guarantee. Scope it to the managed names and carve out `api.ai-models.tsx`: a blanket `*_API_KEY` rule would match `SHOPIFY_API_KEY`, which has ~10 legitimate uses |
+| `cost-plan-scope.test.ts` | §7a: `costPlanFor` caps the four cost quotas on a dev/test shop, and NO entitlement reader calls it — above all not `getSyncScope`/`planCacheCleanup`, where a `free` answer would delete cached products on the owner's own store |
+| `ai-key-preservation.test.ts` | §8a: BYO with six keys → switch to managed → two saves through other tabs → switch back, and every decrypted key, the provider and the model are byte-identical. Fails today by construction |
 | `billing-managed-variants.test.ts` | name→(plan, mode) and price→(plan, mode) round-trip; no two variants share a price |
 | GDPR coverage guard | `AiUsageCounter` is purged by `redactShopData` |
 | `ai-pricing-model-ids.test.ts` | `MANAGED_AI_MODEL` exists in the price table. NOT every `DEFAULT_MODELS` entry: HuggingFace Inference has no per-token list price, and demanding one would force a fake number for a provider §3 excludes |
