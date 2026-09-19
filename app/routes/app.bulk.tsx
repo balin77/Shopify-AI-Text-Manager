@@ -661,6 +661,18 @@ export default function BulkEditor() {
       taskIds?: string[];
     } | null
   >(null);
+  /**
+   * Task rows of background repairs this SESSION started that have not been
+   * seen finished yet — a union across saves, not the latest save's list.
+   *
+   * A merchant saves again while the previous save's runs are still working,
+   * and the second save may start no repair at all (a foreign-locale edit
+   * starts none). Watching only the newest list would drop the first save's
+   * ids and its translations would land with nothing reloading the grid, which
+   * is the empty foreign cell the watch exists to remove. Cleared when the
+   * watch reports every id finished.
+   */
+  const [watchedTaskIds, setWatchedTaskIds] = useState<string[]>([]);
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
   const [overBudgetBanner, setOverBudgetBanner] = useState(false);
@@ -951,6 +963,10 @@ export default function BulkEditor() {
       setLastFailures(saveFetcher.data.failures);
       setLastSavedCount(saveFetcher.data.saved);
       setLastRetranslation(saveFetcher.data.retranslation ?? null);
+      const startedTaskIds = saveFetcher.data.retranslation?.taskIds ?? [];
+      if (startedTaskIds.length > 0) {
+        setWatchedTaskIds((prev) => [...new Set([...prev, ...startedTaskIds])]);
+      }
       // Undo snapshots taken before the save describe a pre-save world —
       // popping one would resurrect just-saved values as dirty edits (§8.4).
       undoStackRef.current = [];
@@ -973,7 +989,8 @@ export default function BulkEditor() {
   // accumulated baselines and the undo stack are the page's own state and stay
   // exactly as they are, and no form is submitted. There is no autosave here,
   // and there must never be one.
-  useBackgroundTaskRefresh(lastRetranslation?.taskIds, () => {
+  useBackgroundTaskRefresh(watchedTaskIds, () => {
+    setWatchedTaskIds([]);
     revalidator.revalidate();
   });
 
