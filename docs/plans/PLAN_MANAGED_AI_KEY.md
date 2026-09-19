@@ -709,8 +709,8 @@ draft** — all four were found by review, all four are free money for somebody:
    uninstall + `shop/redact` deletes the whole `AISettings` row and makes the
    shop trial-eligible again) is 50–100× more expensive here than it is for the
    taster, so it is stated in euros, not waved at.
-2. **A shop that pays nothing gets the FREE tier's cost limits, whatever plan
-   it holds** — the owner's rule, 2026-09-19, and §7a is the whole of it.
+2. **A shop that pays nothing gets no managed AI budget, whatever plan it
+   holds** — the owner's rule, 2026-09-19; §7a is the whole of it.
 3. **The budget period is the BILLING period, not the calendar month.** Plans
    bill `EVERY_30_DAYS` with `APPLY_IMMEDIATELY` proration on switches, while
    `ImageOperationCounter`'s "YYYY-MM" key is a calendar month. Keeping the
@@ -742,7 +742,7 @@ limit, which keeps the story intact), and nobody is migrated.
 
 ---
 
-## 7a. A shop that pays nothing gets Free's COST limits — and nothing else changes
+## 7a. A shop that pays nothing gets no managed AI budget
 
 In PRODUCTION `getCurrentSubscription` accepts `test: true` subscriptions for
 partner development stores (`allowTest = inTestBilling || isDevStore(admin)`),
@@ -752,30 +752,35 @@ is real provider spend against a charge that never happens, and a partner can
 create development stores nearly without limit. This is a bigger hole than the
 Free taster the plan spends a page sizing.
 
-**The rule, decided 2026-09-19:** such a shop is treated as **Free for every
-limit that costs US money**, and is otherwise untouched.
+**The rule, decided 2026-09-19:** such a shop gets the **Free tier's AI
+allowance** — the one-time taster, never a period budget — and **nothing else
+about it changes**.
 
-**What is capped** — each resolves at the Free tier's number regardless of the
-subscribed plan: the managed AI budget → the one-time taster only, never a
-period budget; `monthlyImageOperations` → 0; `dailyPageSpeedRuns` → 5;
-`monthlyIndexNowSubmissions` → 0. Those four are exactly the quotas whose
-consumption lands on an invoice of ours — AI tokens, image compute, Google's
-PSI key, IndexNow submissions.
+**Only AI is capped, and that is a distinction with a reason rather than a
+threshold.** The other quotas that cost us something — `monthlyImageOperations`,
+`dailyPageSpeedRuns`, `monthlyIndexNowSubmissions` — are all spent by a HUMAN
+doing one thing at a time: a merchant uploads an image, presses "measure", asks
+for a submission. Their worst case is bounded by how fast somebody can click,
+and the per-unit cost is small. Managed AI is the one budget that is spent
+UNATTENDED: a webhook storm, a nightly drift sweep or a bulk flush can run
+thousands of calls with nobody at the screen (§6a). So the cap follows the
+structural difference, not the price list — and the practical payoff is that a
+development store stays fully usable for testing the image manager, PageSpeed
+and IndexNow, which capping them would have taken away.
 
-**What is NOT capped, deliberately:**
+**What is explicitly NOT touched:**
 
-- **BYO AI stays unlimited.** It costs us nothing, so there is no reason to
-  restrict it — and it is what keeps a development store fully usable for
-  testing every AI path in the app.
-- **Entitlements are untouched.** `maxProducts`, `contentTypes`, the SEO
-  feature flags, `scoreHistoryDays`, `maxTrackedKeywords` and the rest keep
-  whatever the plan says, so a Max feature stays testable on a Max dev store.
-  That is not a softening of the rule but the difference between "costs us
-  money" and "is a feature" — and collapsing the two has a consequence nobody
-  wants: **`getSyncScope` and `planCacheCleanup` read the plan**, so a dev shop
-  resolving to `free` everywhere would make the cleanup DELETE every cached
-  product past 50 on the owner's own test store. A cost cap must never reach a
-  path that deletes data.
+- **BYO AI stays unlimited.** It costs us nothing, so a development store can
+  exercise every AI path in the app by supplying a key — which is also the way
+  to test AI features on a dev store at all.
+- **Entitlements stay on the subscribed plan.** `maxProducts`, `contentTypes`,
+  the SEO feature flags and the rest are untouched, so Max features stay
+  testable. This is not a softening: substituting the plan wholesale would
+  reach **`getSyncScope` and `planCacheCleanup`**, which read it — and a dev
+  shop resolving to `free` there would make the cleanup DELETE every cached
+  product past 50 on the owner's own test store. Because only the managed-AI
+  budget is capped, no plan substitution happens anywhere and that path cannot
+  be reached by accident.
 
 **Detection is both signals, and a failed lookup is not one.**
 `isCostCappedShop` answers true when `shop.plan.partnerDevelopment === true`
@@ -787,21 +792,15 @@ and a failure counts as **NOT capped**: refusing a paying merchant the AI they
 bought is the expensive error, while the other direction is already bounded by
 the global managed cap (§9.3).
 
-**Where it lives is the whole safety of it.** ONE accessor,
-`costPlanFor(shop)`, returning a `Plan`, consulted by exactly the four cost
-quotas above — they already funnel through `planUtils`, so this changes what
-those accessors are handed rather than adding a gate to every route. No
-entitlement reader may call it, and `getSyncScope`/`planCacheCleanup` must not:
-a test asserts both directions, because the damage from a wrong call here is
-silent and one-way.
+**It lives in one place**: the managed-budget lookup in the credential resolver
+(§5), which is the only code that needs to know. There is no general
+"cost plan" substitution and deliberately so — a mechanism that could hand a
+`free` plan to an arbitrary reader is exactly the one that would eventually
+reach a deletion path.
 
-**Two things are stated rather than discovered.** The image manager and the
-PageSpeed section become effectively untestable on a development store (0 ops,
-5 runs/day) — the accepted price of the rule, with an explicit
-`COST_CAP_EXEMPT_SHOPS` allowlist as the escape for the one store where the
-owner needs to exercise them for real. And a merchant legitimately running a
+One residual, stated rather than discovered: a merchant legitimately running a
 paid plan on a store Shopify reports as `partnerDevelopment` would be capped
-too; that is not a combination a real customer has, but it is the one way this
+too. That is not a combination a real customer has, but it is the one way this
 rule can be wrong, so it is logged when it fires rather than applied silently.
 
 ---
@@ -1070,7 +1069,7 @@ review pass before it is called done.
 | `ai-credentials.test.ts` | the gate matrix: byo/managed × consent × budget × kill switch × **trial** × **test subscription** → exactly one decision each |
 | `stale-repair-budget-abort.test.ts` | §6a rule 1: a budget-refused detached repair purges NOTHING (the one that protects merchant data rather than money) |
 | `ai-key-source-isolation.test.ts` | no file outside the resolver reads a `MANAGED_AI_*` env var or builds an `AIServiceConfig` literal — the §B4 structural guarantee. Scope it to the managed names and carve out `api.ai-models.tsx`: a blanket `*_API_KEY` rule would match `SHOPIFY_API_KEY`, which has ~10 legitimate uses |
-| `cost-plan-scope.test.ts` | §7a: `costPlanFor` caps the four cost quotas on a dev/test shop, and NO entitlement reader calls it — above all not `getSyncScope`/`planCacheCleanup`, where a `free` answer would delete cached products on the owner's own store |
+| `managed-budget-dev-shop.test.ts` | §7a: a `partnerDevelopment` shop and a `test: true` subscription each get the taster and no period budget, a failed dev-store lookup does NOT cap, and BYO plus every entitlement stay untouched — no plan substitution reaches `getSyncScope`/`planCacheCleanup` |
 | `ai-key-preservation.test.ts` | §8a: BYO with six keys → switch to managed → two saves through other tabs → switch back, and every decrypted key, the provider and the model are byte-identical. Fails today by construction |
 | `billing-managed-variants.test.ts` | name→(plan, mode) and price→(plan, mode) round-trip; no two variants share a price |
 | GDPR coverage guard | `AiUsageCounter` is purged by `redactShopData` |
