@@ -2550,7 +2550,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 ? (t.content?.clearAllConfirmMessage ||
                   "Are you sure you want to clear all fields? This will remove all content from the current item. You will need to save the changes to make them permanent.")
                 : (t.content?.clearAllForLocaleConfirmMessage ||
-                  `Are you sure you want to clear all translations for ${shopLocales.find(l => l.locale === state.currentLanguage)?.name || state.currentLanguage}? This will remove all translated content for this language. You will need to save the changes to make them permanent.`)}
+                  "Are you sure you want to clear all translations for {language}? This will remove all translated content for this language. You will need to save the changes to make them permanent."
+                ).replace(
+                  "{language}",
+                  shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage,
+                )}
             </Text>
           </TextContainer>
         </Modal.Section>

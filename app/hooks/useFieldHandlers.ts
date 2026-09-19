@@ -746,6 +746,13 @@ const handleTranslateField = (fieldKey: string) => {
 
         savedLocaleRef.current = targetLocale;
         savedMarketIdRef.current = selectedMarketId;
+        // Same claim as handleSave/handleCopyFieldToAllLocales: without it the
+        // save-response effects fail their `isSavedItemCurrent` guard and
+        // early-return, so this translation never reaches onSaveComplete's
+        // overlay write or the tail revalidation — and `isSaveFromTranslateRef`
+        // is never reset either (its reset sits past that return), which
+        // swallows the "changes saved" box of the NEXT ordinary save.
+        savedItemIdRef.current = requestItemId;
         isSavePendingRef.current = true;
         isSaveFromTranslateRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
@@ -1716,7 +1723,18 @@ const handleClearAllForLocaleConfirm = () => {
 
   savedLocaleRef.current = currentLanguage;
   savedMarketIdRef.current = selectedMarketId;
+  // Track WHICH item is being saved, exactly like handleSave and the copy
+  // paths. Without it savedItemIdRef stays null (or holds a previous item) and
+  // BOTH save-response effects fail their `isSavedItemCurrent` guard and
+  // early-return: onSaveComplete never runs, and — the visible half — the
+  // REVALIDATION at the end of the second one never fires. The loader data
+  // therefore keeps the translations this save just deleted, so as soon as
+  // anything re-resolves the fields (an item switch, which clears
+  // deletedTranslationKeysRef, or a locale switch) the cleared values come
+  // straight back and only a full page reload shows the real state.
+  savedItemIdRef.current = selectedItemId;
   isSavePendingRef.current = true;
+  setIsSaving(true); // Drive the spinner — same reason as handleSave
   safeSubmit(formDataObj, { method: "POST" });
 };
 
