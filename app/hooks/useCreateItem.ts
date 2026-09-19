@@ -83,6 +83,16 @@ export interface UseCreateItemOptions {
    * create still reports success.
    */
   targetLocales?: string[];
+  /**
+   * The shop's PRIMARY locale — the source language of the chained translation.
+   *
+   * Absent, the route action falls back to a lookup of its own, and on a
+   * throttled one that used to become a hard-coded "en": both batch prompts NAME
+   * the source ("Translate these fields from English to: …"), so a German shop's
+   * new article was translated as if its text were English. Supplying it here
+   * also saves that lookup on every create-then-translate.
+   */
+  primaryLocale?: string;
   /** Fired when the chained translate-all finishes, so the caller can
    *  revalidate a SECOND time — the translations land in the DB after the
    *  create's own revalidation has already run. */
@@ -96,6 +106,7 @@ export function useCreateItem({
   atLimit = false,
   onCreated,
   targetLocales = [],
+  primaryLocale,
   onTranslated,
   texts,
 }: UseCreateItemOptions) {
@@ -362,6 +373,9 @@ export function useCreateItem({
       translateData.set("action", "translateAll");
       translateData.set("itemId", info.id);
       translateData.set("targetLocales", JSON.stringify(targetLocales));
+      // Same wire name the editor's own translate-all uses, and the one every
+      // receiving action reads the source language by.
+      if (primaryLocale) translateData.set("primaryLocale", primaryLocale);
       // Values come from the FORM, not from the freshly synced cache: the
       // action reads them off the request, and the merchant's own words are
       // the same ones that were just written to Shopify.
@@ -376,7 +390,7 @@ export function useCreateItem({
     // `translateFetcher` is stable across renders (useFetcher), so leaving it
     // out keeps this effect from re-running on every render of the editor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetcher.data, fetcher.state, onCreated, targetLocales]);
+  }, [fetcher.data, fetcher.state, onCreated, targetLocales, primaryLocale]);
 
   // The chained translation's own answer. Its failure is reported as a NOTE on
   // the created item, never as a create failure — the object exists either way,

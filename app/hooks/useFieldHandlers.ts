@@ -7,7 +7,7 @@
  */
 
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
-import { isAttributeField } from "../services/content-attributes.shared";
+import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { useCallback, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue, buildLocaleKey, buildDeletedKey, LOCALE_MARKET_SEP } from "./useUiDataLoader";
@@ -989,17 +989,36 @@ const handleTranslateAll = () => {
     action: "translateAll",
     itemId: selectedItemId,
     targetLocales: JSON.stringify(targetLocales),
+    // The SOURCE language of everything below, under the name every AI path in
+    // this app already reads it by — including the THEME content action, which
+    // this same handler posts to for `/app/templates` and its siblings.
+    //
+    // It used to be absent, and both receivers then defaulted it to "en" while
+    // both batch prompts NAME it ("Translate these fields from English to: …"):
+    // on a German shop the model was told the source was English — and for `en`
+    // as a TARGET that reads as translating English into English, which the
+    // batch helper's source-echo guard deliberately does not catch (a cell
+    // equal to its source is legitimate when the two languages are the same).
+    // The untranslated German could then be echo-confirmed and mirrored as the
+    // English translation.
+    primaryLocale,
   };
 
-  // Add all field values from primary locale.
+  // Add all field values from primary locale — the TRANSLATABLE ones only.
   // The merchandising attributes are left out: `status`, `vendor`, `tags` and
   // their siblings hold ONE value per item, have no Shopify translation key,
   // and sending them meant paying for an AI translation of "ACTIVE" that the
   // save then refused and reported to the merchant as a failed field. The
   // server filters on the canonical key map for the same reason; this keeps
   // them off the wire and out of the prompt.
+  //
+  // Asked in the POSITIVE (`isTranslatableFieldDefinition`) rather than by
+  // excluding `isAttributeField`, because the attributes are not the only field
+  // here that has no Shopify content key: an image GALLERY carries
+  // `translationKey: "images"`, which is not one either, and its alt-texts are
+  // translated by their own action further down this function.
   effectiveFieldDefinitions.forEach((field) => {
-    if (isAttributeField(field)) return;
+    if (!isTranslatableFieldDefinition(field)) return;
     const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
     if (value) {
       formDataObj[field.key] = value;
@@ -1759,17 +1778,26 @@ const handleTranslateAllForLocale = () => {
     action: "translateAllForLocale",
     itemId: selectedItemId,
     targetLocale: currentLanguage,
+    // See handleTranslateAll — both receivers default this to "en" and the
+    // prompts name it, so it has to be the shop's real primary locale.
+    primaryLocale,
   };
 
-  // Add all field values from primary locale.
+  // Add all field values from primary locale — the TRANSLATABLE ones only.
   // The merchandising attributes are left out: `status`, `vendor`, `tags` and
   // their siblings hold ONE value per item, have no Shopify translation key,
   // and sending them meant paying for an AI translation of "ACTIVE" that the
   // save then refused and reported to the merchant as a failed field. The
   // server filters on the canonical key map for the same reason; this keeps
   // them off the wire and out of the prompt.
+  //
+  // Asked in the POSITIVE (`isTranslatableFieldDefinition`) rather than by
+  // excluding `isAttributeField`, because the attributes are not the only field
+  // here that has no Shopify content key: an image GALLERY carries
+  // `translationKey: "images"`, which is not one either, and its alt-texts are
+  // translated by their own action further down this function.
   effectiveFieldDefinitions.forEach((field) => {
-    if (isAttributeField(field)) return;
+    if (!isTranslatableFieldDefinition(field)) return;
     const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
     if (value) {
       formDataObj[field.key] = value;

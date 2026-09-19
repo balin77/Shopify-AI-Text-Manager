@@ -57,6 +57,45 @@ export function isAttributeField(field: {
 }
 
 /**
+ * May this field definition be part of a TRANSLATION run at all?
+ *
+ * The complement of `isAttributeField` seen from the translation side, and it
+ * has to be asked BEFORE the AI call, not after it. `translateAllContent`'s
+ * `prepareField` rejects a field with no `FIELD_TO_TRANSLATION_KEY` entry — but
+ * it does so once the model has already translated it, which is the wrong end:
+ * the merchant paid for the tokens and then read `en: author, isPublished,
+ * templateSuffix` in a red "failed items" box about three fields that were
+ * never translatable and that nobody asked to have translated. Every content
+ * type has them (a product also ships `vendor`, `tags`, `status`, `category`
+ * and `collections` — the last two as bare GIDs), so a translate-all run asked
+ * the model to translate a `gid://shopify/TaxonomyCategory/…` and reported the
+ * result as a failure.
+ *
+ * `translationKey` is the config's own marker for "has no Shopify translation
+ * key at all", which is why the walk is on it rather than on `type` — and it is
+ * the same walk the editor's change-detection already does. The two further
+ * rails: `supportsTranslation === false` is the second mark those fields carry,
+ * and an image GALLERY carries a `translationKey` (`"images"`) that is not a
+ * Shopify content key either — its alt-texts are translated by their own
+ * action (`translateAllAltTextsToAllLocales`), never as a field of the row.
+ *
+ * This is the CLIENT-side half, and it exists as its own predicate because
+ * `FIELD_TO_TRANSLATION_KEY` lives in a server module the client cannot import.
+ * The server answers the same question from that map twice over —
+ * `collectTranslatableFields` at the action, `translateAllContent` behind it —
+ * because every one of these actions is directly POST-reachable.
+ */
+export function isTranslatableFieldDefinition(field: {
+  type?: string;
+  translationKey?: string;
+  supportsTranslation?: boolean;
+}): boolean {
+  if (!field.translationKey) return false;
+  if (field.supportsTranslation === false) return false;
+  return field.type !== "image-gallery";
+}
+
+/**
  * WHICH CARD a field renders in — the one place that decides, for all three.
  *
  * WHERE a field sits and HOW it saves are separate questions. `isAttributeField`

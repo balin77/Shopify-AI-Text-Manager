@@ -23,6 +23,35 @@ import type { PrismaClient } from "@prisma/client";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
 
+/**
+ * The SOURCE language of a translate request, or `undefined` when the caller
+ * named none.
+ *
+ * Three things this is not allowed to be, each of which it was:
+ *
+ * - It is not `"en"` by default. Both batch prompts NAME the source language
+ *   ("Translate these fields from English to: ..."), so on a German shop the
+ *   model was told German text was English - and with `en` among the TARGETS
+ *   that reads as translating English into English, which the batch helper's
+ *   source-echo guard skips on purpose (two identical languages legitimately
+ *   produce identical text). The untranslated German could then be
+ *   echo-confirmed and mirrored as the English translation. `undefined` hands
+ *   the question to `translateAllContent`, which answers it from the shop's own
+ *   primary locale.
+ * - It is not read from `sourceLocale` alone. The clients on the
+ *   translate-to-all-locales paths send the source as `primaryLocale` (the name
+ *   the `/api/ai` handlers read it under), so a handler asking only for
+ *   `sourceLocale` never saw it.
+ * - And an INVALID value is still refused rather than quietly replaced.
+ */
+function requestedSourceLocale(formData: FormData): string | undefined {
+  return (
+    getFormString(formData, "sourceLocale") ||
+    getFormString(formData, "primaryLocale") ||
+    undefined
+  );
+}
+
 // ============================================================================
 // METAOBJECT TRANSLATION HELPER (local copy)
 // ============================================================================
@@ -363,8 +392,8 @@ export async function handleTranslateAll(
 
   const targetLocalesStr = getFormString(formData, "targetLocales");
   const contextTitle = getFormString(formData, "title");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
-  if (!isValidLocale(sourceLocale)) {
+  const sourceLocale = requestedSourceLocale(formData);
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
@@ -530,11 +559,11 @@ export async function handleTranslateAllForLocale(
 
   const targetLocale = getFormString(formData, "targetLocale");
   const contextTitle = getFormString(formData, "title");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+  const sourceLocale = requestedSourceLocale(formData);
   if (!targetLocale || !isValidLocale(targetLocale)) {
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
   }
-  if (!isValidLocale(sourceLocale)) {
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
@@ -708,8 +737,8 @@ export async function handleTranslateFieldToAllLocales(
   const sourceText = getFormString(formData, "sourceText");
   const targetLocalesStr = getFormString(formData, "targetLocales");
   const contextTitle = getFormString(formData, "contextTitle");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
-  if (!isValidLocale(sourceLocale)) {
+  const sourceLocale = requestedSourceLocale(formData);
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 

@@ -15,6 +15,10 @@ import {
   keywordTranslationDirectiveMulti,
   type LocaleKeywords,
 } from '../../app/services/seo/keyword-translation-prompt';
+// The ONE threshold for "this came back byte-identical, so it was not
+// translated" — shared with translateFieldsToLocalesBatch's own guard rather
+// than restated, or the batch and the retry beside it would disagree.
+import { TRANSLATION_BATCH } from '../../app/config/constants';
 import type { PrismaClient } from "@prisma/client";
 import type { MarketInfo } from "../../app/types/content-editor.types";
 
@@ -53,6 +57,17 @@ export const FIELD_TO_TRANSLATION_KEY: Readonly<Record<string, string>> = {
   productType: 'product_type',
   summary: 'summary_html',
 };
+
+/**
+ * One string, comparable to another that may have been through a sanitizer.
+ *
+ * Only ever used to answer "did the model hand the SOURCE back", never to
+ * decide what gets stored — the value written is always the one that came off
+ * the wire.
+ */
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
 
 /** The field→key map with the single ShopPolicy exception applied
  * (description/body → "body" instead of "body_html"). */
@@ -1873,9 +1888,18 @@ export class ShopifyContentService {
 
   /**
    * Batch translate all fields for all target locales
-   * Uses hybrid approach:
-   * - Short fields (title, seoTitle, handle): 1 batch AI request for all locales
-   * - Long fields (description, body, metaDescription): 1 AI request per locale
+   * Uses hybrid approach — TWO batched AI requests, not one per language:
+   * - Short fields (title, seoTitle, handle, productType): one request for
+   *   every locale (`translateShortFieldsBatch`).
+   * - Long fields (description, body, summary, metaDescription): one request
+   *   for every locale too (`translateFieldsToLocalesChunked`), which splits
+   *   only when the estimated output would exceed the providers' 8192-token
+   *   ceiling. See STEP 2 for why the two halves are not merged into one
+   *   request, and why a per-locale split is the floor rather than a gap.
+   *
+   * A field with no `FIELD_TO_TRANSLATION_KEY` entry never reaches either
+   * request: it could not be saved as a translation, so translating it only
+   * bought tokens and a failure line (see the filter below).
    */
   async translateAllContent(params: {
     resourceId: string;
@@ -1885,6 +1909,12 @@ export class ShopifyContentService {
     translationService: {
       translateProduct: (fields: Record<string, string>, locales: string[], contentType?: string, instructions?: string, keywordDirective?: string) => Promise<Record<string, Record<string, string>>>;
       translateShortFieldsBatch?: (fields: Record<string, string>, sourceLocale: string, targetLocales: string[], contentType?: string, instructions?: string, keywordDirective?: string) => Promise<Record<string, Record<string, string>>>;
+      /**
+       * The LONG half's batch: every field into every locale in as few requests
+       * as the output ceiling allows (STEP 2). OPTIONAL, and absent means the
+       * per-locale loop — which is what it replaced, kept as the fallback.
+       */
+      translateFieldsToLocalesChunked?: (fields: Record<string, string>, sourceLocale: string, targetLocales: string[], options?: { preserveHtml?: boolean; contextLabel?: string; customInstructions?: string; keywordDirectiveFor?: (locales: string[]) => string | undefined }) => Promise<Record<string, Record<string, string>>>;
     };
     db: PrismaClient;
     targetLocales?: string[];
@@ -1899,7 +1929,7 @@ export class ShopifyContentService {
      */
     keywordAwareTranslation?: boolean;
   }) {
-    const { resourceId, resourceType, shop, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'en', keywordAwareTranslation = false } = params;
+    const { resourceId, resourceType, shop, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale: requestedSourceLocale, keywordAwareTranslation = false } = params;
 
     // Fetch digest map once for all translations
     const { digestMap } = await this.loadTranslatableContent(resourceId);
@@ -1909,16 +1939,42 @@ export class ShopifyContentService {
     loggers.translation('debug', `translateAllContent digestMap keys for ${resourceId}`, { keys: Object.keys(digestMap) });
     loggers.translation('debug', 'translateAllContent has summary_html digest', { hasSummaryHtmlDigest: !!digestMap['summary_html'] });
 
-    // Get target locales (use custom list if provided, otherwise all published locales)
-    let targetLocales: string[];
-    if (customTargetLocales) {
-      targetLocales = customTargetLocales;
-    } else {
-      const { shopLocales } = await this.loadShopLocales();
-      targetLocales = shopLocales
-        .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
-        .map((l: { locale: string }) => l.locale);
+    // Get target locales (use custom list if provided, otherwise all published
+    // locales) — and, in the same read, the SOURCE language when the caller did
+    // not name one.
+    //
+    // ONE lookup answers both the target list and the SOURCE language, it runs
+    // only when the caller left one of them open, and it is deliberately NOT
+    // wrapped in a catch — for the two halves it feeds, the same reason.
+    //
+    // The source language used to be a hard-coded 'en' with no lookup at all,
+    // and both batch prompts NAME it ("Translate these fields from English
+    // to: …"): on a German shop the model was told German text was English, and
+    // with `en` among the TARGETS that reads as translating English into
+    // English — an identity instruction the batch helper's source-echo guard
+    // skips on purpose (two identical languages legitimately produce identical
+    // text), so the untranslated German could be echo-confirmed and mirrored as
+    // the English translation. Falling back to 'en' on a FAILED lookup would
+    // reach exactly that state again, from a second direction, and silently.
+    // Not knowing which language the text is in is not a state this can
+    // proceed from, so it throws — the merchant gets a failed task they can
+    // retry instead of a mirror row saying German is English. The target list
+    // has never been allowed to come from a failed lookup either: an empty list
+    // is a run that translates nothing and reports `completed`, and the throw
+    // is what lets a 401 reach the request so it can re-authenticate ("Never
+    // gate on a failed lookup", CLAUDE.md).
+    let shopLocales: Array<{ locale: string; primary: boolean; published: boolean }> = [];
+    if (!customTargetLocales || !requestedSourceLocale) {
+      ({ shopLocales } = await this.loadShopLocales());
     }
+    const targetLocales: string[] = customTargetLocales ?? shopLocales
+      .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+      .map((l: { locale: string }) => l.locale);
+    // 'en' remains the last resort for a lookup that SUCCEEDED and reported no
+    // primary locale at all, which is not a shop this app can be installed on.
+    const sourceLocale: string = requestedSourceLocale
+      || shopLocales.find((l: { primary: boolean }) => l.primary)?.locale
+      || 'en';
 
     // Keyword-aware translation: each target locale's OWN tracked keywords, so
     // the translated text is phrased to carry them instead of being a literal
@@ -1985,12 +2041,74 @@ export class ShopifyContentService {
       if (!skippedFields[locale].includes(field)) skippedFields[locale].push(field);
     };
 
+    // ShopPolicy uses "body", all other resource types use "body_html" — the
+    // ONE canonical map (FIELD_TO_TRANSLATION_KEY, top of this file). Read
+    // BEFORE the partition below, because it is also the gate into it.
+    const keyMapping = fieldTranslationKeyMap(resourceType);
+
+    // A field this map does not know cannot be SAVED as a translation, so it
+    // must not be TRANSLATED either — and the check has to happen here, before
+    // the AI call, not in `prepareField` afterwards. Every content editor sends
+    // its merchandising attributes along (an article ships `author`,
+    // `isPublished` and `templateSuffix`; a product adds `vendor`, `tags`,
+    // `status` and two bare GIDs in `category`/`collections`), and the old
+    // order paid the model to translate all of them and then reported the
+    // result to the merchant as `en: author, isPublished, templateSuffix` in a
+    // red "failed items" box — about fields that hold ONE value per item and
+    // that nobody asked to have translated.
+    //
+    // Two layers ahead of this one already filter, and neither replaces it. The
+    // editors stop paying for the tokens (`isTranslatableFieldDefinition`,
+    // which is the same question asked where the config lives, since this map
+    // is in a server module the client cannot import), and
+    // `collectTranslatableFields` gates the two field-collecting entry points
+    // on this very map. This is the one every caller passes through: the
+    // single-FIELD entrance sets `changedFields[fieldType]` with no gate at
+    // all, and every one of them is directly POST-reachable.
+    //
+    // `prepareField`'s own no-keyMapping branch STAYS: from here on it can only
+    // be reached by a key the MODEL invented, which is a surprise worth
+    // reporting, rather than by one the caller always sends.
+    const translatableFields: Record<string, string> = {};
+    const untranslatableKeys: string[] = [];
+    for (const [key, value] of Object.entries(fields)) {
+      if (keyMapping[key]) translatableFields[key] = value;
+      else if (value) untranslatableKeys.push(key);
+    }
+    if (untranslatableKeys.length > 0) {
+      loggers.translation('debug', 'translateAllContent: dropped fields with no translation key', {
+        dropped: untranslatableKeys,
+      });
+    }
+
+    // Dropping is SILENT only while something else was translated. A caller
+    // whose every field fell out asked for a translation and would otherwise be
+    // answered `success` with an empty map — the single-field entrances reach
+    // this with one field (a metaobject's `<gid>#<key>` has no entry in the
+    // map), and a client told "translated" writes those empty strings into its
+    // overlay. So there the fields are reported exactly as `prepareField`
+    // reported them before this filter existed. Nothing is hidden and nothing
+    // is invented: the noise this removes is a run that DID translate the
+    // merchant's text and then named the editor's own attribute fields beside
+    // it.
+    const nothingTranslatable =
+      Object.keys(translatableFields).length === 0 && untranslatableKeys.length > 0;
+    if (nothingTranslatable) {
+      loggers.translation('warn', 'translateAllContent: every field was untranslatable', {
+        resourceType,
+        fields: untranslatableKeys,
+      });
+      for (const locale of targetLocales) {
+        for (const key of untranslatableKeys) recordRejected(locale, key);
+      }
+    }
+
     // Separate short and long fields
     const SHORT_FIELD_KEYS = ['title', 'seoTitle', 'handle', 'productType'];
     const shortFields: Record<string, string> = {};
     const longFields: Record<string, string> = {};
 
-    for (const [key, value] of Object.entries(fields)) {
+    for (const [key, value] of Object.entries(translatableFields)) {
       if (value) {
         if (SHORT_FIELD_KEYS.includes(key)) {
           shortFields[key] = value;
@@ -2004,10 +2122,6 @@ export class ShopifyContentService {
     const hasLongFields = Object.keys(longFields).length > 0;
 
     loggers.translation('debug', 'Using hybrid approach', { shortFields: Object.keys(shortFields), longFields: Object.keys(longFields) });
-
-    // ShopPolicy uses "body", all other resource types use "body_html" — the
-    // ONE canonical map (FIELD_TO_TRANSLATION_KEY, top of this file).
-    const keyMapping = fieldTranslationKeyMap(resourceType);
 
     // Track which translation keys have already had a digest retry to avoid
     // redundant loadTranslatableContent calls for the same missing key.
@@ -2404,13 +2518,159 @@ export class ShopifyContentService {
       }
     }
 
-    // === STEP 2: Sequential translate long fields (1 AI request per locale) ===
+    // === STEP 2: Long fields — ONE batched AI request for every locale ======
+    //
+    // This used to be a flat `for (const locale of targetLocales)` loop, i.e.
+    // one AI request per language while the short fields right above it were
+    // already answered for every language in a single call: a four-language
+    // shop paid one request for title/seoTitle/handle and then four more for
+    // the description. The batching helper is the same one the bulk editor's
+    // long columns and the single-field "translate to all locales" path have
+    // used for a while (`translateFieldsToLocalesChunked`), and it is a
+    // CHUNKING wrapper, not a naive join: it sends one request while the
+    // estimated OUTPUT fits `TRANSLATION_BATCH.CHUNK_THRESHOLD_CHARS` and only
+    // then splits — by locale first, then by field, and per locale for a single
+    // field too large on its own. That threshold is derived from the providers'
+    // `max_tokens: 8192`, so a 20 000-character article body genuinely cannot
+    // be translated into four languages in one response: the answer would be
+    // truncated, and the assertion inside the helper would reject the whole
+    // call. Splitting is therefore the floor, not a missed optimisation.
+    //
+    // Why not fold the short fields in as well and have exactly ONE request:
+    // the two prompts are not interchangeable. The short one states the URL-slug
+    // rules, carries the SEO length caps and sanitises with
+    // `allowNewlines: false`; the long one preserves HTML and imposes no length
+    // cap. Merging them would have to drop one set of rules, and it would tie
+    // the SEO-critical fields to the fate of a body big enough to fail — one
+    // truncated response would then cost the title, the SEO title and the
+    // handle too, which today succeed independently.
+    //
+    // The per-locale loop stays as the FALLBACK, for a translationService that
+    // does not offer the batched method (the unit tests' fakes) and for a batch
+    // that failed outright.
     if (hasLongFields) {
+      let batched: Record<string, Record<string, string>> | null = null;
+      if (translationService.translateFieldsToLocalesChunked) {
+        try {
+          loggers.translation('debug', `Batch translating long fields to ${targetLocales.length} locales`, { longFields: Object.keys(longFields) });
+          batched = await translationService.translateFieldsToLocalesChunked(
+            longFields,
+            sourceLocale,
+            targetLocales,
+            {
+              preserveHtml: true,
+              contextLabel: contentType || 'product',
+              // The per-locale path below passes both, so the batch has to as
+              // well: without them the merchant's translate instructions, the
+              // seo_optimized length caps and keyword-aware translation would
+              // apply only when the batch FAILED.
+              customInstructions,
+              // Built per CHUNK, because the helper may split by locale — the
+              // clause must name the languages that chunk really translates.
+              keywordDirectiveFor: (locales) =>
+                keywordTranslationDirectiveMulti(
+                  locales
+                    .map((locale) => keywordsByLocale.get(locale))
+                    .filter((entry): entry is LocaleKeywords => !!entry),
+                ) || undefined,
+            },
+          );
+        } catch (batchError: unknown) {
+          // Invalid API key: the per-locale fallback would fail identically —
+          // surface it instead of degrading to a doomed second pass.
+          if (isAuthError(batchError)) throw batchError;
+          loggers.translation('error', 'Batch long fields failed, falling back to per-locale', {
+            error: batchError instanceof Error ? batchError.message : String(batchError),
+          });
+        }
+      }
+
       for (const locale of targetLocales) {
         try {
-          loggers.translation('debug', `Translating long fields to ${locale}`, { longFields: Object.keys(longFields) });
-          const localeTranslations = await translationService.translateProduct(longFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
-          const translatedFields = localeTranslations[locale];
+          // A locale the batch answered in full costs no further request. One it
+          // answered only PARTLY is a partial failure of exactly that chunk, so
+          // the MISSING FIELDS are asked for on their own — the cells the batch
+          // did deliver are kept, because re-asking for them would pay for
+          // tokens twice and lose them outright if the retry throws. (One chunk
+          // failing must likewise not cost the languages it never carried.)
+          const fromBatch = batched?.[locale];
+          const answered = (key: string): boolean =>
+            typeof fromBatch?.[key] === 'string' && fromBatch[key].trim() !== '';
+          const missingKeys = Object.keys(longFields).filter((key) => !answered(key));
+          let translatedFields: Record<string, string> | undefined;
+          if (missingKeys.length === 0) {
+            translatedFields = fromBatch;
+          } else {
+            const retryFields: Record<string, string> = {};
+            for (const key of missingKeys) retryFields[key] = longFields[key];
+            if (batched) {
+              loggers.translation('warn', `Long-field batch incomplete for ${locale} — retrying those fields alone`, {
+                missing: missingKeys,
+              });
+            }
+            loggers.translation('debug', `Translating long fields to ${locale}`, { longFields: missingKeys });
+            // The retry has its OWN catch, and that is the whole point of the
+            // merge above: a 429 on it must cost only the fields it was asked
+            // for, never the ones the batch already delivered for this locale.
+            // An auth error is the one thing that still travels out — every
+            // remaining locale would fail identically.
+            let retried: Record<string, string> | undefined;
+            try {
+              const localeTranslations = await translationService.translateProduct(retryFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
+              retried = localeTranslations[locale];
+            } catch (retryError: unknown) {
+              if (isAuthError(retryError)) throw retryError;
+              loggers.translation('error', `Long-field retry failed for ${locale} — keeping what the batch delivered`, {
+                fields: missingKeys,
+                error: retryError instanceof Error ? retryError.message : String(retryError),
+              });
+            }
+            // Iterated over the fields that were ASKED for, never over the
+            // answer's own keys: `assertNestedComplete` checks only that the
+            // requested ones are there, so a model-invented extra key would
+            // reach `longFields[key].trim()` as undefined and throw a TypeError
+            // — caught per locale, costing every field the batch had translated
+            // for it.
+            for (const key of missingKeys) {
+              const out = String(retried?.[key] ?? '').trim();
+              const src = longFields[key].trim();
+              // `translateProduct` has no source-echo guard, while the reason a
+              // cell is missing here is often that the batch DROPPED it for
+              // coming back as the source verbatim. Taking such a value now
+              // would persist untranslated text as a translation — worse than
+              // an empty cell. Judged exactly as the batch judges it: only a
+              // LONG echo, because a short value is legitimately identical
+              // across languages.
+              //
+              // Compared on COLLAPSED WHITESPACE, which is the difference
+              // between a guard and a comment claiming there is one:
+              // `translateFields` sanitizes with `allowNewlines: false` for
+              // every key but `description`, so a `body`/`summary`/
+              // `metaDescription` echo comes back as the source with its
+              // newlines turned into spaces — byte-different at identical
+              // length, which a `===` on the raw strings never catches. That is
+              // every multi-line body on this path.
+              const echoed =
+                !!out &&
+                collapseWhitespace(out) === collapseWhitespace(src) &&
+                src.length >= TRANSLATION_BATCH.ECHO_FAILURE_MIN_CHARS;
+              if (echoed) {
+                loggers.translation('warn', `Dropped an echoed (untranslated) retry cell for ${locale}`, { field: key });
+                if (retried) delete retried[key];
+              }
+              // Every field this pass could not deliver is REPORTED — dropped
+              // as an echo, or never answered at all. Without it a locale whose
+              // OTHER fields saved reads as a clean success with one field
+              // silently never translated (`collectLocaleTranslations` only
+              // reports the keys it is handed, and a missing one is not among
+              // them).
+              if (echoed || !out) recordRejected(locale, key);
+            }
+            translatedFields = { ...(fromBatch ?? {}), ...(retried ?? {}) };
+            // Nothing survived either pass — the locale has no translation, and
+            // the branch below has to see that rather than an empty object.
+            if (Object.keys(translatedFields).length === 0) translatedFields = undefined;
+          }
 
           if (translatedFields) {
             const prepared = await collectLocaleTranslations(locale, translatedFields);
@@ -2563,7 +2823,12 @@ export class ShopifyContentService {
     // `completed_with_errors`, so those runs now report a PARTIAL FAILURE
     // where they used to report a clean success. Nothing about what is written
     // to Shopify or to the DB changes — only what the run reports about itself.
-    if (hasShortFields || hasLongFields) {
+    // `nothingTranslatable` joins the two: a run whose every field fell out of
+    // the map saved nothing in every locale, which is what it reported before
+    // the filter above existed (the fields reached the AI, were translated, and
+    // were refused by `prepareField`). Reporting it as a plain success is the
+    // one answer that would be new — and wrong.
+    if (hasShortFields || hasLongFields || nothingTranslatable) {
       const savedPerLocale = new Map<string, number>();
       for (const p of allSaved) savedPerLocale.set(p.locale, (savedPerLocale.get(p.locale) ?? 0) + 1);
       const preparedPerLocale = new Map<string, number>();

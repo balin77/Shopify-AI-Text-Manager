@@ -1,4 +1,9 @@
-import { AIService, type AIProvider, type AIServiceConfig } from './ai.service';
+import {
+  AIService,
+  type AIProvider,
+  type AIServiceConfig,
+  type TranslateFieldsToLocalesOptions,
+} from './ai.service';
 
 export class TranslationService {
   private aiService: AIService;
@@ -57,6 +62,31 @@ export class TranslationService {
     targetLocales: string[]
   ): Promise<Record<string, string>> {
     return await this.aiService.translateSlugBatch(slug, fromLang, targetLocales);
+  }
+
+  /**
+   * Translate LONG fields (description, body, summary, meta description) into
+   * every target locale in as few AI requests as the providers' output ceiling
+   * allows — one, in the common case.
+   *
+   * The counterpart of `translateShortFieldsBatch` for the other half of a
+   * translate-all run, and the reason this wrapper exists at all:
+   * `translateAllContent` reaches the AI only through this object, so a method
+   * missing here meant its long fields had to go one language at a time while
+   * its short fields were already answered in a single call.
+   */
+  async translateFieldsToLocalesChunked(
+    fields: Record<string, string>,
+    fromLang: string,
+    targetLocales: string[],
+    options: TranslateFieldsToLocalesOptions = {}
+  ): Promise<Record<string, Record<string, string>>> {
+    return await this.aiService.translateFieldsToLocalesChunked(
+      fields,
+      fromLang,
+      targetLocales,
+      options,
+    );
   }
 
   /**
