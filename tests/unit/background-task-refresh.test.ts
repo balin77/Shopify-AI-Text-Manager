@@ -39,12 +39,35 @@ describe("unfinishedTaskIds", () => {
     expect(unfinishedTaskIds(["a"], { a: MISSING_TASK_STATUS }, false)).toEqual([]);
   });
 
-  it("a poll that answered nothing at all is not evidence either", () => {
+  it("keeps a missing task past its grace while a SIBLING is still working", () => {
+    // The repair runs of one bulk-edited row share a `resourceId`, so they
+    // share an in-flight key and run strictly one after another: the second
+    // one's Task row does not exist until the first has finished. Giving up on
+    // it because a clock ran out ends the watch with its translations still
+    // unwritten — the empty cells this whole path exists to fill.
+    expect(unfinishedTaskIds(["a", "b"], { a: "running", b: MISSING_TASK_STATUS }, false)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("a poll that answered NOTHING is not an answer, at any point in the grace", () => {
     // A failed request, a 500, a truncated response: the id is simply absent
-    // from the map. That is the same non-answer as `missing` and must never be
-    // read as a terminal status.
+    // from the map. `missing` is a real answer from a healthy poll and its
+    // grace may expire; a non-answer's never may, or one transient failure
+    // after 90 seconds would end the watch for good.
     expect(unfinishedTaskIds(["a"], {}, true)).toEqual(["a"]);
-    expect(unfinishedTaskIds(["a"], {}, false)).toEqual([]);
+    expect(unfinishedTaskIds(["a"], {}, false)).toEqual(["a"]);
+  });
+
+  it("an unanswered id also keeps a missing sibling alive", () => {
+    expect(unfinishedTaskIds(["a", "b"], { b: MISSING_TASK_STATUS }, false)).toEqual(["a", "b"]);
+  });
+
+  it("gives up on missing ids only when nothing else is left to wait for", () => {
+    expect(
+      unfinishedTaskIds(["a", "b"], { a: "completed", b: MISSING_TASK_STATUS }, false),
+    ).toEqual([]);
   });
 
   it("waits for the slowest id, not the first", () => {
