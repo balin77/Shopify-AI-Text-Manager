@@ -991,8 +991,15 @@ const handleTranslateAll = () => {
     targetLocales: JSON.stringify(targetLocales),
   };
 
-  // Add all field values from primary locale
+  // Add all field values from primary locale.
+  // The merchandising attributes are left out: `status`, `vendor`, `tags` and
+  // their siblings hold ONE value per item, have no Shopify translation key,
+  // and sending them meant paying for an AI translation of "ACTIVE" that the
+  // save then refused and reported to the merchant as a failed field. The
+  // server filters on the canonical key map for the same reason; this keeps
+  // them off the wire and out of the prompt.
   effectiveFieldDefinitions.forEach((field) => {
+    if (isAttributeField(field)) return;
     const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
     if (value) {
       formDataObj[field.key] = value;
@@ -1754,8 +1761,15 @@ const handleTranslateAllForLocale = () => {
     targetLocale: currentLanguage,
   };
 
-  // Add all field values from primary locale
+  // Add all field values from primary locale.
+  // The merchandising attributes are left out: `status`, `vendor`, `tags` and
+  // their siblings hold ONE value per item, have no Shopify translation key,
+  // and sending them meant paying for an AI translation of "ACTIVE" that the
+  // save then refused and reported to the merchant as a failed field. The
+  // server filters on the canonical key map for the same reason; this keeps
+  // them off the wire and out of the prompt.
   effectiveFieldDefinitions.forEach((field) => {
+    if (isAttributeField(field)) return;
     const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
     if (value) {
       formDataObj[field.key] = value;
