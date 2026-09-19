@@ -43,65 +43,46 @@ export const MISSING_TASK_STATUS = "missing";
 
 const POLL_INTERVAL_MS = 5_000;
 /**
- * How long a task id with no row yet still counts as "starting", once nothing
- * else this watch knows about is working either.
+ * The ONE bound on the watch.
  *
- * A repair run is spawned and not awaited, so `missing` genuinely means "not
- * yet" for a while. Past this it means the run never started — but only when
- * nothing is left that it could still be queued behind; see
- * `unfinishedTaskIds`.
+ * There used to be a second, shorter one for a task id with no row yet, on the
+ * argument that such a run never started. It cost more than it bought, twice
+ * over: a repair run is spawned and not awaited, and runs for the same resource
+ * are SERIAL (they share an in-flight key — all three repair surfaces of one
+ * bulk-edited product do, and so does a run left over from an earlier save), so
+ * a row legitimately appears minutes after the save that reported its id. Every
+ * expiry of that grace ended the watch against a run that had written nothing,
+ * which is the empty cell this hook exists to fill. So a task that has not
+ * answered "terminal" is simply still working, and this is what stops the poll:
+ * at worst a save whose run really never started costs one small query every
+ * five seconds for this long, and then one refresh.
  */
-const MISSING_GRACE_MS = 90_000;
 const MAX_WATCH_MS = 5 * 60_000;
 
 /**
  * Which of `ids` are still worth waiting for. Pure, so the rule that decides
  * when a page stops polling is testable without a timer.
  *
- * THREE answers, not two, and the distinction is the whole rule.
- *
- * A status this map does not carry AT ALL is a poll that failed (a throw, a
- * non-2xx, the route's own 500 branch). It says nothing about the task, so it
- * can never end the watch — the next tick asks again, and `MAX_WATCH_MS` is
- * what bounds a server that stays down.
- *
- * A status of `missing` is a real answer from a healthy poll: the row is not
- * there. That is still NOT-YET while anything else this watch holds is alive,
- * because a repair run queued behind a sibling for the same resource creates
- * its row only when it reaches the head of that queue — and all three repair
- * surfaces of one bulk-edited product (content, sub-resources, alt texts) pass
- * the SAME product GID, so they share an in-flight key and run strictly one
- * after another, long past any grace measured from the save. Only with nothing
- * working and the grace spent does `missing` mean "this never started".
+ * ONLY a terminal status ends the wait for an id. The other two answers look
+ * different and mean the same thing here: `missing` is a healthy poll saying
+ * the row is not there YET (see `MAX_WATCH_MS`), and an id absent from the map
+ * altogether is a poll that failed — a throw, a non-2xx, the route's own 500
+ * branch — which says nothing about the task at all. Reading either as done
+ * refreshes the grid before a single translation is written.
  */
 export function unfinishedTaskIds(
   ids: readonly string[],
   statuses: Readonly<Record<string, string>>,
-  /** True while an id with no row yet still counts as starting on its own. */
-  missingStillCounts: boolean,
 ): string[] {
-  const stateOf = (id: string): "done" | "working" | "missing" | "unanswered" => {
-    const status = statuses[id];
-    if (status === undefined) return "unanswered";
-    if (status === MISSING_TASK_STATUS) return "missing";
-    return TERMINAL_TASK_STATUSES.has(status) ? "done" : "working";
-  };
-  const states = new Map(ids.map((id) => [id, stateOf(id)] as const));
-  const somethingAlive = [...states.values()].some(
-    (state) => state === "working" || state === "unanswered",
-  );
-  return ids.filter((id) => {
-    const state = states.get(id);
-    if (state === "done") return false;
-    if (state === "missing") return missingStillCounts || somethingAlive;
-    return true;
-  });
+  return ids.filter((id) => !TERMINAL_TASK_STATUSES.has(statuses[id] ?? ""));
 }
 
 /**
- * @param taskIds  The ids to watch, or null/empty for "nothing to watch". A new
- *                 ARRAY IDENTITY starts a new watch, so pass the value straight
- *                 off the save result rather than re-deriving it every render.
+ * @param taskIds  The ids to watch, or null/empty for "nothing to watch". The
+ *                 watch is keyed on the ids THEMSELVES, not on the array's
+ *                 identity: a caller that rebuilds the array every render (a
+ *                 `?? []`, a `.filter`) would otherwise re-arm the timer before
+ *                 it ever fires, and `onFinished` would silently never run.
  * @param onFinished Called at most once per watch, when every id is terminal
  *                 (or the watch times out). Must only refresh the display.
  */
@@ -114,24 +95,15 @@ export function useBackgroundTaskRefresh(
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
 
+  // Structural, for the reason in the param doc. Sorted because the order of
+  // the ids says nothing about what is being watched.
+  const watchKey = [...new Set((taskIds ?? []).filter(Boolean))].sort().join(",");
+
   useEffect(() => {
-    const ids = [...new Set((taskIds ?? []).filter(Boolean))];
-    if (ids.length === 0) return;
+    if (!watchKey) return;
+    const ids = watchKey.split(",");
 
     const startedAt = Date.now();
-    /**
-     * When this watch last saw a task REACH a terminal state — what the
-     * `missing` grace is measured from, not the start of the watch.
-     *
-     * The repair runs of one bulk-edited row are serial (they share a
-     * `resourceId`, so they share an in-flight key), so the second one's Task
-     * row appears only once the first has finished. Measured from the save,
-     * its grace would have expired while it was still queued; measured from
-     * the last thing that actually happened, it gets its own.
-     */
-    let lastProgressAt = startedAt;
-    /** Monotonic, so a failed poll (which answers nothing) cannot move it. */
-    let terminalSeen = 0;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -145,8 +117,7 @@ export function useBackgroundTaskRefresh(
 
     const tick = async () => {
       if (cancelled) return;
-      const elapsed = Date.now() - startedAt;
-      if (elapsed > MAX_WATCH_MS) {
+      if (Date.now() - startedAt > MAX_WATCH_MS) {
         finish();
         return;
       }
@@ -161,23 +132,12 @@ export function useBackgroundTaskRefresh(
           statuses = data?.statuses ?? {};
         }
       } catch {
-        // A failed poll answers nothing for ANY id, which `unfinishedTaskIds`
-        // reads as "still working" — never as finished, and never as the
-        // `missing` the grace can expire. The next tick asks again; a server
-        // that stays down is bounded by MAX_WATCH_MS, not by this.
+        // A failed poll answers nothing for any id, which `unfinishedTaskIds`
+        // reads as "still working" — never as finished. The next tick asks
+        // again; a server that stays down is bounded by MAX_WATCH_MS.
       }
       if (cancelled) return;
-      const terminal = ids.filter((id) => TERMINAL_TASK_STATUSES.has(statuses[id] ?? "")).length;
-      if (terminal > terminalSeen) {
-        terminalSeen = terminal;
-        lastProgressAt = Date.now();
-      }
-      const remaining = unfinishedTaskIds(
-        ids,
-        statuses,
-        Date.now() - lastProgressAt < MISSING_GRACE_MS,
-      );
-      if (remaining.length === 0) {
+      if (unfinishedTaskIds(ids, statuses).length === 0) {
         finish();
         return;
       }
@@ -190,5 +150,5 @@ export function useBackgroundTaskRefresh(
       if (timer) clearTimeout(timer);
       controller.abort();
     };
-  }, [taskIds]);
+  }, [watchKey]);
 }
