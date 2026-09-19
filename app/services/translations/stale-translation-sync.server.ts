@@ -2064,6 +2064,10 @@ async function runRetranslation(
   const { tryDecryptApiKey } = await import("../../utils/encryption.server");
   const { getInstructionWithDefault } = await import("../../utils/ai-instructions.utils");
   const { buildTranslateInstructions } = await import("../../utils/character-limits");
+  // The hybrid batching rule — how many languages of this payload fit one AI
+  // response. Dynamic like the import above, to keep this module's static graph
+  // as it is.
+  const { planLocaleChunks } = await import("../ai/translation-budget.shared");
 
   const aiSettings = await db.aISettings.findUnique({ where: { shop } });
   const provider = toValidProvider(aiSettings?.preferredProvider);
@@ -2105,6 +2109,162 @@ async function runRetranslation(
       aiSettings?.translationMode === "seo_optimized" ? "seo_optimized" : "exact";
     const translationService = new TranslationService(provider, aiConfig, shop, task.id);
 
+    // ── ONE AI pass for every language, before the write loop ──────────────
+    //
+    // The loop below is per LOCALE because the writes are: `translationsRegister`
+    // takes one locale, the merchant-superseded checks are per locale and per
+    // entry, and a failure has to be attributable to the language it happened
+    // in. None of that is a reason to ASK per locale, and it used to: a product
+    // whose text changed in the Shopify admin paid one AI request per published
+    // language, unattended, on the merchant's own key — the single most
+    // expensive per-locale loop left in the app, precisely because nobody is
+    // watching it.
+    //
+    // The prefetch is a SNAPSHOT and the loop keeps every check it had. Its
+    // candidate set is computed here at t0; an entry the merchant writes while
+    // the AI works drops out of the loop's own filter later and its prefetched
+    // value is simply never used. The sets only ever shrink, so a hoisted
+    // candidate can never smuggle an entry past a check.
+    //
+    // A locale the prefetch could not answer is NOT lost either: the loop falls
+    // back to the per-locale call it always made. So a throttled batch degrades
+    // to the old behaviour rather than to a purge.
+    const prefetched = new Map<string, Map<string, string>>();
+    /** Stable identity of an entry within its locale — its own resource + key. */
+    const entryId = (entry: StaleTranslation): string =>
+      `${entry.resourceId ?? resourceId}\u0000${entry.key}`;
+    try {
+      const candidates = new Map<string, StaleTranslation[]>();
+      for (const [locale, localeEntries] of byLocale) {
+        const list = localeEntries
+          .filter((entry) => !supersededByMerchant(entry.resourceId ?? resourceId))
+          // The keyToField filter is REPEATED in the loop rather than moved
+          // here, because that one also records a `failed` entry — doing it
+          // twice would report the same entry to the merchant twice.
+          .filter((entry) => asValues || !!keyToField[entry.key]);
+        if (list.length > 0) candidates.set(locale, list);
+      }
+
+      if (candidates.size > 1) {
+        if (asValues) {
+          // Every locale of this run translates the SAME primary values (the
+          // entries differ only in which locale they are missing from), so the
+          // batch is asked once over the union and read back per locale. Mapped
+          // by entry identity, never by position: the per-locale candidate lists
+          // can have different lengths.
+          const union = new Map<string, StaleTranslation>();
+          for (const list of candidates.values()) {
+            for (const entry of list) if (!union.has(entryId(entry))) union.set(entryId(entry), entry);
+          }
+          const ids = [...union.keys()];
+          const perLocale = await translationService.translateValuesToLocales(
+            ids.map((id) => union.get(id)!.primaryValue),
+            asValues.sourceLocale,
+            [...candidates.keys()],
+            asValues.context,
+            {
+              instructions: buildTranslateInstructions(
+                getInstructionWithDefault(aiInstructions, "translateInstructions"),
+                translationMode,
+                [],
+                { limits: (aiSettings?.seoLimits ?? null) as Record<string, number> | null },
+              ),
+            },
+          );
+          for (const [locale, translated] of Object.entries(perLocale)) {
+            const byEntry = new Map<string, string>();
+            ids.forEach((id, index) => {
+              const value = translated[index];
+              if (value && value.trim()) byEntry.set(id, value);
+            });
+            if (byEntry.size > 0) prefetched.set(locale, byEntry);
+          }
+        } else {
+          // The FIELD path. Its prompt is keyed by field name, so the locales
+          // that need the same field set are asked together; a locale whose set
+          // differs gets its own call rather than a merged payload that would
+          // write a field into a language that did not ask for it.
+          const bySignature = new Map<string, { locales: string[]; fields: Record<string, string> }>();
+          for (const [locale, list] of candidates) {
+            const fields: Record<string, string> = {};
+            for (const entry of list) fields[keyToField[entry.key]] = entry.primaryValue;
+            const signature = Object.keys(fields).sort().join("\u0000");
+            const group = bySignature.get(signature) ?? { locales: [], fields };
+            group.locales.push(locale);
+            bySignature.set(signature, group);
+          }
+          for (const group of bySignature.values()) {
+            if (group.locales.length < 2) continue;
+            const instructions = buildTranslateInstructions(
+              getInstructionWithDefault(aiInstructions, "translateInstructions"),
+              translationMode,
+              Object.keys(group.fields),
+              { limits: (aiSettings?.seoLimits ?? null) as Record<string, number> | null },
+            );
+            // A locale that tracks its OWN keywords keeps its own request, and
+            // is simply left out of the batch. `translateProduct` takes ONE
+            // keyword clause for the whole call and that clause is phrased for a
+            // single language ("phrase the translation so this keyword
+            // appears"), so sending it with several languages would either
+            // apply one language's keywords to all of them or drop them. The
+            // loop below still asks per locale for those — and they are the
+            // minority, because most locales track nothing.
+            const plain: string[] = [];
+            await Promise.all(
+              group.locales.map(async (locale) => {
+                const clause = await keywordDirectiveFor(
+                  shop,
+                  resourceId,
+                  locale,
+                  aiSettings?.keywordAwareTranslation ?? true,
+                );
+                if (!clause) plain.push(locale);
+              }),
+            );
+            if (plain.length < 2) continue;
+
+            // `translateProduct` is the SAME call the loop below makes, with the
+            // full locale list instead of `[locale]`: its prompt already builds
+            // a nested JSON skeleton for every requested language and says "from
+            // the source language", so nothing about the wording changes and no
+            // source locale has to be invented here (the field path never had
+            // one). What it does NOT have is chunking, so the locales are cut
+            // with the shared planner — one request for a short field set, one
+            // per language for a long one, groups of two or three in between.
+            const groupChars = Object.values(group.fields).reduce((a, v) => a + v.length, 0);
+            for (const localeChunk of planLocaleChunks(plain, groupChars)) {
+              const batched = await translationService.translateProduct(
+                group.fields,
+                localeChunk,
+                contentKind,
+                instructions,
+              );
+              for (const locale of localeChunk) {
+                const fields = batched[locale];
+                if (!fields) continue;
+                const byEntry = new Map<string, string>();
+                for (const entry of candidates.get(locale) ?? []) {
+                  const value = fields[keyToField[entry.key]];
+                  if (value && value.trim()) byEntry.set(entryId(entry), value);
+                }
+                if (byEntry.size > 0) prefetched.set(locale, byEntry);
+              }
+            }
+          }
+        }
+      }
+    } catch (prefetchError: unknown) {
+      // Never fatal: the loop below still has its per-locale path, which is
+      // exactly what this replaced. An auth error surfaces there instead, on the
+      // first locale, the way it always did.
+      logger.warn("[StaleTranslations] Cross-locale batch failed — falling back to per-locale", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        error: prefetchError instanceof Error ? prefetchError.message : String(prefetchError),
+      });
+    }
+
     let processed = 0;
     for (const [locale, localeEntries] of byLocale) {
       // The merchant edited this resource's translations while we were
@@ -2140,7 +2300,15 @@ async function runRetranslation(
 
       try {
         let translatedFor: (entry: StaleTranslation, index: number) => string | undefined;
-        if (asValues) {
+        // The cross-locale batch above already answered this locale — read it
+        // back per ENTRY and make no request at all. A locale it could not
+        // answer (its chunk failed, it carries its own keywords, it was the
+        // only candidate) falls through to the per-locale paths below, which is
+        // exactly what this replaced.
+        const ready = prefetched.get(locale);
+        if (ready && translatable.every((entry) => ready.has(entryId(entry)))) {
+          translatedFor = (entry) => ready.get(entryId(entry));
+        } else if (asValues) {
           // CHUNKED: `translateBatchValues` numbers every value into ONE
           // prompt, and a product can carry sixty metafields. A single
           // oversized request is the failure this avoids — and because the
