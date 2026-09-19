@@ -140,18 +140,65 @@ export const WEBHOOK_CONFIG = {
  * the estimated output stays small enough, and to split into the fewest
  * possible additional calls otherwise.
  */
+/**
+ * The three numbers the batching budget is built from, declared before the
+ * object so `CHUNK_THRESHOLD_CHARS` can be DERIVED from them in one expression
+ * instead of restated. See `TRANSLATION_BATCH` below for what each one means.
+ */
+const AI_MAX_OUTPUT_TOKENS = 8192;
+const CHARS_PER_OUTPUT_TOKEN = 3;
+const JSON_STRUCTURE_RESERVE = 0.15;
+
 export const TRANSLATION_BATCH = {
+  /**
+   * The `max_tokens` every provider call is made with — the OUTPUT ceiling, and
+   * the number every batching decision in this app is derived from
+   * ([translation-budget.shared.ts](../services/ai/translation-budget.shared.ts)).
+   *
+   * It is small, and it is not a conservative guess that could be raised: the
+   * merchant picks the model out of six providers' lists
+   * ([ai-models.config.ts](./ai-models.config.ts)) and the app sends ONE
+   * `max_tokens` to all of them, so this has to hold for the weakest selectable
+   * one — `gpt-4-turbo` caps output at 4096, `deepseek-chat` and the Gemini
+   * Flash models at 8192, and a HuggingFace endpoint can be lower still.
+   * Raising it is a per-provider, per-model capability lookup, not an edit here.
+   */
+  AI_MAX_OUTPUT_TOKENS,
+
+  /**
+   * Characters of model output per output token, for the languages this app
+   * translates into — deliberately PESSIMISTIC. English is roughly 4; German,
+   * Spanish, French and Italian are closer to 3 because their longer words split
+   * into more sub-word tokens, and HTML markup (`<strong>`, `&nbsp;`,
+   * `href="..."`) tokenizes worse than prose. Estimating with 4 over-promises by
+   * a third on exactly the shops that reach the limit.
+   */
+  CHARS_PER_OUTPUT_TOKEN,
+
+  /**
+   * Share of the output budget reserved for everything that is not translated
+   * text: the JSON skeleton, the locale and field keys, and the escaping the
+   * prompts ask for (a `\"` inside an HTML attribute is two characters where the
+   * source had one, and a body full of `href="..."` pays it per attribute).
+   */
+  JSON_STRUCTURE_RESERVE,
+
   /**
    * Estimated output-size ceiling (in characters) for a single AI call.
    *
-   * Why 40 000: the providers are run with `max_tokens: 8192`. At roughly
-   * 4 characters per output token that is ~32 000 characters of model output;
-   * 40 000 is the rounded practical ceiling we allow per call before splitting
-   * (the OUTPUT_EXPANSION_FACTOR below already adds head-room on the estimate,
-   * and most real payloads are short fields that never reach this threshold).
-   * Tune here — no code search required.
+   * DERIVED from `AI_MAX_OUTPUT_TOKENS` rather than written down, because the
+   * two drifting apart is a truncated response: this used to be a hand-rounded
+   * 40 000 against the same 8 192-token cap, i.e. ~13 000 output tokens' worth
+   * of text asked of a model that can emit 8 192 — the estimate said "fits" for
+   * payloads that could not. The conversion rate and the structural reserve live
+   * in the budget module; see its header for why the rate is 3 and not 4.
+   *
+   * Kept as a named constant because it is what the chunker compares against,
+   * and because a test can then pin the relationship instead of the number.
    */
-  CHUNK_THRESHOLD_CHARS: 40_000,
+  CHUNK_THRESHOLD_CHARS: Math.floor(
+    AI_MAX_OUTPUT_TOKENS * CHARS_PER_OUTPUT_TOKEN * (1 - JSON_STRUCTURE_RESERVE),
+  ),
 
   /**
    * Multiplier applied to the source character count to estimate translated

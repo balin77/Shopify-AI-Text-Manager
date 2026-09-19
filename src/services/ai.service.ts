@@ -8,6 +8,12 @@ import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
 import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
 import { TRANSLATION_BATCH } from '../../app/config/constants';
+import {
+  estimateOutputChars,
+  fitsOneRequest,
+  perLocaleSourceBudgetChars,
+  planLocaleChunks,
+} from '../../app/services/ai/translation-budget.shared';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -1705,12 +1711,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const entries = Object.entries(fields).filter(([, v]) => v && v.trim().length > 0);
     if (entries.length === 0 || targetLocales.length === 0) return {};
 
-    const { CHUNK_THRESHOLD_CHARS, OUTPUT_EXPANSION_FACTOR, MAX_CONCURRENCY } = TRANSLATION_BATCH;
+    const { MAX_CONCURRENCY } = TRANSLATION_BATCH;
     const sourceChars = entries.reduce((a, [, v]) => a + v.length, 0);
-    const estimatedOutput = sourceChars * targetLocales.length * OUTPUT_EXPANSION_FACTOR;
+    const estimatedOutput = estimateOutputChars(sourceChars, targetLocales.length);
 
-    // Fast path: the whole payload fits in one call.
-    if (estimatedOutput <= CHUNK_THRESHOLD_CHARS) {
+    // Fast path: the whole payload fits in one call. THE hybrid decision, and it
+    // is a product of both dimensions — a 6 000-character body is one call on a
+    // two-language shop and eight calls' worth of output on an eight-language
+    // one, which is why the locale count is in the estimate and not only the
+    // text length.
+    if (fitsOneRequest(sourceChars, targetLocales.length)) {
       loggers.ai('info', '[AI-SERVICE] translateFieldsToLocalesChunked: single batch', {
         fields: entries.length,
         locales: targetLocales.length,
@@ -1721,7 +1731,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
 
     // Source-char budget that keeps ONE locale's output under the threshold.
-    const perLocaleBudget = CHUNK_THRESHOLD_CHARS / OUTPUT_EXPANSION_FACTOR;
+    const perLocaleBudget = perLocaleSourceBudgetChars();
     const byKey = new Map(entries);
 
     // Split fields into groups that each fit one locale under budget. A single
@@ -1783,9 +1793,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const groupFields: Record<string, string> = {};
       for (const k of group) groupFields[k] = byKey.get(k) || '';
 
-      const localesPerChunk = Math.max(1, Math.floor(perLocaleBudget / groupChars));
-      for (let i = 0; i < targetLocales.length; i += localesPerChunk) {
-        const localeChunk = targetLocales.slice(i, i + localesPerChunk);
+      // The middle of the hybrid: however many languages of THIS field group fit
+      // one response — every language for a short group, one per request for a
+      // long one, two or three for the medium text on a many-language shop that
+      // used to truncate silently.
+      for (const localeChunk of planLocaleChunks(targetLocales, groupChars)) {
         jobs.push(() =>
           this.translateFieldsToLocalesBatch(groupFields, fromLang, localeChunk, options)
         );
