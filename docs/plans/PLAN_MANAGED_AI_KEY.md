@@ -407,8 +407,10 @@ sliding window. It is also *load-bearing*: the queue, its rate-limit window,
 singletons, so the day production is scaled to two instances, every one of them
 doubles or races. That is a pre-existing property of the app, not something
 this plan introduces — but managed mode is the first feature where it costs
-money directly, so "single instance" belongs in RAILWAY-SETUP.md as a stated
-precondition rather than as a dashboard setting nobody wrote down.
+money directly. Written down 2026-09-19 in
+[RAILWAY-SETUP.md](../../RAILWAY-SETUP.md) §0 ("Der Web-Service läuft mit EINER
+Instanz"), with the four process-local states named, so it is a stated
+precondition rather than a dashboard number nobody recorded.
 `AI_QUEUE_CONCURRENCY` (default 4, tunable to 32) is the other half and moves
 the bound 8× on an ops edit, which is why the managed path still needs its OWN
 per-shop in-flight ceiling (§9.2). A design that instead reserved the worst case up front would refuse the

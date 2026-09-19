@@ -48,6 +48,39 @@ das Laufzeitverhalten.
 Environment-Variablen und Secrets, die Postgres-Datenbank, Volumes und deren Größe,
 Domains, sowie die Branch-Zuordnung eines Environments.
 
+### Der Web-Service läuft mit EINER Instanz — das ist eine Zusage, keine Einstellung
+
+`Replicas` steht oben in der Liste der Dashboard-Werte, und bei genau diesem
+Feld ist das Schweigen der Config-Datei gefährlich: **Production läuft heute
+mit einer einzigen Web-Instanz, und mehrere Teile der App sind darauf
+angewiesen.** Wer die Zahl im Dashboard erhöht, bekommt keine Fehlermeldung —
+sondern doppelte Arbeit, doppelte Kosten und gelegentlich eine überschriebene
+Übersetzung.
+
+Vier Zustände leben **im Prozess**, nicht in der Datenbank:
+
+| Was | Wo | Was bei zwei Instanzen passiert |
+|---|---|---|
+| AI-Queue: Singleton, Concurrency-Deckel, Rate-Limit-Fenster pro Provider | [src/services/ai-queue.service.ts](src/services/ai-queue.service.ts) | jede Instanz hält ihr eigenes Fenster und ihren eigenen `AI_QUEUE_CONCURRENCY`-Deckel → gegen dasselbe Provider-Limit läuft doppelt so viel, die Folge sind 429er statt eines sauberen Wartens |
+| „Merchant hat gerade gespeichert" (`recentSaves`) | [app/utils/translation-save-lock.server.ts](app/utils/translation-save-lock.server.ts) | der Schutz gilt nur in dem Prozess, der den Save bekam. Ein Webhook auf der anderen Instanz sieht die Markierung nicht und überschreibt die frisch gespeicherte Übersetzung mit dem, was Shopify wegen Eventual Consistency gerade noch liefert — **echter Datenverlust**, genau der Fall, für den das Modul existiert |
+| Deduplizierung der detached Re-Translation-Läufe (`retranslationsInFlight`) | [app/services/translations/stale-translation-sync.server.ts](app/services/translations/stale-translation-sync.server.ts) | derselbe Lauf startet zweimal: jede Sprache wird doppelt übersetzt und doppelt registriert — auf dem KI-Key des Merchants auch doppelt bezahlt |
+| Fünf `setInterval`-Sweeps (Audit, Crawl, Translation-Drift, llms.txt, IndexNow) | gestartet in [app/shopify.server.ts](app/shopify.server.ts) | sie laufen pro Prozess. Der DB-Stempel (`lastAutoRunAt` & Co.) fängt das meiste ab, aber nicht alles: zwischen „Shop als fällig lesen" und „Stempel schreiben" liegt ein Fenster, in dem beide Instanzen denselben Shop greifen |
+
+Ehrlichkeitshalber die Gegenliste — **nicht** betroffen ist alles, was seinen
+Zustand in Postgres hält: die Single-Flight-Logik des Crawls samt
+Orphan-Recovery, der atomare Verbrauch von `ImageOperationCounter`, und die
+`Task`-Zeilen.
+
+**Regel:** Soll horizontal skaliert werden, ziehen diese vier Zustände
+**vorher** nach Postgres oder Redis um, nicht danach. Alle Symptome sind still,
+also würde die Ursache erst Wochen später gesucht.
+
+Für das geplante Managed-AI-Key-Modell
+([docs/plans/PLAN_MANAGED_AI_KEY.md](docs/plans/PLAN_MANAGED_AI_KEY.md)) kommt
+ein fünfter Grund dazu: dort ist die Instanzzahl direkt ein Kostenfaktor, weil
+die Obergrenze dafür, wie weit ein Shop sein Budget überziehen kann,
+`AI_QUEUE_CONCURRENCY × Instanzen` ist.
+
 ### Env-Variablen des Cron-Service `Db Space Checker`
 
 [scripts/db-alert.mjs](scripts/db-alert.mjs) misst `pg_database_size` + WAL und
