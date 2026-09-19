@@ -2,7 +2,10 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
-import { MAX_TASK_STATUS_IDS } from "~/hooks/useBackgroundTaskRefresh";
+import {
+  MAX_TASK_STATUS_IDS,
+  TERMINAL_TASK_STATUSES,
+} from "~/hooks/useBackgroundTaskRefresh";
 
 /**
  * "Are these particular Task rows still working?" — for a surface that started
@@ -37,6 +40,25 @@ import { MAX_TASK_STATUS_IDS } from "~/hooks/useBackgroundTaskRefresh";
  */
 const MAX_IDS = MAX_TASK_STATUS_IDS;
 
+/**
+ * The repair Task ids a finished task's stored result points at, if any.
+ *
+ * Tolerant by construction: `Task.result` is a free-form JSON string written by
+ * a dozen different task types, so anything that is not this exact shape simply
+ * yields nothing. A parse error here must never fail a poll.
+ */
+function repairTaskIdsOf(result: string | null): string[] {
+  if (!result) return [];
+  try {
+    const parsed = JSON.parse(result) as { retranslation?: { taskIds?: unknown } };
+    const ids = parsed?.retranslation?.taskIds;
+    if (!Array.isArray(ids)) return [];
+    return ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { session } = await authenticate.admin(request);
@@ -62,7 +84,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const statuses: Record<string, string> = {};
       for (const id of ids) statuses[id] = "missing";
       for (const row of rows) statuses[row.id] = row.status;
-      return json({ statuses }, { headers: { "Cache-Control": "no-store" } });
+
+      // A bulk-editor save of more than MAX_SYNC_SAVE cells runs INSIDE a
+      // `seoBulkMeta` task, so the auto-translation repairs it starts are Task
+      // rows that only that task's result names — and those are exactly the
+      // large saves the grid most needs to reload for. `result` is a second
+      // query over the terminal rows only: it carries every failure of the
+      // save and must not ride on every poll of a run that is still going.
+      const finishedIds = rows.filter((row) => TERMINAL_TASK_STATUSES.has(row.status)).map((row) => row.id);
+      const follow: string[] = [];
+      if (finishedIds.length > 0) {
+        const finished = await db.task.findMany({
+          where: { shop: session.shop, id: { in: finishedIds } },
+          select: { id: true, result: true },
+        });
+        for (const row of finished) {
+          for (const id of repairTaskIdsOf(row.result)) follow.push(id);
+        }
+      }
+
+      return json(
+        { statuses, ...(follow.length > 0 ? { follow: [...new Set(follow)] } : {}) },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     } catch (dbError: unknown) {
       logger.error("Database error in task-status", {
         error: dbError instanceof Error ? dbError.message : String(dbError),

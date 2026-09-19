@@ -989,13 +989,19 @@ export default function BulkEditor() {
   // accumulated baselines and the undo stack are the page's own state and stay
   // exactly as they are, and no form is submitted. There is no autosave here,
   // and there must never be one.
-  useBackgroundTaskRefresh(watchedTaskIds, (watched) => {
-    // Only the ids THAT watch was about: a save that landed while it was
-    // running has already added its own, and clearing wholesale would drop
-    // them unwatched.
-    const done = new Set(watched);
-    setWatchedTaskIds((prev) => prev.filter((id) => !done.has(id)));
-    revalidator.revalidate();
+  useBackgroundTaskRefresh(watchedTaskIds, ({ settled, follow }) => {
+    // Drop exactly what settled and pick up what a settled task pointed at (a
+    // large save runs inside a task of its own; its repairs are further rows).
+    // Never a wholesale reset: a save that landed while the watch was running
+    // has already added its ids.
+    const done = new Set(settled);
+    setWatchedTaskIds((prev) => [
+      ...new Set([...prev.filter((id) => !done.has(id)), ...follow]),
+    ]);
+    // Per batch, not once at the end: twenty-four of twenty-five groups
+    // finishing in half a minute must not keep showing empty cells until the
+    // slowest chain ends. The loader read is idempotent and display-only.
+    if (settled.length > 0) revalidator.revalidate();
   });
 
   useEffect(() => {
@@ -1008,6 +1014,14 @@ export default function BulkEditor() {
       // no way to retry. Merchant clears them explicitly via "Discard" once
       // the task completes.
       setQueuedBanner(true);
+      // A save too large for the request runs inside a `seoBulkMeta` task, and
+      // the auto-translation repairs it starts are named only in THAT task's
+      // result. Watching it is how the grid learns to reload for exactly the
+      // saves it matters most for.
+      if (bulkFetcher.data.taskId) {
+        const queuedId = bulkFetcher.data.taskId;
+        setWatchedTaskIds((prev) => [...new Set([...prev, queuedId])]);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkFetcher.state, bulkFetcher.data]);
