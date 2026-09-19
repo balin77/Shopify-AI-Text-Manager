@@ -1430,6 +1430,21 @@ export interface BulkApplyResult {
     skipped: number;
     /** Rows the cap refused, counted as ROWS. */
     capped: number;
+    /**
+     * The `Task` rows those runs report under, so the grid can stop showing an
+     * empty foreign cell for a translation that is still being written.
+     *
+     * The save's own revalidation lands seconds before the first AI answer, and
+     * nothing else ever tells the page a detached run finished — which is
+     * exactly what a merchant sees as "I switched languages and the new entries
+     * are not there". A reader polls these until each is terminal and then
+     * reloads the DISPLAY; it must never write anything back.
+     *
+     * A row may not exist yet when this arrives (the run is spawned, not
+     * awaited, and may be queued behind another for the same resource), so
+     * "no such task" reads as NOT-YET, never as finished.
+     */
+    taskIds?: string[];
   };
 }
 

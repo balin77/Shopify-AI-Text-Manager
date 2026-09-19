@@ -34,10 +34,21 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       deleteMany: vi.fn(async () => ({ count: 0 })),
       upsert: vi.fn(async () => ({})),
     },
+    // The alt mirror resolves the cache row FRESH on every operation — a
+    // product sync deletes and recreates these rows, so a captured id is
+    // dangling by the time a detached run writes (see the mirror's head
+    // comment). The fake answers the CURRENT state of the table.
+    productImage: {
+      findMany: vi.fn(
+        async (_args?: unknown): Promise<Array<{ id: string; mediaId: string | null }>> => [],
+      ),
+    },
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
     task: {
-      create: vi.fn(async () => ({ id: "task-1" })),
+      // Echoes the id the caller minted: the repair hands that id back before
+      // the detached run exists, so the row has to carry it.
+      create: vi.fn(async (args?: { data?: { id?: string } }) => ({ id: args?.data?.id ?? "task-1" })),
       update: vi.fn(async () => ({})),
     },
   };
@@ -192,6 +203,17 @@ beforeEach(() => {
   policy.autoTranslateExternalChanges = false;
   db.contentTranslation.deleteMany.mockClear();
   db.contentTranslation.upsert.mockClear();
+  db.productImage.findMany.mockClear();
+  db.productImage.findMany.mockResolvedValue([]);
+  db.productImageAltTranslation.upsert.mockClear();
+  db.productImageAltTranslation.upsert.mockImplementation(async () => ({}));
+  db.productImageAltTranslation.findMany.mockClear();
+  db.productImageAltTranslation.findMany.mockResolvedValue([]);
+  db.task.create.mockClear();
+  db.task.create.mockImplementation(async (args?: { data?: { id?: string } }) => ({
+    id: args?.data?.id ?? "task-1",
+  }));
+  db.task.update.mockClear();
   db.contentTranslation.upsert.mockImplementation(async () => ({}));
   ai.translate = vi.fn(async () => ({}));
   ai.translateValues = vi.fn(async (values: string[]) => values.map((v) => `xx-${v}`));
@@ -405,6 +427,43 @@ describe("auto-translation path (Max)", () => {
     // problem, not a reason to delete storefront content.
     expect(shopify.registerCalls).toHaveLength(2);
     expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("…but REPORTS it: a run that could not mirror is not a clean success", async () => {
+    // Every editor in this app renders from the mirror, so a translation that
+    // is live on Shopify with no local row is invisible to the merchant — the
+    // exact symptom "the field stays empty after the background run". Keeping
+    // the entry out of `failed` is right; reporting the run as `completed` on
+    // top of it is what made the defect unobservable.
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
+      [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+    }));
+    db.contentTranslation.upsert.mockImplementation(async () => {
+      throw new Error("connection pool exhausted");
+    });
+
+    await reconcileStaleTranslations(baseParams());
+    await awaitDetachedRetranslations();
+
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    expect(final[0].data.status).toBe("completed_with_errors");
+    expect(JSON.parse(final[0].data.result)).toMatchObject({ retranslated: 2, notMirrored: 2 });
+    expect(final[0].data.error).toContain("could not be written to the local cache");
+  });
+
+  it("hands back the Task id BEFORE the detached run creates the row", async () => {
+    // The row is created inside the run, which outlives the request that
+    // started it — so a caller that wants to tell the merchant "this is still
+    // working" can only do it with an id minted up front.
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
+      [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `t-${k}`])),
+    }));
+    const result = await reconcileStaleTranslations(baseParams());
+    expect(result.taskId).toBeTruthy();
+
+    await awaitDetachedRetranslations();
+    const created = (db.task.create.mock.calls.at(-1) as unknown as [any])[0];
+    expect(created.data.id).toBe(result.taskId);
   });
 
   it("still removes what it cannot re-translate, even with the purge switch off", async () => {
@@ -1409,8 +1468,10 @@ describe("a group spanning several resources (sub-resources)", () => {
 describe("per-surface mirrors", () => {
   it("a product medium's alt is stored by the CACHE row id, not the MediaImage GID", async () => {
     const media = "gid://shopify/MediaImage/55";
-    const mirror = productImageAltMirror(new Map([[media, "cache-row-7"]]));
+    const product = "gid://shopify/Product/900";
+    const mirror = productImageAltMirror(SHOP, product);
 
+    db.productImage.findMany.mockResolvedValue([{ id: "cache-row-7", mediaId: media }]);
     db.productImageAltTranslation.findMany.mockResolvedValue([
       { imageId: "cache-row-7", locale: "fr" },
     ]);
@@ -1424,14 +1485,58 @@ describe("per-surface mirrors", () => {
     expect(upsertArgs.where).toEqual({
       imageId_locale_marketId: { imageId: "cache-row-7", locale: "fr", marketId: "" },
     });
+    // Resolved by the STABLE pair, which is the table's own unique key — never
+    // by a cuid somebody captured earlier.
+    const lookup = (db.productImage.findMany.mock.calls.at(-1) as unknown as [any])[0];
+    expect(lookup.where).toMatchObject({ productId: product, mediaId: { in: [media] } });
   });
 
-  it("an image with no cached row is skipped rather than written under a wrong id", async () => {
-    const mirror = productImageAltMirror(new Map());
-    db.productImageAltTranslation.upsert.mockClear();
+  it("writes under the cache row the product sync RECREATED mid-run, not the one collected", async () => {
+    // The regression this mirror exists for. `syncProduct` does not update a
+    // product's ProductImage rows — it deleteMany + createMany, minting a new
+    // cuid per image — and the bulk editor's own alt write fires the
+    // `products/update` webhook that triggers exactly that, seconds into a
+    // detached AI run that takes far longer. A cuid captured when the repair
+    // group was collected is a DANGLING FK by the time the run mirrors its
+    // confirmed write, so the upsert's create fails, the merchant's field stays
+    // empty for good, and Shopify keeps serving a translation nothing can show.
+    const media = "gid://shopify/MediaImage/55";
+    const product = "gid://shopify/Product/901";
+    const mirror = productImageAltMirror(SHOP, product);
 
-    await mirror.write({ resourceId: "gid://shopify/MediaImage/1", resourceType: "MediaImage" }, "fr", "alt", "x", "d");
+    db.productImage.findMany.mockResolvedValue([{ id: "cache-row-before", mediaId: media }]);
+    await mirror.write({ resourceId: media, resourceType: "MediaImage" }, "de", "alt", "Stuhl", "d");
+
+    // …the sync lands between two locales of the SAME run.
+    db.productImage.findMany.mockResolvedValue([{ id: "cache-row-after", mediaId: media }]);
+    await mirror.write({ resourceId: media, resourceType: "MediaImage" }, "fr", "alt", "Chaise", "d");
+
+    const ids = db.productImageAltTranslation.upsert.mock.calls.map(
+      (call: unknown[]) => (call[0] as any).where.imageId_locale_marketId.imageId,
+    );
+    expect(ids).toEqual(["cache-row-before", "cache-row-after"]);
+  });
+
+  it("REPORTS an image with no cached row instead of skipping it silently", async () => {
+    // Silence is the failure mode, not the write: Shopify has already confirmed
+    // the translation by the time a mirror write runs, so "no row here" means
+    // the storefront serves a value no editor in this app can render. The
+    // caller's mirror-failure bookkeeping has to see it.
+    const mirror = productImageAltMirror(SHOP, "gid://shopify/Product/902");
+    db.productImage.findMany.mockResolvedValue([]);
+
+    await expect(
+      mirror.write({ resourceId: "gid://shopify/MediaImage/1", resourceType: "MediaImage" }, "fr", "alt", "x", "d"),
+    ).rejects.toThrow(/could not be mirrored/);
     expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("removes nothing for an image whose cache row is gone — the cascade already did", async () => {
+    const mirror = productImageAltMirror(SHOP, "gid://shopify/Product/903");
+    db.productImage.findMany.mockResolvedValue([]);
+
+    await mirror.remove({ resourceId: "gid://shopify/MediaImage/1", resourceType: "MediaImage" }, "fr", ["alt"]);
+    expect(db.productImageAltTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
   it("a featured alt rewrites BOTH halves back to the parent row both editors read", async () => {

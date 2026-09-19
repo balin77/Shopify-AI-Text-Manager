@@ -114,8 +114,6 @@ export interface BulkRepairGroup {
   ownerId: string;
   rowType: BulkRowType;
   entries: BulkRepairEntry[];
-  /** productImageAlt only: MediaImage GID to ProductImage cache row id. */
-  imageIdByMedia?: Map<string, string>;
 }
 
 export interface BulkRepairPlan {
@@ -221,7 +219,6 @@ export function collectBulkRepair(
     ownerId: string;
     rowType: BulkRowType;
     entries: BulkRepairEntry[];
-    imageIdByMedia?: ReadonlyMap<string, string>;
   },
 ): boolean {
   if (args.entries.length === 0) return false;
@@ -269,7 +266,6 @@ export function collectBulkRepair(
       ownerId: args.ownerId,
       rowType: args.rowType,
       entries: [],
-      ...(args.imageIdByMedia ? { imageIdByMedia: new Map(args.imageIdByMedia) } : {}),
     };
     pool.set(key, group);
   }
@@ -279,9 +275,6 @@ export function collectBulkRepair(
     if (seen.has(id)) continue;
     seen.add(id);
     group.entries.push(entry);
-  }
-  if (args.imageIdByMedia && group.imageIdByMedia) {
-    for (const [media, imageId] of args.imageIdByMedia) group.imageIdByMedia.set(media, imageId);
   }
   return true;
 }
@@ -365,9 +358,9 @@ export async function flushBulkRepairs(params: {
   primaryLocale?: string;
   policy: TranslationChangePolicy;
   plan: BulkRepairPlan;
-}): Promise<{ started: number; translations: number; skipped: number }> {
+}): Promise<{ started: number; translations: number; skipped: number; taskIds: string[] }> {
   const { db, shop, gateway, foreignLocales, primaryLocale, policy, plan } = params;
-  if (plan.groups.size === 0) return { started: 0, translations: 0, skipped: 0 };
+  if (plan.groups.size === 0) return { started: 0, translations: 0, skipped: 0, taskIds: [] };
 
   const {
     reconcileAfterPrimarySave,
@@ -389,6 +382,17 @@ export async function flushBulkRepairs(params: {
   let started = 0;
   let translations = 0;
   let skipped = 0;
+  /**
+   * The Task rows the merchant can follow this save's background work under.
+   *
+   * They exist so the GRID can stop showing an empty foreign cell for a
+   * translation that is still being written: the save's own revalidation runs
+   * seconds before the first AI answer comes back, and nothing else ever tells
+   * the page the run finished. Only ids of runs that really took work on —
+   * `retranslating > 0` — go in, for the same reason `started` is counted that
+   * way: an id nothing will ever write under is a page polling forever.
+   */
+  const taskIds: string[] = [];
   for (const group of plan.groups.values()) {
     const resourceTitle = titles.get(group.ownerId) || group.ownerId;
     const contentKind = contentKindFor(group.rowType);
@@ -439,12 +443,16 @@ export async function flushBulkRepairs(params: {
         }
         case "productImageAlt": {
           const prompt = valuePrompt("product image alt texts");
-          if (!prompt || !group.imageIdByMedia || group.imageIdByMedia.size === 0) return null;
+          if (!prompt) return null;
           return {
             resourceType: "Product",
             lockId: altTextLockId(group.ownerId),
             contentKind: "product",
-            mirror: productImageAltMirror(group.imageIdByMedia),
+            // (shop, product), never a captured cache-row id: the group's
+            // images are re-resolved at write time, because this save's own
+            // `products/update` webhook recreates every ProductImage row of the
+            // product while the detached run is still working (see the mirror).
+            mirror: productImageAltMirror(shop, group.ownerId),
             translateAs: prompt,
           };
         }
@@ -539,6 +547,7 @@ export async function flushBulkRepairs(params: {
       if (outcome.retranslating > 0) {
         started++;
         translations += outcome.retranslating;
+        if (outcome.taskId) taskIds.push(outcome.taskId);
       }
     } catch (error: unknown) {
       skipped++;
@@ -561,5 +570,5 @@ export async function flushBulkRepairs(params: {
       overflow: plan.overflow.size,
     });
   }
-  return { started, translations, skipped };
+  return { started, translations, skipped, taskIds };
 }

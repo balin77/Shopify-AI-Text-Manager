@@ -633,7 +633,6 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
             ownerId: cacheRow.productId,
             rowType: "product",
             entries,
-            imageIdByMedia: new Map([[mediaId, cacheRow.id]]),
           })
         : collectBulkRepair(deps.repairPlan, {
             surface: "libraryImageAlt",
@@ -654,7 +653,7 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
       await purgeBulkMarketOverrides(
         deps,
         cacheRow
-          ? productImageAltMirror(new Map([[mediaId, cacheRow.id]]))
+          ? productImageAltMirror(deps.shop, cacheRow.productId)
           : contentTranslationMirror(deps.shop),
         [{ resourceId: mediaId, resourceType: "MediaImage" }],
         ["alt"],
@@ -3627,7 +3626,12 @@ export async function applyBulkDiff(
   // the repair reads the new text back from Shopify, and a group flushed
   // mid-run would translate half a row.
   // Never throws — every row above is already saved.
-  let flushed = { started: 0, translations: 0, skipped: 0 };
+  let flushed: { started: number; translations: number; skipped: number; taskIds: string[] } = {
+    started: 0,
+    translations: 0,
+    skipped: 0,
+    taskIds: [],
+  };
   try {
     flushed = await flushBulkRepairs({
       db,
@@ -3649,7 +3653,15 @@ export async function applyBulkDiff(
   // ran. Absent means "nothing to say", never "nothing happened".
   const capped = repairPlan.overflowRows.size;
   const retranslation: BulkApplyResult["retranslation"] =
-    flushed.started > 0 || flushed.skipped > 0 || capped > 0 ? { ...flushed, capped } : undefined;
+    flushed.started > 0 || flushed.skipped > 0 || capped > 0
+      ? {
+          started: flushed.started,
+          translations: flushed.translations,
+          skipped: flushed.skipped,
+          capped,
+          ...(flushed.taskIds.length > 0 ? { taskIds: flushed.taskIds } : {}),
+        }
+      : undefined;
 
   // §10.5: summaries only — never cell values.
   debugLog.bulkSave("diff applied", {

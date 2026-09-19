@@ -1595,12 +1595,14 @@ async function updatePrimaryProduct(
           // the override is as stale as the global row beside it, and an alt
           // text sits outside every webhook this app listens to.
           try {
-            const marketImageIdByMedia = new Map<string, string>();
+            // The MEDIA ids only: the mirror resolves each one's cache row
+            // itself, freshly, because a product sync recreates those rows.
+            const changedMediaIds = new Set<string>();
             for (const index of changedAltTextIndices) {
               const image = dbProduct.images[index];
-              if (image?.mediaId) marketImageIdByMedia.set(image.mediaId, image.id);
+              if (image?.mediaId) changedMediaIds.add(image.mediaId);
             }
-            if (marketImageIdByMedia.size > 0) {
+            if (changedMediaIds.size > 0) {
               const { purgeMarketOverrides } = await import(
                 "~/services/translations/market-layer-purge.server"
               );
@@ -1609,8 +1611,8 @@ async function updatePrimaryProduct(
               );
               await purgeMarketOverrides({
                 gateway,
-                mirror: productImageAltMirror(marketImageIdByMedia),
-                refs: [...marketImageIdByMedia.keys()].map((mediaId) => ({
+                mirror: productImageAltMirror(shop, productId),
+                refs: [...changedMediaIds].map((mediaId) => ({
                   resourceId: mediaId,
                   resourceType: "MediaImage",
                 })),
@@ -1794,7 +1796,12 @@ async function updatePrimaryProduct(
             })),
             foreignLocales,
             policy: changePolicy!,
-            mirror: productImageAltMirror(imageIdByMedia),
+            // (shop, product) rather than the cache-row ids collected above:
+            // `syncProduct` recreates every ProductImage row of the product —
+            // and this save's own `products/update` webhook triggers one while
+            // the detached run is still translating — so a captured cuid is
+            // dangling by the time the run mirrors its confirmed writes.
+            mirror: productImageAltMirror(shop, productId),
             // An alt text is one line of prose about a picture; it has no field
             // definition, no SEO limit and no per-field instruction to carry.
             // The dedicated alt-text prompt is image-aware and one call per

@@ -44,6 +44,7 @@
  * which is why it cannot be configured.
  */
 
+import { randomUUID } from "node:crypto";
 import { logger } from "../../utils/logger.server";
 import {
   markTranslationSaved,
@@ -437,31 +438,73 @@ export function metaobjectTranslationMirror(
 /**
  * `ProductImageAltTranslation` — the store for a PRODUCT medium's alt text.
  *
- * Two things make it its own mirror. The row is keyed by the ProductImage CACHE
- * id, not by the MediaImage GID Shopify is addressed with, so the caller hands
- * the map between them; and the table has no `key` column at all, because a
- * MediaImage has exactly one translatable key (`alt`) — the key argument is
- * therefore accepted and ignored rather than written.
+ * Three things make it its own mirror. The row is keyed by the ProductImage
+ * CACHE row, not by the MediaImage GID Shopify is addressed with, so every
+ * operation here translates between the two; the table has no `key` column at
+ * all, because a MediaImage has exactly one translatable key (`alt`) — the key
+ * argument is therefore accepted and ignored rather than written; and it has no
+ * `digest` column either, which costs nothing because the digest is only needed
+ * to REGISTER on Shopify and this path reads a fresh one for every write
+ * (CLAUDE.md — the mirror's digest is a sync-side detection baseline, and this
+ * surface has no sync-side detection).
  *
- * It has no `digest` column either. That costs nothing here: the digest is only
- * needed to REGISTER on Shopify, and this path reads a fresh one for every
- * write (CLAUDE.md — the mirror's digest is a sync-side detection baseline, and
- * this surface has no sync-side detection).
+ * THE CACHE ROW ID IS RESOLVED FRESH, ON EVERY OPERATION, and that is the whole
+ * point of the (shop, productId) pair this takes instead of a captured map.
+ * `syncProduct` and `syncAllProducts` do not UPDATE a product's `ProductImage`
+ * rows — they `deleteMany` and recreate them, minting a new cuid per image and
+ * re-attaching the alt translations by `mediaId`. The bulk editor's own alt
+ * write goes through `productUpdateMedia`, which fires `products/update`, so
+ * that sync lands seconds later — while the repair this mirror belongs to is a
+ * DETACHED AI run that takes far longer. A cuid captured when the group was
+ * collected is therefore dangling by the time the run writes, and the upsert
+ * under it does not fail loudly: `create` violates the FK, the repair's
+ * per-entry catch records "registered on Shopify but not mirrored locally", and
+ * the loader — which reads by the CURRENT cache row — shows the merchant an
+ * empty field for a translation Shopify is serving. Permanently, because
+ * nothing revisits it.
+ *
+ * `(productId, mediaId)` is the stable address, and the table's own
+ * `@@unique([productId, mediaId])` is exactly that pair. An image the lookup
+ * cannot resolve is REPORTED, never written under a guessed id and never
+ * silently skipped: `write` throws so the caller's mirror-failure bookkeeping
+ * sees it (a translation on Shopify with no local row is the merchant-visible
+ * defect above, and it may not be invisible in the Tasks tab as well).
  */
-export function productImageAltMirror(
-  /** MediaImage GID → ProductImage cache row id. */
-  imageIdByMedia: ReadonlyMap<string, string>,
-): TranslationMirror {
-  const mediaByImageId = new Map([...imageIdByMedia].map(([media, image]) => [image, media]));
+export function productImageAltMirror(shop: string, productId: string): TranslationMirror {
+  /**
+   * MediaImage GID → the CURRENT ProductImage cache row id, read now. Never
+   * memoised: a product sync can land between two locales of one run, and a
+   * memo would carry the pre-sync ids across exactly that boundary.
+   */
+  const resolve = async (mediaIds: readonly string[]): Promise<Map<string, string>> => {
+    const wanted = [...new Set(mediaIds.filter(Boolean))];
+    if (wanted.length === 0) return new Map();
+    const { db } = await import("../../db.server");
+    // `productId` scopes the lookup onto the unique index; `product: { shop }`
+    // is the tenancy check every read in this file carries.
+    const rows = await db.productImage.findMany({
+      where: { productId, mediaId: { in: wanted }, product: { shop } },
+      select: { id: true, mediaId: true },
+    });
+    const byMedia = new Map<string, string>();
+    for (const row of rows as Array<{ id: string; mediaId: string | null }>) {
+      if (row.mediaId) byMedia.set(row.mediaId, row.id);
+    }
+    return byMedia;
+  };
+
   return {
     async existing(refs, foreignLocales) {
-      const imageIds = refs
-        .map((ref) => imageIdByMedia.get(ref.resourceId))
-        .filter((id): id is string => !!id);
-      if (imageIds.length === 0) return [];
+      const byMedia = await resolve(refs.map((ref) => ref.resourceId));
+      if (byMedia.size === 0) return [];
+      const mediaByImageId = new Map([...byMedia].map(([media, image]) => [image, media]));
       const { db } = await import("../../db.server");
       const rows = await db.productImageAltTranslation.findMany({
-        where: { imageId: { in: imageIds }, marketId: "", locale: { in: [...foreignLocales] } },
+        where: {
+          imageId: { in: [...mediaByImageId.keys()] },
+          marketId: "",
+          locale: { in: [...foreignLocales] },
+        },
         select: { imageId: true, locale: true },
       });
       return rows
@@ -473,20 +516,22 @@ export function productImageAltMirror(
         .filter((row: { resourceId: string }) => !!row.resourceId);
     },
     async remove(ref, locale) {
-      const imageId = imageIdByMedia.get(ref.resourceId);
+      const imageId = (await resolve([ref.resourceId])).get(ref.resourceId);
+      // No cache row ⇒ no rows to drop: `ProductImageAltTranslation` cascades
+      // on `ProductImage`, so an image that is gone took its translations with
+      // it. A true no-op, unlike the write below, which would lose data.
       if (!imageId) return;
       const { db } = await import("../../db.server");
       await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId: "" } });
     },
     async marketRows(refs, foreignLocales) {
-      const imageIds = refs
-        .map((ref) => imageIdByMedia.get(ref.resourceId))
-        .filter((id): id is string => !!id);
-      if (imageIds.length === 0) return [];
+      const byMedia = await resolve(refs.map((ref) => ref.resourceId));
+      if (byMedia.size === 0) return [];
+      const mediaByImageId = new Map([...byMedia].map(([media, image]) => [image, media]));
       const { db } = await import("../../db.server");
       const rows = await db.productImageAltTranslation.findMany({
         where: {
-          imageId: { in: imageIds },
+          imageId: { in: [...mediaByImageId.keys()] },
           marketId: { not: "" },
           locale: { in: [...foreignLocales] },
         },
@@ -502,14 +547,22 @@ export function productImageAltMirror(
         .filter((row: { resourceId: string }) => !!row.resourceId);
     },
     async removeMarket(ref, locale, _keys, marketId) {
-      const imageId = imageIdByMedia.get(ref.resourceId);
+      const imageId = (await resolve([ref.resourceId])).get(ref.resourceId);
       if (!imageId) return;
       const { db } = await import("../../db.server");
       await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId } });
     },
     async write(ref, locale, _key, value) {
-      const imageId = imageIdByMedia.get(ref.resourceId);
-      if (!imageId) return;
+      const imageId = (await resolve([ref.resourceId])).get(ref.resourceId);
+      // LOUD, never a silent return. Shopify has already confirmed this
+      // translation by the time a mirror write runs, so "no row here" means the
+      // storefront serves a value this app cannot show — the one outcome the
+      // merchant reports as "the field stays empty".
+      if (!imageId) {
+        throw new Error(
+          `No cached ProductImage row for ${ref.resourceId} on ${productId} — the alt translation is live on Shopify but could not be mirrored. Resync the product.`,
+        );
+      }
       const { db } = await import("../../db.server");
       await db.productImageAltTranslation.upsert({
         where: { imageId_locale_marketId: { imageId, locale, marketId: "" } },
@@ -791,6 +844,18 @@ export interface ReconcileResult {
    * operation in this app.
    */
   retranslating: number;
+  /**
+   * The `Task` row that detached run will report under — minted HERE, before
+   * the run is spawned, so a caller that answers an HTTP request can hand the
+   * id back with the save.
+   *
+   * The row itself does not exist yet when this resolves (and will not until
+   * the run reaches the head of its in-flight queue), so a reader must treat
+   * "no such task" as NOT-YET rather than as finished. That is the price of the
+   * id being knowable at all: the alternative is a caller that has just written
+   * a row it cannot tell the merchant anything about.
+   */
+  taskId?: string;
 }
 
 const NOTHING: ReconcileResult = { removed: 0, retranslating: 0 };
@@ -1677,6 +1742,11 @@ async function repairStaleTranslations(
   // seconds. It is Task-tracked, so nothing is lost by not waiting.
   const inFlightKey = `${shop}${IN_FLIGHT_SEP}${resourceId}`;
   const startRetranslation = retranslate.length > 0;
+  // Minted before the run is spawned rather than read off the row it creates:
+  // the run is detached by design, so by the time `db.task.create` returns the
+  // HTTP request that started it is long gone. A caller that wants to tell the
+  // merchant "this is still working" needs the id NOW.
+  const taskId = startRetranslation ? randomUUID() : undefined;
   if (startRetranslation) {
     const runWork = async () => {
       // "Has someone written since I started?" — a TIMESTAMP, not the
@@ -1726,6 +1796,7 @@ async function repairStaleTranslations(
           target,
           retranslate,
           supersededByMerchant,
+          taskId!,
         );
         // Entries the AI path could not deliver still have to lose their
         // stale translation — a failed automation must never leave the old
@@ -1781,7 +1852,11 @@ async function repairStaleTranslations(
     });
   }
 
-  return { removed, retranslating: startRetranslation ? retranslate.length : 0 };
+  return {
+    removed,
+    retranslating: startRetranslation ? retranslate.length : 0,
+    ...(taskId ? { taskId } : {}),
+  };
 }
 
 // ─── Purge ────────────────────────────────────────────────────────────────
@@ -1927,9 +2002,11 @@ async function retranslateStaleEntries(
   /** "Did a save land after this run started?" — for the RUN when called bare,
    *  for one resource when given its id. See the caller. */
   supersededByMerchant: (entryResourceId?: string) => boolean,
+  /** The id the caller already handed to the merchant — see ReconcileResult. */
+  taskId: string,
 ): Promise<RetranslateOutcome> {
   try {
-    return await runRetranslation(gateway, params, entries, supersededByMerchant);
+    return await runRetranslation(gateway, params, entries, supersededByMerchant, taskId);
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Re-translation could not start — stale rows kept", {
       context: "StaleTranslations",
@@ -1947,6 +2024,7 @@ async function runRetranslation(
   params: RepairTarget,
   entries: readonly StaleTranslation[],
   supersededByMerchant: (entryResourceId?: string) => boolean,
+  taskId: string,
 ): Promise<RetranslateOutcome> {
   const { shop, resourceId, resourceType, contentKind, resourceTitle } = params;
   const { db } = await import("../../db.server");
@@ -1961,6 +2039,18 @@ async function runRetranslation(
 
   const registered: StaleTranslation[] = [];
   const failed: StaleTranslation[] = [];
+  /**
+   * Translations Shopify CONFIRMED but the local mirror refused.
+   *
+   * It is deliberately NOT a failure of the entry — the storefront serves the
+   * new value, and pushing it into `failed` would purge it because our own
+   * database blinked. But it is not nothing either: every surface in this app
+   * RENDERS from the mirror, so such a translation is live and invisible, and
+   * the merchant's report is "the field stays empty after the background run".
+   * The run therefore ends `completed_with_errors` and says so in its result,
+   * rather than reporting a clean success over a half-written repair.
+   */
+  const notMirrored: Array<{ resourceId: string; locale: string; key: string; error: string }> = [];
 
   // Only the content-field path needs the key→field map; the generic value path
   // has no field semantics to look up (see RepairTarget.translateAs).
@@ -1989,6 +2079,9 @@ async function runRetranslation(
 
   const task = await db.task.create({
     data: {
+      // The caller minted it before spawning this run and has already told the
+      // merchant about it — so the row has to carry that id, not a fresh one.
+      id: taskId,
       shop,
       type: "translation",
       status: "running",
@@ -2176,13 +2269,21 @@ async function runRetranslation(
             try {
               await mirror.write(ref, locale, input.key, input.value, input.translatableContentDigest);
             } catch (mirrorError: unknown) {
+              const message =
+                mirrorError instanceof Error ? mirrorError.message : String(mirrorError);
+              notMirrored.push({
+                resourceId: ref.resourceId,
+                locale,
+                key: input.key,
+                error: message,
+              });
               logger.warn("[StaleTranslations] Registered on Shopify but not mirrored locally", {
                 context: "StaleTranslations",
                 shop,
                 resourceId: ref.resourceId,
                 locale,
                 key: input.key,
-                error: mirrorError instanceof Error ? mirrorError.message : String(mirrorError),
+                error: message,
               });
             }
           }
@@ -2221,17 +2322,37 @@ async function runRetranslation(
     // what it should, and a red task blaming it for their own save is a defect
     // report about nothing.
     const stoodDown = registered.length === 0 && failed.length === 0 && supersededByMerchant();
+    const succeeded = registered.length > 0 || stoodDown;
+    // A run that registered on Shopify but could not write some of those rows
+    // locally is NOT a clean success: every editor in this app reads the
+    // mirror, so those translations are live and invisible.
+    const status = succeeded
+      ? notMirrored.length > 0
+        ? "completed_with_errors"
+        : "completed"
+      : "failed";
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: registered.length > 0 || stoodDown ? "completed" : "failed",
+        status,
         progress: 100,
         processed: entries.length,
         completedAt: new Date(),
         ...(registered.length === 0 && !stoodDown
           ? { error: "Automatic re-translation produced no usable translation." }
-          : {}),
-        result: JSON.stringify({ retranslated: registered.length, purged: failed.length }),
+          : notMirrored.length > 0
+            ? {
+                error: `${notMirrored.length} translation(s) were saved on Shopify but could not be written to the local cache: ${notMirrored[0].error}`.substring(
+                  0,
+                  1000,
+                ),
+              }
+            : {}),
+        result: JSON.stringify({
+          retranslated: registered.length,
+          purged: failed.length,
+          ...(notMirrored.length > 0 ? { notMirrored: notMirrored.length } : {}),
+        }),
       },
     });
   } catch (error: unknown) {

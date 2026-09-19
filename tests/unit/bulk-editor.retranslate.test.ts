@@ -194,7 +194,10 @@ describe("collectBulkRepair", () => {
 /** What the (mocked) repair reports back — `retranslating: 0` is the real
  *  answer whenever nothing was left to translate, and the save must then NOT
  *  tell the merchant to look in the Tasks tab. */
-let reconcileResult = { removed: 0, retranslating: 2 };
+let reconcileResult: { removed: number; retranslating: number; taskId?: string } = {
+  removed: 0,
+  retranslating: 2,
+};
 const reconcileAfterPrimarySave = vi.fn(async (_params: Record<string, unknown>) => reconcileResult);
 
 /** What the flush's mirror pre-check finds. `[]` = this surface holds no
@@ -747,9 +750,56 @@ describe("applyBulkDiff with auto-translate on", () => {
     expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
     expect(quiet.retranslation).toBeUndefined();
 
-    reconcileResult = { removed: 0, retranslating: 4 };
+    reconcileResult = { removed: 0, retranslating: 4, taskId: "task-abc" };
     const loud = await applyBulkDiff(ctx, diff);
     expect(loud.retranslation).toMatchObject({ started: 1, translations: 4, capped: 0 });
+    // …and the Task the merchant can follow it under travels back with the
+    // save. The grid needs it to know WHEN to reload its display: its own
+    // revalidation lands seconds before the first AI answer, so without this a
+    // foreign cell stays empty until something else happens to reload the page.
+    expect(loud.retranslation?.taskIds).toEqual(["task-abc"]);
+  });
+
+  it("reports no task id for a repair that started no run", async () => {
+    // `retranslating: 0` means the repair had nothing left to translate and
+    // created no Task row. An id here would be a page polling for something
+    // that will never appear.
+    const { admin } = mockAdmin((query) => {
+      if (query.includes("metafieldsSet(")) {
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: [{ id: "gid://shopify/Metafield/1", namespace: "custom", key: "care", value: "Seide" }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+    reconcileResult = { removed: 0, retranslating: 0, taskId: "never-created" };
+    const result = await applyBulkDiff(
+      {
+        db: mockDb() as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([{ namespace: "custom", key: "care", type: "single_line_text_field" }]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: "",
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Seide",
+        } as BulkDiffEntry,
+      ],
+    );
+    expect(result.retranslation).toBeUndefined();
   });
 
   it("repairs a product's OWN fields too — its webhook cannot prove anything on a row with no translations", async () => {

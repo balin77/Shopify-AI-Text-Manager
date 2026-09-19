@@ -26,6 +26,7 @@
 
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useBackgroundTaskRefresh } from "../hooks/useBackgroundTaskRefresh";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Card, BlockStack, InlineStack, Text, TextField, Button, Select, Banner, Modal, Tooltip } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
@@ -425,7 +426,15 @@ type ActionResult =
       failures: BulkFailure[];
       /** Background re-translations this save started, and how many rows were
        *  NOT re-translated because the per-save cap was reached. */
-      retranslation?: { started: number; translations: number; skipped: number; capped: number };
+      retranslation?: {
+        started: number;
+        translations: number;
+        skipped: number;
+        capped: number;
+        /** Task rows of this save's background runs — polled for the DISPLAY
+         *  refresh below, never for a write. */
+        taskIds?: string[];
+      };
     }
   | { ok: false; error: string };
 
@@ -644,7 +653,13 @@ export default function BulkEditor() {
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
   const [lastSavedCount, setLastSavedCount] = useState<number | null>(null);
   const [lastRetranslation, setLastRetranslation] = useState<
-    { started: number; translations: number; skipped: number; capped: number } | null
+    {
+      started: number;
+      translations: number;
+      skipped: number;
+      capped: number;
+      taskIds?: string[];
+    } | null
   >(null);
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
@@ -946,6 +961,21 @@ export default function BulkEditor() {
     // Only react when the fetcher settles with new data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveFetcher.state, saveFetcher.data]);
+
+  // The save above revalidates IMMEDIATELY, which is seconds before the first
+  // answer of a detached auto-translation run comes back — so the grid shows
+  // empty foreign cells for translations that are on their way, and switching
+  // languages while the run works reloads the same emptiness. Nothing else ever
+  // tells this page the run finished.
+  //
+  // So: watch the Task rows THIS save started, and reload the DISPLAY once they
+  // are done. A revalidation re-runs the loader and nothing else — `edits`, the
+  // accumulated baselines and the undo stack are the page's own state and stay
+  // exactly as they are, and no form is submitted. There is no autosave here,
+  // and there must never be one.
+  useBackgroundTaskRefresh(lastRetranslation?.taskIds, () => {
+    revalidator.revalidate();
+  });
 
   useEffect(() => {
     if (bulkFetcher.state !== "idle" || !bulkFetcher.data) return;
