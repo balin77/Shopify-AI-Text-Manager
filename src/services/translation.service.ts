@@ -48,8 +48,35 @@ export class TranslationService {
     fromLang: string,
     toLang: string,
     context: string,
+    /** The merchant's translate instructions — see `translateBatchValues`. */
+    instructions?: string,
   ): Promise<string[]> {
-    return await this.aiService.translateBatchValues(values, fromLang, toLang, context);
+    return await this.aiService.translateBatchValues(values, fromLang, toLang, context, instructions);
+  }
+
+  /**
+   * `translateValues` for MANY target languages at once — the value-shaped half
+   * of the batching, and the reason the metafield/option/metaobject paths no
+   * longer cost one request per language.
+   *
+   * Order-preserving and 1:1 per locale, so the caller still maps back by INDEX;
+   * an entry a chunk could not deliver comes back as `""`, at its own index,
+   * which every caller here already reads as "not translated".
+   */
+  async translateValuesToLocales(
+    values: string[],
+    fromLang: string,
+    targetLocales: string[],
+    context: string,
+    options: { instructions?: string } = {},
+  ): Promise<Record<string, string[]>> {
+    return await this.aiService.translateBatchValuesToLocales(
+      values,
+      fromLang,
+      targetLocales,
+      context,
+      options,
+    );
   }
 
   /**

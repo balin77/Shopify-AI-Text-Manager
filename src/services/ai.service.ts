@@ -962,7 +962,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     values: string[],
     fromLang: string,
     toLang: string,
-    context: string = "product content"
+    context: string = "product content",
+    /**
+     * The merchant's translate instructions (plus the seo_optimized caps where
+     * the caller built them). OPTIONAL and absent by default, so every existing
+     * call site is byte-identical — but every value path SHOULD pass it: a
+     * metafield, an option value and a metaobject field are merchant content
+     * like a title is, and the instruction that says "keep our brand names in
+     * English" has no reason to hold for the title and not for the swatch name.
+     */
+    instructions?: string
   ): Promise<string[]> {
     if (values.length === 0) return [];
 
@@ -1002,6 +1011,7 @@ Requirements:
 - Maintain similar character length
 - Inside translated strings, escape any straight double-quote as \\" so the JSON array stays valid
 - Return ONLY a JSON array of translated strings in the same order
+${instructions ? `\n${instructions}\n` : ''}
 ${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format: ["translated1", "translated2", ...]`;
 
@@ -1054,6 +1064,225 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
     // caller marks the task failed and writes nothing (N-H3).
     loggers.ai('error', '[AI-SERVICE] Batch translation response was not a JSON array', { responseLength: responseText.length });
     throw new Error('AI batch translation did not return a JSON array');
+  }
+
+  /**
+   * `translateBatchValues` for MANY target languages — the value-shaped half of
+   * the hybrid batching, and the counterpart of
+   * {@link translateFieldsToLocalesChunked} for text that has no field name.
+   *
+   * What goes through here: a metafield's `value`, a product option's `name` and
+   * its values, a metaobject field, a storefront UI string. None of them has a
+   * named field to hang the merchant's per-field instructions or an SEO limit
+   * on, which is what separates them from the field paths — but they were also
+   * the last paths translating ONE LANGUAGE PER REQUEST, because the older
+   * method's signature takes a single `toLang`. A product with sixty metafields
+   * on an eight-language shop paid eight requests where the same edit to its
+   * title paid one.
+   *
+   * Three rules, each the reason a simpler version of this would be wrong.
+   *
+   * The answer is mapped back by **INDEX**, never by value: two option values
+   * may legitimately hold the same text ("Blau", "Blau"), and a value-keyed map
+   * would collapse them into one write. So the prompt numbers the values and the
+   * assertion below is on LENGTH — a short answer shifts every later entry's
+   * meaning, which is silent corruption rather than a missing translation.
+   *
+   * It chunks on **both dimensions**, through the same planner the field path
+   * uses: the values are cut into groups whose own output fits one locale, and
+   * each group's locales into as many per request as the budget allows. Sixty
+   * short metafields into eight languages is a handful of requests; one 3 000-
+   * character multi-line value into eight is one per language. Neither case
+   * needs a branch at the call site.
+   *
+   * And a FAILED chunk costs only its own cells. Every caller of the older
+   * method treats a missing value as "not translated" and falls back to its own
+   * answer (a removal, or the merchant's stored deletion choice), so throwing
+   * the whole run over one refused chunk would discard the ninety values that
+   * did come back. The per-locale map is returned with the gaps in it.
+   */
+  async translateBatchValuesToLocales(
+    values: string[],
+    fromLang: string,
+    targetLocales: string[],
+    context: string = 'product content',
+    options: { instructions?: string } = {},
+  ): Promise<Record<string, string[]>> {
+    if (values.length === 0 || targetLocales.length === 0) return {};
+
+    // One locale is the older method verbatim — same prompt, same recovery path,
+    // same 1:1 assertion. Delegating rather than re-deriving keeps the single
+    // -locale behaviour (which several callers still depend on) from drifting
+    // away from the batched one.
+    if (targetLocales.length === 1) {
+      const translated = await this.translateBatchValues(
+        values,
+        fromLang,
+        targetLocales[0],
+        context,
+        options.instructions,
+      );
+      return { [targetLocales[0]]: translated };
+    }
+
+    const perLocaleBudget = perLocaleSourceBudgetChars();
+    // Value groups whose own output fits ONE locale. A single value larger than
+    // the budget becomes its own group and is still sent: it is one string, the
+    // provider errors loudly if it truly overflows, and splitting a value is not
+    // something this path can do without changing what it means.
+    const groups: { values: string[]; start: number }[] = [];
+    let current: string[] = [];
+    let currentChars = 0;
+    let start = 0;
+    for (const [index, value] of values.entries()) {
+      const length = value.length;
+      if (current.length > 0 && currentChars + length > perLocaleBudget) {
+        groups.push({ values: current, start });
+        current = [];
+        currentChars = 0;
+        start = index;
+      }
+      current.push(value);
+      currentChars += length;
+    }
+    if (current.length > 0) groups.push({ values: current, start });
+
+    type Job = () => Promise<{ locale: string; start: number; translated: string[] }[]>;
+    const jobs: Job[] = [];
+    for (const group of groups) {
+      const groupChars = group.values.reduce((a, v) => a + v.length, 0);
+      for (const localeChunk of planLocaleChunks(targetLocales, groupChars)) {
+        jobs.push(async () => {
+          const partial = await this.translateValuesToLocaleChunk(
+            group.values,
+            fromLang,
+            localeChunk,
+            context,
+            options.instructions,
+          );
+          return localeChunk
+            .filter((locale) => partial[locale])
+            .map((locale) => ({ locale, start: group.start, translated: partial[locale] }));
+        });
+      }
+    }
+
+    loggers.ai('info', '[AI-SERVICE] translateBatchValuesToLocales', {
+      values: values.length,
+      locales: targetLocales.length,
+      chunks: jobs.length,
+      fromLang,
+    });
+
+    // Pre-sized with "" so a chunk that failed leaves EMPTY entries at its own
+    // indices instead of shifting the ones that succeeded — the index mapping is
+    // the contract, and a compacted array would silently re-point every later
+    // value at the wrong resource.
+    const result: Record<string, string[]> = {};
+    for (const locale of targetLocales) result[locale] = values.map(() => '');
+
+    const errors: unknown[] = [];
+    let succeeded = 0;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < jobs.length) {
+        const index = cursor++;
+        try {
+          for (const part of await jobs[index]()) {
+            for (const [offset, value] of part.translated.entries()) {
+              result[part.locale][part.start + offset] = value;
+            }
+          }
+          succeeded++;
+        } catch (error) {
+          errors.push(error);
+          loggers.ai('error', '[AI-SERVICE] translateBatchValuesToLocales: chunk failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(TRANSLATION_BATCH.MAX_CONCURRENCY, jobs.length) }, () => worker()),
+    );
+
+    // Every chunk failed → throw, so the caller's own fallback runs instead of
+    // being handed a map of empty strings that looks like "the AI translated
+    // nothing on purpose". An auth error is the first one, which is what makes a
+    // rejected API key abort the run rather than emptying it.
+    if (succeeded === 0 && errors.length > 0) throw errors[0];
+
+    return result;
+  }
+
+  /**
+   * One request: N numbered values × M locales, `{locale: [translated…]}`.
+   *
+   * The multi-locale sibling of `translateBatchValues`' prompt. Kept private
+   * because the chunking above is not optional — callers go through
+   * `translateBatchValuesToLocales`, which decides how many of each fit.
+   */
+  private async translateValuesToLocaleChunk(
+    values: string[],
+    fromLang: string,
+    targetLocales: string[],
+    context: string,
+    instructions?: string,
+  ): Promise<Record<string, string[]>> {
+    const isAuto = fromLang === 'auto';
+    const numberedValues = values
+      .map((v, i) => `${i + 1}. ${sanitizePromptInput(v, { maxLength: 2000, allowNewlines: false })}`)
+      .join('\n');
+    const targetLanguages = targetLocales.map((loc) => `${localeName(loc)} (${loc})`).join(', ');
+
+    const sourceClause = isAuto
+      ? `For each ${context} value below, detect its source language and translate it into EACH of these languages: ${targetLanguages}. Where a value is already written in a target language, repeat it UNCHANGED for that language.`
+      : `Translate these ${context} values from ${localeName(fromLang)} into EACH of these languages: ${targetLanguages}.`;
+
+    const glossaryDirective = await this.getGlossaryDirective(values, targetLocales);
+
+    // The skeleton is spelled out with the real locale codes and the real
+    // number of slots, which is what makes the length assertion below something
+    // the model was actually told to satisfy.
+    const jsonStructure = Object.fromEntries(
+      targetLocales.map((locale) => [locale, values.map((_, i) => `translated ${i + 1}`)]),
+    );
+
+    const prompt = `${sourceClause}
+
+${numberedValues}
+
+Requirements:
+- Answer with EVERY language, and with exactly ${values.length} value(s) per language, in the SAME ORDER as the numbered list above.
+- Keep translations concise and natural, and maintain similar character length.
+- Two values may legitimately be identical; translate both, do not merge them.
+- Inside translated strings, escape any straight double-quote as \\" so the JSON stays valid.
+${instructions ? `\n${instructions}\n` : ''}
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
+Respond with ONLY this JSON shape (keys = locale codes, each an array of translated strings):
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    const responseText = await this.askAI(prompt);
+    const parsed = this.parseJSONResponse(responseText) as Record<string, unknown>;
+
+    const out: Record<string, string[]> = {};
+    for (const locale of targetLocales) {
+      const list = parsed?.[locale];
+      if (!Array.isArray(list) || list.length !== values.length) {
+        // Length, never content, in the log: these are merchant values and
+        // possibly PII, and the length is the whole diagnosis (R3-M10).
+        loggers.ai('error', '[AI-SERVICE] translateBatchValuesToLocales: bad shape for locale', {
+          locale,
+          expected: values.length,
+          got: Array.isArray(list) ? list.length : null,
+        });
+        throw new Error(
+          `AI value batch returned ${Array.isArray(list) ? list.length : 'no'} values for ${locale}, expected ${values.length}`,
+        );
+      }
+      out[locale] = list.map(String);
+    }
+    return out;
   }
 
   /**
