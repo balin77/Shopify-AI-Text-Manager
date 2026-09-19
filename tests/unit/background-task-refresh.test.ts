@@ -62,16 +62,31 @@ describe("classifyWatchedTasks", () => {
     expect(classifyWatchedTasks(["a"], { a: "completed_with_errors" }).settled).toEqual(["a"]);
   });
 
-  it("an EXPIRED id settles, so it cannot hold the refresh back forever", () => {
+  it("an EXPIRED id settles once nothing is alive, so it cannot block forever", () => {
     // The deadline bounds the ONE case with no evidence at all: a run that
     // never created its row (`startFailed` — it threw before `db.task.create`).
+    const { settled, working } = classifyWatchedTasks(
+      ["a", "b"],
+      { a: "completed", b: MISSING_TASK_STATUS },
+      new Set(["b"]),
+    );
+    expect(settled).toEqual(["a", "b"]);
+    expect(working).toEqual([]);
+  });
+
+  it("…but a LIVE sibling keeps an expired missing id in the watch", () => {
+    // Repairs for one resource share an in-flight key and run strictly one
+    // after another, so while any watched task is running an id with no row
+    // yet is most likely QUEUED behind it. On a ten-locale shop the first two
+    // runs can outlast any fixed bound; expiring the third there drops a run
+    // that has not even started — the empty cell this exists to remove.
     const { settled, working } = classifyWatchedTasks(
       ["a", "b"],
       { a: "running", b: MISSING_TASK_STATUS },
       new Set(["b"]),
     );
-    expect(settled).toEqual(["b"]);
-    expect(working).toEqual(["a"]);
+    expect(settled).toEqual([]);
+    expect(working).toEqual(["a", "b"]);
   });
 
   it("does not expire an id this very poll reports RUNNING", () => {

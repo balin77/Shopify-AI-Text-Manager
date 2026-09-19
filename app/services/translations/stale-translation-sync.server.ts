@@ -2341,12 +2341,11 @@ async function runRetranslation(
         ...(registered.length === 0 && !stoodDown
           ? { error: "Automatic re-translation produced no usable translation." }
           : notMirrored.length > 0
-            ? {
-                error: `${notMirrored.length} translation(s) were saved on Shopify but could not be written to the local cache: ${notMirrored[0].error}`.substring(
-                  0,
-                  1000,
-                ),
-              }
+            ? // A machine CODE, not a sentence: this runs detached from the
+              // request that started it and has no merchant locale, and the
+              // raw exception behind it (a Prisma message, a GID) is for the
+              // log, never for the Tasks tab. `taskErrorText` renders it.
+              { error: `translations_not_mirrored:${notMirrored.length}` }
             : {}),
         result: JSON.stringify({
           retranslated: registered.length,

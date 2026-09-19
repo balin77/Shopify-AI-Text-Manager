@@ -63,6 +63,8 @@ const FALLBACK: Record<string, string> = {
   slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
   invalidApiKey: "(the AI API key was rejected)",
   someFailed: "Some entries could not be processed — open the task for details.",
+  translationsNotMirrored:
+    "{count} translation(s) were saved on Shopify but could not be written to this app's cache — resync the product to see them here.",
 };
 
 function phrase(t: any, key: string): string {
@@ -141,6 +143,16 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // `rows_failed` carries a total where the runner knows one and only the
     // count where it does not (the bulk translate run counts saved UNITS, not
     // rows, so `saved + failed` would not be the number of rows).
+    // The auto-translation repair registered on Shopify but could not write
+    // some of those rows to the local mirror. NOT a failure of the translation
+    // — the storefront serves it — but every editor in this app renders from
+    // the mirror, so the merchant would see an empty field and no reason for
+    // it. A resync is the repair, which is why the sentence names one.
+    case "translations_not_mirrored": {
+      const missed = count(parts[1]);
+      if (missed === null) return neutral();
+      return fill(phrase(t, "translationsNotMirrored"), { count: missed });
+    }
     case "rows_failed": {
       const failed = count(parts[1]);
       if (failed === null) return neutral();

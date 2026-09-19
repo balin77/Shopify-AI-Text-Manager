@@ -2017,6 +2017,8 @@ export const en: Translation = {
       slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
       invalidApiKey: "(the AI API key was rejected)",
       someFailed: "Some entries could not be processed — open the task for details.",
+      translationsNotMirrored:
+        "{count} translation(s) were saved on Shopify but could not be written to this app's cache — resync the product to see them here.",
     },
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",

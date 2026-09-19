@@ -111,6 +111,23 @@ export function classifyWatchedTasks(
   const working: string[] = [];
   /** The row EXISTS and has not finished — evidence, not a guess. */
   const alive: string[] = [];
+  /**
+   * A live SIBLING is evidence too, and it is the difference between the two
+   * things a `missing` id can be. Repairs for one resource share an in-flight
+   * key and run strictly one after another, so while any watched task is
+   * running, an id with no row yet is most likely QUEUED behind it — giving up
+   * on it there drops a run that has not started, which is the empty cell this
+   * exists to remove. Only when nothing at all is alive does a deadline that
+   * has run out mean what it is for: a run that never created its row.
+   */
+  const anyAlive = ids.some((id) => {
+    const status = statuses[id];
+    return (
+      status !== undefined &&
+      status !== MISSING_TASK_STATUS &&
+      !TERMINAL_TASK_STATUSES.has(status)
+    );
+  });
   for (const id of ids) {
     const status = statuses[id];
     if (status !== undefined && TERMINAL_TASK_STATUSES.has(status)) {
@@ -125,7 +142,7 @@ export function classifyWatchedTasks(
       working.push(id);
       continue;
     }
-    if (expired.has(id)) settled.push(id);
+    if (expired.has(id) && !anyAlive) settled.push(id);
     else working.push(id);
   }
   return { settled, working, alive };

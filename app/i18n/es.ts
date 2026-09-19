@@ -2001,6 +2001,8 @@ export const es: Translation = {
       slugEmpty: "El slug de URL traducido para {language} quedó vacío y no se guardó.",
       invalidApiKey: "(la clave de API de IA fue rechazada)",
       someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",
+      translationsNotMirrored:
+        "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a sincronizar el producto para verlas aquí.",
     },
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",

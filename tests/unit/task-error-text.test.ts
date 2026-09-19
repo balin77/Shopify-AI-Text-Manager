@@ -98,6 +98,10 @@ describe("taskErrorText — the runners' counted codes", () => {
     ["item_missing", []],
     ["webp_batch_not_started", []],
     ["slug_empty:pt-BR", ["pt-BR"]],
+    // The auto-translation repair wrote on Shopify but not into the mirror —
+    // the merchant sees an empty field, so the sentence has to reach them in
+    // their own language rather than as a raw Prisma message.
+    ["translations_not_mirrored:2", ["2"]],
   ];
 
   for (const [name, t] of BUNDLES) {

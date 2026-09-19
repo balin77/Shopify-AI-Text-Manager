@@ -448,7 +448,9 @@ describe("auto-translation path (Max)", () => {
     const final = db.task.update.mock.calls.at(-1) as unknown as [any];
     expect(final[0].data.status).toBe("completed_with_errors");
     expect(JSON.parse(final[0].data.result)).toMatchObject({ retranslated: 2, notMirrored: 2 });
-    expect(final[0].data.error).toContain("could not be written to the local cache");
+    // A machine CODE, not an English sentence with a raw Prisma message in it:
+    // this run has no merchant locale, and `taskErrorText` renders the code.
+    expect(final[0].data.error).toBe("translations_not_mirrored:2");
   });
 
   it("hands back the Task id BEFORE the detached run creates the row", async () => {
