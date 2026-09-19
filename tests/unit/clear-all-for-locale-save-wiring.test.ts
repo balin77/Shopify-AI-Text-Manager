@@ -76,3 +76,54 @@ describe("clear-all-for-locale save wiring", () => {
     expect(guards?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 });
+
+/**
+ * The same rail, file-wide.
+ *
+ * Every site that announces a save by setting `isSavePendingRef` must also say
+ * WHICH item it is saving, or the two response effects skip it. This has now
+ * been fixed on four paths (clear-all-for-locale, the copy-to-all-locales
+ * save, both translate auto-saves and the alt-text generate-all auto-save), so
+ * the rule is pinned rather than re-reviewed.
+ *
+ * NOT in scope: `app/hooks/useEditorAltText.ts`, whose seven save sites carry
+ * the same gap. That hook is not handed `savedItemIdRef` at all — closing it
+ * means threading a new prop, which is a change of its own and is deliberately
+ * left open rather than silently half-done here.
+ */
+describe("every save site claims its item", () => {
+  const FILES = [
+    "useFieldHandlers.ts",
+    "useUnifiedContentEditor.ts",
+    "useEditorAutoSave.ts",
+  ];
+  // A claim may sit a few lines up, behind the comment explaining it.
+  const LOOKBACK = 15;
+
+  for (const file of FILES) {
+    it(`${file} sets savedItemIdRef before every isSavePendingRef`, () => {
+      const lines = readFileSync(
+        join(process.cwd(), "app", "hooks", file),
+        "utf8",
+      ).split("\n");
+
+      const unclaimed: number[] = [];
+      lines.forEach((line, i) => {
+        if (!/isSavePendingRef\.current\s*=\s*true/.test(line)) return;
+        const window = lines.slice(Math.max(0, i - LOOKBACK), i).join("\n");
+        // A real claim only: `=` but not `===` (the guard both effects open
+        // with) and not `= null` (the cleanup they end with) — both sit near
+        // save sites, and either would satisfy a looser pattern while the
+        // save stays unclaimed.
+        const CLAIM = /savedItemIdRef\.current\s*=(?!=)\s*(?!null\b)\S/;
+        if (!CLAIM.test(window)) unclaimed.push(i + 1);
+      });
+
+      expect(
+        unclaimed,
+        `${file}: save sites at line(s) ${unclaimed.join(", ")} do not set savedItemIdRef — ` +
+          "the save-response effects will skip them (no onSaveComplete, no revalidation, no messages)",
+      ).toEqual([]);
+    });
+  }
+});
