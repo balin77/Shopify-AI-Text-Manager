@@ -99,8 +99,11 @@ that costs, concretely, and all of it is a hard requirement of this plan:
 1. **Explicit, logged, versioned consent** before the first managed call —
    never a pre-ticked box, never bundled into the plan purchase. Stored as
    `aiProcessingConsentAt` + `aiProcessingConsentVersion` on `AISettings`, and
-   re-asked when the version changes (which it does the day the managed
-   sub-processor changes).
+   re-asked when the version changes (which it does the day a managed
+   sub-processor changes). It names **both** providers — the default and the
+   failover (§3a rule 6) — from the first managed call, because a
+   sub-processor that first appears during an outage is not one anybody
+   consented to.
 2. **Disclosure**: [privacy.tsx](../../app/routes/privacy.tsx) §4.1 (L109–116)
    says content is processed *"only using your own API key"* and that the app
    *"does not provide a shared or operator-owned API key"* — **three
@@ -186,23 +189,35 @@ that two of the four candidates are not in this repo's model config at all.
 
 | Candidate | in / out | Vision | No-training default | Verdict |
 |---|---|---|---|---|
-| **OpenAI `gpt-5-nano`** | 0.05 / 0.40 | yes | yes (API default) | **cheapest by far; first choice pending the quality bake-off** |
-| **Google Gemini 3.1 Flash-Lite** | 0.25 / 1.50 | yes | paid tier only | strong second; note 2.5 Flash-Lite retires 2026-10-16 |
-| Anthropic Haiku 4.5 | 1.00 / 5.00 | yes | yes | ~14× nano; only if quality forces it |
+| **OpenAI `gpt-5-nano`** | 0.05 / 0.40 | yes | yes (API default) | **DEFAULT** — cheapest by far, pending the quality bake-off |
+| **Anthropic `claude-haiku-4-5`** | 1.00 / 5.00 | yes | yes | **FAILOVER** (owner's decision, 2026-09-19) — 200K context, ~14× the blended cost of nano |
+| Google Gemini 3.1 Flash-Lite | 0.25 / 1.50 | yes | paid tier only | not chosen; note 2.5 Flash-Lite retires 2026-10-16 |
 | DeepSeek `deepseek-flash` | 0.15 / 0.60 off-peak | no | unclear | excluded: residency (§2.4), no vision, peak/off-peak pricing |
 | HuggingFace | — | no | **no** | excluded by §B4 |
 
-Three decisions follow from the table:
+**Two models, two PROVIDERS — and the second one is the whole point.** A pinned
+model with no alternative means one provider's outage is our outage, and §13
+named that with no answer. `claude-haiku-4-5` is the failover: different
+company, different network, different status page, vision on both sides, and
+no-training by default on API traffic for both. It is deliberately not a second
+OpenAI model — a second model behind the same endpoint fails with the endpoint.
 
-- **The managed model is PINNED and the merchant cannot change it.** Provider
-  and model selection stay a BYO privilege. Cost control that a customer can
-  switch off is not cost control — and a "choose your model" dropdown over our
-  key is an invitation to select Opus. Pinning needs a **runtime fallback**,
-  though: a startup check can verify that an id is in our price table but not
-  that the provider still serves it, and a model retired at 03:00 does not
-  restart the process. So a second pinned model in the same price table is
-  promoted automatically on a model-not-found error, and the promotion alerts.
-  Note also that `gpt-5-nano` is not in
+Everything difficult about this follows from ONE number: Haiku is **~14× nano**
+blended (1500-in/700-out: $0.000355 vs $0.005). §3a is that number's
+consequences. Two smaller facts belong here: Haiku's context window is **200K**,
+i.e. SMALLER than the default's — irrelevant at this app's prompt sizes
+(`CHUNK_THRESHOLD_CHARS` caps a batch around 10K tokens) but the reason an
+input-too-long failure must never trigger a failover (§3a); and the id is
+`claude-haiku-4-5` with **no date suffix**, while this repo's `CURATED_MODELS`
+still carries `claude-3-5-haiku-20241022`, a previous generation.
+
+Three further decisions follow from the table:
+
+- **Both models are PINNED and the merchant chooses neither.** Provider and
+  model selection stay a BYO privilege. Cost control a customer can switch off
+  is not cost control — and a "choose your model" dropdown over our key is an
+  invitation to select Opus. The failover is automatic and is the ONLY way the
+  second model is ever reached. Note also that `gpt-5-nano` is not in
   [ai-models.config.ts](../../app/config/ai-models.config.ts) at all
   (`DEFAULT_MODELS.openai` is `gpt-4o-mini`) — the pinned candidate joins the
   repo's vocabulary in the same commit.
@@ -223,6 +238,83 @@ Three decisions follow from the table:
   run against nano, Flash-Lite and Haiku, judged side by side. A managed
   default that writes worse copy than the app's reputation implies costs more
   than it saves. Cheapest-that-is-good-enough, not cheapest.
+
+---
+
+## 3a. Failover — what a 14× price difference does to every rule
+
+The failover exists so an OpenAI outage is not a ContentPilot outage. Left
+naive, it turns one company's bad afternoon into our bad month. Eight rules,
+each with the failure it prevents.
+
+**1. A failover must never shrink what the merchant bought.** The budget is
+debited at the **DEFAULT model's price**, whichever model actually ran; we
+absorb the difference. Anything else means a merchant watching their volume
+evaporate at 14× speed because of an outage they did not cause and cannot see —
+punishing the customer for our supplier. This is the rule the other seven exist
+to make affordable.
+
+**2. Therefore the ledger carries two numbers, not one.** `costMicros` is what
+we really paid (priced per model, so a Haiku call is priced as Haiku);
+`billedMicros` is what the merchant's budget was charged (always at default
+prices). They are equal in normal operation and diverge exactly during a
+failover, which also makes the gap the metric that says what failover cost us.
+The §7 margin guard reads `costMicros` — a guard that read the billed figure
+would be blind to the only event that can break it.
+
+**3. A global failover budget, because "we absorb it" is otherwise unbounded.**
+Worked: if every managed shop ran on Haiku for one full day, that day costs
+~14/30 ≈ **47 % of the whole month's provider budget**. Affordable once, not
+repeatedly. So `MANAGED_AI_FAILOVER_BUDGET_MICROS` (a share of the month's
+managed spend, ~25 % to start) with an alert at half of it, and on exhaustion
+managed mode answers `managedUnavailable` (§5) rather than spending without a
+ceiling. Degrading to "temporarily unavailable" during a long outage is honest;
+an unbounded invoice is not.
+
+**4. What triggers a failover is a SHORT list, and the exclusions are where
+the money is.** Fail over on: a connection error, a timeout, a 5xx, a
+model-not-found (the retired-id case §3 names), and a 401 on OUR key — that one
+alerts loudly, because it is our misconfiguration, not the merchant's problem.
+Fail over on a 429 **only after the queue's own retries are exhausted**; doing
+it on the first 429 converts an ordinary throttle, which the queue is built to
+absorb, into a 14× cost event. **Never** fail over on `isInputTooLongError`
+(the fallback's context is smaller — it is guaranteed to fail too), on a
+content-policy refusal, or on a malformed-request 400: the second provider
+returns the same answer and we have paid twice for one failure. The app already
+owns these predicates (`isAuthError`, `isInputTooLongError`) — the failover
+reuses them rather than growing a second vocabulary.
+
+**5. A circuit breaker, not a per-call retry.** Per-call failover means every
+single call pays the primary's failure first, for the whole outage. So: after
+N consecutive qualifying failures inside a window, managed traffic routes to
+the fallback for M minutes, then ONE probe call decides whether to come back.
+This is sound precisely because production runs a single instance
+([RAILWAY-SETUP.md](../../RAILWAY-SETUP.md) §0) — and it is a **fifth
+process-local state**, so it joins that document's table when it is built. On a
+second instance, two breakers would trip and recover independently.
+
+**6. Consent names BOTH providers from day one.** A sub-processor that first
+appears during an outage must not be how a merchant learns their content went
+somewhere new — and an outage is the worst possible moment to ask. So §2's
+consent text, the privacy page and the settings copy list OpenAI *and*
+Anthropic from the first managed call, whether or not the fallback ever runs.
+
+**7. The failover is a quality UPGRADE, and that is its own trap.** Haiku 4.5
+is the stronger model, so a failover never degrades output and needs no quality
+gate. The trap is the opposite direction: output during an outage may read
+*better*, which is an argument someone will make for promoting the fallback to
+default. It costs 14×; if quality is the reason to move, that is a pricing
+decision (§7), not an ops one.
+
+**8. Which model wrote a text is recorded, not inferred.** `Task.aiModel`
+already stores it, so support can answer "why does this one read differently"
+without guessing, and the failover shows up in the task log rather than only in
+our own metrics.
+
+Startup validation (§9.6) covers both credentials and both ids. A MISSING
+fallback does not refuse to start managed mode — running on one provider is
+what we do today — but it is logged and alerted as "no failover configured",
+because the silent version of that state is how an outage becomes a surprise.
 
 ---
 
@@ -286,14 +378,22 @@ model AiUsageCounter {
   source         String   // "managed" | "byo"
   calls          Int      @default(0)
   estimatedCalls Int      @default(0)  // calls whose usage was estimated
+  failoverCalls  Int      @default(0)  // calls served by the fallback provider
   inputTokens    Int      @default(0)
   outputTokens   Int      @default(0)
-  costMicros     Int      @default(0)  // micro-EUR of PROVIDER cost
+  costMicros     Int      @default(0)  // micro-EUR we really paid (priced per model)
+  billedMicros   Int      @default(0)  // micro-EUR charged to the merchant's budget
   updatedAt      DateTime @updatedAt
   @@unique([shop, period, source])
   @@index([shop])
 }
 ```
+
+`costMicros` and `billedMicros` are equal except during a failover, where the
+merchant is charged at the default model's price and we carry the rest (§3a
+rules 1–2). The quota reads `billedMicros`; the margin guard reads
+`costMicros`; the difference, summed, is what the failover cost us and is the
+number the global failover budget (§3a rule 3) is measured against.
 
 Plus three columns on `Task` (`inputTokens`, `outputTokens`, `costMicros`), so
 the Tasks tab can answer "what did that bulk run cost" per run — `Task` already
@@ -315,12 +415,18 @@ break-even visible to the merchant deciding between them.
 ## 5. Phase 2 — one credential resolver
 
 `app/services/ai/ai-credentials.server.ts`, the ONLY module in the app that
-reads `MANAGED_AI_API_KEY`:
+reads `MANAGED_AI_*` — now **two** credentials, the default
+(`MANAGED_AI_PROVIDER` / `_MODEL` / `_API_KEY`) and the failover
+(`MANAGED_AI_FALLBACK_*`). They are resolved as a UNIT: provider, model and key
+always travel together, because the failover crosses providers and a mismatched
+pair is a key sent to the wrong endpoint. Which of the two a call gets is the
+breaker's answer (§3a rule 5), never a caller's choice:
 
 ```ts
 type AiCredentialDecision =
   | { ok: true; source: "byo";     provider: AIProvider; config: AIServiceConfig }
-  | { ok: true; source: "managed"; provider: AIProvider; model: string; config: AIServiceConfig }
+  | { ok: true; source: "managed"; provider: AIProvider; model: string;
+      config: AIServiceConfig; role: "default" | "failover" }
   | { ok: false; reason: "noKey";          provider: AIProvider }   // 409 NO_AI_KEY (today's)
   | { ok: false; reason: "consentMissing" }                          // 409 AI_CONSENT_REQUIRED
   | { ok: false; reason: "budgetExceeded"; used: number; limit: number } // 402 AI_BUDGET_EXCEEDED
@@ -715,11 +821,12 @@ already has a matching hole in today's code:
    account. Our meter failing and the provider's cap failing are two
    independent failures; relying on only one of them is the same mistake as
    trusting `userErrors` without the echo.
-6. **Startup validation**: `MANAGED_AI_PROVIDER`/`MODEL` must exist in the
-   price table and the model must be a live id (`deepseek-chat` is already
-   retired in this repo's config — §3). `scripts/validate-env.js` gains the
-   check; a managed mode pointing at a dead model is a 100 % failure rate for
-   paying customers.
+6. **Startup validation for BOTH credential sets**: each
+   `MANAGED_AI_[FALLBACK_]PROVIDER`/`MODEL` must exist in the price table, and
+   each key must be present for the provider it names. `scripts/validate-env.js`
+   gains the check; a managed mode pointing at a dead model is a 100 % failure
+   rate for paying customers. A missing FALLBACK is a warning, not a refusal
+   (§3a) — but a silent one is how an outage becomes a surprise.
 7. **Prompt-injection surface does not change** (merchant content was already
    being sent), but the blast radius does: content now travels under OUR
    account. Keep `sanitizePromptInput` on every path and make sure no managed
@@ -830,6 +937,8 @@ review pass before it is called done.
 | `managed-ai-margin.test.ts` | budget × buffer ≤ surcharge share, per plan — §7 — AND `taster ≤ 0.25 × smallest paid budget` (§10 ladder rule) |
 | `ai-usage-meter.test.ts` | each SDK's usage shape parses; a missing usage object estimates UP and flags `estimatedCalls` |
 | `ai-usage-overshoot.test.ts` | NOT "cannot overbook" — a bare `increment` never can, and unlike `consumeImageOperations` the cost is unknown up front, so the reserve-before predicate does not apply. It pins the §6 bound instead: N concurrent resolvers seeing `remaining > 0` start at most `concurrency` calls, and the settled counter equals the sum of the real costs |
+| `ai-failover.test.ts` | the trigger matrix of §3a rule 4: 5xx/timeout/connection/model-not-found/our-401 fail over; input-too-long, content refusal and a malformed 400 do NOT; a 429 only after the queue's retries. Plus the breaker: N failures trip it, one probe recovers it, and a tripped breaker does not re-test per call |
+| `ai-failover-billing.test.ts` | a fallback call debits `billedMicros` at the DEFAULT model's price and `costMicros` at the fallback's — the rule that keeps an outage off the merchant's bill |
 | `ai-credentials.test.ts` | the gate matrix: byo/managed × consent × budget × kill switch × **trial** × **test subscription** → exactly one decision each |
 | `stale-repair-budget-abort.test.ts` | §6a rule 1: a budget-refused detached repair purges NOTHING (the one that protects merchant data rather than money) |
 | `ai-key-source-isolation.test.ts` | no file outside the resolver reads a `MANAGED_AI_*` env var or builds an `AIServiceConfig` literal — the §B4 structural guarantee. Scope it to the managed names and carve out `api.ai-models.tsx`: a blanket `*_API_KEY` rule would match `SHOPIFY_API_KEY`, which has ~10 legitimate uses |
@@ -851,9 +960,10 @@ review pass before it is called done.
   bake-off is for, and "move up one model and re-derive the budgets" must stay
   a one-constant change.
 - **Support load shifts to us.** Under BYO a provider outage is the merchant's
-  provider; under managed it is our outage. A single pinned provider has no
-  failover — a second managed provider is a follow-up, and until it exists the
-  status of the managed provider is something we have to watch.
+  provider; under managed it is our outage. That is what the failover answers
+  (§3a) — and it does not remove the risk, it bounds it: a long outage still
+  ends at `managedUnavailable` once the failover budget is spent, and both
+  providers' status is now something we watch rather than one.
 - **The App Store review will read the privacy page against the product.**
   §2.2 is not optional and not a follow-up commit.
 - **The offer can be worded into a terms problem.** §2.6b: an application that
@@ -915,7 +1025,8 @@ settles them, and each has a default so nothing waits:
 | Surcharge level: €12 / €20 / €40 | take it; it is the guard-compliant, collision-free set (§7) |
 | Managed on Free? | no — one-time taster only (§10) |
 | Taster size: 350 actions, one-time | take it, capped by the ladder rule; **no** recurring free allowance in v1 |
-| If the cheap model is not good enough | move up one model and re-derive; prices stay, action counts drop |
+| If the cheap model is not good enough | move up one model and re-derive; prices stay, action counts drop. **Decided 2026-09-19:** the DEFAULT stays the cheapest that passes the bake-off, and `claude-haiku-4-5` is the FAILOVER, not a quality upgrade path — promoting it to default is a pricing decision, not an ops one (§3a rule 7) |
+| Global failover budget: ~25 % of the month's managed spend | take it; it bounds the one event that can break the margin guard (§3a rule 3) |
 | Overage when the budget is spent | hard wall in v1; Shopify usage-billing is the first follow-up (§7) |
 
 **(d) Decisions that only exist once something is built.** Do not pre-decide
