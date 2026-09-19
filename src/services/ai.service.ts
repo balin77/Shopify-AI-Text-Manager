@@ -8,6 +8,12 @@ import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
 import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
 import { TRANSLATION_BATCH } from '../../app/config/constants';
+import {
+  estimateOutputChars,
+  fitsOneRequest,
+  perLocaleSourceBudgetChars,
+  planLocaleChunks,
+} from '../../app/services/ai/translation-budget.shared';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -156,6 +162,31 @@ export interface AIServiceConfig {
   grokApiKey?: string;
   deepseekApiKey?: string;
   selectedModel?: string;
+}
+
+/**
+ * Options for {@link AIService.translateFieldsToLocalesBatch} and its chunking
+ * wrapper — the LONG half of a translate-all run.
+ *
+ * `customInstructions` and `keywordDirectiveFor` are not decoration: they are
+ * the merchant's own translate instructions, the seo_optimized length caps
+ * (`buildTranslateInstructions`) and the keyword-aware clause. The per-locale
+ * path this batch replaced passed both, so a batch that did not would have
+ * silently switched them off for every description, body, excerpt and meta
+ * description the moment it started working — exactly the asymmetry
+ * `translateShortFieldsBatch` was fixed for in the other direction, where a
+ * title ignored a cap its own description respected.
+ *
+ * The keyword clause is a BUILDER rather than a string because the chunking
+ * wrapper splits by locale: a chunk must carry the clauses for the languages it
+ * actually translates and no others, or the prompt names a language the answer
+ * cannot contain.
+ */
+export interface TranslateFieldsToLocalesOptions {
+  preserveHtml?: boolean;
+  contextLabel?: string;
+  customInstructions?: string;
+  keywordDirectiveFor?: (locales: string[]) => string | undefined;
 }
 
 export class AIService {
@@ -356,7 +387,31 @@ ${languageInstruction}`;
   async translateContent(
     content: string,
     fromLang: string,
-    toLang: string
+    toLang: string,
+    /**
+     * The merchant's translate instructions plus the seo_optimized caps and the
+     * keyword clause, joined by the caller. OPTIONAL and absent by default, so
+     * every existing call site is byte-identical — it exists for the ONE branch
+     * that reaches this from a batched run: `translateFieldsToLocalesChunked`
+     * sends a field too large to batch through here per locale, and without it
+     * a 30 000-character body would be the one field of a translate-all run
+     * that silently ignored the merchant's instructions.
+     */
+    instructions?: string,
+    /**
+     * WHICH field the text is, and it is required in practice whenever
+     * `instructions` is passed.
+     *
+     * The seo_optimized block inside those instructions is a list of per-field
+     * caps (`- seoTitle: maximum 60 characters — paraphrase to fit`,
+     * `- metaDescription: 120-160 characters`), and a body only ever reaches
+     * this branch because it is enormous. Handed an UNLABELLED wall of text
+     * together with those lines, the model is invited to condense it to sixty
+     * characters — and the result would be echo-verified and mirrored as the
+     * translation. The batch prompt solves the same problem with its
+     * `### <key>` headers; this is that, for one field.
+     */
+    fieldLabel?: string
   ): Promise<string> {
     // Sanitize content before translation.
     // NOTE (review MEDIUM "5000-char truncation"): this is intentionally NOT a
@@ -381,9 +436,10 @@ ${languageInstruction}`;
 
     const glossaryDirective = await this.getGlossaryDirective([sanitizedContent], [toLang]);
 
-    const prompt = `Translate the following text from ${fromLang} to ${toLang}. Keep HTML tags.
-
+    const prompt = `Translate the following ${fieldLabel ? `"${fieldLabel}" field` : 'text'} from ${fromLang} to ${toLang}. Keep HTML tags.
+${fieldLabel ? `\nAny instruction below that names a DIFFERENT field does not apply to this text.\n` : ''}
 Text: ${sanitizedContent}
+${instructions ? `\n${instructions}\n` : ''}
 ${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any other formatting. No explanations.`;
 
@@ -1518,7 +1574,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     fields: Record<string, string>,
     fromLang: string,
     targetLocales: string[],
-    options: { preserveHtml?: boolean; contextLabel?: string } = {}
+    options: TranslateFieldsToLocalesOptions = {}
   ): Promise<Record<string, Record<string, string>>> {
     const preserveHtml = options.preserveHtml ?? true;
     const contextLabel = options.contextLabel || 'content';
@@ -1562,6 +1618,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       targetLocales,
     );
 
+    // The merchant's own translate instructions and the SEO length caps
+    // (buildTranslateInstructions), plus the keyword clause. Both are per-CALL
+    // and the keyword one is built for THIS chunk's locales only — a clause
+    // naming a language the chunk does not translate is an instruction about
+    // nothing. Kept apart from the requirements list for the same reason
+    // translateFields keeps them apart: the merchant's text must never
+    // overwrite the rules this prompt depends on (the HTML rule above is what
+    // makes a body survive).
+    const keywordDirective = options.keywordDirectiveFor?.(targetLocales) || '';
+
     const prompt = `Translate the following ${contextLabel} fields from ${localeName(fromLang)} to: ${targetLanguages}.
 
 Each field is introduced by a "### <key>" header followed by its source text.
@@ -1573,6 +1639,8 @@ Requirements:
 - Keep the translation natural and faithful to the source meaning.
 - Maintain a similar length to the source.${htmlRule}
 - Do NOT add explanations or extra fields.
+${options.customInstructions ? `\n${options.customInstructions}\n` : ''}
+${keywordDirective ? `\n${keywordDirective}\n` : ''}
 ${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond with ONLY this JSON shape (outer keys = locale codes, inner keys = field keys):
 ${JSON.stringify(jsonStructure, null, 2)}`;
@@ -1638,17 +1706,21 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     fields: Record<string, string>,
     fromLang: string,
     targetLocales: string[],
-    options: { preserveHtml?: boolean; contextLabel?: string } = {}
+    options: TranslateFieldsToLocalesOptions = {}
   ): Promise<Record<string, Record<string, string>>> {
     const entries = Object.entries(fields).filter(([, v]) => v && v.trim().length > 0);
     if (entries.length === 0 || targetLocales.length === 0) return {};
 
-    const { CHUNK_THRESHOLD_CHARS, OUTPUT_EXPANSION_FACTOR, MAX_CONCURRENCY } = TRANSLATION_BATCH;
+    const { MAX_CONCURRENCY } = TRANSLATION_BATCH;
     const sourceChars = entries.reduce((a, [, v]) => a + v.length, 0);
-    const estimatedOutput = sourceChars * targetLocales.length * OUTPUT_EXPANSION_FACTOR;
+    const estimatedOutput = estimateOutputChars(sourceChars, targetLocales.length);
 
-    // Fast path: the whole payload fits in one call.
-    if (estimatedOutput <= CHUNK_THRESHOLD_CHARS) {
+    // Fast path: the whole payload fits in one call. THE hybrid decision, and it
+    // is a product of both dimensions — a 6 000-character body is one call on a
+    // two-language shop and eight calls' worth of output on an eight-language
+    // one, which is why the locale count is in the estimate and not only the
+    // text length.
+    if (fitsOneRequest(sourceChars, targetLocales.length)) {
       loggers.ai('info', '[AI-SERVICE] translateFieldsToLocalesChunked: single batch', {
         fields: entries.length,
         locales: targetLocales.length,
@@ -1659,7 +1731,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
 
     // Source-char budget that keeps ONE locale's output under the threshold.
-    const perLocaleBudget = CHUNK_THRESHOLD_CHARS / OUTPUT_EXPANSION_FACTOR;
+    const perLocaleBudget = perLocaleSourceBudgetChars();
     const byKey = new Map(entries);
 
     // Split fields into groups that each fit one locale under budget. A single
@@ -1700,7 +1772,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         const src = byKey.get(key) || '';
         for (const locale of targetLocales) {
           jobs.push(async () => {
-            const translated = await this.translateContent(src, fromLang, locale);
+            // Same instructions the batched branch below gets — this is still
+            // one field of the SAME run, and the only thing that makes it take
+            // this path is its size.
+            const translated = await this.translateContent(
+              src,
+              fromLang,
+              locale,
+              [options.customInstructions, options.keywordDirectiveFor?.([locale])]
+                .filter((part): part is string => !!part && part.trim() !== '')
+                .join('\n') || undefined,
+              key,
+            );
             return { [locale]: { [key]: translated } };
           });
         }
@@ -1710,9 +1793,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const groupFields: Record<string, string> = {};
       for (const k of group) groupFields[k] = byKey.get(k) || '';
 
-      const localesPerChunk = Math.max(1, Math.floor(perLocaleBudget / groupChars));
-      for (let i = 0; i < targetLocales.length; i += localesPerChunk) {
-        const localeChunk = targetLocales.slice(i, i + localesPerChunk);
+      // The middle of the hybrid: however many languages of THIS field group fit
+      // one response — every language for a short group, one per request for a
+      // long one, two or three for the medium text on a many-language shop that
+      // used to truncate silently.
+      for (const localeChunk of planLocaleChunks(targetLocales, groupChars)) {
         jobs.push(() =>
           this.translateFieldsToLocalesBatch(groupFields, fromLang, localeChunk, options)
         );

@@ -144,7 +144,10 @@ function GlossaryTranslationField({
   const inherited = inheritedGlossaryValue(draft.translations, activeLocale);
   return (
     <TextField
-      label={t.settings.glossaryTranslationHeader}
+      label={t.settings.glossaryTranslationHeader.replace(
+        "{language}",
+        getLocalizedLanguageName(activeLocale, appLocale),
+      )}
       labelHidden
       value={draft.translations[activeLocale] || ""}
       onChange={onChange}

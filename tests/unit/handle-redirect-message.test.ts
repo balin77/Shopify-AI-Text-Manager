@@ -12,9 +12,12 @@
 
 import { describe, it, expect } from "vitest";
 import { buildRedirectMessage, redirectNoteOf } from "~/utils/handle-redirect-message";
+import { de } from "~/i18n/de";
+import { en } from "~/i18n/en";
+import { es } from "~/i18n/es";
 
 const t = {
-  common: {
+  content: {
     redirectCreated: "Alt {path} → neu.",
     redirectNotConfirmed: "{path} nicht weitergeleitet.",
     redirectFailed: "{path} fehlgeschlagen.",
@@ -61,6 +64,73 @@ describe("buildRedirectMessage", () => {
     const message = buildRedirectMessage({ code: "created", fromPath: "/pages/old" }, {});
     expect(message?.text).toContain("/pages/old");
     expect(message?.tone).toBe("success");
+  });
+});
+
+/**
+ * The wiring, against the REAL bundles.
+ *
+ * This module read the keys from `t.common` while all three bundles carry them
+ * in `t.content`, so every redirect note in the app rendered its hardcoded
+ * English fallback — on German and Spanish shops too. Nothing caught it: the
+ * fixture above invents its own section, so it passes whichever one the module
+ * happens to name. A merchant reported it from a German shop, where the save
+ * line beside the note ("Änderungen erfolgreich gespeichert!") WAS translated,
+ * because `changesSaved` happens to exist in both sections.
+ *
+ * So the fixture is no longer the only witness: each bundle answers for itself.
+ */
+describe("buildRedirectMessage against the shipped bundles", () => {
+  const CODES = [
+    "created",
+    "notConfirmed",
+    "failed",
+    "blogArticlesUncovered",
+    "shadowRemoved",
+    "missingBlogHandle",
+    "localeBlogHandleUnknown",
+  ] as const;
+
+  for (const [name, bundle] of [["de", de], ["en", en], ["es", es]] as const) {
+    it(`phrases every code from the ${name} bundle, never from the fallback`, () => {
+      for (const code of CODES) {
+        const message = buildRedirectMessage({ code, fromPath: "/blogs/b/old" }, bundle);
+        expect(message, `${name}/${code} produced no message`).not.toBeNull();
+        // The bundle's own string, not the fallback in the module. Compared by
+        // VALUE against the bundle rather than by "is it English", because the
+        // en bundle is English too and would pass such a check while unwired.
+        const key = {
+          created: "redirectCreated",
+          notConfirmed: "redirectNotConfirmed",
+          failed: "redirectFailed",
+          blogArticlesUncovered: "redirectBlogArticlesUncovered",
+          shadowRemoved: "redirectShadowRemoved",
+          missingBlogHandle: "redirectMissingBlog",
+          localeBlogHandleUnknown: "redirectLocaleBlogUnknown",
+        }[code];
+        const expected = String(
+          (bundle.content as Record<string, unknown>)[key],
+        ).replace("{path}", "/blogs/b/old");
+        expect(message?.text, `${name}/${code} did not come from the bundle`).toBe(expected);
+      }
+    });
+  }
+
+  it("keeps every note short enough for the info box's two-line clamp", () => {
+    // The note is APPENDED to the save message in one box
+    // (useUnifiedContentEditor: "One box, one outcome"), and MainNavigation
+    // clamps that box to two lines. A note that overran it got its ACTION HALF
+    // cut off — the merchant was told a redirect was skipped and not what to
+    // do about it, which is the one sentence that mattered. The budget is the
+    // clamp's rough capacity minus the longest save line; keep new wording
+    // inside it rather than raising the number.
+    const BUDGET = 130;
+    for (const [name, bundle] of [["de", de], ["en", en], ["es", es]] as const) {
+      for (const code of CODES) {
+        const text = buildRedirectMessage({ code, fromPath: "/blogs/b/old" }, bundle)!.text;
+        expect(text.length, `${name}/${code} is ${text.length} chars: "${text}"`).toBeLessThanOrEqual(BUDGET);
+      }
+    }
   });
 });
 

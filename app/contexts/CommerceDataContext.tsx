@@ -537,6 +537,21 @@ export function CommerceDataProvider({
       // merchant editing three locations of one variant cannot end up with one
       // written and two not.
       const byVariant = new Map<string, Array<{ locationId: string; quantity: number; compare: number }>>();
+      /**
+       * NAMED, when the save touches more than one variant's stock — the same
+       * rule the prices above follow, and stock needs it more.
+       *
+       * A bulk restock writes one compare-and-swap per variant, so "the stock
+       * changed while you were editing" is an answer about ONE of twelve. The
+       * notices are deduped, so without the title that sentence appears once,
+       * with no subject, and reads as if the whole save was refused — while
+       * eleven variants were in fact written.
+       */
+      const stockVariantIds = new Set(dirtyStock.map(([key]) => key.split("::")[0]));
+      const nameStockWarning = (variantId: string, phrased: string): string => {
+        const title = data.variants.find((v) => v.id === variantId)?.title;
+        return stockVariantIds.size > 1 && title ? `${title}: ${phrased}` : phrased;
+      };
       /** Locations that have to be ACTIVATED before they can hold a number. */
       const activations: Array<{ variantId: string; locationId: string; quantity: string; gid: string }> = [];
       for (const [key, value] of dirtyStock) {
@@ -559,7 +574,9 @@ export function CommerceDataProvider({
           // this feature avoids — but it is SAID, because dropping a typed
           // quantity and then clearing the field on the reload is how a stock
           // correction disappears with nobody noticing.
-          collected.push((t.warnings?.stockNoBaseline as string) || "stockNoBaseline");
+          collected.push(
+            nameStockWarning(variantId, (t.warnings?.stockNoBaseline as string) || "stockNoBaseline"),
+          );
           continue;
         }
         const list = byVariant.get(variantId) ?? [];
@@ -578,13 +595,19 @@ export function CommerceDataProvider({
           },
           "activateFailed",
         );
-        collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
+        collected.push(
+          ...warnings.map((code) =>
+            nameStockWarning(activation.variantId, (t.warnings?.[code] as string) || code),
+          ),
+        );
       }
 
       for (const [variantId, list] of byVariant) {
         const variant = data.variants.find((v) => v.id === variantId);
         if (!variant?.inventoryItemId) {
-          collected.push(t.warnings?.stockNoInventoryItem || "stockNoInventoryItem");
+          collected.push(
+            nameStockWarning(variantId, (t.warnings?.stockNoInventoryItem as string) || "stockNoInventoryItem"),
+          );
           continue;
         }
         const warnings = await postIsolated({
@@ -600,7 +623,9 @@ export function CommerceDataProvider({
             })),
           ),
         }, (t.saveFailed as string) || "The change could not be saved.");
-        collected.push(...warnings.map((code) => t.warnings?.[code] || code));
+        collected.push(
+          ...warnings.map((code) => nameStockWarning(variantId, (t.warnings?.[code] as string) || code)),
+        );
       }
 
       // InventoryItem settings, grouped per variant — one mutation each.

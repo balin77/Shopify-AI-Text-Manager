@@ -7,6 +7,8 @@
 
 import { data as json } from "react-router";
 import { TranslationService } from "../../../src/services/translation.service";
+import { fieldTranslationKeyMap } from "../../../src/services/shopify-content.service";
+import { isAttributeField } from "~/services/content-attributes.shared";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "../../utils/validation";
 import { getFullErrorMessage } from "../../utils/error-handler";
@@ -20,6 +22,35 @@ import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
+
+/**
+ * The SOURCE language of a translate request, or `undefined` when the caller
+ * named none.
+ *
+ * Three things this is not allowed to be, each of which it was:
+ *
+ * - It is not `"en"` by default. Both batch prompts NAME the source language
+ *   ("Translate these fields from English to: ..."), so on a German shop the
+ *   model was told German text was English - and with `en` among the TARGETS
+ *   that reads as translating English into English, which the batch helper's
+ *   source-echo guard skips on purpose (two identical languages legitimately
+ *   produce identical text). The untranslated German could then be
+ *   echo-confirmed and mirrored as the English translation. `undefined` hands
+ *   the question to `translateAllContent`, which answers it from the shop's own
+ *   primary locale.
+ * - It is not read from `sourceLocale` alone. The clients on the
+ *   translate-to-all-locales paths send the source as `primaryLocale` (the name
+ *   the `/api/ai` handlers read it under), so a handler asking only for
+ *   `sourceLocale` never saw it.
+ * - And an INVALID value is still refused rather than quietly replaced.
+ */
+function requestedSourceLocale(formData: FormData): string | undefined {
+  return (
+    getFormString(formData, "sourceLocale") ||
+    getFormString(formData, "primaryLocale") ||
+    undefined
+  );
+}
 
 // ============================================================================
 // METAOBJECT TRANSLATION HELPER (local copy)
@@ -187,6 +218,68 @@ function getEffectiveResourceType(itemId: string, configResourceType: string): s
   return itemId.includes("/Blog/") ? "Blog" : configResourceType;
 }
 
+/**
+ * The fields a whole-item translation may carry, out of the flat form the
+ * editor submits.
+ *
+ * The editor sends every field definition it renders, and on a product that
+ * includes the merchandising attributes — `status`, `vendor`, `tags`,
+ * `templateSuffix`, `category`. Shopify stores those ONCE PER ITEM and has no
+ * translation key for any of them, so each one was translated by the AI, sent
+ * to `prepareField`, refused there for want of a key mapping and reported back
+ * as `rejectedFields`: every "translate everything" on a product ended in
+ * "Feld(er) status, vendor konnten nicht auf Shopify gespeichert werden", a
+ * failure notice about two fields that can never succeed.
+ *
+ * The gate is the ONE canonical map (`FIELD_TO_TRANSLATION_KEY` via
+ * `fieldTranslationKeyMap`, which also carries the ShopPolicy `body`
+ * exception), never a second vocabulary: exactly what the save stage would
+ * accept is what the AI is paid to translate, so a field can no longer be
+ * translated only to be reported as rejected. It drops `images` by the same
+ * rule and rightly so — alt texts ride on their own parallel request
+ * (`translateAllAltTexts*`), never through this form.
+ *
+ * Server-side, because both entry points are directly POST-reachable: the
+ * client's own filter below is what keeps the values off the wire, this is
+ * what makes the rejection structurally impossible.
+ *
+ * What the gate must NOT become is a silent hole. Dropping an attribute is the
+ * point and says nothing; dropping a field that CLAIMS to be translatable means
+ * someone added one to the config without an entry in the map, and before this
+ * gate existed `prepareField` at least logged and reported it. So a submitted
+ * value for such a field still warns — the attributes stay quiet because
+ * `isAttributeField` is exactly the mark that says "one value per item", and a
+ * non-text field like `images` never carries a value through this form.
+ */
+export function collectTranslatableFields(
+  formData: FormData,
+  fieldDefinitions: ReadonlyArray<{
+    key: string;
+    translationKey?: string;
+    supportsTranslation?: boolean;
+    groupId?: string;
+  }>,
+  resourceType: string,
+): Record<string, string> {
+  const keyMapping = fieldTranslationKeyMap(resourceType);
+  const fields: Record<string, string> = {};
+  for (const field of fieldDefinitions) {
+    const value = getFormString(formData, field.key);
+    if (!value) continue;
+    if (!keyMapping[field.key]) {
+      if (!isAttributeField(field)) {
+        logger.warn(
+          `[Translation] Field '${field.key}' claims translation support but has no entry in FIELD_TO_TRANSLATION_KEY - NOT translated`,
+          { context: "Translation", resourceType, field: field.key },
+        );
+      }
+      continue;
+    }
+    fields[field.key] = value;
+  }
+  return fields;
+}
+
 // ============================================================================
 // TRANSLATE FIELD
 // ============================================================================
@@ -299,8 +392,8 @@ export async function handleTranslateAll(
 
   const targetLocalesStr = getFormString(formData, "targetLocales");
   const contextTitle = getFormString(formData, "title");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
-  if (!isValidLocale(sourceLocale)) {
+  const sourceLocale = requestedSourceLocale(formData);
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
@@ -336,12 +429,14 @@ export async function handleTranslateAll(
         }
       }
     } else {
-      contentConfig.fieldDefinitions.forEach((field) => {
-        const value = getFormString(formData, field.key);
-        if (value) {
-          changedFields[field.key] = value;
-        }
-      });
+      Object.assign(
+        changedFields,
+        collectTranslatableFields(
+          formData,
+          contentConfig.fieldDefinitions,
+          getEffectiveResourceType(itemId, contentConfig.resourceType),
+        ),
+      );
     }
 
     if (Object.keys(changedFields).length === 0) {
@@ -464,11 +559,11 @@ export async function handleTranslateAllForLocale(
 
   const targetLocale = getFormString(formData, "targetLocale");
   const contextTitle = getFormString(formData, "title");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+  const sourceLocale = requestedSourceLocale(formData);
   if (!targetLocale || !isValidLocale(targetLocale)) {
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
   }
-  if (!isValidLocale(sourceLocale)) {
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
@@ -505,12 +600,14 @@ export async function handleTranslateAllForLocale(
         }
       }
     } else {
-      contentConfig.fieldDefinitions.forEach((field) => {
-        const value = getFormString(formData, field.key);
-        if (value) {
-          changedFields[field.key] = value;
-        }
-      });
+      Object.assign(
+        changedFields,
+        collectTranslatableFields(
+          formData,
+          contentConfig.fieldDefinitions,
+          getEffectiveResourceType(itemId, contentConfig.resourceType),
+        ),
+      );
     }
 
     if (Object.keys(changedFields).length === 0) {
@@ -640,8 +737,8 @@ export async function handleTranslateFieldToAllLocales(
   const sourceText = getFormString(formData, "sourceText");
   const targetLocalesStr = getFormString(formData, "targetLocales");
   const contextTitle = getFormString(formData, "contextTitle");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
-  if (!isValidLocale(sourceLocale)) {
+  const sourceLocale = requestedSourceLocale(formData);
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 

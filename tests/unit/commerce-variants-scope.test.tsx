@@ -6,7 +6,9 @@
  * merchant either to leave it alone believing all twelve variants are that
  * price, or to touch it and overwrite eleven values they never saw. So the
  * tests are mostly about the difference between "they agree" and "they
- * differ", and about stock staying out of it entirely.
+ * differ" — for stock too, where the same question is asked of a quantity and
+ * the wrong answer costs a merchant real inventory, and about the two fields
+ * that identify ONE variant and are therefore locked on a group.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -184,22 +186,42 @@ describe("a bulk field", () => {
   });
 });
 
-describe("stock", () => {
-  it("is editable for one variant", async () => {
+describe("SKU and barcode", () => {
+  it("are editable for ONE variant", async () => {
     ui();
-    await screen.findByLabelText("Variant");
     // The single-variant scope is selected by default.
+    const sku = (await screen.findByLabelText(/^SKU/)) as HTMLInputElement;
+    const barcode = (await screen.findByLabelText(/^Barcode/)) as HTMLInputElement;
+    expect(sku.disabled).toBe(false);
+    expect(barcode.disabled).toBe(false);
     expect(screen.queryByText(/one variant at a time/i)).toBeNull();
   });
 
-  it("is NOT bulk-editable, and the panel says why", async () => {
-    // A stock level is a COUNT, per variant per location, written as an
-    // absolute quantity compared against the one that was loaded. One number
-    // across twelve variants would flatten twelve different counts.
+  it("are LOCKED on a group, and the panel says why", async () => {
+    // Both identify exactly one variant: a SKU shared across twelve is lost
+    // inventory control, and a shared barcode scans as the wrong article.
     ui();
     await pick("All variants");
 
+    const sku = (await screen.findByLabelText(/^SKU/)) as HTMLInputElement;
+    const barcode = (await screen.findByLabelText(/^Barcode/)) as HTMLInputElement;
+    expect(sku.disabled).toBe(true);
+    expect(barcode.disabled).toBe(true);
+    // Shown, not hidden — a field that vanishes on a group reads as a bug.
     expect(await screen.findByText(/one variant at a time/i)).toBeTruthy();
+  });
+
+  it("unlocks again when a single variant is picked back", async () => {
+    ui();
+    await pick("All variants");
+    await waitFor(async () =>
+      expect(((await screen.findByLabelText(/^SKU/)) as HTMLInputElement).disabled).toBe(true),
+    );
+
+    await pick("Weiss / 20cm");
+    await waitFor(async () =>
+      expect(((await screen.findByLabelText(/^SKU/)) as HTMLInputElement).disabled).toBe(false),
+    );
   });
 });
 
@@ -259,6 +281,39 @@ describe("the stock table", () => {
     expect([...total.querySelectorAll("td")].map((td) => td.textContent).at(-1)).toBe("35");
   });
 
+  it("moves the total for a quantity typed at a location NOT stocked yet", async () => {
+    // Typing a number into such a row IS the request to start stocking it, so
+    // it counts. The row contributes a real 0 only while it is left empty.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          variants: stocked,
+          variantsTruncated: false,
+          channels: [],
+          channelsTruncated: false,
+          shopLocations: [
+            { id: "l1", name: "Schweiz", isActive: true },
+            { id: "l2", name: "Spanien", isActive: true },
+            { id: "l3", name: "Italien", isActive: true },
+          ],
+        }),
+      })),
+    );
+    ui();
+
+    const row = (await screen.findByText("Italien")).closest("tr")!;
+    const total = () =>
+      [...screen.getByText("Total").closest("tr")!.querySelectorAll("td")].map((td) => td.textContent).at(-1);
+    expect(total()).toBe("30");
+
+    fireEvent.change(row.querySelector("input")!, { target: { value: "7" } });
+    expect(total()).toBe("37");
+  });
+
   it("shows an em dash, never a zero, for a number it does not have", async () => {
     // `tracked: false` and "never synced" both arrive as null, and 0 would
     // tell a merchant they are sold out of something they can sell freely.
@@ -287,6 +342,242 @@ describe("the stock table", () => {
 
     const row = (await screen.findByText("Schweiz")).closest("tr")!;
     expect([...row.querySelectorAll("td")].slice(1, 4).map((td) => td.textContent)).toEqual(["—", "—", "—"]);
+  });
+});
+
+/**
+ * Stock over a GROUP.
+ *
+ * The write is the easy half: one compare-and-swap per variant, which is what
+ * a single variant already got. The table is where a wrong answer costs a
+ * merchant real inventory, so most of this is about what a cell SAYS when the
+ * twelve variants behind it do not agree.
+ */
+describe("bulk stock", () => {
+  function stocked(colour: string, size: string, onHand: number | null, extra: Record<string, unknown> = {}) {
+    return variant(colour, size, {
+      levels: [
+        {
+          locationId: "l1",
+          locationName: "Schweiz",
+          locationActive: true,
+          onHand,
+          available: onHand,
+          committed: 0,
+          unavailable: 0,
+        },
+      ],
+      ...extra,
+    });
+  }
+
+  /** The POSTs a save produced. */
+  function posted() {
+    const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    return calls
+      .filter((c) => c[1]?.method === "POST")
+      .map((c) => Object.fromEntries((c[1].body as FormData).entries()) as Record<string, string>);
+  }
+
+  function withVariants(list: unknown[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          init?.method === "POST"
+            ? { success: true, warnings: [] }
+            : {
+                success: true,
+                variants: list,
+                variantsTruncated: false,
+                channels: [],
+                channelsTruncated: false,
+                shopLocations: [],
+              },
+      })),
+    );
+  }
+
+  function uiWithSave() {
+    return render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+          <SaveButton />
+          <Notices />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+  }
+
+  it("shows the quantity the members agree on", async () => {
+    withVariants([
+      stocked("Weiss", "20cm", 5),
+      stocked("Weiss", "30cm", 5),
+      stocked("Rot", "20cm", 9),
+      stocked("Rot", "30cm", 9),
+    ]);
+    uiWithSave();
+    await pick("All Weiss");
+
+    const row = (await screen.findByText("Schweiz")).closest("tr")!;
+    const input = row.querySelector("input") as HTMLInputElement;
+    expect(input.value).toBe("5");
+    expect(input.disabled).toBe(false);
+  });
+
+  it("shows ≠ where they differ — never a sum and never one member's number", async () => {
+    // A sum would read as a total in a row whose input writes ONE number per
+    // variant, which is how a restock turns into an overwrite.
+    withVariants([
+      stocked("Weiss", "20cm", 5),
+      stocked("Weiss", "30cm", 7),
+      stocked("Rot", "20cm", 9),
+      stocked("Rot", "30cm", 9),
+    ]);
+    uiWithSave();
+    await pick("All Weiss");
+
+    const row = (await screen.findByText("Schweiz")).closest("tr")!;
+    const input = row.querySelector("input") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("\u2260");
+    // The read-only columns say the same thing rather than 12 or 5.
+    expect([...row.querySelectorAll("td")].slice(1, 4).map((td) => td.textContent)).toEqual([
+      "0", "0", "\u2260",
+    ]);
+  });
+
+  it("writes the typed number to EVERY member, each against its own quantity", async () => {
+    withVariants([
+      stocked("Weiss", "20cm", 5),
+      stocked("Weiss", "30cm", 7),
+      stocked("Rot", "20cm", 9),
+      stocked("Rot", "30cm", 9),
+    ]);
+    const { container } = uiWithSave();
+    await pick("All Weiss");
+
+    const row = (await screen.findByText("Schweiz")).closest("tr")!;
+    fireEvent.change(row.querySelector("input")!, { target: { value: "10" } });
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+
+    await waitFor(() => expect(posted().length).toBe(2));
+    const calls = posted();
+    expect(calls.every((c) => c.intent === "stock")).toBe(true);
+    expect(calls.map((c) => c.variantId).sort()).toEqual(["Weiss-20cm", "Weiss-30cm"]);
+    // Each carries ITS OWN compareQuantity — nothing was summed or averaged.
+    const changes = calls.map((c) => JSON.parse(c.changes)[0]);
+    expect(changes.map((c) => c.quantity)).toEqual(["10", "10"]);
+    expect(changes.map((c) => c.compareQuantity).sort()).toEqual(["5", "7"]);
+  });
+
+  it("writes nothing for a mixed field that was typed into and cleared again", async () => {
+    withVariants([
+      stocked("Weiss", "20cm", 5),
+      stocked("Weiss", "30cm", 7),
+      stocked("Rot", "20cm", 9),
+      stocked("Rot", "30cm", 9),
+    ]);
+    const { container } = uiWithSave();
+    await pick("All Weiss");
+
+    const row = (await screen.findByText("Schweiz")).closest("tr")!;
+    fireEvent.change(row.querySelector("input")!, { target: { value: "10" } });
+    fireEvent.change(row.querySelector("input")!, { target: { value: "" } });
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+
+    await waitFor(() => expect(posted().length).toBe(0));
+  });
+
+  it("names the variant a stock warning is about", async () => {
+    // Deduped notices plus a per-variant compare-and-swap: without the title,
+    // "the stock changed while you were editing" reads as if the whole save
+    // was refused while eleven of twelve variants were in fact written.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          init?.method === "POST"
+            ? { success: true, warnings: ["stockChangedMeanwhile"] }
+            : {
+                success: true,
+                variants: [
+                  stocked("Weiss", "20cm", 5),
+                  stocked("Weiss", "30cm", 7),
+                  stocked("Rot", "20cm", 9),
+                  stocked("Rot", "30cm", 9),
+                ],
+                variantsTruncated: false,
+                channels: [],
+                channelsTruncated: false,
+                shopLocations: [],
+              },
+      })),
+    );
+    const { container } = uiWithSave();
+    await pick("All Weiss");
+
+    const row = (await screen.findByText("Schweiz")).closest("tr")!;
+    fireEvent.change(row.querySelector("input")!, { target: { value: "10" } });
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+
+    await waitFor(() => {
+      const notices = container.querySelector("[data-testid=notices]")!.textContent!;
+      expect(notices).toMatch(/Weiss \/ 20cm/);
+      expect(notices).toMatch(/Weiss \/ 30cm/);
+    });
+  });
+
+  it("leaves an untrackable member OUT of the table and says how many", async () => {
+    // A variant with no InventoryItem has nothing to write to. Offering a row
+    // for it would queue a write the save can only answer with a warning.
+    withVariants([
+      stocked("Weiss", "20cm", 5),
+      stocked("Weiss", "30cm", 5, { inventoryItemId: null }),
+      stocked("Rot", "20cm", 9),
+      stocked("Rot", "30cm", 9),
+    ]);
+    const { container } = uiWithSave();
+    await pick("All Weiss");
+
+    expect(await screen.findByText(/1 of 2 variants/i)).toBeTruthy();
+    // The hint counts the ones that ARE in the table.
+    expect(screen.getByText(/for EACH of the 1 variants/i)).toBeTruthy();
+
+    const row = screen.getByText("Schweiz").closest("tr")!;
+    fireEvent.change(row.querySelector("input")!, { target: { value: "10" } });
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+    await waitFor(() => expect(posted().length).toBe(1));
+    expect(posted()[0].variantId).toBe("Weiss-20cm");
+  });
+
+  it("says a location is not stocked at EVERY member, and still writes there", async () => {
+    // Half the group is activated at the location and half is not. The typed
+    // number sets a quantity for the one and starts stocking the other.
+    withVariants([
+      stocked("Weiss", "20cm", 5),
+      variant("Weiss", "30cm", { levels: [] }),
+      stocked("Rot", "20cm", 9),
+      stocked("Rot", "30cm", 9),
+    ]);
+    const { container } = uiWithSave();
+    await pick("All Weiss");
+
+    expect(await screen.findByText(/not stocked at every variant/i)).toBeTruthy();
+
+    const row = screen.getByText("Schweiz").closest("tr")!;
+    fireEvent.change(row.querySelector("input")!, { target: { value: "10" } });
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+
+    await waitFor(() => expect(posted().length).toBe(2));
+    const intents = posted().map((c) => c.intent).sort();
+    // One compare-and-swap, one activation — never a compare-less overwrite.
+    expect(intents).toEqual(["activate", "stock"]);
   });
 });
 
@@ -345,6 +636,8 @@ describe("the variant's own settings", () => {
     ui();
     await pick("All Weiss");
 
+    // Locked on a group, but still SHOWING what it knows: an empty box with no
+    // hint would read as "they are all empty".
     const sku = (await screen.findByLabelText(/^SKU/)) as HTMLInputElement;
     expect(sku.value).toBe("");
     expect(sku.placeholder).toMatch(/different/i);
@@ -387,8 +680,8 @@ describe("what a bulk save SENDS", () => {
     // character and deleted it again sent `barcode: ""` for every member and
     // Shopify cleared values they had never seen.
     withVariants([
-      variant("Weiss", "20cm", { barcode: "BC-A" }),
-      variant("Weiss", "30cm", { barcode: "BC-B" }),
+      variant("Weiss", "20cm", { compareAtPrice: "19.00" }),
+      variant("Weiss", "30cm", { compareAtPrice: "21.00" }),
       variant("Rot", "20cm"),
       variant("Rot", "30cm"),
     ]);
@@ -402,10 +695,10 @@ describe("what a bulk save SENDS", () => {
     );
     await pick("All Weiss");
 
-    const barcode = (await screen.findByLabelText(/^Barcode/)) as HTMLInputElement;
-    expect(barcode.value).toBe("");
-    fireEvent.change(barcode, { target: { value: "X" } });
-    fireEvent.change(barcode, { target: { value: "" } });
+    const compareAt = (await screen.findByLabelText(/^Compare-at/)) as HTMLInputElement;
+    expect(compareAt.value).toBe("");
+    fireEvent.change(compareAt, { target: { value: "9" } });
+    fireEvent.change(compareAt, { target: { value: "" } });
 
     fireEvent.click(container.querySelector("[data-testid=save]")!);
     await waitFor(() => expect(posted().length).toBe(0));
@@ -415,8 +708,8 @@ describe("what a bulk save SENDS", () => {
     // Where they agree the field was showing the value being erased, so ""
     // keeps its ordinary meaning.
     withVariants([
-      variant("Weiss", "20cm", { barcode: "BC-A" }),
-      variant("Weiss", "30cm", { barcode: "BC-A" }),
+      variant("Weiss", "20cm", { compareAtPrice: "19.00" }),
+      variant("Weiss", "30cm", { compareAtPrice: "19.00" }),
       variant("Rot", "20cm"),
       variant("Rot", "30cm"),
     ]);
@@ -430,13 +723,13 @@ describe("what a bulk save SENDS", () => {
     );
     await pick("All Weiss");
 
-    const barcode = (await screen.findByLabelText(/^Barcode/)) as HTMLInputElement;
-    expect(barcode.value).toBe("BC-A");
-    fireEvent.change(barcode, { target: { value: "" } });
+    const compareAt = (await screen.findByLabelText(/^Compare-at/)) as HTMLInputElement;
+    expect(compareAt.value).toBe("19.00");
+    fireEvent.change(compareAt, { target: { value: "" } });
 
     fireEvent.click(container.querySelector("[data-testid=save]")!);
     await waitFor(() => expect(posted().length).toBe(2));
-    expect(posted().every((p) => p.barcode === "" && p.intent === "price")).toBe(true);
+    expect(posted().every((p) => p.compareAtPrice === "" && p.intent === "price")).toBe(true);
   });
 
   it("skips members that already hold the typed value", async () => {

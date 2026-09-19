@@ -1034,6 +1034,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     resources: createResources,
     atLimit: finalPlanLimit.isAtLimit,
     targetLocales: createTargetLocales,
+    // The SOURCE language of that chained translation. From the SHOP's own list
+    // for the same reason `createTargetLocales` is: the create dialog's promise
+    // is about the shop, not about this session's language selection.
+    primaryLocale: shopLocales.find((l) => l.primary)?.locale,
     // The chained translation lands in the DB after the create's own
     // revalidation has already run, so the list needs a second look.
     onTranslated: () => revalidator?.revalidate(),
@@ -2550,7 +2554,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 ? (t.content?.clearAllConfirmMessage ||
                   "Are you sure you want to clear all fields? This will remove all content from the current item. You will need to save the changes to make them permanent.")
                 : (t.content?.clearAllForLocaleConfirmMessage ||
-                  `Are you sure you want to clear all translations for ${shopLocales.find(l => l.locale === state.currentLanguage)?.name || state.currentLanguage}? This will remove all translated content for this language. You will need to save the changes to make them permanent.`)}
+                  "Are you sure you want to clear all translations for {language}? This will remove all translated content for this language. You will need to save the changes to make them permanent."
+                ).replace(
+                  "{language}",
+                  shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage,
+                )}
             </Text>
           </TextContainer>
         </Modal.Section>

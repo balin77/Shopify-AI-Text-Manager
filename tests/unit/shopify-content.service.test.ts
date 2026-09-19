@@ -1271,3 +1271,388 @@ describe('ShopifyContentService.translateAllContent() — failure reporting', ()
     expect(mirroredValues(db)).toEqual({ body_html: '[fr] Vase aus Ton' });
   });
 });
+
+/**
+ * translateAllContent()'s AI half: how many requests it makes, and which fields
+ * it lets near the model at all.
+ *
+ * Both halves used to be wrong in the same run. The long fields were translated
+ * one LANGUAGE at a time while the short fields beside them were answered for
+ * every language in a single call; and the merchandising attributes every
+ * content editor sends along (`author`, `isPublished`, `templateSuffix`,
+ * `vendor`, `tags`, …) were translated first and only then rejected, which the
+ * merchant read as `en: author, isPublished, templateSuffix` in a red "failed
+ * items" box about three fields that hold one value per item.
+ */
+describe('ShopifyContentService.translateAllContent() — request count and field gate', () => {
+  const productId = 'gid://shopify/Product/42';
+
+  function makeAdmin() {
+    const registerCalls: any[] = [];
+    const graphql = vi.fn().mockImplementation(async (document: string, options?: any) => {
+      const variables = options?.variables;
+      if (document.includes('translationsRegister')) registerCalls.push(variables);
+      return {
+        ok: true,
+        json: async () => {
+          if (document.includes('translationsRegister')) {
+            return {
+              data: {
+                translationsRegister: {
+                  userErrors: [],
+                  translations: (variables.translations ?? []).map((t: any) => ({
+                    locale: t.locale, key: t.key, value: t.value,
+                  })),
+                },
+              },
+            };
+          }
+          return {
+            data: {
+              translatableResource: {
+                translatableContent: [
+                  { key: 'body_html', digest: 'digest-body', value: 'Vase aus Ton' },
+                  { key: 'title', digest: 'digest-title', value: 'Vase' },
+                  { key: 'summary_html', digest: 'digest-summary', value: 'Kurz' },
+                ],
+              },
+            },
+          };
+        },
+      };
+    });
+    return { graphql, registerCalls };
+  }
+
+  const makeDb = () => {
+    const upsert = vi.fn();
+    return {
+      $transaction: vi.fn(async (fn: any) => fn({ contentTranslation: { upsert } })),
+      contentTranslation: { upsert },
+    } as any;
+  };
+
+  /** A service that offers BOTH batches — the real `TranslationService` shape. */
+  function makeBatchingService() {
+    return {
+      translateShortFieldsBatch: vi.fn(async (fields: Record<string, string>, _src: string, locales: string[]) => {
+        const out: Record<string, Record<string, string>> = {};
+        for (const locale of locales) {
+          out[locale] = {};
+          for (const key of Object.keys(fields)) out[locale][key] = `[${locale}] ${fields[key]}`;
+        }
+        return out;
+      }),
+      translateFieldsToLocalesChunked: vi.fn(async (
+        fields: Record<string, string>,
+        _src: string,
+        locales: string[],
+        // Declared so the mock's call tuple carries it — the options are what
+        // two of the tests below assert on.
+        _options?: { preserveHtml?: boolean; contextLabel?: string; customInstructions?: string; keywordDirectiveFor?: (l: string[]) => string | undefined },
+      ) => {
+        const out: Record<string, Record<string, string>> = {};
+        for (const locale of locales) {
+          out[locale] = {};
+          for (const key of Object.keys(fields)) out[locale][key] = `[${locale}] ${fields[key]}`;
+        }
+        return out;
+      }),
+      translateProduct: vi.fn(async (fields: Record<string, string>, locales: string[]) => {
+        const out: Record<string, Record<string, string>> = {};
+        for (const locale of locales) {
+          out[locale] = {};
+          for (const key of Object.keys(fields)) out[locale][key] = `[${locale}] ${fields[key]}`;
+        }
+        return out;
+      }),
+    };
+  }
+
+  const params = (admin: any, db: any, extra: Record<string, unknown> = {}) => ({
+    resourceId: productId,
+    resourceType: 'Article',
+    shop,
+    db,
+    targetLocales: ['en', 'es', 'fr', 'it'],
+    sourceLocale: 'de',
+    ...extra,
+  });
+
+  it('asks for the long fields ONCE for every locale, not once per locale', async () => {
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { title: 'Vase', description: 'Eine Vase aus Ton', summary: 'Kurz' },
+      translationService: ts as any,
+    }) as any);
+
+    // TWO AI requests for four languages: one short batch, one long batch.
+    expect(ts.translateShortFieldsBatch).toHaveBeenCalledTimes(1);
+    expect(ts.translateFieldsToLocalesChunked).toHaveBeenCalledTimes(1);
+    // The per-locale path is the fallback and must not have run at all — it is
+    // what the four extra requests used to come from.
+    expect(ts.translateProduct).not.toHaveBeenCalled();
+    // Every locale of the batch goes into ONE call.
+    expect(ts.translateFieldsToLocalesChunked.mock.calls[0][2]).toEqual(['en', 'es', 'fr', 'it']);
+    expect(result.failedLocales).toEqual([]);
+    expect(result.translations.it.description).toBe('[it] Eine Vase aus Ton');
+  });
+
+  it('retries only the locale a batch came back short of, never the whole run', async () => {
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    // The helper drops a cell it could not translate; one missing chunk must
+    // not cost the languages the batch did carry.
+    ts.translateFieldsToLocalesChunked.mockImplementationOnce(async (_f: any, _s: any, locales: string[]) => {
+      const out: Record<string, Record<string, string>> = {};
+      for (const locale of locales) {
+        if (locale === 'fr') continue;
+        out[locale] = { description: `[${locale}] Eine Vase aus Ton` };
+      }
+      return out;
+    });
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { description: 'Eine Vase aus Ton' },
+      translationService: ts as any,
+    }) as any);
+
+    expect(ts.translateProduct).toHaveBeenCalledTimes(1);
+    expect(ts.translateProduct.mock.calls[0][1]).toEqual(['fr']);
+    expect(result.failedLocales).toEqual([]);
+    expect(result.translations.fr.description).toBe('[fr] Eine Vase aus Ton');
+  });
+
+  it('asks the retry only for the FIELDS the batch left out, and keeps the rest', async () => {
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    // One field of one locale is missing — re-asking for the other would pay
+    // for the same tokens twice and lose that cell if the retry threw.
+    ts.translateFieldsToLocalesChunked.mockImplementationOnce(async (fields: any, _s: any, locales: string[]) => {
+      const out: Record<string, Record<string, string>> = {};
+      for (const locale of locales) {
+        out[locale] = {};
+        for (const key of Object.keys(fields)) {
+          if (locale === 'fr' && key === 'summary') continue;
+          out[locale][key] = `[${locale}] ${fields[key]}`;
+        }
+      }
+      return out;
+    });
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { description: 'Eine Vase aus Ton', summary: 'Kurz' },
+      translationService: ts as any,
+    }) as any);
+
+    expect(ts.translateProduct).toHaveBeenCalledTimes(1);
+    expect(Object.keys(ts.translateProduct.mock.calls[0][0])).toEqual(['summary']);
+    // The batch's own cell survived the retry beside it.
+    expect(result.translations.fr.description).toBe('[fr] Eine Vase aus Ton');
+    expect(result.translations.fr.summary).toBe('[fr] Kurz');
+  });
+
+  it('keeps the cells a batch delivered when the retry for the others THROWS', async () => {
+    // A 429 on the retry must cost only the fields it was asked for. Merging
+    // after the call resolved would have lost the locale's whole answer.
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    ts.translateFieldsToLocalesChunked.mockImplementationOnce(async (fields: any, _s: any, locales: string[]) => {
+      const out: Record<string, Record<string, string>> = {};
+      for (const locale of locales) {
+        out[locale] = {};
+        for (const key of Object.keys(fields)) {
+          if (key === 'summary') continue;
+          out[locale][key] = `[${locale}] ${fields[key]}`;
+        }
+      }
+      return out;
+    });
+    ts.translateProduct.mockRejectedValue(new Error('429 Too Many Requests'));
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { description: 'Eine Vase aus Ton', summary: 'Kurz' },
+      translationService: ts as any,
+      targetLocales: ['fr'],
+    }) as any);
+
+    expect(result.translations.fr.description).toBe('[fr] Eine Vase aus Ton');
+    expect(result.translations.fr.summary).toBeUndefined();
+    // The locale saved something, so it is not "failed" — but the field that
+    // reached no value in either pass is still named.
+    expect(result.failedLocales).toEqual([]);
+    expect(result.rejectedFields.fr).toEqual(['summary']);
+  });
+
+  it('never writes a retry cell that came back as the source verbatim', async () => {
+    // A cell is usually missing from the batch BECAUSE the helper dropped it as
+    // an untranslated echo, and `translateProduct` has no such guard — so a
+    // retry that echoes again must not be persisted as a translation.
+    const longSource = 'Eine Vase aus Ton. '.repeat(30);
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    ts.translateFieldsToLocalesChunked.mockImplementationOnce(async () => ({}));
+    ts.translateProduct.mockImplementation(async (fields: Record<string, string>, locales: string[]) => {
+      const out: Record<string, Record<string, string>> = {};
+      for (const locale of locales) out[locale] = { description: fields.description };
+      return out;
+    });
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { description: longSource },
+      translationService: ts as any,
+      targetLocales: ['fr'],
+    }) as any);
+
+    expect(admin.registerCalls).toHaveLength(0);
+    expect(result.translations.fr ?? {}).toEqual({});
+    expect(result.failedLocales).toEqual(['fr']);
+  });
+
+  it('catches an echo that came back FLATTENED by the sanitizer', async () => {
+    // The real `translateFields` sanitizes every key but `description` with
+    // `allowNewlines: false`, so a `summary`/`body`/`metaDescription` echo
+    // returns the source with its newlines turned into spaces: byte-different
+    // at identical length. A `===` on the raw strings caught none of them —
+    // i.e. every multi-line body on this path — which is why the comparison
+    // collapses whitespace on both sides.
+    const multiline = 'Erste Zeile über die Vase.\n\n' + 'Zweite Zeile mit mehr Text dazu. '.repeat(8);
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    ts.translateFieldsToLocalesChunked.mockImplementationOnce(async () => ({}));
+    ts.translateProduct.mockImplementation(async (fields: Record<string, string>, locales: string[]) => {
+      const out: Record<string, Record<string, string>> = {};
+      // What the sanitizer really does to it.
+      for (const locale of locales) out[locale] = { summary: fields.summary.replace(/\s+/g, ' ') };
+      return out;
+    });
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { summary: multiline },
+      translationService: ts as any,
+      targetLocales: ['fr'],
+    }) as any);
+
+    expect(multiline.replace(/\s+/g, ' ')).not.toBe(multiline); // the precondition
+    expect(admin.registerCalls).toHaveLength(0);
+    expect(result.failedLocales).toEqual(['fr']);
+    expect(result.rejectedFields.fr).toEqual(['summary']);
+  });
+
+  it('falls back to one request per locale when the batch throws', async () => {
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    ts.translateFieldsToLocalesChunked.mockRejectedValueOnce(new Error('provider hiccup'));
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { description: 'Eine Vase aus Ton' },
+      translationService: ts as any,
+    }) as any);
+
+    expect(ts.translateProduct).toHaveBeenCalledTimes(4);
+    expect(result.failedLocales).toEqual([]);
+  });
+
+  it('never sends a field with no translation key to the AI, and reports none as failed', async () => {
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      // Exactly what the article editor used to submit.
+      fields: {
+        title: 'Vase',
+        description: 'Eine Vase aus Ton',
+        author: 'Rafael',
+        isPublished: 'true',
+        templateSuffix: 'wide',
+        tags: 'keramik, handmade',
+      },
+      translationService: ts as any,
+    }) as any);
+
+    expect(Object.keys(ts.translateShortFieldsBatch.mock.calls[0][0])).toEqual(['title']);
+    expect(Object.keys(ts.translateFieldsToLocalesChunked.mock.calls[0][0])).toEqual(['description']);
+    // The red box the merchant saw: three attribute names under every locale.
+    expect(result.rejectedFields).toEqual({});
+    expect(result.failedLocales).toEqual([]);
+  });
+
+  it('gives the long batch the merchant instructions the per-locale path passed', async () => {
+    // The per-locale call carries `customInstructions` — the merchant's own
+    // translate instructions plus the seo_optimized length caps. A batch that
+    // dropped them would have switched both off for every description, body,
+    // excerpt and meta description the moment batching started working, and
+    // left them applying only when the batch FAILED.
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+
+    await service.translateAllContent(params(admin, makeDb(), {
+      fields: { description: 'Eine Vase aus Ton' },
+      translationService: ts as any,
+      customInstructions: 'Meta description: 150-160 characters.',
+    }) as any);
+
+    const options = ts.translateFieldsToLocalesChunked.mock.calls[0][3]!;
+    expect(options.customInstructions).toBe('Meta description: 150-160 characters.');
+    expect(options.preserveHtml).toBe(true);
+    // The keyword clause is a BUILDER, so a chunk that covers only some of the
+    // locales can be given only those locales' keywords.
+    expect(typeof options.keywordDirectiveFor).toBe('function');
+  });
+
+  it('names the shop PRIMARY locale as the source, never a hard-coded "en"', async () => {
+    // Both batch prompts state the source language. With the old 'en' default a
+    // German shop was told its German text was English — and for `en` as a
+    // TARGET that is an identity instruction the batch helper's source-echo
+    // guard skips on purpose, so the untranslated German could be
+    // echo-confirmed and mirrored as the English translation.
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+
+    await service.translateAllContent(params(admin, makeDb(), {
+      fields: { title: 'Vase', description: 'Eine Vase aus Ton' },
+      translationService: ts as any,
+      sourceLocale: 'de',
+    }) as any);
+
+    expect(ts.translateShortFieldsBatch.mock.calls[0][1]).toBe('de');
+    expect(ts.translateFieldsToLocalesChunked.mock.calls[0][1]).toBe('de');
+  });
+
+  it('still SAYS SO when every field was untranslatable, without asking the AI', async () => {
+    // The silent drop is only right while something else WAS translated. A
+    // caller whose every field fell out of the map asked for a translation and
+    // got none — answering `success` with an empty map would have the
+    // single-field entrances (a metaobject's `<gid>#<key>` has no map entry)
+    // write empty strings into their overlay as translations.
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+
+    const result = await service.translateAllContent(params(admin, makeDb(), {
+      fields: { author: 'Rafael', isPublished: 'true', templateSuffix: 'wide' },
+      translationService: ts as any,
+    }) as any);
+
+    // No tokens were spent, and no write was attempted.
+    expect(ts.translateShortFieldsBatch).not.toHaveBeenCalled();
+    expect(ts.translateFieldsToLocalesChunked).not.toHaveBeenCalled();
+    expect(ts.translateProduct).not.toHaveBeenCalled();
+    expect(admin.registerCalls).toHaveLength(0);
+    // …but the caller is told, exactly as `prepareField` used to tell it.
+    expect(result.failedLocales.sort()).toEqual(['en', 'es', 'fr', 'it']);
+    expect(result.rejectedFields.fr).toEqual(['author', 'isPublished', 'templateSuffix']);
+  });
+});

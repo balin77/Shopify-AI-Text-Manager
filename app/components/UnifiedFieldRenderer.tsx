@@ -510,10 +510,14 @@ export function UnifiedFieldRenderer(
         notTranslatable: t.content?.attributesForeignLocale,
         addTag: t.content?.addTag,
         add: t.common?.add,
-        yes: t.common?.yes,
-        no: t.common?.no,
+        // `yes`/`no` live in the SETTINGS section and `reload` in CONTENT —
+        // none of the three is in `common`, so these read undefined and the
+        // component fell back to its English literals on every shop. Same
+        // wrong-section bug as the redirect notes in handle-redirect-message.
+        yes: t.settings?.yes,
+        no: t.settings?.no,
         notSyncedYet: t.content?.attributesNotSyncedYet,
-        reload: t.common?.reload,
+        reload: t.content?.reload,
       },
     };
 

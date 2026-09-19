@@ -1248,6 +1248,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         savedLocaleRef.current = targetLocale;
         // Legacy translateField auto-save carries marketId when foreign (see above).
         savedMarketIdRef.current = targetLocale !== primaryLocale ? selectedMarketIdRef.current : "";
+        // Claim the item, or both save-response effects fail their
+        // `isSavedItemCurrent` guard and early-return: no onSaveComplete
+        // overlay write, no revalidation (so the loader would keep serving the
+        // pre-translation row), and every message that effect owns swallowed.
+        // This legacy path is not reached today — `handleTranslateField` posts
+        // through submitAIAction's own fetch, so this route-fetcher response
+        // never fires — so the claim buys nothing until something posts
+        // `translateField` here again. It is set anyway because the omission
+        // is exactly what made the same code in useFieldHandlers a bug.
+        savedItemIdRef.current = selectedItemId;
         isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
       }
@@ -1369,6 +1379,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // This bulk alt auto-save (generate-all) writes globally — see formDataObj above
     // (no marketId) — so the mirror must tag the saved alt as global too.
     savedMarketIdRef.current = "";
+    // Claim the item — see the identical note on the translateField auto-save
+    // above. It matters most here: this path carries alt texts, so the
+    // `failedAltTextIndices` warning is the one message a merchant must not
+    // miss, and without the claim it never reaches them.
+    savedItemIdRef.current = selectedItemId;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
   }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
@@ -1560,7 +1575,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           );
         } else {
           showInfoBox(
-            t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
+            // `t.common.translatedSuccessfully` existed in no bundle at all, so
+            // this always rendered its English literal. Its three siblings
+            // above are content/translateLocale* with a {locale} placeholder.
+            String(t.content?.translateLocaleSuccess || "Successfully translated to {locale}.")
+              .replace("{locale}", targetLocale),
             "success"
           );
         }
