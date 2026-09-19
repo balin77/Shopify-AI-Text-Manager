@@ -48,6 +48,23 @@ describe("unfinishedTaskIds", () => {
     expect(unfinishedTaskIds(["a", "b"], { a: "completed", b: MISSING_TASK_STATUS })).toEqual(["b"]);
   });
 
+  it("an EXPIRED id stops holding the reload back for the ids that finished", () => {
+    // A deadline is per id and stamped when it is first watched, so a task
+    // whose row never appears (`startFailed`: the run threw before
+    // `db.task.create`) ages out on its own. Without that it blocked the
+    // all-or-nothing refresh for every sibling that really did finish — the
+    // empty foreign cell again, with a poll running for the whole session.
+    expect(
+      unfinishedTaskIds(["a", "b"], { a: "completed", b: MISSING_TASK_STATUS }, new Set(["b"])),
+    ).toEqual([]);
+  });
+
+  it("expiry is not contagious — a live sibling keeps the watch running", () => {
+    expect(
+      unfinishedTaskIds(["a", "b"], { a: "running", b: MISSING_TASK_STATUS }, new Set(["b"])),
+    ).toEqual(["a"]);
+  });
+
   it("counts a run that ended with errors as ended", () => {
     // `completed_with_errors` is what a run reports when Shopify confirmed the
     // translation but the local mirror refused it. The rows it DID write are

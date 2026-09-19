@@ -54,7 +54,7 @@ const POLL_INTERVAL_MS = 5_000;
  */
 export const MAX_TASK_STATUS_IDS = 50;
 /**
- * The ONE bound on the watch.
+ * The bound, and it belongs to an ID rather than to the watch.
  *
  * There used to be a second, shorter one for a task id with no row yet, on the
  * argument that such a run never started. It cost more than it bought, twice
@@ -64,9 +64,17 @@ export const MAX_TASK_STATUS_IDS = 50;
  * a row legitimately appears minutes after the save that reported its id. Every
  * expiry of that grace ended the watch against a run that had written nothing,
  * which is the empty cell this hook exists to fill. So a task that has not
- * answered "terminal" is simply still working, and this is what stops the poll:
- * at worst a save whose run really never started costs one small query every
- * five seconds for this long, and then one refresh.
+ * answered "terminal" is simply still working, and a save whose run really
+ * never started (`startFailed` — the run threw before `db.task.create`, so no
+ * row will ever exist) costs one small query every five seconds until this,
+ * and then one refresh.
+ *
+ * PER ID, and stamped when the id is FIRST watched. The set is a union that
+ * grows with each save, so a deadline belonging to the watch was restarted by
+ * every new save: one id that never turns terminal was then never aged out
+ * while saves kept arriving, and because the refresh is all-or-nothing it held
+ * the reload back for every id that HAD finished. The empty foreign cell again,
+ * this time with a poll running for the whole session.
  */
 const MAX_WATCH_MS = 5 * 60_000;
 
@@ -80,12 +88,18 @@ const MAX_WATCH_MS = 5 * 60_000;
  * altogether is a poll that failed — a throw, a non-2xx, the route's own 500
  * branch — which says nothing about the task at all. Reading either as done
  * refreshes the grid before a single translation is written.
+ *
+ * `expired` is the other way out, and it is not a status: an id whose own
+ * deadline has passed is one we STOPPED ASKING about, which is a different
+ * statement from "it finished" and is why it may not hold the reload back for
+ * the ids that really did.
  */
 export function unfinishedTaskIds(
   ids: readonly string[],
   statuses: Readonly<Record<string, string>>,
+  expired: ReadonlySet<string> = new Set(),
 ): string[] {
-  return ids.filter((id) => !TERMINAL_TASK_STATUSES.has(statuses[id] ?? ""));
+  return ids.filter((id) => !TERMINAL_TASK_STATUSES.has(statuses[id] ?? "") && !expired.has(id));
 }
 
 /**
@@ -109,15 +123,24 @@ export function useBackgroundTaskRefresh(
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
 
+  /** id → when this watch stops asking about it. Outlives the effect, because
+   *  a new save restarts the effect and must not restart these. */
+  const deadlinesRef = useRef<Map<string, number>>(new Map());
+
   // Structural, for the reason in the param doc. Sorted because the order of
   // the ids says nothing about what is being watched.
   const watchKey = [...new Set((taskIds ?? []).filter(Boolean))].sort().join(",");
 
   useEffect(() => {
-    if (!watchKey) return;
-    const ids = watchKey.split(",");
+    const ids = watchKey ? watchKey.split(",") : [];
+    // Stamp the new ids, forget the ones the caller has retired. An id already
+    // in the map keeps ITS deadline — that is the whole point.
+    const deadlines = deadlinesRef.current;
+    const watched = new Set(ids);
+    for (const id of [...deadlines.keys()]) if (!watched.has(id)) deadlines.delete(id);
+    for (const id of ids) if (!deadlines.has(id)) deadlines.set(id, Date.now() + MAX_WATCH_MS);
+    if (ids.length === 0) return;
 
-    const startedAt = Date.now();
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -131,10 +154,6 @@ export function useBackgroundTaskRefresh(
 
     const tick = async () => {
       if (cancelled) return;
-      if (Date.now() - startedAt > MAX_WATCH_MS) {
-        finish();
-        return;
-      }
       const statuses: Record<string, string> = {};
       try {
         // Chunked, because the loader answers at most MAX_TASK_STATUS_IDS per
@@ -154,10 +173,13 @@ export function useBackgroundTaskRefresh(
       } catch {
         // A failed poll answers nothing for any id, which `unfinishedTaskIds`
         // reads as "still working" — never as finished. The next tick asks
-        // again; a server that stays down is bounded by MAX_WATCH_MS.
+        // again; a server that stays down is bounded by each id's MAX_WATCH_MS.
       }
       if (cancelled) return;
-      if (unfinishedTaskIds(ids, statuses).length === 0) {
+      const now = Date.now();
+      const expired = new Set(ids.filter((id) => now > (deadlines.get(id) ?? Infinity)));
+      const remaining = unfinishedTaskIds(ids, statuses, expired);
+      if (remaining.length === 0) {
         finish();
         return;
       }
