@@ -989,8 +989,12 @@ export default function BulkEditor() {
   // accumulated baselines and the undo stack are the page's own state and stay
   // exactly as they are, and no form is submitted. There is no autosave here,
   // and there must never be one.
-  useBackgroundTaskRefresh(watchedTaskIds, () => {
-    setWatchedTaskIds([]);
+  useBackgroundTaskRefresh(watchedTaskIds, (watched) => {
+    // Only the ids THAT watch was about: a save that landed while it was
+    // running has already added its own, and clearing wholesale would drop
+    // them unwatched.
+    const done = new Set(watched);
+    setWatchedTaskIds((prev) => prev.filter((id) => !done.has(id)));
     revalidator.revalidate();
   });
 

@@ -43,6 +43,17 @@ export const MISSING_TASK_STATUS = "missing";
 
 const POLL_INTERVAL_MS = 5_000;
 /**
+ * How many ids one `/api/task-status` call may ask about.
+ *
+ * ONE constant, imported by the route as its own cap: a client that asks about
+ * more than the loader answers gets no status for the surplus, which
+ * `unfinishedTaskIds` correctly reads as "still working" — so the watch could
+ * only ever end on the timeout, minutes after the runs really finished. The
+ * watch set is a union across saves and 25 groups per save, so three saves
+ * reach this; it is a chunk size here, not a limit on what may be watched.
+ */
+export const MAX_TASK_STATUS_IDS = 50;
+/**
  * The ONE bound on the watch.
  *
  * There used to be a second, shorter one for a task id with no row yet, on the
@@ -84,11 +95,14 @@ export function unfinishedTaskIds(
  *                 `?? []`, a `.filter`) would otherwise re-arm the timer before
  *                 it ever fires, and `onFinished` would silently never run.
  * @param onFinished Called at most once per watch, when every id is terminal
- *                 (or the watch times out). Must only refresh the display.
+ *                 (or the watch times out). It is handed the ids THIS watch
+ *                 was about — never "all of them" — so a caller keeping a union
+ *                 across saves drops exactly those and keeps ids that arrived
+ *                 while this watch was running. Must only refresh the display.
  */
 export function useBackgroundTaskRefresh(
   taskIds: readonly string[] | null | undefined,
-  onFinished: () => void,
+  onFinished: (watchedIds: string[]) => void,
 ): void {
   // The callback is read at fire time, so a caller does not have to memoise it
   // — a changed identity must not restart the watch.
@@ -112,7 +126,7 @@ export function useBackgroundTaskRefresh(
     const finish = () => {
       if (cancelled) return;
       cancelled = true;
-      onFinishedRef.current();
+      onFinishedRef.current(ids);
     };
 
     const tick = async () => {
@@ -121,15 +135,21 @@ export function useBackgroundTaskRefresh(
         finish();
         return;
       }
-      let statuses: Record<string, string> = {};
+      const statuses: Record<string, string> = {};
       try {
-        const response = await fetch(
-          `/api/task-status?ids=${encodeURIComponent(ids.join(","))}`,
-          { signal: controller.signal },
-        );
-        if (response.ok) {
+        // Chunked, because the loader answers at most MAX_TASK_STATUS_IDS per
+        // call and a surplus id would come back with no status at all — read
+        // as "still working" forever, which is right about the unknown and
+        // wrong about the watch.
+        for (let from = 0; from < ids.length; from += MAX_TASK_STATUS_IDS) {
+          const chunk = ids.slice(from, from + MAX_TASK_STATUS_IDS);
+          const response = await fetch(
+            `/api/task-status?ids=${encodeURIComponent(chunk.join(","))}`,
+            { signal: controller.signal },
+          );
+          if (!response.ok) break;
           const data = (await response.json()) as { statuses?: Record<string, string> };
-          statuses = data?.statuses ?? {};
+          Object.assign(statuses, data?.statuses ?? {});
         }
       } catch {
         // A failed poll answers nothing for any id, which `unfinishedTaskIds`

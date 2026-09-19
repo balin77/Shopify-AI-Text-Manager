@@ -2,6 +2,7 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
+import { MAX_TASK_STATUS_IDS } from "~/hooks/useBackgroundTaskRefresh";
 
 /**
  * "Are these particular Task rows still working?" — for a surface that started
@@ -28,8 +29,13 @@ import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
  * caller's to bound — it is the only honest answer this loader can give.
  */
 
-/** How many ids one call may ask about — a save's groups are capped at 25. */
-const MAX_IDS = 50;
+/**
+ * How many ids one call may ask about. The constant lives with the CALLER, so
+ * the two cannot disagree: a client asking about more than this gets no status
+ * for the surplus, and a non-answer reads as "still working" — correct about
+ * the unknown id, and a watch that then only ever ends on its timeout.
+ */
+const MAX_IDS = MAX_TASK_STATUS_IDS;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
