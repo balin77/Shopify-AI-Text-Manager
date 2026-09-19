@@ -28,12 +28,19 @@ export interface HandleRedirectNotePayload {
 
 export function buildRedirectMessage(
   note: HandleRedirectNotePayload | null | undefined,
-  t: { common?: Record<string, unknown> } | null | undefined,
+  t: { content?: Record<string, unknown> } | null | undefined,
 ): HandleRedirectMessage | null {
   if (!note?.code) return null;
   const path = note.fromPath || "";
+  // The keys live in the CONTENT section of every bundle, which is where the
+  // save messages these are appended to live. This read used to name
+  // `t.common` — a section that carries a `changesSaved` of its own, so the
+  // save line beside the note was translated while every note in this module
+  // silently fell through to its English fallback, in all three languages. The
+  // unit test's fixture invented its own `common`, so the wiring was never
+  // compared against a real bundle; it now is.
   const s = (key: string, fallback: string) =>
-    String(t?.common?.[key] ?? fallback).replace("{path}", path);
+    String(t?.content?.[key] ?? fallback).replace("{path}", path);
 
   switch (note.code) {
     case "created":
@@ -46,7 +53,7 @@ export function buildRedirectMessage(
       return {
         text: s(
           "redirectBlogArticlesUncovered",
-          "The old blog URL {path} now redirects to the new one — but the articles' own URLs changed too and are not covered.",
+          "The old blog URL {path} now redirects — the URLs of this blog's articles do not.",
         ),
         tone: "warning",
       };
@@ -58,17 +65,17 @@ export function buildRedirectMessage(
       return {
         text: s(
           "redirectShadowRemoved",
-          "The old URL {path} now redirects to the new one. An existing redirect on the new URL was removed — it would have hidden the page.",
+          "The old URL {path} now redirects. An existing redirect on the new URL was removed — it would have hidden the page.",
         ),
         tone: "warning",
       };
     case "notConfirmed":
-      return { text: s("redirectNotConfirmed", "The old URL {path} could not be redirected."), tone: "warning" };
+      return { text: s("redirectNotConfirmed", "The old URL {path} could not be redirected — set it up in Shopify if the old link matters."), tone: "warning" };
     case "failed":
-      return { text: s("redirectFailed", "The old URL {path} could not be redirected."), tone: "warning" };
+      return { text: s("redirectFailed", "The old URL {path} could not be redirected — set it up in Shopify if the old link matters."), tone: "warning" };
     case "missingBlogHandle":
       return {
-        text: s("redirectMissingBlog", "The old article URL could not be redirected because its blog is unknown."),
+        text: s("redirectMissingBlog", "The old article URL was not redirected: its blog is unknown. Set it up in Shopify if the old link matters."),
         tone: "warning",
       };
     // Foreign locales only. The blog IS known — but its own handle is
@@ -80,7 +87,7 @@ export function buildRedirectMessage(
       return {
         text: s(
           "redirectLocaleBlogUnknown",
-          "The old article URL was not redirected: this blog's handle is translated too, so the article's address in this language is not certain.",
+          "The old article URL was not redirected: the blog's handle is translated too. Set it up in Shopify if needed.",
         ),
         tone: "warning",
       };

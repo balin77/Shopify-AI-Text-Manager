@@ -1560,7 +1560,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           );
         } else {
           showInfoBox(
-            t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
+            // `t.common.translatedSuccessfully` existed in no bundle at all, so
+            // this always rendered its English literal. Its three siblings
+            // above are content/translateLocale* with a {locale} placeholder.
+            String(t.content?.translateLocaleSuccess || "Successfully translated to {locale}.")
+              .replace("{locale}", targetLocale),
             "success"
           );
         }
