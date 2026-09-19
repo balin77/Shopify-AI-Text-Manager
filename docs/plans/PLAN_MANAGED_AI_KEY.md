@@ -237,7 +237,12 @@ Three further decisions follow from the table:
   translation into 3 locales, an alt text, an SEO title under a character cap —
   run against nano, Flash-Lite and Haiku, judged side by side. A managed
   default that writes worse copy than the app's reputation implies costs more
-  than it saves. Cheapest-that-is-good-enough, not cheapest.
+  than it saves. Cheapest-that-is-good-enough, not cheapest. The bake-off now
+  answers two questions rather than one: which model is the DEFAULT, and
+  whether the FAILOVER holds the same output contract — the prompts expect
+  parseable, length-capped answers, and a fallback that writes beautifully but
+  ignores a 60-character SEO cap fails saves during an outage, which is the
+  worst moment to discover it.
 
 ---
 
@@ -783,7 +788,10 @@ already has a matching hole in today's code:
    `MANAGED_AI_TPM` at the provider's real limit and the queue admits roughly a
    tenth of the capacity we pay for; configure it ten times higher and the
    first long batch trips the real limit. The managed bucket uses a real input
-   count plus the model's actual `max_tokens`. And the app's aggregate ceiling
+   count plus the model's actual `max_tokens` — and there are **two** buckets,
+   one per managed provider (`MANAGED_AI_RPM`/`TPM` and
+   `MANAGED_AI_FALLBACK_RPM`/`TPM`), because a failover moves the entire load
+   onto a second account whose limits are its own. And the app's aggregate ceiling
    is worth stating before volume is sold at all: `AI_QUEUE_CONCURRENCY`
    (default 4) on the single production instance is roughly one call per
    second for BYO and managed together — a single Max budget is a meaningful share of a day's global
@@ -915,9 +923,10 @@ AI-included price of your tier.
 - **Phase 1 — resolver + consent + enforcement** (§5, §6, §2), managed mode
   reachable only for an internal allowlist of shops.
 - **Phase 2 — billing variants + UI** (§7, §8) and the margin guard test.
-- **Phase 3 — rails** (§9) and the unattended-spend rules (§6a) before the
-  first external shop. Not after: §6a rule 1 is a data-loss guard, so it lands
-  with the enforcement it protects, not with the polish.
+- **Phase 3 — rails** (§9), the unattended-spend rules (§6a) and the failover
+  (§3a) before the first external shop. Not after: §6a rule 1 is a data-loss
+  guard and lands with the enforcement it protects; the failover is what makes
+  "your AI is included" a promise we can keep on a day OpenAI cannot.
 - **Phase 4 — the taster** (§10), which is the marketing moment; the public
   roadmap entry and the App Store listing change here.
 - **Phase 5 — follow-ups**: usage-based overage, a BYO cost view built from the
