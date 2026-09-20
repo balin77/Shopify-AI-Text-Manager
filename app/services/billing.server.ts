@@ -493,7 +493,7 @@ export async function syncSubscriptionToDatabase(
    * the columns alone rather than clearing them — a partial sync must not be
    * able to switch a paying shop's AI off.
    */
-  managed?: { active: boolean; currentPeriodEnd?: Date | null },
+  managed?: { active: boolean; currentPeriodEnd?: Date | null; isTest?: boolean },
 ) {
   const managedFields =
     managed === undefined
@@ -503,6 +503,11 @@ export async function syncSubscriptionToDatabase(
           ...(managed.currentPeriodEnd !== undefined
             ? { managedAiPeriodEnd: managed.currentPeriodEnd }
             : {}),
+          // §7a signal 2, mirrored so the resolver can read it without an
+          // admin client. A `test: true` subscription carries the managed
+          // variant's own name and price, so it resolves to managed and
+          // switches the entitlement on while charging nothing.
+          ...(managed.isTest !== undefined ? { subscriptionIsTest: managed.isTest } : {}),
         };
 
   await prisma.aISettings.upsert({
@@ -684,6 +689,7 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
       // Only meaningful while managed is on; Shopify reports the period end on
       // the subscription itself.
       currentPeriodEnd: managedActive ? parsePeriodEnd(subscription.currentPeriodEnd) : null,
+      isTest: subscription.test === true,
     });
 
     // Trial-consumption is recorded HERE — at the Shopify-verified point, not
@@ -711,9 +717,24 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     // And deliberately NO managed argument: this caller established nothing,
     // so the managed columns are left as they are rather than cleared. A
     // transient API failure must not revoke an entitlement a merchant paid
-    // for. It costs nothing in the meantime — the plan written here is `free`,
-    // whose managed budget is zero (§7a), so a shop in this state refuses
-    // managed calls until the next successful sync either way.
+    // for.
+    //
+    // A shop with a VERIFIED managed entitlement keeps its PLAN too, and that
+    // exception is what §10 made necessary. The plan column is what sizes the
+    // managed budget, so writing `free` over it left a Max+AI shop holding
+    // `managedAiActive: true` with a zero period budget — which since the
+    // taster is not a refusal but a GRANT: one throttled lookup and the
+    // paying merchant either burns their one-time free trial or, having
+    // burnt it, is told their free trial is over. The old comment's "it
+    // costs nothing in the meantime" was true before there was anything
+    // below a period budget to fall to.
+    if (existing?.managedAiActive === true && existing.subscriptionPlan) {
+      logger.warn('[Billing] Subscription lookup failed — keeping the verified managed plan', {
+        shop,
+        plan: existing.subscriptionPlan,
+      });
+      return existing.subscriptionPlan as BillingPlan;
+    }
     await syncSubscriptionToDatabase(shop, 'free');
     return 'free';
   }

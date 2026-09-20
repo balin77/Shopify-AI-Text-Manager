@@ -91,6 +91,34 @@ model AISettings {
   // having at this price.
   managedAiTasterGrantedAt DateTime?
 
+  /**
+   * What the taster was WORTH when it was granted, in micro-euro — frozen.
+   *
+   * The limit is derived from the price of the managed default model, and the
+   * used figure never resets. Re-deriving it on every read made "once, ever"
+   * false in both directions: moving `MANAGED_AI_MODEL` to a dearer model
+   * silently re-granted a second taster to every shop that had spent its
+   * first, and moving to a cheaper one retroactively exhausted shops in the
+   * middle of theirs. An ops action nobody would associate with a grant is
+   * exactly the kind that must not be one.
+   *
+   * Null means "not granted yet", and then the current derivation applies —
+   * which is what makes a model change move the cost for NEW shops, as §10
+   * intends, and leave settled ones alone.
+   */
+  managedAiTasterMicros Int?
+
+  /**
+   * When the taster was found SPENT — a stamp, not the enforcement.
+   *
+   * The ledger row under the `taster` key is what refuses a second grant.
+   * This exists because `resolveAiCredentials` is synchronous and runs on
+   * every detached path: without a column it cannot know, and a shop whose
+   * AI-included plan ENDED would stay in managed mode with a spent taster
+   * and a perfectly good API key of its own that nothing ever reached.
+   */
+  managedAiTasterSpentAt DateTime?
+
   // Is this a Shopify PARTNER DEVELOPMENT store? Three-valued on purpose
   // (null = never determined), written at subscription-sync time where an
   // admin client exists. `isDevStore`'s catch returns false, so a lookup that
@@ -100,6 +128,17 @@ model AISettings {
   // looking it up there would permanently answer "not a dev store" (= uncapped)
   // on exactly the unattended paths the cap exists for.
   partnerDevelopment Boolean?
+
+  /**
+   * The verified subscription carries `test: true`, i.e. it charges nothing —
+   * §7a's second signal, mirrored because the credential resolver runs on
+   * detached paths that hold no admin client and cannot ask Shopify.
+   *
+   * Three-valued like `partnerDevelopment` beside it: null means no sync has
+   * established it, and an unknown answer must not cost a paying merchant
+   * their budget. Written only where a subscription was really read.
+   */
+  subscriptionIsTest Boolean?
 
   // How to handle Shopify's richtext rule ("all top level nodes must be
   // <p>/<ul>/<ol>/<h1>-<h6>") when saving primary theme-settings values

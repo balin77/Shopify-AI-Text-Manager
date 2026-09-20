@@ -249,8 +249,8 @@ describe('checkAndSyncSubscription()', () => {
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop },
-        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
-        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
+        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
+        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
       })
     );
   });
@@ -263,7 +263,7 @@ describe('checkAndSyncSubscription()', () => {
     expect(plan).toBe('max');
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        update: { subscriptionPlan: 'max', managedAiActive: false, managedAiPeriodEnd: null },
+        update: { subscriptionPlan: 'max', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
       })
     );
   });
@@ -329,8 +329,8 @@ describe('checkAndSyncSubscription()', () => {
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop },
-        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
-        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
+        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
+        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
       })
     );
   });
@@ -595,6 +595,9 @@ describe('checkAndSyncSubscription() – dev override short-circuit', () => {
     expect(admin.graphql).not.toHaveBeenCalled();
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
+        // No `subscriptionIsTest`: the dev-override path reads no
+        // subscription, so it establishes nothing about the test flag and
+        // leaves that column exactly as it found it.
         update: { subscriptionPlan: 'max', managedAiActive: false, managedAiPeriodEnd: null },
       }),
     );

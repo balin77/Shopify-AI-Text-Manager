@@ -52,6 +52,7 @@ import { isDevAppBuild } from "../dev-plan-override.server";
 import { AIService, toValidProvider, type AIServiceConfig } from "../../../src/services/ai.service";
 import { type AiCredentialSource } from "./usage-dimensions.shared";
 import {
+  boughtManagedAi,
   hasCurrentAiProcessingConsent,
   wantsManagedAi,
   type AiRefusalCode,
@@ -296,12 +297,41 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
     };
   }
 
-  // The shop asked for managed and Shopify verified it bought it. Everything
-  // below is a reason we still cannot serve it.
-  if (!managedAiAvailable()) return { ok: false, reason: "managedUnavailable" };
+  // The shop's stored choice says managed. Everything below is a reason we
+  // cannot serve it — and each one asks the same question afterwards: does
+  // this merchant still have a key of their own?
+  //
+  // That fallback is the half §10 nearly cost. Before the taster,
+  // `wantsManagedAi` was false for a shop whose AI-included plan ENDED, so it
+  // went straight back to its own key — which `checkAndSyncSubscription`
+  // documents as the designed behaviour, and which is why cancelling never
+  // deletes a stored key. With the mode now decided by the stored choice
+  // alone, that shop would have sat in managed mode with a spent taster and a
+  // perfectly good credential nothing ever reached.
+  if (!managedAiAvailable()) return managedUnavailableOrByo(settings);
 
-  // 3. Consent, before anything is spent.
+  // 3. Consent, before anything is spent. No fallback here: a merchant who
+  // has not answered the question has not asked for their own key either, and
+  // silently spending it would make the consent gate unobservable — which is
+  // the one property §B4 is satisfied by.
   if (!hasCurrentAiProcessingConsent(settings)) return { ok: false, reason: "consentMissing" };
+
+  // The TASTER is spent and this shop never bought the variant. Synchronous,
+  // from a column, because this function runs on every detached path and
+  // cannot afford the aggregate that established the fact. The stamp is
+  // written by the preflight; the ledger row is what really enforces it.
+  if (!boughtManagedAi(settings) && settings?.managedAiTasterSpentAt != null) {
+    const missing = missingMerchantKey(settings);
+    if (!missing) {
+      return {
+        ok: true,
+        source: "byo",
+        provider: toValidProvider(settings?.preferredProvider),
+        config: byoConfig(settings),
+      };
+    }
+    return { ok: false, reason: "tasterExhausted", usedMicros: 0, limitMicros: 0 };
+  }
 
   // Read ONCE. Asking three times re-read the environment on every AI request
   // and, on a misconfigured provider name, logged the same error twice per
@@ -340,6 +370,25 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
         };
       },
     },
+  };
+}
+
+/**
+ * Managed cannot be served — the merchant's own key if they have one, the
+ * refusal otherwise.
+ *
+ * It is `managedUnavailable` and not a silent nothing, because the two states
+ * read differently to a merchant: one says "use your key meanwhile", the
+ * other says "this is ours to fix".
+ */
+function managedUnavailableOrByo(settings: AISettings | null): AiCredentialDecision {
+  const missing = missingMerchantKey(settings);
+  if (missing) return { ok: false, reason: "managedUnavailable" };
+  return {
+    ok: true,
+    source: "byo",
+    provider: toValidProvider(settings?.preferredProvider),
+    config: byoConfig(settings),
   };
 }
 
@@ -437,6 +486,31 @@ export function aiServiceFor(
 }
 
 /**
+ * One conditional write for the taster's two stamps. Never throws: the budget
+ * has already been checked and the merchant's generation is about to run, so
+ * a bookkeeping failure may not fail it.
+ *
+ * The `where` carries the same null condition as the read that decided to
+ * write, so two concurrent calls cannot both claim the same stamp.
+ */
+async function stampTaster(
+  shop: string,
+  data: Record<string, unknown>,
+  guard: Record<string, null>,
+): Promise<void> {
+  try {
+    const { db } = await import("../../db.server");
+    await db.aISettings.updateMany({ where: { shop, ...guard }, data: data as never });
+  } catch (error) {
+    logger.warn(
+      `[ManagedAI] Could not stamp the taster for ${shop}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+/**
  * The per-REQUEST gate installed on every managed AIService.
  *
  * It is asked before each provider call rather than once per service instance
@@ -464,9 +538,11 @@ function managedPreflight(
 ): NonNullable<AIServiceConfig["preflight"]> {
   return async () => {
     let settings = built;
+    let settingsAreFresh = false;
     try {
       const { db } = await import("../../db.server");
       settings = await db.aISettings.findUnique({ where: { shop } });
+      settingsAreFresh = true;
     } catch {
       // Keep `built` — see above.
     }
@@ -482,12 +558,25 @@ function managedPreflight(
     const plan = (settings?.subscriptionPlan ?? "free") as BillingPlan;
     const status = await managedBudgetStatus(shop, settings, plan);
     if (!status.allowed) {
+      // A SPENT taster is stamped, so the synchronous resolver can hand the
+      // shop back to its own key from the next call rather than refusing
+      // every one of them for ever. Only on fresh settings: a stale snapshot
+      // would write the stamp against a row whose grant may have moved.
+      if (status.kind === "taster" && settingsAreFresh && settings?.managedAiTasterSpentAt == null) {
+        await stampTaster(shop, { managedAiTasterSpentAt: new Date() }, {
+          managedAiTasterSpentAt: null,
+        });
+      }
       return {
         // A spent TASTER is its own refusal (§10): it never resets, so the
         // period sentence would send a free shop to wait for a reset that
         // cannot come instead of to the two exits it really has.
         ok: false,
-        reason: status.kind === "taster" ? "tasterExhausted" : "budgetExceeded",
+        reason: status.unavailable
+          ? "managedUnavailable"
+          : status.kind === "taster"
+            ? "tasterExhausted"
+            : "budgetExceeded",
         usedMicros: status.usedMicros,
         limitMicros: status.limitMicros,
       };
@@ -509,25 +598,28 @@ function managedPreflight(
     // last gate before a real provider call, so the date describes a grant the
     // shop actually began spending rather than one it was shown in Settings.
     //
-    // It is a record, not the enforcement — the ledger row under the `taster`
-    // key is what refuses a second grant, and it is permanent. This column is
-    // what the usage card renders and what answers "has this shop ever had
-    // one" without an aggregate. Fire-and-forget and swallowed: a bookkeeping
-    // write may never fail a call whose budget has already been checked.
-    if (status.kind === "taster" && settings && settings.managedAiTasterGrantedAt == null) {
-      try {
-        const { db } = await import("../../db.server");
-        await db.aISettings.updateMany({
-          where: { shop, managedAiTasterGrantedAt: null },
-          data: { managedAiTasterGrantedAt: new Date() },
-        });
-      } catch (error) {
-        logger.warn(
-          `[ManagedAI] Could not stamp the taster grant for ${shop}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
+    // The DATE is a record — the ledger row under the `taster` key is the
+    // enforcement, and it is permanent. What is not merely a record is the
+    // frozen WORTH beside it: the limit is derived from the managed default
+    // model's price, so without freezing it here an ops change of model
+    // re-grants a second taster to every shop that has spent its first.
+    //
+    // Gated on a FRESH settings read: writing this against a snapshot whose
+    // read failed would stamp a row we cannot see, and re-issue a no-op
+    // update before every provider call for the rest of the run.
+    if (
+      status.kind === "taster" &&
+      settingsAreFresh &&
+      settings?.managedAiTasterGrantedAt == null
+    ) {
+      await stampTaster(
+        shop,
+        {
+          managedAiTasterGrantedAt: new Date(),
+          managedAiTasterMicros: Math.min(status.limitMicros, 2_147_483_647),
+        },
+        { managedAiTasterGrantedAt: null },
+      );
     }
 
     return { ok: true };

@@ -203,3 +203,67 @@ describe('a taster it cannot size is a refusal, never an unlimited grant', () =>
     expect(status.allowed).toBe(false);
   });
 });
+
+describe('the grant is frozen once it starts', () => {
+  it('a stored worth wins over the current model price', async () => {
+    // Otherwise "once, ever" is really "once per managed-model price": the
+    // limit is re-derived on every read while the used figure never resets,
+    // so moving MANAGED_AI_MODEL to a dearer model silently hands a second
+    // taster to every shop that spent its first — an ops action nobody would
+    // associate with a grant.
+    const frozen = 120_050;
+    process.env.MANAGED_AI_MODEL = 'claude-opus-4-0-20250514';
+    process.env.MANAGED_AI_PROVIDER = 'claude';
+
+    const status = await managedBudgetStatus(
+      shop,
+      settingsFor({ managedAiTasterMicros: frozen }),
+      'free',
+    );
+    expect(status.limitMicros).toBe(frozen);
+    // Without the freeze this deployment would grant the ladder ceiling.
+    expect(managedTasterLimitMicros()).toBeGreaterThan(frozen);
+  });
+
+  it('and a shop that has not started one is sized at the current model', async () => {
+    const status = await managedBudgetStatus(shop, settingsFor(), 'free');
+    expect(status.limitMicros).toBe(managedTasterLimitMicros());
+  });
+});
+
+describe('which POOL a taster spend lands in', () => {
+  it('a trialing shop that BOUGHT the variant draws on the paid pool', () => {
+    // It has no period budget (§7 rule 1) and therefore spends the taster,
+    // but it is a paying customer in waiting: letting it into the taster pool
+    // would let paying shops exhaust the ring that keeps free installs off
+    // the paid one.
+    const trialing = settingsFor({
+      managedAiActive: true,
+      subscriptionPlan: 'max',
+      trialConsumedAt: new Date(),
+    });
+    expect(periodBudgetMicros(shop, trialing, 'max')).toBe(0);
+    expect(managedPoolFor(shop, trialing, 'max')).toBe('paid');
+  });
+
+  it('a free shop draws on the taster pool', () => {
+    expect(managedPoolFor(shop, settingsFor(), 'free')).toBe('taster');
+  });
+});
+
+describe('a plan column that contradicts the entitlement is never a grant', () => {
+  it('bought + free plan refuses as UNAVAILABLE, and spends no taster', async () => {
+    // The state a throttled subscription lookup used to leave behind. It is
+    // ours to fix, so it must not read as "your volume is used up" and must
+    // not quietly consume the one-time grant.
+    const status = await managedBudgetStatus(
+      shop,
+      settingsFor({ managedAiActive: true, subscriptionPlan: 'free' }),
+      'free',
+    );
+    expect(status.allowed).toBe(false);
+    expect(status.unavailable).toBe(true);
+    expect(status.kind).toBe('period');
+    expect(aggregate).not.toHaveBeenCalled();
+  });
+});

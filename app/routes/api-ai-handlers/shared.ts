@@ -277,6 +277,16 @@ export async function aiRefusalResponse(
       (settings?.subscriptionPlan ?? "free") as never
     );
     if (status.allowed) return null;
+    if (status.unavailable) {
+      return json(
+        {
+          success: false,
+          code: "AI_TEMPORARILY_UNAVAILABLE",
+          error: say("managedAiUnavailable"),
+        },
+        { status: AI_REFUSAL_STATUS.managedUnavailable },
+      );
+    }
     const taster = status.kind === "taster";
     return json(
       {

@@ -101,13 +101,24 @@ describe('the kill switch', () => {
     expect(managedAiAvailable()).toBe(false);
   });
 
-  it('turns managed mode off for a shop that bought it, without touching BYO', () => {
+  it('hands a shop that HAS its own key straight back to it', () => {
+    // Managed cannot be served, so the merchant's own credential is the right
+    // answer and not a refusal — their work does not stop because our kill
+    // switch is off. The stored choice is untouched, so the moment managed
+    // comes back they are on it again.
     const decision = resolveAiCredentials({ shop: 's', settings: managedShop() });
-    expect(decision).toEqual({ ok: false, reason: 'managedUnavailable' });
+    expect(decision.ok).toBe(true);
+    if (!decision.ok) throw new Error('expected ok');
+    expect(decision.source).toBe('byo');
+    expect(decision.config.openaiApiKey).toBe('sk-merchant');
+  });
 
-    // The merchant's own key still resolves.
-    const byo = resolveAiCredentials({ shop: 's', settings: byoShop() });
-    expect(byo.ok).toBe(true);
+  it('…and refuses only a shop that has no key to fall back to', () => {
+    const decision = resolveAiCredentials({
+      shop: 's',
+      settings: managedShop({ openaiApiKey: null }),
+    });
+    expect(decision).toEqual({ ok: false, reason: 'managedUnavailable' });
   });
 
   it('refuses to serve an operator key from a dev/custom-app build', () => {
@@ -120,10 +131,9 @@ describe('the kill switch', () => {
     process.env.APP_ENV = 'development';
 
     expect(managedAiAvailable()).toBe(false);
-    expect(resolveAiCredentials({ shop: 's', settings: managedShop() })).toEqual({
-      ok: false,
-      reason: 'managedUnavailable',
-    });
+    expect(
+      resolveAiCredentials({ shop: 's', settings: managedShop({ openaiApiKey: null }) }),
+    ).toEqual({ ok: false, reason: 'managedUnavailable' });
   });
 });
 
@@ -307,10 +317,9 @@ describe('the operator credential is read as a UNIT', () => {
     configureManaged();
     process.env.MANAGED_AI_PROVIDER = 'openai-compatible-gateway';
     expect(readManagedCredential('default')).toBeNull();
-    expect(resolveAiCredentials({ shop: 's', settings: managedShop() })).toEqual({
-      ok: false,
-      reason: 'managedUnavailable',
-    });
+    expect(
+      resolveAiCredentials({ shop: 's', settings: managedShop({ openaiApiKey: null }) }),
+    ).toEqual({ ok: false, reason: 'managedUnavailable' });
   });
 
   it('falls back to the DEFAULT credential when no failover is configured', () => {
@@ -362,5 +371,50 @@ describe('a refusal is a value, never an exception', () => {
       reason: 'noKey',
       provider: 'claude',
     });
+  });
+});
+
+describe('a spent taster hands the shop back to its own key (§10)', () => {
+  beforeEach(configureManaged);
+
+  it('a shop that never bought it, taster spent, WITH a key of its own', () => {
+    // The state a cancelled AI-included plan leaves behind: the stored choice
+    // is still "managed" (cancelling deliberately keeps it, and keeps the
+    // stored keys), but there is no entitlement and no grant left. Before
+    // this rule that shop sat in managed mode refusing every call while
+    // holding a perfectly good credential nothing ever reached.
+    const decision = resolveAiCredentials({
+      shop: 's',
+      settings: managedShop({
+        managedAiActive: false,
+        managedAiTasterSpentAt: new Date('2026-09-01'),
+      }),
+    });
+    expect(decision.ok).toBe(true);
+    if (!decision.ok) throw new Error('expected ok');
+    expect(decision.source).toBe('byo');
+  });
+
+  it('…and refuses with tasterExhausted when there is no key to fall back to', () => {
+    expect(
+      resolveAiCredentials({
+        shop: 's',
+        settings: managedShop({
+          managedAiActive: false,
+          openaiApiKey: null,
+          managedAiTasterSpentAt: new Date('2026-09-01'),
+        }),
+      }),
+    ).toMatchObject({ ok: false, reason: 'tasterExhausted' });
+  });
+
+  it('a shop that BOUGHT managed is unaffected by an old taster stamp', () => {
+    // It has a period budget; the stamp is a record of a grant it spent
+    // before it bought anything.
+    const decision = resolveAiCredentials({
+      shop: 's',
+      settings: managedShop({ managedAiTasterSpentAt: new Date('2026-09-01') }),
+    });
+    expect(decision.ok && decision.source).toBe('managed');
   });
 });

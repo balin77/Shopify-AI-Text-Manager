@@ -25,6 +25,7 @@ import {
   type BudgetContext,
 } from "../../config/managed-ai-budget";
 import { resolveDevPlanMode } from "../dev-plan-override.server";
+import { boughtManagedAi } from "./managed-ai.shared";
 import { managedBudgetPeriod } from "./usage-meter.server";
 import { logger } from "../../utils/logger.server";
 
@@ -41,22 +42,38 @@ export interface ManagedBudgetStatus {
    * period" is a lie to a shop whose grant was once per shop ever.
    */
   kind: "period" | "taster";
+  /**
+   * The refusal is OURS to fix, not a volume the merchant ran out of — a
+   * plan column that contradicts the verified entitlement. It answers
+   * `managedUnavailable`, because telling a paying merchant their volume is
+   * used up would send them to buy more of something we are not serving.
+   */
+  unavailable?: boolean;
 }
 
 /**
  * The §7a signals this layer can see.
  *
- * `testSubscription` is deliberately absent: it is not mirrored to any column
- * yet, and in production a `test: true` subscription is only ever SEEN by a
- * shop that is already `partnerDevelopment` or on a forced dev plan — which is
- * the plan's own reading of why signal 2 earns its place (for
- * `DEV_PLAN_OVERRIDE_SHOPS` and for a shop whose dev lookup once failed).
- * Phase 2 reads the subscription here anyway and can mirror it then; until
- * `managedAiActive` can be true at all, nothing reaches this function.
+ * All three of §7a's signals, and the third is the one that matters: a shop
+ * on a forced dev plan has no subscription object at all and, on a real
+ * store, reports `partnerDevelopment: false`.
+ *
+ * `testSubscription` reads a MIRRORED column rather than the live
+ * subscription, because this runs per AI request on detached paths that hold
+ * no admin client. Three-valued at the source: `null` (no sync has
+ * established it) counts as NOT a test subscription, since refusing a paying
+ * merchant's budget on missing evidence is the expensive direction and the
+ * global pool bounds what this cannot see.
  */
 export function budgetContextFor(shop: string, settings: AISettings | null): BudgetContext {
   return {
     partnerDevelopment: settings?.partnerDevelopment ?? null,
+    // §7a signal 2, mirrored by `syncSubscriptionToDatabase`. It was
+    // documented here as "deliberately absent, Phase 2 can mirror it" and
+    // Phase 2 did not: a `test: true` subscription carries the managed
+    // variant's own name and price, so it resolves to managed and grants a
+    // full period budget against zero revenue wherever signals 1 and 3 miss.
+    testSubscription: settings?.subscriptionIsTest === true,
     devPlanMode: resolveDevPlanMode(shop) !== null,
     // Every paid tier carries `trialDays: 7` and Shopify reports a trialing
     // subscription as ACTIVE, so without this a week of full allowance is
@@ -147,7 +164,15 @@ export function managedPoolFor(
   settings: AISettings | null,
   plan: BillingPlan,
 ): "paid" | "taster" {
-  return periodBudgetMicros(shop, settings, plan) > 0 ? "paid" : "taster";
+  // Asked of the PURCHASE, not of the period budget — and the difference is
+  // one real case. A shop inside its 7-day trial of an AI-included plan has
+  // no period budget (§7 rule 1: Shopify reports a trialing subscription as
+  // ACTIVE and the revenue has not arrived) and therefore spends the taster,
+  // but it is a paying customer in waiting and must not be able to exhaust
+  // the ring that exists to keep free installs off the paid one.
+  void shop;
+  void plan;
+  return boughtManagedAi(settings) ? "paid" : "taster";
 }
 
 /**
@@ -164,6 +189,30 @@ export async function managedBudgetStatus(
   // The BILLING period, not the calendar month (§7 rule 3) — the calendar key
   // hands a sign-up on the 31st two full budgets inside one billing period.
   const periodLimit = periodBudgetMicros(shop, settings, plan);
+
+  // A shop cannot have BOUGHT the AI-included variant of the free plan — no
+  // such product exists — so this pair is a stale or half-written plan
+  // column, not a state to hand a grant to. It stays a PERIOD budget of zero
+  // rather than falling to the taster: the taster is a one-time grant, and
+  // spending it on our own bookkeeping error is the one way to lose it that
+  // the merchant can neither see nor undo. (The billing sync no longer writes
+  // `free` over a verified managed plan, which is where this came from; this
+  // is the second rail.)
+  if (boughtManagedAi(settings) && plan === "free") {
+    logger.error(
+      `[ManagedAI] ${shop} holds a verified managed entitlement on the free plan — refusing rather than spending the taster on a contradictory plan column.`,
+    );
+    return {
+      usedMicros: 0,
+      limitMicros: 0,
+      remainingMicros: 0,
+      allowed: false,
+      period: managedBudgetPeriod(settings?.managedAiPeriodEnd ?? null),
+      kind: "period",
+      unavailable: true,
+    };
+  }
+
   const kind: "period" | "taster" = periodLimit > 0 ? "period" : "taster";
   const period =
     kind === "period" ? managedBudgetPeriod(settings?.managedAiPeriodEnd ?? null) : TASTER_PERIOD;
@@ -177,8 +226,19 @@ export async function managedBudgetStatus(
   let limitMicros = periodLimit;
   if (kind === "taster") {
     try {
-      const { managedTasterLimitMicros } = await import("./ai-credentials.server");
-      limitMicros = managedTasterLimitMicros();
+      // FROZEN once the grant has started. The limit is derived from the price
+      // of the managed default model and the used figure never resets, so
+      // re-deriving it on every read made "once, ever" false in both
+      // directions: a move to a dearer model silently handed a second taster
+      // to every shop that had spent its first, and a move to a cheaper one
+      // retroactively exhausted shops mid-grant.
+      const frozen = settings?.managedAiTasterMicros ?? null;
+      if (frozen !== null && frozen > 0) {
+        limitMicros = frozen;
+      } else {
+        const { managedTasterLimitMicros } = await import("./ai-credentials.server");
+        limitMicros = managedTasterLimitMicros();
+      }
     } catch (error) {
       logger.error(
         `[ManagedAI] Taster limit unreadable for ${shop}: ${

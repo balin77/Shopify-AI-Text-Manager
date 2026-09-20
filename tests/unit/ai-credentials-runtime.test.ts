@@ -102,11 +102,25 @@ describe('a managed refusal fails as a REFUSAL, not as a missing key', () => {
   });
 
   it('the kill switch is a refusal too, not a missing key', async () => {
+    // For a shop with NO key of its own. One that has one is handed back to
+    // it instead — the merchant's work does not stop because our switch is
+    // off — which is the case the test below pins.
     delete process.env.MANAGED_AI_ENABLED;
-    const { service } = aiServiceFor(managed(), 'demo.myshopify.com');
+    const { service } = aiServiceFor(
+      managed({ openaiApiKey: null }),
+      'demo.myshopify.com',
+    );
     const error = await call(service).catch((e) => e);
     expect(isManagedRefusal(error)).toBe(true);
     expect((error as { reason: string }).reason).toBe('managedUnavailable');
+  });
+
+  it('…while a shop WITH a key of its own keeps working on it', () => {
+    delete process.env.MANAGED_AI_ENABLED;
+    const creds = aiCredentialsFor(managed(), 'demo.myshopify.com');
+    expect(creds.decision.ok && creds.decision.source).toBe('byo');
+    expect(creds.config.openaiApiKey).toBe('sk-merchant');
+    expect(creds.config.managedRefusal).toBeUndefined();
   });
 
   it('carries no key anywhere near the refused service', () => {
