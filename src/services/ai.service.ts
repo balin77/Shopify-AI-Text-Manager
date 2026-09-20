@@ -319,6 +319,18 @@ export interface AIServiceConfig {
    * or lazily.
    */
   managedRefusal?: string;
+  /**
+   * The ledger PERIOD a managed call is counted in — the shop's BILLING
+   * period, not the calendar month (§7 rule 3).
+   *
+   * It has to travel with the credential because the meter and the budget must
+   * key on the same string: written under `m:2026-09` and read back under
+   * `b:2026-10-14`, the used figure is always zero and the cap never fires. The
+   * resolver computes it (it is the only thing that has the subscription's
+   * mirrored period end) and BYO leaves it unset, which keeps the calendar
+   * month for traffic nobody caps.
+   */
+  usagePeriod?: string;
 }
 
 /**
@@ -2637,6 +2649,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         source: this.config.credentialSource ?? 'byo',
         estimated: usage.source === 'estimate',
         taskId: this.taskId,
+        ...(this.config.usagePeriod ? { period: this.config.usagePeriod } : {}),
       });
     } catch (error) {
       loggers.ai('error', '[AI-SERVICE] Failed to record AI usage', {

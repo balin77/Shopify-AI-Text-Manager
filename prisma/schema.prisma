@@ -59,6 +59,18 @@ model AISettings {
   // the client. A merchant cannot grant themselves managed AI by posting.
   managedAiActive Boolean @default(false)
 
+  // When the current BILLING period ends, mirrored from the same subscription.
+  //
+  // The budget is per BILLING period, not per calendar month (§7 rule 3), and
+  // the difference is money: plans bill EVERY_30_DAYS with APPLY_IMMEDIATELY
+  // proration on switches, so a calendar key hands a sign-up on the 31st two
+  // full budgets in one period — on Max that is a 29.4 % cost share, 1.47x the
+  // guard the whole pricing rests on — and makes upgrade-spend-cancel a
+  // repeatable ~EUR 3.87 loop. NULL means the period is unknown, and the
+  // budget key then falls back to the calendar month, which is the honest
+  // answer rather than a guessed period boundary.
+  managedAiPeriodEnd DateTime?
+
   // Explicit, logged, versioned consent to processing content through the
   // OPERATOR's AI account (compliance audit §B4's second acceptable fix, which
   // is the only thing that makes managed mode buildable). Never pre-ticked,

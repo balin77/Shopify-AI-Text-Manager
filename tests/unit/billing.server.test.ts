@@ -249,8 +249,8 @@ describe('checkAndSyncSubscription()', () => {
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop },
-        update: { subscriptionPlan: 'pro' },
-        create: { shop, subscriptionPlan: 'pro' },
+        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
+        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
       })
     );
   });
@@ -262,7 +262,9 @@ describe('checkAndSyncSubscription()', () => {
 
     expect(plan).toBe('max');
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { subscriptionPlan: 'max' } })
+      expect.objectContaining({
+        update: { subscriptionPlan: 'max', managedAiActive: false, managedAiPeriodEnd: null },
+      })
     );
   });
 
@@ -273,7 +275,9 @@ describe('checkAndSyncSubscription()', () => {
 
     expect(plan).toBe('free');
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { subscriptionPlan: 'free' } })
+      expect.objectContaining({
+        update: { subscriptionPlan: 'free', managedAiActive: false, managedAiPeriodEnd: null },
+      })
     );
   });
 
@@ -299,6 +303,20 @@ describe('checkAndSyncSubscription()', () => {
     );
   });
 
+  it('a transient API error does NOT revoke a paid managed entitlement', async () => {
+    // The error path establishes nothing, so it writes nothing about managed
+    // AI — clearing it would revoke on a network blip what a merchant paid
+    // for. It costs nothing meanwhile: the plan written here is `free`, whose
+    // managed budget is zero.
+    const admin = { graphql: vi.fn().mockRejectedValue(new Error('Network error')) };
+
+    await checkAndSyncSubscription(admin, shop);
+
+    const call = mockAISettingsUpsert.mock.calls.at(-1)?.[0];
+    expect(call.update).not.toHaveProperty('managedAiActive');
+    expect(call.update).not.toHaveProperty('managedAiPeriodEnd');
+  });
+
   it('upserts even when shop has no aISettings record (covers reinstall edge case)', async () => {
     mockAISettingsFindUnique.mockResolvedValue(null);
     const admin = makeMockAdmin([activeProSubscription]);
@@ -311,8 +329,62 @@ describe('checkAndSyncSubscription()', () => {
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop },
-        update: { subscriptionPlan: 'pro' },
-        create: { shop, subscriptionPlan: 'pro' },
+        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
+        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null },
+      })
+    );
+  });
+
+  it('mirrors managed AI from the subscription, never from anything a merchant posts', async () => {
+    // The entitlement IS the subscription. A shop on the managed variant gets
+    // `managedAiActive: true` and the period end the budget is keyed on; a
+    // shop on the BYO variant gets false, even if it asked for managed.
+    const managedPro = {
+      ...activeProSubscription,
+      name: 'Pro Plan + AI',
+      currentPeriodEnd: '2026-10-14T00:00:00Z',
+      lineItems: [
+        {
+          id: 'li-1',
+          plan: {
+            pricingDetails: {
+              __typename: 'AppRecurringPricing',
+              price: { amount: '39.90', currencyCode: 'EUR' },
+              interval: 'EVERY_30_DAYS',
+            },
+          },
+        },
+      ],
+    };
+    const admin = makeMockAdmin([managedPro]);
+
+    const plan = await checkAndSyncSubscription(admin, shop);
+
+    expect(plan).toBe('pro');
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          subscriptionPlan: 'pro',
+          managedAiActive: true,
+          managedAiPeriodEnd: new Date('2026-10-14T00:00:00Z'),
+        }),
+      })
+    );
+  });
+
+  it('an unparseable period end is null, not a guessed boundary', async () => {
+    const managedMax = {
+      ...activeMaxSubscription,
+      name: 'Max Plan + AI',
+      currentPeriodEnd: 'not a date',
+    };
+    const admin = makeMockAdmin([managedMax]);
+
+    await checkAndSyncSubscription(admin, shop);
+
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ managedAiActive: true, managedAiPeriodEnd: null }),
       })
     );
   });
@@ -522,7 +594,9 @@ describe('checkAndSyncSubscription() – dev override short-circuit', () => {
     expect(plan).toBe('max');
     expect(admin.graphql).not.toHaveBeenCalled();
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { subscriptionPlan: 'max' } }),
+      expect.objectContaining({
+        update: { subscriptionPlan: 'max', managedAiActive: false, managedAiPeriodEnd: null },
+      }),
     );
   });
 

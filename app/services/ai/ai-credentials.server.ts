@@ -33,6 +33,7 @@ import type { AIProvider } from "../../utils/api-key-validation";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import { logger } from "../../utils/logger.server";
 import { UNPRICED_PROVIDERS } from "../../config/ai-pricing";
+import { managedBudgetPeriod } from "./usage-meter.server";
 // §7a "belt and braces": the operator key must never be served from the
 // dev/custom-app build. IMPORTED rather than re-derived — the local copy read
 // `process.env.DEV_APP_CLIENT_ID`, which is not an environment variable
@@ -153,10 +154,14 @@ export function readManagedCredential(role: ManagedRole): ManagedCredential | nu
 }
 
 /** Put the operator key in the one config slot its provider reads. */
-function configFor(cred: ManagedCredential): AIServiceConfig {
+function configFor(cred: ManagedCredential, settings: AISettings | null): AIServiceConfig {
   const config: AIServiceConfig = {
     selectedModel: cred.model,
     credentialSource: "managed",
+    // The meter must WRITE under the key the budget is READ under. Written as
+    // a calendar month and read as a billing period, the used figure is
+    // always zero and the cap never fires.
+    usagePeriod: managedBudgetPeriod(settings?.managedAiPeriodEnd ?? null),
   };
   (config as Record<string, unknown>)[PROVIDER_KEY_FIELD[cred.provider] as string] = cred.apiKey;
   return config;
@@ -266,7 +271,7 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
     provider: cred.provider,
     model: cred.model,
     role: roleCred ? role : "default",
-    config: configFor(cred),
+    config: configFor(cred, settings),
   };
 }
 

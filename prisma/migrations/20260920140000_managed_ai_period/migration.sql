@@ -1,0 +1,15 @@
+-- PLAN_MANAGED_AI_KEY §7 rule 3 — the budget period is the BILLING period.
+--
+-- Plans bill EVERY_30_DAYS with APPLY_IMMEDIATELY proration on switches, while
+-- the meter's calendar key is a month. Keeping the calendar key is money, not
+-- tidiness: a sign-up on the 31st gets two full budgets inside one billing
+-- period (on Max that is a 29.4% cost share, 1.47x the guard the pricing rests
+-- on), upgrade-spend-cancel becomes a repeatable ~EUR 3.87 loop per shop, and
+-- a downgrade after spending lands at a 44% cost share.
+--
+-- NULL means the period is unknown — never mirrored, unparseable, or a shop
+-- with no managed subscription. The budget key then falls back to the calendar
+-- month, which is a STATED approximation; a guessed period boundary would be
+-- an unstated one, and only a shop whose entitlement we could not read reaches
+-- it anyway, which is a shop with no budget to spend.
+ALTER TABLE "AISettings" ADD COLUMN "managedAiPeriodEnd" TIMESTAMP(3);

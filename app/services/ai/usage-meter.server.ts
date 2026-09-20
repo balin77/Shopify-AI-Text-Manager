@@ -107,6 +107,49 @@ export function currentAiUsagePeriod(date: Date = new Date()): string {
 }
 
 /**
+ * The BILLING period a managed call is counted in — §7 rule 3.
+ *
+ * Plans bill `EVERY_30_DAYS` with `APPLY_IMMEDIATELY` proration on switches,
+ * so a calendar month is the wrong unit and the difference is money, not
+ * tidiness. Keeping the calendar key produces: a sign-up on the 31st that gets
+ * two full budgets inside one billing period (on Max, 10.00 against 34.00 net
+ * = a 29.4 % cost share, 1.47x the guard this pricing rests on); an
+ * upgrade-spend-cancel loop worth about EUR 3.87 per shop per period,
+ * repeatable; and a downgrade-after-spend at a 44 % cost share.
+ *
+ * The key is derived from the period END that Shopify reports, counted
+ * backwards in 30-day steps — a period is identified by the day it ENDS,
+ * which is the one date the subscription actually carries. A mid-period
+ * upgrade therefore does NOT mint a second budget: the used figure carries
+ * over inside the same key while the LIMIT is read from the current plan at
+ * check time.
+ *
+ * `null` (never mirrored, an unparseable value, a shop with no managed
+ * subscription) falls back to the calendar month. That is a stated
+ * approximation rather than a guessed boundary — and it is only ever reached
+ * by a shop whose managed entitlement we could not read, which is a shop with
+ * no budget to spend.
+ */
+export function managedBudgetPeriod(
+  periodEnd: Date | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (!periodEnd) return currentAiUsagePeriod(now);
+  const end = new Date(periodEnd);
+  if (Number.isNaN(end.getTime())) return currentAiUsagePeriod(now);
+
+  // A stale mirror (the webhook has not landed yet, or a sync is overdue) can
+  // leave `periodEnd` in the past. Walk it forward in whole periods rather
+  // than keying on an expired one, or the shop would keep spending against a
+  // budget that has already reset — the wrong direction.
+  const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
+  let boundary = end.getTime();
+  while (boundary < now.getTime()) boundary += PERIOD_MS;
+
+  return `b:${new Date(boundary).toISOString().slice(0, 10)}`;
+}
+
+/**
  * Non-negative integer, or 0 — token counts arrive from provider JSON and a
  * garbage value must not poison a column. The cap is a sanity bound on ONE
  * call (no single call is 2.1e9 tokens); the stored TOTAL is BIGINT precisely

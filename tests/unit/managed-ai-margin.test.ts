@@ -23,7 +23,9 @@ import {
   managedBudgetMicros,
   paysNothing,
 } from '~/config/managed-ai-budget';
-import { BILLING_PLANS, type BillingPlan } from '~/config/billing';
+import { BILLING_PLANS, MANAGED_BILLING_PLANS, type BillingPlan } from '~/config/billing';
+import { resolveSubscription } from '~/services/billing.server';
+import { managedBudgetPeriod } from '~/services/ai/usage-meter.server';
 
 const PAID: Exclude<BillingPlan, 'free'>[] = ['basic', 'pro', 'max'];
 
@@ -129,5 +131,94 @@ describe('who gets no period budget at all (§7a)', () => {
     expect(managedBudgetMicros('basic', { partnerDevelopment: false })).toBe(
       MANAGED_BUDGET_MICROS.basic,
     );
+  });
+});
+
+describe('a subscription resolves to a plan AND a mode', () => {
+  it('matches the managed variant by NAME', () => {
+    for (const plan of PAID) {
+      const resolved = resolveSubscription({
+        name: MANAGED_BILLING_PLANS[plan].name,
+        lineItems: [],
+      } as never);
+      expect(resolved).toEqual({ plan, aiMode: 'managed' });
+    }
+  });
+
+  it('matches the BYO variant by name, and does not read it as managed', () => {
+    for (const plan of PAID) {
+      expect(
+        resolveSubscription({ name: BILLING_PLANS[plan].name, lineItems: [] } as never),
+      ).toEqual({ plan, aiMode: 'byo' });
+    }
+  });
+
+  it('falls back to the PRICE, and the price still identifies the mode', () => {
+    // This fallback exists for renamed subscriptions, which is why no two
+    // products may share a price — see the collision test above.
+    for (const plan of PAID) {
+      const managedPrice = BILLING_PLANS[plan].price + MANAGED_SURCHARGE_CENTS[plan] / 100;
+      const resolved = resolveSubscription({
+        name: 'Something the merchant renamed',
+        lineItems: [
+          { plan: { pricingDetails: { __typename: 'AppRecurringPricing', price: { amount: String(managedPrice), currencyCode: 'EUR' } } } },
+        ],
+      } as never);
+      expect(resolved).toEqual({ plan, aiMode: 'managed' });
+    }
+  });
+
+  it('never GUESSES — an unknown subscription is free and BYO', () => {
+    expect(
+      resolveSubscription({ name: 'Mystery Plan', lineItems: [] } as never),
+    ).toEqual({ plan: 'free', aiMode: 'byo' });
+    expect(resolveSubscription(null)).toEqual({ plan: 'free', aiMode: 'byo' });
+  });
+
+  it('the managed name of one plan is never the name of another', () => {
+    const names = new Set<string>();
+    for (const plan of PAID) {
+      for (const cfg of [BILLING_PLANS[plan], MANAGED_BILLING_PLANS[plan]]) {
+        expect(names.has(cfg.name.toLowerCase())).toBe(false);
+        names.add(cfg.name.toLowerCase());
+      }
+    }
+  });
+});
+
+describe('the budget period is the BILLING period (§7 rule 3)', () => {
+  it('keys on the period END, so a mid-period upgrade mints no second budget', () => {
+    const end = new Date('2026-10-14T00:00:00Z');
+    const early = managedBudgetPeriod(end, new Date('2026-09-20T00:00:00Z'));
+    const late = managedBudgetPeriod(end, new Date('2026-10-13T23:00:00Z'));
+    expect(early).toBe('b:2026-10-14');
+    expect(late).toBe(early);
+  });
+
+  it('a sign-up on the 31st does NOT get two budgets', () => {
+    // The whole reason for the rule: under a calendar key, 31 Aug and 1 Sep
+    // are two budgets inside one billing period.
+    const end = new Date('2026-09-30T00:00:00Z');
+    expect(managedBudgetPeriod(end, new Date('2026-08-31T12:00:00Z'))).toBe(
+      managedBudgetPeriod(end, new Date('2026-09-01T12:00:00Z')),
+    );
+  });
+
+  it('walks a STALE mirror forward rather than keying on an expired period', () => {
+    // A late webhook can leave the period end in the past. Keying on it would
+    // let the shop keep spending against a budget that has already reset.
+    const stale = new Date('2026-01-10T00:00:00Z');
+    const key = managedBudgetPeriod(stale, new Date('2026-03-01T00:00:00Z'));
+    expect(key).toBe('b:2026-03-11');
+  });
+
+  it('falls back to the calendar month when the period is unknown', () => {
+    expect(managedBudgetPeriod(null, new Date('2026-09-20T00:00:00Z'))).toBe('m:2026-09');
+    expect(managedBudgetPeriod(new Date('nonsense'), new Date('2026-09-20T00:00:00Z'))).toBe('m:2026-09');
+  });
+
+  it('the two schemes can never be read as one another', () => {
+    expect(managedBudgetPeriod(new Date('2026-10-14'))).toMatch(/^b:/);
+    expect(managedBudgetPeriod(null)).toMatch(/^m:/);
   });
 });

@@ -24,7 +24,7 @@ import {
   type BudgetContext,
 } from "../../config/managed-ai-budget";
 import { resolveDevPlanMode } from "../dev-plan-override.server";
-import { currentAiUsagePeriod } from "./usage-meter.server";
+import { managedBudgetPeriod } from "./usage-meter.server";
 import { logger } from "../../utils/logger.server";
 
 export interface ManagedBudgetStatus {
@@ -96,7 +96,9 @@ export async function managedBudgetStatus(
   settings: AISettings | null,
   plan: BillingPlan,
 ): Promise<ManagedBudgetStatus> {
-  const period = currentAiUsagePeriod();
+  // The BILLING period, not the calendar month (§7 rule 3) — the calendar key
+  // hands a sign-up on the 31st two full budgets inside one billing period.
+  const period = managedBudgetPeriod(settings?.managedAiPeriodEnd ?? null);
   const limitMicros = managedBudgetMicros(plan, budgetContextFor(shop, settings));
 
   // No limit means nothing to measure against — and a zero budget is a real
