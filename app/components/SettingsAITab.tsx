@@ -55,9 +55,6 @@ interface Settings {
   grokMaxRequestsPerMinute: number;
   deepseekMaxTokensPerMinute: number;
   deepseekMaxRequestsPerMinute: number;
-  // SEO fields are saved via SettingsSEOTab, but still included in full save payload
-  seoTitleSuffixEnabled?: boolean;
-  seoTitleSuffix?: string;
 }
 
 interface SettingsAITabProps {
@@ -200,7 +197,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   // global toast in the top nav was easy to miss, especially when a warn
   // banner stayed visible inside the card.
   const fieldErrors: Record<string, string> =
-    fetcher.data && !fetcher.data.success && fetcher.data.actionType === "saveSettings" && fetcher.data.fieldErrors
+    fetcher.data && !fetcher.data.success && fetcher.data.actionType === "saveAiKeys" && fetcher.data.fieldErrors
       ? (fetcher.data.fieldErrors as Record<string, string>)
       : {};
   const hasFieldErrors = Object.keys(fieldErrors).length > 0;
@@ -256,7 +253,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
 
     fetcher.submit(
       {
-        actionType: "saveSettings",
+        actionType: "saveAiKeys",
         huggingfaceApiKey: huggingfaceKey,
         geminiApiKey: geminiKey,
         claudeApiKey: claudeKey,
@@ -333,7 +330,11 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             onDiscard={handleDiscard}
             saveText={t.products.saveChanges}
             discardText={t.content?.discardChanges || "Verwerfen"}
-            action="saveSettings"
+            action="saveAiKeys"
+            isSavingCurrentItem={
+              fetcher.state !== "idle" &&
+              fetcher.formData?.get("actionType") === "saveAiKeys"
+            }
             fetcherState={fetcher.state}
             fetcherFormData={fetcher.formData}
           />

@@ -95,8 +95,13 @@ export const AISettingsSchema = z.object({
   deepseekMaxRequestsPerMinute: z.number().int().min(1).max(1000).optional(),
 
   // SEO title suffix (form sends "true"/"false" strings)
-  seoTitleSuffixEnabled: z.preprocess(val => val === "true" || val === true, z.boolean()).optional().default(false),
-  seoTitleSuffix: z.string().max(60).optional().or(z.literal('')),
+  // seoTitleSuffix(Enabled) are deliberately ABSENT: they belong to the
+  // `saveSeoSettings` branch, which reads them off formData directly. While
+  // they were declared here, `.optional().default(false)` meant a payload that
+  // merely omitted them still produced `false` in the parsed data — which is
+  // how the AI tab's save cleared a suffix configured in the SEO tab. A field
+  // no branch may write must not be parseable here either, or the next
+  // `...data` spread reintroduces the bug without naming it.
 });
 
 /**

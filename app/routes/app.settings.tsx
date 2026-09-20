@@ -1245,8 +1245,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType, enabledCount: toInsert.length, failed });
-    } else {
-      // Validate and save AI settings
+    } else if (actionType === "saveAiKeys" || actionType === "saveSettings") {
+      // "saveSettings" is the OLD name, kept for exactly one release. An
+      // embedded app sits in an iframe for hours, so on deploy day a merchant
+      // whose tab still holds the previous bundle posts the old name — and
+      // with the fallback closed below, that POST would 400, the page would
+      // raise a critical banner, and their pasted API key would silently not
+      // save. A fetcher POST does not trigger React Router's manifest-mismatch
+      // reload, so it would not self-heal until a manual refresh. Drop this
+      // alias in the next deploy.
+      if (actionType === "saveSettings") {
+        logger.warn("[Settings] deprecated actionType saveSettings (stale bundle)", {
+          shop: session.shop,
+        });
+      }
+      // The AI credentials, the provider/model choice and the per-provider
+      // rate limits — the AI tab owns all of them and nothing else writes
+      // them.
+      //
+      // This used to be the unnamed `else` FALLBACK, which is what made it
+      // dangerous: any actionType that did not match a branch above landed in
+      // a write path, and `encryptApiKey(undefined)` returns null exactly like
+      // `encryptApiKey("")`, so a payload that merely omitted a field cleared
+      // a stored credential. It also invited a second caller to reuse the
+      // vague name "saveSettings" for a different tab's save — which is how
+      // the SEO-title-suffix wipe happened, one field at a time. A branch that
+      // writes secrets is matched by NAME, and an unknown action is refused
+      // below.
       const validationResult = parseFormData(formData, AISettingsSchema);
 
       if (!validationResult.success) {
@@ -1266,7 +1291,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           deepseekApiKey: encryptApiKey(data.deepseekApiKey),
           preferredProvider: data.preferredProvider,
           selectedModel: data.selectedModel || null,
-          appLanguage: data.appLanguage,
+          // appLanguage is NOT written here — it belongs to `saveAppLanguage`.
+          // The AI tab sends it from a prop seeded at mount and never
+          // re-synced, so writing it back on every key save wrote the app
+          // language as it had been minutes earlier: with two tabs open, a
+          // language change in one was undone by saving a key in the other.
+          // Same class as the SEO suffix, one column over. The field stays in
+          // the payload because the CREATE half below seeds a NEW row from it,
+          // where there is no stored value to lose.
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
           hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,
           geminiMaxTokensPerMinute: data.geminiMaxTokensPerMinute,
@@ -1279,8 +1311,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
-          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
-          seoTitleSuffix: data.seoTitleSuffix || null,
+          // seoTitleSuffix(Enabled) are NOT written here: they belong to
+          // `saveSeoSettings`, and this branch is posted by the AI tab, whose
+          // payload does not carry them. Zod then filled the gap with its own
+          // defaults — `?? false` and `|| null` — so every save in the AI tab
+          // silently cleared a suffix the merchant had configured in the SEO
+          // tab. Same failure the `saveAppLanguage` branch above was narrowed
+          // to fix ("fields not in the payload got wiped"); a field is written
+          // by the action that owns it, or not at all.
         },
         create: {
           shop: session.shop,
@@ -1292,6 +1330,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           deepseekApiKey: encryptApiKey(data.deepseekApiKey),
           preferredProvider: data.preferredProvider,
           selectedModel: data.selectedModel || null,
+          // Only on CREATE: there is no stored value to overwrite, and Prisma's
+          // own default applies when the field is absent.
           appLanguage: data.appLanguage,
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
           hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,
@@ -1305,12 +1345,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
-          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
-          seoTitleSuffix: data.seoTitleSuffix || null,
+          // seoTitleSuffix(Enabled) are NOT written here: they belong to
+          // `saveSeoSettings`, and this branch is posted by the AI tab, whose
+          // payload does not carry them. Zod then filled the gap with its own
+          // defaults — `?? false` and `|| null` — so every save in the AI tab
+          // silently cleared a suffix the merchant had configured in the SEO
+          // tab. Same failure the `saveAppLanguage` branch above was narrowed
+          // to fix ("fields not in the payload got wiped"); a field is written
+          // by the action that owns it, or not at all.
         },
       });
 
       return json({ success: true, actionType });
+    } else {
+      // An unrecognised actionType is a bug in a caller, not a save. Refusing
+      // it is what keeps the branches above closed: every one of them writes a
+      // different subset of AISettings, so a request that matches none of them
+      // has no correct subset to write.
+      // The raw value goes to the log, never into the banner: this response is
+      // rendered as a critical InfoBox and the app ships in three languages, so
+      // a developer string would be shown to a merchant untranslated.
+      logger.warn("[Settings] Unknown actionType", { shop: session.shop, actionType });
+      return json(
+        { success: false, error: "Unsupported settings action", actionType },
+        { status: 400 },
+      );
     }
   } catch (error: unknown) {
     // Use safe error handler to prevent information leakage
