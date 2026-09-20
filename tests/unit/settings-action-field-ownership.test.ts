@@ -35,22 +35,35 @@ function namedActions(): string[] {
   return [...source.matchAll(/actionType === "([^"]+)"/g)].map((m) => m[1]);
 }
 
-/** Source of one named branch, up to the next branch. */
+/**
+ * Source of one named branch. BOUNDED at the next branch, the final `else`, or
+ * the action's `catch` — whichever comes first. An unbounded slice would run to
+ * EOF for the LAST branch and scan a third of the file (the React component),
+ * which both false-fails on unrelated code and reads as a stronger guard than
+ * it is.
+ */
 function branchSource(name: string): string {
   const start = source.indexOf(`actionType === "${name}"`);
   expect(start, `no branch for actionType "${name}"`).toBeGreaterThan(-1);
   const rest = source.slice(start + 1);
-  const end = rest.indexOf('actionType === "');
-  return end === -1 ? rest : rest.slice(0, end);
+  const bounds = ['actionType === "', "\n    } else {", "\n  } catch (error"]
+    .map((marker) => rest.indexOf(marker))
+    .filter((i) => i > -1);
+  return bounds.length ? rest.slice(0, Math.min(...bounds)) : rest;
 }
 
-/** Everything after the LAST named branch: the final `else`. */
+/**
+ * The action's final `else`. Anchored on the LAST named branch's own index
+ * rather than `lastIndexOf('actionType === "')`, which would land in the React
+ * component the moment anything there compares `fetcher.data.actionType` — a
+ * pattern other settings tabs already use.
+ */
 function finalElse(): string {
-  const lastNamed = source.lastIndexOf('actionType === "');
-  const rest = source.slice(lastNamed);
-  const elseStart = rest.indexOf("} else {");
+  const last = namedActions().at(-1)!;
+  const start = source.indexOf(`actionType === "${last}"`);
+  const rest = source.slice(start);
+  const elseStart = rest.indexOf("\n    } else {");
   expect(elseStart, "no final else branch found").toBeGreaterThan(-1);
-  // Stop at the action's catch, so we read the else and nothing after it.
   const body = rest.slice(elseStart);
   const catchStart = body.indexOf("} catch (error");
   return catchStart === -1 ? body : body.slice(0, catchStart);
@@ -79,6 +92,22 @@ describe("settings action — field ownership", () => {
 
   it("the AI tab does not submit SEO suffix fields either", () => {
     expect(aiTab).not.toContain("seoTitleSuffix");
+  });
+});
+
+describe("AISettingsSchema — the fields it must not parse", () => {
+  it("does not produce the SEO suffix columns at all", async () => {
+    const { AISettingsSchema } = await import("~/utils/validation");
+    const parsed = AISettingsSchema.parse({
+      preferredProvider: "claude",
+      appLanguage: "de",
+    });
+    // This is the assertion the source scan cannot make: while the schema
+    // declared these with `.optional().default(false)`, ANY write built from
+    // the parsed data — including a plain `...data` spread — reintroduced the
+    // wipe without naming the field anywhere.
+    expect(parsed).not.toHaveProperty("seoTitleSuffixEnabled");
+    expect(parsed).not.toHaveProperty("seoTitleSuffix");
   });
 });
 

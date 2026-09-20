@@ -331,6 +331,10 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             saveText={t.products.saveChanges}
             discardText={t.content?.discardChanges || "Verwerfen"}
             action="saveAiKeys"
+            isSavingCurrentItem={
+              fetcher.state !== "idle" &&
+              fetcher.formData?.get("actionType") === "saveAiKeys"
+            }
             fetcherState={fetcher.state}
             fetcherFormData={fetcher.formData}
           />
