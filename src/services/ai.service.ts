@@ -49,7 +49,21 @@ export interface AiCallUsage {
  * invocation, which one return value could only express by adding them up and
  * calling it one call.
  */
-export type AiUsageSink = (usage: AiCallUsage) => void;
+export interface AiCallMeter {
+  /**
+   * Provider calls STARTED — incremented immediately before each request.
+   *
+   * `dispatched > observed.length` is the only way to know that a call is
+   * still out there generating: it is what makes the timeout's worst-case
+   * charge unconditional. Gating that charge on "nothing has been reported
+   * yet" left the one case with two provider calls — Gemini's vision fallback,
+   * where the first answers and the second hangs — charged for the cheap half
+   * and nothing for the expensive one.
+   */
+  dispatched: number;
+  /** What each provider that ANSWERED reported. */
+  observed: AiCallUsage[];
+}
 
 /**
  * Tokens charged for ONE image, when the provider reported no usage and we
@@ -2385,7 +2399,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    */
   private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
     let timer: NodeJS.Timeout | undefined;
-    const observed: AiCallUsage[] = [];
+    const meter: AiCallMeter = { dispatched: 0, observed: [] };
     try {
       // Backstop timeout: even if a provider SDK ignores its own timeout
       // (e.g. Gemini/HF have no constructor timeout), this guarantees the
@@ -2397,12 +2411,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         );
       });
       return await Promise.race([
-        this._executeAIRequestInner(prompt, imageUrls, (usage) => observed.push(usage)),
+        this._executeAIRequestInner(prompt, imageUrls, meter),
         timeoutPromise,
       ]);
     } catch (error) {
-      if (error instanceof AIRequestTimeoutError && observed.length === 0) {
-        observed.push(this.worstCaseUsage(prompt, imageUrls?.length ?? 0));
+      if (error instanceof AIRequestTimeoutError && meter.dispatched > meter.observed.length) {
+        // A call was still generating when the clock ran out. Charged at its
+        // worst case per dispatch that never answered, not merely when NOTHING
+        // answered: Gemini's vision fallback can have a cheap first answer and
+        // an expensive second call still in flight.
+        for (let i = meter.observed.length; i < meter.dispatched; i++) {
+          meter.observed.push(this.worstCaseUsage(prompt, imageUrls?.length ?? 0));
+        }
       }
       if (AIService.isInputTooLongError(error)) {
         throw new Error(AIService.INPUT_TOO_LONG_MESSAGE);
@@ -2416,7 +2436,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // what a budget would later be enforced against. `recordUsage` never
       // throws, so this cannot turn a successful generation into a failed one,
       // nor replace the error a failed one is about to throw.
-      for (const usage of observed) await this.recordUsage(usage);
+      for (const usage of meter.observed) {
+        // Guarded here as well as inside `recordUsage`: this loop runs in a
+        // `finally` that may be unwinding an error, and anything thrown from
+        // it — including from the logger in that method's own catch — would
+        // REPLACE the error the caller is about to see with a bookkeeping one.
+        try {
+          await this.recordUsage(usage);
+        } catch {
+          // Deliberately silent: the one thing left that could report this is
+          // the logger that just failed.
+        }
+      }
     }
   }
 
@@ -2551,7 +2582,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const model = this.getModel();
     const input = reported?.input;
     const out = reported?.output;
-    if (typeof input === 'number' && typeof out === 'number' && input >= 0 && out >= 0) {
+    // `input > 0` and not `>= 0`: a real provider call always has input tokens
+    // — the prompt was sent — so a usage object reporting zero of them is a
+    // gateway or a routed provider filling the field with nothing, not a
+    // measurement. Accepting it stored an `estimated: false` row of 0 tokens
+    // and EUR 0, which is worse than an estimate: it lands in the MEASURED
+    // half of the report and drags down the per-call average §7's price ladder
+    // stands on, indistinguishably from a real cheap call. `out` may
+    // legitimately be 0 (an answer we then reject carries input and no
+    // output), so only the input side decides.
+    if (typeof input === 'number' && typeof out === 'number' && input > 0 && out >= 0) {
       return { inputTokens: input, outputTokens: out, model, source: 'provider' };
     }
     return {
@@ -2564,16 +2604,17 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   /**
-   * One provider call. Returns the text; reports what it COST through
-   * `onUsage`, which is called the moment the provider's response object is in
-   * hand — before every guard below that can reject that answer, and once per
-   * provider call rather than once per invocation (Gemini's vision fallback
-   * makes two). See `AiUsageSink` for why those are different events.
+   * One provider call. Returns the text; reports what it COST into `meter`,
+   * the moment the provider's response object is in hand — before every guard
+   * below that can reject that answer, and once per provider call rather than
+   * once per invocation (Gemini's vision fallback makes two). `meter.dispatched`
+   * is bumped before each request so a call that never answers is still known
+   * about. See `AiCallMeter` for why those are different events.
    */
   private async _executeAIRequestInner(
     prompt: string,
     imageUrls: string[] | undefined,
-    onUsage: AiUsageSink,
+    meter: AiCallMeter,
   ): Promise<string> {
     // One local truth for "is this a vision call": every provider branch below
     // asks the same question, and a branch that asked it differently is how a
@@ -2599,12 +2640,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       loggers.ai('warn', '[AI-SERVICE] Dropped image URL(s) the model cannot be given', { dropped });
     }
     const hasImages = images.length > 0;
-    /** One OpenAI-shaped answer: report first, then judge it. */
+    /**
+     * One OpenAI-shaped answer: report first, then judge it.
+     *
+     * `sentImages` is passed per branch rather than read from `images.length`,
+     * because two of the providers below are text-only and never put an image
+     * in their payload — charging their estimate for images the merchant
+     * happened to have attached invented tokens that were never sent.
+     */
     const reportChat = (
       completion: { usage?: { prompt_tokens?: number; completion_tokens?: number } | null },
       text: string,
+      sentImages: number,
     ) => {
-      onUsage(
+      meter.observed.push(
         this.usageOf(
           prompt,
           text,
@@ -2612,13 +2661,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             input: completion.usage?.prompt_tokens,
             output: completion.usage?.completion_tokens,
           },
-          images.length,
+          sentImages,
         ),
       );
     };
 
     if (this.provider === 'huggingface' && this.huggingface) {
       // HuggingFace: text-only (no vision support)
+      meter.dispatched++;
       const response = await this.huggingface.chatCompletion({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
@@ -2629,7 +2679,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // routed provider fills it is a runtime question — absent is the
       // estimate case, never zero.
       const hfContent = response.choices[0]?.message?.content ?? '';
-      reportChat(response, hfContent);
+      reportChat(response, hfContent, 0); // text-only provider
       if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
       if (!hfContent.trim()) throw new Error('HuggingFace returned empty content');
       return hfContent;
@@ -2645,6 +2695,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           // the text-only fallback that makes a slow CDN survivable never
           // runs. Bounded by AI_IMAGES_PER_REQUEST_MAX either way.
           const encoded = await Promise.all(images.map((url) => this.fetchImageAsBase64(url)));
+          meter.dispatched++;
           const result = await this.gemini.generateContent([
             { text: prompt },
             ...encoded.map((data) => ({ inlineData: { mimeType: 'image/jpeg', data } })),
@@ -2659,7 +2710,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           try {
             geminiText = response.text();
           } finally {
-            onUsage(this.usageOf(prompt, geminiText, visionReported, images.length));
+            meter.observed.push(
+              this.usageOf(prompt, geminiText, visionReported, images.length),
+            );
           }
           if (!geminiText.trim()) throw new Error('Gemini returned empty response');
           return geminiText;
@@ -2670,6 +2723,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           // makes TWO provider calls in one invocation — and they are reported
           // as two, not summed: a sum would count one call, which is exactly
           // the per-call average Phase 0 exists to measure.
+          meter.dispatched++;
           const result = await this.gemini.generateContent(prompt);
           const response = await result.response;
           const fallbackReported = AIService.geminiUsage(response);
@@ -2677,12 +2731,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           try {
             geminiTextFallback = response.text();
           } finally {
-            onUsage(this.usageOf(prompt, geminiTextFallback, fallbackReported));
+            meter.observed.push(this.usageOf(prompt, geminiTextFallback, fallbackReported));
           }
           if (!geminiTextFallback.trim()) throw new Error('Gemini returned empty response');
           return geminiTextFallback;
         }
       } else {
+        meter.dispatched++;
         const result = await this.gemini.generateContent(prompt);
         const response = await result.response;
         const reported = AIService.geminiUsage(response);
@@ -2690,13 +2745,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         try {
           geminiTextOnly = response.text();
         } finally {
-          onUsage(this.usageOf(prompt, geminiTextOnly, reported));
+          meter.observed.push(this.usageOf(prompt, geminiTextOnly, reported));
         }
         if (!geminiTextOnly.trim()) throw new Error('Gemini returned empty response');
         return geminiTextOnly;
       }
     } else if (this.provider === 'claude' && this.anthropic) {
       // Claude: supports vision with URL
+      meter.dispatched++;
       const message = hasImages
         ? await this.anthropic.messages.create({
             model: this.getModel(),
@@ -2721,12 +2777,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // `input_tokens` deliberately EXCLUDES cache_creation/cache_read tokens.
       // This app uses no prompt caching; adopting it means adding them here or
       // silently under-counting.
-      onUsage(
+      meter.observed.push(
         this.usageOf(
           prompt,
           claudeText,
           { input: message.usage?.input_tokens, output: message.usage?.output_tokens },
-          images.length,
+          hasImages ? images.length : 0,
         ),
       );
       if (!textBlock) throw new Error('Claude returned no text block');
@@ -2734,6 +2790,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       return claudeText;
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL
+      meter.dispatched++;
       const completion = hasImages
         ? await this.openai.chat.completions.create({
             model: this.getModel(),
@@ -2752,7 +2809,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
           });
       const openaiContent = completion.choices[0]?.message?.content ?? '';
-      reportChat(completion, openaiContent);
+      reportChat(completion, openaiContent, hasImages ? images.length : 0);
       if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
       // A `finish_reason: length` truncation answers with empty content after
       // generating the FULL output allowance — the single most expensive call
@@ -2761,6 +2818,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       return openaiContent;
     } else if (this.provider === 'grok' && this.grok) {
       // Grok: supports vision with URL (similar to GPT-4o)
+      meter.dispatched++;
       const completion = hasImages
         ? await this.grok.chat.completions.create({
             model: this.getModel(),
@@ -2781,12 +2839,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             temperature: 0.7,
           });
       const grokContent = completion.choices[0]?.message?.content ?? '';
-      reportChat(completion, grokContent);
+      reportChat(completion, grokContent, hasImages ? images.length : 0);
       if (!completion.choices[0]) throw new Error('Grok returned empty response');
       if (!grokContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
       return grokContent;
     } else if (this.provider === 'deepseek' && this.deepseek) {
       // DeepSeek: text-only (no vision support)
+      meter.dispatched++;
       const completion = await this.deepseek.chat.completions.create({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
@@ -2794,7 +2853,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         temperature: 0.7,
       });
       const deepseekContent = completion.choices[0]?.message?.content ?? '';
-      reportChat(completion, deepseekContent);
+      reportChat(completion, deepseekContent, 0); // text-only provider
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');
       if (!deepseekContent.trim()) throw new Error(`DeepSeek returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
       return deepseekContent;

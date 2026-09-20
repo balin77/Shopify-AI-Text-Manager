@@ -143,7 +143,7 @@ function warnUnknownModelOnce(provider: AIProvider, model: string): void {
 export async function recordAiUsage(
   input: RecordAiUsageInput,
 ): Promise<RecordedAiUsage> {
-  let period = input.period ?? currentAiUsagePeriod();
+  const period = input.period ?? currentAiUsagePeriod();
   let costMicros = 0;
   let billedMicros = 0;
   let ledgerWritten = false;
@@ -298,6 +298,17 @@ export async function getAiUsage(
     where: { shop, period },
     orderBy: [{ feature: "asc" }, { model: "asc" }],
   });
+  const unknown = rows.filter((row) => !isAiCredentialSource(row.source));
+  if (unknown.length > 0) {
+    // Not silently dropped: today this cannot happen, but Phase 1 adds the
+    // resolver that writes this column, and a third source appearing here
+    // would otherwise vanish from every usage view with no way to notice.
+    logger.warn(
+      `[AI-METER] ${unknown.length} usage row(s) for ${shop} carry an unknown source (${[
+        ...new Set(unknown.map((r) => r.source)),
+      ].join(", ")}) and are not reported.`,
+    );
+  }
   return rows
     .filter((row) => isAiCredentialSource(row.source))
     .map((row) => ({

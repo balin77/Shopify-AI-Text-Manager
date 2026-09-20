@@ -449,7 +449,10 @@ events, and three shapes only the first framing can express are all money.
   safety-blocked candidate Google has still billed for its input and images.
 - **A call that loses the 120 s timeout race is charged at its WORST CASE**
   (prompt estimate in, `max_tokens` out, flagged estimated). `Promise.race`
-  does not cancel the loser: the provider finishes and bills us.
+  does not cancel the loser: the provider finishes and bills us. The sink is
+  therefore a `{ dispatched, observed }` METER rather than a callback — a
+  charge gated on "nothing was reported yet" missed the case with two provider
+  calls, where the cheap first one answers and the expensive second hangs.
 
 Nothing is charged for a call that never reached a provider. A stated residual:
 the SDKs retry internally (`AI_SDK_MAX_RETRIES`), so one logical call can be up
@@ -465,11 +468,17 @@ not billed, which is why this is named rather than corrected.
 | (any branch) | absent or partial → estimate, flagged |
 
 `usage.source` is `"provider"` or `"estimate"`. **An estimate rounds UP** —
-`chars/3`, below the Latin-script average, plus a flat allowance per IMAGE:
-an image is ~1,100–1,300 input tokens the prompt string knows nothing about,
-so counting characters alone made the estimate err ~90 % CHEAP on exactly the
-vision calls most likely to need it. A missing usage object is never read as
-zero.
+`chars/3`, below the Latin-script average, plus a flat allowance per IMAGE
+ACTUALLY SENT: an image is ~1,100–1,300 input tokens the prompt string knows
+nothing about, so counting characters alone made the estimate err ~90 % CHEAP
+on exactly the vision calls most likely to need it — while charging it on the
+two TEXT-ONLY providers (nothing filters the image list by provider) invented
+tokens that were never sent, so the count is passed per branch. A missing usage
+object is never read as zero, and neither is a ZERO-FILLED one: a real call
+always has input tokens, so `{prompt_tokens: 0}` from a gateway or a routed
+provider is a field nobody filled, and accepting it as a measurement put an
+`estimated: false` row of €0 into the MEASURED half of the report, where it is
+indistinguishable from a real cheap call.
 
 **4.2 One price table, one module.** `app/config/ai-pricing.ts`:
 `MODEL_PRICING` in **micro-euro** integers, with a `USD_PER_EUR` constant that

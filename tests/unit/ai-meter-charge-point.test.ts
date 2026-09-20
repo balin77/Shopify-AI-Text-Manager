@@ -82,10 +82,20 @@ beforeEach(() => {
   mockTaskFindUnique.mockResolvedValue({ type: 'bulkTranslation' });
 });
 
-/** Build a service whose one provider client is a fake. */
+/**
+ * Build a service whose one provider client is a fake.
+ *
+ * The field an AIService keeps its client in is the provider's name for every
+ * provider but Claude, whose field is `anthropic` — the one mapping that has
+ * to be stated. Getting it wrong would leave the constructor-built client in
+ * place and fail loudly rather than pass vacuously, but the map should still
+ * say what it maps.
+ */
+const CLIENT_FIELD: Record<string, string> = { claude: 'anthropic' };
+
 function withClient(provider: string, client: unknown, shop?: string, taskId?: string) {
   const svc = new AIService(provider as never, { ...CONFIG, openaiApiKey: 'k', geminiApiKey: 'k', grokApiKey: 'k', deepseekApiKey: 'k', huggingfaceApiKey: 'k' }, shop, taskId);
-  (svc as unknown as Record<string, unknown>)[provider === 'huggingface' ? 'huggingface' : provider] = client;
+  (svc as unknown as Record<string, unknown>)[CLIENT_FIELD[provider] ?? provider] = client;
   return svc;
 }
 
@@ -153,6 +163,58 @@ describe('per-SDK usage shapes', () => {
     expect(mockRecordAiUsage).toHaveBeenCalledWith(
       expect.objectContaining({ provider: 'gemini', inputTokens: 240, outputTokens: 60, estimated: false }),
     );
+  });
+
+  it('treats a ZERO-filled usage object as an estimate, not a measurement', async () => {
+    // A gateway or a routed provider that fills `usage` with nothing is not
+    // reporting. Storing it as measured put an `estimated: false` row of zero
+    // tokens into the MEASURED half of the report, where it is indistinguishable
+    // from a real cheap call and drags the per-call average down.
+    const svc = withClient('huggingface', {
+      chatCompletion: async () => ({
+        choices: [{ message: { content: 'an answer' } }],
+        usage: { prompt_tokens: 0, completion_tokens: 0 },
+      }),
+    }, 'demo.myshopify.com');
+
+    await svc.replayRequest('a prompt');
+
+    const charged = mockRecordAiUsage.mock.calls[0][0];
+    expect(charged.estimated).toBe(true);
+    expect(charged.inputTokens).toBeGreaterThan(0);
+  });
+
+  it('still trusts a report whose OUTPUT is zero — a rejected answer has input', async () => {
+    const svc = new AIService('claude', CONFIG, 'demo.myshopify.com');
+    (svc as unknown as { anthropic: unknown }).anthropic = {
+      messages: {
+        create: async () => ({
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: 700, output_tokens: 0 },
+        }),
+      },
+    };
+
+    await svc.replayRequest('p');
+
+    expect(mockRecordAiUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ estimated: false, inputTokens: 700, outputTokens: 0 }),
+    );
+  });
+
+  it('charges no IMAGE tokens to a text-only provider', async () => {
+    // Nothing filters the image list by provider, so a merchant on HuggingFace
+    // with images attached reached this branch — which never puts one in the
+    // payload. Adding an allowance for them invented tokens nobody sent.
+    const svc = withClient('huggingface', {
+      chatCompletion: async () => ({ choices: [{ message: { content: 'x' } }] }),
+    }, 'demo.myshopify.com');
+
+    await (svc as unknown as { executeAIRequest: (p: string, i?: string[]) => Promise<string> })
+      .executeAIRequest('p', ['https://cdn.shopify.com/a.jpg', 'https://cdn.shopify.com/b.jpg']);
+
+    // Estimated from the prompt alone: two images would add thousands.
+    expect(mockRecordAiUsage.mock.calls[0][0].inputTokens).toBeLessThan(100);
   });
 
   it('records the model the call RAN on', async () => {
@@ -244,8 +306,11 @@ describe('a provider that answered is charged, even when we reject the answer', 
     (svc as unknown as { fetchImageAsBase64: unknown }).fetchImageAsBase64 = async () => 'AAAA';
 
     const out = await (svc as unknown as {
-      _executeAIRequestInner: (p: string, i: string[] | undefined, cb: unknown) => Promise<string>;
-    })._executeAIRequestInner('p', ['https://cdn.shopify.com/x.jpg'], () => {});
+      _executeAIRequestInner: (p: string, i: string[] | undefined, m: unknown) => Promise<string>;
+    })._executeAIRequestInner('p', ['https://cdn.shopify.com/x.jpg'], {
+      dispatched: 0,
+      observed: [],
+    });
     expect(out).toBe('text-only answer');
 
     // Through the charge point, the two answers are two ledger entries — a sum
@@ -350,6 +415,46 @@ describe('the charge point', () => {
       // might have produced: these are the longest calls there are.
       expect(charged.outputTokens).toBe(8192);
       expect(charged.inputTokens).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('charges a SECOND provider call that hangs, even though the first answered', async () => {
+    vi.useFakeTimers();
+    try {
+      let call = 0;
+      const svc = withClient('gemini', {
+        generateContent: async () => {
+          call += 1;
+          if (call === 1) {
+            return {
+              response: {
+                text: () => '',
+                usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 0 },
+              },
+            };
+          }
+          // The fallback never comes back — and keeps generating and billing.
+          return new Promise(() => {});
+        },
+      }, 'demo.myshopify.com');
+      (svc as unknown as { fetchImageAsBase64: unknown }).fetchImageAsBase64 = async () => 'AAAA';
+
+      const rejected = expect(
+        (svc as unknown as { executeAIRequest: (p: string, i?: string[]) => Promise<string> })
+          .executeAIRequest('p', ['https://cdn.shopify.com/x.jpg']),
+      ).rejects.toThrow(/timed out/);
+      await vi.advanceTimersByTimeAsync(121_000);
+      await rejected;
+
+      // Two dispatches, one answer: the cheap one is charged as reported and
+      // the hung one at its worst case. Gating on "nothing was reported"
+      // charged only the cheap half.
+      expect(mockRecordAiUsage).toHaveBeenCalledTimes(2);
+      expect(mockRecordAiUsage.mock.calls[0][0].inputTokens).toBe(300);
+      expect(mockRecordAiUsage.mock.calls[1][0].outputTokens).toBe(8192);
+      expect(mockRecordAiUsage.mock.calls[1][0].estimated).toBe(true);
     } finally {
       vi.useRealTimers();
     }
