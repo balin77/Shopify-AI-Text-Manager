@@ -274,7 +274,27 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
     provider: cred.provider,
     model: cred.model,
     role: roleCred ? role : "default",
-    config: configFor(cred, settings),
+    config: {
+      ...configFor(cred, settings),
+      // §3a rule 8 — the seam the switch goes through. `ai.service.ts` never
+      // reads `process.env`, so the second credential is handed over by the
+      // one module that holds it, on demand and not before.
+      switchToFailover: async () => {
+        const fallback = readManagedCredential("failover");
+        if (!fallback) return null;
+        if (fallback.provider === cred.provider && fallback.model === cred.model) return null;
+        return {
+          provider: fallback.provider,
+          config: {
+            ...configFor(fallback, settings),
+            // Rule 1: the merchant's budget is debited at the DEFAULT model's
+            // price whatever ran.
+            defaultModelForBilling: cred.model,
+            defaultProviderForBilling: cred.provider,
+          },
+        };
+      },
+    },
   };
 }
 

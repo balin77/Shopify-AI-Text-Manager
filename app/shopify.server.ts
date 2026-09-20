@@ -190,6 +190,13 @@ import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
 import { TranslationDriftAutoRunService } from "./services/translations/translation-drift-auto-run.service";
 
+/**
+ * The managed-AI smoke test runs ONCE per process. It is a real provider call,
+ * so firing it per authenticated request would be a small standing bill and a
+ * lot of identical log lines.
+ */
+let managedSmokeTestFired = false;
+
 import { hostParamRejection } from "./utils/shopify-host-param.server";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
@@ -248,6 +255,19 @@ const enhancedAuthenticate = {
     // The change event Shopify does not send for pages, articles, blogs and
     // policies — see translation-drift-auto-run.service.ts.
     TranslationDriftAutoRunService.getInstance().start();
+
+    // PLAN_MANAGED_AI_KEY §9.6 — does the operator credential actually ANSWER?
+    // A table lookup cannot see a retired model id or a revoked key, and a
+    // managed mode pointing at one is a 100% failure rate for paying
+    // customers, discovered by them. Fired ONCE per process, not awaited: a
+    // provider having a bad minute while we deploy is not a reason to hold up
+    // a shop whose own key works.
+    if (!managedSmokeTestFired) {
+      managedSmokeTestFired = true;
+      void import("./services/ai/managed-smoke-test.server")
+        .then((m) => m.runManagedAiSmokeTest())
+        .catch(() => undefined);
+    }
 
     return { admin, session };
   }

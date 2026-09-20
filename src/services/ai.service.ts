@@ -338,6 +338,43 @@ export interface AIServiceConfig {
    * than it enforces.
    */
   usagePool?: 'paid' | 'taster';
+  /**
+   * Swap this instance onto the OTHER managed credential — §3a rule 8.
+   *
+   * Where the switch lives is decided by three mechanics, not by taste.
+   * `isInputTooLongError` is a private static and `executeAIRequest` REPLACES
+   * that error with a merchant-facing sentence before any caller sees it, so
+   * above this method the exclusion could only be applied by string-matching a
+   * UI message. `askAI` latches the first auth failure and fails every later
+   * call fast, so a 401 handled above it never arrives. And the queue
+   * re-enqueues the same closure, which captures this instance and therefore
+   * its provider, so the switch cannot live there either.
+   *
+   * It is a CALLBACK because `ai.service.ts` must never read `process.env`:
+   * the resolver is the one module that holds the operator credential, and
+   * this is how it hands over the second one without that changing.
+   *
+   * Returns the new `(provider, config)` pair, or null when no fallback is
+   * configured — in which case the original error stands.
+   */
+  switchToFailover?: () => Promise<{ provider: AIProvider; config: AIServiceConfig } | null>;
+  /**
+   * This instance is running on the FALLBACK credential — §3a rules 1 and 3.
+   *
+   * It changes what the ledger records, not what the merchant is charged: the
+   * budget is debited at the DEFAULT model's price whatever ran, because an
+   * outage must not shrink what the merchant bought. The gap is what we
+   * absorb, and it is the number the failover pool is measured against.
+   */
+  failoverServed?: boolean;
+  /**
+   * The DEFAULT managed model's id, carried onto a failover instance so the
+   * meter can price the merchant's side at it (§3a rule 1). Absent on every
+   * non-failover call, where the model that ran IS the model billed.
+   */
+  defaultModelForBilling?: string;
+  /** The default credential's provider, when the failover crossed providers. */
+  defaultProviderForBilling?: AIProvider;
 }
 
 /**
@@ -2572,10 +2609,19 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           AI_REQUEST_TIMEOUT_MS,
         );
       });
-      return await Promise.race([
-        this._executeAIRequestInner(prompt, imageUrls, meter),
-        timeoutPromise,
-      ]);
+      try {
+        return await Promise.race([
+          this._executeAIRequestInner(prompt, imageUrls, meter),
+          timeoutPromise,
+        ]);
+      } catch (firstError) {
+        // §3a — the failover. HERE, below askAI's auth latch and BEFORE the
+        // input-too-long replacement below, which is the only place both are
+        // still true.
+        const retried = await this.tryFailover(firstError, prompt, imageUrls, meter);
+        if (retried !== null) return retried;
+        throw firstError;
+      }
     } catch (error) {
       if (error instanceof AIRequestTimeoutError && meter.dispatched > meter.observed.length) {
         // A call was still generating when the clock ran out. Charged at its
@@ -2610,6 +2656,91 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           // the logger that just failed.
         }
       }
+    }
+  }
+
+  /**
+   * Try the OTHER managed provider, or answer null to let the original error
+   * stand — §3a.
+   *
+   * Never throws: a failure here must leave the caller with the FIRST error,
+   * which is the one that describes what actually happened. It returns null
+   * for every reason not to fail over, and the reasons are as important as
+   * the mechanism:
+   *
+   * - not a managed call (a merchant's own key is not ours to reroute),
+   * - no fallback configured,
+   * - the error is one the second provider answers identically (§3a rule 7),
+   * - the breaker is open on the fallback too,
+   * - this SHOP has used up its failover allowance (rule 2).
+   */
+  private async tryFailover(
+    error: unknown,
+    prompt: string,
+    imageUrls: string[] | undefined,
+    meter: AiCallMeter,
+  ): Promise<string | null> {
+    if (this.config.credentialSource !== 'managed' || !this.config.switchToFailover) return null;
+    // A refusal is not a provider failure — it is us declining, and retrying
+    // it on the other account would spend the operator's money on a call that
+    // was never allowed.
+    if (isManagedRefusal(error)) return null;
+
+    try {
+      const { classifyFailover, statusOf } = await import(
+        '../../app/services/ai/managed-failover.shared'
+      );
+      const verdict = classifyFailover({
+        status: statusOf(error),
+        message: error instanceof Error ? error.message : String(error),
+        // The queue retries a rate limit by re-enqueueing the same closure, so
+        // by the time an error reaches here that path is already spent.
+        rateLimitRetriesExhausted: true,
+      });
+      if (!verdict.failOver) return null;
+
+      const { breakerAllows, recordBreakerOutcome, shopFailoverExhausted } = await import(
+        '../../app/services/ai/managed-failover.server'
+      );
+      recordBreakerOutcome(this.provider, false);
+
+      if (this.shop && this.config.usagePeriod) {
+        if (await shopFailoverExhausted(this.shop, this.config.usagePeriod)) {
+          loggers.ai('warn', '[AI-SERVICE] Failover ceiling reached for this shop', {
+            shop: this.shop,
+          });
+          return null;
+        }
+      }
+
+      const swapped = await this.config.switchToFailover();
+      if (!swapped) return null;
+      if (!breakerAllows(swapped.provider).allow) return null;
+
+      loggers.ai('warn', '[AI-SERVICE] Managed failover', {
+        shop: this.shop,
+        from: this.provider,
+        to: swapped.provider,
+        reason: verdict.reason,
+      });
+
+      // Re-initialise onto the other credential. `initializeProvider` builds
+      // exactly one client from `this.provider`, so both have to move.
+      this.provider = swapped.provider;
+      this.config = { ...swapped.config, failoverServed: true };
+      this.initializeProvider();
+
+      const text = await this._executeAIRequestInner(prompt, imageUrls, meter);
+      recordBreakerOutcome(swapped.provider, true);
+      return text;
+    } catch (failoverError) {
+      // The fallback failed too. The caller gets the FIRST error, which
+      // describes the outage rather than our reaction to it.
+      loggers.ai('error', '[AI-SERVICE] Failover attempt failed', {
+        shop: this.shop,
+        error: failoverError instanceof Error ? failoverError.message : String(failoverError),
+      });
+      return null;
     }
   }
 
@@ -2659,6 +2790,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         // unset field is a bug, and a default would hide it.
         source: this.config.credentialSource ?? 'byo',
         estimated: usage.source === 'estimate',
+        failover: this.config.failoverServed === true,
+        // §3a rule 1: the merchant is billed at the DEFAULT model's price
+        // whatever ran. An outage they did not cause and cannot see must not
+        // make their volume evaporate at 14x speed — we carry the difference,
+        // and the ledger keeps both numbers so "what did the outage cost us"
+        // stays answerable.
+        ...(this.config.failoverServed && this.config.defaultModelForBilling
+          ? {
+              billedModel: this.config.defaultModelForBilling,
+              ...(this.config.defaultProviderForBilling
+                ? { billedProvider: this.config.defaultProviderForBilling }
+                : {}),
+            }
+          : {}),
         taskId: this.taskId,
         ...(this.config.usagePeriod ? { period: this.config.usagePeriod } : {}),
         ...(this.config.usagePool ? { pool: this.config.usagePool } : {}),

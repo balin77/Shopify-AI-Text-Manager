@@ -63,9 +63,22 @@ export interface RecordAiUsageInput {
   failover?: boolean;
   /**
    * What to charge the merchant's budget, when that differs from what we paid.
-   * Absent means "the same" — which is every call until failover ships.
+   * Absent means "the same".
    */
   billedMicros?: number;
+  /**
+   * Price the MERCHANT's side at this model instead of the one that ran —
+   * §3a rule 1. Set only on a failover: the merchant is billed at the default
+   * model's price whatever answered, because an outage they did not cause and
+   * cannot see must not make their volume evaporate at 14x speed.
+   *
+   * Computed here rather than by the caller so the two prices come from one
+   * table and one rounding rule; a caller doing its own arithmetic is how the
+   * ledger's two columns would come to disagree about the same call.
+   */
+  billedModel?: string;
+  /** The default credential's PROVIDER, when the failover crossed providers. */
+  billedProvider?: AIProvider;
   /** When present, the same call is added to this task's per-run totals. */
   taskId?: string;
   /** Defaults to the current period. */
@@ -203,8 +216,23 @@ export async function recordAiUsage(
 
     const priced = priceCall(input.provider, input.model, inputTokens, outputTokens);
     costMicros = priced.costMicros;
-    billedMicros =
-      input.billedMicros === undefined ? costMicros : clampMicros(input.billedMicros);
+
+    if (input.billedMicros !== undefined) {
+      billedMicros = clampMicros(input.billedMicros);
+    } else if (input.billedModel && input.billedModel !== input.model) {
+      // A failover: what we PAID is the model that ran, what the MERCHANT is
+      // charged is the default model's price for the same tokens. Same table,
+      // same rounding — the two columns describe one call and must not be
+      // computed two different ways.
+      billedMicros = priceCall(
+        input.billedProvider ?? input.provider,
+        input.billedModel,
+        inputTokens,
+        outputTokens,
+      ).costMicros;
+    } else {
+      billedMicros = costMicros;
+    }
 
     if (priced.pricedAtCeiling) warnUnknownModelOnce(input.provider, input.model);
 
