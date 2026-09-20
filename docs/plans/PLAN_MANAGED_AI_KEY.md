@@ -1321,7 +1321,12 @@ AI-included price of your tier.
   one put the taster out of reach of the only population it exists for. A shop
   that did not buy the variant resolves to managed and draws on the taster:
   its own ledger key (`taster`, prefixless, with no next value), its own global
-  pool, its own refusal code, and consent first like everybody else.
+  pool, its own refusal code, and consent first like everybody else. What the
+  review pass then had to put back is the other half of that move: a shop
+  whose managed AI cannot be served — a spent taster, the kill switch, an
+  entitlement that ended — falls back to its OWN key wherever it has one,
+  which is what the old gate did for free and what makes cancelling an
+  AI-included plan a soft landing rather than a wall.
   The roadmap card is deliberately `in-progress` rather than `shipped`:
   `MANAGED_AI_ENABLED` is unset everywhere and the three managed subscription
   products do not exist yet, and a public card offering something nobody can
