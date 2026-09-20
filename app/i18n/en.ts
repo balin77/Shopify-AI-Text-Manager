@@ -1117,6 +1117,12 @@ export const en: Translation = {
       usageExhausted:
         "This period's AI volume is used up. Add your own API key to continue immediately, or wait for the next period.",
       usageEstimated: "Part of this figure is estimated.",
+      planButton: "With AI included — {price}",
+      planVolume: {
+        basic: "Enough for about 300–500 products translated into one language each period.",
+        pro: "Enough for about 600–1,000 products translated into one language each period.",
+        max: "Enough for about 1,500–2,500 products translated into one language each period.",
+      },
     },
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",

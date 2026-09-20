@@ -1115,6 +1115,12 @@ export const de = {
       usageExhausted:
         "Das KI-Volumen dieses Zeitraums ist aufgebraucht. Trage deinen eigenen API-Key ein, um sofort weiterzuarbeiten, oder warte auf den nächsten Zeitraum.",
       usageEstimated: "Ein Teil dieses Werts ist geschätzt.",
+      planButton: "Mit enthaltener KI — {price}",
+      planVolume: {
+        basic: "Reicht für etwa 300–500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
+        pro: "Reicht für etwa 600–1.000 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
+        max: "Reicht für etwa 1.500–2.500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
+      },
     },
     aiInstructions: "KI-Anweisungen",
     appLanguage: "App-Sprache",

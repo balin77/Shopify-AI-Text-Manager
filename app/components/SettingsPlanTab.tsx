@@ -29,6 +29,7 @@ import { getAvailablePlans, type BillingPlan } from "../config/billing";
 import { useI18n } from "../contexts/I18nContext";
 import { formatNumber } from "../utils/format";
 import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
+import { MANAGED_BILLING_PLANS } from "../config/billing";
 
 /**
  * Wraps a plan-card value in <strong> when the row differs from the tier below.
@@ -37,6 +38,26 @@ import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
  */
 function PlanValue({ highlight, children }: { highlight: boolean; children: ReactNode }) {
   return highlight ? <strong>{children}</strong> : <>{children}</>;
+}
+
+/** "{price}" etc., with an absent template yielding an empty string. */
+function fillTemplate(template: unknown, values: Record<string, string>): string {
+  let out = typeof template === "string" ? template : "";
+  for (const [k, v] of Object.entries(values)) out = out.replace(`{${k}}`, v);
+  return out;
+}
+
+/**
+ * The managed variant's price for a tier.
+ *
+ * Read from the shared config rather than restated, so the number on the
+ * button and the number Shopify charges cannot drift — and the margin guard
+ * covers both, because they are the same constant.
+ */
+function formatManagedPrice(plan: BillingPlan): string {
+  if (plan === "free") return "";
+  const cfg = MANAGED_BILLING_PLANS[plan];
+  return `${cfg.price.toFixed(2)} ${cfg.currency}`;
 }
 
 interface SettingsPlanTabProps {
@@ -57,6 +78,13 @@ interface SettingsPlanTabProps {
   pageCount: number;
   themeTranslationCount: number;
   imageOperationCount: number;
+  /**
+   * Whether this DEPLOYMENT can serve plan-included AI at all
+   * (PLAN_MANAGED_AI_KEY §9.4). Selling it where managed mode is off would
+   * take a merchant's money for a feature every call then refuses, so the
+   * second price is not even offered.
+   */
+  managedAiOffered?: boolean;
   t: any;
 }
 
@@ -73,6 +101,7 @@ export function SettingsPlanTab({
   pageCount,
   themeTranslationCount,
   imageOperationCount,
+  managedAiOffered = false,
   t,
 }: SettingsPlanTabProps) {
   const revalidator = useRevalidator();
@@ -101,7 +130,7 @@ export function SettingsPlanTab({
     }
   };
 
-  const handleSelectPlan = async (plan: BillingPlan) => {
+  const handleSelectPlan = async (plan: BillingPlan, aiMode: "byo" | "managed" = "byo") => {
     if (plan === "free") {
       setDowngradeConfirmOpen(true);
       return;
@@ -114,7 +143,10 @@ export function SettingsPlanTab({
       const response = await fetch("/api/billing/create-subscription", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
+        // PLAN_MANAGED_AI_KEY §8 — which VARIANT of the plan. The server
+        // re-checks that managed mode is available before charging anybody;
+        // this is a purchase choice, not an entitlement.
+        body: JSON.stringify({ plan, aiMode }),
       });
 
       const data = await response.json();
@@ -491,6 +523,30 @@ export function SettingsPlanTab({
                   </BlockStack>
 
                   <div style={{ marginTop: "auto", paddingTop: "16px" }}>
+                    {/* PLAN_MANAGED_AI_KEY §8 — each paid tier shows TWO
+                        prices: with your own AI key, and with AI included.
+                        The volume is stated as a work unit the merchant
+                        thinks in, never as a token count and never as a
+                        single precise-looking number of "actions" the next
+                        long description falsifies. Rendered only where the
+                        deployment can actually serve it. */}
+                    {managedAiOffered && id !== "free" && (
+                      <BlockStack gap="200">
+                        <Button
+                          disabled={planLoading !== null}
+                          loading={planLoading === id}
+                          onClick={() => handleSelectPlan(id, "managed")}
+                          fullWidth
+                        >
+                          {fillTemplate(t.settings.managedAi?.planButton, {
+                            price: formatManagedPrice(id),
+                          })}
+                        </Button>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.settings.managedAi?.planVolume?.[id] ?? ""}
+                        </Text>
+                      </BlockStack>
+                    )}
                     <Button
                       variant={isCurrentPlan ? "secondary" : "primary"}
                       disabled={isCurrentPlan || planLoading !== null}

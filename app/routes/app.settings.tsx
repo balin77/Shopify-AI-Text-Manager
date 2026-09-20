@@ -36,6 +36,7 @@ import {
   wantsManagedAi,
   AI_PROCESSING_CONSENT_VERSION,
 } from "../services/ai/managed-ai.shared";
+import { managedAiAvailable } from "../services/ai/ai-credentials.server";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import {
   DEFAULT_GENERAL_INSTRUCTIONS,
@@ -598,6 +599,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         : null,
       managedAiConsentVersion: settings.aiProcessingConsentVersion ?? null,
       managedAiBudget,
+      // Whether this DEPLOYMENT can serve plan-included AI at all (§9.4).
+      // Offering the second price where managed mode is off would sell a
+      // feature every call then refuses.
+      managedAiOffered: managedAiAvailable(),
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -1561,7 +1566,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, managedAiConsentedAt = null, managedAiConsentVersion = null, managedAiBudget = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, managedAiOffered = false, managedAiConsentedAt = null, managedAiConsentVersion = null, managedAiBudget = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -2044,6 +2049,7 @@ export default function SettingsPage() {
                     pageCount={pageCount}
                     themeTranslationCount={themeTranslationCount}
                     imageOperationCount={imageOperationCount}
+                    managedAiOffered={managedAiOffered}
                     t={t}
                   />
                 </>

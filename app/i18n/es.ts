@@ -1100,6 +1100,12 @@ export const es: Translation = {
       usageExhausted:
         "El volumen de IA de este periodo se ha agotado. Añade tu propia clave para continuar ahora, o espera al siguiente periodo.",
       usageEstimated: "Parte de esta cifra es una estimación.",
+      planButton: "Con IA incluida — {price}",
+      planVolume: {
+        basic: "Alcanza para unos 300–500 productos traducidos a un idioma por periodo.",
+        pro: "Alcanza para unos 600–1.000 productos traducidos a un idioma por periodo.",
+        max: "Alcanza para unos 1.500–2.500 productos traducidos a un idioma por periodo.",
+      },
     },
     aiInstructions: "Instrucciones de IA",
     appLanguage: "Idioma de la aplicación",
