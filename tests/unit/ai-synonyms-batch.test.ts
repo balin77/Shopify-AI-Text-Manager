@@ -39,6 +39,17 @@ vi.mock('../../app/db.server', () => ({
 
 const CONFIG: AIServiceConfig = { claudeApiKey: 'test-claude-key' };
 
+/**
+ * `executeAIRequest` returns `{ text, usage }` since the meter (Phase 0 of
+ * PLAN_MANAGED_AI_KEY): a stub that answers with a bare string produces
+ * `undefined.trim()` inside askAI, not a failed assertion, so the shape is
+ * built in one place here rather than spelled out per test.
+ */
+const aiResult = (text: string) => ({
+  text,
+  usage: { inputTokens: 0, outputTokens: 0, model: 'test-model', source: 'estimate' as const },
+});
+
 describe('AIService.generateSynonymsBatch', () => {
   let svc: AIService;
   let prompts: string[];
@@ -46,7 +57,7 @@ describe('AIService.generateSynonymsBatch', () => {
   const respondWith = (text: string) => {
     vi.spyOn(svc as any, 'executeAIRequest').mockImplementation(async (prompt: unknown) => {
       prompts.push(String(prompt));
-      return text;
+      return aiResult(text);
     });
   };
 
@@ -137,7 +148,7 @@ describe('AIService.findLocalizedAnchors', () => {
   const respondWith = (text: string) => {
     vi.spyOn(svc as any, 'executeAIRequest').mockImplementation(async (prompt: unknown) => {
       prompts.push(String(prompt));
-      return text;
+      return aiResult(text);
     });
   };
 

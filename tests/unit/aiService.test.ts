@@ -66,6 +66,17 @@ vi.mock('../../app/db.server', () => ({
   },
 }));
 
+/**
+ * `executeAIRequest` returns `{ text, usage }` since the meter (Phase 0 of
+ * PLAN_MANAGED_AI_KEY): a stub that answers with a bare string produces
+ * `undefined.trim()` inside askAI, not a failed assertion, so the shape is
+ * built in one place here rather than spelled out per test.
+ */
+const aiResult = (text: string) => ({
+  text,
+  usage: { inputTokens: 0, outputTokens: 0, model: 'test-model', source: 'estimate' as const },
+});
+
 describe('AIService', () => {
   let aiService: AIService;
   const mockConfig: AIServiceConfig = {
@@ -201,7 +212,7 @@ describe('AIService', () => {
     });
 
     const mockResponse = (text: string) =>
-      vi.spyOn(aiService as any, 'executeAIRequest').mockResolvedValue(text);
+      vi.spyOn(aiService as any, 'executeAIRequest').mockResolvedValue(aiResult(text));
 
     it('strips ```html ... ``` wrappers around HTML output', async () => {
       mockResponse('```html\n<p>Hallo Welt</p>\n```');
@@ -326,14 +337,14 @@ describe('AIService', () => {
 
     it('keeps a SHORT identical value (loanword) instead of throwing', async () => {
       const svc = new AIService('claude', mockConfig);
-      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue('Hotel');
+      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue(aiResult('Hotel'));
       await expect(svc.translateContent('Hotel', 'en', 'de')).resolves.toBe('Hotel');
     });
 
     it('throws on a LONG identical value (failed translation)', async () => {
       const svc = new AIService('claude', mockConfig);
       const long = 'The quick brown fox jumps over the lazy dog. '.repeat(8);
-      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue(long);
+      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue(aiResult(long));
       await expect(svc.translateContent(long, 'en', 'de')).rejects.toThrow(/source unchanged/);
     });
   });
@@ -473,7 +484,7 @@ describe('AIService', () => {
     };
 
     const mockResponse = (text: string) =>
-      vi.spyOn(aiService as any, 'executeAIRequest').mockResolvedValue(text);
+      vi.spyOn(aiService as any, 'executeAIRequest').mockResolvedValue(aiResult(text));
 
     it('collapses 5 fields × 3 locales into a single AI call', async () => {
       const fields = {

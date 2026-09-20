@@ -208,14 +208,14 @@ model AISettings {
   // Default ON for the same reason as seoAutoAuditEnabled — an entitled shop
   // should get the delivery report without hunting for a checkbox — and ANDed
   // into the sweep's due-query, so switching it off costs nothing per tick.
-  seoAutoCrawlEnabled Boolean   @default(true)
+  seoAutoCrawlEnabled   Boolean   @default(true)
   // Last automatic storefront crawl for this shop — see
   // services/seo/crawl-auto-run.service.ts. Null = never auto-crawled. Same
   // backoff-stamp rules as lastAutoAuditAt: written on every path, never a
   // lock, and only shops on a plan with seo.scheduledCrawl are selected.
   // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
   // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
-  lastAutoCrawlAt     DateTime?
+  lastAutoCrawlAt       DateTime?
   // Backoff stamp for the translation-drift sweep — the change event Shopify
   // does not send for pages, articles, blogs and policies. Its own column
   // because it has its own cadence; one stamp cannot express two.
@@ -507,6 +507,20 @@ model Task {
   estimatedTokens Int? // Estimated tokens for this task
   provider        String? // AI provider used (huggingface, gemini, claude, openai, grok, deepseek) - for recovery
   aiModel         String? // AI model name used (e.g., gpt-4o, claude-3-5-sonnet-20241022)
+
+  // What this run really consumed (PLAN_MANAGED_AI_KEY §4.3). `estimatedTokens`
+  // above is the QUEUE's guess, taken before the call and charging a flat 8192
+  // output tokens; these three are the measured aftermath, summed over every
+  // provider call the task made. Task rows expire after 3 days, so this is the
+  // cheapest possible per-run cost record — the durable one is AiUsageCounter.
+  //
+  // A 0 here means "nothing recorded", never a measured zero: a row written
+  // before the meter shipped reads the same as a run that made no AI call. The
+  // ambiguity is bounded by `expiresAt` (3 days) and is the reason these are
+  // per-run convenience columns rather than a source anything bills from.
+  inputTokens  Int @default(0)
+  outputTokens Int @default(0)
+  costMicros   Int @default(0) // micro-EUR, priced per model (app/config/ai-pricing.ts)
 
   startedAt   DateTime  @default(now())
   completedAt DateTime?
@@ -916,23 +930,23 @@ model GroupedFieldTranslation {
 /// every merchant on the platform, and hold nothing a shop owns. Scoping them
 /// would store 14 608 rows per locale PER SHOP for data that cannot differ.
 model TaxonomyCategoryName {
-  id       String @id @default(cuid())
+  id        String   @id @default(cuid())
   /// The dist folder of Shopify's taxonomy repo: "de", "pt-BR".
-  locale   String
+  locale    String
   /// "gid://shopify/TaxonomyCategory/hg-3-72" -- the id the Admin API returns.
-  gid      String
+  gid       String
   /// The whole path, which is what identifies a category to a human.
-  fullName String
+  fullName  String
   /// The last segment, split at import so no read has to do it. This is what a
   /// derived product type is built from.
-  name     String
+  name      String
   /// Has no children. DERIVED from the GID hierarchy at import (the file does
   /// not carry it) — the picker marks a non-leaf "(broad)", and a search hit
   /// with no answer here would be marked broad whether it is or not.
-  isLeaf   Boolean
+  isLeaf    Boolean
   /// The taxonomy release these rows came from ("2026-05"). Diagnostic: the
   /// import is triggered by an unknown GID, not by comparing versions.
-  version  String   @default("")
+  version   String   @default("")
   updatedAt DateTime @updatedAt
 
   @@unique([locale, gid])
@@ -1459,6 +1473,44 @@ model ImageOperationCounter {
   updatedAt DateTime @updatedAt
 
   @@unique([shop, period])
+  @@index([shop])
+}
+
+// What the AI really consumed, per shop and per period (PLAN_MANAGED_AI_KEY §4.3).
+//
+// Usage data, not entitlement data — the same rule ImageOperationCounter above
+// follows, so it is deliberately absent from getSyncScope / planCacheCleanup.
+//
+// Three things in here are separate on purpose:
+//   • `source` splits a shop's own key ("byo") from the operator's ("managed").
+//     BYO is metered too, with no cap: it is where this app's price numbers
+//     come from, and it is the answer a BYO merchant cannot get from any
+//     provider's API (see docs/reference/AI_PROVIDER_BALANCE_FEASIBILITY.md).
+//   • `costMicros` is what WE pay the provider; `billedMicros` is what is
+//     charged against the merchant's budget. They are equal except during a
+//     failover, where the merchant is billed at the default model's price and
+//     we carry the difference (§3a rules 1-2).
+//   • `estimatedCalls` is the honesty column: a provider that reported no usage
+//     object is counted at an estimate, never at zero, and the share of such
+//     calls is what makes "the meter says X, the invoice says Y" diagnosable.
+//
+// Money is integer micro-EUR: no floats (this is money) and no BigInt (the
+// logger and Task paths JSON-stringify their values, which throws on BigInt).
+model AiUsageCounter {
+  id             String   @id @default(cuid())
+  shop           String
+  period         String // "YYYY-MM" (UTC) today; the BILLING period from §7 rule 3 on
+  source         String // "managed" | "byo"
+  calls          Int      @default(0)
+  estimatedCalls Int      @default(0) // calls whose token usage was estimated, not reported
+  failoverCalls  Int      @default(0) // calls served by the fallback provider
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  costMicros     Int      @default(0) // micro-EUR we really paid
+  billedMicros   Int      @default(0) // micro-EUR charged against the merchant's budget
+  updatedAt      DateTime @updatedAt
+
+  @@unique([shop, period, source])
   @@index([shop])
 }
 

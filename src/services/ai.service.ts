@@ -14,8 +14,31 @@ import {
   perLocaleSourceBudgetChars,
   planLocaleChunks,
 } from '../../app/services/ai/translation-budget.shared';
+import type { AiCredentialSource } from '../../app/services/ai/credential-source.shared';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
+
+/**
+ * What one provider call consumed, as it leaves the provider branch.
+ *
+ * The MODEL rides out with the usage rather than being read back from the
+ * instance afterwards: a failover (planned) switches the model mid-call, and a
+ * cost derived from configuration that has since moved is a cost attributed to
+ * the wrong model.
+ */
+export interface AiCallUsage {
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  /** `provider` = the SDK reported both numbers; `estimate` = we counted characters. */
+  source: 'provider' | 'estimate';
+}
+
+/** A provider call's answer plus what it cost to get it. */
+export interface AiCallResult {
+  text: string;
+  usage: AiCallUsage;
+}
 
 const LOCALE_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', it: 'Italian',
@@ -162,6 +185,14 @@ export interface AIServiceConfig {
   grokApiKey?: string;
   deepseekApiKey?: string;
   selectedModel?: string;
+  /**
+   * Whose key this instance is spending — the meter's `source` column
+   * (PLAN_MANAGED_AI_KEY §4.4). Absent means the merchant's own key, which is
+   * every caller today: the managed resolver sets it in Phase 1. It defaults
+   * rather than being required because the wrong default here is the one that
+   * would report operator spend as merchant spend, and "byo" cannot do that.
+   */
+  credentialSource?: AiCredentialSource;
 }
 
 /**
@@ -2153,18 +2184,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     try {
       // If no shop/taskId provided, execute directly (backward compatibility)
       if (!this.shop || !this.taskId) {
-        response = await this.executeAIRequest(prompt, imageUrls);
+        response = (await this.executeAIRequest(prompt, imageUrls)).text;
       } else {
         // Use queue for rate-limited execution
         const estimatedTokens = this.estimateTokens(prompt);
 
-        response = await this.queue.enqueue(
-          this.shop,
-          this.taskId,
-          this.provider,
-          estimatedTokens,
-          () => this.executeAIRequest(prompt, imageUrls)
-        );
+        response = (
+          await this.queue.enqueue(
+            this.shop,
+            this.taskId,
+            this.provider,
+            estimatedTokens,
+            () => this.executeAIRequest(prompt, imageUrls)
+          )
+        ).text;
       }
     } catch (error) {
       // Normalise provider auth failures (invalid/expired key) into a single
@@ -2276,7 +2309,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
   /** Re-execute a stored prompt during task recovery (bypasses prompt saving & queuing). */
   async replayRequest(prompt: string): Promise<string> {
-    return this.executeAIRequest(prompt);
+    return (await this.executeAIRequest(prompt)).text;
   }
 
   /**
@@ -2304,7 +2337,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   private static readonly INPUT_TOO_LONG_MESSAGE =
     'The text is too long for the AI model to process. Please shorten the content and try again.';
 
-  private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
+  private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<AiCallResult> {
     let timer: NodeJS.Timeout | undefined;
     try {
       // Backstop timeout: even if a provider SDK ignores its own timeout
@@ -2316,10 +2349,23 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           AI_REQUEST_TIMEOUT_MS,
         );
       });
-      return await Promise.race([
+      const result = await Promise.race([
         this._executeAIRequestInner(prompt, imageUrls),
         timeoutPromise,
       ]);
+      // THE meter's charge point, and deliberately not `askAI`: `replayRequest`
+      // (task recovery) calls this method directly, past the queue and past
+      // anything askAI would carry. Recording here cannot be bypassed by a
+      // caller that skips the queue.
+      //
+      // AWAITED rather than fired off: one upsert against a call that took
+      // seconds is not worth measuring, while a detached write is one the
+      // process can be killed out from under — and an under-counted ledger is
+      // what a budget would later be enforced against. `recordUsage` never
+      // throws, so awaiting it cannot turn a successful generation into a
+      // failed one.
+      await this.recordUsage(result.usage);
+      return result;
     } catch (error) {
       if (AIService.isInputTooLongError(error)) {
         throw new Error(AIService.INPUT_TOO_LONG_MESSAGE);
@@ -2330,7 +2376,91 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
   }
 
-  private async _executeAIRequestInner(prompt: string, imageUrls?: string[]): Promise<string> {
+  /**
+   * Hand one completed call to the meter (PLAN_MANAGED_AI_KEY §4).
+   *
+   * Two guards, both deliberate. Without a `shop` there is nothing to meter
+   * against — unit tests and ad-hoc usage construct an AIService with no shop,
+   * the same condition `loadGlossaryRules` short-circuits on. And the whole
+   * body is wrapped: the generation has already succeeded by the time this
+   * runs, so a bookkeeping failure must never reach the caller, who would
+   * surface it as a failed save and invite a retry that pays for the same
+   * tokens twice.
+   */
+  private async recordUsage(usage: AiCallUsage): Promise<void> {
+    if (!this.shop) return;
+    try {
+      // Dynamic import for the same reason savePromptToTask uses one: it keeps
+      // db.server out of this module's static graph.
+      const { recordAiUsage } = await import('../../app/services/ai/usage-meter.server');
+      await recordAiUsage({
+        shop: this.shop,
+        provider: this.provider,
+        model: usage.model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        source: this.config.credentialSource ?? 'byo',
+        estimated: usage.source === 'estimate',
+        taskId: this.taskId,
+      });
+    } catch (error) {
+      loggers.ai('error', '[AI-SERVICE] Failed to record AI usage', {
+        shop: this.shop,
+        provider: this.provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * What ONE provider call really consumed.
+   *
+   * `source` is the honest half: `provider` means the SDK reported both
+   * numbers, `estimate` means it did not and we counted characters. An
+   * estimate is never silently equal to a measurement — the ledger stores the
+   * share of estimated calls, so "the meter says X and the invoice says Y" is
+   * diagnosable instead of mysterious.
+   */
+  /**
+   * Gemini reports usage on the RESPONSE object, which this branch obtains at
+   * three separate sites. Reading it in one helper is what keeps the three
+   * from drifting.
+   */
+  private static geminiUsage(response: unknown): { input?: number | null; output?: number | null } | null {
+    const meta = (response as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } })
+      ?.usageMetadata;
+    if (!meta) return null;
+    return { input: meta.promptTokenCount, output: meta.candidatesTokenCount };
+  }
+
+  private static estimateTokensFor(text: string): number {
+    // Deliberately pessimistic: ~4 chars/token is the Latin-script average, and
+    // an estimate that errs cheap is the one that understates a bill. Non-Latin
+    // scripts run denser than 4, so 3 is the direction that cannot hide cost.
+    return Math.ceil(text.length / 3);
+  }
+
+  /** Build usage from an SDK that reported it, or fall back to an estimate. */
+  private usageOf(
+    prompt: string,
+    output: string,
+    reported: { input?: number | null; output?: number | null } | null,
+  ): AiCallUsage {
+    const model = this.getModel();
+    const input = reported?.input;
+    const out = reported?.output;
+    if (typeof input === 'number' && typeof out === 'number' && input >= 0 && out >= 0) {
+      return { inputTokens: input, outputTokens: out, model, source: 'provider' };
+    }
+    return {
+      inputTokens: AIService.estimateTokensFor(prompt),
+      outputTokens: AIService.estimateTokensFor(output),
+      model,
+      source: 'estimate',
+    };
+  }
+
+  private async _executeAIRequestInner(prompt: string, imageUrls?: string[]): Promise<AiCallResult> {
     // One local truth for "is this a vision call": every provider branch below
     // asks the same question, and a branch that asked it differently is how a
     // text-only provider would end up with an image in its payload.
@@ -2366,9 +2496,22 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
       const hfContent = response.choices[0].message.content;
       if (!hfContent || !hfContent.trim()) throw new Error('HuggingFace returned empty content');
-      return hfContent;
+      // HuggingFace's chat-completion output declares `usage`, but whether a
+      // routed provider fills it is a runtime question — absent is the
+      // estimate case, never zero.
+      return {
+        text: hfContent,
+        usage: this.usageOf(prompt, hfContent, {
+          input: response.usage?.prompt_tokens,
+          output: response.usage?.completion_tokens,
+        }),
+      };
     } else if (this.provider === 'gemini' && this.gemini) {
       // Gemini: supports vision with URL
+      // Carries the vision attempt's usage into the fallback below, which is
+      // the one place in this function where two provider calls are billed for
+      // one invocation.
+      let visionUsage: { input?: number | null; output?: number | null } | null = null;
       if (hasImages) {
         try {
           // Gemini takes the BYTES, so every image is a download inside this
@@ -2385,8 +2528,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           ]);
           const response = await result.response;
           const geminiText = response.text();
+          visionUsage = AIService.geminiUsage(response);
           if (!geminiText || !geminiText.trim()) throw new Error('Gemini returned empty response');
-          return geminiText;
+          return {
+            text: geminiText,
+            usage: this.usageOf(prompt, geminiText, visionUsage),
+          };
         } catch (error) {
           if (AIService.isInputTooLongError(error)) throw error;
           loggers.ai('warn', '[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
@@ -2395,14 +2542,31 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           const response = await result.response;
           const geminiTextFallback = response.text();
           if (!geminiTextFallback || !geminiTextFallback.trim()) throw new Error('Gemini returned empty response');
-          return geminiTextFallback;
+          // TWO provider calls happened inside this one invocation, and the
+          // first one was billed if it got far enough to answer. Its usage is
+          // ADDED rather than replaced: dropping it is spend the meter never
+          // sees, and this is the only branch in the app that can bill twice.
+          const fallbackUsage = this.usageOf(prompt, geminiTextFallback, AIService.geminiUsage(response));
+          return {
+            text: geminiTextFallback,
+            usage: visionUsage
+              ? {
+                  ...fallbackUsage,
+                  inputTokens: fallbackUsage.inputTokens + (visionUsage.input ?? 0),
+                  outputTokens: fallbackUsage.outputTokens + (visionUsage.output ?? 0),
+                }
+              : fallbackUsage,
+          };
         }
       } else {
         const result = await this.gemini.generateContent(prompt);
         const response = await result.response;
         const geminiTextOnly = response.text();
         if (!geminiTextOnly || !geminiTextOnly.trim()) throw new Error('Gemini returned empty response');
-        return geminiTextOnly;
+        return {
+          text: geminiTextOnly,
+          usage: this.usageOf(prompt, geminiTextOnly, AIService.geminiUsage(response)),
+        };
       }
     } else if (this.provider === 'claude' && this.anthropic) {
       // Claude: supports vision with URL
@@ -2423,7 +2587,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         const textBlock = message.content.find((b) => b.type === 'text');
         if (!textBlock) throw new Error('Claude returned no text block');
         if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
-        return textBlock.text;
+        return {
+          text: textBlock.text,
+          usage: this.usageOf(prompt, textBlock.text, {
+            input: message.usage?.input_tokens,
+            output: message.usage?.output_tokens,
+          }),
+        };
       } else {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
@@ -2433,7 +2603,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         const textBlock = message.content.find((b) => b.type === 'text');
         if (!textBlock) throw new Error('Claude returned no text block');
         if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
-        return textBlock.text;
+        return {
+          text: textBlock.text,
+          usage: this.usageOf(prompt, textBlock.text, {
+            input: message.usage?.input_tokens,
+            output: message.usage?.output_tokens,
+          }),
+        };
       }
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL
@@ -2452,7 +2628,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         const openaiVisionContent = completion.choices[0].message.content;
         if (!openaiVisionContent || !openaiVisionContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return openaiVisionContent;
+        return {
+          text: openaiVisionContent,
+          usage: this.usageOf(prompt, openaiVisionContent, {
+            input: completion.usage?.prompt_tokens,
+            output: completion.usage?.completion_tokens,
+          }),
+        };
       } else {
         const completion = await this.openai.chat.completions.create({
           model: this.getModel(),
@@ -2462,7 +2644,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         const openaiContent = completion.choices[0].message.content;
         if (!openaiContent || !openaiContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return openaiContent;
+        return {
+          text: openaiContent,
+          usage: this.usageOf(prompt, openaiContent, {
+            input: completion.usage?.prompt_tokens,
+            output: completion.usage?.completion_tokens,
+          }),
+        };
       }
     } else if (this.provider === 'grok' && this.grok) {
       // Grok: supports vision with URL (similar to GPT-4o)
@@ -2482,7 +2670,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
         const grokVisionContent = completion.choices[0].message.content;
         if (!grokVisionContent || !grokVisionContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return grokVisionContent;
+        return {
+          text: grokVisionContent,
+          usage: this.usageOf(prompt, grokVisionContent, {
+            input: completion.usage?.prompt_tokens,
+            output: completion.usage?.completion_tokens,
+          }),
+        };
       } else {
         const completion = await this.grok.chat.completions.create({
           model: this.getModel(),
@@ -2493,7 +2687,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
         const grokContent = completion.choices[0].message.content;
         if (!grokContent || !grokContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return grokContent;
+        return {
+          text: grokContent,
+          usage: this.usageOf(prompt, grokContent, {
+            input: completion.usage?.prompt_tokens,
+            output: completion.usage?.completion_tokens,
+          }),
+        };
       }
     } else if (this.provider === 'deepseek' && this.deepseek) {
       // DeepSeek: text-only (no vision support)
@@ -2506,7 +2706,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');
       const deepseekContent = completion.choices[0].message.content;
       if (!deepseekContent || !deepseekContent.trim()) throw new Error(`DeepSeek returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-      return deepseekContent;
+      return {
+        text: deepseekContent,
+        usage: this.usageOf(prompt, deepseekContent, {
+          input: completion.usage?.prompt_tokens,
+          output: completion.usage?.completion_tokens,
+        }),
+      };
     }
 
     throw new Error('No AI provider configured');
