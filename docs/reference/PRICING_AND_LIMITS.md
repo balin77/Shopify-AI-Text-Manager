@@ -164,7 +164,8 @@ keine Kunden).
 
 Jeder Befund oben argumentiert aus einer Prämisse: *AI-Tokens sind BYO, also
 hat dieser App keine variablen AI-Kosten*. Diese Prämisse bleibt für den
-BYO-Modus wahr und wird für den geplanten **Managed-Key-Modus** falsch —
+BYO-Modus wahr und wird für den **Managed-Key-Modus** falsch (gebaut
+2026-09-20, ausgeliefert hinter dem Schalter `MANAGED_AI_ENABLED`) —
 siehe [docs/plans/PLAN_MANAGED_AI_KEY.md](../plans/PLAN_MANAGED_AI_KEY.md) und
 die Roadmap-Einträge `managed-ai-key`, `ai-usage-metering`,
 `managed-ai-pricing`.
@@ -193,3 +194,13 @@ eine einmalige Probe von rund 350 Aktionen (ein voller Durchlauf über das, was
 Free überhaupt freischaltet). Ein monatliches Freikontingent von 2 EUR wäre
 mehr AI-Volumen gewesen als der bezahlte Basic-Tarif bekommt, und es skaliert
 mit Installationen statt mit Kunden — Begründung mit Zahlen in §10 des Plans.
+
+Gebaut ist die Probe etwas weiter gefasst, als dieser Absatz sie beschreibt,
+und zwar aus einer Regel und nicht aus Großzügigkeit: sie bekommt **jeder
+Shop ohne Periodenbudget** — Free, Dev-Stores, Shops in der 7-Tage-Testphase
+und ein bezahlter Shop, der die Managed-Variante nicht gekauft hat und den
+Schalter trotzdem umlegt. Der Grund ist, dass genau das die Menge ist, die
+sonst gar nichts sehen würde, und dass die Obergrenze in allen vier Fällen
+dieselbe ist: einmalig, rund 12 Cent Anbieterkosten, mit einem eigenen,
+nicht zurücksetzbaren Zählerschlüssel. Das **Monatsvolumen** hängt
+unveraendert an der von Shopify bestaetigten Managed-Variante.
