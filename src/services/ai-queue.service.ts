@@ -22,8 +22,20 @@ interface QueuedRequest {
    * time it runs there is nothing left to ask.
    */
   source: QueueCredentialSource;
+  /**
+   * The bucket the call was really SERVED on, asked once the closure has run.
+   *
+   * Admission uses `source`/`provider` above, which is all that is knowable
+   * before dispatch. But a managed call can swap onto the FALLBACK provider
+   * inside the closure (§3a), and recording its tokens against the bucket it
+   * was admitted on means the window that decides how fast the fallback
+   * account may be spent never sees a single one of those calls. Optional:
+   * every caller that does not swap leaves it unset and the admission bucket
+   * stands.
+   */
+  servedBucket?: () => string;
   estimatedTokens: number;
-  execute: () => Promise<any>;
+  execute: (attempt: number) => Promise<any>;
   resolve: (value: any) => void;
   reject: (error: any) => void;
   retryCount: number;
@@ -38,6 +50,14 @@ interface UsageWindow {
 
 /** Whose key a queued call spends — the first half of a bucket key. */
 export type QueueCredentialSource = 'byo' | 'managed';
+
+/**
+ * How many times a rate-limited call is re-enqueued before the queue gives
+ * up. Exported because §3a rule 7 makes the FAILOVER wait for exactly this
+ * number, and two copies of it would let a 429 fail over one attempt early —
+ * at ~14x the price, on a lever a shop can pull by queueing work.
+ */
+export const MAX_RATE_LIMIT_RETRIES = 3;
 
 /**
  * The bucket a call is admitted against.
@@ -331,13 +351,21 @@ export class AIQueueService {
     taskId: string,
     provider: AIProvider,
     estimatedTokens: number,
-    execute: () => Promise<T>,
+    /**
+     * The call itself. It is handed the number of rate-limit RETRIES this
+     * request has already had, because §3a rule 7 makes the failover wait for
+     * them: the closure runs INSIDE the retry loop, so "the queue has already
+     * retried" is a fact only the queue has.
+     */
+    execute: (attempt: number) => Promise<T>,
     /**
      * Whose key the call spends. Defaults to `byo`, which is every caller that
      * has not been told otherwise — and the safe default, because it can only
      * ever admit a call against a bucket the merchant's own account owns.
      */
-    source: QueueCredentialSource = 'byo'
+    source: QueueCredentialSource = 'byo',
+    /** See `QueuedRequest.servedBucket`. */
+    servedBucket?: () => string
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       const request: QueuedRequest = {
@@ -346,6 +374,7 @@ export class AIQueueService {
         taskId,
         provider,
         source,
+        servedBucket,
         estimatedTokens,
         execute,
         resolve,
@@ -410,6 +439,21 @@ export class AIQueueService {
   /** The bucket ONE queued request is admitted against. */
   private bucketOf(request: Pick<QueuedRequest, 'source' | 'provider'>): string {
     return rateLimitBucket(request.source, request.provider);
+  }
+
+  /**
+   * The bucket a request's tokens are RECORDED against — the one it was
+   * really served on where the caller can say, the admission bucket
+   * otherwise. Never throws: a getter that fails must not cost the window its
+   * entry, so it falls back rather than propagating.
+   */
+  private servedBucketOf(request: QueuedRequest): string {
+    if (!request.servedBucket) return this.bucketOf(request);
+    try {
+      return request.servedBucket() || this.bucketOf(request);
+    } catch {
+      return this.bucketOf(request);
+    }
   }
 
   private canExecute(bucket: string, estimatedTokens: number): boolean {
@@ -559,11 +603,18 @@ export class AIQueueService {
 
       await this.updateTaskStatus(shop, request.taskId, 'running');
 
+      let reachedProvider = true;
       try {
-        const result = await request.execute();
+        const result = await request.execute(request.retryCount);
         request.resolve(result);
         loggers.queue('debug', `Successfully executed request ${request.id}`);
       } catch (error: any) {
+        // A MANAGED REFUSAL never touched a provider — it is the resolver
+        // declining before dispatch — so it must not move the rate-limit
+        // window. Recognised by CODE rather than by instance: the error class
+        // lives behind a dynamic import and two copies of it exist on some
+        // paths, which is the trap `isManagedRefusal` documents.
+        if (error?.code === 'MANAGED_AI_REFUSED') reachedProvider = false;
         loggers.queue('error', `Error executing request ${request.id}`, { error: error?.message || String(error) });
 
         const isRateLimitError =
@@ -574,7 +625,7 @@ export class AIQueueService {
 
         // Don't re-enqueue during shutdown — reject so the caller settles and
         // the task is not left dangling against a closing DB client.
-        if (isRateLimitError && request.retryCount < 3 && !this.shuttingDown) {
+        if (isRateLimitError && request.retryCount < MAX_RATE_LIMIT_RETRIES && !this.shuttingDown) {
           request.retryCount++;
           // Exponential backoff WITH jitter (H7): without jitter, a
           // provider-wide 429 makes every shop retry in lock-step and
@@ -583,7 +634,7 @@ export class AIQueueService {
           const jitter = Math.floor(Math.random() * 1000);
           const backoffTime = base + jitter;
 
-          loggers.queue('warn', `Rate limit hit. Retrying request ${request.id}`, { attempt: request.retryCount, maxAttempts: 3, backoffMs: backoffTime });
+          loggers.queue('warn', `Rate limit hit. Retrying request ${request.id}`, { attempt: request.retryCount, maxAttempts: MAX_RATE_LIMIT_RETRIES, backoffMs: backoffTime });
 
           await this.updateTaskRetryCount(shop, request.taskId, request.retryCount);
 
@@ -604,8 +655,11 @@ export class AIQueueService {
         // Record provider usage for EVERY attempt that reached the provider,
         // success or failure. Counting only successes under-reports the
         // sliding window and triggers 429 storms precisely when the provider
-        // is already failing/timing out (N-H8).
-        this.recordUsage(this.bucketOf(request), request.estimatedTokens);
+        // is already failing/timing out (N-H8). A call refused BEFORE dispatch
+        // reached nothing, so it is the one case that is not counted.
+        if (reachedProvider) {
+          this.recordUsage(this.servedBucketOf(request), request.estimatedTokens);
+        }
       }
 
       await this.updateQueuePositions(shop);

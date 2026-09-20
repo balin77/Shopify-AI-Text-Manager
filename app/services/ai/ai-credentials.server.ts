@@ -500,7 +500,8 @@ function managedPreflight(
     // has budget left, so telling them they are out of volume would be a lie
     // and would send them to buy more of something we cannot serve.
     const { globalPoolStatus, alertIfPoolLow } = await import("./managed-global-pool.server");
-    const poolStatus = await globalPoolStatus(managedPoolFor(shop, settings, plan), status.period);
+    // The pool's own period, NOT `status.period` — see `globalPoolPeriod`.
+    const poolStatus = await globalPoolStatus(managedPoolFor(shop, settings, plan));
     alertIfPoolLow(poolStatus);
     if (!poolStatus.allowed) return { ok: false, reason: "managedUnavailable" };
 

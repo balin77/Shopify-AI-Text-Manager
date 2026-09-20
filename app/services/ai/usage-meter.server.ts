@@ -302,9 +302,13 @@ export async function recordAiUsage(
     if (input.source === "managed") {
       try {
         const { addGlobalPoolSpend } = await import("./managed-global-pool.server");
+        // NOT `period`. The pool has its own calendar-month key, computed
+        // inside that module so the reader and the writer cannot be handed
+        // different ones — which is what happened when both took the shop's
+        // key: the "global" counter sharded into one row per billing-period
+        // end and each row got the full limit.
         await addGlobalPoolSpend(
           input.pool ?? "paid",
-          period,
           costMicros,
           // What WE absorb on a failover: the gap between what the provider
           // charged and what the merchant was billed.

@@ -198,3 +198,77 @@ describe('the per-shop failover ceiling', () => {
     expect(await shopFailoverExhausted('demo.myshopify.com', 'b:2026-10-14')).toBe(true);
   });
 });
+
+describe('a transport error is never read as a content refusal', () => {
+  // The bug this pins cost the failover its commonest trigger: the content
+  // patterns ran first and carried the bare word "refused", which is INSIDE
+  // `ECONNREFUSED`. The provider being unreachable was classified as the
+  // provider declining our content, no failover fired, and on a detached
+  // repair that is a deletion.
+  it.each([
+    'connect ECONNREFUSED 104.18.1.1:443',
+    'Error: Connection refused',
+    'FetchError: request to https://api.openai.com failed, reason: connect ECONNREFUSED',
+  ])('%s fails over as a connection error', (message) => {
+    const verdict = classifyFailover({ message });
+    expect(verdict).toEqual({ failOver: true, reason: 'connection' });
+  });
+
+  it('a 429 whose body blames the merchant for "violating" the limit is still a 429', () => {
+    // "violat" was a content-refusal pattern and ran before the 429 branch.
+    expect(
+      classifyFailover({
+        status: 429,
+        message: 'Rate limit reached: you have violated the requests-per-minute limit',
+        rateLimitRetriesExhausted: false,
+      }),
+    ).toEqual({ failOver: false, reason: 'rateLimitedRetryFirst' });
+
+    expect(
+      classifyFailover({
+        status: 429,
+        message: 'Rate limit reached: you have violated the requests-per-minute limit',
+        rateLimitRetriesExhausted: true,
+      }),
+    ).toEqual({ failOver: true, reason: 'rateLimited' });
+  });
+
+  it('a REAL content refusal is still excluded', () => {
+    for (const message of [
+      "I'm sorry, but that violates our content policy",
+      'The model refused to answer: safety',
+      'Request was blocked by the content filter',
+    ]) {
+      expect(classifyFailover({ message }).failOver, message).toBe(false);
+    }
+  });
+});
+
+describe('the breaker is asked about the DEFAULT provider, not only the fallback', () => {
+  it('a window of successes keeps it closed although failures also land', () => {
+    // Without recording successes the window is 100 % failures by
+    // construction and the circuit opens after MIN_SAMPLES whatever the real
+    // rate is. Four successes and four failures is 50 %, which is the
+    // threshold — five successes and four failures is under it.
+    for (let i = 0; i < 5; i++) recordBreakerOutcome('openai', true);
+    for (let i = 0; i < 4; i++) recordBreakerOutcome('openai', false);
+    expect(breakerState('openai').open).toBe(false);
+    expect(breakerAllows('openai').allow).toBe(true);
+  });
+
+  it('opens on a real failure RATE and then hands out exactly one probe', () => {
+    for (let i = 0; i < 6; i++) recordBreakerOutcome('openai', false);
+    expect(breakerState('openai').open).toBe(true);
+    // Still inside the hold window: nobody gets through.
+    expect(breakerAllows('openai').allow).toBe(false);
+
+    const later = Date.now() + 61_000;
+    const first = breakerAllows('openai', later);
+    expect(first).toEqual({ allow: true, probe: true });
+    // Only one at a time.
+    expect(breakerAllows('openai', later).allow).toBe(false);
+
+    recordBreakerOutcome('openai', true, later);
+    expect(breakerState('openai').open).toBe(false);
+  });
+});

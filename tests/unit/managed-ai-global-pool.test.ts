@@ -112,7 +112,7 @@ describe('recording spend', () => {
     // The gap between what the provider charged and what the merchant was
     // billed is what §3a rule 4's failover budget is measured against; folded
     // into the total, "what did the outage cost us" is unanswerable.
-    await addGlobalPoolSpend('paid', 'm:2026-09', 1200, 900);
+    await addGlobalPoolSpend('paid', 1200, 900, 'm:2026-09');
 
     const arg = mockUpsert.mock.calls[0][0];
     expect(arg.update.costMicros).toEqual({ increment: BigInt(1200) });
@@ -120,13 +120,13 @@ describe('recording spend', () => {
   });
 
   it('writes nothing for a zero-cost call', async () => {
-    await addGlobalPoolSpend('paid', 'm:2026-09', 0, 0);
+    await addGlobalPoolSpend('paid', 0, 0, 'm:2026-09');
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 
   it('never throws — the call has already been made and paid for', async () => {
     mockUpsert.mockRejectedValueOnce(new Error('db down'));
-    await expect(addGlobalPoolSpend('paid', 'm:2026-09', 10)).resolves.toBeUndefined();
+    await expect(addGlobalPoolSpend('paid', 10, 0, 'm:2026-09')).resolves.toBeUndefined();
   });
 });
 

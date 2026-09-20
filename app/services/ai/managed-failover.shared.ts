@@ -15,7 +15,15 @@
  * - **a malformed-request 400** — our payload is wrong, not their service.
  * - **a 429**, until the queue's own retries are exhausted. A rate limit is a
  *   wait, and paying 14x to skip a wait is the most expensive way to be
- *   impatient.
+ *   impatient. Whether they ARE exhausted is the caller's fact, counted by
+ *   the queue and threaded in — asserting it here (the first cut hardcoded
+ *   `true`) meant every 429 failed over on the FIRST attempt, which is the
+ *   shop-reachable lever rule 2 names.
+ *
+ * ORDER matters as much as the lists. Transport errors are decided first (a
+ * socket is not a sentence), then coded statuses, then the phrase matching —
+ * because a substring is the weakest evidence here and the two bugs this
+ * module has had were both a substring beating something stronger.
  */
 
 /** What went wrong, as much as we can tell from an error object. */
@@ -35,9 +43,17 @@ const CONNECTION_PATTERNS = [
   "econnrefused",
   "enotfound",
   "etimedout",
+  "epipe",
   "socket hang up",
   "network error",
   "fetch failed",
+  // The same two conditions in prose. Node's own errors carry the codes
+  // above, but a proxy, an undici wrapper or a provider SDK may hand over
+  // only the sentence — and once the bare word "refused" stopped being a
+  // content pattern, nothing else matched these.
+  "connection refused",
+  "connection reset",
+  "connection closed",
 ];
 
 const TIMEOUT_PATTERNS = ["timed out", "timeout"];
@@ -59,28 +75,51 @@ const INPUT_TOO_LONG_PATTERNS = [
   "too many tokens",
 ];
 
+/**
+ * Phrases a PROVIDER uses when it declines the content — and every one of them
+ * has to be long enough that a transport error cannot wear it.
+ *
+ * The first cut listed the bare words `"refused"` and `"violat"`, and the
+ * first of those is inside `ECONNREFUSED`: the commonest outage shape there
+ * is was classified as a content refusal and never failed over, which on a
+ * detached repair is the error that becomes a deletion. `"violat"` had the
+ * same shape from the other side — several providers word a rate limit as
+ * "you have violated the rate limit", so a 429 was excluded before the 429
+ * branch could see it.
+ */
 const CONTENT_REFUSAL_PATTERNS = [
   "content policy",
   "content_policy",
+  "content filter",
+  "content_filter",
   "safety",
   "was blocked",
-  "refused",
-  "violat",
+  "refused to",
+  "i cannot assist",
+  "policy violation",
+  "violates our",
+  "violates the usage",
+  "usage policies",
+  "responsible ai",
 ];
 
 export function classifyFailover(signal: FailoverSignal): FailoverVerdict {
   const msg = (signal.message || "").toLowerCase();
   const status = signal.status ?? 0;
 
-  // EXCLUSIONS FIRST. Each one is a case where the second provider returns
-  // the same answer and we have paid twice.
-  if (INPUT_TOO_LONG_PATTERNS.some((p) => msg.includes(p))) {
-    return { failOver: false, reason: "inputTooLong" };
-  }
-  if (CONTENT_REFUSAL_PATTERNS.some((p) => msg.includes(p))) {
-    return { failOver: false, reason: "contentRefusal" };
+  // TRANSPORT FIRST, ahead of every message-based rule. A connection-level
+  // failure is not a sentence anybody wrote about our request — it is a
+  // socket — so reading it for intent is a category error, and it was a
+  // costly one: `ECONNREFUSED` contains "refused", so the one error shape
+  // that most obviously calls for the other provider was read as the
+  // provider declining our content and never failed over at all.
+  if (CONNECTION_PATTERNS.some((p) => msg.includes(p))) {
+    return { failOver: true, reason: "connection" };
   }
 
+  // A STATUS is stronger evidence than a substring, so the coded cases go
+  // ahead of the phrase matching too. A 429 whose body says "you have
+  // violated the rate limit" is a rate limit.
   if (status === 429) {
     // A rate limit is a WAIT. Only once the queue has stopped waiting is
     // paying 14x to skip it the better answer.
@@ -95,6 +134,15 @@ export function classifyFailover(signal: FailoverSignal): FailoverVerdict {
   // is nonsense).
   if (status === 401 || status === 403) return { failOver: true, reason: "ourAuth" };
 
+  // EXCLUSIONS. Each one is a case where the second provider returns the same
+  // answer and we have paid twice.
+  if (INPUT_TOO_LONG_PATTERNS.some((p) => msg.includes(p))) {
+    return { failOver: false, reason: "inputTooLong" };
+  }
+  if (CONTENT_REFUSAL_PATTERNS.some((p) => msg.includes(p))) {
+    return { failOver: false, reason: "contentRefusal" };
+  }
+
   if (MODEL_NOT_FOUND_PATTERNS.some((p) => msg.includes(p))) {
     return { failOver: true, reason: "modelNotFound" };
   }
@@ -105,9 +153,6 @@ export function classifyFailover(signal: FailoverSignal): FailoverVerdict {
 
   if (status >= 500 && status < 600) return { failOver: true, reason: "server" };
   if (TIMEOUT_PATTERNS.some((p) => msg.includes(p))) return { failOver: true, reason: "timeout" };
-  if (CONNECTION_PATTERNS.some((p) => msg.includes(p))) {
-    return { failOver: true, reason: "connection" };
-  }
 
   // Anything unrecognised does NOT fail over. The default has to be the cheap
   // one: an unknown error that the fallback would also refuse costs double

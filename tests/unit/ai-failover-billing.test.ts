@@ -81,7 +81,9 @@ describe('a failover bills the DEFAULT model and costs the fallback', () => {
       pool: 'paid',
     });
 
-    const [, , cost, absorbed] = mockPoolSpend.mock.calls[0];
+    // (pool, costMicros, failoverMicros) — the pool's own period key is
+    // computed inside that module, so it is not an argument here.
+    const [, cost, absorbed] = mockPoolSpend.mock.calls[0];
     expect(absorbed).toBeGreaterThan(0);
     expect(absorbed).toBe(cost - priceCall('openai', 'gpt-5-nano', 1500, 700).costMicros);
   });
@@ -105,7 +107,7 @@ describe('a failover bills the DEFAULT model and costs the fallback', () => {
       model: 'gpt-5-nano',
     });
     expect(result.billedMicros).toBe(result.costMicros);
-    expect(mockPoolSpend.mock.calls[0][3]).toBe(0);
+    expect(mockPoolSpend.mock.calls[0][2]).toBe(0);
   });
 
   it('an explicit billedMicros still wins — one override, not two', async () => {

@@ -2,7 +2,7 @@ import { HfInference } from '@huggingface/inference';
 import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { AIQueueService } from './ai-queue.service';
+import { AIQueueService, MAX_RATE_LIMIT_RETRIES, rateLimitBucket } from './ai-queue.service';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
 import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
@@ -2406,11 +2406,23 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           this.taskId,
           this.provider,
           estimatedTokens,
-          () => this.executeAIRequest(prompt, imageUrls),
-          // Which rate-limit bucket this call is admitted against (§9.1). It
-          // travels at ENQUEUE time because `execute` is an opaque closure:
-          // by the time it runs there is nothing left to ask.
-          this.config.credentialSource === 'managed' ? 'managed' : 'byo'
+          // The queue hands over how many rate-limit retries this request has
+          // already had. §3a rule 7 makes the failover wait for them, and the
+          // queue is the only place that counts them — this closure runs
+          // INSIDE its retry loop, so asserting "already spent" from in here
+          // (the first cut did) failed a 429 over on the very first attempt.
+          (attempt) => this.executeAIRequest(prompt, imageUrls, attempt),
+          // Which rate-limit bucket this call is ADMITTED against (§9.1),
+          // decided from what is knowable before dispatch.
+          this.config.credentialSource === 'managed' ? 'managed' : 'byo',
+          // …and which one it was really SERVED on, asked afterwards: a
+          // managed call can swap onto the fallback provider inside the
+          // closure, and its tokens belong to that account's window.
+          () =>
+            rateLimitBucket(
+              this.config.credentialSource === 'managed' ? 'managed' : 'byo',
+              this.provider,
+            )
         );
       }
     } catch (error) {
@@ -2419,6 +2431,21 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // re-throw this rather than swallowing it (see isAuthError usages), so an
       // invalid key always surfaces instead of silently producing no output.
       if (isAuthError(error)) {
+        // §3a rule 9 — an auth failure on the OPERATOR's key is our incident,
+        // not the merchant's. `InvalidAIKeyError` says "your API key was
+        // rejected" and sends them to a tab that renders nothing in managed
+        // mode; worse, it is not a managed refusal, so on a detached repair it
+        // reads as "the AI could not deliver" and DELETES translations because
+        // our own key was revoked. It reaches here only when the failover
+        // could not run — no fallback configured, the ceiling or the global
+        // budget spent, or the fallback failing too.
+        if (this.config.credentialSource === 'managed') {
+          loggers.ai('error', '[AI-SERVICE] Operator credential rejected', {
+            shop: this.shop,
+            provider: this.provider,
+          });
+          throw new ManagedAiRefusedError('managedUnavailable');
+        }
         this.authError = new InvalidAIKeyError(error instanceof Error ? error.message : String(error));
         throw this.authError;
       }
@@ -2576,7 +2603,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * three HTTP attempts. A failed attempt generates no tokens and is normally
    * not billed, which is why this is a stated residual and not a correction.
    */
-  private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
+  private async executeAIRequest(
+    prompt: string,
+    imageUrls?: string[],
+    /** Rate-limit retries the QUEUE has already spent on this call (§3a rule 7). */
+    queueAttempt = 0,
+  ): Promise<string> {
     // A refusal decided at BUILD time (no consent, kill switch, a credential
     // this deployment cannot serve) fails every call on this instance, and
     // fails it as a refusal rather than as a missing key.
@@ -2597,6 +2629,26 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       }
     }
 
+    // §3a rule 6 — the breaker GATE on the default provider, and it is the
+    // half that was missing: the breaker recorded outcomes and nothing ever
+    // asked it anything, so an open circuit changed nothing. Every call still
+    // paid the full timeout against a dead provider before failing over, the
+    // half-open probe was never issued, and the circuit therefore never
+    // closed again — which also made the trip counter, the thing the log line
+    // calls a page, permanently stuck at one.
+    //
+    // Open ⇒ go straight to the fallback. Half-open ⇒ THIS call is the probe
+    // and goes to the primary while everyone else holds the fallback.
+    if (this.isManagedPrimary()) {
+      const { breakerAllows } = await import(
+        '../../app/services/ai/managed-failover.server'
+      );
+      const verdict = breakerAllows(this.provider);
+      if (!verdict.allow) {
+        await this.switchToFailoverGuarded('breakerOpen');
+      }
+    }
+
     let timer: NodeJS.Timeout | undefined;
     const meter: AiCallMeter = { dispatched: 0, observed: [] };
     try {
@@ -2609,16 +2661,24 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           AI_REQUEST_TIMEOUT_MS,
         );
       });
+      const onPrimary = this.isManagedPrimary();
       try {
-        return await Promise.race([
+        const answer = await Promise.race([
           this._executeAIRequestInner(prompt, imageUrls, meter),
           timeoutPromise,
         ]);
+        // A managed SUCCESS on the default provider, recorded — without it
+        // the breaker's window is 100 % failures by construction and it opens
+        // after five failover-eligible errors whatever the real rate is. It
+        // is also what CLOSES a half-open circuit.
+        if (onPrimary) await this.recordPrimaryOutcome(true);
+        return answer;
       } catch (firstError) {
+        if (onPrimary) await this.recordPrimaryOutcome(false);
         // §3a — the failover. HERE, below askAI's auth latch and BEFORE the
         // input-too-long replacement below, which is the only place both are
         // still true.
-        const retried = await this.tryFailover(firstError, prompt, imageUrls, meter);
+        const retried = await this.tryFailover(firstError, prompt, imageUrls, meter, queueAttempt);
         if (retried !== null) return retried;
         throw firstError;
       }
@@ -2679,6 +2739,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     prompt: string,
     imageUrls: string[] | undefined,
     meter: AiCallMeter,
+    queueAttempt: number,
   ): Promise<string | null> {
     if (this.config.credentialSource !== 'managed' || !this.config.switchToFailover) return null;
     // A refusal is not a provider failure — it is us declining, and retrying
@@ -2693,54 +2754,148 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const verdict = classifyFailover({
         status: statusOf(error),
         message: error instanceof Error ? error.message : String(error),
-        // The queue retries a rate limit by re-enqueueing the same closure, so
-        // by the time an error reaches here that path is already spent.
-        rateLimitRetriesExhausted: true,
+        // The queue retries a rate limit by re-enqueueing the same closure,
+        // and this runs INSIDE that closure — so the retries are spent only
+        // once the queue says so. Hardcoding `true` here made every 429 fail
+        // over on the first attempt, at ~14x the price, on the one lever a
+        // shop can pull deliberately by queueing enough work (rule 2).
+        rateLimitRetriesExhausted: queueAttempt >= MAX_RATE_LIMIT_RETRIES,
       });
       if (!verdict.failOver) return null;
 
-      const { breakerAllows, recordBreakerOutcome, shopFailoverExhausted } = await import(
+      // Bank what the PRIMARY attempt already spent BEFORE the identity can
+      // move. `recordUsage` reads `this.provider` and `this.config`, and the
+      // entries in `meter.observed` belong to the call that just failed — a
+      // Gemini vision fallback can answer once and fail on a second dispatch,
+      // and the timeout branch fills entries too. Left in the meter they were
+      // priced at the FALLBACK's unknown-model ceiling and billed there, which
+      // is rule 1 broken in the one case it exists for.
+      await this.drainMeter(meter);
+
+      if (!(await this.switchToFailoverGuarded(verdict.reason))) return null;
+
+      const { recordBreakerOutcome } = await import(
         '../../app/services/ai/managed-failover.server'
       );
-      recordBreakerOutcome(this.provider, false);
-
-      if (this.shop && this.config.usagePeriod) {
-        if (await shopFailoverExhausted(this.shop, this.config.usagePeriod)) {
-          loggers.ai('warn', '[AI-SERVICE] Failover ceiling reached for this shop', {
-            shop: this.shop,
-          });
-          return null;
-        }
-      }
-
-      const swapped = await this.config.switchToFailover();
-      if (!swapped) return null;
-      if (!breakerAllows(swapped.provider).allow) return null;
-
-      loggers.ai('warn', '[AI-SERVICE] Managed failover', {
-        shop: this.shop,
-        from: this.provider,
-        to: swapped.provider,
-        reason: verdict.reason,
-      });
-
-      // Re-initialise onto the other credential. `initializeProvider` builds
-      // exactly one client from `this.provider`, so both have to move.
-      this.provider = swapped.provider;
-      this.config = { ...swapped.config, failoverServed: true };
-      this.initializeProvider();
-
       const text = await this._executeAIRequestInner(prompt, imageUrls, meter);
-      recordBreakerOutcome(swapped.provider, true);
+      recordBreakerOutcome(this.provider, true);
       return text;
     } catch (failoverError) {
-      // The fallback failed too. The caller gets the FIRST error, which
-      // describes the outage rather than our reaction to it.
+      // The fallback failed too, and it has to be RECORDED as a failure or the
+      // fallback's own breaker can never open — the first cut only ever
+      // recorded its successes, so a permanently broken fallback was probed
+      // on every single call for ever.
+      try {
+        const { recordBreakerOutcome } = await import(
+          '../../app/services/ai/managed-failover.server'
+        );
+        if (this.config.failoverServed) recordBreakerOutcome(this.provider, false);
+      } catch {
+        // Bookkeeping only — never allowed to replace the caller's error.
+      }
+      // The caller gets the FIRST error, which describes the outage rather
+      // than our reaction to it.
       loggers.ai('error', '[AI-SERVICE] Failover attempt failed', {
         shop: this.shop,
         error: failoverError instanceof Error ? failoverError.message : String(failoverError),
       });
       return null;
+    }
+  }
+
+  /**
+   * Is this instance a MANAGED call still on its default credential?
+   *
+   * The one predicate the breaker gate and the outcome recording both ask, so
+   * a call already served by the fallback can never be recorded against the
+   * primary's window (which would make a healthy fallback close a dead
+   * primary's circuit).
+   */
+  private isManagedPrimary(): boolean {
+    return (
+      this.config.credentialSource === 'managed' &&
+      !!this.config.switchToFailover &&
+      this.config.failoverServed !== true
+    );
+  }
+
+  /** Tell the breaker how a DEFAULT-credential managed call went. Never throws. */
+  private async recordPrimaryOutcome(ok: boolean): Promise<void> {
+    try {
+      const { recordBreakerOutcome } = await import(
+        '../../app/services/ai/managed-failover.server'
+      );
+      recordBreakerOutcome(this.provider, ok);
+    } catch {
+      // Bookkeeping only — never allowed to replace the caller's error.
+    }
+  }
+
+  /**
+   * Move this instance onto the fallback credential, or answer false.
+   *
+   * ONE gate for both entrances — the breaker finding the primary open before
+   * a call, and an error classifying as failover-worthy after one — because
+   * the three things it checks are money: the per-SHOP ceiling (rule 2: the
+   * triggers are shop-reachable and the breaker is global), the GLOBAL
+   * failover budget (rule 4), and the fallback's own breaker.
+   */
+  private async switchToFailoverGuarded(reason: string): Promise<boolean> {
+    if (!this.config.switchToFailover) return false;
+    const { breakerAllows, shopFailoverExhausted } = await import(
+      '../../app/services/ai/managed-failover.server'
+    );
+
+    if (this.shop && this.config.usagePeriod) {
+      if (await shopFailoverExhausted(this.shop, this.config.usagePeriod)) {
+        loggers.ai('warn', '[AI-SERVICE] Failover ceiling reached for this shop', {
+          shop: this.shop,
+        });
+        return false;
+      }
+    }
+
+    const { failoverBudgetExhausted } = await import(
+      '../../app/services/ai/managed-global-pool.server'
+    );
+    if (await failoverBudgetExhausted()) return false;
+
+    const swapped = await this.config.switchToFailover();
+    if (!swapped) return false;
+    if (!breakerAllows(swapped.provider).allow) return false;
+
+    loggers.ai('warn', '[AI-SERVICE] Managed failover', {
+      shop: this.shop,
+      from: this.provider,
+      to: swapped.provider,
+      reason,
+    });
+
+    // Re-initialise onto the other credential. `initializeProvider` builds
+    // exactly one client from `this.provider`, so both have to move.
+    this.provider = swapped.provider;
+    this.config = { ...swapped.config, failoverServed: true };
+    this.initializeProvider();
+    return true;
+  }
+
+  /**
+   * Record everything the meter holds NOW and reset it.
+   *
+   * Used by the failover, where the identity the entries belong to is about to
+   * change. Resetting `dispatched` with it is deliberate: the second attempt's
+   * accounting starts fresh, and the timeout branch's "a dispatch that never
+   * answered" comparison is about the attempt in flight, not about both.
+   */
+  private async drainMeter(meter: AiCallMeter): Promise<void> {
+    const pending = meter.observed.splice(0, meter.observed.length);
+    meter.dispatched = 0;
+    for (const usage of pending) {
+      try {
+        await this.recordUsage(usage);
+      } catch {
+        // Deliberately silent, like the drain in executeAIRequest's finally.
+      }
     }
   }
 
