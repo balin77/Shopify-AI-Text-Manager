@@ -9,14 +9,24 @@
  *
  * Two rules the numbers here obey, and both are about the direction of error:
  *
- * - **An unknown model is priced at its provider's most expensive entry**, not
- *   at zero and not at an average. A model id we do not know is usually a NEW
- *   one, and the cheap direction is the one that hides a cost explosion.
- * - **Money is integer MICRO-EURO.** No floats (this is money), and no BigInt:
- *   the logger and the Task paths run their values through `JSON.stringify`,
- *   which throws on a BigInt — a trap `entry.server.tsx`'s `describeError`
- *   already documents. Int32 tops out at €2,147 per counter row, far past any
- *   monthly shop total, and `clampMicros` says so rather than wrapping.
+ * - **An unknown model is priced at a STATED per-provider ceiling**, not at
+ *   zero, not at an average, and — the correction that matters — not at the
+ *   most expensive entry of this table either. Deriving the ceiling from the
+ *   table makes it a ceiling only if the table already holds the provider's
+ *   dearest model, which it does not and is not meant to: this app's own
+ *   picker offers `claude-opus-4-0-20250514` ($15/$75), while the dearest
+ *   Claude entry here is $5/$25 — so a merchant on that model was metered at
+ *   a third of what they spent, under a log line reassuring us it had been
+ *   "priced at the ceiling". `UNKNOWN_MODEL_PRICE` is therefore its own dated
+ *   fact per provider, deliberately at or above that provider's most
+ *   expensive public model, and a table entry can never silently outgrow it.
+ * - **Money is integer MICRO-EURO.** No floats (this is money), and no BigInt
+ *   ANYWHERE in this module: it is imported by client-safe code and its values
+ *   travel through `JSON.stringify`, which throws on a BigInt — the trap
+ *   `entry.server.tsx`'s `describeError` already documents. A single CALL is
+ *   far inside Int32; the accumulating LEDGER columns are not, which is a
+ *   question for the store and not for this table (see
+ *   `app/services/ai/usage-meter.server.ts`).
  *
  * Prices are provider LIST prices in USD per 1M tokens, converted here. They
  * are dated facts, not measurements this repo can re-check — the ops re-check
@@ -75,6 +85,9 @@ export const MODEL_PRICING: Record<AIProvider, Record<string, ModelPrice>> = {
     "claude-sonnet-4-5-20250929": price(3.0, 15.0),
     "claude-sonnet-5": price(2.0, 10.0),
     "claude-opus-5": price(5.0, 25.0),
+    // Offered by the app's own picker (app/config/ai-models.config.ts), which
+    // is why its absence was not academic.
+    "claude-opus-4-0-20250514": price(15.0, 75.0),
   },
   gemini: {
     "gemini-2.0-flash-lite": price(0.075, 0.3),
@@ -86,6 +99,8 @@ export const MODEL_PRICING: Record<AIProvider, Record<string, ModelPrice>> = {
     "grok-3-mini": price(0.3, 0.5),
     "grok-3": price(3.0, 15.0),
     "grok-2-vision-1212": price(2.0, 10.0),
+    // Also in the app's picker; priced at grok-3's rate it read ~15x high.
+    "grok-4-fast-non-reasoning": price(0.2, 0.5),
   },
   deepseek: {
     "deepseek-chat": price(0.27, 1.1),
@@ -103,7 +118,7 @@ export const MODEL_PRICING: Record<AIProvider, Record<string, ModelPrice>> = {
 /** Providers whose usage is counted but deliberately not priced. */
 export const UNPRICED_PROVIDERS: ReadonlySet<AIProvider> = new Set(["huggingface"]);
 
-/** Int32 ceiling for a stored micro-euro column. */
+/** Int32 ceiling — the sanity bound for ONE call's value, not for a total. */
 export const MAX_MICROS = 2_147_483_647;
 
 export interface PricedUsage {
@@ -115,27 +130,42 @@ export interface PricedUsage {
 }
 
 /**
- * The most expensive known price of a provider — what an UNKNOWN model costs.
- * A provider with no entries at all yields null (see UNPRICED_PROVIDERS).
+ * What an UNKNOWN model of each provider is priced at.
+ *
+ * A stated fact per provider — the provider's most expensive public model as
+ * of PRICES_CHECKED_ON — and NOT the maximum of the table above. The two are
+ * different questions: the table holds what this app defaults to and curates,
+ * while this holds what the provider's dearest offering costs, which is the
+ * only number that makes "unknown ⇒ ceiling" a real bound. `api.ai-models.tsx`
+ * fetches each provider's model list LIVE, so a merchant is not restricted to
+ * the curated ids and an unknown id is an ordinary Tuesday.
+ *
+ * `assertCeilingsCoverTable` (tests) fails the build if a table entry ever
+ * exceeds its provider's ceiling on either dimension — which is what keeps
+ * the word "ceiling" true as models are added.
  */
-function ceilingFor(provider: AIProvider): ModelPrice | null {
-  const entries = Object.values(MODEL_PRICING[provider] ?? {});
-  if (entries.length === 0) return null;
-  return entries.reduce((worst, p) =>
-    p.inMicrosPerMToken + p.outMicrosPerMToken >
-    worst.inMicrosPerMToken + worst.outMicrosPerMToken
-      ? p
-      : worst,
-  );
-}
+export const UNKNOWN_MODEL_PRICE: Record<AIProvider, ModelPrice | null> = {
+  openai: price(15.0, 60.0), // gpt-4.5-class list price
+  claude: price(15.0, 75.0), // Opus tier
+  gemini: price(2.5, 15.0), // 2.5 Pro, long-context tier
+  grok: price(5.0, 25.0), // grok-4 reasoning tier
+  deepseek: price(1.0, 4.0), // reasoner tier, with headroom
+  // No per-token list price exists at all — see UNPRICED_PROVIDERS.
+  huggingface: null,
+};
 
 export function priceForModel(
   provider: AIProvider,
   model: string,
 ): { price: ModelPrice | null; atCeiling: boolean } {
+  // The unpriced set is asked FIRST and is authoritative. It used to be
+  // declared and never consulted, with "the provider's record is empty" doing
+  // the real work — two expressions of one rule, which drift the day somebody
+  // adds a single price entry to an unpriced provider.
+  if (UNPRICED_PROVIDERS.has(provider)) return { price: null, atCeiling: false };
   const known = MODEL_PRICING[provider]?.[model];
   if (known) return { price: known, atCeiling: false };
-  return { price: ceilingFor(provider), atCeiling: true };
+  return { price: UNKNOWN_MODEL_PRICE[provider], atCeiling: true };
 }
 
 /**
@@ -165,10 +195,19 @@ export function priceCall(
   };
 }
 
-/** Keep a micro-euro value inside the Int32 column it is stored in. */
+/**
+ * Keep a micro-euro value integral and non-negative.
+ *
+ * It CEILS, like `priceCall`, and the two saying opposite things two screens
+ * apart is the drift this note replaces: rounding to nearest turned a billed
+ * 0.4 µ€ into 0, i.e. free, which is the one direction this module's whole
+ * comment header forbids. The `MAX_MICROS` cap is about a single value being
+ * sane, not about what a stored TOTAL can hold — that is the store's problem
+ * and the store solves it with a wider column.
+ */
 export function clampMicros(micros: number): number {
   if (!Number.isFinite(micros) || micros < 0) return 0;
-  return Math.min(Math.round(micros), MAX_MICROS);
+  return Math.min(Math.ceil(micros), MAX_MICROS);
 }
 
 /** "€1.23" from micro-euro — display only, never used for arithmetic. */

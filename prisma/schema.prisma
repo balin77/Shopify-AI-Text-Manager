@@ -1476,42 +1476,67 @@ model ImageOperationCounter {
   @@index([shop])
 }
 
-// What the AI really consumed, per shop and per period (PLAN_MANAGED_AI_KEY §4.3).
+// What the AI really consumed (PLAN_MANAGED_AI_KEY §4.3).
 //
 // Usage data, not entitlement data — the same rule ImageOperationCounter above
 // follows, so it is deliberately absent from getSyncScope / planCacheCleanup.
 //
-// Three things in here are separate on purpose:
-//   • `source` splits a shop's own key ("byo") from the operator's ("managed").
-//     BYO is metered too, with no cap: it is where this app's price numbers
-//     come from, and it is the answer a BYO merchant cannot get from any
-//     provider's API (see docs/reference/AI_PROVIDER_BALANCE_FEASIBILITY.md).
-//   • `costMicros` is what WE pay the provider; `billedMicros` is what is
-//     charged against the merchant's budget. They are equal except during a
-//     failover, where the merchant is billed at the default model's price and
-//     we carry the difference (§3a rules 1-2).
-//   • `estimatedCalls` is the honesty column: a provider that reported no usage
-//     object is counted at an estimate, never at zero, and the share of such
-//     calls is what makes "the meter says X, the invoice says Y" diagnosable.
+// The KEY is the whole design, and the first cut got it wrong in a way that
+// made the feature pointless: it was (shop, period, source) alone, one row per
+// shop per month, which blends every feature, provider and model into a single
+// average that describes none of them. Phase 0 exists to answer "what does one
+// operation cost, per feature" and that key cannot be asked it. The only store
+// carrying the feature dimension was `Task`, which the reaper deletes after 3
+// days — so a 4-week measurement window would have kept its last three days.
+// Every dimension below is therefore part of the key:
+//   • `source`    — the merchant's own key ("byo") or the operator's
+//                   ("managed"). BYO is metered too, uncapped: it is where this
+//                   app's price numbers come from, and it is the "what is this
+//                   costing me" answer no provider API gives uniformly.
+//   • `provider` + `model` — because they are what the price depends on. They
+//                   also make "was this row priced at the unknown-model
+//                   ceiling / not priced at all" DERIVABLE at read time from
+//                   app/config/ai-pricing.ts, which is why no column says so.
+//   • `feature`   — `Task.type` (bulkTranslation, aiGeneration, seoBulkFix …),
+//                   or "adhoc" for a call that belongs to no task.
+//   • `estimated` — whether the provider reported the token counts or we
+//                   counted characters. Its own key column rather than a
+//                   counter, so the measured average can be computed WITHOUT
+//                   the estimates in it; mixing them in one row made the one
+//                   number §7's price ladder stands on uncleanable.
+// Row count stays trivial: a few dozen per shop-month.
 //
-// Money is integer micro-EUR: no floats (this is money) and no BigInt (the
-// logger and Task paths JSON-stringify their values, which throws on BigInt).
+// `costMicros` is what WE pay the provider, `billedMicros` what is charged
+// against the merchant's budget. Equal today; they diverge on a failover,
+// where the merchant is billed at the default model's price and we carry the
+// difference (§3a rules 1-2). One column could not express that afterwards.
+//
+// The four volume columns are BIGINT, and that is a correction rather than
+// caution: Int32 holds 2.1e9 TOKENS, which on the pinned managed default is
+// about EUR 99 of input spend — and Postgres RAISES on an integer overflow
+// rather than clamping, so the row would simply stop advancing mid-period,
+// silently, including the very column enforcement reads. They are read back as
+// Number at the one boundary that exposes them (`getAiUsage`), so no BigInt
+// ever reaches a `JSON.stringify`.
 model AiUsageCounter {
-  id             String   @id @default(cuid())
-  shop           String
-  period         String // "YYYY-MM" (UTC) today; the BILLING period from §7 rule 3 on
-  source         String // "managed" | "byo"
-  calls          Int      @default(0)
-  estimatedCalls Int      @default(0) // calls whose token usage was estimated, not reported
-  failoverCalls  Int      @default(0) // calls served by the fallback provider
-  inputTokens    Int      @default(0)
-  outputTokens   Int      @default(0)
-  costMicros     Int      @default(0) // micro-EUR we really paid
-  billedMicros   Int      @default(0) // micro-EUR charged against the merchant's budget
-  updatedAt      DateTime @updatedAt
+  id            String   @id @default(cuid())
+  shop          String
+  period        String // "m:YYYY-MM" (UTC). Phase 2's billing period is "b:<start>" — prefixed so the two schemes can never be read as one.
+  source        String // "managed" | "byo"
+  provider      String // "openai" | "claude" | "gemini" | "grok" | "deepseek" | "huggingface"
+  model         String // the model id the call actually ran on
+  feature       String // Task.type, or "adhoc"
+  estimated     Boolean // true = token counts were counted, not reported
+  calls         Int      @default(0)
+  failoverCalls Int      @default(0) // calls served by the fallback provider
+  inputTokens   BigInt   @default(0)
+  outputTokens  BigInt   @default(0)
+  costMicros    BigInt   @default(0) // micro-EUR we really paid
+  billedMicros  BigInt   @default(0) // micro-EUR charged against the merchant's budget
+  updatedAt     DateTime @updatedAt
 
-  @@unique([shop, period, source])
-  @@index([shop])
+  @@unique([shop, period, source, provider, model, feature, estimated])
+  @@index([shop, period])
 }
 
 // SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon

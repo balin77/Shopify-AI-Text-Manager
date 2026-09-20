@@ -14,7 +14,7 @@ import {
   perLocaleSourceBudgetChars,
   planLocaleChunks,
 } from '../../app/services/ai/translation-budget.shared';
-import type { AiCredentialSource } from '../../app/services/ai/credential-source.shared';
+import { ADHOC_FEATURE, type AiCredentialSource } from '../../app/services/ai/usage-dimensions.shared';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -34,11 +34,32 @@ export interface AiCallUsage {
   source: 'provider' | 'estimate';
 }
 
-/** A provider call's answer plus what it cost to get it. */
-export interface AiCallResult {
-  text: string;
-  usage: AiCallUsage;
-}
+/**
+ * Where a provider call's cost is reported the moment the provider ANSWERS.
+ *
+ * A side channel rather than a return value, and that is the whole point: the
+ * two events are not the same one. `_executeAIRequestInner` returns once, on
+ * success — but a provider that answered has already charged us, and this
+ * function rejects such an answer in sixteen places (`returned empty content`,
+ * `no text block`, a `finish_reason: length` truncation, a content refusal).
+ * Reporting cost through the return value metered every one of those at zero,
+ * and the truncation case is the MOST expensive call shape there is, so the
+ * under-count was biased exactly backwards. Gemini's vision fallback makes the
+ * same point from the other side: two billed provider calls inside one
+ * invocation, which one return value could only express by adding them up and
+ * calling it one call.
+ */
+export type AiUsageSink = (usage: AiCallUsage) => void;
+
+/**
+ * Tokens charged for ONE image, when the provider reported no usage and we
+ * have to estimate. Deliberately above the real figures (~1,100 on a
+ * gpt-4o-mini-class model for 1024x1024, ~1,290 on Gemini for a large image):
+ * the estimate's whole claim is that it errs expensive, and counting only the
+ * prompt's characters made it err ~90% CHEAP on exactly the vision calls that
+ * are most likely to need it.
+ */
+const ESTIMATED_TOKENS_PER_IMAGE = 1_400;
 
 const LOCALE_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', it: 'Italian',
@@ -248,6 +269,8 @@ export class AIService {
    * alt-texts, SEO — is covered automatically.
    */
   private glossaryRulesPromise?: Promise<GlossaryRule[]>;
+  /** The ledger's `feature` dimension for this instance — see resolveFeature. */
+  private featurePromise?: Promise<string>;
 
   constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
@@ -2184,20 +2207,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     try {
       // If no shop/taskId provided, execute directly (backward compatibility)
       if (!this.shop || !this.taskId) {
-        response = (await this.executeAIRequest(prompt, imageUrls)).text;
+        response = await this.executeAIRequest(prompt, imageUrls);
       } else {
         // Use queue for rate-limited execution
         const estimatedTokens = this.estimateTokens(prompt);
 
-        response = (
-          await this.queue.enqueue(
-            this.shop,
-            this.taskId,
-            this.provider,
-            estimatedTokens,
-            () => this.executeAIRequest(prompt, imageUrls)
-          )
-        ).text;
+        response = await this.queue.enqueue(
+          this.shop,
+          this.taskId,
+          this.provider,
+          estimatedTokens,
+          () => this.executeAIRequest(prompt, imageUrls)
+        );
       }
     } catch (error) {
       // Normalise provider auth failures (invalid/expired key) into a single
@@ -2309,7 +2330,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
   /** Re-execute a stored prompt during task recovery (bypasses prompt saving & queuing). */
   async replayRequest(prompt: string): Promise<string> {
-    return (await this.executeAIRequest(prompt)).text;
+    return this.executeAIRequest(prompt);
   }
 
   /**
@@ -2337,8 +2358,34 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   private static readonly INPUT_TOO_LONG_MESSAGE =
     'The text is too long for the AI model to process. Please shorten the content and try again.';
 
-  private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<AiCallResult> {
+  /**
+   * THE meter's charge point, and deliberately not `askAI`: `replayRequest`
+   * (task recovery) calls this method directly, past the queue and past
+   * anything askAI would carry, so a meter one level up would silently miss
+   * every recovered task.
+   *
+   * Everything the inner call REPORTED is charged in a `finally`, so a
+   * provider answer that we then reject is still paid for. Two things that
+   * follows from, both of which were holes:
+   *
+   * - A call that loses the timeout race is charged at its WORST CASE, never
+   *   at zero. `Promise.race` does not cancel the loser: the provider finishes
+   *   generating and bills us, and the calls that time out are the longest and
+   *   most expensive ones, so metering them at zero biased the under-count
+   *   towards exactly the wrong end. The worst case is the prompt's estimate in
+   *   and `max_tokens` out — what the call COULD have produced.
+   * - Nothing is charged for a call that never reached a provider (a
+   *   connection error, an invalid key, a dropped image fetch): `observed` is
+   *   empty and there is no timeout to substitute a worst case for.
+   *
+   * What it still cannot see, stated rather than hidden: the provider SDKs
+   * retry internally (`AI_SDK_MAX_RETRIES`), so one logical call can be up to
+   * three HTTP attempts. A failed attempt generates no tokens and is normally
+   * not billed, which is why this is a stated residual and not a correction.
+   */
+  private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
     let timer: NodeJS.Timeout | undefined;
+    const observed: AiCallUsage[] = [];
     try {
       // Backstop timeout: even if a provider SDK ignores its own timeout
       // (e.g. Gemini/HF have no constructor timeout), this guarantees the
@@ -2349,31 +2396,43 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           AI_REQUEST_TIMEOUT_MS,
         );
       });
-      const result = await Promise.race([
-        this._executeAIRequestInner(prompt, imageUrls),
+      return await Promise.race([
+        this._executeAIRequestInner(prompt, imageUrls, (usage) => observed.push(usage)),
         timeoutPromise,
       ]);
-      // THE meter's charge point, and deliberately not `askAI`: `replayRequest`
-      // (task recovery) calls this method directly, past the queue and past
-      // anything askAI would carry. Recording here cannot be bypassed by a
-      // caller that skips the queue.
-      //
-      // AWAITED rather than fired off: one upsert against a call that took
-      // seconds is not worth measuring, while a detached write is one the
-      // process can be killed out from under — and an under-counted ledger is
-      // what a budget would later be enforced against. `recordUsage` never
-      // throws, so awaiting it cannot turn a successful generation into a
-      // failed one.
-      await this.recordUsage(result.usage);
-      return result;
     } catch (error) {
+      if (error instanceof AIRequestTimeoutError && observed.length === 0) {
+        observed.push(this.worstCaseUsage(prompt, imageUrls?.length ?? 0));
+      }
       if (AIService.isInputTooLongError(error)) {
         throw new Error(AIService.INPUT_TOO_LONG_MESSAGE);
       }
       throw error;
     } finally {
       if (timer) clearTimeout(timer);
+      // AWAITED rather than fired off: one upsert against a call that took
+      // seconds is not worth measuring, while a detached write is one the
+      // process can be killed out from under — and an under-counted ledger is
+      // what a budget would later be enforced against. `recordUsage` never
+      // throws, so this cannot turn a successful generation into a failed one,
+      // nor replace the error a failed one is about to throw.
+      for (const usage of observed) await this.recordUsage(usage);
     }
+  }
+
+  /**
+   * What a call that never came back might have cost: the prompt (plus its
+   * images) in, and the output ceiling every provider here is configured with
+   * out. Flagged as an estimate like any other counted call.
+   */
+  private worstCaseUsage(prompt: string, imageCount: number): AiCallUsage {
+    return {
+      inputTokens:
+        AIService.estimateTokensFor(prompt) + imageCount * ESTIMATED_TOKENS_PER_IMAGE,
+      outputTokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+      model: this.getModel(),
+      source: 'estimate',
+    };
   }
 
   /**
@@ -2397,8 +2456,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         shop: this.shop,
         provider: this.provider,
         model: usage.model,
+        feature: await this.resolveFeature(),
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        // Not a default so much as a fact: no managed credential exists in the
+        // app yet, so every construction site today really is spending the
+        // merchant's own key. Phase 1 introduces the resolver that sets this,
+        // and makes the field REQUIRED in the same change — at that point an
+        // unset field is a bug, and a default would hide it.
         source: this.config.credentialSource ?? 'byo',
         estimated: usage.source === 'estimate',
         taskId: this.taskId,
@@ -2410,6 +2475,34 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  /**
+   * Which FEATURE this instance's calls belong to — `Task.type`, the
+   * vocabulary the app already uses (bulkTranslation, aiGeneration,
+   * seoBulkMeta, bulkEditorTranslate, …), or `ADHOC_FEATURE` for an
+   * interactive call that has no task.
+   *
+   * Read ONCE per instance, not per call: one AIService is one task, and a
+   * bulk run makes hundreds of calls. Memoised on the instance exactly like
+   * `glossaryRulesPromise`, and a failed lookup answers `adhoc` rather than
+   * throwing — the dimension is worth having and never worth a failed save.
+   */
+  private resolveFeature(): Promise<string> {
+    if (!this.taskId) return Promise.resolve(ADHOC_FEATURE);
+    if (!this.featurePromise) {
+      const taskId = this.taskId;
+      this.featurePromise = (async () => {
+        try {
+          const { db } = await import('../../app/db.server');
+          const row = await db.task.findUnique({ where: { id: taskId }, select: { type: true } });
+          return row?.type || ADHOC_FEATURE;
+        } catch {
+          return ADHOC_FEATURE;
+        }
+      })();
+    }
+    return this.featurePromise;
   }
 
   /**
@@ -2440,11 +2533,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return Math.ceil(text.length / 3);
   }
 
-  /** Build usage from an SDK that reported it, or fall back to an estimate. */
+  /**
+   * Build usage from an SDK that reported it, or fall back to an estimate.
+   *
+   * `imageCount` is not decoration: an image is ~1,100-1,300 input tokens the
+   * prompt string knows nothing about, so without it the estimate on a vision
+   * call came out at roughly a tenth of the truth while wearing the label
+   * "rounds up". A PARTIAL report (one number present, the other not) falls
+   * back wholesale rather than mixing a measurement with a guess.
+   */
   private usageOf(
     prompt: string,
     output: string,
     reported: { input?: number | null; output?: number | null } | null,
+    imageCount = 0,
   ): AiCallUsage {
     const model = this.getModel();
     const input = reported?.input;
@@ -2453,14 +2555,26 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       return { inputTokens: input, outputTokens: out, model, source: 'provider' };
     }
     return {
-      inputTokens: AIService.estimateTokensFor(prompt),
+      inputTokens:
+        AIService.estimateTokensFor(prompt) + imageCount * ESTIMATED_TOKENS_PER_IMAGE,
       outputTokens: AIService.estimateTokensFor(output),
       model,
       source: 'estimate',
     };
   }
 
-  private async _executeAIRequestInner(prompt: string, imageUrls?: string[]): Promise<AiCallResult> {
+  /**
+   * One provider call. Returns the text; reports what it COST through
+   * `onUsage`, which is called the moment the provider's response object is in
+   * hand — before every guard below that can reject that answer, and once per
+   * provider call rather than once per invocation (Gemini's vision fallback
+   * makes two). See `AiUsageSink` for why those are different events.
+   */
+  private async _executeAIRequestInner(
+    prompt: string,
+    imageUrls: string[] | undefined,
+    onUsage: AiUsageSink,
+  ): Promise<string> {
     // One local truth for "is this a vision call": every provider branch below
     // asks the same question, and a branch that asked it differently is how a
     // text-only provider would end up with an image in its payload.
@@ -2485,6 +2599,24 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       loggers.ai('warn', '[AI-SERVICE] Dropped image URL(s) the model cannot be given', { dropped });
     }
     const hasImages = images.length > 0;
+    /** One OpenAI-shaped answer: report first, then judge it. */
+    const reportChat = (
+      completion: { usage?: { prompt_tokens?: number; completion_tokens?: number } | null },
+      text: string,
+    ) => {
+      onUsage(
+        this.usageOf(
+          prompt,
+          text,
+          {
+            input: completion.usage?.prompt_tokens,
+            output: completion.usage?.completion_tokens,
+          },
+          images.length,
+        ),
+      );
+    };
+
     if (this.provider === 'huggingface' && this.huggingface) {
       // HuggingFace: text-only (no vision support)
       const response = await this.huggingface.chatCompletion({
@@ -2493,25 +2625,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         temperature: 0.7,
       });
-      if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
-      const hfContent = response.choices[0].message.content;
-      if (!hfContent || !hfContent.trim()) throw new Error('HuggingFace returned empty content');
       // HuggingFace's chat-completion output declares `usage`, but whether a
       // routed provider fills it is a runtime question — absent is the
       // estimate case, never zero.
-      return {
-        text: hfContent,
-        usage: this.usageOf(prompt, hfContent, {
-          input: response.usage?.prompt_tokens,
-          output: response.usage?.completion_tokens,
-        }),
-      };
+      const hfContent = response.choices[0]?.message?.content ?? '';
+      reportChat(response, hfContent);
+      if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
+      if (!hfContent.trim()) throw new Error('HuggingFace returned empty content');
+      return hfContent;
     } else if (this.provider === 'gemini' && this.gemini) {
       // Gemini: supports vision with URL
-      // Carries the vision attempt's usage into the fallback below, which is
-      // the one place in this function where two provider calls are billed for
-      // one invocation.
-      let visionUsage: { input?: number | null; output?: number | null } | null = null;
       if (hasImages) {
         try {
           // Gemini takes the BYTES, so every image is a download inside this
@@ -2527,174 +2650,141 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             ...encoded.map((data) => ({ inlineData: { mimeType: 'image/jpeg', data } })),
           ]);
           const response = await result.response;
-          const geminiText = response.text();
-          visionUsage = AIService.geminiUsage(response);
-          if (!geminiText || !geminiText.trim()) throw new Error('Gemini returned empty response');
-          return {
-            text: geminiText,
-            usage: this.usageOf(prompt, geminiText, visionUsage),
-          };
+          // The usage is read BEFORE `response.text()`, which THROWS when the
+          // candidate was blocked for safety or carries no text part — a
+          // response Google has still billed for its input, images included.
+          // Reading it after cost us exactly that call, every time.
+          const visionReported = AIService.geminiUsage(response);
+          let geminiText = '';
+          try {
+            geminiText = response.text();
+          } finally {
+            onUsage(this.usageOf(prompt, geminiText, visionReported, images.length));
+          }
+          if (!geminiText.trim()) throw new Error('Gemini returned empty response');
+          return geminiText;
         } catch (error) {
           if (AIService.isInputTooLongError(error)) throw error;
           loggers.ai('warn', '[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
-          // Fallback to text-only
+          // Fallback to text-only. This is the one branch in the app that
+          // makes TWO provider calls in one invocation — and they are reported
+          // as two, not summed: a sum would count one call, which is exactly
+          // the per-call average Phase 0 exists to measure.
           const result = await this.gemini.generateContent(prompt);
           const response = await result.response;
-          const geminiTextFallback = response.text();
-          if (!geminiTextFallback || !geminiTextFallback.trim()) throw new Error('Gemini returned empty response');
-          // TWO provider calls happened inside this one invocation, and the
-          // first one was billed if it got far enough to answer. Its usage is
-          // ADDED rather than replaced: dropping it is spend the meter never
-          // sees, and this is the only branch in the app that can bill twice.
-          const fallbackUsage = this.usageOf(prompt, geminiTextFallback, AIService.geminiUsage(response));
-          return {
-            text: geminiTextFallback,
-            usage: visionUsage
-              ? {
-                  ...fallbackUsage,
-                  inputTokens: fallbackUsage.inputTokens + (visionUsage.input ?? 0),
-                  outputTokens: fallbackUsage.outputTokens + (visionUsage.output ?? 0),
-                }
-              : fallbackUsage,
-          };
+          const fallbackReported = AIService.geminiUsage(response);
+          let geminiTextFallback = '';
+          try {
+            geminiTextFallback = response.text();
+          } finally {
+            onUsage(this.usageOf(prompt, geminiTextFallback, fallbackReported));
+          }
+          if (!geminiTextFallback.trim()) throw new Error('Gemini returned empty response');
+          return geminiTextFallback;
         }
       } else {
         const result = await this.gemini.generateContent(prompt);
         const response = await result.response;
-        const geminiTextOnly = response.text();
-        if (!geminiTextOnly || !geminiTextOnly.trim()) throw new Error('Gemini returned empty response');
-        return {
-          text: geminiTextOnly,
-          usage: this.usageOf(prompt, geminiTextOnly, AIService.geminiUsage(response)),
-        };
+        const reported = AIService.geminiUsage(response);
+        let geminiTextOnly = '';
+        try {
+          geminiTextOnly = response.text();
+        } finally {
+          onUsage(this.usageOf(prompt, geminiTextOnly, reported));
+        }
+        if (!geminiTextOnly.trim()) throw new Error('Gemini returned empty response');
+        return geminiTextOnly;
       }
     } else if (this.provider === 'claude' && this.anthropic) {
       // Claude: supports vision with URL
-      if (hasImages) {
-        const message = await this.anthropic.messages.create({
-          model: this.getModel(),
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          messages: [{
-            role: 'user',
-            content: [
-              // Images FIRST, then the prompt — the order every branch here
-              // uses, and the one Anthropic documents for multi-image prompts.
-              ...images.map((url) => ({ type: 'image' as const, source: { type: 'url' as const, url } })),
-              { type: 'text', text: prompt },
-            ],
-          }],
-        });
-        const textBlock = message.content.find((b) => b.type === 'text');
-        if (!textBlock) throw new Error('Claude returned no text block');
-        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
-        return {
-          text: textBlock.text,
-          usage: this.usageOf(prompt, textBlock.text, {
-            input: message.usage?.input_tokens,
-            output: message.usage?.output_tokens,
-          }),
-        };
-      } else {
-        const message = await this.anthropic.messages.create({
-          model: this.getModel(),
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          messages: [{ role: 'user', content: prompt }],
-        });
-        const textBlock = message.content.find((b) => b.type === 'text');
-        if (!textBlock) throw new Error('Claude returned no text block');
-        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
-        return {
-          text: textBlock.text,
-          usage: this.usageOf(prompt, textBlock.text, {
-            input: message.usage?.input_tokens,
-            output: message.usage?.output_tokens,
-          }),
-        };
-      }
+      const message = hasImages
+        ? await this.anthropic.messages.create({
+            model: this.getModel(),
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            messages: [{
+              role: 'user',
+              content: [
+                // Images FIRST, then the prompt — the order every branch here
+                // uses, and the one Anthropic documents for multi-image prompts.
+                ...images.map((url) => ({ type: 'image' as const, source: { type: 'url' as const, url } })),
+                { type: 'text', text: prompt },
+              ],
+            }],
+          })
+        : await this.anthropic.messages.create({
+            model: this.getModel(),
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            messages: [{ role: 'user', content: prompt }],
+          });
+      const textBlock = message.content.find((b) => b.type === 'text');
+      const claudeText = textBlock?.text ?? '';
+      // `input_tokens` deliberately EXCLUDES cache_creation/cache_read tokens.
+      // This app uses no prompt caching; adopting it means adding them here or
+      // silently under-counting.
+      onUsage(
+        this.usageOf(
+          prompt,
+          claudeText,
+          { input: message.usage?.input_tokens, output: message.usage?.output_tokens },
+          images.length,
+        ),
+      );
+      if (!textBlock) throw new Error('Claude returned no text block');
+      if (!claudeText.trim()) throw new Error('Claude returned empty text');
+      return claudeText;
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL
-      if (hasImages) {
-        const completion = await this.openai.chat.completions.create({
-          model: this.getModel(),
-          messages: [{
-            role: 'user',
-            content: [
-              ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
-              { type: 'text' as const, text: prompt },
-            ],
-          }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-        });
-        if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
-        const openaiVisionContent = completion.choices[0].message.content;
-        if (!openaiVisionContent || !openaiVisionContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return {
-          text: openaiVisionContent,
-          usage: this.usageOf(prompt, openaiVisionContent, {
-            input: completion.usage?.prompt_tokens,
-            output: completion.usage?.completion_tokens,
-          }),
-        };
-      } else {
-        const completion = await this.openai.chat.completions.create({
-          model: this.getModel(),
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-        });
-        if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
-        const openaiContent = completion.choices[0].message.content;
-        if (!openaiContent || !openaiContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return {
-          text: openaiContent,
-          usage: this.usageOf(prompt, openaiContent, {
-            input: completion.usage?.prompt_tokens,
-            output: completion.usage?.completion_tokens,
-          }),
-        };
-      }
+      const completion = hasImages
+        ? await this.openai.chat.completions.create({
+            model: this.getModel(),
+            messages: [{
+              role: 'user',
+              content: [
+                ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+                { type: 'text' as const, text: prompt },
+              ],
+            }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+          })
+        : await this.openai.chat.completions.create({
+            model: this.getModel(),
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+          });
+      const openaiContent = completion.choices[0]?.message?.content ?? '';
+      reportChat(completion, openaiContent);
+      if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
+      // A `finish_reason: length` truncation answers with empty content after
+      // generating the FULL output allowance — the single most expensive call
+      // shape there is, which is why the report above happens first.
+      if (!openaiContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+      return openaiContent;
     } else if (this.provider === 'grok' && this.grok) {
       // Grok: supports vision with URL (similar to GPT-4o)
-      if (hasImages) {
-        const completion = await this.grok.chat.completions.create({
-          model: this.getModel(),
-          messages: [{
-            role: 'user',
-            content: [
-              ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
-              { type: 'text' as const, text: prompt },
-            ],
-          }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          temperature: 0.7,
-        });
-        if (!completion.choices[0]) throw new Error('Grok returned empty response');
-        const grokVisionContent = completion.choices[0].message.content;
-        if (!grokVisionContent || !grokVisionContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return {
-          text: grokVisionContent,
-          usage: this.usageOf(prompt, grokVisionContent, {
-            input: completion.usage?.prompt_tokens,
-            output: completion.usage?.completion_tokens,
-          }),
-        };
-      } else {
-        const completion = await this.grok.chat.completions.create({
-          model: this.getModel(),
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          temperature: 0.7,
-        });
-        if (!completion.choices[0]) throw new Error('Grok returned empty response');
-        const grokContent = completion.choices[0].message.content;
-        if (!grokContent || !grokContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return {
-          text: grokContent,
-          usage: this.usageOf(prompt, grokContent, {
-            input: completion.usage?.prompt_tokens,
-            output: completion.usage?.completion_tokens,
-          }),
-        };
-      }
+      const completion = hasImages
+        ? await this.grok.chat.completions.create({
+            model: this.getModel(),
+            messages: [{
+              role: 'user',
+              content: [
+                ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+                { type: 'text' as const, text: prompt },
+              ],
+            }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            temperature: 0.7,
+          })
+        : await this.grok.chat.completions.create({
+            model: this.getModel(),
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            temperature: 0.7,
+          });
+      const grokContent = completion.choices[0]?.message?.content ?? '';
+      reportChat(completion, grokContent);
+      if (!completion.choices[0]) throw new Error('Grok returned empty response');
+      if (!grokContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+      return grokContent;
     } else if (this.provider === 'deepseek' && this.deepseek) {
       // DeepSeek: text-only (no vision support)
       const completion = await this.deepseek.chat.completions.create({
@@ -2703,16 +2793,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         temperature: 0.7,
       });
+      const deepseekContent = completion.choices[0]?.message?.content ?? '';
+      reportChat(completion, deepseekContent);
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');
-      const deepseekContent = completion.choices[0].message.content;
-      if (!deepseekContent || !deepseekContent.trim()) throw new Error(`DeepSeek returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-      return {
-        text: deepseekContent,
-        usage: this.usageOf(prompt, deepseekContent, {
-          input: completion.usage?.prompt_tokens,
-          output: completion.usage?.completion_tokens,
-        }),
-      };
+      if (!deepseekContent.trim()) throw new Error(`DeepSeek returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+      return deepseekContent;
     }
 
     throw new Error('No AI provider configured');

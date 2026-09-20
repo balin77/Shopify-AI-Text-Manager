@@ -419,90 +419,136 @@ can never happen" sitting on top of the code that does it.
 
 ---
 
-## 4. Phase 0 — the meter (ships first, alone, and is useful without any of the rest)
+## 4. Phase 0 — the meter (SHIPPED 2026-09-20)
 
 Nothing about pricing can be decided honestly until the app knows what one
-operation actually costs. It does not know today: `estimateTokens` exists for
-the rate limiter and over-counts output by roughly 10×, and the real `usage`
-objects the SDKs return are discarded.
+operation actually costs. It did not: `estimateTokens` exists for the rate
+limiter and charges a flat 8192 output tokens per call, and the real `usage`
+objects the SDKs return were discarded.
 
-**4.1 Capture real usage at the one chokepoint.** `_executeAIRequestInner`
-returns `{ text, usage }` instead of `string`, and the CHARGE is taken in
-`executeAIRequest` — deliberately not in `askAI`, which `replayRequest` skips
-(§1). Two shapes need care rather than a table row:
+Shipped as described below, with the corrections review forced. Every number
+in §7 stays provisional until this has run 2–4 weeks.
 
-- **Gemini reads `usageMetadata` at THREE sites**, because the branch obtains
-  its `response` three times (vision, vision-fallback, text-only), and the
-  vision fallback makes **two provider calls inside one invocation**. A single
-  `{text, usage}` cannot express two billed calls — the failed first one has to
-  be added, or it is spend the meter never sees.
-- **HuggingFace** declares `usage` on its chat-completion output too, so the
-  gap is not the SDK but whether the routed provider fills it. Treat a missing
-  field as the estimate case, never as zero.
+**4.1 Capture real usage, and charge where a provider ANSWERS.**
+`_executeAIRequestInner` takes an `onUsage` SINK and reports the moment a
+response object is in hand — deliberately not through its return value, and
+deliberately not in `askAI`, which `replayRequest` skips (§1). The sink is the
+correction: a call that SUCCEEDS and a provider that ANSWERED are different
+events, and three shapes only the first framing can express are all money.
+
+- **Sixteen guards reject an answer we have already paid for** (`returned
+  empty content`, `no text block`, a `finish_reason: length` truncation, a
+  content refusal). Reporting cost through the return value metered every one
+  of them at ZERO — and the truncation case generated the full `max_tokens`
+  allowance, i.e. the under-count was biased towards the most expensive call
+  shape there is.
+- **Gemini's vision fallback makes TWO provider calls in one invocation.** One
+  return value could only add them up and call it one call, which inflates the
+  per-call average this whole phase exists to measure. Two reports, two rows.
+  Its usage is also read BEFORE `response.text()`, which THROWS on a
+  safety-blocked candidate Google has still billed for its input and images.
+- **A call that loses the 120 s timeout race is charged at its WORST CASE**
+  (prompt estimate in, `max_tokens` out, flagged estimated). `Promise.race`
+  does not cancel the loser: the provider finishes and bills us.
+
+Nothing is charged for a call that never reached a provider. A stated residual:
+the SDKs retry internally (`AI_SDK_MAX_RETRIES`), so one logical call can be up
+to three HTTP attempts — a failed attempt generates no tokens and is normally
+not billed, which is why this is named rather than corrected.
 
 | Provider | Field |
 |---|---|
-| Anthropic | `message.usage.input_tokens` / `output_tokens` |
+| Anthropic | `message.usage.input_tokens` / `output_tokens` (EXCLUDES cache tokens — adopting prompt caching means adding them) |
 | OpenAI, Grok, DeepSeek | `completion.usage.prompt_tokens` / `completion_tokens` |
-| Gemini | `response.usageMetadata.promptTokenCount` / `candidatesTokenCount` |
+| Gemini | `response.usageMetadata.promptTokenCount` / `candidatesTokenCount` (EXCLUDES `thoughtsTokenCount` on thinking models) |
 | HuggingFace | `response.usage` when present, else estimate |
 | (any branch) | absent or partial → estimate, flagged |
 
-`usage.source` is `"provider"` or `"estimate"`. **An estimate rounds UP** — it
-is the direction that costs us money if it errs, the same rule
-`estimateCalls` follows in the bulk editor. A missing usage object is never
-read as zero: a call that reported nothing still counts, at its estimate, and
-the estimate share is stored so "the meter says €2 but the invoice says €3" is
-diagnosable instead of mysterious.
+`usage.source` is `"provider"` or `"estimate"`. **An estimate rounds UP** —
+`chars/3`, below the Latin-script average, plus a flat allowance per IMAGE:
+an image is ~1,100–1,300 input tokens the prompt string knows nothing about,
+so counting characters alone made the estimate err ~90 % CHEAP on exactly the
+vision calls most likely to need it. A missing usage object is never read as
+zero.
 
 **4.2 One price table, one module.** `app/config/ai-pricing.ts`:
-`MODEL_PRICING: Record<provider, Record<modelId, {inMicrosPerMToken,
-outMicrosPerMToken}>>` in **micro-euro** integers — which means a
-`USD_PER_EUR` constant exists whether or not anyone names it, since every
-provider lists in USD. It is named, dated and owned here, beside the prices,
-and it carries the same monthly re-check: a table computed at 1.08 understates
-the euro cost by ~14 % if the rate moves to 0.95, which is more than half of
-what the §7 buffer is supposed to absorb (no floats — this is money,
-and the `Task`/logger paths JSON-stringify their values, where a `BigInt`
-throws; Int µ€ tops out at €2,147 per counter row, far past any monthly shop
-total, and is clamped with a warning rather than wrapped). A model the table
-does not know is priced at the **most expensive** entry of its provider and
-logged — an unknown price must never read as free.
+`MODEL_PRICING` in **micro-euro** integers, with a `USD_PER_EUR` constant that
+is named, dated and re-checked with the prices (a table computed at 1.08
+understates the euro cost by ~14 % if the rate moves to 0.95). No floats, and
+no BigInt in this module — it is imported by client-safe code and its values
+travel through `JSON.stringify`.
 
-**4.3 Ledger.**
+**An unknown model is priced at `UNKNOWN_MODEL_PRICE`, a STATED per-provider
+ceiling — not at the table's own maximum.** That distinction is the review
+finding, not a nuance: deriving the ceiling from the table makes it a ceiling
+only if the table already holds the provider's dearest model, which it does
+not and is not meant to. `claude-opus-4-0-20250514` is in this app's own picker
+at $15/$75 while the dearest Claude entry was $5/$25, so such a merchant was
+metered at a THIRD of what they spent, under a log line saying they had been
+"priced at the ceiling"; `api.ai-models.tsx` fetches each provider's list live,
+so an unknown id is ordinary. A test fails the build if any table entry exceeds
+its provider's ceiling on either dimension, and a second one requires every
+CURATED and DEFAULT model to be priced outright — a ceiling is a bound for a
+model nobody predicted, and a model in our own dropdown is predicted.
+
+**4.3 Ledger.** The KEY is the design, and the first cut got it wrong in a way
+that made the phase pointless: `(shop, period, source)` alone is one row per
+shop per month, blending every feature, provider and model into an average that
+describes none of them — while the only store carrying the feature dimension,
+`Task`, is deleted after 3 days.
 
 ```prisma
 model AiUsageCounter {
-  id             String   @id @default(cuid())
-  shop           String
-  period         String   // the SUBSCRIPTION's billing period (§7 rule 3), or "taster"
-  source         String   // "managed" | "byo"
-  calls          Int      @default(0)
-  estimatedCalls Int      @default(0)  // calls whose usage was estimated
-  failoverCalls  Int      @default(0)  // calls served by the fallback provider
-  inputTokens    Int      @default(0)
-  outputTokens   Int      @default(0)
-  costMicros     Int      @default(0)  // micro-EUR we really paid (priced per model)
-  billedMicros   Int      @default(0)  // micro-EUR charged to the merchant's budget
-  updatedAt      DateTime @updatedAt
-  @@unique([shop, period, source])
-  @@index([shop])
+  id            String   @id @default(cuid())
+  shop          String
+  period        String   // "m:YYYY-MM" (UTC); §7 rule 3's billing key is "b:<start>"
+  source        String   // "managed" | "byo"
+  provider      String
+  model         String   // what actually ran
+  feature       String   // Task.type, or "adhoc"
+  estimated     Boolean  // reported by the provider, or counted by us
+  calls         Int      @default(0)
+  failoverCalls Int      @default(0)
+  inputTokens   BigInt   @default(0)
+  outputTokens  BigInt   @default(0)
+  costMicros    BigInt   @default(0)  // micro-EUR we really paid
+  billedMicros  BigInt   @default(0)  // micro-EUR charged to the merchant's budget
+  updatedAt     DateTime @updatedAt
+  @@unique([shop, period, source, provider, model, feature, estimated])
+  @@index([shop, period])
 }
 ```
+
+Four things in there are decisions:
+
+- **`estimated` is a KEY column, not a counter.** §7's table stands on a
+  MEASURED average call, and an average that mixes a provider's own count with
+  our character estimate is not a measurement. Summed in one row it could
+  never be cleaned apart again.
+- **"Priced at the ceiling" and "unpriced" need no columns**: with `provider`
+  and `model` in the key they are derivable at read time from the price table.
+- **The volume columns are BIGINT.** Int32 holds 2.1e9 TOKENS — about €99 of
+  input spend on the pinned managed default, nowhere near the €2,147 the first
+  draft reasoned about — and Postgres RAISES on overflow rather than clamping,
+  so an INTEGER column would have stopped a busy shop's whole row mid-period,
+  silently, including the column enforcement reads. No BigInt leaves the meter:
+  `getAiUsage` converts at the boundary.
+- **The `m:` prefix** is what lets §7 rule 3 replace the period key later
+  without the table holding two meanings in one column.
 
 `costMicros` and `billedMicros` are equal except during a failover, where the
 merchant is charged at the default model's price and we carry the rest (§3a
 rules 1–2). The quota reads `billedMicros`; the margin guard reads
-`costMicros`; the difference, summed, is what the failover cost us and is the
-number the global failover budget (§3a rule 3) is measured against.
+`costMicros`; the difference, summed, is what failover cost us.
 
-Plus three columns on `Task` (`inputTokens`, `outputTokens`, `costMicros`), so
-the Tasks tab can answer "what did that bulk run cost" per run — `Task` already
-carries `provider` and `aiModel` and expires after 3 days, so this is the
-cheapest possible per-run record.
+Plus three columns on `Task` (`inputTokens`, `outputTokens`, `costMicros`) for
+"what did that run cost". They stay Int32 — the Tasks routes JSON-serialise
+these rows — and they are written in their OWN try, so a giant run that
+overflows them cannot take the durable ledger write down with it. A 0 there
+means "nothing recorded", bounded by the row's 3-day `expiresAt`.
 
-`AiUsageCounter` is shop-scoped, so **`redactShopData` must purge it** — the
-GDPR schema-coverage guard fails otherwise, by design.
+`AiUsageCounter` is shop-scoped, so `redactShopData` purges it — the GDPR
+schema-coverage guard fails otherwise, by design.
 
 **4.4 BYO is metered too.** Same table, `source: "byo"`, no cap. Three payoffs:
 it is the measurement this plan's numbers come from; it gives BYO merchants the
@@ -510,6 +556,20 @@ it is the measurement this plan's numbers come from; it gives BYO merchants the
 [AI_PROVIDER_BALANCE_FEASIBILITY.md](../reference/AI_PROVIDER_BALANCE_FEASIBILITY.md)
 concluded no provider can give uniformly; and it makes the managed/BYO
 break-even visible to the merchant deciding between them.
+
+**4.5 Something has to ASK it.** `npm run ai:usage [period] [shop]` prints the
+per-(feature, model) average and cost, MEASURED and ESTIMATED apart, plus the
+estimated share — the first thing to check when the meter and an invoice
+disagree. A script rather than a route, because it reports across every shop.
+The merchant-facing view is §8.
+
+**4.6 An `AIService` with no `shop` is not metered**, and that is a coverage
+rule rather than a guard: `theme-content-api.server.ts` built one without a
+shop, so `generateAIText`, `translateField` and `translateAll` — the last
+fanning out into dozens of calls — were invisible to the meter across twelve
+theme routes. It now passes the shop. Any new construction site must, or its
+spend is indistinguishable in the ledger from a shop that never used the
+feature.
 
 ---
 
@@ -1224,8 +1284,8 @@ AI-included price of your tier.
 
 ## 11. Sequencing
 
-- **Phase 0 — measure, decide nothing.** Ship §4 (the meter) alone, behind no
-  flag, metering BYO traffic. After 2–4 weeks the app knows its real cost per
+- **Phase 0 — measure, decide nothing. SHIPPED 2026-09-20.** §4 (the meter)
+  alone, behind no flag, metering BYO traffic. After 2–4 weeks the app knows its real cost per
   operation per feature. In parallel, the quality bake-off of §3 on the app's
   own prompts. *Every number in §7 is provisional until this lands* — the table
   is built so replacing one measured average updates it mechanically.
@@ -1260,7 +1320,8 @@ review pass before it is called done.
 | Test | Guards |
 |---|---|
 | `managed-ai-margin.test.ts` | budget × buffer ≤ surcharge share, per plan — §7 — AND `taster ≤ 0.25 × smallest paid budget` (§10 ladder rule) |
-| `ai-usage-meter.test.ts` | each SDK's usage shape parses; a missing usage object estimates UP and flags `estimatedCalls` |
+| `ai-usage-meter.test.ts` | the ledger key keeps its dimensions; an estimate is a SEPARATE row; the ceiling is a stated price and no table entry exceeds it; every CURATED and DEFAULT model is priced outright; the two writes report independently — **shipped** |
+| `ai-meter-charge-point.test.ts` | each SDK's real usage shape parses (fake clients, not a stubbed inner call); a provider that ANSWERED is charged although we reject the answer; Gemini's fallback bills TWO calls; a timed-out call is charged at its worst case; a call that never reached a provider is charged nothing — **shipped** |
 | `ai-usage-overshoot.test.ts` | NOT "cannot overbook" — a bare `increment` never can, and unlike `consumeImageOperations` the cost is unknown up front, so the reserve-before predicate does not apply. It pins the §6 bound instead: N concurrent resolvers seeing `remaining > 0` start at most `concurrency` calls, and the settled counter equals the sum of the real costs |
 | `ai-failover.test.ts` | the trigger matrix of §3a rule 4: 5xx/timeout/connection/model-not-found/our-401 fail over; input-too-long, content refusal and a malformed 400 do NOT; a 429 only after the queue's retries. Plus the breaker: N failures trip it, one probe recovers it, and a tripped breaker does not re-test per call |
 | `ai-failover-billing.test.ts` | a fallback call debits `billedMicros` at the DEFAULT model's price and `costMicros` at the fallback's — the rule that keeps an outage off the merchant's bill |

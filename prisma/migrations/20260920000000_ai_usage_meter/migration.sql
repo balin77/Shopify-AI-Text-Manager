@@ -11,41 +11,46 @@
 
 -- 1. The durable per-shop ledger.
 --
--- `source` splits a shop's own key ("byo") from the operator's ("managed").
--- BYO is metered too, deliberately and with no cap: it is where this app's
--- price numbers come from, and it is the "what is this costing me" answer no
--- provider API gives uniformly.
+-- The KEY is the design. Everything the cost of a call depends on is IN it:
+-- whose key paid ("byo" / "managed"), the provider and model (which also make
+-- "priced at the unknown-model ceiling" and "not priced at all" derivable at
+-- read time, so no column has to say so), the FEATURE (Task.type, or "adhoc"),
+-- and whether the token counts were REPORTED or estimated — the last one as a
+-- key column rather than a counter, so the measured average can be computed
+-- without the estimates mixed into it.
 --
 -- `costMicros` is what we pay the provider, `billedMicros` what is charged
--- against the merchant's budget. They are equal today and diverge only during
--- a failover, where the merchant is billed at the default model's price.
+-- against the merchant's budget. Equal today; they diverge on a failover.
 --
--- `estimatedCalls` is the honesty column: a call whose provider reported no
--- usage object is counted at an estimate, never at zero.
---
--- Money is integer micro-EUR. Int32 tops out at ~EUR 2,147 per row, far past
--- any monthly shop total; the writer clamps rather than wrapping.
+-- The volume columns are BIGINT. Int32 holds 2.1e9 tokens, which is about
+-- EUR 99 of input spend on the pinned managed default — and Postgres RAISES on
+-- an integer overflow rather than clamping, so an INTEGER column here would
+-- simply stop advancing mid-period, silently, including the column enforcement
+-- reads.
 CREATE TABLE "AiUsageCounter" (
     "id" TEXT NOT NULL,
     "shop" TEXT NOT NULL,
     "period" TEXT NOT NULL,
     "source" TEXT NOT NULL,
+    "provider" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "feature" TEXT NOT NULL,
+    "estimated" BOOLEAN NOT NULL,
     "calls" INTEGER NOT NULL DEFAULT 0,
-    "estimatedCalls" INTEGER NOT NULL DEFAULT 0,
     "failoverCalls" INTEGER NOT NULL DEFAULT 0,
-    "inputTokens" INTEGER NOT NULL DEFAULT 0,
-    "outputTokens" INTEGER NOT NULL DEFAULT 0,
-    "costMicros" INTEGER NOT NULL DEFAULT 0,
-    "billedMicros" INTEGER NOT NULL DEFAULT 0,
+    "inputTokens" BIGINT NOT NULL DEFAULT 0,
+    "outputTokens" BIGINT NOT NULL DEFAULT 0,
+    "costMicros" BIGINT NOT NULL DEFAULT 0,
+    "billedMicros" BIGINT NOT NULL DEFAULT 0,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "AiUsageCounter_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "AiUsageCounter_shop_period_source_key"
-  ON "AiUsageCounter"("shop", "period", "source");
+CREATE UNIQUE INDEX "AiUsageCounter_shop_period_source_provider_model_feature_es_key"
+  ON "AiUsageCounter"("shop", "period", "source", "provider", "model", "feature", "estimated");
 
-CREATE INDEX "AiUsageCounter_shop_idx" ON "AiUsageCounter"("shop");
+CREATE INDEX "AiUsageCounter_shop_period_idx" ON "AiUsageCounter"("shop", "period");
 
 -- 2. The per-RUN record, on Task.
 --
