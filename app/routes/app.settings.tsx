@@ -1279,8 +1279,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
-          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
-          seoTitleSuffix: data.seoTitleSuffix || null,
+          // seoTitleSuffix(Enabled) are NOT written here: they belong to
+          // `saveSeoSettings`, and this branch is posted by the AI tab, whose
+          // payload does not carry them. Zod then filled the gap with its own
+          // defaults — `?? false` and `|| null` — so every save in the AI tab
+          // silently cleared a suffix the merchant had configured in the SEO
+          // tab. Same failure the `saveAppLanguage` branch above was narrowed
+          // to fix ("fields not in the payload got wiped"); a field is written
+          // by the action that owns it, or not at all.
         },
         create: {
           shop: session.shop,
@@ -1305,8 +1311,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
-          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
-          seoTitleSuffix: data.seoTitleSuffix || null,
+          // seoTitleSuffix(Enabled) are NOT written here: they belong to
+          // `saveSeoSettings`, and this branch is posted by the AI tab, whose
+          // payload does not carry them. Zod then filled the gap with its own
+          // defaults — `?? false` and `|| null` — so every save in the AI tab
+          // silently cleared a suffix the merchant had configured in the SEO
+          // tab. Same failure the `saveAppLanguage` branch above was narrowed
+          // to fix ("fields not in the payload got wiped"); a field is written
+          // by the action that owns it, or not at all.
         },
       });
 

@@ -55,9 +55,6 @@ interface Settings {
   grokMaxRequestsPerMinute: number;
   deepseekMaxTokensPerMinute: number;
   deepseekMaxRequestsPerMinute: number;
-  // SEO fields are saved via SettingsSEOTab, but still included in full save payload
-  seoTitleSuffixEnabled?: boolean;
-  seoTitleSuffix?: string;
 }
 
 interface SettingsAITabProps {
