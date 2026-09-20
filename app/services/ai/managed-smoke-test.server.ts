@@ -25,7 +25,12 @@
  */
 
 import { logger } from "../../utils/logger.server";
-import { isManagedAiEnabled, readManagedCredential, type ManagedRole } from "./ai-credentials.server";
+import {
+  isManagedAiEnabled,
+  readManagedCredential,
+  PROVIDER_KEY_FIELD,
+  type ManagedRole,
+} from "./ai-credentials.server";
 
 export interface SmokeResult {
   role: ManagedRole;
@@ -57,8 +62,12 @@ async function probe(role: ManagedRole): Promise<SmokeResult | null> {
       selectedModel: cred.model,
       credentialSource: "managed",
     };
-    const keyField = `${cred.provider === "claude" ? "claude" : cred.provider}ApiKey`;
-    config[keyField] = cred.apiKey;
+    // The SAME map the resolver spends, not a second derivation of it. The
+    // local copy was a no-op ternary ("claude" -> "claude") that happened to
+    // agree today and would have gone quietly wrong the day a provider's
+    // column stops being `<provider>ApiKey` — in a probe whose whole job is
+    // to notice a misconfigured credential.
+    config[PROVIDER_KEY_FIELD[cred.provider]] = cred.apiKey;
 
     const service = new AIService(cred.provider, config as never);
     // No shop, so nothing is metered — which is correct: this call is ours,

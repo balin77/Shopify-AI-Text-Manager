@@ -58,8 +58,15 @@ import {
   type AiRefusalCode,
 } from "./managed-ai.shared";
 
-/** Which encrypted column holds which provider's merchant key. */
-const PROVIDER_KEY_FIELD: Record<AIProvider, keyof AISettings & string> = {
+/**
+ * Which config field (and encrypted column) holds which provider's key.
+ *
+ * Exported because the smoke test builds a config too and had grown its own
+ * derivation of this — a no-op ternary that agreed today and would have gone
+ * quietly wrong in the one probe whose job is to notice a misconfigured
+ * credential.
+ */
+export const PROVIDER_KEY_FIELD: Record<AIProvider, keyof AISettings & string> = {
   huggingface: "huggingfaceApiKey",
   gemini: "geminiApiKey",
   claude: "claudeApiKey",
@@ -549,9 +556,19 @@ function managedPreflight(
     const decision = resolveAiCredentials({ shop, settings });
     if (!decision.ok) return { ok: false, reason: decision.reason };
     if (decision.source !== "managed") {
-      // The shop moved off managed mid-run. Nothing to bound: the merchant's
-      // own key is not ours to cap.
-      return { ok: true };
+      // The shop moved off managed MID-RUN — cancelled, withdrew consent, or
+      // spent the last of its taster. This used to answer "nothing to bound,
+      // the merchant's own key is not ours to cap", which describes the wrong
+      // service: the one this gate is installed on is holding the OPERATOR's
+      // credential and will go on spending it for the rest of a bulk run.
+      // Refusing is the safe direction on both counts — the spend stops, and
+      // a detached repair treats a managed refusal as an ABORT (§6a rule 1)
+      // rather than as "the AI could not deliver", so nothing is deleted. The
+      // next run resolves to the merchant's own key by itself.
+      logger.warn(
+        `[ManagedAI] ${shop} left managed mode mid-run — standing the operator credential down.`,
+      );
+      return { ok: false, reason: "managedUnavailable" };
     }
 
     const { managedBudgetStatus } = await import("./managed-budget.server");

@@ -174,16 +174,32 @@ describe('the grant is spent once and never comes back', () => {
   });
 
   it('a shop that UPGRADES after spending its taster gets a fresh PERIOD budget', async () => {
-    // The ledger row under `taster` stays where it is; the paid budget is a
-    // different key, so buying the variant is not blocked by having tried it.
-    aggregate.mockResolvedValue({ _sum: { billedMicros: BigInt(0) } });
-    const status = await managedBudgetStatus(
+    // The point is the KEY separation, so the ledger has to be asked with a
+    // spent taster row really in it: answering zero for every period would
+    // pass whether or not the two keys were told apart.
+    aggregate.mockImplementation(async (args: { where: { period: string } }) => ({
+      _sum: {
+        billedMicros:
+          args.where.period === TASTER_PERIOD ? BigInt(managedTasterLimitMicros()) : BigInt(0),
+      },
+    }));
+
+    const spent = await managedBudgetStatus(shop, settingsFor(), 'free');
+    expect(spent.allowed).toBe(false);
+
+    const bought = await managedBudgetStatus(
       shop,
-      settingsFor({ managedAiActive: true, subscriptionPlan: 'basic' }),
+      settingsFor({
+        managedAiActive: true,
+        subscriptionPlan: 'basic',
+        managedAiPeriodEnd: new Date('2099-10-14T00:00:00Z'),
+      }),
       'basic',
     );
-    expect(status.kind).toBe('period');
-    expect(status.allowed).toBe(true);
+    expect(bought.kind).toBe('period');
+    expect(bought.period).toBe('b:2099-10-14');
+    expect(bought.usedMicros).toBe(0);
+    expect(bought.allowed).toBe(true);
   });
 });
 

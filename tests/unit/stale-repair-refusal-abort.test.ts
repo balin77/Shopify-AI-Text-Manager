@@ -20,6 +20,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { AI_REFUSAL_CODES, AI_REFUSAL_STATUS } from '~/services/ai/managed-ai.shared';
+import { taskErrorText } from '~/utils/task-error-text';
 import {
   ManagedAiRefusedError,
   isManagedRefusal,
@@ -30,17 +32,34 @@ import { join } from 'node:path';
 
 const REPAIR = join(__dirname, '..', '..', 'app/services/translations/stale-translation-sync.server.ts');
 
-const REASONS = [
-  'budgetExceeded',
-  'tasterExhausted',
-  'managedUnavailable',
-  'consentMissing',
-  'noKey',
-] as const;
+// EVERY refusal code, read from the source rather than listed here — a new
+// one must force a decision in this file instead of quietly inheriting
+// whatever the previous ones do. The equality assertion below is what makes
+// that true; a hand-kept copy would simply drift.
+const REASONS = AI_REFUSAL_CODES;
 
 describe('a managed refusal is recognisable', () => {
+  it('every refusal code this app can produce is covered here', () => {
+    // The `it.each` below is true for ANY string — `isManagedRefusal` keys on
+    // the class and the code and never on a reason list, which is exactly
+    // what makes it safe. So the assertion that has to bite is this one: a
+    // new code added to `AI_REFUSAL_CODES` must appear in the per-reason
+    // sweep, and in the HTTP and task-error maps the two tests after it read.
+    expect([...REASONS].sort()).toEqual(
+      ['budgetExceeded', 'consentMissing', 'managedUnavailable', 'noKey', 'tasterExhausted'].sort(),
+    );
+  });
+
   it.each(REASONS)('%s is identified as a refusal', (reason) => {
     expect(isManagedRefusal(new ManagedAiRefusedError(reason))).toBe(true);
+  });
+
+  it.each(REASONS)('%s has an HTTP status and a merchant sentence', (reason) => {
+    // Adding a code without either is how a refusal comes to answer
+    // `undefined` as its status and render an empty string at the merchant.
+    expect(AI_REFUSAL_STATUS[reason]).toBeGreaterThanOrEqual(400);
+    const text = taskErrorText(`managed_ai_refused:${reason}`, { tasks: { taskErrors: {} } });
+    expect(typeof text === 'string' && text.trim().length > 0, reason).toBe(true);
   });
 
   it('is recognised by CODE as well as by instance', () => {
