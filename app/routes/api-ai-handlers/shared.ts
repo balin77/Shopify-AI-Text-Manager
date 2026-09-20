@@ -242,6 +242,10 @@ export function noAiKeyResponse(
 const MANAGED_REFUSAL_FALLBACK = {
   managedAiBudgetExceeded:
     "The AI volume included in your plan is used up for this period.",
+  // §10 — the taster never resets, so it gets the sentence that names the two
+  // exits instead of the one that promises a reset.
+  managedAiTasterExhausted:
+    "Your free AI trial is used up. Add your own API key to continue for free, or choose an AI-included plan.",
   managedAiConsentMissing:
     "AI processing has not been confirmed for this shop. Confirm it in Settings and try again.",
   managedAiUnavailable: "The included AI is temporarily unavailable. Please try again shortly.",
@@ -273,15 +277,20 @@ export async function aiRefusalResponse(
       (settings?.subscriptionPlan ?? "free") as never
     );
     if (status.allowed) return null;
+    const taster = status.kind === "taster";
     return json(
       {
         success: false,
-        code: "AI_BUDGET_EXCEEDED",
-        error: say("managedAiBudgetExceeded"),
+        code: taster ? "AI_TASTER_EXHAUSTED" : "AI_BUDGET_EXCEEDED",
+        error: say(taster ? "managedAiTasterExhausted" : "managedAiBudgetExceeded"),
         usedMicros: status.usedMicros,
         limitMicros: status.limitMicros,
       },
-      { status: AI_REFUSAL_STATUS.budgetExceeded }
+      {
+        status: taster
+          ? AI_REFUSAL_STATUS.tasterExhausted
+          : AI_REFUSAL_STATUS.budgetExceeded,
+      }
     );
   }
 

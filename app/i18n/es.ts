@@ -1100,6 +1100,15 @@ export const es: Translation = {
       usageExhausted:
         "El volumen de IA de este periodo se ha agotado. Añade tu propia clave para continuar ahora, o espera al siguiente periodo.",
       usageEstimated: "Parte de esta cifra es una estimación.",
+      tasterHeading: "Prueba gratuita de IA",
+      tasterHint:
+        "Prueba la IA incluida con unas {actions} acciones de IA, una sola vez: sin clave de API y sin cambiar de plan. Tu propia clave sigue siendo gratuita e ilimitada.",
+      tasterUsed: "{percent}% de tu prueba gratuita usado",
+      tasterStarted: "Iniciada el {date}",
+      tasterWarning:
+        "Has usado el {percent}% de tu prueba gratuita de IA. Es única y no se renueva.",
+      tasterExhausted:
+        "Tu prueba gratuita de IA se ha agotado. Añade tu propia clave de API para seguir gratis, o elige un plan con IA incluida.",
       planButton: "Con IA incluida — {price}",
       planVolume: {
         basic: "Alcanza para unos 300–500 productos traducidos a un idioma por periodo.",
@@ -2049,6 +2058,8 @@ export const es: Translation = {
         "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
       managedAiBudgetExceeded:
         "El volumen de IA incluido en tu plan se ha agotado para este periodo. No se cambió nada: tus traducciones se mantienen tal cual.",
+      managedAiTasterExhausted:
+        "Tu prueba gratuita de IA se ha agotado: es una concesión única y no se renueva. No se cambió nada. Añade tu propia clave de API para seguir gratis, o elige un plan con IA incluida.",
       managedAiConsentMissing:
         "El procesamiento con IA no está confirmado para esta tienda, así que no se ejecutó ni se cambió nada. Confírmalo en Ajustes e inténtalo de nuevo.",
       managedAiUnavailable:

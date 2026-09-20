@@ -11,10 +11,15 @@
  *
  * Resolution order, and each step is a decision someone could get wrong:
  *
- *   1. The MODE comes from the verified subscription (`managedAiActive`,
- *      mirrored by `checkAndSyncSubscription`) AND the merchant's stored
- *      choice (`aiKeySource`) — never from a form field, never from the
- *      client. Same rule as `subscriptionPlan`.
+ *   1. The MODE is the merchant's stored choice (`aiKeySource`). Since §10's
+ *      taster it is that choice ALONE: a Free shop has no managed
+ *      subscription by definition, so gating the mode on the verified one put
+ *      the acquisition grant out of reach of the only population it is for.
+ *      The verified half (`managedAiActive`, mirrored by
+ *      `checkAndSyncSubscription` and settable by nobody else) moved down to
+ *      the only thing it ever protected — the SIZE of the budget, in
+ *      `periodBudgetMicros`. A shop that did not buy the variant gets the
+ *      taster, once, ever.
  *   2. A MERCHANT key wins whenever the merchant has one and asked for it.
  *      Managed mode does not delete BYO keys and BYO keys do not disable a
  *      managed subscription; the stored choice decides, which is what makes
@@ -33,7 +38,11 @@ import type { AIProvider } from "../../utils/api-key-validation";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import { logger } from "../../utils/logger.server";
 import { UNPRICED_PROVIDERS } from "../../config/ai-pricing";
-import { managedBudgetPeriod } from "./usage-meter.server";
+import {
+  managedPeriodKey,
+  managedPoolFor,
+} from "./managed-budget.server";
+import { tasterActionsFor, tasterBudgetMicros } from "../../config/managed-ai-budget";
 // §7a "belt and braces": the operator key must never be served from the
 // dev/custom-app build. IMPORTED rather than re-derived — the local copy read
 // `process.env.DEV_APP_CLIENT_ID`, which is not an environment variable
@@ -78,6 +87,7 @@ export type AiCredentialDecision =
   | { ok: false; reason: "noKey"; provider: AIProvider }
   | { ok: false; reason: "consentMissing" }
   | { ok: false; reason: "budgetExceeded"; usedMicros: number; limitMicros: number }
+  | { ok: false; reason: "tasterExhausted"; usedMicros: number; limitMicros: number }
   | { ok: false; reason: "managedUnavailable" };
 
 export type AiCredentialRefusal = Extract<AiCredentialDecision, { ok: false }>;
@@ -154,17 +164,23 @@ export function readManagedCredential(role: ManagedRole): ManagedCredential | nu
 }
 
 /** Put the operator key in the one config slot its provider reads. */
-function configFor(cred: ManagedCredential, settings: AISettings | null): AIServiceConfig {
+function configFor(
+  cred: ManagedCredential,
+  settings: AISettings | null,
+  shop: string,
+): AIServiceConfig {
+  const plan = (settings?.subscriptionPlan ?? "free") as BillingPlan;
   const config: AIServiceConfig = {
     selectedModel: cred.model,
     credentialSource: "managed",
     // The meter must WRITE under the key the budget is READ under. Written as
-    // a calendar month and read as a billing period, the used figure is
-    // always zero and the cap never fires.
-    usagePeriod: managedBudgetPeriod(settings?.managedAiPeriodEnd ?? null),
+    // a calendar month and read as a billing period — or as a billing period
+    // and read as the taster — the used figure is always zero and the cap
+    // never fires. `managedPeriodKey` is the ONE function both sides ask.
+    usagePeriod: managedPeriodKey(shop, settings, plan),
     // The meter must record against the pool the preflight checked, or the
     // cap is measured over a different number than it enforces.
-    usagePool: poolFor(settings),
+    usagePool: managedPoolFor(shop, settings, plan),
   };
   (config as Record<string, unknown>)[PROVIDER_KEY_FIELD[cred.provider] as string] = cred.apiKey;
   return config;
@@ -182,6 +198,35 @@ export function managedAiAvailable(): boolean {
     return false;
   }
   return readManagedCredential("default") !== null;
+}
+
+/**
+ * What the one-time taster (§10) is worth in this deployment, in micro-euro.
+ *
+ * DERIVED from the default credential's model, which is why it lives here: the
+ * grant is expressed in AI actions and enforced in money, and only this module
+ * is allowed to know which model those actions would run on. A deployment that
+ * serves no managed AI grants nothing — zero, so the budget check refuses
+ * rather than handing out an uncapped grant against a model it cannot price.
+ */
+export function managedTasterLimitMicros(): number {
+  if (!managedAiAvailable()) return 0;
+  const cred = readManagedCredential("default");
+  if (!cred) return 0;
+  return tasterBudgetMicros(cred.provider, cred.model);
+}
+
+/**
+ * The same grant expressed in AI ACTIONS — what the Settings card says, and
+ * the only half of it a merchant can reason about. It is `MANAGED_AI_TASTER_ACTIONS`
+ * at the default model and fewer at a dearer one, because the ladder ceiling
+ * shrinks the actions rather than bending (§10).
+ */
+export function managedTasterActions(): number {
+  if (!managedAiAvailable()) return 0;
+  const cred = readManagedCredential("default");
+  if (!cred) return 0;
+  return tasterActionsFor(cred.provider, cred.model);
 }
 
 // ─── The merchant credential ─────────────────────────────────────────────────
@@ -275,7 +320,7 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
     model: cred.model,
     role: roleCred ? role : "default",
     config: {
-      ...configFor(cred, settings),
+      ...configFor(cred, settings, args.shop),
       // §3a rule 8 — the seam the switch goes through. `ai.service.ts` never
       // reads `process.env`, so the second credential is handed over by the
       // one module that holds it, on demand and not before.
@@ -286,7 +331,7 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
         return {
           provider: fallback.provider,
           config: {
-            ...configFor(fallback, settings),
+            ...configFor(fallback, settings, args.shop),
             // Rule 1: the merchant's budget is debited at the DEFAULT model's
             // price whatever ran.
             defaultModelForBilling: cred.model,
@@ -438,8 +483,11 @@ function managedPreflight(
     const status = await managedBudgetStatus(shop, settings, plan);
     if (!status.allowed) {
       return {
+        // A spent TASTER is its own refusal (§10): it never resets, so the
+        // period sentence would send a free shop to wait for a reset that
+        // cannot come instead of to the two exits it really has.
         ok: false,
-        reason: "budgetExceeded",
+        reason: status.kind === "taster" ? "tasterExhausted" : "budgetExceeded",
         usedMicros: status.usedMicros,
         limitMicros: status.limitMicros,
       };
@@ -452,25 +500,35 @@ function managedPreflight(
     // has budget left, so telling them they are out of volume would be a lie
     // and would send them to buy more of something we cannot serve.
     const { globalPoolStatus, alertIfPoolLow } = await import("./managed-global-pool.server");
-    const poolStatus = await globalPoolStatus(poolFor(settings), status.period);
+    const poolStatus = await globalPoolStatus(managedPoolFor(shop, settings, plan), status.period);
     alertIfPoolLow(poolStatus);
     if (!poolStatus.allowed) return { ok: false, reason: "managedUnavailable" };
 
+    // The taster has been ENTERED. Stamped here and nowhere else: this is the
+    // last gate before a real provider call, so the date describes a grant the
+    // shop actually began spending rather than one it was shown in Settings.
+    //
+    // It is a record, not the enforcement — the ledger row under the `taster`
+    // key is what refuses a second grant, and it is permanent. This column is
+    // what the usage card renders and what answers "has this shop ever had
+    // one" without an aggregate. Fire-and-forget and swallowed: a bookkeeping
+    // write may never fail a call whose budget has already been checked.
+    if (status.kind === "taster" && settings && settings.managedAiTasterGrantedAt == null) {
+      try {
+        const { db } = await import("../../db.server");
+        await db.aISettings.updateMany({
+          where: { shop, managedAiTasterGrantedAt: null },
+          data: { managedAiTasterGrantedAt: new Date() },
+        });
+      } catch (error) {
+        logger.warn(
+          `[ManagedAI] Could not stamp the taster grant for ${shop}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
     return { ok: true };
   };
-}
-
-/**
- * Which global pool a shop draws from — §9.3.
- *
- * A shop with no PERIOD budget is on the taster, whatever plan it holds: §7a's
- * dev stores, free shops and shops inside their trial. They are the least
- * accountable population here, so their spend must not be able to trip the cap
- * that every paying merchant runs against.
- */
-function poolFor(settings: AISettings | null): "paid" | "taster" {
-  return settings?.managedAiActive === true &&
-    (settings?.subscriptionPlan ?? "free") !== "free"
-    ? "paid"
-    : "taster";
 }

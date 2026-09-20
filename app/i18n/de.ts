@@ -1115,6 +1115,15 @@ export const de = {
       usageExhausted:
         "Das KI-Volumen dieses Zeitraums ist aufgebraucht. Trage deinen eigenen API-Key ein, um sofort weiterzuarbeiten, oder warte auf den nächsten Zeitraum.",
       usageEstimated: "Ein Teil dieses Werts ist geschätzt.",
+      tasterHeading: "Kostenlose KI-Testphase",
+      tasterHint:
+        "Teste die enthaltene KI einmalig mit rund {actions} KI-Aktionen — ohne API-Schlüssel, ohne Planwechsel. Dein eigener Schlüssel bleibt kostenlos und unbegrenzt.",
+      tasterUsed: "{percent}% deines kostenlosen Guthabens verbraucht",
+      tasterStarted: "Gestartet am {date}",
+      tasterWarning:
+        "Du hast {percent}% deines einmaligen kostenlosen KI-Guthabens verbraucht. Es wird nicht erneuert.",
+      tasterExhausted:
+        "Dein kostenloses KI-Guthaben ist aufgebraucht. Hinterlege deinen eigenen API-Schlüssel, um kostenlos weiterzuarbeiten, oder wähle einen Plan mit enthaltener KI.",
       planButton: "Mit enthaltener KI — {price}",
       planVolume: {
         basic: "Reicht für etwa 300–500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
@@ -2064,6 +2073,8 @@ export const de = {
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
       managedAiBudgetExceeded:
         "Das in deinem Plan enthaltene KI-Volumen ist für diesen Zeitraum aufgebraucht. Es wurde nichts geändert — deine Übersetzungen sind unverändert geblieben.",
+      managedAiTasterExhausted:
+        "Dein kostenloses KI-Guthaben ist aufgebraucht — es ist einmalig und wird nicht erneuert. Es wurde nichts geändert. Hinterlege deinen eigenen API-Schlüssel, um kostenlos weiterzuarbeiten, oder wähle einen Plan mit enthaltener KI.",
       managedAiConsentMissing:
         "Die KI-Verarbeitung ist für diesen Shop nicht bestätigt, deshalb wurde nichts ausgeführt und nichts geändert. Bestätige sie in den Einstellungen und versuche es erneut.",
       managedAiUnavailable:

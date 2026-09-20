@@ -2,8 +2,15 @@
  * Where the AI comes from — PLAN_MANAGED_AI_KEY §8, §8a.
  *
  * ONE choice, rendered from ONE state: the merchant's stored `aiKeySource`
- * and the Shopify-verified `managedAiActive`. The plan card sells the variant
- * (it is a price); this is where the merchant lives with it.
+ * and whether this deployment serves managed AI. The plan card sells the
+ * variant (it is a price); this is where the merchant lives with it.
+ *
+ * `managedAiActive` — the Shopify-verified purchase — no longer decides
+ * whether this screen applies. Since §10's taster it decides only WHAT the
+ * shop gets: a monthly period budget if it bought the variant, the one-time
+ * free trial if it did not. The card therefore renders by budget KIND and
+ * never by plan, because every sentence about a period is false about a grant
+ * that does not come back.
  *
  * Four rules here are structural rather than cosmetic:
  *
@@ -45,15 +52,24 @@ import { ToggleRow } from "./ToggleRow";
 export interface ManagedAiBudget {
   usedMicros: number;
   limitMicros: number;
-  /** ISO date this period's volume resets. */
+  /** ISO date this period's volume resets — `null` for the taster, which does not. */
   resetsOn: string | null;
   /** Share of calls whose token counts were estimated, 0-1. */
   estimatedShare: number;
+  /** A period budget that resets, or the one-time taster (§10). */
+  kind: "period" | "taster";
+  /** What the taster is worth in AI actions — the unit the merchant reads. */
+  tasterActions: number;
+  /** ISO date the taster was first spent against. */
+  grantedAt: string | null;
 }
 
 export interface ManagedAiCardProps {
   aiKeySource: "byo" | "managed";
+  /** Shopify verified the shop BOUGHT the AI-included variant. */
   managedAiActive: boolean;
+  /** This DEPLOYMENT can serve managed AI at all (§9.4's kill switch). */
+  managedAiOffered?: boolean;
   consented: boolean;
   consentedAt?: string | null;
   consentVersion?: string | null;
@@ -77,6 +93,7 @@ const fill = (template: unknown, values: Record<string, string>): string => {
 export function ManagedAiCard({
   aiKeySource,
   managedAiActive,
+  managedAiOffered = false,
   consented,
   consentedAt,
   consentVersion,
@@ -97,7 +114,12 @@ export function ManagedAiCard({
     fetcher.submit(body, { method: "post" });
   };
 
-  const onManaged = aiKeySource === "managed" && managedAiActive;
+  // On managed AI = the merchant chose it AND something can serve it. Since
+  // §10's taster that is no longer the same question as "did they buy it":
+  // `managedAiActive` decides the SIZE of what they get, not whether the
+  // screen applies to them.
+  const onManaged = aiKeySource === "managed" && managedAiOffered;
+  const onTaster = budget?.kind === "taster";
   const usedPct = budget ? pct(budget.usedMicros, budget.limitMicros) : 0;
 
   return (
@@ -112,7 +134,7 @@ export function ManagedAiCard({
               "managed". Their own key is being used again — the friendly
               fallback, and not something to discover by noticing a different
               writing style. */}
-          {aiKeySource === "managed" && !managedAiActive && (
+          {aiKeySource === "managed" && !managedAiOffered && (
             <Banner tone="warning">
               <Text as="p">{m.entitlementEnded}</Text>
             </Banner>
@@ -121,20 +143,29 @@ export function ManagedAiCard({
           <ToggleRow
             label={m.useIncluded ?? ""}
             checked={onManaged}
-            disabled={!managedAiActive || busy("saveAiSource")}
+            disabled={!managedAiOffered || busy("saveAiSource")}
             onChange={(checked) =>
               post({ actionType: "saveAiSource", aiKeySource: checked ? "managed" : "byo" })
             }
           />
 
+          {/* Three different shops read this line: one that bought the AI, one
+              that has not and is being offered the taster, and one whose
+              deployment serves no managed AI at all. Telling the middle one
+              "your plan does not include AI" and stopping there is what made
+              the taster invisible to the population it exists for. */}
           <Text as="p" variant="bodySm" tone="subdued">
-            {managedAiActive ? m.includedHint : m.notIncludedHint}
+            {managedAiActive
+              ? m.includedHint
+              : managedAiOffered
+                ? fill(m.tasterHint, { actions: String(budget?.tasterActions || "") })
+                : m.notIncludedHint}
           </Text>
         </BlockStack>
       </Card>
 
       {/* Consent — only where it is needed, and never pre-set. */}
-      {aiKeySource === "managed" && managedAiActive && (
+      {aiKeySource === "managed" && managedAiOffered && (
         <Card>
           <BlockStack gap="300">
             <Text as="h3" variant="headingMd">
@@ -196,29 +227,43 @@ export function ManagedAiCard({
         <Card>
           <BlockStack gap="300">
             <Text as="h3" variant="headingMd">
-              {m.usageHeading}
+              {onTaster ? m.tasterHeading : m.usageHeading}
             </Text>
             <ProgressBar
               progress={usedPct}
               tone={usedPct >= 100 ? "critical" : usedPct >= 80 ? "highlight" : "primary"}
             />
+            {/* Every sentence in this card is chosen by KIND, not decorated
+                with an extra line: a period budget "resets on the 14th" and a
+                taster never does, so one wording cannot serve both without
+                promising a reset that will not come. */}
             <Text as="p" variant="bodySm">
-              {fill(m.usageUsed, { percent: String(usedPct) })}
+              {fill(onTaster ? m.tasterUsed : m.usageUsed, { percent: String(usedPct) })}
             </Text>
-            {budget.resetsOn && (
-              <Text as="p" variant="bodySm" tone="subdued">
-                {fill(m.usageResets, { date: budget.resetsOn.slice(0, 10) })}
-              </Text>
-            )}
+            {onTaster
+              ? budget.grantedAt && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {fill(m.tasterStarted, { date: budget.grantedAt.slice(0, 10) })}
+                  </Text>
+                )
+              : budget.resetsOn && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {fill(m.usageResets, { date: budget.resetsOn.slice(0, 10) })}
+                  </Text>
+                )}
             {/* A warning BEFORE a wall: "your AI volume is used up" arriving
                 with no notice, mid-catalogue, is the review nobody wants. */}
             {usedPct >= 100 ? (
               <Banner tone="critical">
-                <Text as="p">{m.usageExhausted}</Text>
+                <Text as="p">{onTaster ? m.tasterExhausted : m.usageExhausted}</Text>
               </Banner>
             ) : usedPct >= 80 ? (
               <Banner tone="warning">
-                <Text as="p">{fill(m.usageWarning, { percent: String(usedPct) })}</Text>
+                <Text as="p">
+                  {fill(onTaster ? m.tasterWarning : m.usageWarning, {
+                    percent: String(usedPct),
+                  })}
+                </Text>
               </Banner>
             ) : null}
             {/* Said only when it is non-trivial: every figure is partly

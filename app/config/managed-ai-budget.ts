@@ -20,13 +20,14 @@
  */
 
 import type { BillingPlan } from "./billing";
+import type { AIProvider } from "../utils/api-key-validation";
+import { priceCall } from "./ai-pricing";
 
 /** Micro-euro, the unit the meter stores and the only unit enforced. */
 export const MANAGED_BUDGET_MICROS: Record<BillingPlan, number> = {
-  // A shop that pays nothing gets no PERIOD budget at all (§7a). The one-time
-  // taster (§10) is a separate grant with its own counter and is not built
-  // yet — until it is, zero is the honest answer rather than a placeholder
-  // allowance nobody sized.
+  // A shop that pays nothing gets no PERIOD budget at all (§7a). What it does
+  // get is the one-time TASTER below — a separate grant, under its own period
+  // key, sized by the ladder rule rather than by this table.
   free: 0,
   basic: 1_500_000, // EUR 1.50
   pro: 2_500_000, // EUR 2.50
@@ -130,4 +131,115 @@ export function managedBudgetMicros(plan: BillingPlan, ctx: BudgetContext = {}):
   if (paysNothing(ctx)) return MANAGED_BUDGET_MICROS.free;
   if (ctx.inTrial) return MANAGED_BUDGET_MICROS.free;
   return MANAGED_BUDGET_MICROS[plan] ?? 0;
+}
+
+// ─── The one-time taster (§10) ───────────────────────────────────────────────
+
+/**
+ * The taster is the acquisition fix: a managed grant an evaluating shop gets
+ * BEFORE it buys anything, because every gate above it asks a merchant to pay
+ * for a feature they have not seen.
+ *
+ * Two units, and which is which is the whole design. The grant is EXPRESSED in
+ * AI actions, because that is the only unit a merchant can reason about, and
+ * ENFORCED in micro-euro, because §7's one-unit rule says a budget is money or
+ * it is nothing. The euro figure is DERIVED from the pinned model's price, so
+ * a change of managed default model moves the COST and not the promise.
+ *
+ * Why not the "EUR 2 per month on Free" that was proposed: it out-grants paid
+ * Basic (EUR 2 of provider cost is ~6,000 nano-class calls against Basic's
+ * ~4,500), and it is ~18x what the Free plan's 50 products and 5 collections
+ * can even consume — while scaling with INSTALLS rather than with customers,
+ * which is the one cost line in this app a good App Store listing makes worse.
+ */
+export const MANAGED_AI_TASTER_ACTIONS = 350;
+
+/**
+ * The call the action figure is priced at — PROVISIONAL until the Phase 0
+ * meter has a measured average (`npm run ai:usage`), and named as one constant
+ * so replacing it re-derives everything below.
+ *
+ * It is sized from §10's own arithmetic: one full pass over everything the
+ * Free plan entitles (50 products + 5 collections, a description each, into
+ * five locales) is ~325 calls and ~EUR 0.11 at the default model, i.e. ~340
+ * micro-euro a call. The app BATCHES fields and locales, so the same work may
+ * be 30 calls of ten times the size — which moves the call count and not the
+ * euro total, and the euro total is what is enforced.
+ */
+export const TASTER_REFERENCE_CALL = {
+  inputTokens: 1_800,
+  outputTokens: 700,
+} as const;
+
+/**
+ * The hard ladder rule: the taster may never exceed a QUARTER of the smallest
+ * PAID managed budget. It is what makes "let us make Free a bit more generous"
+ * fail the build instead of quietly inverting the ladder — a free shop with
+ * more AI than a merchant paying EUR 21.90 leaves no reason to ever leave Free
+ * but the product limits.
+ */
+export const TASTER_LADDER_SHARE = 0.25;
+
+/**
+ * The ledger period key of the taster — PREFIXLESS on purpose.
+ *
+ * The other two schemes are `m:<month>` and `b:<period end>`, so this can
+ * never be read as either, and it never rolls over: the grant is once per shop
+ * EVER, and "ever" is expressed by a key that has no next value. That is also
+ * what makes the ledger itself the enforcement — a shop that spent its taster
+ * on Free gets nothing extra during the paid trial it later starts (§7 rule 1)
+ * and nothing extra as a dev store (§7a), because the row is still there.
+ */
+export const TASTER_PERIOD = "taster";
+
+const PAID_PLANS = Object.keys(MANAGED_SURCHARGE_CENTS) as Exclude<BillingPlan, "free">[];
+
+/** The smallest budget any PAID managed plan grants — the ladder's bottom rung. */
+export function smallestPaidBudgetMicros(): number {
+  return Math.min(...PAID_PLANS.map((plan) => MANAGED_BUDGET_MICROS[plan]));
+}
+
+/** The ladder ceiling the taster is capped at, whatever the model costs. */
+export function tasterCeilingMicros(): number {
+  return Math.floor(smallestPaidBudgetMicros() * TASTER_LADDER_SHARE);
+}
+
+/**
+ * What ONE taster action costs at a given model, in micro-euro. Zero means the
+ * model cannot be priced, which is not "free" but "we could not enforce this"
+ * — every caller below turns it into a refusal rather than into a grant.
+ */
+export function tasterCallMicros(provider: AIProvider, model: string): number {
+  const priced = priceCall(
+    provider,
+    model,
+    TASTER_REFERENCE_CALL.inputTokens,
+    TASTER_REFERENCE_CALL.outputTokens,
+  );
+  return priced.unpriced ? 0 : priced.costMicros;
+}
+
+/**
+ * The taster budget for a deployment running `model` as its managed default.
+ *
+ * The SMALLER of the action count and the ladder ceiling, which is the rule
+ * that decides what a costlier future default model does: it shrinks the
+ * ACTIONS (see `tasterActionsFor`) rather than bending the ladder.
+ */
+export function tasterBudgetMicros(provider: AIProvider, model: string): number {
+  const perCall = tasterCallMicros(provider, model);
+  if (perCall <= 0) return 0;
+  return Math.min(perCall * MANAGED_AI_TASTER_ACTIONS, tasterCeilingMicros());
+}
+
+/**
+ * How many actions the taster really buys at this model — the number the
+ * Settings card shows, and the visible half of the rule above: at the default
+ * model it is exactly `MANAGED_AI_TASTER_ACTIONS`, and at a dearer one it is
+ * however many the ceiling pays for.
+ */
+export function tasterActionsFor(provider: AIProvider, model: string): number {
+  const perCall = tasterCallMicros(provider, model);
+  if (perCall <= 0) return 0;
+  return Math.min(MANAGED_AI_TASTER_ACTIONS, Math.floor(tasterCeilingMicros() / perCall));
 }

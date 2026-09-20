@@ -1298,22 +1298,34 @@ AI-included price of your tier.
   operation per feature. In parallel, the quality bake-off of §3 on the app's
   own prompts. *Every number in §7 is provisional until this lands* — the table
   is built so replacing one measured average updates it mechanically.
-- **Phase 1 — resolver + consent + enforcement** (§5, §6, §2), plus §3a's
+- **Phase 1 — resolver + consent + enforcement. SHIPPED 2026-09-20.** (§5, §6, §2), plus §3a's
   switch seam and the startup SMOKE TEST, and §7a's dev-shop detection (it
   gates who may reach a budget at all). Managed mode stays off everywhere
   except where `MANAGED_AI_ENABLED` is set (§9.4) — the kill switch is the
   rollout control; there is no second allowlist mechanism.
-- **Phase 2 — billing variants + UI** (§7, §8) and the margin guard test.
+- **Phase 2 — billing variants + UI. SHIPPED 2026-09-20.** (§7, §8) and the margin guard test.
   §8a lands WITH the UI change, not after it: hiding the tab without its rules
   1–3 and rule 6 leaves a permanent "add an API key" warning pointing at a tab
   that no longer exists. The SEO-title-suffix bug §8a names is live today and
   can be fixed before any of this.
-- **Phase 3 — rails** (§9), the unattended-spend rules (§6a) and the failover
+- **Phase 3 — rails. SHIPPED 2026-09-20.** (§9), the unattended-spend rules (§6a) and the failover
   (§3a) before the first external shop. Not after: §6a rule 1 is a data-loss
   guard and lands with the enforcement it protects; the failover is what makes
   "your AI is included" a promise we can keep on a day OpenAI cannot.
-- **Phase 4 — the taster** (§10), which is the marketing moment; the public
-  roadmap entry and the App Store listing change here.
+- **Phase 4 — the taster. SHIPPED 2026-09-20.** (§10), which is the marketing
+  moment; the public roadmap entry and the App Store listing change here.
+  What shipping it MOVED, and it is the one thing in this plan that loosened a
+  gate rather than adding one: the verified subscription no longer decides
+  whether managed mode may be ENTERED, only how big the budget is. It had to —
+  a Free shop has no managed subscription by definition, so gating the mode on
+  one put the taster out of reach of the only population it exists for. A shop
+  that did not buy the variant resolves to managed and draws on the taster:
+  its own ledger key (`taster`, prefixless, with no next value), its own global
+  pool, its own refusal code, and consent first like everybody else.
+  The roadmap card is deliberately `in-progress` rather than `shipped`:
+  `MANAGED_AI_ENABLED` is unset everywhere and the three managed subscription
+  products do not exist yet, and a public card offering something nobody can
+  buy is the one failure mode a roadmap has.
 - **Phase 5 — follow-ups**: usage-based overage, a BYO cost view built from the
   same meter, a per-feature cost breakdown in Tasks, and a recurring quality
   sample (§13) so "measured once" does not become "measured never again".

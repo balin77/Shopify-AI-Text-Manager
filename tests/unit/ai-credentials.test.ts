@@ -29,6 +29,7 @@ import {
   missingMerchantKey,
 } from '~/services/ai/ai-credentials.server';
 import { AI_PROCESSING_CONSENT_VERSION } from '~/services/ai/managed-ai.shared';
+import { TASTER_PERIOD } from '~/config/managed-ai-budget';
 import { DEV_APP_CLIENT_ID } from '~/services/dev-plan-override.server';
 
 type Settings = Parameters<typeof resolveAiCredentials>[0]['settings'];
@@ -143,18 +144,54 @@ describe('the mode comes from the subscription AND the stored choice', () => {
     expect(decision.config.selectedModel).toBe('gpt-5-nano');
   });
 
-  it('a shop that asked for managed but did NOT buy it stays on its own key', () => {
-    // `managedAiActive` is mirrored from the Shopify-verified subscription.
-    // A merchant can set `aiKeySource`; only the sync writes the other half.
+  it('a shop that asked for managed but did NOT buy it gets the operator key too — on the TASTER', () => {
+    // §10 changed this answer, deliberately. It used to resolve to the
+    // merchant's own key, which put the one grant an evaluating shop is
+    // offered before it buys anything out of reach of every Free shop — the
+    // only population it exists for.
+    //
+    // What did NOT change is what a merchant can give themselves. The
+    // verified half moved DOWN, to the size of the budget: this shop draws on
+    // the taster (worth cents, once per shop ever, its own ledger key and its
+    // own global pool), never on a plan's monthly volume. That half is
+    // `periodBudgetMicros`, and the two tests below pin it.
     const decision = resolveAiCredentials({
       shop: 's',
       settings: managedShop({ managedAiActive: false }),
     });
 
     expect(decision.ok).toBe(true);
-    if (!decision.ok) throw new Error('expected ok');
-    expect(decision.source).toBe('byo');
-    expect(decision.config.openaiApiKey).toBe('sk-merchant');
+    if (!decision.ok || decision.source !== 'managed') throw new Error('expected managed');
+    expect(decision.config.openaiApiKey).toBe('sk-operator');
+    // The TASTER key, not a billing period — the meter writes under the key
+    // the budget is read under, or the cap never fires.
+    expect(decision.config.usagePeriod).toBe(TASTER_PERIOD);
+    expect(decision.config.usagePool).toBe('taster');
+  });
+
+  it('a shop that BOUGHT it is metered against its billing period and the paid pool', () => {
+    const decision = resolveAiCredentials({
+      shop: 's',
+      settings: managedShop({
+        subscriptionPlan: 'pro',
+        managedAiPeriodEnd: new Date('2099-10-14T00:00:00Z'),
+      }),
+    });
+    if (!decision.ok || decision.source !== 'managed') throw new Error('expected managed');
+    expect(decision.config.usagePeriod).toBe('b:2099-10-14');
+    expect(decision.config.usagePool).toBe('paid');
+  });
+
+  it('a PAID plan with no verified managed purchase still draws on the taster', () => {
+    // The tampering case: posting `aiKeySource=managed` from a Pro shop on the
+    // BYO variant must not hand it Pro's monthly volume.
+    const decision = resolveAiCredentials({
+      shop: 's',
+      settings: managedShop({ subscriptionPlan: 'pro', managedAiActive: false }),
+    });
+    if (!decision.ok || decision.source !== 'managed') throw new Error('expected managed');
+    expect(decision.config.usagePeriod).toBe(TASTER_PERIOD);
+    expect(decision.config.usagePool).toBe('taster');
   });
 
   it('a shop that bought managed but kept its own key gets its own key', () => {

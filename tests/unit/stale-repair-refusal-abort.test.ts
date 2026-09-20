@@ -12,11 +12,11 @@
  * budget ran out, and it is unrecoverable: the digest baseline has already
  * advanced, so nothing will ever detect those rows as stale again.
  *
- * Asserted PER REASON, not once. Each of the four arrives through a different
- * door — the budget from the per-request preflight, `managedUnavailable` from
- * the kill switch or a pool that emptied mid-outage, `consentMissing` from a
- * withdrawal during a long run — and the first cut of this plan immunised only
- * the budget.
+ * Asserted PER REASON, not once. Each arrives through a different door — the
+ * budget and the spent TASTER (§10) from the per-request preflight,
+ * `managedUnavailable` from the kill switch or a pool that emptied mid-outage,
+ * `consentMissing` from a withdrawal during a long run — and the first cut of
+ * this plan immunised only the budget.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -30,7 +30,13 @@ import { join } from 'node:path';
 
 const REPAIR = join(__dirname, '..', '..', 'app/services/translations/stale-translation-sync.server.ts');
 
-const REASONS = ['budgetExceeded', 'managedUnavailable', 'consentMissing', 'noKey'] as const;
+const REASONS = [
+  'budgetExceeded',
+  'tasterExhausted',
+  'managedUnavailable',
+  'consentMissing',
+  'noKey',
+] as const;
 
 describe('a managed refusal is recognisable', () => {
   it.each(REASONS)('%s is identified as a refusal', (reason) => {

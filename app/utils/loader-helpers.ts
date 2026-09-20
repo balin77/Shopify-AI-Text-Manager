@@ -50,6 +50,13 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
     // with no key of its own. Every reader of the six booleans above must ask
     // this first, or a merchant who paid for AI included is told the feature
     // needs a key they do not have to give us.
+    //
+    // Since §10 this also covers a shop on the free TASTER, and the residual
+    // is stated rather than hidden: a shop whose taster is spent still reads
+    // as "working" here, because the alternative is an aggregate over the
+    // usage ledger on a loader that runs on every page. What it meets instead
+    // is the refusal at the point of use, which names both exits by name —
+    // which is where §10 puts that sentence anyway.
     managedAiWorking:
       wantsManagedAi(settings ?? null) && hasCurrentAiProcessingConsent(settings ?? null),
     preferredProvider: settings?.preferredProvider || null,

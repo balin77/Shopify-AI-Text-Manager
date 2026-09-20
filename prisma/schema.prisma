@@ -79,6 +79,18 @@ model AISettings {
   aiProcessingConsentAt      DateTime?
   aiProcessingConsentVersion String?
 
+  // The one-time managed-AI TASTER (PLAN_MANAGED_AI_KEY §10) — the grant that
+  // lets an evaluating merchant see the feature before buying anything.
+  //
+  // Once per shop, EVER: a shop that spent it on Free gets nothing extra
+  // during the paid trial it later starts, and nothing extra as a dev store.
+  // Tracked exactly like `trialConsumedAt`, with the same stated residual — an
+  // uninstall plus a GDPR redact clears it, so a determined merchant can
+  // re-grant by reinstalling. Accepted: the grant is worth cents, and
+  // retaining a record of an uninstalled shop is a GDPR conversation not worth
+  // having at this price.
+  managedAiTasterGrantedAt DateTime?
+
   // Is this a Shopify PARTNER DEVELOPMENT store? Three-valued on purpose
   // (null = never determined), written at subscription-sync time where an
   // admin client exists. `isDevStore`'s catch returns false, so a lookup that

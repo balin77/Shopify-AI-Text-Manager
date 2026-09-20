@@ -1,0 +1,14 @@
+-- PLAN_MANAGED_AI_KEY §10 — the one-time managed-AI taster.
+--
+-- The plan up to here still asks an evaluating merchant to buy something
+-- before they see anything. This is the grant that fixes that, and everything
+-- above it is what makes offering it safe.
+--
+-- Once per shop, EVER. A shop that spent it on Free gets nothing extra during
+-- the paid trial it later starts (§7 rule 1) and nothing extra as a dev store
+-- (§7a). Tracked exactly like `trialConsumedAt`, with the same stated
+-- residual: an uninstall plus a GDPR redact clears it, so a determined
+-- merchant can re-grant by reinstalling. That is accepted rather than
+-- engineered around — the grant is worth cents, and retaining a record of an
+-- uninstalled shop is a GDPR conversation not worth having at this price.
+ALTER TABLE "AISettings" ADD COLUMN "managedAiTasterGrantedAt" TIMESTAMP(3);

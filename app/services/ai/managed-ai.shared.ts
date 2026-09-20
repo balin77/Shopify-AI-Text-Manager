@@ -26,11 +26,19 @@ export const AI_PROCESSING_CONSENT_VERSION = "2026-09-20.1";
  * mode's. Every one of them is an ABORT for a detached repair (§6a rule 1,
  * §3a rule 5), never "the AI could not deliver this entry" — that distinction
  * is the difference between a refused save and a deleted translation.
+ *
+ * `tasterExhausted` is `budgetExceeded`'s twin and is deliberately NOT folded
+ * into it: a period budget comes back next month and the taster (§10) never
+ * does, so one sentence cannot serve both. Telling a free shop its volume is
+ * "used up for this period" sends it to wait for a reset that will not happen,
+ * instead of to the two real exits — its own key, free and unlimited, or the
+ * AI-included price of its tier.
  */
 export const AI_REFUSAL_CODES = [
   "noKey",
   "consentMissing",
   "budgetExceeded",
+  "tasterExhausted",
   "managedUnavailable",
 ] as const;
 
@@ -41,6 +49,7 @@ export const AI_REFUSAL_STATUS: Record<AiRefusalCode, number> = {
   noKey: 409,
   consentMissing: 409,
   budgetExceeded: 402,
+  tasterExhausted: 402,
   managedUnavailable: 503,
 };
 
@@ -56,18 +65,40 @@ export function toAiKeySource(value: unknown): AiCredentialSource {
 }
 
 /**
+ * Has Shopify VERIFIED that this shop bought the AI-included variant?
+ *
+ * Only `checkAndSyncSubscription` writes `managedAiActive`; a merchant can set
+ * `aiKeySource` and nothing else. What this now decides is the SIZE of the
+ * budget (`periodBudgetMicros`) and the plan-facing wording — not whether
+ * managed mode may be entered at all, which is the next predicate.
+ */
+export function boughtManagedAi(settings: {
+  managedAiActive?: boolean | null;
+} | null): boolean {
+  return settings?.managedAiActive === true;
+}
+
+/**
  * May this shop's stored choice of "managed" be honoured?
  *
- * Both halves are required and they answer different questions: `aiKeySource`
- * is what the merchant asked for, `managedAiActive` is what Shopify verified
- * they bought. A merchant can set the first; only `checkAndSyncSubscription`
- * writes the second.
+ * It is the merchant's stored choice ALONE, and that widening is what §10's
+ * taster costs. Requiring the verified subscription here — which is what this
+ * did until Phase 4 — makes the one grant an evaluating shop is offered before
+ * it buys anything unreachable by exactly the population it exists for: a Free
+ * shop has no managed subscription by definition.
+ *
+ * Nothing is given away by the move, because the verified half did not go
+ * missing, it went DOWN. `periodBudgetMicros` grants a plan's monthly volume
+ * only to a shop that bought the variant; everyone else falls to the taster,
+ * which is worth cents and is once per shop ever. A merchant who posts
+ * `aiKeySource=managed` without buying therefore gets precisely what they
+ * would have been offered anyway — and still only after consent (§2), still
+ * against the taster pool and the global cap (§9).
  */
 export function wantsManagedAi(settings: {
   aiKeySource?: string | null;
-  managedAiActive?: boolean | null;
 } | null): boolean {
-  return toAiKeySource(settings?.aiKeySource) === "managed" && settings?.managedAiActive === true;
+  return toAiKeySource(settings?.aiKeySource) === "managed";
 }
 
 /**

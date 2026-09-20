@@ -337,7 +337,12 @@ export function SettingsAITab({
   // the line saying how many keys are stored, with a Delete control — hiding
   // the tab without that would leave "uninstall the app" as the only way to
   // erase a credential they gave us.
-  const keyFieldsHidden = managedAi?.aiKeySource === "managed" && managedAi.managedAiActive;
+  // Since §10 the question is "is this shop ON managed AI", not "did it buy
+  // it": a Free shop spending its taster is on managed AI, and leaving six key
+  // fields and a model select in front of it would describe a setup nothing is
+  // reading.
+  const keyFieldsHidden =
+    managedAi?.aiKeySource === "managed" && managedAi.managedAiOffered === true;
 
   return (
     <>

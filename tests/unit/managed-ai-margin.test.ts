@@ -22,6 +22,15 @@ import {
   surchargeNetMicros,
   managedBudgetMicros,
   paysNothing,
+  MANAGED_AI_TASTER_ACTIONS,
+  TASTER_LADDER_SHARE,
+  TASTER_PERIOD,
+  TASTER_REFERENCE_CALL,
+  smallestPaidBudgetMicros,
+  tasterActionsFor,
+  tasterBudgetMicros,
+  tasterCallMicros,
+  tasterCeilingMicros,
 } from '~/config/managed-ai-budget';
 import { BILLING_PLANS, MANAGED_BILLING_PLANS, type BillingPlan } from '~/config/billing';
 import { resolveSubscription } from '~/services/billing.server';
@@ -220,5 +229,95 @@ describe('the budget period is the BILLING period (§7 rule 3)', () => {
   it('the two schemes can never be read as one another', () => {
     expect(managedBudgetPeriod(new Date('2026-10-14'))).toMatch(/^b:/);
     expect(managedBudgetPeriod(null)).toMatch(/^m:/);
+  });
+});
+
+describe('the ladder rule — the taster may never out-grant the cheapest paid plan (§10)', () => {
+  // The whole point of a taster that is worth cents: EUR 2 of provider cost
+  // buys more nano-class calls than paid Basic's EUR 1.50 budget does, so a
+  // free shop would get more AI than a merchant paying EUR 21.90 and the only
+  // reason left to leave Free would be the product limits.
+  const MODELS: [Parameters<typeof tasterBudgetMicros>[0], string][] = [
+    ['openai', 'gpt-5-nano'],
+    ['openai', 'gpt-4o'],
+    ['claude', 'claude-opus-4-0-20250514'],
+    ['gemini', 'gemini-2.0-flash'],
+    // Unknown model — priced at its provider's ceiling, the dearest case the
+    // pricing table can produce at all.
+    ['claude', 'some-model-nobody-added-yet'],
+  ];
+
+  it('the ACTION PROMISE itself fits under the ladder at the pinned model', () => {
+    // This is the assertion that bites, and the clamp is why it has to be
+    // written this way: `tasterBudgetMicros` takes the smaller of the action
+    // count and the ceiling, so asserting the CLAMPED value against the
+    // ceiling is `min(x, c) <= c` — true for any action count anybody ever
+    // types here, including 6,000. What has to be guarded is the promise
+    // BEFORE the clamp: raise MANAGED_AI_TASTER_ACTIONS past what the ladder
+    // pays for and the grant silently stops being 350 actions, which is the
+    // one number this feature is advertised in.
+    const unclamped = tasterCallMicros('openai', 'gpt-5-nano') * MANAGED_AI_TASTER_ACTIONS;
+    const ceiling = tasterCeilingMicros();
+    expect(
+      unclamped,
+      `${MANAGED_AI_TASTER_ACTIONS} actions cost EUR ${(unclamped / 1e6).toFixed(4)} against EUR ${(ceiling / 1e6).toFixed(4)} allowed`,
+    ).toBeLessThanOrEqual(ceiling);
+  });
+
+  it('the ceiling is a QUARTER of the smallest paid budget, and never more', () => {
+    expect(TASTER_LADDER_SHARE).toBeLessThanOrEqual(0.25);
+    expect(smallestPaidBudgetMicros()).toBe(
+      Math.min(...PAID.map((plan) => MANAGED_BUDGET_MICROS[plan])),
+    );
+    expect(tasterCeilingMicros()).toBeLessThanOrEqual(
+      smallestPaidBudgetMicros() * TASTER_LADDER_SHARE,
+    );
+  });
+
+  it.each(MODELS)('the clamp holds whatever the default model is: %s %s', (provider, model) => {
+    expect(tasterBudgetMicros(provider, model)).toBeLessThanOrEqual(tasterCeilingMicros());
+  });
+
+  it('a costlier default model shrinks the ACTIONS rather than bending the ladder', () => {
+    // The rule the plan states as "the smaller of the action count and the
+    // ceiling". At the pinned model the promise is kept exactly; at an Opus
+    // price it is the ceiling that decides and the action figure falls with
+    // it — which is what the Settings card then shows.
+    expect(tasterActionsFor('openai', 'gpt-5-nano')).toBe(MANAGED_AI_TASTER_ACTIONS);
+    expect(tasterBudgetMicros('openai', 'gpt-5-nano')).toBe(
+      tasterCallMicros('openai', 'gpt-5-nano') * MANAGED_AI_TASTER_ACTIONS,
+    );
+
+    const dear = tasterActionsFor('claude', 'claude-opus-4-0-20250514');
+    expect(dear).toBeLessThan(MANAGED_AI_TASTER_ACTIONS);
+    expect(dear).toBeGreaterThan(0);
+    expect(tasterBudgetMicros('claude', 'claude-opus-4-0-20250514')).toBe(tasterCeilingMicros());
+  });
+
+  it('is about EUR 0.12 at the pinned model — the figure §10 sized the grant from', () => {
+    const micros = tasterBudgetMicros('openai', 'gpt-5-nano');
+    expect(micros / 1e6).toBeGreaterThan(0.1);
+    expect(micros / 1e6).toBeLessThan(0.15);
+  });
+
+  it('a model that cannot be PRICED grants nothing — zero is a refusal, not free', () => {
+    // HuggingFace has no per-token list price, so `billedMicros` would never
+    // move and the grant could never be enforced. `readManagedCredential`
+    // refuses such a credential outright; this is the second rail.
+    expect(tasterBudgetMicros('huggingface', 'anything')).toBe(0);
+    expect(tasterActionsFor('huggingface', 'anything')).toBe(0);
+  });
+
+  it('the reference call is a real call, not a placeholder', () => {
+    expect(TASTER_REFERENCE_CALL.inputTokens).toBeGreaterThan(0);
+    expect(TASTER_REFERENCE_CALL.outputTokens).toBeGreaterThan(0);
+  });
+
+  it('the taster period key can never be read as a month or a billing period', () => {
+    // The other two schemes are `m:<month>` and `b:<period end>`. A key with
+    // no next value is how "once per shop, EVER" is expressed in the ledger.
+    expect(TASTER_PERIOD).not.toMatch(/^[mb]:/);
+    expect(managedBudgetPeriod(null)).not.toBe(TASTER_PERIOD);
+    expect(managedBudgetPeriod(new Date('2026-10-14'))).not.toBe(TASTER_PERIOD);
   });
 });

@@ -1117,6 +1117,18 @@ export const en: Translation = {
       usageExhausted:
         "This period's AI volume is used up. Add your own API key to continue immediately, or wait for the next period.",
       usageEstimated: "Part of this figure is estimated.",
+      // §10 — the one-time taster. Its own wording throughout, because every
+      // sentence about a period ("used this period", "resets on", "wait for
+      // the next period") is false about a grant that never comes back.
+      tasterHeading: "Free AI trial",
+      tasterHint:
+        "Try the included AI with about {actions} AI actions, once — no API key, no plan change. Your own key stays free and unlimited.",
+      tasterUsed: "{percent}% of your free trial used",
+      tasterStarted: "Started on {date}",
+      tasterWarning:
+        "You have used {percent}% of your one-time free AI trial. It does not reset.",
+      tasterExhausted:
+        "Your free AI trial is used up. Add your own API key to continue for free, or choose an AI-included plan.",
       planButton: "With AI included — {price}",
       planVolume: {
         basic: "Enough for about 300–500 products translated into one language each period.",
@@ -2065,6 +2077,8 @@ export const en: Translation = {
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
       managedAiBudgetExceeded:
         "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
+      managedAiTasterExhausted:
+        "Your free AI trial is used up — it is a one-time grant and does not reset. Nothing was changed. Add your own API key to continue for free, or choose an AI-included plan.",
       managedAiConsentMissing:
         "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
       managedAiUnavailable:

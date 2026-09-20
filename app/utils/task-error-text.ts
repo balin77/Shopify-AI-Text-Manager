@@ -67,6 +67,8 @@ const FALLBACK: Record<string, string> = {
     "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
   managedAiBudgetExceeded:
     "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
+  managedAiTasterExhausted:
+    "Your free AI trial is used up — it is a one-time grant and does not reset. Nothing was changed. Add your own API key to continue for free, or choose an AI-included plan.",
   managedAiConsentMissing:
     "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
   managedAiUnavailable:
@@ -169,6 +171,7 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     case "managed_ai_refused": {
       const reason = parts[1];
       if (reason === "budgetExceeded") return phrase(t, "managedAiBudgetExceeded");
+      if (reason === "tasterExhausted") return phrase(t, "managedAiTasterExhausted");
       if (reason === "consentMissing") return phrase(t, "managedAiConsentMissing");
       return phrase(t, "managedAiUnavailable");
     }

@@ -414,7 +414,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // merchant's own setup); only their plaintext stops travelling. What the
     // merchant keeps is the COUNT and a Delete control (rule 5, GDPR: a
     // credential they gave us must be erasable without uninstalling the app).
-    const onManagedAi = wantsManagedAi(settings);
+    // Managed mode is the merchant's stored choice AND a deployment that can
+    // serve it (§9.4's kill switch). Both halves matter here: withholding the
+    // key fields for a shop whose managed AI nothing can serve would hide the
+    // one screen it still needs.
+    const managedAiOffered = managedAiAvailable();
+    const onManagedAi = wantsManagedAi(settings) && managedAiOffered;
     const storedKeyCount = keyFields.filter(
       ({ field }) => !!(settings[field] as string | null | undefined),
     ).length;
@@ -438,6 +443,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       limitMicros: number;
       resetsOn: string | null;
       estimatedShare: number;
+      /** A period budget that resets, or the one-time taster (§10). */
+      kind: "period" | "taster";
+      /** How many AI actions the taster is worth here — display only. */
+      tasterActions: number;
+      grantedAt: string | null;
     } | null = null;
     if (onManagedAi) {
       try {
@@ -453,13 +463,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         });
         const total = rows.reduce((n, r) => n + r.calls, 0);
         const estimated = rows.filter((r) => r.estimated).reduce((n, r) => n + r.calls, 0);
+        const { managedTasterActions } = await import("../services/ai/ai-credentials.server");
         managedAiBudget = {
           usedMicros: status.usedMicros,
           limitMicros: status.limitMicros,
-          resetsOn: settings.managedAiPeriodEnd
-            ? settings.managedAiPeriodEnd.toISOString()
-            : null,
+          // A taster does not reset, so it has no reset date — and printing
+          // the subscription's period end beside it would promise one.
+          resetsOn:
+            status.kind === "period" && settings.managedAiPeriodEnd
+              ? settings.managedAiPeriodEnd.toISOString()
+              : null,
           estimatedShare: total > 0 ? estimated / total : 0,
+          kind: status.kind,
+          tasterActions: status.kind === "taster" ? managedTasterActions() : 0,
+          grantedAt: settings.managedAiTasterGrantedAt
+            ? settings.managedAiTasterGrantedAt.toISOString()
+            : null,
         };
       } catch (error) {
         // A usage card that cannot load is not a reason to fail Settings.
@@ -602,7 +621,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Whether this DEPLOYMENT can serve plan-included AI at all (§9.4).
       // Offering the second price where managed mode is off would sell a
       // feature every call then refuses.
-      managedAiOffered: managedAiAvailable(),
+      managedAiOffered,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -1339,22 +1358,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // model, because "back to my own key" means back to their own SETUP and
       // not to a default that silently rewrites it.
       //
-      // "managed" is only accepted while the SHOPIFY-VERIFIED subscription
-      // says so. That is the half a merchant cannot post: `managedAiActive` is
-      // mirrored by checkAndSyncSubscription, and a form that could set it
-      // would be a free operator key for anyone who can open devtools.
+      // "managed" is accepted whenever this DEPLOYMENT can serve it (§9.4),
+      // and that is Phase 4's change: the verified subscription used to be
+      // required here, which made §10's taster — the whole point of which is
+      // to be reachable before anything is bought — unreachable by every Free
+      // shop. What a merchant cannot post is the SIZE of what they get:
+      // `managedAiActive` is mirrored by checkAndSyncSubscription and nothing
+      // else, and `periodBudgetMicros` grants a plan's monthly volume only to
+      // a shop that carries it. Posting this field buys the taster, once,
+      // ever — which is exactly what the UI offers anyway.
       const requested = toAiKeySource(getFormString(formData, "aiKeySource"));
-      const current = await db.aISettings.findUnique({
-        where: { shop: session.shop },
-        select: { managedAiActive: true },
-      });
 
-      if (requested === "managed" && current?.managedAiActive !== true) {
+      if (requested === "managed" && !managedAiAvailable()) {
         return json(
           {
             success: false,
             actionType,
-            error: "This shop's plan does not include AI. Choose an AI-included plan first.",
+            error: "Included AI is not available for this shop.",
           },
           { status: 403 }
         );
@@ -1929,6 +1949,7 @@ export default function SettingsPage() {
                   managedAi={{
                     aiKeySource: settings.aiKeySource as "byo" | "managed",
                     managedAiActive: settings.managedAiActive,
+                    managedAiOffered,
                     consented: settings.managedAiConsented,
                     consentedAt: managedAiConsentedAt,
                     consentVersion: managedAiConsentVersion,
