@@ -1082,7 +1082,40 @@ export const de = {
   settings: {
     title: "Einstellungen",
     appSetup: "App-Setup",
-    aiApiAccess: "AI API-Zugangscodes",
+    aiApiAccess: "KI-API-Zugangscodes",
+    managedAi: {
+      heading: "Woher die KI kommt",
+      useOwnKey: "Meinen eigenen API-Key verwenden",
+      useIncluded: "Die im Plan enthaltene KI verwenden",
+      includedHint:
+        "Dein Plan enthält KI. Du kannst jederzeit auf deinen eigenen API-Key wechseln — deine gespeicherten Keys bleiben erhalten.",
+      notIncludedHint:
+        "Dein aktueller Plan enthält keine KI. Wähle einen Plan mit KI, oder trage unten deinen eigenen API-Key ein.",
+      entitlementEnded:
+        "Dein Plan enthält keine KI mehr, deshalb wird wieder dein eigener API-Key verwendet. Deine gespeicherten Keys sind erhalten geblieben.",
+      storedKeys: "{count} gespeicherte(r) API-Key(s) — aufbewahrt, damit du zurückwechseln kannst",
+      storedKeysNone: "Keine API-Keys gespeichert",
+      deleteKeys: "Gespeicherte Keys löschen",
+      deleteKeysConfirm: "Endgültig löschen",
+      deleteKeysWarning:
+        "Das entfernt die API-Keys, die du uns gegeben hast, endgültig. Anbieter- und Modellauswahl bleiben erhalten.",
+      consentHeading: "Verarbeitung durch unsere KI-Anbieter",
+      consentLabel: "Ich bin einverstanden, dass Inhalte meines Shops von diesen Anbietern verarbeitet werden",
+      consentBody:
+        "Für die im Plan enthaltene KI werden deine Produkttexte über unser Konto an unsere KI-Anbieter gesendet. Sie trainieren nicht mit diesen Inhalten. Vorher wird nichts gesendet.",
+      consentRequired: "Bestätige dies, um die enthaltene KI zu nutzen.",
+      consentSave: "Bestätigen",
+      consentWithdraw: "Widerrufen",
+      consentGranted: "Bestätigt am {date} (Version {version})",
+      privacyLink: "Nachlesen, was verarbeitet wird und von wem",
+      usageHeading: "Im Plan enthaltene KI",
+      usageUsed: "{percent}% in diesem Zeitraum verbraucht",
+      usageResets: "Zurückgesetzt am {date}",
+      usageWarning: "Du hast {percent}% des KI-Volumens dieses Zeitraums verbraucht.",
+      usageExhausted:
+        "Das KI-Volumen dieses Zeitraums ist aufgebraucht. Trage deinen eigenen API-Key ein, um sofort weiterzuarbeiten, oder warte auf den nächsten Zeitraum.",
+      usageEstimated: "Ein Teil dieses Werts ist geschätzt.",
+    },
     aiInstructions: "KI-Anweisungen",
     appLanguage: "App-Sprache",
     translations: "Übersetzungen",

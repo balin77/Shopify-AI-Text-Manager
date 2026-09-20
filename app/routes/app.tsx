@@ -35,6 +35,10 @@ import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription } from "~/services/billing.server";
 import { isProductionLocked } from "../utils/planUtils";
 import { de, en, es } from "../i18n";
+import {
+  hasCurrentAiProcessingConsent,
+  wantsManagedAi,
+} from "~/services/ai/managed-ai.shared";
 
 // Inline helper to build API-key presence flags from a single AISettings record.
 type AiSettingsRow = {
@@ -45,6 +49,10 @@ type AiSettingsRow = {
   grokApiKey?: string | null;
   deepseekApiKey?: string | null;
   preferredProvider?: string | null;
+  aiKeySource?: string | null;
+  managedAiActive?: boolean | null;
+  aiProcessingConsentAt?: Date | string | null;
+  aiProcessingConsentVersion?: string | null;
 } | null | undefined;
 
 function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: string | null) => string | null) {
@@ -56,6 +64,15 @@ function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: strin
     hasGrokApiKey: !!decryptApiKey(settings?.grokApiKey),
     hasDeepseekApiKey: !!decryptApiKey(settings?.deepseekApiKey),
     preferredProvider: settings?.preferredProvider || null,
+    /**
+     * Managed AI is serving this shop — the merchant's stored choice, the
+     * VERIFIED entitlement and the consent, all three. Anything less is not a
+     * working AI source: a shop that chose managed but has not consented gets
+     * no calls, and telling it otherwise would hide the one thing it has to
+     * do.
+     */
+    managedAiWorking:
+      wantsManagedAi(settings ?? null) && hasCurrentAiProcessingConsent(settings ?? null),
   };
 }
 
@@ -178,6 +195,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokApiKey: true,
         deepseekApiKey: true,
         preferredProvider: true,
+        // The three columns that answer "has a working AI source" for a
+        // managed shop — §8a rule 6.
+        aiKeySource: true,
+        managedAiActive: true,
+        aiProcessingConsentAt: true,
+        aiProcessingConsentVersion: true,
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
         seoLimits: true,
@@ -378,6 +401,16 @@ function AppContent() {
   // bell). Both warnings carry a stable dedupeKey for that.
   useEffect(() => {
     if (!aiSettings) return;
+
+    // PLAN_MANAGED_AI_KEY §8a rule 6 — "has a key" is no longer the question;
+    // "has a working AI source" is. A merchant who PAID for AI included would
+    // otherwise be told on every screen that AI does not work, and sent to a
+    // tab that in managed mode no longer renders the fields it names.
+    if (aiSettings.managedAiWorking) {
+      dismissByKey("missing-api-key:any");
+      dismissByKey("missing-api-key:preferred");
+      return;
+    }
 
     const hasAnyKey =
       aiSettings.hasHuggingfaceApiKey ||

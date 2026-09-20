@@ -21,6 +21,7 @@ import { HelpTooltip } from "./HelpTooltip";
 import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { CURATED_MODELS, DEFAULT_MODELS } from "../config/ai-models.config";
 import "../styles/RateLimitFields.css";
+import { ManagedAiCard, type ManagedAiCardProps } from "./ManagedAiCard";
 
 // Responsive label component that shows short version on small screens
 function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; shortText: string; helpKey?: string }) {
@@ -62,9 +63,21 @@ interface SettingsAITabProps {
   fetcher: FetcherWithComponents<any>;
   t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  /** What the shop's managed-AI state is — see ManagedAiCard. */
+  managedAi?: ManagedAiCardProps extends infer P
+    ? P extends { fetcher: unknown; t: unknown }
+      ? Omit<P, "fetcher" | "t">
+      : never
+    : never;
 }
 
-export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
+export function SettingsAITab({
+  settings,
+  fetcher,
+  t,
+  onHasChangesChange,
+  managedAi,
+}: SettingsAITabProps) {
   const { dismissByKey } = useInfoBox();
   // Build per-provider setters that ALSO clear any active "corrupted API
   // key" warning for that provider. The warning is no longer actionable
@@ -316,8 +329,20 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
     provider as AIProvider
   );
 
+  // PLAN_MANAGED_AI_KEY §8a — in managed mode the six key fields, the provider
+  // select, the model select and the per-provider rate limits are all noise:
+  // none of them affects anything, and a screen full of inert inputs invites
+  // the merchant to fill them in and wonder why nothing changes. The mode
+  // SWITCH stays (the way back must never be the hidden thing), and so does
+  // the line saying how many keys are stored, with a Delete control — hiding
+  // the tab without that would leave "uninstall the app" as the only way to
+  // erase a credential they gave us.
+  const keyFieldsHidden = managedAi?.aiKeySource === "managed" && managedAi.managedAiActive;
+
   return (
     <>
+    {managedAi && <ManagedAiCard {...managedAi} fetcher={fetcher} t={t} />}
+    {keyFieldsHidden ? null : (
     <Card>
       <BlockStack gap="500">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
@@ -873,6 +898,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         </div>
       </BlockStack>
     </Card>
+    )}
   </>
   );
 }

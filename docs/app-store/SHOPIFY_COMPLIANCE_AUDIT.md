@@ -149,31 +149,62 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   `firstName`/`lastName`/`email` erweitern (analog Token-Pfad). Doku erst nach
   verifizierter Implementierung als „erfüllt" markieren.
 
-### B4 — Keine KI-Datenverarbeitungs-Zustimmung / unzureichende Offenlegung (für eine KI-App kritisch) ✅ BEHOBEN (Ansatz A: BYO-Key)
+### B4 — Keine KI-Datenverarbeitungs-Zustimmung / unzureichende Offenlegung (für eine KI-App kritisch) ✅ BEHOBEN (Ansatz A **und** Ansatz B)
 
-- **Status:** Behoben durch **Ansatz A (BYO-Key erzwingen)**.
+> **Geändert 2026-09-20 (PLAN_MANAGED_AI_KEY).** Dieser Befund nennt ZWEI
+> akzeptable Fixes — „1. BYO-Key erzwingen **oder** 2. explizites, geloggtes
+> In-App-Consent-Gate vor jedem KI-Call". Die App setzte Fix 1 um; sie setzt
+> jetzt BEIDE um: BYO bleibt der Default und ist unverändert, und daneben gibt
+> es einen Operator-Key hinter Fix 2. B4 wird damit **nicht wieder geöffnet** —
+> aber der frühere, kategorische Satz „es existiert kein Codepfad mehr, der
+> Merchant-Content über einen Operator-Account sendet" ist nicht mehr wahr und
+> wird hier ersetzt, statt als Garantie stehenzubleiben, die der Code nicht
+> mehr gibt.
+
+- **Status:** Behoben durch **Ansatz A (BYO-Key)** für jeden Shop im Default,
+  und durch **Ansatz B (Consent-Gate)** für Shops, die einen Plan mit
+  enthaltener KI gebucht UND aktiviert haben.
   - `process.env.*_API_KEY`-Shared-Fallback in
-    [src/services/ai.service.ts](src/services/ai.service.ts) **vollständig entfernt**;
-    fehlt der merchant-eigene Key, wirft `initializeProvider()` jetzt
+    [src/services/ai.service.ts](src/services/ai.service.ts) **vollständig entfernt** und
+    nicht wiederbelebt; fehlt ein verwendbarer Key, wirft `initializeProvider()`
     `MissingAIKeyError` (Code `NO_AI_KEY`) — garantierter Chokepoint für **alle**
-    `new AIService(...)`-Aufrufer inkl. Hintergrund-Tasks. Es existiert **kein**
-    Codepfad mehr, der Merchant-Content über einen App-/Operator-Account an eine
-    Dritt-KI sendet.
+    `new AIService(...)`-Aufrufer inkl. Hintergrund-Tasks.
+  - **Der Operator-Key lebt unter EIGENEN Namen** (`MANAGED_AI_*`) und wird von
+    genau EINEM Modul gelesen:
+    [app/services/ai/ai-credentials.server.ts](app/services/ai/ai-credentials.server.ts).
+    Dasselbe Modul prüft die Einwilligung, den Kill-Switch und das Budget —
+    ein Credential, das man nur zusammen mit seinem Gate bekommt, lässt sich
+    nicht daran vorbei bekommen. `tests/unit/ai-key-source-isolation.test.ts`
+    hält das fest: keine andere Datei darf eine dieser Variablen lesen.
+  - **Die Einwilligung ist explizit, geloggt und versioniert**
+    (`AISettings.aiProcessingConsentAt` / `…Version`), eigene Action mit
+    eigenem Button — nie in eine Save-Bar gebündelt, die auch anderes trägt.
+    Ändert sich ein Sub-Prozessor, wird die Version erhöht und alle Shops
+    werden erneut gefragt: wer zwei Anbietern zugestimmt hat, hat nicht einem
+    dritten zugestimmt. Ohne gültige Einwilligung wird **jeder** managed Call
+    verweigert, auch auf unbeaufsichtigten Pfaden.
   - Freundliche Vorab-Prüfung (`getMissingPreferredKey` / `noAiKeyResponse`,
     `409 NO_AI_KEY`, lokalisiert) an den HTTP-Eintrittspunkten:
     [api.ai.tsx](app/routes/api.ai.tsx) (deckt alle 11 Handler),
     [api.translate-alt-text-template.tsx](app/routes/api.translate-alt-text-template.tsx),
     [templates-translate-field.action.ts](app/actions/templates/templates-translate-field.action.ts).
-  - `privacy.tsx`: alle **6** Provider (HuggingFace, Google Gemini, Anthropic,
-    OpenAI, Grok/X.AI, DeepSeek) + konkreter Verarbeitungszweck + „kein
-    Modell-Training" + Drittland-/EU-Transfer-Hinweis; aus dem Settings-AI-Tab
-    verlinkt.
-  - **No-Go:** Die Variablen `HUGGINGFACE_API_KEY`, `GOOGLE_API_KEY`,
-    `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROK_API_KEY`, `DEEPSEEK_API_KEY`
-    dürfen **nicht** als Shared-/Operator-Keys gesetzt werden — sie werden vom
-    Code nicht mehr gelesen und würden den Compliance-Verstoß wieder einführen.
-    (`scripts/validate-env.js` erwartet diese Vars nicht — kein Pflicht-Env.)
-    Bestehende Werte in `.env`/Deployment entfernen (siehe R6).
+  - `privacy.tsx`: beide Wege sind benannt — eigener Key vs. im Plan enthaltene
+    KI — inklusive der beiden Anbieter, die für den zweiten verwendet werden
+    (OpenAI als Default, Anthropic als Ausweichanbieter), alle **6** Provider
+    für den BYO-Weg, konkreter Verarbeitungszweck, „kein Modell-Training" und
+    Drittland-/EU-Transfer-Hinweis; aus dem Settings-AI-Tab verlinkt.
+  - **No-Go, unverändert:** Die Variablen `HUGGINGFACE_API_KEY`,
+    `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROK_API_KEY`,
+    `DEEPSEEK_API_KEY` dürfen **nicht** gesetzt werden — sie werden vom Code
+    nicht gelesen, und ein gesetzter Wert bedeutet, dass jemand einen
+    Shared-Key erwartet, der an allen Gates vorbeigeht. Sie sind aus beiden
+    `.env.*.template` **entfernt** (nicht nur leer gelassen: eine Zeile mit
+    „nicht setzen" daneben ist genau die Einladung, die dieser Befund
+    abschaffen wollte), `scripts/validate-env.js` warnt, wenn eine gesetzt ist,
+    und `ai-key-source-isolation.test.ts` prüft beide Hälften.
+    Der Operator-Key heißt `MANAGED_AI_API_KEY`, ist **opt-in pro Deployment**
+    (`MANAGED_AI_ENABLED=true`) und wird im Dev-/Custom-App-Build grundsätzlich
+    nicht ausgeliefert.
 - **Anforderung:** Keine Nutzung von API-/Merchant-Daten für ML/KI ohne **schriftliche
   Zustimmung von Shopify ODER des Merchants**; Privacy-Policy-Offenlegung der erhobenen
   Daten/Zwecke/Drittempfänger. (PPA §6.1 / API Terms — <https://www.shopify.com/partners/terms>,

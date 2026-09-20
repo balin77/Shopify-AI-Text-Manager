@@ -1068,6 +1068,39 @@ export const es: Translation = {
     title: "Configuración",
     appSetup: "Configuración de la aplicación",
     aiApiAccess: "Códigos de acceso a la API de IA",
+    managedAi: {
+      heading: "De dónde viene la IA",
+      useOwnKey: "Usar mi propia clave de API",
+      useIncluded: "Usar la IA incluida en mi plan",
+      includedHint:
+        "Tu plan incluye IA. Puedes cambiar a tu propia clave cuando quieras — tus claves guardadas se conservan.",
+      notIncludedHint:
+        "Tu plan actual no incluye IA. Elige un plan con IA incluida, o añade tu propia clave abajo.",
+      entitlementEnded:
+        "Tu plan ya no incluye IA, así que se vuelve a usar tu propia clave. Tus claves guardadas se conservaron.",
+      storedKeys: "{count} clave(s) de API guardada(s), conservadas para que puedas volver",
+      storedKeysNone: "No hay claves de API guardadas",
+      deleteKeys: "Eliminar claves guardadas",
+      deleteKeysConfirm: "Eliminarlas",
+      deleteKeysWarning:
+        "Esto elimina definitivamente las claves de API que nos diste. Tu proveedor y modelo se conservan.",
+      consentHeading: "Procesamiento por nuestros proveedores de IA",
+      consentLabel: "Acepto que el contenido de mi tienda sea procesado por estos proveedores",
+      consentBody:
+        "Para usar la IA incluida en tu plan, tus textos se envían a nuestros proveedores de IA con nuestra cuenta. No entrenan con este contenido. No se envía nada hasta que aceptes.",
+      consentRequired: "Confírmalo para empezar a usar la IA incluida.",
+      consentSave: "Confirmar",
+      consentWithdraw: "Retirar",
+      consentGranted: "Confirmado el {date} (versión {version})",
+      privacyLink: "Leer qué se procesa y quién lo procesa",
+      usageHeading: "IA incluida en tu plan",
+      usageUsed: "{percent}% usado en este periodo",
+      usageResets: "Se reinicia el {date}",
+      usageWarning: "Has usado el {percent}% del volumen de IA de este periodo.",
+      usageExhausted:
+        "El volumen de IA de este periodo se ha agotado. Añade tu propia clave para continuar ahora, o espera al siguiente periodo.",
+      usageEstimated: "Parte de esta cifra es una estimación.",
+    },
     aiInstructions: "Instrucciones de IA",
     appLanguage: "Idioma de la aplicación",
     translations: "Traducciones",

@@ -1085,6 +1085,39 @@ export const en: Translation = {
     title: "Settings",
     appSetup: "App Setup",
     aiApiAccess: "AI API Access Codes",
+    managedAi: {
+      heading: "Where the AI comes from",
+      useOwnKey: "Use my own API key",
+      useIncluded: "Use the AI included in my plan",
+      includedHint:
+        "Your plan includes AI. You can switch to your own API key at any time — your stored keys are kept.",
+      notIncludedHint:
+        "Your current plan does not include AI. Choose an AI-included plan to use ours, or add your own API key below.",
+      entitlementEnded:
+        "Your plan no longer includes AI, so your own API key is being used again. Your stored keys were kept.",
+      storedKeys: "{count} stored API key(s), kept so you can switch back",
+      storedKeysNone: "No API keys stored",
+      deleteKeys: "Delete stored keys",
+      deleteKeysConfirm: "Delete them",
+      deleteKeysWarning:
+        "This permanently removes the API keys you gave us. Your provider and model choices are kept.",
+      consentHeading: "Processing with our AI providers",
+      consentLabel: "I agree that my shop's content may be processed by these providers",
+      consentBody:
+        "To use the AI included in your plan, your product texts are sent to our AI providers under our account. They do not train on this content. Nothing is sent until you agree.",
+      consentRequired: "Confirm this to start using the included AI.",
+      consentSave: "Confirm",
+      consentWithdraw: "Withdraw",
+      consentGranted: "Confirmed on {date} (version {version})",
+      privacyLink: "Read what is processed and by whom",
+      usageHeading: "AI included in your plan",
+      usageUsed: "{percent}% used this period",
+      usageResets: "Resets on {date}",
+      usageWarning: "You have used {percent}% of this period's AI volume.",
+      usageExhausted:
+        "This period's AI volume is used up. Add your own API key to continue immediately, or wait for the next period.",
+      usageEstimated: "Part of this figure is estimated.",
+    },
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",
     translations: "Translations",

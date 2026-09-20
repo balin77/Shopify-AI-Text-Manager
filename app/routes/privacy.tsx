@@ -109,12 +109,30 @@ export default function PrivacyPolicy() {
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>4.1 AI Service Providers</h3>
         <p>
           {appName} sends store content to a third-party AI provider <strong>only</strong> when
-          you explicitly trigger an AI generation or translation action, and <strong>only</strong>
-          using <strong>your own API key</strong> that you configure in the app's settings.
-          {appName} does not provide a shared or operator-owned API key: without your own key,
-          no content is ever sent to any AI provider. Depending on the provider you choose, the
-          content you submit (e.g. product titles, descriptions, SEO fields, store policies,
-          image URLs) is sent to one of the following providers:
+          you explicitly trigger an AI generation or translation action. There are two ways that
+          content can reach a provider, and which one applies to your shop is your choice:
+        </p>
+        <ul style={{ marginLeft: '20px' }}>
+          <li>
+            <strong>Your own API key.</strong> You configure a key in the app's settings and the
+            content is sent under <strong>your</strong> account with that provider. This is the
+            default and, unless you have chosen otherwise, the only mode that applies to you.
+          </li>
+          <li>
+            <strong>AI included in your plan.</strong> If you subscribe to a plan that includes
+            AI and switch your shop to it, content is sent under an account operated by{' '}
+            {appName} instead. This never happens without your <strong>explicit, recorded
+            consent</strong>, which you give in the app's settings and can withdraw there at any
+            time; if you have not given it, no content is sent under our account. We ask again
+            whenever the providers involved change.
+          </li>
+        </ul>
+        <p>
+          The providers used for plan-included AI are <strong>OpenAI</strong> (default) and{' '}
+          <strong>Anthropic</strong> (used if the first is unavailable). Both operate under
+          business terms that do <strong>not</strong> train on content submitted through their
+          APIs. If you use your own key, the content instead goes to the provider you selected,
+          which may be any of the following:
         </p>
         <ul style={{ marginLeft: '20px' }}>
           <li><strong>Hugging Face:</strong> Text generation and translation</li>
@@ -127,7 +145,11 @@ export default function PrivacyPolicy() {
         <p>
           Content is sent solely to produce the output you requested. It is processed
           transiently by the provider to generate a response and is <strong>not used by
-          {appName} to train any machine-learning or AI models</strong>. The handling of your
+          {appName} to train any machine-learning or AI models</strong>, whether it was sent
+          under your own key or under ours. When plan-included AI is used, {appName} is the
+          controller of the account the request is made from and records how much was used, in
+          order to apply your plan's volume; the content itself is not retained by us beyond
+          what is needed to produce and store the result you asked for. The handling of your
           content by each provider is governed by that provider's own terms and privacy policy.
           Most of these providers process data on infrastructure located outside the European
           Union (for example, in the United States); by selecting a provider and submitting
