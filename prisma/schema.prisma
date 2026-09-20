@@ -42,6 +42,41 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // ── Managed AI (PLAN_MANAGED_AI_KEY Phase 1) ───────────────────────────────
+  //
+  // The key source is a SECOND AXIS beside the plan, never a fifth plan value:
+  // every `Record<Plan, …>` in the app keeps working, and a merchant on any
+  // tier can be on either side of it.
+  //
+  // `aiKeySource` is the merchant's STORED CHOICE ("byo" | "managed"). It may
+  // only be set to "managed" while the verified subscription says so, and
+  // switching to managed NEVER deletes a stored key — the way back has to stay
+  // one click, or "I hit the cap" becomes a support ticket.
+  aiKeySource String @default("byo")
+
+  // Mirrored from the SHOPIFY-VERIFIED subscription by checkAndSyncSubscription,
+  // exactly like `subscriptionPlan` — never from a form field and never from
+  // the client. A merchant cannot grant themselves managed AI by posting.
+  managedAiActive Boolean @default(false)
+
+  // Explicit, logged, versioned consent to processing content through the
+  // OPERATOR's AI account (compliance audit §B4's second acceptable fix, which
+  // is the only thing that makes managed mode buildable). Never pre-ticked,
+  // never bundled into the plan purchase, and re-asked when the version
+  // changes — which it does the day a managed sub-processor changes.
+  aiProcessingConsentAt      DateTime?
+  aiProcessingConsentVersion String?
+
+  // Is this a Shopify PARTNER DEVELOPMENT store? Three-valued on purpose
+  // (null = never determined), written at subscription-sync time where an
+  // admin client exists. `isDevStore`'s catch returns false, so a lookup that
+  // FAILED and a shop that is genuinely not a dev store are the same boolean —
+  // the `attributesSyncedAt` trap again. The credential resolver runs per AI
+  // request, including on detached paths that hold no admin client at all, so
+  // looking it up there would permanently answer "not a dev store" (= uncapped)
+  // on exactly the unattended paths the cap exists for.
+  partnerDevelopment Boolean?
+
   // How to handle Shopify's richtext rule ("all top level nodes must be
   // <p>/<ul>/<ol>/<h1>-<h6>") when saving primary theme-settings values
   // (e.g. Brand information → brand_description). Merchant-selectable in Settings.

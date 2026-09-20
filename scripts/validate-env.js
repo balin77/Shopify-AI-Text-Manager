@@ -163,6 +163,75 @@ console.log('\n🔎 Google Search Console (SEO tab):');
 }
 
 // Print results
+// ─── Managed AI (PLAN_MANAGED_AI_KEY §9.6) ───────────────────────────────────
+//
+// A managed mode pointing at a dead model is a 100% failure rate for paying
+// customers, and it fails at the FIRST merchant call rather than at boot. So
+// both credential sets are checked here: provider, model and key are a UNIT
+// (the failover crosses providers, so a mismatched pair is a key sent to the
+// wrong endpoint), and each provider/model pair must be one the price table
+// knows — an unpriced managed model meters at a guessed ceiling.
+//
+// What this canNOT check is whether the model ANSWERS. That is the startup
+// smoke test's job; a lookup in our own table cannot see a retired id.
+const KNOWN_AI_PROVIDERS = ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'];
+
+function checkManagedCredential(prefix, label, required) {
+  const provider = process.env[`${prefix}PROVIDER`];
+  const model = process.env[`${prefix}MODEL`];
+  const apiKey = process.env[`${prefix}API_KEY`];
+  const present = [provider, model, apiKey].filter(Boolean).length;
+
+  if (present === 0) {
+    if (required) {
+      errors.push(`❌ MANAGED_AI_ENABLED is true but no ${label} credential is configured (${prefix}PROVIDER/MODEL/API_KEY)`);
+    } else {
+      // §3a: a missing failover does not refuse to start, but a SILENT one is
+      // how an outage becomes a surprise.
+      warnings.push(`⚠️  No ${label} AI credential configured — an outage of the default provider is an outage of managed AI`);
+    }
+    return;
+  }
+
+  if (present < 3) {
+    errors.push(`❌ ${label} AI credential is incomplete — ${prefix}PROVIDER, ${prefix}MODEL and ${prefix}API_KEY must be set together`);
+    return;
+  }
+
+  if (!KNOWN_AI_PROVIDERS.includes(provider)) {
+    errors.push(`❌ ${prefix}PROVIDER is "${provider}" — expected one of ${KNOWN_AI_PROVIDERS.join(', ')}`);
+    return;
+  }
+
+  console.log(`✅ ${label} AI: ${provider} / ${model}`);
+}
+
+if (process.env.MANAGED_AI_ENABLED === 'true') {
+  checkManagedCredential('MANAGED_AI_', 'managed (default)', true);
+  checkManagedCredential('MANAGED_AI_FALLBACK_', 'managed (failover)', false);
+
+  // §7a, belt and braces: the operator key must never be served from the
+  // dev/custom-app build, and the cheapest place to find that out is here.
+  if (process.env.DEV_APP_CLIENT_ID &&
+      process.env.SHOPIFY_API_KEY === process.env.DEV_APP_CLIENT_ID &&
+      process.env.APP_ENV !== 'production') {
+    errors.push('❌ MANAGED_AI_ENABLED is true in a dev/custom-app build — an operator key must never be configured there');
+  }
+} else if (process.env.MANAGED_AI_API_KEY) {
+  // Not an error: this is exactly what the kill switch is for. But a key
+  // sitting in the environment of a deployment that ignores it is worth one
+  // line, because "why is managed mode off" is otherwise a hunt.
+  console.log('ℹ️  A managed AI key is configured but MANAGED_AI_ENABLED is not "true" — managed mode is OFF');
+}
+
+// The six provider names compliance §B4 says must never be set. The code reads
+// none of them; a set one means somebody is expecting a shared key to work.
+for (const forbidden of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GROK_API_KEY', 'DEEPSEEK_API_KEY', 'HUGGINGFACE_API_KEY']) {
+  if (process.env[forbidden]) {
+    warnings.push(`⚠️  ${forbidden} is set. No code path reads it — merchant keys live in the database and the operator key is MANAGED_AI_API_KEY.`);
+  }
+}
+
 console.log('\n' + '='.repeat(60));
 if (errors.length > 0) {
   console.log('\n🚨 ERRORS FOUND:\n');

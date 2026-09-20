@@ -38,6 +38,31 @@ interface UserError {
  * Development stores should use test billing (no real charges).
  */
 async function isDevStore(admin: ShopifyAdminClient): Promise<boolean> {
+  // `=== true`, so an UNKNOWN answer keeps the historic behaviour here: a
+  // failed lookup means "not a dev store" for the BILLING question, which is
+  // the conservative direction (a real charge rather than a test one).
+  return (await detectPartnerDevelopment(admin)) === true;
+}
+
+/**
+ * Is this a Shopify partner DEVELOPMENT store? THREE-VALUED — `null` means the
+ * lookup failed and we do not know.
+ *
+ * The distinction did not matter while the only consumer was billing, where
+ * "do not know" and "no" want the same answer. It matters for managed AI
+ * (PLAN_MANAGED_AI_KEY §7a): such a shop can hold a Shopify-verified ACTIVE
+ * subscription that charges EUR 0, so treating an unknown as "not a dev store"
+ * hands it an uncapped operator budget — and `isDevStore`'s catch made those
+ * two indistinguishable, the `attributesSyncedAt` trap by another name.
+ *
+ * The answer is PERSISTED by the caller rather than asked per AI call: the
+ * credential resolver runs on detached paths that hold no admin client at all,
+ * where this lookup could only ever fail, which is precisely "uncapped" on the
+ * unattended paths the cap exists for.
+ */
+export async function detectPartnerDevelopment(
+  admin: ShopifyAdminClient
+): Promise<boolean | null> {
   try {
     const response = await admin.graphql(
       `#graphql
@@ -51,10 +76,11 @@ async function isDevStore(admin: ShopifyAdminClient): Promise<boolean> {
       `
     );
     const result = await response.json();
-    return result.data?.shop?.plan?.partnerDevelopment === true;
+    const value = result.data?.shop?.plan?.partnerDevelopment;
+    return typeof value === 'boolean' ? value : null;
   } catch (error) {
-    logger.warn('[Billing] Could not determine shop plan type, defaulting to non-test', { error });
-    return false;
+    logger.warn('[Billing] Could not determine shop plan type', { error });
+    return null;
   }
 }
 
@@ -316,7 +342,30 @@ export async function getCurrentSubscription(
   if (testSubs.length === 0) return null;
 
   const inTestBilling = shop ? resolveDevPlanMode(shop) === 'test-billing' : false;
-  const allowTest = inTestBilling || (await isDevStore(admin));
+  const partnerDevelopment = await detectPartnerDevelopment(admin);
+  // PLAN_MANAGED_AI_KEY §7a — recorded HERE, as a side effect of a lookup this
+  // function already makes, and deliberately not as a call of its own earlier
+  // in checkAndSyncSubscription: that runs on every app navigation, so an
+  // extra GraphQL round trip there is a real cost, and placing it above the
+  // dev-override short-circuit also broke that path's guarantee never to call
+  // Shopify at all (the custom-app distribution has no Billing API).
+  //
+  // A dev-override shop therefore never writes this column, which costs
+  // nothing: §7a's third signal (`resolveDevPlanMode !== null`) is exactly the
+  // one that covers it — which is why the plan names three signals and not two.
+  //
+  // THREE-VALUED: a failed lookup writes NOTHING rather than `false`, so an
+  // answer established earlier survives a throttled sync and "never
+  // determined" stays distinguishable from "no".
+  if (shop && partnerDevelopment !== null) {
+    await prisma.aISettings
+      .updateMany({ where: { shop }, data: { partnerDevelopment } })
+      .catch((error) => {
+        // Bookkeeping for a spend cap, never a reason to fail a plan lookup.
+        logger.warn('[Billing] Could not record partnerDevelopment', { shop, error });
+      });
+  }
+  const allowTest = inTestBilling || partnerDevelopment === true;
   if (!allowTest) {
     logger.warn('[Billing] Ignoring test subscription in production — shop not currently entitled to test billing', {
       shop: shop ?? '(unknown)',

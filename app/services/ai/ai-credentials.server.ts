@@ -1,0 +1,267 @@
+/**
+ * WHOSE key an AI call spends — the only module in this app that reads a
+ * `MANAGED_AI_*` variable. PLAN_MANAGED_AI_KEY §5.
+ *
+ * That exclusivity is the compliance guarantee, not tidiness. The audit's §B4
+ * permits an operator key only behind an explicit, logged consent gate, and a
+ * credential that can be obtained ONLY together with its gate cannot be
+ * obtained past it. `ai.service.ts` never learns that `process.env` exists;
+ * the key is injected into its config by this function or not at all.
+ * `tests/unit/ai-key-source-isolation.test.ts` is what keeps that true.
+ *
+ * Resolution order, and each step is a decision someone could get wrong:
+ *
+ *   1. The MODE comes from the verified subscription (`managedAiActive`,
+ *      mirrored by `checkAndSyncSubscription`) AND the merchant's stored
+ *      choice (`aiKeySource`) — never from a form field, never from the
+ *      client. Same rule as `subscriptionPlan`.
+ *   2. A MERCHANT key wins whenever the merchant has one and asked for it.
+ *      Managed mode does not delete BYO keys and BYO keys do not disable a
+ *      managed subscription; the stored choice decides, which is what makes
+ *      "I hit the cap" one click rather than a support ticket.
+ *   3. CONSENT is checked in managed mode only, before anything is spent.
+ *   4. BUDGET is checked last, because it is the only step that costs a DB
+ *      round trip.
+ *
+ * Everything here is deliberately cheap to call: it runs PER AI REQUEST,
+ * including on detached paths that hold no admin client and no session.
+ */
+
+import type { AISettings } from "@prisma/client";
+import type { AIProvider } from "../../utils/api-key-validation";
+import { tryDecryptApiKey } from "../../utils/encryption.server";
+import { logger } from "../../utils/logger.server";
+import { toValidProvider, type AIServiceConfig } from "../../../src/services/ai.service";
+import { type AiCredentialSource } from "./usage-dimensions.shared";
+import {
+  hasCurrentAiProcessingConsent,
+  wantsManagedAi,
+  type AiRefusalCode,
+} from "./managed-ai.shared";
+
+/** Which encrypted column holds which provider's merchant key. */
+const PROVIDER_KEY_FIELD: Record<AIProvider, keyof AISettings & string> = {
+  huggingface: "huggingfaceApiKey",
+  gemini: "geminiApiKey",
+  claude: "claudeApiKey",
+  openai: "openaiApiKey",
+  grok: "grokApiKey",
+  deepseek: "deepseekApiKey",
+};
+
+export type ManagedRole = "default" | "failover";
+
+export type AiCredentialDecision =
+  | {
+      ok: true;
+      source: "byo";
+      provider: AIProvider;
+      config: AIServiceConfig;
+    }
+  | {
+      ok: true;
+      source: "managed";
+      provider: AIProvider;
+      model: string;
+      role: ManagedRole;
+      config: AIServiceConfig;
+    }
+  | { ok: false; reason: "noKey"; provider: AIProvider }
+  | { ok: false; reason: "consentMissing" }
+  | { ok: false; reason: "budgetExceeded"; usedMicros: number; limitMicros: number }
+  | { ok: false; reason: "managedUnavailable" };
+
+export type AiCredentialRefusal = Extract<AiCredentialDecision, { ok: false }>;
+
+/** Narrowing helper — `reason` is what every caller switches on. */
+export function isRefusal(d: AiCredentialDecision): d is AiCredentialRefusal {
+  return d.ok === false;
+}
+
+export function refusalCode(d: AiCredentialRefusal): AiRefusalCode {
+  return d.reason;
+}
+
+// ─── The operator credential ─────────────────────────────────────────────────
+
+interface ManagedCredential {
+  provider: AIProvider;
+  model: string;
+  apiKey: string;
+}
+
+/**
+ * Is managed mode switched on for this deployment at all?
+ *
+ * OPT-IN, not opt-out: an unset variable means OFF. §9.4 describes the kill
+ * switch as `MANAGED_AI_ENABLED=false`, and reading it that way — off only
+ * when explicitly false — would turn managed mode on in every environment that
+ * has a key configured and no opinion about the flag, which includes anyone
+ * restoring a production env file into a staging box.
+ */
+export function isManagedAiEnabled(): boolean {
+  return process.env.MANAGED_AI_ENABLED === "true";
+}
+
+/**
+ * True when the running binary is the dev/custom app, where an operator key
+ * must never be configured (§7a, "belt and braces"). Deliberately a local copy
+ * of the predicate rather than an import: `dev-plan-override.server.ts` reads
+ * the DB and resolves a plan, and this module must stay callable from a
+ * detached path with nothing but `process.env`.
+ */
+function isDevAppBuild(): boolean {
+  const devClientId = process.env.DEV_APP_CLIENT_ID;
+  return (
+    !!devClientId &&
+    process.env.SHOPIFY_API_KEY === devClientId &&
+    process.env.APP_ENV !== "production"
+  );
+}
+
+/**
+ * The operator credential for one role. Provider, model and key are read as a
+ * UNIT and a partial configuration yields NOTHING: the failover crosses
+ * providers, so a model or a key that belongs to a different provider than the
+ * one named is a request sent to the wrong endpoint with somebody else's
+ * secret in the header.
+ */
+export function readManagedCredential(role: ManagedRole): ManagedCredential | null {
+  const prefix = role === "failover" ? "MANAGED_AI_FALLBACK_" : "MANAGED_AI_";
+  const rawProvider = process.env[`${prefix}PROVIDER`];
+  const model = process.env[`${prefix}MODEL`];
+  const apiKey = process.env[`${prefix}API_KEY`];
+  if (!rawProvider || !model || !apiKey) return null;
+
+  // `toValidProvider` falls back to 'claude' for anything it does not
+  // recognise, which is the right default for a merchant's stored preference
+  // and the WRONG one here: it would pair an unknown provider's key with
+  // Anthropic's endpoint. An unrecognised name is a misconfiguration.
+  const provider = toValidProvider(rawProvider);
+  if (provider !== rawProvider) {
+    logger.error(
+      `[ManagedAI] ${prefix}PROVIDER is "${rawProvider}", which is not a known provider — this credential is ignored.`,
+    );
+    return null;
+  }
+  return { provider, model, apiKey };
+}
+
+/** Put the operator key in the one config slot its provider reads. */
+function configFor(cred: ManagedCredential): AIServiceConfig {
+  const config: AIServiceConfig = {
+    selectedModel: cred.model,
+    credentialSource: "managed",
+  };
+  (config as Record<string, unknown>)[PROVIDER_KEY_FIELD[cred.provider] as string] = cred.apiKey;
+  return config;
+}
+
+/**
+ * Is managed mode available at all in this deployment? Kill switch, dev-build
+ * guard and a configured default credential — the three questions that have
+ * nothing to do with which shop is asking.
+ */
+export function managedAiAvailable(): boolean {
+  if (!isManagedAiEnabled()) return false;
+  if (isDevAppBuild()) {
+    logger.warn("[ManagedAI] Refusing to serve an operator key from a dev/custom app build.");
+    return false;
+  }
+  return readManagedCredential("default") !== null;
+}
+
+// ─── The merchant credential ─────────────────────────────────────────────────
+
+/** Every merchant key the shop has stored, decrypted, for the AIService config. */
+export function byoConfig(settings: AISettings | null): AIServiceConfig {
+  return {
+    huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
+    geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
+    claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
+    openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
+    grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
+    deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
+    selectedModel: settings?.selectedModel || undefined,
+    credentialSource: "byo",
+  };
+}
+
+/**
+ * The provider the shop wants but has no key for, or null when a usable
+ * merchant key exists. Decrypts, because the column is encrypted and a
+ * non-empty check would report a corrupt value as a key.
+ */
+export function missingMerchantKey(settings: AISettings | null): AIProvider | null {
+  const provider = toValidProvider(settings?.preferredProvider);
+  const stored = settings
+    ? (settings as Record<string, unknown>)[PROVIDER_KEY_FIELD[provider]]
+    : null;
+  const decrypted = tryDecryptApiKey(stored as string | null | undefined, provider);
+  return decrypted && decrypted.trim().length > 0 ? null : provider;
+}
+
+// ─── The decision ────────────────────────────────────────────────────────────
+
+export interface ResolveArgs {
+  shop: string;
+  settings: AISettings | null;
+  /**
+   * Which managed credential to use. The BREAKER decides this (§3a rule 5),
+   * never a caller — it is a parameter here only so the failover has a seam to
+   * pass through when it ships. Phase 1 always resolves the default.
+   */
+  role?: ManagedRole;
+}
+
+/**
+ * Whose key does this shop's next AI call spend?
+ *
+ * Never throws: a refusal is a value, because two of its four reasons reach a
+ * DETACHED repair, where an exception is indistinguishable from "the AI could
+ * not deliver this entry" — and that, on a shop with auto-translate on, is a
+ * `translationsRemove` plus a local delete (§6a rule 1). A refusal that can be
+ * inspected is what lets that path ABORT instead.
+ */
+export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
+  const { settings, role = "default" } = args;
+
+  // 1 + 2. Mode. Both halves are required, and neither comes from the client.
+  if (!wantsManagedAi(settings)) {
+    const missing = missingMerchantKey(settings);
+    if (missing) return { ok: false, reason: "noKey", provider: missing };
+    return {
+      ok: true,
+      source: "byo",
+      provider: toValidProvider(settings?.preferredProvider),
+      config: byoConfig(settings),
+    };
+  }
+
+  // The shop asked for managed and Shopify verified it bought it. Everything
+  // below is a reason we still cannot serve it.
+  if (!managedAiAvailable()) return { ok: false, reason: "managedUnavailable" };
+
+  // 3. Consent, before anything is spent.
+  if (!hasCurrentAiProcessingConsent(settings)) return { ok: false, reason: "consentMissing" };
+
+  const cred = readManagedCredential(role) ?? readManagedCredential("default");
+  if (!cred) return { ok: false, reason: "managedUnavailable" };
+
+  // 4. Budget is NOT decided here — it is a DB round trip and belongs to the
+  // caller that can afford one (§6). This function stays synchronous and
+  // free so it can run on every detached path.
+  return {
+    ok: true,
+    source: "managed",
+    provider: cred.provider,
+    model: cred.model,
+    role: readManagedCredential(role) ? role : "default",
+    config: configFor(cred),
+  };
+}
+
+/** The ledger dimension for a decision — `managed` or `byo`, never guessed. */
+export function sourceOf(decision: AiCredentialDecision): AiCredentialSource | null {
+  return decision.ok ? decision.source : null;
+}
