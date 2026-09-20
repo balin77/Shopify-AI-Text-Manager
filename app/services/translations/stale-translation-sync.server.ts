@@ -2073,18 +2073,16 @@ async function runRetranslation(
   // response. Dynamic like the import above, to keep this module's static graph
   // as it is.
   const { planLocaleChunks } = await import("../ai/translation-budget.shared");
+  const { aiCredentialsFor } = await import("../ai/ai-credentials.server");
 
   const aiSettings = await db.aISettings.findUnique({ where: { shop } });
-  const provider = toValidProvider(aiSettings?.preferredProvider);
-  const aiConfig = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, shop);
+  const provider = aiCredentials.provider;
+  const aiConfig = aiCredentials.config;
 
   const task = await db.task.create({
     data: {

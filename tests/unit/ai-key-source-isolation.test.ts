@@ -81,6 +81,34 @@ describe('the operator credential has exactly one reader', () => {
   });
 });
 
+describe('no AIServiceConfig literal outside the resolver', () => {
+  it('nobody builds their own bag of decrypted merchant keys', () => {
+    // Ten copies of the same six decrypt lines is what made "the operator key
+    // has one reader" impossible to state: managed mode would have had to be
+    // added to each of them, and the one that was missed would silently keep
+    // spending the merchant's key.
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      const rel = relative(root, file).replace(/\\/g, '/');
+      if (rel === RESOLVER) continue;
+      const src = readFileSync(file, 'utf8');
+      // The shape is unmistakable: a decrypted key for one provider next to a
+      // decrypted key for another. `loader-helpers.ts` builds `has*ApiKey`
+      // BOOLEANS for the UI and does not match.
+      if (
+        /(?<!has)(?<!Has)\bhuggingfaceApiKey:\s*tryDecryptApiKey/.test(src) &&
+        /(?<!has)(?<!Has)\bclaudeApiKey:\s*tryDecryptApiKey/.test(src)
+      ) {
+        offenders.push(rel);
+      }
+    }
+    expect(
+      offenders,
+      `these files build their own credential config: ${offenders.join(', ')}`,
+    ).toEqual([]);
+  });
+});
+
 describe('the forbidden provider env names stay gone', () => {
   const FORBIDDEN = [
     'ANTHROPIC_API_KEY',

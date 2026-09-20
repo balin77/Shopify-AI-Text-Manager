@@ -19,6 +19,7 @@ import type { Session } from "@shopify/shopify-api";
 import type { SeoLimits } from "../../utils/character-limits";
 import { resolveSeoLimits } from "../../utils/character-limits";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "~/services/ai/ai-credentials.server";
 
 // ─── Content type config map ──────────────────────────────────────────────────
 
@@ -217,20 +218,13 @@ export function noAiKeyResponse(
 
 // ─── AI Service factory ───────────────────────────────────────────────────────
 
-/** Create an AIService instance from shop settings and a task ID. */
+/**
+ * Create an AIService instance from shop settings and a task ID.
+ *
+ * A thin wrapper over the credential resolver since PLAN_MANAGED_AI_KEY §5:
+ * whose key the call spends is one module's answer, and this signature stays
+ * only because a dozen handlers call it.
+ */
 export function createAIService(settings: AISettings | null, shop: string, taskId: string): AIService {
-  return new AIService(
-    toValidProvider(settings?.preferredProvider),
-    {
-      huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-      geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-      claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-      openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-      grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-      deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-      selectedModel: settings?.selectedModel || undefined,
-    },
-    shop,
-    taskId
-  );
+  return aiServiceFor(settings, shop, taskId).service;
 }

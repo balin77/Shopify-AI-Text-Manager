@@ -31,7 +31,7 @@ import type { AISettings } from "@prisma/client";
 import type { AIProvider } from "../../utils/api-key-validation";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import { logger } from "../../utils/logger.server";
-import { toValidProvider, type AIServiceConfig } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, type AIServiceConfig } from "../../../src/services/ai.service";
 import { type AiCredentialSource } from "./usage-dimensions.shared";
 import {
   hasCurrentAiProcessingConsent,
@@ -264,4 +264,74 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
 /** The ledger dimension for a decision — `managed` or `byo`, never guessed. */
 export function sourceOf(decision: AiCredentialDecision): AiCredentialSource | null {
   return decision.ok ? decision.source : null;
+}
+
+/**
+ * The `(provider, config)` pair an `AIService` is constructed from, for a
+ * caller that cannot (yet) act on a refusal.
+ *
+ * Every AI path in this app used to build that pair itself — ten copies of the
+ * same six decrypt lines — which is what made "the operator key has one
+ * reader" impossible to state. They all call this instead, and the decision is
+ * handed back with it so a caller that CAN refuse does so on the code rather
+ * than on a thrown error.
+ *
+ * What a refusal produces is the load-bearing part:
+ *
+ * - `noKey` yields the merchant's (empty) config, so `initializeProvider`
+ *   throws `MissingAIKeyError` exactly as it does today. Nothing changes for a
+ *   shop that never configured a key.
+ * - A MANAGED refusal (`consentMissing`, `managedUnavailable`) yields a config
+ *   with NO key at all, so the call fails instead of quietly falling back to
+ *   the merchant's own key. A shop that asked for managed AI and has not
+ *   consented must not have its own credential spent on its behalf — and a
+ *   silent fallback would also make the consent gate unobservable, which is
+ *   the one property §B4 is satisfied by.
+ */
+export interface AiRuntimeCredentials {
+  provider: AIProvider;
+  config: AIServiceConfig;
+  decision: AiCredentialDecision;
+}
+
+export function aiCredentialsFor(
+  settings: AISettings | null,
+  shop: string,
+  role: ManagedRole = "default",
+): AiRuntimeCredentials {
+  const decision = resolveAiCredentials({ shop, settings, role });
+  if (decision.ok) {
+    return { provider: decision.provider, config: decision.config, decision };
+  }
+
+  const provider = toValidProvider(settings?.preferredProvider);
+  if (decision.reason === "noKey") {
+    return { provider, config: byoConfig(settings), decision };
+  }
+  // Managed was asked for and cannot be served: no key travels.
+  return { provider, config: { credentialSource: "managed" }, decision };
+}
+
+/**
+ * An `AIService` for a shop, built through the resolver — THE factory.
+ *
+ * Every construction site in the app goes through this or through
+ * `aiCredentialsFor` above, which is what makes §5's guarantee ("no
+ * `AIServiceConfig` literal outside the resolver") checkable rather than
+ * aspirational. The decision travels back so a caller that can refuse does so
+ * on the code; a caller that cannot gets today's behaviour, because the
+ * refusal has already been turned into a config that fails at
+ * `initializeProvider`.
+ */
+export function aiServiceFor(
+  settings: AISettings | null,
+  shop: string,
+  taskId?: string,
+  role: ManagedRole = "default",
+): { service: AIService; decision: AiCredentialDecision } {
+  const creds = aiCredentialsFor(settings, shop, role);
+  return {
+    service: new AIService(creds.provider, creds.config, shop, taskId),
+    decision: creds.decision,
+  };
 }

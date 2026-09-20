@@ -15,17 +15,15 @@ export async function buildTranslateBatch(shop: string, taskId?: string) {
   const { db } = await import("../db.server");
   const { AIService, toValidProvider } = await import("../../src/services/ai.service");
   const { tryDecryptApiKey } = await import("../utils/encryption.server");
+  const { aiCredentialsFor } = await import("./ai/ai-credentials.server");
   const aiSettings = await db.aISettings.findUnique({ where: { shop } });
-  const provider = toValidProvider(aiSettings?.preferredProvider);
-  const config = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, shop);
+  const provider = aiCredentials.provider;
+  const config = aiCredentials.config;
   const service = new AIService(provider, config, shop, taskId);
   const translateBatch = (values: string[], from: string, to: string, context: string) =>
     service.translateBatchValues(values, from, to, context);

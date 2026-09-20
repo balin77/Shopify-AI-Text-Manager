@@ -10,11 +10,11 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../src/services/ai.service";
-import { tryDecryptApiKey } from "../utils/encryption.server";
+import { AIService } from "../../src/services/ai.service";
 import { getFormString } from "~/utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "./ai/ai-credentials.server";
 
 /**
  * Prisma `where` fragment scoping ThemeContent/ThemeTranslation reads to the
@@ -197,14 +197,7 @@ function buildAIService(
   settings: Record<string, string | null | undefined> | null,
   shop: string,
 ) {
-  return new AIService(toValidProvider(settings?.preferredProvider), {
-    huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-  }, shop);
+  return aiServiceFor(settings as never, shop).service;
 }
 
 /**

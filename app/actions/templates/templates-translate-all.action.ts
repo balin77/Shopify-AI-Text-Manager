@@ -1,6 +1,4 @@
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../../src/services/ai.service";
-import { tryDecryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
@@ -9,6 +7,7 @@ import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "~/services/ai/ai-credentials.server";
 
 export async function handleTranslateAll(
   ctx: TemplatesActionContext,
@@ -55,19 +54,7 @@ export async function handleTranslateAll(
       data: { status: "running", progress: 5 },
     });
 
-    const aiService = new AIService(
-      toValidProvider(settings?.preferredProvider),
-      {
-        huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-        geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-        claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-        openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-        grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-        deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-      },
-      session.shop,
-      task.id
-    );
+    const aiService = aiServiceFor(settings, session.shop, task.id).service;
 
     const primaryLocale = getFormString(formData, "primaryLocale") || "en";
 

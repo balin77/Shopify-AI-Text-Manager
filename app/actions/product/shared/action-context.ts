@@ -6,13 +6,13 @@
  */
 
 import { logger } from "~/utils/logger.server";
-import { tryDecryptApiKey } from "~/utils/encryption.server";
 import type { Session } from "@shopify/shopify-api";
-import { AIService, type AIProvider, toValidProvider } from "../../../../src/services/ai.service";
+import { AIService, type AIProvider } from "../../../../src/services/ai.service";
 import { TranslationService } from "../../../../src/services/translation.service";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
+import { aiCredentialsFor } from "~/services/ai/ai-credentials.server";
 
 interface AIConfig {
   huggingfaceApiKey?: string;
@@ -138,17 +138,14 @@ export async function prepareActionContext(
   }
 
   // Prepare provider and config
-  const provider = toValidProvider(aiSettings?.preferredProvider);
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, shop);
+  const provider = aiCredentials.provider;
 
-  const config: AIConfig = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  const config = aiCredentials.config;
 
   // Create Shopify API Gateway
   const gateway = new ShopifyApiGateway(admin, shop);

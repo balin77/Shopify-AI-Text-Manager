@@ -7,11 +7,10 @@
 
 import { data as json } from "react-router";
 import type { ActionFunctionArgs } from "react-router";
-import { AIService, toValidProvider } from "../../src/services/ai.service";
+import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
-import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import type { ContentEditorConfig } from "../types/content-editor.types";
@@ -49,6 +48,7 @@ import { handleUpdateContent } from "./content/content-update.action";
 import { handleCreateContent } from "./content/create.actions";
 import { handleDeleteContent } from "./content/delete.actions";
 import { handleDuplicateContent } from "./content/duplicate.actions";
+import { aiCredentialsFor } from "~/services/ai/ai-credentials.server";
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -86,18 +86,15 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   }
 
   // Initialize services
-  const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, session.shop);
+  const provider = aiCredentials.provider;
   // Cast aiInstructions to indexable type for dynamic field access
   const instructions = aiInstructions as Record<string, string | null> | null;
-  const serviceConfig = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  const serviceConfig = aiCredentials.config;
 
   // Update queue rate limits from settings
   const { AIQueueService } = await import("../../src/services/ai-queue.service");
