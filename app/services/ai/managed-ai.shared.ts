@@ -16,7 +16,23 @@ import { type AiCredentialSource } from "./usage-dimensions.shared";
  * promise. The stored value is compared for EQUALITY, not ordering: a
  * downgrade of the text is still a different text.
  */
-export const AI_PROCESSING_CONSENT_VERSION = "2026-09-20.1";
+export const AI_PROCESSING_CONSENT_VERSION = "2026-09-20.2";
+
+/**
+ * The sub-processors the consent text NAMES, and the reason it has to.
+ *
+ * §2 requires consent naming the sub-processor, and §3a extends it to BOTH
+ * managed providers from the first managed call: a second company that first
+ * appears during an outage is not one anybody consented to. The first cut of
+ * the text said "our AI providers", which is a version constant re-asking
+ * everybody about wording that never told them what changed.
+ *
+ * Stated here rather than read from `MANAGED_AI_PROVIDER`, because the two
+ * answer different questions: the env names what a deployment runs, this
+ * names what a merchant agreed to. They are kept in step by hand, and by the
+ * rule that bumping either means bumping the version above.
+ */
+export const AI_SUB_PROCESSORS = ["OpenAI", "Anthropic"] as const;
 
 /**
  * Why a managed AI call was refused. These travel to the client as codes —

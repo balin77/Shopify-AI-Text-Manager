@@ -36,7 +36,7 @@ import {
   wantsManagedAi,
   AI_PROCESSING_CONSENT_VERSION,
 } from "../services/ai/managed-ai.shared";
-import { managedAiAvailable } from "../services/ai/ai-credentials.server";
+import { managedAiAvailable, managedTasterActions } from "../services/ai/ai-credentials.server";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import {
   DEFAULT_GENERAL_INSTRUCTIONS,
@@ -69,6 +69,19 @@ function shallowEqualLimits(
   if (ak.length !== bk.length) return false;
   for (const k of ak) if (a[k] !== b[k]) return false;
   return true;
+}
+
+/**
+ * The reset DATE a `b:<YYYY-MM-DD>` period key names, or null for any other
+ * scheme (`m:<month>`, the taster). Reading the key rather than the mirrored
+ * column is what keeps a stale webhook from showing a reset date in the past:
+ * `managedBudgetPeriod` walks an expired `managedAiPeriodEnd` forward instead
+ * of keying on it, and the card must show the date the budget really resets.
+ */
+function periodEndFromKey(period: string): string | null {
+  if (!period.startsWith("b:")) return null;
+  const day = period.slice(2);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${day}T00:00:00.000Z` : null;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -622,6 +635,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Offering the second price where managed mode is off would sell a
       // feature every call then refuses.
       managedAiOffered,
+      // The taster's size in ACTIONS comes from the environment, not from the
+      // usage aggregate, so the offer sentence has a number to show a shop
+      // that has switched nothing on yet — which is the only population it is
+      // addressed to.
+      managedAiTasterActions: managedAiOffered ? managedTasterActions() : 0,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -631,6 +649,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // merchant's stored choice and the Shopify-verified entitlement.
         aiKeySource: toAiKeySource(settings.aiKeySource),
         managedAiActive: settings.managedAiActive === true,
+        /** The one-time grant is gone — the offer stops being an invitation. */
+        managedAiTasterSpent: settings.managedAiTasterSpentAt != null,
         managedAiConsented: hasCurrentAiProcessingConsent(settings),
         /** How many keys are stored — the line that replaces the hidden tab. */
         storedApiKeyCount: storedKeyCount,
@@ -1405,6 +1425,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // record; this line is the audit trail a reviewer asks for.
       const granted = getFormString(formData, "consent") === "true";
 
+      // The merchant agrees to the text they were SHOWN, which is not
+      // necessarily the text this process now holds: a deploy between the
+      // render and the click would otherwise record agreement to wording
+      // nobody read — which is the one property versioning exists to make
+      // impossible. A mismatch refuses and asks them to look again.
+      const shownVersion = getFormString(formData, "consentVersion");
+      if (granted && shownVersion && shownVersion !== AI_PROCESSING_CONSENT_VERSION) {
+        logger.warn("[Settings] Consent posted against an outdated text version", {
+          shop: session.shop,
+          shown: shownVersion,
+          current: AI_PROCESSING_CONSENT_VERSION,
+        });
+        return json(
+          {
+            success: false,
+            actionType,
+            error: "The processing notice has changed. Please read it again and confirm.",
+          },
+          { status: 409 },
+        );
+      }
+
       await db.aISettings.update({
         where: { shop: session.shop },
         data: granted
@@ -1586,7 +1628,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, managedAiOffered = false, managedAiConsentedAt = null, managedAiConsentVersion = null, managedAiBudget = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, managedAiOffered = false, managedAiTasterActions = 0, managedAiConsentedAt = null, managedAiConsentVersion = null, managedAiBudget = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1950,6 +1992,8 @@ export default function SettingsPage() {
                     aiKeySource: settings.aiKeySource as "byo" | "managed",
                     managedAiActive: settings.managedAiActive,
                     managedAiOffered,
+                    tasterActions: managedAiTasterActions,
+                    tasterSpent: settings.managedAiTasterSpent,
                     consented: settings.managedAiConsented,
                     consentedAt: managedAiConsentedAt,
                     consentVersion: managedAiConsentVersion,
@@ -2071,6 +2115,7 @@ export default function SettingsPage() {
                     themeTranslationCount={themeTranslationCount}
                     imageOperationCount={imageOperationCount}
                     managedAiOffered={managedAiOffered}
+                    managedAiActive={settings.managedAiActive}
                     t={t}
                   />
                 </>

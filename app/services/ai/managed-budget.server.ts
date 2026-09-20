@@ -49,6 +49,13 @@ export interface ManagedBudgetStatus {
    * used up would send them to buy more of something we are not serving.
    */
   unavailable?: boolean;
+  /**
+   * The ledger could not be READ. Separate from `allowed`, because the card
+   * renders from these numbers: a failed read answers "0 % used, no warning"
+   * while every call is being refused, which is the one combination that
+   * tells a merchant nothing is wrong.
+   */
+  readFailed?: boolean;
 }
 
 /**
@@ -280,7 +287,15 @@ export async function managedBudgetStatus(
         error instanceof Error ? error.message : String(error)
       } — refusing rather than spending on unread evidence`,
     );
-    return { usedMicros: 0, limitMicros, remainingMicros: 0, allowed: false, period, kind };
+    return {
+      usedMicros: 0,
+      limitMicros,
+      remainingMicros: 0,
+      allowed: false,
+      period,
+      kind,
+      readFailed: true,
+    };
   }
 }
 

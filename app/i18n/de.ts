@@ -1102,7 +1102,7 @@ export const de = {
       consentHeading: "Verarbeitung durch unsere KI-Anbieter",
       consentLabel: "Ich bin einverstanden, dass Inhalte meines Shops von diesen Anbietern verarbeitet werden",
       consentBody:
-        "Für die im Plan enthaltene KI werden deine Produkttexte über unser Konto an unsere KI-Anbieter gesendet. Sie trainieren nicht mit diesen Inhalten. Vorher wird nichts gesendet.",
+        "Für die im Plan enthaltene KI werden deine Produkttexte über unser Konto an OpenAI (Standardmodell) und, falls OpenAI nicht erreichbar ist, an Anthropic gesendet. Beide dürfen vertraglich nicht mit diesen Inhalten trainieren. Vorher wird nichts gesendet — und wenn ein weiterer Anbieter hinzukommt, fragen wir erneut.",
       consentRequired: "Bestätige dies, um die enthaltene KI zu nutzen.",
       consentSave: "Bestätigen",
       consentWithdraw: "Widerrufen",
@@ -1115,6 +1115,11 @@ export const de = {
       usageExhausted:
         "Das KI-Volumen dieses Zeitraums ist aufgebraucht. Trage deinen eigenen API-Key ein, um sofort weiterzuarbeiten, oder warte auf den nächsten Zeitraum.",
       usageEstimated: "Ein Teil dieses Werts ist geschätzt.",
+      activeWithAi: "Aktiv, mit KI",
+      notAvailableNotice:
+        "Die enthaltene KI ist derzeit nicht verfügbar. Dein eigener API-Schlüssel funktioniert unverändert.",
+      usageUnavailable:
+        "Dein KI-Verbrauch konnte gerade nicht geladen werden. Bis dahin können KI-Aktionen abgelehnt werden.",
       tasterHeading: "Kostenlose KI-Testphase",
       tasterHint:
         "Teste die enthaltene KI einmalig mit rund {actions} KI-Aktionen — ohne API-Schlüssel, ohne Planwechsel. Dein eigener Schlüssel bleibt kostenlos und unbegrenzt.",

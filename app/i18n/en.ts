@@ -1104,7 +1104,7 @@ export const en: Translation = {
       consentHeading: "Processing with our AI providers",
       consentLabel: "I agree that my shop's content may be processed by these providers",
       consentBody:
-        "To use the AI included in your plan, your product texts are sent to our AI providers under our account. They do not train on this content. Nothing is sent until you agree.",
+        "To use the AI included in your plan, your product texts are sent under our account to OpenAI (the default model) and, if OpenAI is unavailable, to Anthropic. Both are contractually barred from training on this content. Nothing is sent until you agree, and if we ever add a provider we will ask you again.",
       consentRequired: "Confirm this to start using the included AI.",
       consentSave: "Confirm",
       consentWithdraw: "Withdraw",
@@ -1120,6 +1120,11 @@ export const en: Translation = {
       // §10 — the one-time taster. Its own wording throughout, because every
       // sentence about a period ("used this period", "resets on", "wait for
       // the next period") is false about a grant that never comes back.
+      activeWithAi: "Active, with AI",
+      notAvailableNotice:
+        "The included AI is not available right now. Your own API key still works as usual.",
+      usageUnavailable:
+        "Your AI usage could not be loaded right now. AI actions may be refused until it can.",
       tasterHeading: "Free AI trial",
       tasterHint:
         "Try the included AI with about {actions} AI actions, once — no API key, no plan change. Your own key stays free and unlimited.",

@@ -1087,7 +1087,7 @@ export const es: Translation = {
       consentHeading: "Procesamiento por nuestros proveedores de IA",
       consentLabel: "Acepto que el contenido de mi tienda sea procesado por estos proveedores",
       consentBody:
-        "Para usar la IA incluida en tu plan, tus textos se envían a nuestros proveedores de IA con nuestra cuenta. No entrenan con este contenido. No se envía nada hasta que aceptes.",
+        "Para usar la IA incluida en tu plan, tus textos se envían con nuestra cuenta a OpenAI (el modelo por defecto) y, si OpenAI no está disponible, a Anthropic. Ambos tienen prohibido por contrato entrenar con este contenido. No se envía nada hasta que aceptes, y si algún día añadimos un proveedor te lo volveremos a preguntar.",
       consentRequired: "Confírmalo para empezar a usar la IA incluida.",
       consentSave: "Confirmar",
       consentWithdraw: "Retirar",
@@ -1100,6 +1100,11 @@ export const es: Translation = {
       usageExhausted:
         "El volumen de IA de este periodo se ha agotado. Añade tu propia clave para continuar ahora, o espera al siguiente periodo.",
       usageEstimated: "Parte de esta cifra es una estimación.",
+      activeWithAi: "Activo, con IA",
+      notAvailableNotice:
+        "La IA incluida no está disponible ahora mismo. Tu propia clave de API sigue funcionando igual.",
+      usageUnavailable:
+        "No se pudo cargar tu consumo de IA. Hasta entonces, las acciones de IA pueden rechazarse.",
       tasterHeading: "Prueba gratuita de IA",
       tasterHint:
         "Prueba la IA incluida con unas {actions} acciones de IA, una sola vez: sin clave de API y sin cambiar de plan. Tu propia clave sigue siendo gratuita e ilimitada.",

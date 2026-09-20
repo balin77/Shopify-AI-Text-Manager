@@ -36,6 +36,7 @@
  */
 
 import { useState } from "react";
+import { useFetcher } from "react-router";
 import {
   BlockStack,
   Banner,
@@ -48,18 +49,20 @@ import {
 } from "@shopify/polaris";
 import type { FetcherWithComponents } from "react-router";
 import { ToggleRow } from "./ToggleRow";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
+import { AI_PROCESSING_CONSENT_VERSION } from "../services/ai/managed-ai.shared";
 
 export interface ManagedAiBudget {
   usedMicros: number;
   limitMicros: number;
   /** ISO date this period's volume resets — `null` for the taster, which does not. */
   resetsOn: string | null;
+  /** The figures could not be read. 0 % and "no warning" would both be lies. */
+  readFailed?: boolean;
   /** Share of calls whose token counts were estimated, 0-1. */
   estimatedShare: number;
   /** A period budget that resets, or the one-time taster (§10). */
   kind: "period" | "taster";
-  /** What the taster is worth in AI actions — the unit the merchant reads. */
-  tasterActions: number;
   /** ISO date the taster was first spent against. */
   grantedAt: string | null;
 }
@@ -70,6 +73,18 @@ export interface ManagedAiCardProps {
   managedAiActive: boolean;
   /** This DEPLOYMENT can serve managed AI at all (§9.4's kill switch). */
   managedAiOffered?: boolean;
+  /**
+   * What the one-time taster is worth here, in AI actions — the unit the
+   * merchant reads, and the only number the offer sentence carries.
+   *
+   * It comes from the ENVIRONMENT, not from the usage aggregate, so it is
+   * available to a shop that has not switched anything on yet. Computing it
+   * with the budget meant the acquisition sentence read "about  AI actions"
+   * to exactly the population it exists for.
+   */
+  tasterActions?: number;
+  /** The one-time grant is gone. Not an invitation any more. */
+  tasterSpent?: boolean;
   consented: boolean;
   consentedAt?: string | null;
   consentVersion?: string | null;
@@ -94,16 +109,36 @@ export function ManagedAiCard({
   aiKeySource,
   managedAiActive,
   managedAiOffered = false,
+  tasterActions = 0,
+  tasterSpent = false,
   consented,
   consentedAt,
   consentVersion,
   storedApiKeyCount,
   budget,
-  fetcher,
+  fetcher: pageFetcher,
   t,
 }: ManagedAiCardProps) {
+  // Its OWN fetcher, not the page's. `router.fetch` aborts whatever is in
+  // flight on the same key, so a consent grant, a mode change or a key
+  // deletion posted on the shared one dies silently the moment the AI tab's
+  // save bar fires — and consent is the one post in this app that may not
+  // quietly not happen. The page's fetcher is still accepted and ignored, so
+  // the prop stays part of one bundle with the rest of the card's state.
+  void pageFetcher;
+  const fetcher = useFetcher<unknown>();
   const m = t?.settings?.managedAi ?? {};
   const [armedDelete, setArmedDelete] = useState(false);
+
+  // A DRAFT, not a write. CLAUDE.md's standing settings rule — a click is a
+  // draft until Save — and here it is not a formality: this one switch hides
+  // the whole AI-keys tab and stops the loader decrypting the merchant's
+  // stored keys, with the only way back being the same unconfirmed click. It
+  // keeps its own Save button rather than joining a save bar, for the reason
+  // the consent card beside it does: the page's bar belongs to the key fields
+  // that this switch is about to hide, and two `ui-save-bar`s cannot both be
+  // mounted.
+  const [modeDraft, setModeDraft] = useState<"byo" | "managed" | null>(null);
 
   const busy = (action: string) =>
     fetcher.state !== "idle" && fetcher.formData?.get("actionType") === action;
@@ -121,6 +156,19 @@ export function ManagedAiCard({
   const onManaged = aiKeySource === "managed" && managedAiOffered;
   const onTaster = budget?.kind === "taster";
   const usedPct = budget ? pct(budget.usedMicros, budget.limitMicros) : 0;
+  const chosenMode = modeDraft ?? aiKeySource;
+  const modeDirty = modeDraft !== null && modeDraft !== aiKeySource;
+
+  // The HINT under the switch answers a different question for four
+  // different shops, and collapsing them is how a merchant who is paying the
+  // surcharge came to read "your plan no longer includes AI".
+  const hint = managedAiActive
+    ? m.includedHint
+    : !managedAiOffered
+      ? m.notIncludedHint
+      : tasterSpent
+        ? m.tasterExhausted
+        : fill(m.tasterHint, { actions: String(tasterActions || "") });
 
   return (
     <BlockStack gap="400">
@@ -134,20 +182,35 @@ export function ManagedAiCard({
               "managed". Their own key is being used again — the friendly
               fallback, and not something to discover by noticing a different
               writing style. */}
-          {aiKeySource === "managed" && !managedAiOffered && (
+          {/* Two different facts, two different sentences. "Your plan no
+              longer includes AI" is true only of a shop whose entitlement
+              really ended AND whose grant is gone, which is exactly when the
+              resolver hands it back to its own key. A deployment that serves
+              no managed AI is OURS, and saying otherwise to a merchant who is
+              paying the surcharge — which is what one condition for both
+              produced — contradicts the line directly under it. */}
+          {aiKeySource === "managed" && !managedAiActive && tasterSpent && managedAiOffered && (
             <Banner tone="warning">
               <Text as="p">{m.entitlementEnded}</Text>
             </Banner>
           )}
+          {aiKeySource === "managed" && !managedAiOffered && (
+            <Banner tone="warning">
+              <Text as="p">{m.notAvailableNotice}</Text>
+            </Banner>
+          )}
 
-          <ToggleRow
-            label={m.useIncluded ?? ""}
-            checked={onManaged}
-            disabled={!managedAiOffered || busy("saveAiSource")}
-            onChange={(checked) =>
-              post({ actionType: "saveAiSource", aiKeySource: checked ? "managed" : "byo" })
-            }
-          />
+          {/* CHECKED reflects the stored CHOICE (or the draft over it), never
+              whether we can serve it: an unchecked switch beside "your plan
+              includes AI" tells a paying merchant they turned it off. */}
+          <DisabledActionTooltip hint={managedAiOffered ? undefined : m.notAvailableNotice} block>
+            <ToggleRow
+              label={m.useIncluded ?? ""}
+              checked={chosenMode === "managed"}
+              disabled={!managedAiOffered || busy("saveAiSource")}
+              onChange={(checked) => setModeDraft(checked ? "managed" : "byo")}
+            />
+          </DisabledActionTooltip>
 
           {/* Three different shops read this line: one that bought the AI, one
               that has not and is being offered the taster, and one whose
@@ -155,12 +218,26 @@ export function ManagedAiCard({
               "your plan does not include AI" and stopping there is what made
               the taster invisible to the population it exists for. */}
           <Text as="p" variant="bodySm" tone="subdued">
-            {managedAiActive
-              ? m.includedHint
-              : managedAiOffered
-                ? fill(m.tasterHint, { actions: String(budget?.tasterActions || "") })
-                : m.notIncludedHint}
+            {hint}
           </Text>
+
+          {modeDirty && (
+            <InlineStack gap="300" blockAlign="center">
+              <Button
+                variant="primary"
+                loading={busy("saveAiSource")}
+                onClick={() => {
+                  post({ actionType: "saveAiSource", aiKeySource: modeDraft as string });
+                  setModeDraft(null);
+                }}
+              >
+                {t?.products?.saveChanges ?? "Save"}
+              </Button>
+              <Button variant="plain" onClick={() => setModeDraft(null)}>
+                {t?.common?.cancel ?? "Cancel"}
+              </Button>
+            </InlineStack>
+          )}
         </BlockStack>
       </Card>
 
@@ -210,7 +287,14 @@ export function ManagedAiCard({
                     variant="primary"
                     loading={busy("saveAiProcessingConsent")}
                     onClick={() =>
-                      post({ actionType: "saveAiProcessingConsent", consent: "true" })
+                      post({
+                      actionType: "saveAiProcessingConsent",
+                      consent: "true",
+                      // The version the merchant is LOOKING at. A deploy
+                      // between this render and the click would otherwise
+                      // record agreement to text nobody read.
+                      consentVersion: AI_PROCESSING_CONSENT_VERSION,
+                    })
                     }
                   >
                     {m.consentSave}
@@ -229,17 +313,27 @@ export function ManagedAiCard({
             <Text as="h3" variant="headingMd">
               {onTaster ? m.tasterHeading : m.usageHeading}
             </Text>
-            <ProgressBar
-              progress={usedPct}
-              tone={usedPct >= 100 ? "critical" : usedPct >= 80 ? "highlight" : "primary"}
-            />
+            {budget.readFailed ? (
+              // 0 % and "no warning" are both lies about a figure we could not
+              // read, and the card would say them while every call refuses.
+              <Banner tone="warning">
+                <Text as="p">{m.usageUnavailable}</Text>
+              </Banner>
+            ) : (
+              <ProgressBar
+                progress={usedPct}
+                tone={usedPct >= 100 ? "critical" : usedPct >= 80 ? "highlight" : "primary"}
+              />
+            )}
             {/* Every sentence in this card is chosen by KIND, not decorated
                 with an extra line: a period budget "resets on the 14th" and a
                 taster never does, so one wording cannot serve both without
                 promising a reset that will not come. */}
-            <Text as="p" variant="bodySm">
-              {fill(onTaster ? m.tasterUsed : m.usageUsed, { percent: String(usedPct) })}
-            </Text>
+            {!budget.readFailed && (
+              <Text as="p" variant="bodySm">
+                {fill(onTaster ? m.tasterUsed : m.usageUsed, { percent: String(usedPct) })}
+              </Text>
+            )}
             {onTaster
               ? budget.grantedAt && (
                   <Text as="p" variant="bodySm" tone="subdued">
@@ -253,7 +347,7 @@ export function ManagedAiCard({
                 )}
             {/* A warning BEFORE a wall: "your AI volume is used up" arriving
                 with no notice, mid-catalogue, is the review nobody wants. */}
-            {usedPct >= 100 ? (
+            {budget.readFailed ? null : usedPct >= 100 ? (
               <Banner tone="critical">
                 <Text as="p">{onTaster ? m.tasterExhausted : m.usageExhausted}</Text>
               </Banner>

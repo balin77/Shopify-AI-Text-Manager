@@ -85,6 +85,12 @@ interface SettingsPlanTabProps {
    * second price is not even offered.
    */
   managedAiOffered?: boolean;
+  /**
+   * The VERIFIED subscription includes AI. A plan is two products, and
+   * without this the tab could only see one of them — so a merchant on
+   * "Pro + AI" saw plain Pro badged "active" and had no way back to it.
+   */
+  managedAiActive?: boolean;
   t: any;
 }
 
@@ -102,6 +108,7 @@ export function SettingsPlanTab({
   themeTranslationCount,
   imageOperationCount,
   managedAiOffered = false,
+  managedAiActive = false,
   t,
 }: SettingsPlanTabProps) {
   const revalidator = useRevalidator();
@@ -241,7 +248,16 @@ export function SettingsPlanTab({
           // rows whose number changed. Derived from PLAN_CONFIG in planDiff.ts,
           // never from thresholds written into this file.
           const highlights = getPlanCardHighlights(id);
-          const isCurrentPlan = id === subscriptionPlan;
+          // A tier is two PRODUCTS — with AI included and without — and which
+          // one the shop holds decides which button is "active" and which is
+          // still buyable. Reading only the tier made both of them read as
+          // current: the BYO button was disabled and badged active for a shop
+          // paying the surcharge, so leaving the AI-included variant was
+          // impossible from inside the app, while the managed button stayed
+          // clickable on the product they already had.
+          const isCurrentTier = id === subscriptionPlan;
+          const isCurrentPlan = isCurrentTier && !managedAiActive;
+          const isCurrentManagedPlan = isCurrentTier && managedAiActive;
           const price = config ? `€${config.price.toFixed(2)}${t.settings.perMonth}` : t.settings.free;
           const shouldPulse = hasApproachingLimit && nextPlan === id;
 
@@ -260,7 +276,13 @@ export function SettingsPlanTab({
                       <Text as="h3" variant="headingMd">
                         {PLAN_DISPLAY_NAMES[id]}
                       </Text>
-                      {isCurrentPlan && <Badge tone="success">{t.settings.active}</Badge>}
+                      {isCurrentTier && (
+                        <Badge tone="success">
+                          {isCurrentManagedPlan
+                            ? (t.settings.managedAi?.activeWithAi ?? t.settings.active)
+                            : t.settings.active}
+                        </Badge>
+                      )}
                     </InlineStack>
 
                     <Text as="p" variant="headingLg" fontWeight="bold">
@@ -533,14 +555,16 @@ export function SettingsPlanTab({
                     {managedAiOffered && id !== "free" && (
                       <BlockStack gap="200">
                         <Button
-                          disabled={planLoading !== null}
+                          disabled={isCurrentManagedPlan || planLoading !== null}
                           loading={planLoading === id}
                           onClick={() => handleSelectPlan(id, "managed")}
                           fullWidth
                         >
-                          {fillTemplate(t.settings.managedAi?.planButton, {
-                            price: formatManagedPrice(id),
-                          })}
+                          {isCurrentManagedPlan
+                            ? t.settings.currentPlanButton
+                            : fillTemplate(t.settings.managedAi?.planButton, {
+                                price: formatManagedPrice(id),
+                              })}
                         </Button>
                         <Text as="p" variant="bodySm" tone="subdued">
                           {t.settings.managedAi?.planVolume?.[id] ?? ""}
