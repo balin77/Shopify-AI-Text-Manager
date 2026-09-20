@@ -1524,9 +1524,20 @@ async function persistField(params: PersistArgs): Promise<void> {
       } else if (field === "description") {
         inputPayload = { id, descriptionHtml: value };
       } else {
-        const seoInput: Record<string, string> = {};
-        seoInput[field === "seoTitle" ? "title" : "description"] = value;
-        inputPayload = { id, seo: seoInput };
+        // Shopify treats `seo` as a UNIT: sending `seo: { title }` alone CLEARS
+        // the existing description, and vice versa. This handler writes exactly
+        // ONE field per finding, so it is always the partial case — and
+        // `fixAllForItem` makes it worse, sending two single-sided writes in a
+        // row where only the last one survives, both reported as successes. The
+        // merge is the content service's, not a second copy of it: the
+        // failed-lookup branch (drop the missing side rather than send "") is
+        // the part that is easy to get wrong.
+        const preservedSeo = await contentService.buildPreservedSeo(
+          id,
+          field === "seoTitle" ? value : undefined,
+          field === "metaDescription" ? value : undefined,
+        );
+        inputPayload = { id, ...(preservedSeo ? { seo: preservedSeo } : {}) };
       }
       const response = await gateway.graphql(
         `#graphql
@@ -1568,8 +1579,14 @@ async function persistField(params: PersistArgs): Promise<void> {
           data: { descriptionHtml: value, lastSyncedAt: new Date() },
         });
       } else {
-        const seo = field === "seoTitle" ? { title: value } : { description: value };
-        await contentService.updateCollection(id, { seo });
+        // Same unit rule as the product branch above — `updateCollection` passes
+        // its `seo` through verbatim, so the merge has to happen here.
+        const preservedSeo = await contentService.buildPreservedSeo(
+          id,
+          field === "seoTitle" ? value : undefined,
+          field === "metaDescription" ? value : undefined,
+        );
+        await contentService.updateCollection(id, { ...(preservedSeo ? { seo: preservedSeo } : {}) });
         await db.collection.update({
           where: { shop_id: { shop, id } },
           data:

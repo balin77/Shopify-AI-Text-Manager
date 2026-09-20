@@ -498,8 +498,15 @@ export class ShopifyContentService {
    *
    * `undefined` means "not sent by the client"; `""` means "user cleared it".
    * Returns `null` when neither side was sent (caller should omit `seo` entirely).
+   *
+   * PUBLIC because a second write path needs exactly this and had its own,
+   * wrong answer: the SEO tab's "Fix with AI" (seo-bulk-fix.handler.ts) writes
+   * one field per finding and built a one-sided `seo` object for products AND
+   * collections. A second copy of this rule is not an option — the reason the
+   * helper exists is that the merge has three cases (both sides, one side, a
+   * failed lookup) and the failed-lookup one is the subtle one.
    */
-  private async buildPreservedSeo(
+  async buildPreservedSeo(
     resourceGid: string,
     seoTitle: string | undefined,
     seoDescription: string | undefined,

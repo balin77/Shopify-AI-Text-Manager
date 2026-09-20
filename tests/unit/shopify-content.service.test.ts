@@ -1656,3 +1656,96 @@ describe('ShopifyContentService.translateAllContent() — request count and fiel
     expect(result.rejectedFields.fr).toEqual(['author', 'isPublished', 'templateSuffix']);
   });
 });
+
+/**
+ * `buildPreservedSeo` — the rule that Shopify's `seo` input is a UNIT.
+ *
+ * Sending `seo: { title }` without a description CLEARS the description, and
+ * vice versa. This helper is what every partial SEO write goes through; it was
+ * private until the SEO tab's "Fix with AI" turned out to have its own, wrong
+ * answer (one field per finding, so ALWAYS the partial case, on products and
+ * collections alike — and `fixAllForItem` sends two such writes in a row where
+ * only the last one survives, both reported as successes).
+ *
+ * Three cases, and the third is the one a second copy would get wrong.
+ */
+describe('ShopifyContentService.buildPreservedSeo()', () => {
+  const productId = 'gid://shopify/Product/1';
+
+  function adminWithSeo(seo: { title: string | null; description: string | null } | null) {
+    return {
+      graphql: vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { node: seo ? { seo } : null } }),
+      }),
+    };
+  }
+
+  it('sends BOTH halves when both were given, without asking Shopify', async () => {
+    const admin = adminWithSeo(null);
+    const service = new ShopifyContentService(admin);
+
+    const seo = await service.buildPreservedSeo(productId, 'T', 'D');
+
+    expect(seo).toEqual({ title: 'T', description: 'D' });
+    // A full save already knows both sides — no lookup is worth paying for.
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it('carries the untouched half over when only ONE side was given', async () => {
+    const admin = adminWithSeo({ title: 'old title', description: 'keep me' });
+    const service = new ShopifyContentService(admin);
+
+    const seo = await service.buildPreservedSeo(productId, 'new title', undefined);
+
+    expect(seo).toEqual({ title: 'new title', description: 'keep me' });
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+  });
+
+  it('works in the other direction too', async () => {
+    const admin = adminWithSeo({ title: 'keep me', description: 'old' });
+    const service = new ShopifyContentService(admin);
+
+    const seo = await service.buildPreservedSeo(productId, undefined, 'new description');
+
+    expect(seo).toEqual({ title: 'keep me', description: 'new description' });
+  });
+
+  it('DROPS the missing side when the lookup fails — never sends ""', async () => {
+    // The subtle case: `""` would clear the field, while an omitted key leaves
+    // it untouched. Erring towards "change nothing" is the only safe direction
+    // when we could not find out what is there.
+    const admin = { graphql: vi.fn().mockRejectedValue(new Error('throttled')) };
+    const service = new ShopifyContentService(admin);
+
+    const seo = await service.buildPreservedSeo(productId, 'new title', undefined);
+
+    expect(seo).toEqual({ title: 'new title', description: undefined });
+    expect(JSON.stringify(seo)).not.toContain('description');
+  });
+
+  it('treats a resource with no SEO set the same way — omit, not clear', async () => {
+    const admin = adminWithSeo({ title: null, description: null });
+    const service = new ShopifyContentService(admin);
+
+    const seo = await service.buildPreservedSeo(productId, undefined, 'only a description');
+
+    expect(seo).toEqual({ title: undefined, description: 'only a description' });
+  });
+
+  it('returns null when neither side was sent, so the caller omits `seo` entirely', async () => {
+    const admin = adminWithSeo(null);
+    const service = new ShopifyContentService(admin);
+
+    expect(await service.buildPreservedSeo(productId, undefined, undefined)).toBeNull();
+  });
+
+  it('an EMPTY string is a deliberate clear and is sent as such', async () => {
+    const admin = adminWithSeo({ title: 'old', description: 'old d' });
+    const service = new ShopifyContentService(admin);
+
+    const seo = await service.buildPreservedSeo(productId, '', undefined);
+
+    expect(seo).toEqual({ title: '', description: 'old d' });
+  });
+});
