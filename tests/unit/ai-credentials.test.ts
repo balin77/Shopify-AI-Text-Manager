@@ -29,6 +29,7 @@ import {
   missingMerchantKey,
 } from '~/services/ai/ai-credentials.server';
 import { AI_PROCESSING_CONSENT_VERSION } from '~/services/ai/managed-ai.shared';
+import { DEV_APP_CLIENT_ID } from '~/services/dev-plan-override.server';
 
 type Settings = Parameters<typeof resolveAiCredentials>[0]['settings'];
 
@@ -110,8 +111,11 @@ describe('the kill switch', () => {
 
   it('refuses to serve an operator key from a dev/custom-app build', () => {
     configureManaged();
-    process.env.DEV_APP_CLIENT_ID = 'dev-client-id';
-    process.env.SHOPIFY_API_KEY = 'dev-client-id';
+    // The REAL dev client id, imported rather than invented: the first cut of
+    // this test set `DEV_APP_CLIENT_ID` in the environment and the guard read
+    // it from there — so the test constructed the one world in which the
+    // guard worked, while in every real deployment it was dead.
+    process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
     process.env.APP_ENV = 'development';
 
     expect(managedAiAvailable()).toBe(false);

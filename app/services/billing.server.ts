@@ -342,30 +342,7 @@ export async function getCurrentSubscription(
   if (testSubs.length === 0) return null;
 
   const inTestBilling = shop ? resolveDevPlanMode(shop) === 'test-billing' : false;
-  const partnerDevelopment = await detectPartnerDevelopment(admin);
-  // PLAN_MANAGED_AI_KEY §7a — recorded HERE, as a side effect of a lookup this
-  // function already makes, and deliberately not as a call of its own earlier
-  // in checkAndSyncSubscription: that runs on every app navigation, so an
-  // extra GraphQL round trip there is a real cost, and placing it above the
-  // dev-override short-circuit also broke that path's guarantee never to call
-  // Shopify at all (the custom-app distribution has no Billing API).
-  //
-  // A dev-override shop therefore never writes this column, which costs
-  // nothing: §7a's third signal (`resolveDevPlanMode !== null`) is exactly the
-  // one that covers it — which is why the plan names three signals and not two.
-  //
-  // THREE-VALUED: a failed lookup writes NOTHING rather than `false`, so an
-  // answer established earlier survives a throttled sync and "never
-  // determined" stays distinguishable from "no".
-  if (shop && partnerDevelopment !== null) {
-    await prisma.aISettings
-      .updateMany({ where: { shop }, data: { partnerDevelopment } })
-      .catch((error) => {
-        // Bookkeeping for a spend cap, never a reason to fail a plan lookup.
-        logger.warn('[Billing] Could not record partnerDevelopment', { shop, error });
-      });
-  }
-  const allowTest = inTestBilling || partnerDevelopment === true;
+  const allowTest = inTestBilling || (await isDevStore(admin));
   if (!allowTest) {
     logger.warn('[Billing] Ignoring test subscription in production — shop not currently entitled to test billing', {
       shop: shop ?? '(unknown)',
@@ -533,6 +510,39 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   // is itself hard-gated (dev client_id + APP_ENV !== 'production'), so this
   // branch is provably dead in the public App-Store build. Cache is reconciled
   // exactly like a real plan change so downgrade edge cases are testable.
+  // PLAN_MANAGED_AI_KEY §7a — record whether this is a partner DEVELOPMENT
+  // store, three-valued, ONCE per shop.
+  //
+  // Three constraints shape where this sits, and the first two cuts each broke
+  // one. It cannot go above the dev-override short-circuit below: that path is
+  // guaranteed never to call Shopify (the custom-app distribution has no
+  // Billing API) and a test pins it. It cannot go inside
+  // `getCurrentSubscription`'s test-subscription branch either — that branch
+  // is reached only in production, only for a shop whose ONLY subscriptions
+  // are `test: true`, so every ordinary shop would keep `null` forever, which
+  // is the value that means "not capped".
+  //
+  // So it runs here, and only while the answer is UNKNOWN. That makes it one
+  // extra GraphQL query per shop per lifetime rather than one per navigation —
+  // `checkAndSyncSubscription` runs on the app.tsx loader, so an unconditional
+  // lookup here is a real cost on a real path.
+  //
+  // A failed lookup writes NOTHING rather than `false`: an answer established
+  // earlier survives a throttled sync, and "never determined" stays
+  // distinguishable from "no". The consequence is that it retries on the next
+  // sync, which is what we want.
+  if (existing && existing.partnerDevelopment === null) {
+    const partnerDevelopment = await detectPartnerDevelopment(admin);
+    if (partnerDevelopment !== null) {
+      await prisma.aISettings
+        .updateMany({ where: { shop }, data: { partnerDevelopment } })
+        .catch((error) => {
+          // Bookkeeping for a spend cap, never a reason to fail a plan sync.
+          logger.warn('[Billing] Could not record partnerDevelopment', { shop, error });
+        });
+    }
+  }
+
   const forced = await getDevForcedPlan(shop);
   if (forced) {
     await syncSubscriptionToDatabase(shop, forced);

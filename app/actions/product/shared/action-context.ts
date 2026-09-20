@@ -7,22 +7,23 @@
 
 import { logger } from "~/utils/logger.server";
 import type { Session } from "@shopify/shopify-api";
-import { AIService, type AIProvider } from "../../../../src/services/ai.service";
+import { AIService, type AIProvider, type AIServiceConfig } from "../../../../src/services/ai.service";
 import { TranslationService } from "../../../../src/services/translation.service";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { aiCredentialsFor } from "~/services/ai/ai-credentials.server";
 
-interface AIConfig {
-  huggingfaceApiKey?: string;
-  geminiApiKey?: string;
-  claudeApiKey?: string;
-  openaiApiKey?: string;
-  grokApiKey?: string;
-  deepseekApiKey?: string;
-  selectedModel?: string;
-}
+/**
+ * The AI credential config an action context carries.
+ *
+ * An ALIAS, not a shape of its own. It used to be a hand-written structural
+ * subset that omitted `preflight` and `managedRefusal` — so the managed budget
+ * gate travelled through it at runtime while being invisible to the type
+ * system, and any future `{ ...context.config }` rebuild would have dropped it
+ * silently and typechecked clean.
+ */
+type AIConfig = AIServiceConfig;
 
 export interface ActionContext {
   admin: AdminApiContext;

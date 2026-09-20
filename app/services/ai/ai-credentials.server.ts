@@ -32,6 +32,13 @@ import type { BillingPlan } from "../../config/billing";
 import type { AIProvider } from "../../utils/api-key-validation";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import { logger } from "../../utils/logger.server";
+import { UNPRICED_PROVIDERS } from "../../config/ai-pricing";
+// §7a "belt and braces": the operator key must never be served from the
+// dev/custom-app build. IMPORTED rather than re-derived — the local copy read
+// `process.env.DEV_APP_CLIENT_ID`, which is not an environment variable
+// anywhere in this repo (the id is a constant in that module), so it was
+// always false and this guard never fired.
+import { isDevAppBuild } from "../dev-plan-override.server";
 import { AIService, toValidProvider, type AIServiceConfig } from "../../../src/services/ai.service";
 import { type AiCredentialSource } from "./usage-dimensions.shared";
 import {
@@ -105,22 +112,6 @@ export function isManagedAiEnabled(): boolean {
 }
 
 /**
- * True when the running binary is the dev/custom app, where an operator key
- * must never be configured (§7a, "belt and braces"). Deliberately a local copy
- * of the predicate rather than an import: `dev-plan-override.server.ts` reads
- * the DB and resolves a plan, and this module must stay callable from a
- * detached path with nothing but `process.env`.
- */
-function isDevAppBuild(): boolean {
-  const devClientId = process.env.DEV_APP_CLIENT_ID;
-  return (
-    !!devClientId &&
-    process.env.SHOPIFY_API_KEY === devClientId &&
-    process.env.APP_ENV !== "production"
-  );
-}
-
-/**
  * The operator credential for one role. Provider, model and key are read as a
  * UNIT and a partial configuration yields NOTHING: the failover crosses
  * providers, so a model or a key that belongs to a different provider than the
@@ -142,6 +133,19 @@ export function readManagedCredential(role: ManagedRole): ManagedCredential | nu
   if (provider !== rawProvider) {
     logger.error(
       `[ManagedAI] ${prefix}PROVIDER is "${rawProvider}", which is not a known provider — this credential is ignored.`,
+    );
+    return null;
+  }
+  // An UNPRICED provider cannot be a managed one, and this is a budget rule
+  // before it is a compliance one. `priceCall` answers 0 for a provider with
+  // no per-token list price, so the ledger's `billedMicros` never moves, the
+  // remaining budget never falls and managed spend is UNCAPPED — the one
+  // configuration that makes every gate in this module decorative. (§2 rule 3
+  // disqualifies HuggingFace for a second, independent reason: no contractual
+  // no-training default.)
+  if (UNPRICED_PROVIDERS.has(provider)) {
+    logger.error(
+      `[ManagedAI] ${prefix}PROVIDER is "${provider}", which this app cannot price — a managed budget over it could never be enforced. This credential is ignored.`,
     );
     return null;
   }
@@ -246,7 +250,11 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
   // 3. Consent, before anything is spent.
   if (!hasCurrentAiProcessingConsent(settings)) return { ok: false, reason: "consentMissing" };
 
-  const cred = readManagedCredential(role) ?? readManagedCredential("default");
+  // Read ONCE. Asking three times re-read the environment on every AI request
+  // and, on a misconfigured provider name, logged the same error twice per
+  // call.
+  const roleCred = readManagedCredential(role);
+  const cred = roleCred ?? readManagedCredential("default");
   if (!cred) return { ok: false, reason: "managedUnavailable" };
 
   // 4. Budget is NOT decided here — it is a DB round trip and belongs to the
@@ -257,7 +265,7 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
     source: "managed",
     provider: cred.provider,
     model: cred.model,
-    role: readManagedCredential(role) ? role : "default",
+    role: roleCred ? role : "default",
     config: configFor(cred),
   };
 }
@@ -316,8 +324,19 @@ export function aiCredentialsFor(
   if (decision.reason === "noKey") {
     return { provider, config: byoConfig(settings), decision };
   }
-  // Managed was asked for and cannot be served: no key travels.
-  return { provider, config: { credentialSource: "managed" }, decision };
+  // Managed was asked for and cannot be served. The config carries the REASON
+  // rather than simply lacking a key: a keyless config makes
+  // `initializeProvider` throw `MissingAIKeyError`, which is a different error
+  // meaning a different thing — and the detached repair's purge path does not
+  // recognise it, so a refusal would have been recorded as "the AI could not
+  // deliver" and DELETED the merchant's translations. With the marker the
+  // service builds (no client, no key) and every call on it throws the one
+  // error that means "stand down".
+  return {
+    provider,
+    config: { credentialSource: "managed", managedRefusal: decision.reason },
+    decision,
+  };
 }
 
 /**
@@ -354,15 +373,30 @@ export function aiServiceFor(
  * consumers in this app (webhooks, the drift sweep, the bulk flush) never pass
  * one (§6a).
  *
- * Re-asks the whole decision, not only the budget: consent can be withdrawn
- * and the kill switch can be thrown while a long run is in flight, and both
- * must stop the next call rather than the next run.
+ * It re-reads the SHOP's settings on every call, not just the environment, and
+ * that is the difference between the comment and the code the first cut
+ * shipped: closing over the settings loaded at construction meant a merchant
+ * who withdrew consent, cancelled, or downgraded went on spending the operator
+ * key for the rest of a bulk run — hours, on the one flag that makes managed
+ * mode legal at all. It is one indexed read beside an aggregate this function
+ * already makes, against a call that takes seconds.
+ *
+ * A failed read keeps the credential the service was BUILT with rather than
+ * refusing: the resolver already granted it once, and answering a database
+ * blink with a refusal would abort a repair (§6a) over nothing.
  */
 function managedPreflight(
   shop: string,
-  settings: AISettings | null,
+  built: AISettings | null,
 ): NonNullable<AIServiceConfig["preflight"]> {
   return async () => {
+    let settings = built;
+    try {
+      const { db } = await import("../../db.server");
+      settings = await db.aISettings.findUnique({ where: { shop } });
+    } catch {
+      // Keep `built` — see above.
+    }
     const decision = resolveAiCredentials({ shop, settings });
     if (!decision.ok) return { ok: false, reason: decision.reason };
     if (decision.source !== "managed") {

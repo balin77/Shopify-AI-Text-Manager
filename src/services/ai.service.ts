@@ -136,16 +136,6 @@ export function toValidProvider(value: string | null | undefined): AIProvider {
 }
 
 /**
- * Thrown when an AI call is attempted but the merchant has not configured
- * their own API key for the selected provider.
- *
- * IMPORTANT (Shopify PPA / API Terms compliance): ContentPilot must NOT send
- * merchant content to any third-party AI service through an operator-owned
- * (shared) key. Each shop must use its own key. This error is the guaranteed
- * backstop that blocks every AI call path — including background tasks — when
- * no merchant key is present.
- */
-/**
  * A managed AI call was REFUSED before it was made — no consent, no budget,
  * the kill switch, or a credential this deployment cannot serve.
  *
@@ -184,6 +174,31 @@ export function isManagedRefusal(error: unknown): error is ManagedAiRefusedError
   return (error as { code?: string } | null)?.code === 'MANAGED_AI_REFUSED';
 }
 
+/**
+ * Thrown when an AI call is attempted but no usable key is available for the
+ * selected provider.
+ *
+ * **The compliance statement this used to carry has changed, and saying so is
+ * the point.** It read: merchant content must NEVER go to an AI provider
+ * through an operator-owned key, each shop must use its own. That was this
+ * app's own reading of the Shopify PPA / API Terms, written to justify the
+ * BYO-only design — and the audit it cites (§B4) in fact names TWO acceptable
+ * fixes, of which enforced BYO is the first. The app now also implements the
+ * second: an operator key behind an explicit, logged, versioned in-app consent
+ * gate (PLAN_MANAGED_AI_KEY §2).
+ *
+ * What that does NOT change is where a credential may come from. This class,
+ * and `initializeProvider` below, still read no environment variable: the key
+ * is injected by `app/services/ai/ai-credentials.server.ts`, the single module
+ * that reads the operator credential AND enforces consent, the kill switch and
+ * the budget. A key obtainable only together with its gate cannot be obtained
+ * past it — which is the guarantee in the only form that survives review.
+ *
+ * So this error still means what it always meant: no usable key, block the
+ * call, on every path including background tasks. It is NOT the error a
+ * managed refusal produces — see `ManagedAiRefusedError`, and the reason the
+ * two must stay distinguishable.
+ */
 export class MissingAIKeyError extends Error {
   readonly code = 'NO_AI_KEY' as const;
   readonly provider: AIProvider;
@@ -285,6 +300,25 @@ export interface AIServiceConfig {
   preflight?: () => Promise<
     { ok: true } | { ok: false; reason: string; usedMicros?: number; limitMicros?: number }
   >;
+  /**
+   * This instance was REFUSED managed AI before it was built — the reason, for
+   * the error every call on it throws.
+   *
+   * It exists because refusing at CONSTRUCTION is not an option and refusing
+   * only at call time was not enough. The resolver used to answer a managed
+   * refusal with a keyless config, which made `initializeProvider` throw
+   * `MissingAIKeyError` — a different error, meaning a different thing, and
+   * the detached repair's purge path does not recognise it. A budget that ran
+   * out would then have deleted the merchant's storefront translations through
+   * a door the abort rule never covered, because the throw happens before any
+   * call the rule guards.
+   *
+   * So the service CONSTRUCTS (no provider client, no key anywhere near it)
+   * and every call on it refuses with the one error type that means "stand
+   * down", whichever of the eleven paths built it and whether it built eagerly
+   * or lazily.
+   */
+  managedRefusal?: string;
 }
 
 /**
@@ -425,9 +459,22 @@ export class AIService {
   }
 
   private initializeProvider() {
-    // Compliance backstop: only the merchant's own key is ever used. No
-    // operator-owned process.env.*_API_KEY fallback. An empty key blocks the
-    // call for EVERY AIService consumer, including background tasks.
+    // Compliance backstop: this function never reads an environment variable.
+    // The key it uses is the merchant's own, or — where the shop bought the
+    // managed option, consented, and the deployment has it configured — the
+    // operator's, INJECTED by `ai-credentials.server.ts`, which is the one
+    // module that reads that credential and the one that gates it on consent,
+    // the kill switch and the budget (PLAN_MANAGED_AI_KEY §2, §5). An empty
+    // key blocks the call for EVERY AIService consumer, including background
+    // tasks.
+    if (this.config.managedRefusal) {
+      // Managed AI was refused for this shop. Build NOTHING: no client, no key.
+      // Every call on this instance throws ManagedAiRefusedError, which the
+      // detached repair recognises as "stand down" rather than as a
+      // translation the AI could not deliver — the difference between a stale
+      // row kept and a storefront translation deleted.
+      return;
+    }
     if (this.provider === 'huggingface') {
       const apiKey = this.config.huggingfaceApiKey || '';
       if (!apiKey) throw new MissingAIKeyError('huggingface');
@@ -1340,6 +1387,11 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
       Array.from({ length: Math.min(TRANSLATION_BATCH.MAX_CONCURRENCY, jobs.length) }, () => worker()),
     );
 
+    // A managed refusal aborts regardless of how many siblings succeeded — see
+    // the same rule in `translateFieldsToLocalesChunked`.
+    const refusal = errors.find((e) => isManagedRefusal(e));
+    if (refusal) throw refusal;
+
     // Every chunk failed → throw, so the caller's own fallback runs instead of
     // being handed a map of empty strings that looks like "the AI translated
     // nothing on purpose". An auth error is the first one, which is what makes a
@@ -2241,6 +2293,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       Array.from({ length: Math.min(MAX_CONCURRENCY, jobs.length) }, () => worker())
     );
 
+    // A managed REFUSAL is not a chunk that failed — it is the whole operation
+    // standing down, and it has to leave here as a throw whether or not a
+    // sibling chunk succeeded. Otherwise its cells come back empty, which every
+    // caller reads as "the AI could not deliver" — and on the repair path that
+    // answer is a deletion (§6a rule 1). The repair happened to abort anyway,
+    // through two unrelated completeness checks agreeing by coincidence; a
+    // defence by coincidence is not one.
+    const refusal = errors.find((e) => isManagedRefusal(e));
+    if (refusal) throw refusal;
+
     // Every chunk failed → throw so the caller can fall back to sequential.
     if (succeeded === 0 && errors.length > 0) {
       throw errors[0];
@@ -2455,6 +2517,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * not billed, which is why this is a stated residual and not a correction.
    */
   private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
+    // A refusal decided at BUILD time (no consent, kill switch, a credential
+    // this deployment cannot serve) fails every call on this instance, and
+    // fails it as a refusal rather than as a missing key.
+    if (this.config.managedRefusal) {
+      throw new ManagedAiRefusedError(this.config.managedRefusal);
+    }
+
     // BEFORE the timer and before the queue slot does any work: a refused call
     // must cost nothing at all, and a refusal thrown from inside the race
     // would be charged a worst case by the timeout branch below.

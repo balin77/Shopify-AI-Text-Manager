@@ -2023,6 +2023,12 @@ export const de = {
       someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
       translationsNotMirrored:
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
+      managedAiBudgetExceeded:
+        "Das in deinem Plan enthaltene KI-Volumen ist für diesen Zeitraum aufgebraucht. Es wurde nichts geändert — deine Übersetzungen sind unverändert geblieben.",
+      managedAiConsentMissing:
+        "Die KI-Verarbeitung ist für diesen Shop nicht bestätigt, deshalb wurde nichts ausgeführt und nichts geändert. Bestätige sie in den Einstellungen und versuche es erneut.",
+      managedAiUnavailable:
+        "Die enthaltene KI war vorübergehend nicht erreichbar, deshalb wurde nichts ausgeführt und nichts geändert. Bitte später erneut versuchen.",
     },
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",

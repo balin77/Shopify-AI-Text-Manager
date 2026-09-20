@@ -174,7 +174,34 @@ console.log('\n🔎 Google Search Console (SEO tab):');
 //
 // What this canNOT check is whether the model ANSWERS. That is the startup
 // smoke test's job; a lookup in our own table cannot see a retired id.
+// Mirrors src/services/ai.service.ts's VALID_PROVIDERS and
+// app/config/ai-pricing.ts's UNPRICED_PROVIDERS. This is a plain .js script
+// that runs before the build, so it cannot import the TypeScript sources;
+// tests/unit/validate-env-managed-ai.test.ts pins the two copies against each
+// other, which is the same arrangement gdpr-audit-cleanup uses for its twin.
 const KNOWN_AI_PROVIDERS = ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'];
+// A provider with no per-token list price cannot carry a managed budget: the
+// meter would record EUR 0 for every call, the remaining budget would never
+// fall, and managed spend would be uncapped.
+const UNPRICEABLE_AI_PROVIDERS = ['huggingface'];
+// Model ids app/config/ai-pricing.ts knows a real price for. An id outside
+// this list is metered at that provider's unknown-model CEILING — a guess,
+// and on the managed path a guess the budget is then enforced against.
+const PRICED_AI_MODELS = {
+  openai: ['gpt-5-nano', 'gpt-5-mini', 'gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'o3-mini'],
+  claude: [
+    'claude-haiku-4-5',
+    'claude-3-5-haiku-20241022',
+    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-5',
+    'claude-opus-5',
+    'claude-opus-4-0-20250514',
+  ],
+  gemini: ['gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+  grok: ['grok-3-mini', 'grok-3', 'grok-2-vision-1212', 'grok-4-fast-non-reasoning'],
+  deepseek: ['deepseek-chat', 'deepseek-flash', 'deepseek-reasoner'],
+  huggingface: [],
+};
 
 function checkManagedCredential(prefix, label, required) {
   const provider = process.env[`${prefix}PROVIDER`];
@@ -203,6 +230,16 @@ function checkManagedCredential(prefix, label, required) {
     return;
   }
 
+  if (UNPRICEABLE_AI_PROVIDERS.includes(provider)) {
+    errors.push(`❌ ${prefix}PROVIDER is "${provider}", which this app cannot price per token — a managed budget over it could never be enforced`);
+    return;
+  }
+
+  if (!(PRICED_AI_MODELS[provider] || []).includes(model)) {
+    errors.push(`❌ ${prefix}MODEL is "${model}", which app/config/ai-pricing.ts does not price — every call would be metered at that provider's unknown-model ceiling and the budget enforced against a guess`);
+    return;
+  }
+
   console.log(`✅ ${label} AI: ${provider} / ${model}`);
 }
 
@@ -212,8 +249,11 @@ if (process.env.MANAGED_AI_ENABLED === 'true') {
 
   // §7a, belt and braces: the operator key must never be served from the
   // dev/custom-app build, and the cheapest place to find that out is here.
-  if (process.env.DEV_APP_CLIENT_ID &&
-      process.env.SHOPIFY_API_KEY === process.env.DEV_APP_CLIENT_ID &&
+  // The dev/custom-app client_id, mirroring the constant in
+  // app/services/dev-plan-override.server.ts (public, not a secret — it is in
+  // every OAuth URL). It is NOT an environment variable: reading it as one
+  // made this check, and the identical guard in the resolver, silently dead.
+  if (process.env.SHOPIFY_API_KEY === '433cf493223c0c6b95bdb91b0de5961a' &&
       process.env.APP_ENV !== 'production') {
     errors.push('❌ MANAGED_AI_ENABLED is true in a dev/custom-app build — an operator key must never be configured there');
   }

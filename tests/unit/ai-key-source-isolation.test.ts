@@ -64,6 +64,18 @@ describe('the operator credential has exactly one reader', () => {
       // comments all over the app) and `MANAGED_AI_REFUSED` (an error code).
       // A guard that fires on a doc reference is one somebody turns off.
       const src = readFileSync(file, 'utf8');
+      // Three shapes, because two of them slipped past the first version:
+      // a direct read, a DESTRUCTURE off process.env, and an aliased env
+      // object. Everything else that mentions one of these names is a doc
+      // reference (`PLAN_MANAGED_AI_KEY`) or an error code
+      // (`MANAGED_AI_REFUSED`), and a guard that fires on those is one
+      // somebody turns off.
+      const destructured = /const\s*\{[^}]*MANAGED_AI_[A-Z_]+[^}]*\}\s*=\s*process\.env/.test(src);
+      const aliased = /=\s*process\.env\s*;[\s\S]*?\.MANAGED_AI_[A-Z_]+/.test(src);
+      if (destructured || aliased) {
+        offenders.push(`${rel} (env destructure/alias)`);
+        continue;
+      }
       for (const match of src.matchAll(/MANAGED_AI_[A-Z_]+/g)) {
         const before = src.slice(Math.max(0, match.index - 80), match.index);
         if (/process\.env\s*[.[]?[^;]*$/.test(before)) {

@@ -2024,6 +2024,12 @@ export const en: Translation = {
       someFailed: "Some entries could not be processed — open the task for details.",
       translationsNotMirrored:
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
+      managedAiBudgetExceeded:
+        "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
+      managedAiConsentMissing:
+        "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
+      managedAiUnavailable:
+        "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
     },
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",

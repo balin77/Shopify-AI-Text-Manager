@@ -61,11 +61,21 @@ export function budgetContextFor(shop: string, settings: AISettings | null): Bud
 /**
  * Is the shop inside its 7-day trial?
  *
- * Derived from `trialConsumedAt`, the marker written at the Shopify-VERIFIED
- * point when a subscription was granted a trial. It is a coarse answer — the
- * exact trial end lives on the subscription — and it errs towards "in trial",
- * i.e. towards NO budget, which is the direction that cannot cost money.
- * Phase 2 reads the subscription here and replaces it with the exact date.
+ * Derived from `trialConsumedAt` — a one-way null→now transition written at
+ * the first Shopify-VERIFIED sync of the first trial subscription, so it is
+ * genuinely the trial START and not a per-sync stamp.
+ *
+ * It is coarse, and the case it gets WRONG is named rather than waved at: a
+ * shop that cancels on trial day 2 and re-subscribes on day 3 is no longer
+ * trial-eligible and is charged immediately, yet this refuses its whole budget
+ * until day 8. Same for an upgrade to a managed plan inside the original
+ * seven days. That is a paying merchant meeting a 402 — narrow, but a support
+ * ticket on a money path, and the reason Phase 2 replaces this with the exact
+ * trial end from the subscription rather than keeping it as "good enough".
+ *
+ * It is kept meanwhile because the error it makes cannot cost money, and the
+ * opposite error — a full allowance for a week of revenue that may never
+ * arrive — can.
  */
 function isWithinTrialWindow(settings: AISettings): boolean {
   const consumed = settings.trialConsumedAt;

@@ -13,8 +13,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 /** Build a bound AIService.translateBatchValues for this shop, plus the provider. */
 export async function buildTranslateBatch(shop: string, taskId?: string) {
   const { db } = await import("../db.server");
-  const { AIService, toValidProvider } = await import("../../src/services/ai.service");
-  const { tryDecryptApiKey } = await import("../utils/encryption.server");
+  const { AIService } = await import("../../src/services/ai.service");
   const { aiCredentialsFor } = await import("./ai/ai-credentials.server");
   const aiSettings = await db.aISettings.findUnique({ where: { shop } });
   // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
@@ -66,10 +65,10 @@ export async function runAiTask(
 ): Promise<number> {
   const { db } = await import("../db.server");
   const dt = await import("./direct-translation.server");
-  const { toValidProvider } = await import("../../src/services/ai.service");
   const { getTaskExpirationDate } = await import("../config/constants");
 
   const total = params.items.length * params.locales.length;
+  const { toValidProvider } = await import("../../src/services/ai.service");
   const aiSettings = await db.aISettings.findUnique({ where: { shop }, select: { preferredProvider: true } });
   const provider = toValidProvider(aiSettings?.preferredProvider);
 

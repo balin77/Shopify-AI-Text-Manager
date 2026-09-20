@@ -20,6 +20,7 @@ import type { SeoLimits } from "../../utils/character-limits";
 import { resolveSeoLimits } from "../../utils/character-limits";
 import type { DataResponse } from "~/types/data-response";
 import { aiServiceFor } from "~/services/ai/ai-credentials.server";
+import { AI_REFUSAL_STATUS } from "~/services/ai/managed-ai.shared";
 
 // ─── Content type config map ──────────────────────────────────────────────────
 
@@ -232,16 +233,34 @@ export function noAiKeyResponse(
  * `executeAIRequest`, and this is its early, friendly copy: refusing before a
  * Task row exists is a better merchant experience, not a stronger guarantee.
  *
- * Every code answers the status §5 assigns it, and the WORDING stays in the
- * language bundles — the app ships in three languages and this response is
- * read by two different clients.
+ * Every code answers the status `AI_REFUSAL_STATUS` assigns it — the map is
+ * read rather than restated, or the two drift — and the WORDING comes from the
+ * language bundles, shared with the one the Tasks tab renders for the same
+ * refusal on a background run. One refusal, one sentence, wherever a merchant
+ * meets it.
  */
+const MANAGED_REFUSAL_FALLBACK = {
+  managedAiBudgetExceeded:
+    "The AI volume included in your plan is used up for this period.",
+  managedAiConsentMissing:
+    "AI processing has not been confirmed for this shop. Confirm it in Settings and try again.",
+  managedAiUnavailable: "The included AI is temporarily unavailable. Please try again shortly.",
+} as const;
+
 export async function aiRefusalResponse(
   settings: AISettings | null,
   shop: string
 ): Promise<DataResponse | null> {
   const { resolveAiCredentials } = await import("~/services/ai/ai-credentials.server");
   const decision = resolveAiCredentials({ shop, settings });
+
+  const t = getTranslation((settings?.appLanguage ?? "en") as Locale);
+  const say = (key: keyof typeof MANAGED_REFUSAL_FALLBACK): string => {
+    const value = (t.tasks?.taskErrors as Record<string, unknown> | undefined)?.[key];
+    return typeof value === "string" && value.trim() !== ""
+      ? value
+      : MANAGED_REFUSAL_FALLBACK[key];
+  };
 
   if (decision.ok) {
     if (decision.source !== "managed") return null;
@@ -258,12 +277,11 @@ export async function aiRefusalResponse(
       {
         success: false,
         code: "AI_BUDGET_EXCEEDED",
-        error:
-          "The AI volume included in your plan is used up for this period. It resets with your next billing period — or switch to your own API key in Settings.",
+        error: say("managedAiBudgetExceeded"),
         usedMicros: status.usedMicros,
         limitMicros: status.limitMicros,
       },
-      { status: 402 }
+      { status: AI_REFUSAL_STATUS.budgetExceeded }
     );
   }
 
@@ -279,10 +297,9 @@ export async function aiRefusalResponse(
       {
         success: false,
         code: "AI_CONSENT_REQUIRED",
-        error:
-          "Please confirm in Settings that content may be processed by the AI providers used for your plan's included AI.",
+        error: say("managedAiConsentMissing"),
       },
-      { status: 409 }
+      { status: AI_REFUSAL_STATUS.consentMissing }
     );
   }
 
@@ -293,9 +310,9 @@ export async function aiRefusalResponse(
     {
       success: false,
       code: "AI_TEMPORARILY_UNAVAILABLE",
-      error: "The included AI is temporarily unavailable. Please try again shortly.",
+      error: say("managedAiUnavailable"),
     },
-    { status: 503 }
+    { status: AI_REFUSAL_STATUS.managedUnavailable }
   );
 }
 
