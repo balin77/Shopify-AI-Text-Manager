@@ -18,8 +18,7 @@ import {
   VALID_CONTENT_TYPES,
   errorMessage,
   errorStack,
-  getMissingPreferredKey,
-  noAiKeyResponse,
+  aiRefusalResponse,
   isAuthError,
   aiAuthErrorResponse,
   resolveSeoContext,
@@ -95,9 +94,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // NON_AI_ACTIONS are exempt — they only read/write the DB content cache
     // and/or Shopify directly (no provider call at all), so a shop with no AI
     // key configured yet must still be able to use them.
-    const missingKey = NON_AI_ACTIONS.has(actionType) ? null : getMissingPreferredKey(settings);
-    if (missingKey) {
-      return noAiKeyResponse(settings, missingKey);
+    const refusal = NON_AI_ACTIONS.has(actionType)
+      ? null
+      : await aiRefusalResponse(settings, session.shop);
+    if (refusal) {
+      return refusal;
     }
 
     // Resolve merchant SEO knobs once — used across generation, translation

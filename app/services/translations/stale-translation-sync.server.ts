@@ -55,6 +55,9 @@ import {
 import { marketOverrideKey } from "./market-layer-purge.server";
 import { TRANSLATION_BATCH } from "../../config/constants";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
+// §6a rule 1: a managed refusal must ABORT this repair, never look like a
+// translation the AI could not deliver — that fallback is a deletion.
+import { isManagedRefusal } from "../../../src/services/ai.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
 import {
   registerAndVerify,
@@ -2333,6 +2336,14 @@ async function runRetranslation(
                 valueInstructions,
               );
             } catch (chunkError: unknown) {
+              // A managed REFUSAL is not a chunk that failed — it is the whole
+              // run standing down, and it has to leave this function as a
+              // throw so `retranslateStaleEntries` reports `startFailed` and
+              // the caller skips the purge entirely (§6a rule 1). Falling
+              // through to "this chunk's entries route to the removal" would
+              // DELETE the merchant's translations because our prepaid budget
+              // ran out, unrecoverably.
+              if (isManagedRefusal(chunkError)) throw chunkError;
               // Caught PER CHUNK. `translateBatchValues` throws on a length
               // mismatch, and letting that reach the locale's own catch would
               // discard every chunk already translated and purge all of them —
@@ -2465,6 +2476,10 @@ async function runRetranslation(
           }
         }
       } catch (error: unknown) {
+        // Same rule as the chunk catch above, and this is the one that would
+        // have done the damage: "falling back to removal" is exactly what a
+        // budget refusal must never mean.
+        if (isManagedRefusal(error)) throw error;
         logger.warn("[StaleTranslations] Auto-translation failed — falling back to removal", {
           context: "StaleTranslations",
           shop,
@@ -2532,6 +2547,30 @@ async function runRetranslation(
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    if (isManagedRefusal(error)) {
+      // The run stood down rather than failing. The Task row says so with its
+      // own status — a red task blaming the automation for a budget the
+      // merchant can top up is a defect report about nothing — and the throw
+      // is re-raised so the wrapper answers `startFailed` and NOTHING is
+      // purged (§6a rule 1, §3a rule 5).
+      await db.task
+        .update({
+          where: { id: task.id },
+          data: {
+            status: "completed_with_errors",
+            completedAt: new Date(),
+            error: `managed_ai_refused:${(error as { reason?: string }).reason ?? "unknown"}`,
+          },
+        })
+        .catch(() => undefined);
+      logger.warn("[StaleTranslations] Auto-translation stood down — stale rows KEPT", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        reason: (error as { reason?: string }).reason,
+      });
+      throw error;
+    }
     await db.task
       .update({
         where: { id: task.id },

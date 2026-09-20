@@ -28,6 +28,7 @@
  */
 
 import type { AISettings } from "@prisma/client";
+import type { BillingPlan } from "../../config/billing";
 import type { AIProvider } from "../../utils/api-key-validation";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import { logger } from "../../utils/logger.server";
@@ -301,7 +302,14 @@ export function aiCredentialsFor(
 ): AiRuntimeCredentials {
   const decision = resolveAiCredentials({ shop, settings, role });
   if (decision.ok) {
-    return { provider: decision.provider, config: decision.config, decision };
+    return {
+      provider: decision.provider,
+      config:
+        decision.source === "managed"
+          ? { ...decision.config, preflight: managedPreflight(shop, settings) }
+          : decision.config,
+      decision,
+    };
   }
 
   const provider = toValidProvider(settings?.preferredProvider);
@@ -333,5 +341,45 @@ export function aiServiceFor(
   return {
     service: new AIService(creds.provider, creds.config, shop, taskId),
     decision: creds.decision,
+  };
+}
+
+/**
+ * The per-REQUEST gate installed on every managed AIService.
+ *
+ * It is asked before each provider call rather than once per service instance
+ * because a bulk run holds one instance for hundreds of calls — a budget
+ * checked at construction is a budget checked before the spend it bounds. The
+ * HTTP gates are the early, friendly copy of the same question; the heaviest
+ * consumers in this app (webhooks, the drift sweep, the bulk flush) never pass
+ * one (§6a).
+ *
+ * Re-asks the whole decision, not only the budget: consent can be withdrawn
+ * and the kill switch can be thrown while a long run is in flight, and both
+ * must stop the next call rather than the next run.
+ */
+function managedPreflight(
+  shop: string,
+  settings: AISettings | null,
+): NonNullable<AIServiceConfig["preflight"]> {
+  return async () => {
+    const decision = resolveAiCredentials({ shop, settings });
+    if (!decision.ok) return { ok: false, reason: decision.reason };
+    if (decision.source !== "managed") {
+      // The shop moved off managed mid-run. Nothing to bound: the merchant's
+      // own key is not ours to cap.
+      return { ok: true };
+    }
+
+    const { managedBudgetStatus } = await import("./managed-budget.server");
+    const plan = (settings?.subscriptionPlan ?? "free") as BillingPlan;
+    const status = await managedBudgetStatus(shop, settings, plan);
+    if (status.allowed) return { ok: true };
+    return {
+      ok: false,
+      reason: "budgetExceeded",
+      usedMicros: status.usedMicros,
+      limitMicros: status.limitMicros,
+    };
   };
 }

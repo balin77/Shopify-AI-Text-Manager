@@ -1,5 +1,5 @@
 import { data as json } from "react-router";
-import { getMissingPreferredKey, noAiKeyResponse } from "~/routes/api-ai-handlers/shared";
+import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
@@ -23,11 +23,12 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
     return json({ success: false, error: "No source text available" }, { status: 400 });
   }
 
-  // Compliance gate: require the shop's own AI key before creating a task.
+  // Compliance gate: whose key, consent, kill switch and budget — before a
+  // Task row exists.
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const missingKey = getMissingPreferredKey(settings);
-  if (missingKey) {
-    return noAiKeyResponse(settings, missingKey);
+  const refusal = await aiRefusalResponse(settings, session.shop);
+  if (refusal) {
+    return refusal;
   }
 
   const task = await db.task.create({
@@ -160,11 +161,12 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
   }
 
-  // Compliance gate: require the shop's own AI key before creating a task.
+  // Compliance gate: whose key, consent, kill switch and budget — before a
+  // Task row exists.
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const missingKey = getMissingPreferredKey(settings);
-  if (missingKey) {
-    return noAiKeyResponse(settings, missingKey);
+  const refusal = await aiRefusalResponse(settings, session.shop);
+  if (refusal) {
+    return refusal;
   }
 
   const task = await db.task.create({

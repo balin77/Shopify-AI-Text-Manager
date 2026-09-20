@@ -49,7 +49,8 @@ import { suggestionWhere, parseView, parseTypeFilter } from "../services/seo/int
 import { carryLinkIntoTranslations, type CarryOutcome } from "../services/seo/internal-links-translate.server";
 import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
 import { fieldTranslationKeyMap } from "../../src/services/shopify-content.service";
-import { createAIService, getMissingPreferredKey } from "./api-ai-handlers/shared";
+import { createAIService } from "./api-ai-handlers/shared";
+import { resolveAiCredentials } from "~/services/ai/ai-credentials.server";
 import { readDataPayload } from "~/utils/data-response";
 
 /**
@@ -205,7 +206,13 @@ function buildAnchorTranslator(
   | ((anchor: string, fromLocale: string, samples: { locale: string; text: string }[]) => Promise<Record<string, string>>)
   | undefined {
   if (!primaryLocale) return undefined;
-  if (getMissingPreferredKey(aiSettings)) return undefined;
+  // Not the full gate: this decides whether to OFFER the synonym helper at all,
+  // synchronously, inside a loader. A managed shop without consent or budget is
+  // refused per request by the preflight in `executeAIRequest`, which is where
+  // that decision belongs anyway (§6) — offering the helper and having it
+  // refuse costs a no-op, while asking the budget here would put a DB round
+  // trip in front of every scan.
+  if (!resolveAiCredentials({ shop, settings: aiSettings }).ok) return undefined;
 
   return (anchor, fromLocale, samples) =>
     createAIService(aiSettings, shop, "").findLocalizedAnchors(anchor, fromLocale, samples);

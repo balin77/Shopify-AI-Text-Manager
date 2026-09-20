@@ -216,6 +216,89 @@ export function noAiKeyResponse(
   );
 }
 
+/**
+ * The HTTP gate for an AI action — PLAN_MANAGED_AI_KEY §6.
+ *
+ * Returns a coded refusal response, or `null` when the call may proceed. It
+ * replaces the `getMissingPreferredKey` + `noAiKeyResponse` pair at every
+ * entry point, because BYO's "you have no key" is now one of FOUR reasons a
+ * call can be refused and the other three have nothing to do with keys.
+ *
+ * **This gate is necessary and nowhere near sufficient**, and the comment is
+ * here so nobody mistakes it for the enforcement. It covers the interactive
+ * paths only; the heaviest AI consumers in this app — the webhook
+ * reconciliation, the nightly drift sweep, the bulk flush — never pass one.
+ * The decision that actually bounds spend lives per REQUEST, inside
+ * `executeAIRequest`, and this is its early, friendly copy: refusing before a
+ * Task row exists is a better merchant experience, not a stronger guarantee.
+ *
+ * Every code answers the status §5 assigns it, and the WORDING stays in the
+ * language bundles — the app ships in three languages and this response is
+ * read by two different clients.
+ */
+export async function aiRefusalResponse(
+  settings: AISettings | null,
+  shop: string
+): Promise<DataResponse | null> {
+  const { resolveAiCredentials } = await import("~/services/ai/ai-credentials.server");
+  const decision = resolveAiCredentials({ shop, settings });
+
+  if (decision.ok) {
+    if (decision.source !== "managed") return null;
+    // Managed: the budget is the one question that costs a DB round trip, so
+    // it is asked last and only for the shops it can refuse.
+    const { managedBudgetStatus } = await import("~/services/ai/managed-budget.server");
+    const status = await managedBudgetStatus(
+      shop,
+      settings,
+      (settings?.subscriptionPlan ?? "free") as never
+    );
+    if (status.allowed) return null;
+    return json(
+      {
+        success: false,
+        code: "AI_BUDGET_EXCEEDED",
+        error:
+          "The AI volume included in your plan is used up for this period. It resets with your next billing period — or switch to your own API key in Settings.",
+        usedMicros: status.usedMicros,
+        limitMicros: status.limitMicros,
+      },
+      { status: 402 }
+    );
+  }
+
+  if (decision.reason === "noKey") {
+    return noAiKeyResponse(settings, {
+      provider: decision.provider,
+      displayName: getProviderDisplayName(decision.provider),
+    });
+  }
+
+  if (decision.reason === "consentMissing") {
+    return json(
+      {
+        success: false,
+        code: "AI_CONSENT_REQUIRED",
+        error:
+          "Please confirm in Settings that content may be processed by the AI providers used for your plan's included AI.",
+      },
+      { status: 409 }
+    );
+  }
+
+  // managedUnavailable — ours to fix, never the merchant's, so the message
+  // does not send them anywhere and does not mention a key (§3a rule 9: in
+  // managed mode the AI-keys tab is hidden, and pointing at it is nonsense).
+  return json(
+    {
+      success: false,
+      code: "AI_TEMPORARILY_UNAVAILABLE",
+      error: "The included AI is temporarily unavailable. Please try again shortly.",
+    },
+    { status: 503 }
+  );
+}
+
 // ─── AI Service factory ───────────────────────────────────────────────────────
 
 /**

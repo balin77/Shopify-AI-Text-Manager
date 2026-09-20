@@ -145,6 +145,45 @@ export function toValidProvider(value: string | null | undefined): AIProvider {
  * backstop that blocks every AI call path — including background tasks — when
  * no merchant key is present.
  */
+/**
+ * A managed AI call was REFUSED before it was made — no consent, no budget,
+ * the kill switch, or a credential this deployment cannot serve.
+ *
+ * Its own class, and thrown rather than returned, for one reason: it has to be
+ * TELLABLE APART from "the AI could not deliver this text". A detached repair
+ * turns the latter into `translationsRemove` plus a local delete, so a refusal
+ * mistaken for a failure deletes storefront translations because our prepaid
+ * budget ran out — unrecoverably, since the digest baseline has already moved
+ * (PLAN_MANAGED_AI_KEY §6a rule 1, §3a rule 5). Every caller that purges on
+ * failure must check `isManagedRefusal` and ABORT instead.
+ */
+export class ManagedAiRefusedError extends Error {
+  readonly code = 'MANAGED_AI_REFUSED' as const;
+  /** "consentMissing" | "budgetExceeded" | "managedUnavailable". */
+  readonly reason: string;
+  readonly usedMicros?: number;
+  readonly limitMicros?: number;
+
+  constructor(reason: string, detail?: { usedMicros?: number; limitMicros?: number }) {
+    super(`Managed AI refused: ${reason}`);
+    this.name = 'ManagedAiRefusedError';
+    this.reason = reason;
+    this.usedMicros = detail?.usedMicros;
+    this.limitMicros = detail?.limitMicros;
+  }
+}
+
+/**
+ * Is this error a managed refusal? Checked by INSTANCE and by CODE: the error
+ * crosses a dynamic-import boundary on some paths, where two copies of the
+ * class can exist and `instanceof` quietly answers false — which here means a
+ * purge instead of an abort.
+ */
+export function isManagedRefusal(error: unknown): error is ManagedAiRefusedError {
+  if (error instanceof ManagedAiRefusedError) return true;
+  return (error as { code?: string } | null)?.code === 'MANAGED_AI_REFUSED';
+}
+
 export class MissingAIKeyError extends Error {
   readonly code = 'NO_AI_KEY' as const;
   readonly provider: AIProvider;
@@ -223,11 +262,29 @@ export interface AIServiceConfig {
   /**
    * Whose key this instance is spending — the meter's `source` column
    * (PLAN_MANAGED_AI_KEY §4.4). Absent means the merchant's own key, which is
-   * every caller today: the managed resolver sets it in Phase 1. It defaults
-   * rather than being required because the wrong default here is the one that
-   * would report operator spend as merchant spend, and "byo" cannot do that.
+   * what every construction site resolves to until a managed subscription
+   * exists; the resolver sets it, and Phase 2 makes it required once there is
+   * something other than "byo" for it to be.
    */
   credentialSource?: AiCredentialSource;
+  /**
+   * Asked before EVERY provider call, and only installed for managed ones.
+   *
+   * The decision has to live per REQUEST rather than per service instance: a
+   * bulk run holds one instance for hundreds of calls, and a budget checked
+   * once at construction is a budget checked before the spend it is supposed
+   * to bound. The HTTP gates are the early, friendly copy of this; the heaviest
+   * consumers in this app never pass one (§6a).
+   *
+   * It is a CALLBACK rather than a lookup in here because `ai.service.ts` must
+   * never learn that `process.env` exists — the whole compliance guarantee is
+   * that the operator credential has one reader, and this is the seam through
+   * which that reader keeps answering (and, when the failover ships, through
+   * which it can answer with a different credential).
+   */
+  preflight?: () => Promise<
+    { ok: true } | { ok: false; reason: string; usedMicros?: number; limitMicros?: number }
+  >;
 }
 
 /**
@@ -2398,6 +2455,19 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * not billed, which is why this is a stated residual and not a correction.
    */
   private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
+    // BEFORE the timer and before the queue slot does any work: a refused call
+    // must cost nothing at all, and a refusal thrown from inside the race
+    // would be charged a worst case by the timeout branch below.
+    if (this.config.preflight) {
+      const verdict = await this.config.preflight();
+      if (!verdict.ok) {
+        throw new ManagedAiRefusedError(verdict.reason, {
+          usedMicros: verdict.usedMicros,
+          limitMicros: verdict.limitMicros,
+        });
+      }
+    }
+
     let timer: NodeJS.Timeout | undefined;
     const meter: AiCallMeter = { dispatched: 0, observed: [] };
     try {

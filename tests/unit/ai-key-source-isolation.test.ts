@@ -58,11 +58,19 @@ describe('the operator credential has exactly one reader', () => {
     for (const file of sourceFiles()) {
       const rel = relative(root, file).replace(/\\/g, '/');
       if (ALLOWED.has(rel)) continue;
-      // `PLAN_MANAGED_AI_KEY` is the plan's filename and appears in comments
-      // all over the app — a doc reference is not a credential read, and a
-      // rule that could not tell them apart would be turned off within a week.
-      const src = readFileSync(file, 'utf8').replace(/PLAN_MANAGED_AI_KEY/g, '');
-      if (/MANAGED_AI_[A-Z_]+/.test(src)) offenders.push(rel);
+      // What the rule MEANS is "reads a MANAGED_AI_* variable out of the
+      // environment", and it has to say so: a broad match on the identifier
+      // also hits `PLAN_MANAGED_AI_KEY` (the plan's filename, quoted in
+      // comments all over the app) and `MANAGED_AI_REFUSED` (an error code).
+      // A guard that fires on a doc reference is one somebody turns off.
+      const src = readFileSync(file, 'utf8');
+      for (const match of src.matchAll(/MANAGED_AI_[A-Z_]+/g)) {
+        const before = src.slice(Math.max(0, match.index - 80), match.index);
+        if (/process\.env\s*[.[]?[^;]*$/.test(before)) {
+          offenders.push(`${rel} (${match[0]})`);
+          break;
+        }
+      }
     }
     expect(offenders, `these files read the operator credential: ${offenders.join(', ')}`).toEqual([]);
   });
