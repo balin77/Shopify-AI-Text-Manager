@@ -331,6 +331,13 @@ export interface AIServiceConfig {
    * month for traffic nobody caps.
    */
   usagePeriod?: string;
+  /**
+   * Which GLOBAL pool a managed call draws from (§9.3). Set by the resolver
+   * beside the period, for the same reason: the meter must record against the
+   * pool the preflight checked, or the cap is measured over a different number
+   * than it enforces.
+   */
+  usagePool?: 'paid' | 'taster';
 }
 
 /**
@@ -2362,7 +2369,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           this.taskId,
           this.provider,
           estimatedTokens,
-          () => this.executeAIRequest(prompt, imageUrls)
+          () => this.executeAIRequest(prompt, imageUrls),
+          // Which rate-limit bucket this call is admitted against (§9.1). It
+          // travels at ENQUEUE time because `execute` is an opaque closure:
+          // by the time it runs there is nothing left to ask.
+          this.config.credentialSource === 'managed' ? 'managed' : 'byo'
         );
       }
     } catch (error) {
@@ -2650,6 +2661,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         estimated: usage.source === 'estimate',
         taskId: this.taskId,
         ...(this.config.usagePeriod ? { period: this.config.usagePeriod } : {}),
+        ...(this.config.usagePool ? { pool: this.config.usagePool } : {}),
       });
     } catch (error) {
       loggers.ai('error', '[AI-SERVICE] Failed to record AI usage', {

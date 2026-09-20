@@ -15,6 +15,13 @@ interface QueuedRequest {
   shop: string;
   taskId: string;
   provider: AIProvider;
+  /**
+   * Whose key this call spends — §9.1. It decides which rate-limit BUCKET the
+   * call is admitted against, and it has to travel on the request rather than
+   * being derived at execution time: `execute` is an opaque closure, so by the
+   * time it runs there is nothing left to ask.
+   */
+  source: QueueCredentialSource;
   estimatedTokens: number;
   execute: () => Promise<any>;
   resolve: (value: any) => void;
@@ -27,6 +34,22 @@ interface UsageWindow {
   timestamp: number;
   tokens: number;
   requests: number;
+}
+
+/** Whose key a queued call spends — the first half of a bucket key. */
+export type QueueCredentialSource = 'byo' | 'managed';
+
+/**
+ * The bucket a call is admitted against.
+ *
+ * BYO traffic shares one bucket per provider, as it always has: those numbers
+ * are a merchant's own and describe their own account. MANAGED traffic has its
+ * own, because it is ONE account shared by every shop, and mixing the two
+ * would let a BYO shop's configured limits decide how fast the operator's key
+ * may be spent.
+ */
+export function rateLimitBucket(source: QueueCredentialSource, provider: AIProvider): string {
+  return `${source}:${provider}`;
 }
 
 /**
@@ -94,10 +117,24 @@ export class AIQueueService {
   private lastProcessedShopIndex = 0;
 
   // Track usage per provider using sliding window (global - shared API keys)
-  private usageWindows: Map<AIProvider, UsageWindow[]> = new Map();
+  /** Usage windows, keyed like the buckets above. */
+  private usageWindows: Map<string, UsageWindow[]> = new Map();
 
   // Rate limit configurations per provider (global)
-  private rateLimits: Map<AIProvider, RateLimitConfig> = new Map();
+  /**
+   * Rate-limit buckets, keyed by `${source}:${provider}` — PLAN_MANAGED_AI_KEY §9.1.
+   *
+   * The key used to be the provider alone, and `updateRateLimits(settings)`
+   * writes it from whichever SHOP called last. Under BYO that is merely odd:
+   * every shop spends its own quota, so one shop's numbers describing another's
+   * window is a mis-prediction, not a theft. With a SHARED key it is one
+   * merchant raising the limit everybody else runs against — and lowering it,
+   * which is the cheaper attack.
+   *
+   * So the managed buckets are configured from the ENVIRONMENT only and
+   * `updateRateLimits` refuses to touch them.
+   */
+  private rateLimits: Map<string, RateLimitConfig> = new Map();
 
   // Track last activity time per shop for cleanup (memory leak prevention)
   private lastShopActivity: Map<string, number> = new Map();
@@ -128,69 +165,133 @@ export class AIQueueService {
   }
 
   private setDefaultRateLimits() {
-    this.rateLimits.set('huggingface', {
+    this.rateLimits.set(rateLimitBucket('byo', 'huggingface'), {
       maxTokensPerMinute: 1000000,
       maxRequestsPerMinute: 100,
     });
-    this.rateLimits.set('gemini', {
+    this.rateLimits.set(rateLimitBucket('byo', 'gemini'), {
       maxTokensPerMinute: 1000000,
       maxRequestsPerMinute: 15,
     });
-    this.rateLimits.set('claude', {
+    this.rateLimits.set(rateLimitBucket('byo', 'claude'), {
       maxTokensPerMinute: 40000,
       maxRequestsPerMinute: 5,
     });
-    this.rateLimits.set('openai', {
+    this.rateLimits.set(rateLimitBucket('byo', 'openai'), {
       maxTokensPerMinute: 200000,
       maxRequestsPerMinute: 500,
     });
-    this.rateLimits.set('grok', {
+    this.rateLimits.set(rateLimitBucket('byo', 'grok'), {
       maxTokensPerMinute: 100000,
       maxRequestsPerMinute: 60,
     });
-    this.rateLimits.set('deepseek', {
+    this.rateLimits.set(rateLimitBucket('byo', 'deepseek'), {
       maxTokensPerMinute: 100000,
       maxRequestsPerMinute: 60,
     });
+
+    // The managed buckets seed from the same defaults so a call is never
+    // admitted against a missing bucket, and are then overwritten from the
+    // environment. The default Anthropic numbers (5 RPM / 40 000 TPM) are one
+    // merchant's account, not ours — a failover honestly keyed to them would
+    // admit about four calls a minute for the whole app (§3a rule 10).
+    for (const provider of ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'] as const) {
+      const byo = this.rateLimits.get(rateLimitBucket('byo', provider));
+      if (byo) this.rateLimits.set(rateLimitBucket('managed', provider), { ...byo });
+    }
+    this.configureManagedBuckets();
   }
 
   /**
    * Update rate limits from database settings
    */
+  /**
+   * Apply ONE SHOP's configured rate limits.
+   *
+   * It writes the `byo:` buckets only. The managed buckets are configured from
+   * the environment in `configureManagedBuckets` and are deliberately
+   * unreachable from here: this function is called with whichever shop's
+   * settings arrived last, and under a SHARED key that would be one merchant
+   * deciding how fast every other merchant's calls may go (§9.1).
+   */
+  /**
+   * The managed buckets, from the environment — §9.0 and §9.1.
+   *
+   * They must NOT be fed by `estimateTokens`: that helper charges a flat 8192
+   * output tokens to every call, so a bucket honestly set to the provider's
+   * real TPM admits about a tenth of the capacity we pay for, while one set
+   * ten times higher trips the provider's real limit on the first long batch.
+   * The managed path meters with the real input count plus the model's actual
+   * output ceiling, which is what these numbers are sized against.
+   *
+   * Absent values leave the defaults in place rather than inventing one: a
+   * guessed TPM is the number that either wastes the account or trips it.
+   */
+  configureManagedBuckets(): void {
+    const read = (name: string): number | null => {
+      const raw = process.env[name];
+      if (!raw) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+
+    for (const [prefix, providerVar] of [
+      ['MANAGED_AI_', 'MANAGED_AI_PROVIDER'],
+      ['MANAGED_AI_FALLBACK_', 'MANAGED_AI_FALLBACK_PROVIDER'],
+    ] as const) {
+      const provider = process.env[providerVar] as AIProvider | undefined;
+      if (!provider) continue;
+      const tpm = read(`${prefix}TPM`);
+      const rpm = read(`${prefix}RPM`);
+      if (tpm === null || rpm === null) {
+        loggers.queue(
+          'warn',
+          `[AIQueue] ${prefix}TPM/${prefix}RPM not configured — the managed bucket for ${provider} keeps this app's default, which is sized for a single merchant's account, not ours.`,
+        );
+        continue;
+      }
+      this.rateLimits.set(rateLimitBucket('managed', provider), {
+        maxTokensPerMinute: tpm,
+        maxRequestsPerMinute: rpm,
+      });
+      loggers.queue('info', `[AIQueue] Managed bucket configured for ${provider}`, { tpm, rpm });
+    }
+  }
+
   async updateRateLimits(settings: any) {
     if (!settings) return;
     if (settings.hfMaxTokensPerMinute && settings.hfMaxRequestsPerMinute) {
-      this.rateLimits.set('huggingface', {
+      this.rateLimits.set(rateLimitBucket('byo', 'huggingface'), {
         maxTokensPerMinute: settings.hfMaxTokensPerMinute,
         maxRequestsPerMinute: settings.hfMaxRequestsPerMinute,
       });
     }
     if (settings.geminiMaxTokensPerMinute && settings.geminiMaxRequestsPerMinute) {
-      this.rateLimits.set('gemini', {
+      this.rateLimits.set(rateLimitBucket('byo', 'gemini'), {
         maxTokensPerMinute: settings.geminiMaxTokensPerMinute,
         maxRequestsPerMinute: settings.geminiMaxRequestsPerMinute,
       });
     }
     if (settings.claudeMaxTokensPerMinute && settings.claudeMaxRequestsPerMinute) {
-      this.rateLimits.set('claude', {
+      this.rateLimits.set(rateLimitBucket('byo', 'claude'), {
         maxTokensPerMinute: settings.claudeMaxTokensPerMinute,
         maxRequestsPerMinute: settings.claudeMaxRequestsPerMinute,
       });
     }
     if (settings.openaiMaxTokensPerMinute && settings.openaiMaxRequestsPerMinute) {
-      this.rateLimits.set('openai', {
+      this.rateLimits.set(rateLimitBucket('byo', 'openai'), {
         maxTokensPerMinute: settings.openaiMaxTokensPerMinute,
         maxRequestsPerMinute: settings.openaiMaxRequestsPerMinute,
       });
     }
     if (settings.grokMaxTokensPerMinute && settings.grokMaxRequestsPerMinute) {
-      this.rateLimits.set('grok', {
+      this.rateLimits.set(rateLimitBucket('byo', 'grok'), {
         maxTokensPerMinute: settings.grokMaxTokensPerMinute,
         maxRequestsPerMinute: settings.grokMaxRequestsPerMinute,
       });
     }
     if (settings.deepseekMaxTokensPerMinute && settings.deepseekMaxRequestsPerMinute) {
-      this.rateLimits.set('deepseek', {
+      this.rateLimits.set(rateLimitBucket('byo', 'deepseek'), {
         maxTokensPerMinute: settings.deepseekMaxTokensPerMinute,
         maxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute,
       });
@@ -230,7 +331,13 @@ export class AIQueueService {
     taskId: string,
     provider: AIProvider,
     estimatedTokens: number,
-    execute: () => Promise<T>
+    execute: () => Promise<T>,
+    /**
+     * Whose key the call spends. Defaults to `byo`, which is every caller that
+     * has not been told otherwise — and the safe default, because it can only
+     * ever admit a call against a bucket the merchant's own account owns.
+     */
+    source: QueueCredentialSource = 'byo'
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       const request: QueuedRequest = {
@@ -238,6 +345,7 @@ export class AIQueueService {
         shop,
         taskId,
         provider,
+        source,
         estimatedTokens,
         execute,
         resolve,
@@ -264,17 +372,17 @@ export class AIQueueService {
   }
 
   /**
-   * Get current usage for a provider in the last minute
+   * Get current usage for one BUCKET in the last minute.
    */
-  private getCurrentUsage(provider: AIProvider): { tokens: number; requests: number } {
+  private getCurrentUsage(bucket: string): { tokens: number; requests: number } {
     const now = Date.now();
     const oneMinuteAgo = now - 60000;
 
-    const windows = this.usageWindows.get(provider) || [];
+    const windows = this.usageWindows.get(bucket) || [];
 
     // Remove old windows
     const recentWindows = windows.filter(w => w.timestamp > oneMinuteAgo);
-    this.usageWindows.set(provider, recentWindows);
+    this.usageWindows.set(bucket, recentWindows);
 
     // Sum up usage
     const tokens = recentWindows.reduce((sum, w) => sum + w.tokens, 0);
@@ -286,34 +394,39 @@ export class AIQueueService {
   /**
    * Record usage for a provider
    */
-  private recordUsage(provider: AIProvider, tokens: number) {
-    const windows = this.usageWindows.get(provider) || [];
+  private recordUsage(bucket: string, tokens: number) {
+    const windows = this.usageWindows.get(bucket) || [];
     windows.push({
       timestamp: Date.now(),
       tokens,
       requests: 1,
     });
-    this.usageWindows.set(provider, windows);
+    this.usageWindows.set(bucket, windows);
   }
 
   /**
    * Check if a request can be executed without exceeding rate limits
    */
-  private canExecute(provider: AIProvider, estimatedTokens: number): boolean {
-    const limits = this.rateLimits.get(provider);
+  /** The bucket ONE queued request is admitted against. */
+  private bucketOf(request: Pick<QueuedRequest, 'source' | 'provider'>): string {
+    return rateLimitBucket(request.source, request.provider);
+  }
+
+  private canExecute(bucket: string, estimatedTokens: number): boolean {
+    const limits = this.rateLimits.get(bucket);
     if (!limits) {
-      loggers.queue('warn', `No rate limits configured for provider: ${provider}`);
+      loggers.queue('warn', `No rate limits configured for bucket: ${bucket}`);
       return true;
     }
 
-    const usage = this.getCurrentUsage(provider);
+    const usage = this.getCurrentUsage(bucket);
 
     const canExecute =
       usage.tokens + estimatedTokens <= limits.maxTokensPerMinute &&
       usage.requests + 1 <= limits.maxRequestsPerMinute;
 
     if (!canExecute) {
-      loggers.queue('debug', `Rate limit check for ${provider}`, { tokens: usage.tokens + estimatedTokens, maxTokens: limits.maxTokensPerMinute, requests: usage.requests + 1, maxRequests: limits.maxRequestsPerMinute });
+      loggers.queue('debug', `Rate limit check for ${bucket}`, { tokens: usage.tokens + estimatedTokens, maxTokens: limits.maxTokensPerMinute, requests: usage.requests + 1, maxRequests: limits.maxRequestsPerMinute });
     }
 
     return canExecute;
@@ -322,20 +435,21 @@ export class AIQueueService {
   /**
    * Calculate wait time until rate limit allows execution
    */
-  private calculateWaitTime(provider?: AIProvider, estimatedTokens?: number): number {
-    // If no provider specified, find the minimum wait time across all providers with active windows
-    if (!provider) {
+  private calculateWaitTime(bucket?: string, estimatedTokens?: number): number {
+    // No bucket specified: the minimum wait across every bucket with an
+    // active window.
+    if (!bucket) {
       let minWait = Infinity;
-      for (const [p, windows] of this.usageWindows.entries()) {
+      for (const [key, windows] of this.usageWindows.entries()) {
         if (windows.length > 0) {
-          const wait = this.calculateWaitTime(p, 0);
+          const wait = this.calculateWaitTime(key, 0);
           if (wait < minWait) minWait = wait;
         }
       }
       return minWait === Infinity ? 0 : minWait;
     }
 
-    const windows = this.usageWindows.get(provider) || [];
+    const windows = this.usageWindows.get(bucket) || [];
     if (windows.length === 0) return 0;
 
     const now = Date.now();
@@ -364,7 +478,7 @@ export class AIQueueService {
 
       // Find first executable request in this shop's queue
       const requestIndex = queue.findIndex(req =>
-        this.canExecute(req.provider, req.estimatedTokens)
+        this.canExecute(this.bucketOf(req), req.estimatedTokens)
       );
 
       if (requestIndex !== -1) {
@@ -491,7 +605,7 @@ export class AIQueueService {
         // success or failure. Counting only successes under-reports the
         // sliding window and triggers 429 storms precisely when the provider
         // is already failing/timing out (N-H8).
-        this.recordUsage(request.provider, request.estimatedTokens);
+        this.recordUsage(this.bucketOf(request), request.estimatedTokens);
       }
 
       await this.updateQueuePositions(shop);
@@ -650,6 +764,10 @@ export class AIQueueService {
         shop: task.shop,
         taskId: task.id,
         provider,
+        // Recovery replays a config the caller handed in; it has no managed
+        // credential of its own, and `byo` is the bucket that cannot spend
+        // the operator's window.
+        source: 'byo',
         estimatedTokens,
         execute,
         resolve: (result) => {

@@ -52,8 +52,27 @@ function sourceFiles(): string[] {
   return files;
 }
 
+/**
+ * What must have ONE reader is the SECRET and the switch that permits its use.
+ *
+ * Not every `MANAGED_AI_*` name: the rate-limit window of our account
+ * (`MANAGED_AI_TPM`/`RPM`) belongs to the queue that admits against it, and
+ * the global pool ceilings belong to the module that enforces them. Those are
+ * ops numbers — they cannot leak a credential, and routing them through the
+ * resolver would put a key-holding module in two more import graphs for no
+ * gain. The rule says what it protects, or it is a rule people widen until it
+ * protects nothing.
+ */
+const CREDENTIAL_ENV = [
+  'MANAGED_AI_API_KEY',
+  'MANAGED_AI_FALLBACK_API_KEY',
+  // The kill switch: whether the credential may be used at all. A second
+  // reader could serve the key in a deployment that had switched it off.
+  'MANAGED_AI_ENABLED',
+];
+
 describe('the operator credential has exactly one reader', () => {
-  it('no file outside the resolver mentions a MANAGED_AI_* variable', () => {
+  it('no file outside the resolver reads the operator SECRET or its switch', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       const rel = relative(root, file).replace(/\\/g, '/');
@@ -70,21 +89,40 @@ describe('the operator credential has exactly one reader', () => {
       // reference (`PLAN_MANAGED_AI_KEY`) or an error code
       // (`MANAGED_AI_REFUSED`), and a guard that fires on those is one
       // somebody turns off.
-      const destructured = /const\s*\{[^}]*MANAGED_AI_[A-Z_]+[^}]*\}\s*=\s*process\.env/.test(src);
-      const aliased = /=\s*process\.env\s*;[\s\S]*?\.MANAGED_AI_[A-Z_]+/.test(src);
+      const destructured = new RegExp(
+        `const\\s*\\{[^}]*(${CREDENTIAL_ENV.join('|')})[^}]*\\}\\s*=\\s*process\\.env`,
+      ).test(src);
+      const aliased = new RegExp(
+        `=\\s*process\\.env\\s*;[\\s\\S]*?\\.(${CREDENTIAL_ENV.join('|')})\\b`,
+      ).test(src);
       if (destructured || aliased) {
         offenders.push(`${rel} (env destructure/alias)`);
         continue;
       }
-      for (const match of src.matchAll(/MANAGED_AI_[A-Z_]+/g)) {
-        const before = src.slice(Math.max(0, match.index - 80), match.index);
-        if (/process\.env\s*[.[]?[^;]*$/.test(before)) {
-          offenders.push(`${rel} (${match[0]})`);
-          break;
+      for (const name of CREDENTIAL_ENV) {
+        for (const match of src.matchAll(new RegExp(name, 'g'))) {
+          const before = src.slice(Math.max(0, match.index - 80), match.index);
+          if (/process\.env\s*[.[]?[^;]*$/.test(before)) {
+            offenders.push(`${rel} (${name})`);
+            break;
+          }
         }
       }
     }
     expect(offenders, `these files read the operator credential: ${offenders.join(', ')}`).toEqual([]);
+  });
+
+  it('the operator SECRET is not even NAMED outside the resolver and validate-env', () => {
+    // The resolver builds the variable name from a prefix, so a `process.env`
+    // proximity check alone could miss a second reader that spells it out.
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      const rel = relative(root, file).replace(/\\/g, '/');
+      if (ALLOWED.has(rel)) continue;
+      const src = readFileSync(file, 'utf8');
+      if (/MANAGED_AI(_FALLBACK)?_API_KEY/.test(src)) offenders.push(rel);
+    }
+    expect(offenders, `these files name the operator secret: ${offenders.join(', ')}`).toEqual([]);
   });
 
   it('the resolver really does read it — an allowlist over nothing proves nothing', () => {

@@ -57,7 +57,8 @@ angewiesen.** Wer die Zahl im Dashboard erhöht, bekommt keine Fehlermeldung —
 sondern doppelte Arbeit, doppelte Kosten und gelegentlich eine überschriebene
 Übersetzung.
 
-Vier Zustände leben **im Prozess**, nicht in der Datenbank:
+Vier Zustände leben **im Prozess**, nicht in der Datenbank (mit Managed AI
+kommt der Breaker als fünfter dazu — siehe unten):
 
 | Was | Wo | Was bei zwei Instanzen passiert |
 |---|---|---|
@@ -75,11 +76,33 @@ Orphan-Recovery, der atomare Verbrauch von `ImageOperationCounter`, und die
 **vorher** nach Postgres oder Redis um, nicht danach. Alle Symptome sind still,
 also würde die Ursache erst Wochen später gesucht.
 
-Für das geplante Managed-AI-Key-Modell
-([docs/plans/PLAN_MANAGED_AI_KEY.md](docs/plans/PLAN_MANAGED_AI_KEY.md)) kommt
-ein fünfter Grund dazu: dort ist die Instanzzahl direkt ein Kostenfaktor, weil
-die Obergrenze dafür, wie weit ein Shop sein Budget überziehen kann,
-`AI_QUEUE_CONCURRENCY × Instanzen` ist.
+Für das Managed-AI-Key-Modell
+([docs/plans/PLAN_MANAGED_AI_KEY.md](docs/plans/PLAN_MANAGED_AI_KEY.md)) kommen
+zwei weitere Gründe dazu, und sie sind nicht mehr geplant, sondern gebaut.
+Erstens ist die Instanzzahl direkt ein Kostenfaktor: die Obergrenze dafür, wie
+weit ein Shop sein Budget überziehen kann, ist `AI_QUEUE_CONCURRENCY ×
+Instanzen`. Zweitens ist der Circuit Breaker des Failovers ein **fünfter**
+prozesslokaler Zustand — zwei Instanzen probieren einen ausgefallenen Anbieter
+doppelt so oft und zahlen die Fehlversuche doppelt.
+
+### Env-Variablen für Managed AI
+
+Alle sind **optional**: ohne `MANAGED_AI_ENABLED=true` ist das Feature aus, und
+BYO funktioniert unverändert. `scripts/validate-env.js` prüft sie beim Start
+und verweigert eine halbe Konfiguration.
+
+| Variable | Bedeutung |
+|---|---|
+| `MANAGED_AI_ENABLED` | Der Kill-Switch, **opt-in**: nur `"true"` schaltet an. Alles andere (auch unset) ist AUS — die umgekehrte Lesart würde das Feature in jeder Umgebung anschalten, die einen Key hat und keine Meinung zum Flag, also auch in einer Staging-Box mit kopierter Production-Env. |
+| `MANAGED_AI_PROVIDER` / `_MODEL` / `_API_KEY` | Das Operator-Credential. Werden als EINHEIT gelesen: eine halbe Konfiguration ergibt gar keine, weil ein Modell oder Key des falschen Anbieters ein Request an den falschen Endpunkt mit fremdem Secret im Header ist. Das Modell muss in `app/config/ai-pricing.ts` bepreist sein, sonst wird das Budget gegen eine Schätzung durchgesetzt. |
+| `MANAGED_AI_FALLBACK_*` | Dasselbe für den Ausweichanbieter. Fehlt er, startet die App trotzdem — aber ein Ausfall des Default-Anbieters ist dann ein Ausfall. |
+| `MANAGED_AI_TPM` / `_RPM` (+ `_FALLBACK_`) | Das Rate-Limit-Fenster **unseres** Kontos. Ohne sie gelten die App-Defaults, die für EINEN Merchant-Account gedacht sind: Anthropics Default (5 RPM / 40 000 TPM) ließe app-weit etwa vier Calls pro Minute zu. |
+| `MANAGED_AI_POOL_MICROS` / `_TASTER_POOL_MICROS` | Die globale Monatsobergrenze in Mikro-Euro, **zwei Töpfe**. Pro-Shop-Budgets begrenzen, was ein Merchant kosten kann; diese begrenzen, was ein BUG kosten kann. Zwei Töpfe, weil ein Ansturm freier Installationen sonst am 18. den Deckel reißt und jedem ZAHLENDEN Merchant 503 antwortet. Unset heißt kein Deckel — eine Entscheidung, keine Voreinstellung, in die man hineinrutscht. |
+
+Der Operator-Key wird von genau einem Modul gelesen
+(`app/services/ai/ai-credentials.server.ts`), das zugleich Einwilligung,
+Kill-Switch und Budget prüft; ein Test hält das fest. Im Dev-/Custom-App-Build
+wird er grundsätzlich nicht ausgeliefert.
 
 ### Env-Variablen des Cron-Service `Db Space Checker`
 

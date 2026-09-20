@@ -1586,6 +1586,36 @@ model AiUsageCounter {
   @@index([shop, period])
 }
 
+// The GLOBAL monthly cap on managed AI spend (PLAN_MANAGED_AI_KEY §9.3).
+//
+// Its own table, deliberately NOT a sentinel row in the shop-scoped counter
+// above. Not because the GDPR guard would fail — that guard checks every
+// shop-scoped MODEL is purged, and a `shop: "__global__"` row would simply
+// survive redactShopData's exact-match delete — but because a global counter
+// has no tenant and therefore no business in a per-shop unique key, and a
+// surviving row that LOOKS like a shop is worse than a separate table in
+// every later audit.
+//
+// TWO POOLS, not one. A paid pool sized from the subscriptions actually sold,
+// and a smaller taster pool. With one pool, a listing spike of free installs
+// spending their tasters trips the cap on the 18th and 503s every PAYING
+// merchant for the rest of the month — the plan names free shops as the least
+// accountable population and must not then let them refuse the revenue.
+//
+// `failoverMicros` is what §3a rule 4's budget is measured against: the part
+// of a failover we absorb, which is the gap between what we paid and what the
+// merchant was billed.
+model ManagedAiGlobalCounter {
+  id             String   @id @default(cuid())
+  period         String // same key scheme as AiUsageCounter
+  pool           String // "paid" | "taster"
+  costMicros     BigInt   @default(0)
+  failoverMicros BigInt   @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([period, pool])
+}
+
 // SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon
 // through the /apps/contentpilot/seo-404 app-proxy. Shopify exposes no 404 logs
 // via API, so we collect them ourselves. Mirrors DirectTranslationCandidate:

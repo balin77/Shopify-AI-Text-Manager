@@ -38,20 +38,25 @@ describe('AIQueueService', () => {
   });
 
   describe('Rate Limits Configuration', () => {
-    it('should have default rate limits for all providers', () => {
+    // The buckets are keyed `${source}:${provider}` since
+    // PLAN_MANAGED_AI_KEY §9.1: `updateRateLimits` writes from whichever SHOP
+    // called last, and with a shared operator key that would be one merchant
+    // deciding how fast everybody else's calls may go.
+    const byo = (provider: string) => `byo:${provider}`;
+    const managed = (provider: string) => `managed:${provider}`;
+
+    it('should have default rate limits for all providers, per source', () => {
       const rateLimits = (queueService as any).rateLimits;
 
-      expect(rateLimits.has('huggingface')).toBe(true);
-      expect(rateLimits.has('gemini')).toBe(true);
-      expect(rateLimits.has('claude')).toBe(true);
-      expect(rateLimits.has('openai')).toBe(true);
-      expect(rateLimits.has('grok')).toBe(true);
-      expect(rateLimits.has('deepseek')).toBe(true);
+      for (const provider of ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek']) {
+        expect(rateLimits.has(byo(provider)), `${provider} byo`).toBe(true);
+        expect(rateLimits.has(managed(provider)), `${provider} managed`).toBe(true);
+      }
     });
 
     it('should have correct default limits for HuggingFace', () => {
       const rateLimits = (queueService as any).rateLimits;
-      const hfLimits = rateLimits.get('huggingface');
+      const hfLimits = rateLimits.get(byo('huggingface'));
 
       expect(hfLimits.maxTokensPerMinute).toBe(1000000);
       expect(hfLimits.maxRequestsPerMinute).toBe(100);
@@ -59,7 +64,7 @@ describe('AIQueueService', () => {
 
     it('should have correct default limits for Claude', () => {
       const rateLimits = (queueService as any).rateLimits;
-      const claudeLimits = rateLimits.get('claude');
+      const claudeLimits = rateLimits.get(byo('claude'));
 
       expect(claudeLimits.maxTokensPerMinute).toBe(40000);
       expect(claudeLimits.maxRequestsPerMinute).toBe(5);
@@ -76,13 +81,58 @@ describe('AIQueueService', () => {
       await queueService.updateRateLimits(settings);
 
       const rateLimits = (queueService as any).rateLimits;
-      const hfLimits = rateLimits.get('huggingface');
-      const claudeLimits = rateLimits.get('claude');
+      const hfLimits = rateLimits.get(byo('huggingface'));
+      const claudeLimits = rateLimits.get(byo('claude'));
 
       expect(hfLimits.maxTokensPerMinute).toBe(500000);
       expect(hfLimits.maxRequestsPerMinute).toBe(50);
       expect(claudeLimits.maxTokensPerMinute).toBe(20000);
       expect(claudeLimits.maxRequestsPerMinute).toBe(3);
+    });
+
+    it('a SHOP cannot change the bucket the operator key runs against', () => {
+      // The whole point of the key change: one merchant's settings used to
+      // rewrite a process-wide bucket, and with a shared key that is one shop
+      // raising — or lowering — the limit everybody else runs against.
+      const rateLimits = (queueService as any).rateLimits;
+      const before = { ...rateLimits.get(managed('claude')) };
+
+      return queueService
+        .updateRateLimits({ claudeMaxTokensPerMinute: 999999, claudeMaxRequestsPerMinute: 999 })
+        .then(() => {
+          expect(rateLimits.get(managed('claude'))).toEqual(before);
+          // ...while the shop's own bucket did change.
+          expect(rateLimits.get(byo('claude')).maxTokensPerMinute).toBe(999999);
+        });
+    });
+
+    it('the managed bucket is configured from the ENVIRONMENT', () => {
+      const saved = {
+        provider: process.env.MANAGED_AI_PROVIDER,
+        tpm: process.env.MANAGED_AI_TPM,
+        rpm: process.env.MANAGED_AI_RPM,
+      };
+      try {
+        process.env.MANAGED_AI_PROVIDER = 'openai';
+        process.env.MANAGED_AI_TPM = '2000000';
+        process.env.MANAGED_AI_RPM = '5000';
+        (queueService as any).configureManagedBuckets();
+
+        const rateLimits = (queueService as any).rateLimits;
+        expect(rateLimits.get(managed('openai'))).toEqual({
+          maxTokensPerMinute: 2000000,
+          maxRequestsPerMinute: 5000,
+        });
+      } finally {
+        for (const [k, v] of Object.entries({
+          MANAGED_AI_PROVIDER: saved.provider,
+          MANAGED_AI_TPM: saved.tpm,
+          MANAGED_AI_RPM: saved.rpm,
+        })) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
     });
   });
 

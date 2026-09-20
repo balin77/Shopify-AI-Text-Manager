@@ -162,6 +162,9 @@ function configFor(cred: ManagedCredential, settings: AISettings | null): AIServ
     // a calendar month and read as a billing period, the used figure is
     // always zero and the cap never fires.
     usagePeriod: managedBudgetPeriod(settings?.managedAiPeriodEnd ?? null),
+    // The meter must record against the pool the preflight checked, or the
+    // cap is measured over a different number than it enforces.
+    usagePool: poolFor(settings),
   };
   (config as Record<string, unknown>)[PROVIDER_KEY_FIELD[cred.provider] as string] = cred.apiKey;
   return config;
@@ -413,12 +416,41 @@ function managedPreflight(
     const { managedBudgetStatus } = await import("./managed-budget.server");
     const plan = (settings?.subscriptionPlan ?? "free") as BillingPlan;
     const status = await managedBudgetStatus(shop, settings, plan);
-    if (status.allowed) return { ok: true };
-    return {
-      ok: false,
-      reason: "budgetExceeded",
-      usedMicros: status.usedMicros,
-      limitMicros: status.limitMicros,
-    };
+    if (!status.allowed) {
+      return {
+        ok: false,
+        reason: "budgetExceeded",
+        usedMicros: status.usedMicros,
+        limitMicros: status.limitMicros,
+      };
+    }
+
+    // The GLOBAL pool (§9.3) — the outer ring. Per-shop budgets bound what one
+    // merchant can cost us; they do not bound what a BUG can, and this makes
+    // the worst case one configured month rather than an unbounded invoice.
+    // Its refusal is `managedUnavailable`, not `budgetExceeded`: the merchant
+    // has budget left, so telling them they are out of volume would be a lie
+    // and would send them to buy more of something we cannot serve.
+    const { globalPoolStatus, alertIfPoolLow } = await import("./managed-global-pool.server");
+    const poolStatus = await globalPoolStatus(poolFor(settings), status.period);
+    alertIfPoolLow(poolStatus);
+    if (!poolStatus.allowed) return { ok: false, reason: "managedUnavailable" };
+
+    return { ok: true };
   };
+}
+
+/**
+ * Which global pool a shop draws from — §9.3.
+ *
+ * A shop with no PERIOD budget is on the taster, whatever plan it holds: §7a's
+ * dev stores, free shops and shops inside their trial. They are the least
+ * accountable population here, so their spend must not be able to trip the cap
+ * that every paying merchant runs against.
+ */
+function poolFor(settings: AISettings | null): "paid" | "taster" {
+  return settings?.managedAiActive === true &&
+    (settings?.subscriptionPlan ?? "free") !== "free"
+    ? "paid"
+    : "taster";
 }

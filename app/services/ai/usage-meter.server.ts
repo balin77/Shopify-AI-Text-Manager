@@ -70,6 +70,11 @@ export interface RecordAiUsageInput {
   taskId?: string;
   /** Defaults to the current period. */
   period?: string;
+  /**
+   * Which GLOBAL pool a managed call draws from (§9.3). Ignored for BYO, which
+   * costs the operator nothing and is bounded by nobody's pool.
+   */
+  pool?: "paid" | "taster";
 }
 
 export interface RecordedAiUsage {
@@ -257,6 +262,33 @@ export async function recordAiUsage(
           error instanceof Error ? error.message : String(error)
         }`,
       );
+    }
+
+    // The GLOBAL pool (§9.3) — recorded for a MANAGED call only, and beside
+    // the ledger rather than derived from it: the pool is read on every
+    // managed call, and summing a shop-keyed table over every shop to answer
+    // it would be a table scan per AI request.
+    //
+    // Its own try for the same reason the Task write has one: losing the
+    // global figure must not take the durable per-shop row with it.
+    if (input.source === "managed") {
+      try {
+        const { addGlobalPoolSpend } = await import("./managed-global-pool.server");
+        await addGlobalPoolSpend(
+          input.pool ?? "paid",
+          period,
+          costMicros,
+          // What WE absorb on a failover: the gap between what the provider
+          // charged and what the merchant was billed.
+          Math.max(0, costMicros - billedMicros),
+        );
+      } catch (error) {
+        logger.error(
+          `[AI-METER] Global pool write failed for ${input.shop}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
 
     if (input.taskId) {
