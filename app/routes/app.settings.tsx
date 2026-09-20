@@ -1245,8 +1245,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType, enabledCount: toInsert.length, failed });
-    } else {
-      // Validate and save AI settings
+    } else if (actionType === "saveAiKeys") {
+      // The AI credentials, the provider/model choice and the per-provider
+      // rate limits — the AI tab owns all of them and nothing else writes
+      // them.
+      //
+      // This used to be the unnamed `else` FALLBACK, which is what made it
+      // dangerous: any actionType that did not match a branch above landed in
+      // a write path, and `encryptApiKey(undefined)` returns null exactly like
+      // `encryptApiKey("")`, so a payload that merely omitted a field cleared
+      // a stored credential. It also invited a second caller to reuse the
+      // vague name "saveSettings" for a different tab's save — which is how
+      // the SEO-title-suffix wipe happened, one field at a time. A branch that
+      // writes secrets is matched by NAME, and an unknown action is refused
+      // below.
       const validationResult = parseFormData(formData, AISettingsSchema);
 
       if (!validationResult.success) {
@@ -1323,6 +1335,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else {
+      // An unrecognised actionType is a bug in a caller, not a save. Refusing
+      // it is what keeps the branches above closed: every one of them writes a
+      // different subset of AISettings, so a request that matches none of them
+      // has no correct subset to write.
+      logger.warn("[Settings] Unknown actionType", { shop: session.shop, actionType });
+      return json(
+        { success: false, error: `Unknown actionType: ${actionType}`, actionType },
+        { status: 400 },
+      );
     }
   } catch (error: unknown) {
     // Use safe error handler to prevent information leakage
