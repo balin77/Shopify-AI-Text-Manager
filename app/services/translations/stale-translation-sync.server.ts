@@ -1504,7 +1504,16 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
           // The verdict comes from the SAME classifier the repair partitions
           // with, so "will this be translated" cannot drift from what actually
           // happens to it.
-          if (classifyStaleTranslation(candidate, true, { anyKey: !!params.translateAs }) === "retranslate") {
+          if (
+            classifyStaleTranslation(candidate, true, {
+              anyKey: !!params.translateAs,
+              // The SAME options the partition uses, or the two answers drift:
+              // without this a handle reads as a removal here, pays the
+              // per-locale evidence sweep this branch exists to avoid, and is
+              // then re-translated by the partition anyway.
+              translateHandles: policy.autoTranslateHandles,
+            }) === "retranslate"
+          ) {
             stale.push(candidate);
           } else {
             needEvidence.push(candidate);
@@ -1916,7 +1925,22 @@ async function repairStaleTranslations(
     ),
   );
   for (const entry of [...retranslate, ...toPurge]) keptDeclinedKeys.delete(entry.key);
-  const marketKeys = scope.keys.filter((key) => !keptDeclinedKeys.has(key));
+  // A `handle` whose GLOBAL row this repair did NOT delete keeps its MARKET
+  // override as well. The rule beside it — "the market layer goes when
+  // something happens to the global layer" — is about a wording that no longer
+  // describes its source; an override handle is a URL, and nothing can ever
+  // re-translate it (the redirect decision refuses a market-scoped path
+  // outright, because one shop-wide row cannot express a per-market address).
+  // Deleting it would move that market's URL with no redirect, which is the
+  // breakage this whole option exists to avoid. A handle that IS purged still
+  // takes its override with it — unchanged behaviour. On a VALUE surface
+  // `handle` is an ordinary field key, not an address, so none of this applies.
+  const purgesHandle = toPurge.some((entry) => entry.key === "handle");
+  const marketKeys = scope.keys.filter((key) => {
+    if (keptDeclinedKeys.has(key)) return false;
+    if (!target.translateAs && key === "handle" && !purgesHandle) return false;
+    return true;
+  });
 
   if (mayPurge && marketKeys.length > 0 && (retranslate.length > 0 || toPurge.length > 0)) {
     try {
@@ -2656,6 +2680,16 @@ async function runRetranslation(
             // (a non-Latin answer collapses to "" under an ASCII sanitiser) is
             // DISCARDED rather than written.
             value = sanitizeSlug(value ?? "");
+            // The duplicate-slug guard both other write paths carry (the single
+            // editor skips such a value, the bulk editor fails the cell): a
+            // handle translation identical to the primary handle causes routing
+            // conflicts across locales. The AI answering with the primary slug
+            // is the likeliest way one gets written unattended — and the entry
+            // then falls to the kept list, so the working old handle stays.
+            const primaryHandle =
+              handleContexts.get(tripleKey(refOf(params, entry).resourceId, locale, entry.key))
+                ?.primaryHandle ?? "";
+            if (primaryHandle && value === sanitizeSlug(primaryHandle)) value = "";
           }
           if (!value || !value.trim() || !entry.digest) {
             undelivered(entry);

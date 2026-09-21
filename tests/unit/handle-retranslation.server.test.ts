@@ -128,6 +128,17 @@ describe("makeHandleRedirectResolver", () => {
     expect(await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "de")).toBeNull();
   });
 
+  it("refuses a BLOG handle: its articles' URLs cannot come along", async () => {
+    // Shopify redirects have no wildcards, so the blog's own index page would
+    // be covered and every article under it would 404 — with nobody watching
+    // to be told, which is what a save-side `blogArticlesUncovered` note does
+    // have.
+    fx.handleRows = [{ resourceId: "gid://shopify/Blog/3", locale: "de", value: "neuigkeiten" }];
+    expect(
+      await resolver()({ resourceId: "gid://shopify/Blog/3", resourceType: "Blog" }, "de"),
+    ).toBeNull();
+  });
+
   it("refuses a type with no handle-derived storefront URL", async () => {
     expect(
       await resolver()({ resourceId: "gid://shopify/ShopPolicy/1", resourceType: "ShopPolicy" }, "de"),

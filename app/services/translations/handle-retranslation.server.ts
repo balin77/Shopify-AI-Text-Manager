@@ -130,6 +130,13 @@ export function makeHandleRedirectResolver(deps: ResolverDeps): HandleRedirectRe
       // Policies, metaobjects, theme content, sub-resources: no handle-derived
       // storefront URL, so no `handle` key either. Refusing costs nothing.
       if (!resource) return null;
+      // A BLOG carries its ARTICLES' URLs with it, and Shopify redirects have
+      // no wildcards — `applyTranslatedHandleRedirect` covers the blog's own
+      // index page and reports the rest as `blogArticlesUncovered`, which the
+      // merchant reads on a save they made. Here nobody is watching, so that
+      // note has no reader and the option would break every article URL under
+      // the blog in silence. The blog's handle is left to a deliberate edit.
+      if (resource === "blog") return null;
 
       // The shop's own "redirect when a handle changes" switch. Off means the
       // merchant does not want redirect rows — and an UNATTENDED handle rewrite
@@ -302,11 +309,11 @@ async function loadResourceState(
       // the decision reads as "proceed".
       return { handle: row?.handle ?? null, state: {} };
     }
-    case "blog": {
-      // This app keeps no Blog model, so the one place its handle exists is
-      // Shopify.
-      return { handle: await blogHandleFor(resourceId), state: {} };
-    }
+    case "blog":
+      // Unreachable: a blog's handle is refused by the caller, because its
+      // ARTICLES' URLs move with it and Shopify redirects have no wildcards.
+      // Kept so the switch stays exhaustive over `RedirectableResource`.
+      return null;
   }
 }
 

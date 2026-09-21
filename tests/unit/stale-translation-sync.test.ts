@@ -1596,6 +1596,9 @@ describe("per-surface mirrors", () => {
  * nor deleted.
  */
 describe("handle re-translation", () => {
+  /** The resource id the market-override fake answers for. */
+  let baseId = "";
+
   /** A resource whose stale set is one `handle` in German. */
   function handleParams(over: Record<string, unknown> = {}) {
     return baseParams({
@@ -1686,6 +1689,43 @@ describe("handle re-translation", () => {
     // Undelivered, but NOT swept into the fallback purge with the other
     // failures: that list deletes, and a deleted handle is a moved URL.
     expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("discards an answer identical to the PRIMARY handle — duplicate slugs break routing", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    // The same rule the single editor (skip) and the bulk editor (fail the
+    // cell) carry. Unattended, the AI answering with the primary slug is the
+    // likeliest way one would get written.
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Box" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("keeps the MARKET override of a handle it refreshed — an override is a URL too", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    // The shop holds a market-scoped handle for the same (locale, key).
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId?.not === ""
+        ? [{ resourceId: baseId, key: "handle", locale: "de", marketId: "gid://shopify/Market/1" }]
+        : [],
+    );
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+
+    const id = freshProduct();
+    baseId = id;
+    await reconcileStaleTranslations(handleParams({ resourceId: id, handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    // Nothing in this app can ever re-translate a market override (the redirect
+    // decision refuses a market-scoped path), so removing it would move that
+    // market's address with no redirect.
+    expect(shopify.removeMarkets).toEqual([]);
   });
 
   it("does not purge the handle when the AI request itself fails", async () => {
