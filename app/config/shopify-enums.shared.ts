@@ -45,3 +45,11 @@ export const COLLECTION_SORT_ORDERS = [
 
 /** Shopify `BlogCommentPolicy`. */
 export const BLOG_COMMENT_POLICIES = ["CLOSED", "MODERATED", "AUTO_PUBLISHED"] as const;
+
+/** Shopify `WeightUnit`. A bad enum fails at the SCHEMA level, where
+ *  `userErrors` never sees it and the save reads as a success. */
+export const WEIGHT_UNITS = ["GRAMS", "KILOGRAMS", "OUNCES", "POUNDS"] as const;
+
+/** Shopify `ProductVariantInventoryPolicy` — whether the shop keeps selling at
+ *  zero stock. */
+export const INVENTORY_POLICIES = ["DENY", "CONTINUE"] as const;

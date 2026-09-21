@@ -70,6 +70,10 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { parseMoney } from "./bulk-editor/columns.shared";
 import {
+  WEIGHT_UNITS as SHOPIFY_WEIGHT_UNITS,
+  INVENTORY_POLICIES as SHOPIFY_INVENTORY_POLICIES,
+} from "../config/shopify-enums.shared";
+import {
   EMPTY_MEASUREMENT_INPUT,
   decideUnitPrice,
   isEmptyMeasurement,
@@ -694,8 +698,10 @@ export interface InventoryItemFields {
   sku?: string;
 }
 
-/** Shopify's `WeightUnit` enum. A bad enum fails at the SCHEMA level. */
-const WEIGHT_UNITS = new Set(["GRAMS", "KILOGRAMS", "OUNCES", "POUNDS"]);
+/** Shopify's `WeightUnit` enum. A bad enum fails at the SCHEMA level. The
+ *  vocabulary lives in the import-free leaf module, because the bulk grid
+ *  offers the same values in a dropdown and the two must not drift. */
+const WEIGHT_UNITS = new Set<string>(SHOPIFY_WEIGHT_UNITS);
 
 /**
  * A non-negative decimal, or null.
@@ -717,12 +723,48 @@ export function parseCountryCode(value: string): string | null {
   return /^[A-Z]{2}$/.test(trimmed) ? trimmed : null;
 }
 
-export async function applyInventoryItemFields(
-  admin: AdminApiContext,
+/**
+ * Anything that speaks Admin GraphQL.
+ *
+ * The single editor hands in Shopify's `AdminApiContext`; the bulk editor
+ * hands in its `ShopifyApiGateway`, whose queue and THROTTLED retry it must
+ * not bypass on a save that can carry hundreds of rows. Both satisfy this
+ * shape, which is the whole point — ONE InventoryItem write path, reached from
+ * two surfaces, rather than a second copy of the mutation and the echo rule in
+ * apply.server.ts.
+ */
+export interface CommerceGraphqlClient {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  graphql(query: string, options?: { variables?: Record<string, unknown> }): Promise<{ json: () => Promise<any> }>;
+}
+
+/**
+ * What an InventoryItem write did.
+ *
+ * Richer than the `CommerceWarning` the single editor's panel needs, for the
+ * bulk grid's sake: it marks failures per CELL, so it has to know WHICH field
+ * was refused and WHAT Shopify said. The panel keeps its code — it renders one
+ * sentence from `t.content.commerceWarnings` in three languages, and a raw
+ * Shopify string is not that.
+ */
+export type InventoryItemWriteResult =
+  | { ok: true }
+  | {
+      ok: false;
+      warning: CommerceWarning;
+      /** The `InventoryItemFields` key this app refused before sending. Absent
+       *  when Shopify refused the call as a whole. */
+      field?: keyof InventoryItemFields;
+      /** Shopify's own words, where there are any. */
+      message?: string;
+    };
+
+export async function writeInventoryItemFields(
+  admin: CommerceGraphqlClient,
   db: PrismaClient,
   shop: string,
   params: { variantId: string; inventoryItemId: string; fields: InventoryItemFields },
-): Promise<CommerceWarning | undefined> {
+): Promise<InventoryItemWriteResult> {
   const input: Record<string, unknown> = {};
   const mirror: Record<string, unknown> = {};
 
@@ -737,7 +779,9 @@ export async function applyInventoryItemFields(
       // Money, so the same parser as the prices — `parseDecimal` would read a
       // German "1.299" as 1.30 here too.
       const parsed = parseMoney(params.fields.cost);
-      if (!parsed.ok || !parsed.value) return "itemFieldsInvalid";
+      if (!parsed.ok || !parsed.value) {
+        return { ok: false, warning: "itemFieldsInvalid", field: "cost" };
+      }
       input.cost = parsed.value;
       mirror.cost = parsed.value;
     }
@@ -762,7 +806,9 @@ export async function applyInventoryItemFields(
     const unit = params.fields.weight.unit.trim().toUpperCase();
     // Both or neither. A weight with no unit is not a weight, and Shopify's
     // WeightUnit is an ENUM — a bad one fails at the schema level.
-    if (value === null || !WEIGHT_UNITS.has(unit)) return "itemFieldsInvalid";
+    if (value === null || !WEIGHT_UNITS.has(unit)) {
+      return { ok: false, warning: "itemFieldsInvalid", field: "weight" };
+    }
     input.measurement = { weight: { value: Number(value), unit } };
     mirror.weight = value;
     mirror.weightUnit = unit;
@@ -780,13 +826,15 @@ export async function applyInventoryItemFields(
     } else {
       const code = parseCountryCode(raw);
       // `CountryCode` is an enum too — same reasoning as the weight unit.
-      if (code === null) return "itemFieldsInvalid";
+      if (code === null) {
+        return { ok: false, warning: "itemFieldsInvalid", field: "countryCodeOfOrigin" };
+      }
       input.countryCodeOfOrigin = code;
       mirror.countryCodeOfOrigin = code;
     }
   }
 
-  if (Object.keys(input).length === 0) return undefined;
+  if (Object.keys(input).length === 0) return { ok: true };
 
   // `inventoryItem` is the echo, selected in full rather than as a bare id:
   // these are settings a merchant sets once and trusts, so the cache must
@@ -835,23 +883,25 @@ export async function applyInventoryItemFields(
       logger.warn("[Commerce] Item fields schema-level error", {
         context: "Commerce", shop, error: body.errors[0]?.message,
       });
-      return "itemFieldsFailed";
+      return { ok: false, warning: "itemFieldsFailed", message: body.errors[0]?.message };
     }
     const payload = body.data?.inventoryItemUpdate;
     if (payload?.userErrors?.length) {
       logger.warn("[Commerce] Item fields userErrors", {
         context: "Commerce", shop, error: payload.userErrors[0].message,
       });
-      return "itemFieldsFailed";
+      return { ok: false, warning: "itemFieldsFailed", message: payload.userErrors[0].message };
     }
     const item = payload?.inventoryItem;
-    if (!item?.id) return "itemFieldsNotConfirmed";
+    if (!item?.id) return { ok: false, warning: "itemFieldsNotConfirmed" };
     // `tracked` decides whether stock exists at all, so a write Shopify
     // accepted and did not apply must not read as success.
     if ("inventoryTracked" in mirror && item.tracked !== mirror.inventoryTracked) {
-      return "itemFieldsNotConfirmed";
+      return { ok: false, warning: "itemFieldsNotConfirmed", field: "tracked" };
     }
-    if ("sku" in mirror && (item.sku ?? null) !== mirror.sku) return "itemFieldsNotConfirmed";
+    if ("sku" in mirror && (item.sku ?? null) !== mirror.sku) {
+      return { ok: false, warning: "itemFieldsNotConfirmed", field: "sku" };
+    }
 
     // Mirror from the ECHO, not from `mirror` — Shopify normalises (a cost of
     // "4.5" comes back "4.50", a weight in grams may be rebased). Writing the
@@ -886,15 +936,30 @@ export async function applyInventoryItemFields(
     logger.info("[Commerce] Item fields applied", {
       context: "Commerce", shop, variantId: params.variantId, fields: Object.keys(input).length,
     });
-    return undefined;
+    return { ok: true };
   } catch (error) {
-    logger.warn("[Commerce] Item field write failed", {
-      context: "Commerce",
-      shop,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return "itemFieldsFailed";
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("[Commerce] Item field write failed", { context: "Commerce", shop, error: message });
+    return { ok: false, warning: "itemFieldsFailed", message };
   }
+}
+
+/**
+ * The single editor's view of the write above: one warning CODE or nothing.
+ *
+ * The panel renders a sentence from `t.content.commerceWarnings` in three
+ * languages, so a raw Shopify string is no use to it — and it never marks
+ * individual fields, because it saves the whole card at once. Kept as a thin
+ * wrapper rather than as a second implementation.
+ */
+export async function applyInventoryItemFields(
+  admin: AdminApiContext,
+  db: PrismaClient,
+  shop: string,
+  params: { variantId: string; inventoryItemId: string; fields: InventoryItemFields },
+): Promise<CommerceWarning | undefined> {
+  const result = await writeInventoryItemFields(admin, db, shop, params);
+  return result.ok ? undefined : result.warning;
 }
 
 
@@ -952,8 +1017,9 @@ export interface VariantPriceFields {
   showUnitPrice?: boolean;
 }
 
-/** Shopify's `ProductVariantInventoryPolicy`. */
-const INVENTORY_POLICIES = new Set(["DENY", "CONTINUE"]);
+/** Shopify's `ProductVariantInventoryPolicy` — same single-source rule as the
+ *  weight units above. */
+const INVENTORY_POLICIES = new Set<string>(SHOPIFY_INVENTORY_POLICIES);
 
 /**
  * Write the SELLING price of one variant.

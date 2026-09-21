@@ -48,7 +48,6 @@ import {
   BulkCell,
   type BulkCellActions,
   type BulkCellEnumLabels,
-  type BulkCellStatusOptions,
   type CellNavDirection,
 } from "./BulkCell";
 
@@ -114,8 +113,7 @@ interface BulkGridProps {
    * that have nothing to offer. */
   cellActions?: (row: BulkRow, column: ColumnDescriptor) => BulkCellActions | undefined;
   columnHeading: (column: ColumnDescriptor) => string;
-  statusOptions: BulkCellStatusOptions;
-  /** Labels for the select columns other than status (see BulkCellEnumLabels). */
+  /** Labels for the select columns (see BulkCellEnumLabels). */
   enumLabels: BulkCellEnumLabels;
   /** Template suffixes the PUBLISHED theme offers for this row type, or
    *  undefined while the lookup is pending or after it failed — the cell then
@@ -158,7 +156,6 @@ export function BulkGrid({
   previewImageLabel,
   cellActions,
   columnHeading,
-  statusOptions,
   enumLabels,
   templateSuffixes,
   handleWarning,
@@ -835,7 +832,6 @@ export function BulkGrid({
                       isDirty={dirty}
                       error={error}
                       errorId={error ? `cp-bulk-err-${type}-${rowIndex}-${i}` : undefined}
-                      statusOptions={statusOptions}
                       enumLabels={enumLabels}
                       templateSuffixes={templateSuffixes}
                       onChange={(v) => setEdit(row, col, v)}

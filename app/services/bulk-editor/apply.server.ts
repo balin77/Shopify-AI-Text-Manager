@@ -76,6 +76,12 @@ import { redirectResourceFor, wasEverLive, type RedirectableResource } from "../
 // The single editor parses tags with exactly this function — one rule, so the
 // two surfaces cannot disagree about what a tag list is.
 import {
+  writeInventoryItemFields,
+  type InventoryItemFields,
+  type CommerceWarning,
+} from "../commerce-write.server";
+import { INVENTORY_POLICIES } from "../../config/shopify-enums.shared";
+import {
   parseTagList,
   attributeInputFor,
   attributesForResource,
@@ -96,6 +102,16 @@ import {
   VAR_PRICE_COLUMN_ID,
   VAR_COMPARE_AT_COLUMN_ID,
   VAR_BARCODE_COLUMN_ID,
+  VAR_COST_COLUMN_ID,
+  VAR_TAXABLE_COLUMN_ID,
+  VAR_INVENTORY_POLICY_COLUMN_ID,
+  VAR_INVENTORY_TRACKED_COLUMN_ID,
+  VAR_WEIGHT_COLUMN_ID,
+  VAR_WEIGHT_UNIT_COLUMN_ID,
+  VAR_REQUIRES_SHIPPING_COLUMN_ID,
+  VAR_COUNTRY_OF_ORIGIN_COLUMN_ID,
+  VAR_HS_CODE_COLUMN_ID,
+  INVENTORY_ITEM_COLUMN_IDS,
   type BulkRowType,
   type BulkDiffEntry,
   type BulkDiffRowGroup,
@@ -3315,6 +3331,8 @@ const PRODUCT_VARIANTS_BULK_UPDATE = `#graphql
         price
         compareAtPrice
         barcode
+        taxable
+        inventoryPolicy
       }
       userErrors {
         field
@@ -3329,6 +3347,11 @@ interface VariantBulkInput {
   compareAtPrice?: string | null;
   barcode?: string | null;
   inventoryItem?: { sku: string };
+  /** §Phase 4 — the two commerce fields that are the VARIANT's own. Everything
+   *  else in that block lives on its InventoryItem and needs a second
+   *  mutation (see persistVariantInventoryItems). */
+  taxable?: boolean;
+  inventoryPolicy?: string;
 }
 
 interface PreparedVariantInput {
@@ -3351,6 +3374,10 @@ function variantColumnForErrorField(tail: string): string | null {
     case "sku":
     case "inventoryItem":
       return VAR_SKU_COLUMN_ID;
+    case "taxable":
+      return VAR_TAXABLE_COLUMN_ID;
+    case "inventoryPolicy":
+      return VAR_INVENTORY_POLICY_COLUMN_ID;
     default:
       return null;
   }
@@ -3386,6 +3413,10 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
   const columnIds: string[] = [];
 
   for (const [columnId, value] of Object.entries(group.cells)) {
+    // Cost, weight, customs and `tracked` are fields of the variant's
+    // InventoryItem, not of the variant — a different mutation, run after this
+    // one (persistVariantInventoryItems).
+    if (INVENTORY_ITEM_COLUMN_IDS.has(columnId)) continue;
     switch (columnId) {
       case VAR_PRICE_COLUMN_ID: {
         const parsed = parseMoney(value);
@@ -3424,6 +3455,29 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
         input.barcode = value === "" ? null : value;
         columnIds.push(columnId);
         break;
+      case VAR_TAXABLE_COLUMN_ID:
+        // A two-value enum in the grid. Anything but an explicit "false" is
+        // taxable — the same reading `attributeInputFor` gives `isPublished`,
+        // and the safe direction: a product that owes tax must not stop
+        // charging it because a cell arrived malformed.
+        input.taxable = value !== "false";
+        columnIds.push(columnId);
+        break;
+      case VAR_INVENTORY_POLICY_COLUMN_ID: {
+        const policy = value.trim().toUpperCase();
+        // A GraphQL ENUM: a bad value fails at the SCHEMA level, where
+        // `userErrors` never sees it and the whole call reads as a success
+        // while nothing was written.
+        if (!INVENTORY_POLICY_VALUES.has(policy)) {
+          failures.push(
+            failureOf(group, `"${value}" is not a stock policy — expected DENY or CONTINUE.`, columnId),
+          );
+          break;
+        }
+        input.inventoryPolicy = policy;
+        columnIds.push(columnId);
+        break;
+      }
       default:
         // Validation rejected unknown columns already — reaching this is a
         // programming error, surfaced per cell.
@@ -3433,6 +3487,198 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
 
   if (columnIds.length === 0) return { prepared: null, failures };
   return { prepared: { group, input, columnIds }, failures };
+}
+
+/** Shopify's `ProductVariantInventoryPolicy`, as the server-side gate. The
+ *  grid offers exactly these (the column's `selectOptions`); this is the
+ *  second layer, for a diff that arrives by direct POST or CSV import. */
+const INVENTORY_POLICY_VALUES = new Set<string>(INVENTORY_POLICIES);
+
+/** Which InventoryItem field a grid column writes. */
+const INVENTORY_ITEM_FIELD_BY_COLUMN: Record<string, keyof InventoryItemFields> = {
+  [VAR_COST_COLUMN_ID]: "cost",
+  [VAR_INVENTORY_TRACKED_COLUMN_ID]: "tracked",
+  [VAR_REQUIRES_SHIPPING_COLUMN_ID]: "requiresShipping",
+  [VAR_COUNTRY_OF_ORIGIN_COLUMN_ID]: "countryCodeOfOrigin",
+  [VAR_HS_CODE_COLUMN_ID]: "harmonizedSystemCode",
+};
+
+/** The reverse, for attributing a refusal back to its cell. The weight pair
+ *  answers with the VALUE column: `writeInventoryItemFields` refuses the two
+ *  as one (`field: "weight"`), and a merchant reading "not a valid weight"
+ *  looks at the number first. */
+const COLUMN_BY_INVENTORY_ITEM_FIELD: Partial<Record<keyof InventoryItemFields, string>> = {
+  cost: VAR_COST_COLUMN_ID,
+  tracked: VAR_INVENTORY_TRACKED_COLUMN_ID,
+  requiresShipping: VAR_REQUIRES_SHIPPING_COLUMN_ID,
+  countryCodeOfOrigin: VAR_COUNTRY_OF_ORIGIN_COLUMN_ID,
+  harmonizedSystemCode: VAR_HS_CODE_COLUMN_ID,
+  weight: VAR_WEIGHT_COLUMN_ID,
+  sku: VAR_SKU_COLUMN_ID,
+};
+
+/** The cached row a weight write may have to complete itself from. */
+interface VariantCommerceRow {
+  /** ProductVariant.id — the NUMERIC Shopify id, which is what the mirror in
+   *  commerce-write.server.ts is keyed by (the grid's row id is the GID). */
+  id: string;
+  inventoryItemId: string | null;
+  weight: { toString(): string } | null;
+  weightUnit: string | null;
+}
+
+/**
+ * The InventoryItem half of a variant save: cost, tax-free weight, customs and
+ * whether Shopify keeps a count at all.
+ *
+ * ── One mutation per VARIANT, deliberately ─────────────────────────────────
+ * `productVariantsBulkUpdate` covers the whole product in one call, but
+ * `inventoryItemUpdate` is addressed by a single InventoryItem GID and Shopify
+ * offers no bulk form of it. So this is one call per variant that has such a
+ * cell — counted by `estimateCalls`, which is what keeps a save that fans out
+ * from slipping past MAX_TASK_CALLS.
+ *
+ * ── The write itself is NOT here ───────────────────────────────────────────
+ * It is `writeInventoryItemFields` in commerce-write.server.ts, the same
+ * function the single editor's stock panel calls — including its echo check
+ * (`tracked` is verified against what Shopify stored, because it decides
+ * whether stock exists at all) and its mirror, which is taken from the ECHO
+ * because Shopify normalises a cost of "4.5" to "4.50" and may rebase a
+ * weight. A second copy of that here is exactly what this file is not allowed
+ * to grow.
+ *
+ * ── The weight is ONE value in two cells ───────────────────────────────────
+ * Shopify REPLACES the measurement rather than merging into it, so "change
+ * only the unit" is not an operation that exists. A save carrying one half
+ * takes the other from the CACHED row — which is the value the merchant was
+ * looking at in the neighbouring cell — and refuses when the cache has no unit
+ * to take, because a number with no unit is not a weight.
+ */
+async function persistVariantInventoryItems(
+  groups: BulkDiffRowGroup[],
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
+  const failures: BulkFailure[] = [];
+  const relevant = groups.filter((g) =>
+    Object.keys(g.cells).some((columnId) => INVENTORY_ITEM_COLUMN_IDS.has(columnId)),
+  );
+  if (relevant.length === 0) return failures;
+
+  // ONE lookup for the whole product's rows: the InventoryItem address, plus
+  // the weight pair a half-written measurement has to be completed from.
+  const rows = new Map<string, VariantCommerceRow>();
+  try {
+    const found = await deps.db.productVariant.findMany({
+      where: { shopifyGid: { in: relevant.map((g) => g.rowId) }, product: { shop: deps.shop } },
+      select: { id: true, shopifyGid: true, inventoryItemId: true, weight: true, weightUnit: true },
+    });
+    for (const row of found) rows.set(row.shopifyGid, row);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    for (const group of relevant) {
+      for (const columnId of Object.keys(group.cells)) {
+        if (INVENTORY_ITEM_COLUMN_IDS.has(columnId)) failures.push(failureOf(group, message, columnId));
+      }
+    }
+    return failures;
+  }
+
+  for (const group of relevant) {
+    const cells = Object.entries(group.cells).filter(([columnId]) =>
+      INVENTORY_ITEM_COLUMN_IDS.has(columnId),
+    );
+    const columnIds = cells.map(([columnId]) => columnId);
+    const row = rows.get(group.rowId);
+    const failEveryCell = (message: string) => {
+      for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
+    };
+
+    if (!row?.inventoryItemId) {
+      // The grid renders these cells read-only without one, so this is the
+      // direct-POST / CSV entrance. Naming the resync is the way out.
+      failEveryCell(
+        "This variant has no Shopify inventory item — cost, weight and customs data are written on it. Resync the product first.",
+      );
+      continue;
+    }
+
+    const fields: InventoryItemFields = {};
+    let weightFailed = false;
+    for (const [columnId, value] of cells) {
+      if (columnId === VAR_WEIGHT_COLUMN_ID || columnId === VAR_WEIGHT_UNIT_COLUMN_ID) continue;
+      const field = INVENTORY_ITEM_FIELD_BY_COLUMN[columnId];
+      if (field === "cost" || field === "countryCodeOfOrigin" || field === "harmonizedSystemCode") {
+        fields[field] = value;
+      } else if (field === "tracked" || field === "requiresShipping") {
+        // Two-value enums in the grid. Anything but an explicit "false" is
+        // true — the same reading every other boolean cell gets.
+        fields[field] = value !== "false";
+      }
+    }
+
+    const weightCell = group.cells[VAR_WEIGHT_COLUMN_ID];
+    const unitCell = group.cells[VAR_WEIGHT_UNIT_COLUMN_ID];
+    if (weightCell !== undefined || unitCell !== undefined) {
+      const value = weightCell !== undefined ? weightCell : row.weight?.toString() ?? "";
+      const unit = unitCell !== undefined ? unitCell : row.weightUnit ?? "";
+      if (value.trim() === "" || unit.trim() === "") {
+        // Both or neither, and the message says which half is missing rather
+        // than reporting an invalid weight the merchant can see is fine.
+        failures.push(
+          failureOf(
+            group,
+            "A weight needs a value AND a unit — Shopify stores the two as one measurement, so fill both cells.",
+            weightCell !== undefined ? VAR_WEIGHT_COLUMN_ID : VAR_WEIGHT_UNIT_COLUMN_ID,
+          ),
+        );
+        weightFailed = true;
+      } else {
+        fields.weight = { value, unit };
+      }
+    }
+
+    if (Object.keys(fields).length === 0) continue;
+
+    const result = await writeInventoryItemFields(deps.gateway, deps.db, deps.shop, {
+      variantId: row.id,
+      inventoryItemId: row.inventoryItemId,
+      fields,
+    });
+    if (result.ok) continue;
+
+    // `inventoryItemUpdate` applies as a unit, so a refusal this app made
+    // before sending lands on its own cell and a refusal by Shopify lands on
+    // every cell that went with it — the same semantics the variant bulk
+    // update already reports.
+    const message = result.message ?? inventoryItemWarningMessage(result.warning);
+    const named = result.field ? COLUMN_BY_INVENTORY_ITEM_FIELD[result.field] : undefined;
+    if (named && result.warning === "itemFieldsInvalid") {
+      failures.push(failureOf(group, message, named));
+      continue;
+    }
+    for (const columnId of columnIds) {
+      if (weightFailed && (columnId === VAR_WEIGHT_COLUMN_ID || columnId === VAR_WEIGHT_UNIT_COLUMN_ID)) {
+        continue;
+      }
+      failures.push(failureOf(group, message, columnId));
+    }
+  }
+
+  return failures;
+}
+
+/** A warning code the bulk grid has to say out loud. The single editor renders
+ *  these from `t.content.commerceWarnings`; a per-cell failure carries its own
+ *  sentence, like every other message in this file. */
+function inventoryItemWarningMessage(warning: CommerceWarning): string {
+  switch (warning) {
+    case "itemFieldsInvalid":
+      return "Shopify would refuse this value — check the amount, the weight unit or the two-letter country code.";
+    case "itemFieldsNotConfirmed":
+      return "Shopify did not confirm the change, so nothing was saved locally either.";
+    default:
+      return "The inventory details could not be saved.";
+  }
 }
 
 /**
@@ -3473,7 +3719,15 @@ async function persistVariantProductGroup(
       data?: {
         productVariantsBulkUpdate?: {
           productVariants?:
-            | { id: string; sku?: string | null; price?: string | null; compareAtPrice?: string | null; barcode?: string | null }[]
+            | {
+                id: string;
+                sku?: string | null;
+                price?: string | null;
+                compareAtPrice?: string | null;
+                barcode?: string | null;
+                taxable?: boolean | null;
+                inventoryPolicy?: string | null;
+              }[]
             | null;
           userErrors?: { field?: string[] | string | null; message: string }[];
         };
@@ -3546,6 +3800,8 @@ async function persistVariantProductGroup(
       }
       if (input.inventoryItem !== undefined) mirror.sku = echo.sku ?? null;
       if (input.barcode !== undefined) mirror.barcode = echo.barcode ?? null;
+      if (input.taxable !== undefined) mirror.taxable = echo.taxable ?? null;
+      if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echo.inventoryPolicy ?? null;
       await db.productVariant.updateMany({ where: { shopifyGid: group.rowId }, data: mirror });
     }
   } catch (err: unknown) {
@@ -3787,7 +4043,14 @@ export async function applyBulkDiff(
     let unitFailures: BulkFailure[];
     try {
       if (unit.kind === "variantProduct") {
-        unitFailures = await persistVariantProductGroup(unit.productId, unit.groups, deps);
+        // Two mutations, in this order: the variants' own fields for the whole
+        // product in ONE call, then the InventoryItem fields one variant at a
+        // time. The order matters only in that both write the same variant's
+        // SKU path — running them concurrently would race on it.
+        unitFailures = [
+          ...(await persistVariantProductGroup(unit.productId, unit.groups, deps)),
+          ...(await persistVariantInventoryItems(unit.groups, deps)),
+        ];
       } else if (unit.kind === "unresolvedVariant") {
         unitFailures = [
           failureOf(

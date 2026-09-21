@@ -1107,6 +1107,10 @@ export default function BulkEditor() {
     // §3.6 — the merchant CAN clear this: a resync fills the block in. The
     // reason says so rather than reading as a permanent restriction.
     attributesNotSynced: b.readOnlyReasons.attributesNotSynced,
+    // §Phase 4 — same shape, different block and different discriminator
+    // (`commerceSyncedAt`), so a merchant is not sent to resync the wrong half.
+    commerceNotSynced: b.readOnlyReasons.commerceNotSynced,
+    missingInventoryItem: b.readOnlyReasons.missingInventoryItem,
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,
@@ -1982,6 +1986,22 @@ export default function BulkEditor() {
    * distinction `templateResourceFor` draws for the blog tab; here the row type
    * already says which of the two a row is.
    */
+  /**
+   * Labels for every select column — `t.content.enumLabels`, the map the
+   * create modal and the single editor already render `status`, `sortOrder`
+   * and `weightUnit` from. The grid carried a second copy of the four status
+   * words until this; the empty theme-template suffix is the one key that map
+   * has no reason to hold, since only a grid cell offers "the default
+   * template" as a pickable value.
+   */
+  const enumLabels = useMemo(
+    () => ({
+      ...((t.content?.enumLabels ?? {}) as Record<string, string>),
+      "templateSuffix.": t.content?.themeTemplate?.defaultTemplate ?? "",
+    }),
+    [t],
+  );
+
   const templateResource = templateResourceForRowType(type);
   const templateSuffixesLoaded = useThemeTemplateSuffixes(templateResource);
   const templateSuffixes = templateSuffixesLoaded?.ok ? templateSuffixesLoaded.suffixes : undefined;
@@ -2513,8 +2533,7 @@ export default function BulkEditor() {
                         })
                       }
                       columnHeading={columnHeading}
-                      statusOptions={b.statusOptions}
-                      enumLabels={b.enumLabels}
+                      enumLabels={enumLabels}
                       templateSuffixes={templateSuffixes}
                       handleWarning={b.handleWarning}
                       readOnlyTooltips={readOnlyTooltips}

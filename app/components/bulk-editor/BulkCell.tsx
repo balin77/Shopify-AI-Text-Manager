@@ -26,15 +26,13 @@ import type { ColumnDescriptor } from "../../services/bulk-editor/columns.shared
  * editable cells, Enter goes one row down in the same column. */
 export type CellNavDirection = "next" | "prev" | "down";
 
-export interface BulkCellStatusOptions {
-  active: string;
-  draft: string;
-  archived: string;
-  unlisted: string;
-}
-
 /**
- * Labels for every OTHER select column, keyed `<column.label>.<value>`.
+ * Labels for every select column, keyed `<column.label>.<value>`.
+ *
+ * This IS `t.content.enumLabels`, the map the create modal and the single
+ * editor already render their `status`, `sortOrder` and `weightUnit` options
+ * from — the grid used to carry a second copy of the four status words, which
+ * that map's own comment had been asking someone to merge.
  *
  * Keyed by the column and not by the value alone because "true" is "Sichtbar"
  * on `isPublished` and "Ja" on `taxable` — the same two strings carry the whole
@@ -92,8 +90,7 @@ interface BulkCellProps {
    * cell so it stays visible what needs translating. Typing over it creates
    * the translation; the ghost itself is never part of the value. */
   ghost?: string;
-  statusOptions: BulkCellStatusOptions;
-  /** Labels for the non-status select columns (see BulkCellEnumLabels). */
+  /** Labels for the select columns (see BulkCellEnumLabels). */
   enumLabels: BulkCellEnumLabels;
   /** Suffixes offered by the published theme for this row type, or undefined
    *  while the lookup is pending or after it failed. */
@@ -161,7 +158,6 @@ export function BulkCell({
   error,
   errorId,
   ghost,
-  statusOptions,
   enumLabels,
   templateSuffixes,
   onChange,
@@ -213,58 +209,37 @@ export function BulkCell({
         />
       );
     }
-    if (column.id !== "field.status") {
-      // The generic branch. A stored value the offered list does not contain
-      // keeps its own DISABLED row at the top rather than disappearing: a
-      // Polaris `Select` whose value matches no option renders the FIRST one,
-      // so a page on a template the theme no longer has would read as
-      // "Default" and the next save would make that true.
-      const known = options.includes(value);
-      return (
-        <Select
-          label=""
-          labelHidden
-          options={[
-            ...(known ? [] : [{ label: value || "—", value, disabled: true } as const]),
-            ...options.map((option) => ({
-              label: enumLabels[`${column.label}.${option}`] ?? option,
-              value: option,
-            })),
-          ]}
-          value={value}
-          onChange={onChange}
-        />
-      );
-    }
-    // Product status. Non-null in the schema, but a partial sync could leave
-    // it "" — show a placeholder row instead of silently defaulting the
-    // display to ACTIVE (which would cause a no-op click to write ACTIVE
-    // where the DB had "").
+    // A stored value the offered list does not contain keeps its own DISABLED
+    // row at the top rather than disappearing.
+    //
+    // Two different situations, one rule: a page on a template the published
+    // theme no longer has, and a product whose `status` a partial sync left ""
+    // — in BOTH a Polaris `Select` whose value matches none of its options
+    // renders the FIRST one, so the cell would read "Default" / "Active" and
+    // the next save would make that true.
+    //
     // UNLISTED is a real Shopify status (confirmed against live shop data) and
-    // IS settable: the 2025-10 ProductStatus enum lists UNLISTED and the docs
-    // name `ProductInput` (the input `productUpdate` takes, which is what
-    // apply.server.ts sends) among the inputs that accept it. The docs' one
-    // restriction — "can't be changed from unlisted in older versions" — is
-    // scoped to pre-2025-10 versions, where the value is translated to active
-    // and is not part of the enum at all. The app pins 2025-10 by default
-    // (shopify.server.ts), so it is offered as a normal choice here; the
-    // matching server-side gate is PRODUCT_STATUSES in apply.server.ts, which
-    // must list exactly these four values. Source:
+    // IS settable: the 2025-10 ProductStatus enum lists it and the docs name
+    // `ProductInput` — which is what apply.server.ts sends — among the inputs
+    // that accept it. The docs' one restriction ("can't be changed from
+    // unlisted in older versions") is scoped to pre-2025-10 versions, where
+    // the value is translated to active and is not in the enum at all. The app
+    // pins 2025-10 by default (shopify.server.ts). The matching server-side
+    // gate is PRODUCT_STATUSES in apply.server.ts.
     // https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus
-    const hasStatus =
-      value === "ACTIVE" || value === "DRAFT" || value === "UNLISTED" || value === "ARCHIVED";
+    const known = options.includes(value);
     return (
       <Select
         label=""
         labelHidden
         options={[
-          ...(hasStatus ? [] : [{ label: "—", value: "", disabled: true } as const]),
-          { label: statusOptions.active, value: "ACTIVE" },
-          { label: statusOptions.draft, value: "DRAFT" },
-          { label: statusOptions.unlisted, value: "UNLISTED" },
-          { label: statusOptions.archived, value: "ARCHIVED" },
+          ...(known ? [] : [{ label: value || "\u2014", value, disabled: true } as const]),
+          ...options.map((option) => ({
+            label: enumLabels[`${column.label}.${option}`] ?? option,
+            value: option,
+          })),
         ]}
-        value={hasStatus ? value : ""}
+        value={value}
         onChange={onChange}
       />
     );

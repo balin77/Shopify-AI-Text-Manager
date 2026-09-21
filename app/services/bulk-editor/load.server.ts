@@ -872,6 +872,24 @@ function decimalToGridValue(value: { toFixed(digits: number): string } | null): 
 }
 
 /**
+ * A non-money decimal as the merchant should see it — "1.5", not "1.500".
+ *
+ * The weight column is `Decimal(12, 3)`, and `toFixed(3)` would pad every
+ * whole kilogram with three zeros. Money keeps `toFixed(2)` above, because
+ * there a trailing zero is the correct spelling of an amount.
+ */
+function decimalToPlainValue(value: { toString(): string } | null): string {
+  return value === null ? "" : value.toString();
+}
+
+/** A nullable boolean as a two-value enum cell. `null` is NOT "false": it is
+ *  "Shopify did not say", which the select shows as its disabled placeholder
+ *  rather than as an answer the merchant never gave. */
+function booleanToGridValue(value: boolean | null): string {
+  return value === null ? "" : String(value);
+}
+
+/**
  * One page of variant rows: one row = one variant, with the product joined
  * for the read-only context columns (image, title) and the search. Search
  * matches variant title, SKU AND product title (Plan §5.3); the price/SKU
@@ -942,6 +960,22 @@ async function loadVariantRows(
     compareAtPrice: true,
     barcode: true,
     position: true,
+    // §Phase 4 commerce block. `commerceSyncedAt` travels with it for the same
+    // reason `attributesSyncedAt` does on the content types: a null `taxable`
+    // on a row an older sync wrote is the migration's default, not "this
+    // variant is tax-free". `inventoryItemId` is the ADDRESS the cost, weight
+    // and customs cells are written at — without it they have nowhere to go.
+    inventoryItemId: true,
+    cost: true,
+    taxable: true,
+    inventoryPolicy: true,
+    inventoryTracked: true,
+    weight: true,
+    weightUnit: true,
+    requiresShipping: true,
+    countryCodeOfOrigin: true,
+    harmonizedSystemCode: true,
+    commerceSyncedAt: true,
     product: {
       select: {
         id: true,
@@ -977,6 +1011,17 @@ async function loadVariantRows(
       compareAtPrice: decimalToGridValue(v.compareAtPrice),
       barcode: v.barcode ?? "",
       position: v.position,
+      inventoryItemId: v.inventoryItemId ?? undefined,
+      cost: decimalToGridValue(v.cost),
+      taxable: booleanToGridValue(v.taxable),
+      inventoryPolicy: v.inventoryPolicy ?? "",
+      inventoryTracked: booleanToGridValue(v.inventoryTracked),
+      weight: decimalToPlainValue(v.weight),
+      weightUnit: v.weightUnit ?? "",
+      requiresShipping: booleanToGridValue(v.requiresShipping),
+      countryCodeOfOrigin: v.countryCodeOfOrigin ?? "",
+      harmonizedSystemCode: v.harmonizedSystemCode ?? "",
+      commerceKnown: !!v.commerceSyncedAt,
       hasMoreVariants: v.product.hasMoreVariants,
     })),
     total,

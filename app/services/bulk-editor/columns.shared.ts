@@ -18,7 +18,11 @@ import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 // From the import-FREE leaf module, never from create-fields.config: that file
 // imports metaobject-fields.shared, which imports this one, and spreading a
 // constant across that cycle reads it before it is initialised.
-import { COLLECTION_SORT_ORDERS } from "../../config/shopify-enums.shared";
+import {
+  COLLECTION_SORT_ORDERS,
+  WEIGHT_UNITS,
+  INVENTORY_POLICIES,
+} from "../../config/shopify-enums.shared";
 
 // ─── Row types ─────────────────────────────────────────────────────────────
 
@@ -351,10 +355,70 @@ const MO_HANDLE_COLUMN: ColumnDescriptor = {
 // read-only too. ALL variant columns are translatable:false — prices/SKUs
 // have no translation layer.
 
+/** `isPublished`, `taxable`, … — a boolean cell is a two-value enum, so it
+ *  rides the same select machinery rather than growing a checkbox kind of its
+ *  own. The strings are what the diff, the CSV round trip and the edit map all
+ *  carry; only the LABEL differs per column (`enumLabels`). */
+export const BOOLEAN_SELECT_OPTIONS = ["true", "false"];
+
 export const VAR_SKU_COLUMN_ID = "var.sku";
 export const VAR_PRICE_COLUMN_ID = "var.price";
 export const VAR_COMPARE_AT_COLUMN_ID = "var.compareAtPrice";
 export const VAR_BARCODE_COLUMN_ID = "var.barcode";
+
+// ─── The Phase-4 commerce block (PLAN_CONTENT_CREATION §Phase 4) ───────────
+//
+// The single editor's variants card has had these since Phase 4; the grid had
+// four of its fourteen. Cost, tax, the stock policy and everything customs
+// wants are exactly the fields a merchant corrects across a catalogue rather
+// than one variant at a time.
+//
+// TWO Shopify objects, which is the only thing that is structurally
+// interesting here: `taxable` and `inventoryPolicy` are fields of the VARIANT
+// and ride the existing `productVariantsBulkUpdate`, while cost, the weight,
+// the customs fields and `tracked` live on the variant's INVENTORY ITEM and
+// need `inventoryItemUpdate` — addressed by `inventoryItemId`, which is why
+// the sync stores it at all and why a variant without one shows these cells
+// read-only rather than offering a control that fails.
+//
+// What is deliberately NOT here is the QUANTITY. A stock level is a claim
+// about a moment: the panel reads it LIVE and writes it with `compareQuantity`
+// against the number the merchant was looking at, so a value that moved under
+// their feet is refused rather than overwritten. A grid cell fed from a cache
+// cannot make that promise, and "cached + typed number" is the classic source
+// of inventory drift. It stays in the editor's stock panel.
+
+export const VAR_COST_COLUMN_ID = "var.cost";
+export const VAR_TAXABLE_COLUMN_ID = "var.taxable";
+export const VAR_INVENTORY_POLICY_COLUMN_ID = "var.inventoryPolicy";
+export const VAR_INVENTORY_TRACKED_COLUMN_ID = "var.inventoryTracked";
+export const VAR_WEIGHT_COLUMN_ID = "var.weight";
+export const VAR_WEIGHT_UNIT_COLUMN_ID = "var.weightUnit";
+export const VAR_REQUIRES_SHIPPING_COLUMN_ID = "var.requiresShipping";
+export const VAR_COUNTRY_OF_ORIGIN_COLUMN_ID = "var.countryCodeOfOrigin";
+export const VAR_HS_CODE_COLUMN_ID = "var.harmonizedSystemCode";
+
+/** The commerce columns whose value lives on the variant's INVENTORY ITEM —
+ *  a second mutation, and unreachable without an `inventoryItemId`. */
+export const INVENTORY_ITEM_COLUMN_IDS = new Set([
+  VAR_COST_COLUMN_ID,
+  VAR_INVENTORY_TRACKED_COLUMN_ID,
+  VAR_WEIGHT_COLUMN_ID,
+  VAR_WEIGHT_UNIT_COLUMN_ID,
+  VAR_REQUIRES_SHIPPING_COLUMN_ID,
+  VAR_COUNTRY_OF_ORIGIN_COLUMN_ID,
+  VAR_HS_CODE_COLUMN_ID,
+]);
+
+/** Every column fed by the Phase-4 commerce block, whose emptiness only means
+ *  something once `commerceSyncedAt` is set — the variant-level twin of
+ *  ATTRIBUTE_BLOCK_COLUMNS. Price, compare-at, SKU and barcode are NOT in it:
+ *  they predate that block and come from the ordinary product sync. */
+export const COMMERCE_BLOCK_COLUMNS = new Set([
+  ...INVENTORY_ITEM_COLUMN_IDS,
+  VAR_TAXABLE_COLUMN_ID,
+  VAR_INVENTORY_POLICY_COLUMN_ID,
+]);
 
 const PRODUCT_TITLE_COLUMN: ColumnDescriptor = {
   id: "productTitle",
@@ -399,7 +463,12 @@ const VARIANT_POSITION_COLUMN: ColumnDescriptor = {
 function variantColumn(
   id: string,
   label: string,
-  opts: { inputType: ColumnDescriptor["inputType"]; minWidth: number; sortKey?: string },
+  opts: {
+    inputType: ColumnDescriptor["inputType"];
+    minWidth: number;
+    sortKey?: string;
+    selectOptions?: string[];
+  },
 ): ColumnDescriptor {
   return {
     id,
@@ -411,6 +480,14 @@ function variantColumn(
     inputType: opts.inputType,
     minWidth: opts.minWidth,
     ...(opts.sortKey ? { sortKey: opts.sortKey } : {}),
+    // A boolean is a two-value enum here (BOOLEAN_SELECT_OPTIONS); a select
+    // with no vocabulary would render as an empty dropdown, which is a control
+    // whose next save clears a working value.
+    ...(opts.selectOptions
+      ? { selectOptions: opts.selectOptions }
+      : opts.inputType === "select"
+        ? { selectOptions: BOOLEAN_SELECT_OPTIONS }
+        : {}),
   };
 }
 
@@ -418,6 +495,48 @@ const VAR_SKU_COLUMN = variantColumn(VAR_SKU_COLUMN_ID, "sku", { inputType: "tex
 const VAR_PRICE_COLUMN = variantColumn(VAR_PRICE_COLUMN_ID, "price", { inputType: "money", minWidth: 110, sortKey: "price" });
 const VAR_COMPARE_AT_COLUMN = variantColumn(VAR_COMPARE_AT_COLUMN_ID, "compareAtPrice", { inputType: "money", minWidth: 130, sortKey: "compareAtPrice" });
 const VAR_BARCODE_COLUMN = variantColumn(VAR_BARCODE_COLUMN_ID, "barcode", { inputType: "text", minWidth: 140 });
+
+const VAR_COST_COLUMN = variantColumn(VAR_COST_COLUMN_ID, "cost", { inputType: "money", minWidth: 120 });
+const VAR_TAXABLE_COLUMN = variantColumn(VAR_TAXABLE_COLUMN_ID, "taxable", {
+  inputType: "select",
+  minWidth: 140,
+  selectOptions: BOOLEAN_SELECT_OPTIONS,
+});
+const VAR_INVENTORY_POLICY_COLUMN = variantColumn(VAR_INVENTORY_POLICY_COLUMN_ID, "inventoryPolicy", {
+  inputType: "select",
+  minWidth: 200,
+  selectOptions: [...INVENTORY_POLICIES],
+});
+const VAR_INVENTORY_TRACKED_COLUMN = variantColumn(VAR_INVENTORY_TRACKED_COLUMN_ID, "inventoryTracked", {
+  inputType: "select",
+  minWidth: 170,
+  selectOptions: BOOLEAN_SELECT_OPTIONS,
+});
+/** Value and unit are ONE value to Shopify (it replaces the measurement rather
+ *  than merging into it), but two cells here — so a save that carries only one
+ *  of them takes the other from the cached row, and refuses when the cache has
+ *  no unit to take. A number with no unit is not a weight. */
+const VAR_WEIGHT_COLUMN = variantColumn(VAR_WEIGHT_COLUMN_ID, "weight", {
+  inputType: "number",
+  minWidth: 110,
+});
+const VAR_WEIGHT_UNIT_COLUMN = variantColumn(VAR_WEIGHT_UNIT_COLUMN_ID, "weightUnit", {
+  inputType: "select",
+  minWidth: 150,
+  selectOptions: [...WEIGHT_UNITS],
+});
+const VAR_REQUIRES_SHIPPING_COLUMN = variantColumn(VAR_REQUIRES_SHIPPING_COLUMN_ID, "requiresShipping", {
+  inputType: "select",
+  minWidth: 170,
+});
+const VAR_COUNTRY_OF_ORIGIN_COLUMN = variantColumn(VAR_COUNTRY_OF_ORIGIN_COLUMN_ID, "countryCodeOfOrigin", {
+  inputType: "text",
+  minWidth: 150,
+});
+const VAR_HS_CODE_COLUMN = variantColumn(VAR_HS_CODE_COLUMN_ID, "harmonizedSystemCode", {
+  inputType: "text",
+  minWidth: 150,
+});
 
 function fieldColumn(
   name: string,
@@ -465,12 +584,6 @@ const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputT
  * drift, which is the half that actually matters.
  */
 const PRODUCT_STATUS_OPTIONS = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"];
-
-/** `isPublished`, `taxable`, … — a boolean cell is a two-value enum, so it
- *  rides the same select machinery rather than growing a checkbox kind of its
- *  own. The strings are what the diff, the CSV round trip and the edit map all
- *  carry; only the LABEL differs per column (`enumLabels`). */
-export const BOOLEAN_SELECT_OPTIONS = ["true", "false"];
 
 const COL_STATUS = fieldColumn("status", {
   translatable: false,
@@ -615,7 +728,16 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     VAR_SKU_COLUMN,
     VAR_PRICE_COLUMN,
     VAR_COMPARE_AT_COLUMN,
+    VAR_COST_COLUMN,
+    VAR_TAXABLE_COLUMN,
     VAR_BARCODE_COLUMN,
+    VAR_INVENTORY_TRACKED_COLUMN,
+    VAR_INVENTORY_POLICY_COLUMN,
+    VAR_WEIGHT_COLUMN,
+    VAR_WEIGHT_UNIT_COLUMN,
+    VAR_REQUIRES_SHIPPING_COLUMN,
+    VAR_COUNTRY_OF_ORIGIN_COLUMN,
+    VAR_HS_CODE_COLUMN,
     VARIANT_POSITION_COLUMN,
   ],
   collection: [
@@ -1240,6 +1362,26 @@ export interface BulkRow {
   compareAtPrice?: string;
   barcode?: string;
   position?: number;
+  /** §Phase 4 commerce block, as grid strings. The booleans are "true"/"false"
+   *  (two-value enums), the money and the weight are the normalized dot form
+   *  ("12.50", "" = unset) and the two enums are Shopify's own values. */
+  cost?: string;
+  taxable?: string;
+  inventoryPolicy?: string;
+  inventoryTracked?: string;
+  weight?: string;
+  weightUnit?: string;
+  requiresShipping?: string;
+  countryCodeOfOrigin?: string;
+  harmonizedSystemCode?: string;
+  /** False ⇒ every field of the block above is the migration's default, not
+   *  the shop's data (`ProductVariant.commerceSyncedAt`) — the variant twin of
+   *  `attributesKnown`. The grid shows them as unknown, never as empty. */
+  commerceKnown?: boolean;
+  /** The variant's InventoryItem GID — the address cost, weight, the customs
+   *  fields and `tracked` are written at. Absent ⇒ those cells are read-only:
+   *  there is nothing to write them to, and a resync is the way in. */
+  inventoryItemId?: string;
   /** Product has >100 variants — the sync window is capped (Plan §5.1); the
    * UI shows a "remainder lives in the Shopify admin" hint. */
   hasMoreVariants?: boolean;
@@ -1312,7 +1454,9 @@ export type CellReadOnlyReason =
   | "wrongMetaobjectType" // mofield column of another definition type (Phase 5)
   | "listSeparatorInValue" // a list entry contains "|" — editing would shatter it (Finding 11)
   | "altTextInImages" // product main-image alt — edit it under the Images row type
-  | "attributesNotSynced"; // PLAN §2.4 — the block was never fetched (see below)
+  | "attributesNotSynced" // PLAN §2.4 — the block was never fetched (see below)
+  | "commerceNotSynced" // §Phase 4 — `commerceSyncedAt` unset: unknown, not empty
+  | "missingInventoryItem"; // the variant has no InventoryItem GID to write to
 
 /** The columns fed by the Phase-0 attribute block, whose emptiness only means
  *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
@@ -1338,6 +1482,34 @@ export interface ResolvedCell {
   value: string;
   editable: boolean;
   readOnlyReason?: CellReadOnlyReason;
+}
+
+/** The commerce block's value for one column. Flat properties on the row, so
+ *  this is a lookup rather than a computation — written out instead of indexing
+ *  by a derived name, which would silently answer "" for a typo. */
+function commerceValueForColumn(row: BulkRow, columnId: string): string {
+  switch (columnId) {
+    case VAR_COST_COLUMN_ID:
+      return row.cost ?? "";
+    case VAR_TAXABLE_COLUMN_ID:
+      return row.taxable ?? "";
+    case VAR_INVENTORY_POLICY_COLUMN_ID:
+      return row.inventoryPolicy ?? "";
+    case VAR_INVENTORY_TRACKED_COLUMN_ID:
+      return row.inventoryTracked ?? "";
+    case VAR_WEIGHT_COLUMN_ID:
+      return row.weight ?? "";
+    case VAR_WEIGHT_UNIT_COLUMN_ID:
+      return row.weightUnit ?? "";
+    case VAR_REQUIRES_SHIPPING_COLUMN_ID:
+      return row.requiresShipping ?? "";
+    case VAR_COUNTRY_OF_ORIGIN_COLUMN_ID:
+      return row.countryCodeOfOrigin ?? "";
+    case VAR_HS_CODE_COLUMN_ID:
+      return row.harmonizedSystemCode ?? "";
+    default:
+      return "";
+  }
 }
 
 function joinOptionValues(option: BulkRowOption): string {
@@ -1430,8 +1602,26 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
         case VAR_BARCODE_COLUMN_ID:
           return { value: row.barcode ?? "", editable: true };
         default:
-          return { value: "", editable: false, readOnlyReason: "column" };
+          break;
       }
+      if (COMMERCE_BLOCK_COLUMNS.has(column.id)) {
+        const value = commerceValueForColumn(row, column.id);
+        // §Phase 4 — a variant row written before the commerce sync existed
+        // carries nulls that are indistinguishable from "the merchant left it
+        // empty". `taxable` is the one that would be quietly expensive: shown
+        // as "no" and saved along with a neighbouring cell, it stops charging
+        // tax on a product that owes it. A resync is the way out.
+        if (row.commerceKnown === false) {
+          return { value, editable: false, readOnlyReason: "commerceNotSynced" };
+        }
+        // Cost, weight, customs and `tracked` are written on the INVENTORY
+        // ITEM, which this variant has no address for.
+        if (INVENTORY_ITEM_COLUMN_IDS.has(column.id) && !row.inventoryItemId) {
+          return { value, editable: false, readOnlyReason: "missingInventoryItem" };
+        }
+        return { value, editable: true };
+      }
+      return { value: "", editable: false, readOnlyReason: "column" };
     }
     case "mofield": {
       // Cross-type cell (the union universe contains every definition's
@@ -1812,6 +2002,12 @@ export function estimateCalls(
       // One mutation per product (§5.4) — fall back to the row id itself when
       // the mapping is unknown (defensive over-estimate).
       variantTargets.add(opts?.variantProductIdByRowId?.[group.rowId] ?? group.rowId);
+      // …plus ONE `inventoryItemUpdate` per VARIANT that touches the
+      // InventoryItem half (cost, weight, customs, `tracked`). Shopify offers
+      // no bulk form of that mutation, so a 200-row save of cost prices is 200
+      // calls on top of the one bulk update — exactly the fan-out this guard
+      // exists to notice before MAX_TASK_CALLS is blown past.
+      if (entries.some(([columnId]) => INVENTORY_ITEM_COLUMN_IDS.has(columnId))) calls += 1;
       continue;
     }
     if (group.rowType === "blog") {

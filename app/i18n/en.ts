@@ -828,6 +828,14 @@ export const en: Translation = {
       "sortOrder.PRICE_ASC": "Price, low to high", "sortOrder.PRICE_DESC": "Price, high to low",
       "sortOrder.CREATED": "Oldest first", "sortOrder.CREATED_DESC": "Newest first",
       "sortOrder.MOST_RELEVANT": "Relevance",
+      // The bulk grid's boolean columns. Keyed by FIELD, not by value: the
+      // same two strings answer a different question per column.
+      "isPublished.true": "Visible", "isPublished.false": "Hidden",
+      "taxable.true": "Yes", "taxable.false": "No",
+      "inventoryTracked.true": "Yes", "inventoryTracked.false": "No",
+      "requiresShipping.true": "Yes", "requiresShipping.false": "No",
+      "inventoryPolicy.DENY": "Stop selling",
+      "inventoryPolicy.CONTINUE": "Keep selling",
       "commentPolicy.CLOSED": "Closed", "commentPolicy.MODERATED": "Moderated",
       "commentPolicy.AUTO_PUBLISHED": "Auto-published",
       "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
@@ -4058,29 +4066,18 @@ export const en: Translation = {
       isPublished: "Visible in the online store",
       sortOrder: "Sort order",
       author: "Author",
-    },
-    /** Labels for the select columns other than `status`, keyed
-     *  `<column label>.<value>` — the same two boolean strings answer a
-     *  different question per column, so the column decides the wording. */
-    enumLabels: {
-      "isPublished.true": "Visible",
-      "isPublished.false": "Hidden",
-      "templateSuffix.": "Default",
-      "sortOrder.MANUAL": "Manual",
-      "sortOrder.BEST_SELLING": "Best selling",
-      "sortOrder.ALPHA_ASC": "Alphabetically A–Z",
-      "sortOrder.ALPHA_DESC": "Alphabetically Z–A",
-      "sortOrder.PRICE_ASC": "Price, low to high",
-      "sortOrder.PRICE_DESC": "Price, high to low",
-      "sortOrder.CREATED": "Newest first",
-      "sortOrder.CREATED_DESC": "Oldest first",
-      "sortOrder.MOST_RELEVANT": "Most relevant",
-    },
-    statusOptions: {
-      active: "Active",
-      draft: "Draft",
-      archived: "Archived",
-      unlisted: "Unlisted",
+      // §Phase 4 commerce block. The QUANTITY is deliberately absent: a stock
+      // level is a claim about a moment, read live in the editor and written
+      // against `compareQuantity`.
+      cost: "Cost per item",
+      taxable: "Charge tax",
+      inventoryPolicy: "Selling at zero stock",
+      inventoryTracked: "Track quantity",
+      weight: "Weight",
+      weightUnit: "Weight unit",
+      requiresShipping: "Requires shipping",
+      countryCodeOfOrigin: "Country of origin (ISO)",
+      harmonizedSystemCode: "HS code",
     },
     chooseColumns: "Choose columns",
     columnPicker: {
@@ -4103,6 +4100,8 @@ export const en: Translation = {
       // PLAN §3.6 — the block was never fetched, so an empty cell here is
       // "not loaded", not "empty". A resync is the way out.
       attributesNotSynced: "This product's details have not been loaded from Shopify yet — reload the products, then edit this.",
+      commerceNotSynced: "This variant's price, shipping and stock details have not been loaded from Shopify yet — resync the products, then edit this.",
+      missingInventoryItem: "This variant has no Shopify inventory item, which is where cost, weight and customs data live — resync the product first.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",

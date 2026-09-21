@@ -818,9 +818,9 @@ export const de = {
     // Schlüssel "<feld>.<WERT>" — ein Shopify-Enum wird nie roh angezeigt
     // ("ALPHA_ASC" ist in keiner Sprache ein Satz).
     //
-    // Noch NICHT das einzige: die Item-Liste (`statusLabels`) und die
-    // Status-Spalte im Bulk-Grid haben eigene. Das zusammenzuführen lohnt sich
-    // — bis dahin sagt dieser Kommentar es, statt es zu behaupten.
+    // Das Bulk-Grid liest jetzt DIESE Map — seine Status-Spalte hatte bis
+    // hierher eine zweite Kopie derselben vier Wörter. Übrig bleibt die
+    // Item-Liste (`statusLabels`); das steht hier, statt behauptet zu werden.
     enumLabels: {
       "unitPriceUnit.ITEM": "Stück",
       "unitPriceGroup.volume": "Volumen",
@@ -835,6 +835,14 @@ export const de = {
       "sortOrder.PRICE_ASC": "Preis aufsteigend", "sortOrder.PRICE_DESC": "Preis absteigend",
       "sortOrder.CREATED": "Älteste zuerst", "sortOrder.CREATED_DESC": "Neueste zuerst",
       "sortOrder.MOST_RELEVANT": "Relevanz",
+      // Die Boolean-Spalten des Bulk-Grids. Gekeyt nach FELD, nicht nach Wert:
+      // dieselben zwei Strings beantworten je Spalte eine andere Frage.
+      "isPublished.true": "Sichtbar", "isPublished.false": "Versteckt",
+      "taxable.true": "Ja", "taxable.false": "Nein",
+      "inventoryTracked.true": "Ja", "inventoryTracked.false": "Nein",
+      "requiresShipping.true": "Ja", "requiresShipping.false": "Nein",
+      "inventoryPolicy.DENY": "Verkauf stoppen",
+      "inventoryPolicy.CONTINUE": "Weiter verkaufen",
       "commentPolicy.CLOSED": "Geschlossen", "commentPolicy.MODERATED": "Moderiert",
       "commentPolicy.AUTO_PUBLISHED": "Automatisch veröffentlicht",
       "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
@@ -4071,29 +4079,18 @@ export const de = {
       isPublished: "Im Onlineshop sichtbar",
       sortOrder: "Sortierung",
       author: "Autor",
-    },
-    /** Beschriftungen der Select-Spalten außer `status`, gekeyt
-     *  `<Spalten-Label>.<Wert>` — dieselben zwei Boolean-Strings tragen je
-     *  Spalte eine andere Frage, deshalb entscheidet die Spalte das Wort. */
-    enumLabels: {
-      "isPublished.true": "Sichtbar",
-      "isPublished.false": "Versteckt",
-      "templateSuffix.": "Standard",
-      "sortOrder.MANUAL": "Manuell",
-      "sortOrder.BEST_SELLING": "Bestseller",
-      "sortOrder.ALPHA_ASC": "Alphabetisch A–Z",
-      "sortOrder.ALPHA_DESC": "Alphabetisch Z–A",
-      "sortOrder.PRICE_ASC": "Preis aufsteigend",
-      "sortOrder.PRICE_DESC": "Preis absteigend",
-      "sortOrder.CREATED": "Neueste zuerst",
-      "sortOrder.CREATED_DESC": "Älteste zuerst",
-      "sortOrder.MOST_RELEVANT": "Relevanteste",
-    },
-    statusOptions: {
-      active: "Aktiv",
-      draft: "Entwurf",
-      archived: "Archiviert",
-      unlisted: "Nicht gelistet",
+      // §Phase 4 — der Handelsblock. "Bestand" fehlt hier bewusst: eine
+      // Stückzahl ist eine Aussage über einen Moment, wird im Editor live
+      // gelesen und gegen `compareQuantity` geschrieben.
+      cost: "Einkaufspreis",
+      taxable: "Steuerpflichtig",
+      inventoryPolicy: "Verkauf bei 0 Bestand",
+      inventoryTracked: "Bestand verfolgen",
+      weight: "Gewicht",
+      weightUnit: "Gewichtseinheit",
+      requiresShipping: "Versand nötig",
+      countryCodeOfOrigin: "Herkunftsland (ISO)",
+      harmonizedSystemCode: "Zolltarifnummer",
     },
     chooseColumns: "Spalten wählen",
     columnPicker: {
@@ -4116,6 +4113,11 @@ export const de = {
       // PLAN §3.6 — der Attributblock wurde nie geladen; leer heißt hier
       // "nicht geladen", nicht "leer". Ein Resync ist der Ausweg.
       attributesNotSynced: "Die Details dieses Produkts wurden noch nicht von Shopify geladen — lade die Produkte neu und bearbeite das dann.",
+      // §Phase 4 — derselbe Fall für den Handelsblock, aber mit eigenem
+      // Diskriminator (`commerceSyncedAt`): wer hier landet, soll nicht den
+      // falschen Teil neu synchronisieren.
+      commerceNotSynced: "Preis-, Versand- und Bestandsdetails dieser Variante wurden noch nicht von Shopify geladen — lade die Produkte neu und bearbeite das dann.",
+      missingInventoryItem: "Dieser Variante fehlt der Shopify-Lagerartikel, an dem Einkaufspreis, Gewicht und Zolldaten hängen — Produkt zuerst neu synchronisieren.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",

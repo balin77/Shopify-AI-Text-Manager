@@ -817,6 +817,14 @@ export const es: Translation = {
       "sortOrder.PRICE_ASC": "Precio ascendente", "sortOrder.PRICE_DESC": "Precio descendente",
       "sortOrder.CREATED": "Más antiguos primero", "sortOrder.CREATED_DESC": "Más recientes primero",
       "sortOrder.MOST_RELEVANT": "Relevancia",
+      // Las columnas booleanas de la cuadrícula. Con clave por CAMPO, no por
+      // valor: las mismas dos cadenas responden preguntas distintas.
+      "isPublished.true": "Visible", "isPublished.false": "Oculto",
+      "taxable.true": "Sí", "taxable.false": "No",
+      "inventoryTracked.true": "Sí", "inventoryTracked.false": "No",
+      "requiresShipping.true": "Sí", "requiresShipping.false": "No",
+      "inventoryPolicy.DENY": "Dejar de vender",
+      "inventoryPolicy.CONTINUE": "Seguir vendiendo",
       "commentPolicy.CLOSED": "Cerrados", "commentPolicy.MODERATED": "Moderados",
       "commentPolicy.AUTO_PUBLISHED": "Publicación automática",
       "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
@@ -4046,29 +4054,18 @@ export const es: Translation = {
       isPublished: "Visible en la tienda online",
       sortOrder: "Orden",
       author: "Autor",
-    },
-    /** Etiquetas de las columnas de selección distintas de `status`, con
-     *  clave `<etiqueta de columna>.<valor>`: las mismas dos cadenas booleanas
-     *  responden una pregunta distinta según la columna. */
-    enumLabels: {
-      "isPublished.true": "Visible",
-      "isPublished.false": "Oculto",
-      "templateSuffix.": "Predeterminada",
-      "sortOrder.MANUAL": "Manual",
-      "sortOrder.BEST_SELLING": "Más vendidos",
-      "sortOrder.ALPHA_ASC": "Alfabético A–Z",
-      "sortOrder.ALPHA_DESC": "Alfabético Z–A",
-      "sortOrder.PRICE_ASC": "Precio ascendente",
-      "sortOrder.PRICE_DESC": "Precio descendente",
-      "sortOrder.CREATED": "Más recientes primero",
-      "sortOrder.CREATED_DESC": "Más antiguos primero",
-      "sortOrder.MOST_RELEVANT": "Más relevantes",
-    },
-    statusOptions: {
-      active: "Activo",
-      draft: "Borrador",
-      archived: "Archivado",
-      unlisted: "No listado",
+      // Bloque de comercio (§fase 4). La CANTIDAD falta a propósito: un nivel
+      // de stock es una afirmación sobre un momento, se lee en vivo en el
+      // editor y se escribe contra `compareQuantity`.
+      cost: "Coste por artículo",
+      taxable: "Cobrar impuestos",
+      inventoryPolicy: "Vender sin stock",
+      inventoryTracked: "Controlar inventario",
+      weight: "Peso",
+      weightUnit: "Unidad de peso",
+      requiresShipping: "Requiere envío",
+      countryCodeOfOrigin: "País de origen (ISO)",
+      harmonizedSystemCode: "Código arancelario",
     },
     chooseColumns: "Elegir columnas",
     columnPicker: {
@@ -4091,6 +4088,8 @@ export const es: Translation = {
       // PLAN §3.6 — el bloque de atributos nunca se cargó; vacío aquí
       // significa "no cargado", no "vacío". Una resincronización lo resuelve.
       attributesNotSynced: "Los datos de este producto aún no se han cargado desde Shopify — recarga los productos y edítalo después.",
+      commerceNotSynced: "Los detalles de precio, envío e inventario de esta variante aún no se han cargado desde Shopify — vuelve a sincronizar los productos y edítalo después.",
+      missingInventoryItem: "Esta variante no tiene artículo de inventario de Shopify, donde viven el coste, el peso y los datos aduaneros — vuelve a sincronizar el producto.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",
