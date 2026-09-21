@@ -740,6 +740,7 @@ export const en: Translation = {
       loading: "Loading",
       loadFailed: "Stock and channels could not be loaded.",
       saveFailed: "The change could not be saved.",
+      saveConfirmed: "Saved.",
       retry: "Try again",
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",

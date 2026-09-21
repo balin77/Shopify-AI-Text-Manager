@@ -1626,13 +1626,22 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               <AppSaveBar
                 id="unified-content-editor-save-bar"
                 hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false) || commerceSave.hasChanges}
-                loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
+                // The commerce panel is the THIRD writer on this button, and it
+                // has to report itself like the other two: its writes are
+                // several sequential Shopify calls, and a bar that looked
+                // untouched for those seconds is most of why a stock save read
+                // as having done nothing.
+                loading={
+                  state.isSavingCurrentItem ||
+                  (subResourceState?.isSaving ?? false) ||
+                  commerceSave.saving
+                }
                 onSave={() => {
                   // Guard against double-submit: a long-running image save
                   // (up to ~38s for big 3D models) must not fire a duplicate
                   // /api/update-variant-galleries POST (→ Shopify 422 on the
                   // duplicate productCreateMedia for the same staging URL).
-                  if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
+                  if (state.isSavingCurrentItem || subResourceState?.isSaving || commerceSave.saving) return;
                   handlers.handleSave();
                   subResourceHandlers?.saveSubResources?.();
                   // Third writer, same button. Its failures surface INSIDE the

@@ -25,6 +25,18 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 export interface CommerceSaveApi {
   /** True while the panel holds unsaved stock, item-field or channel edits. */
   hasChanges: boolean;
+  /**
+   * True while this panel's own writes are in flight.
+   *
+   * The bar has to show it: a stock save is several sequential calls to
+   * Shopify and can take seconds, and for that whole time the bar looked
+   * exactly as it had before the click — the merchant's question was whether
+   * anything was happening at all. It also disables the buttons, which is the
+   * same double-submit guard the content and sub-resource saves already have
+   * (the panel's own `savingRef` refuses the second write, but it refuses it
+   * silently, which reads as a click that did nothing).
+   */
+  saving: boolean;
   /** Runs the panel's own save. Never throws — failures surface in the panel. */
   save: () => Promise<void>;
   /** Throws the panel's unsaved edits away, for the save bar's Discard. */
@@ -84,11 +96,16 @@ const NOOP = () => undefined;
 export function useCommerceSaveRegistry() {
   const apiRef = useRef<CommerceSaveApi | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const register = useCallback((next: CommerceSaveApi | null) => {
     apiRef.current = next;
+    // Booleans for the same reason `hasChanges` is one: setting a flag to the
+    // value it already holds renders nothing, so a re-registration that
+    // changes nothing observable cannot start the loop this file documents.
     setHasChanges(next?.hasChanges === true);
+    setSaving(next?.saving === true);
   }, []);
 
   const value = useMemo(() => ({ register, reloadNonce }), [register, reloadNonce]);
@@ -111,6 +128,7 @@ export function useCommerceSaveRegistry() {
     Provider: CommerceSaveContext.Provider,
     value,
     hasChanges,
+    saving,
     save,
     discard,
     requestReload,

@@ -20,7 +20,7 @@ import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { CommerceField } from "~/components/unified/CommerceField";
 import { CommerceVariantsSection } from "~/components/unified/CommerceVariantsSection";
-import { CommerceDataProvider } from "~/contexts/CommerceDataContext";
+import { CommerceDataProvider, type CommerceTexts } from "~/contexts/CommerceDataContext";
 import { useCommerceSaveRegistry } from "~/contexts/CommerceSaveContext";
 
 let renders = 0;
@@ -55,8 +55,20 @@ const BODY = {
 };
 
 /** Mimics the editor: registry here, provider around it, and — the part that
- *  mattered — a `t` bag rebuilt inline on every render. */
-function Editor() {
+ *  mattered — a `t` bag rebuilt inline on every render.
+ *
+ *  `channels: false` leaves the sales-channel half OUT, which is the view a
+ *  merchant editing stock actually has: the two halves are two cards, and for
+ *  a while everything a save had to say was rendered in this one. */
+function Editor({
+  channels = true,
+  t,
+  productId = "gid://shopify/Product/1",
+}: {
+  channels?: boolean;
+  t?: CommerceTexts;
+  productId?: string;
+} = {}) {
   const commerceSave = useCommerceSaveRegistry();
   const [, force] = useState(0);
   renders += 1;
@@ -68,15 +80,16 @@ function Editor() {
   return (
     <commerceSave.Provider value={commerceSave.value}>
       <span data-testid="dirty">{String(commerceSave.hasChanges)}</span>
+      <span data-testid="saving">{String(commerceSave.saving)}</span>
       <button data-testid="discard" onClick={() => commerceSave.discard()}>discard</button>
       <button data-testid="reload" onClick={() => commerceSave.requestReload()}>reload</button>
       <button data-testid="save" onClick={() => void commerceSave.save()}>save</button>
       <CommerceDataProvider
-        productId="gid://shopify/Product/1"
+        productId={productId}
         isPrimaryLocale
-        t={{ warnings: {}, enumLabels: {} }}
+        t={t ?? { warnings: {}, enumLabels: {} }}
       >
-        <CommerceField label="Vertriebskanäle" />
+        {channels && <CommerceField label="Vertriebskanäle" />}
         <CommerceVariantsSection />
       </CommerceDataProvider>
     </commerceSave.Provider>
@@ -188,5 +201,252 @@ describe("CommerceField + save registry", () => {
     // channel — its presence was the visible half of the bug.
     expect(screen.queryByText(/On no channel/i)).toBeNull();
     expect(screen.getByTestId("dirty").textContent).toBe("false");
+  });
+});
+
+/**
+ * Where a save's own answer is rendered.
+ *
+ * The report: change a quantity, press Save, and the save bar does not go away
+ * — "does it save at all?". It did not, and the panel said so in the SALES
+ * CHANNEL card, which is a different card somewhere else on the page. The bar
+ * stays up on purpose in that case (the reload keeps what was typed, so the
+ * merchant does not have to retype it against a number that just moved), but
+ * with the reason out of sight the whole thing reads as a button that does
+ * nothing.
+ *
+ * So each half of the panel renders its OWN notices, and a save that wrote
+ * something and was not refused says so.
+ */
+describe("a save says what it did, in the card that did it", () => {
+  /** A variant with one stocked location, so the on-hand input is editable. */
+  const STOCK_BODY = {
+    ...BODY,
+    variants: [
+      {
+        ...BODY.variants[0],
+        levels: [
+          {
+            locationId: "gid://shopify/Location/1",
+            locationName: "Berlin",
+            locationActive: true,
+            onHand: 5,
+            available: 5,
+            committed: 0,
+            unavailable: 0,
+          },
+        ],
+      },
+    ],
+    shopLocations: [],
+  };
+
+  /** Answers the loader with the stock fixture and the POST with `warnings`. */
+  const stubWith = (warnings: string[]) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) =>
+        init?.method === "POST"
+          ? { ok: true, status: 200, json: async () => ({ success: true, warnings }) }
+          : { ok: true, status: 200, json: async () => STOCK_BODY },
+      ),
+    );
+
+  const typeAQuantity = async () => {
+    const input = await screen.findByLabelText("On hand");
+    fireEvent.change(input, { target: { value: "7" } });
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("true"));
+  };
+
+  it("puts a refused STOCK write in the stock card, not only in the channel card", async () => {
+    // THE defect. `CommerceField` — the channel half — is deliberately not
+    // rendered here: this is what a merchant looking at the variants card sees.
+    stubWith(["stockNotConfirmed"]);
+    render(
+      <AppProvider i18n={en}>
+        <Editor channels={false} t={{ warnings: { stockNotConfirmed: "Shopify did not confirm it." }, enumLabels: {} }} />
+      </AppProvider>,
+    );
+    await typeAQuantity();
+    fireEvent.click(screen.getByTestId("save"));
+
+    await waitFor(() => expect(screen.getByText("Shopify did not confirm it.")).toBeTruthy());
+    // Still dirty, on purpose: the typed value is kept so it does not have to
+    // be retyped. That is exactly why the reason has to be readable HERE.
+    expect(screen.getByTestId("dirty").textContent).toBe("true");
+  });
+
+  it("confirms a stock write that went through, and then clears the bar", async () => {
+    stubWith([]);
+    render(
+      <AppProvider i18n={en}>
+        <Editor channels={false} t={{ warnings: {}, enumLabels: {}, saveConfirmed: "Saved." }} />
+      </AppProvider>,
+    );
+    await typeAQuantity();
+    fireEvent.click(screen.getByTestId("save"));
+
+    await waitFor(() => expect(screen.getByText("Saved.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("false"));
+  });
+
+  it("says nothing at all when the save had nothing of this panel's to write", async () => {
+    // The save bar fires this on EVERY save, including a plain title edit.
+    // A "Saved." banner over a panel that wrote nothing is a claim about
+    // somebody else's work.
+    stubWith([]);
+    render(<AppProvider i18n={en}><Editor channels={false} t={{ warnings: {}, enumLabels: {}, saveConfirmed: "Saved." }} /></AppProvider>);
+    await screen.findByLabelText("On hand");
+    fireEvent.click(screen.getByTestId("save"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.queryByText("Saved.")).toBeNull();
+  });
+
+  it("reports the panel's own write as in flight, so the bar is not idle", async () => {
+    let release: (() => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) => {
+        if (init?.method === "POST") {
+          await new Promise<void>((resolve) => { release = resolve; });
+          return { ok: true, status: 200, json: async () => ({ success: true, warnings: [] }) };
+        }
+        return { ok: true, status: 200, json: async () => STOCK_BODY };
+      }),
+    );
+    render(<AppProvider i18n={en}><Editor channels={false} t={{ warnings: {}, enumLabels: {} }} /></AppProvider>);
+    await typeAQuantity();
+    fireEvent.click(screen.getByTestId("save"));
+
+    await waitFor(() => expect(screen.getByTestId("saving").textContent).toBe("true"));
+    release?.();
+    await waitFor(() => expect(screen.getByTestId("saving").textContent).toBe("false"));
+  });
+});
+
+/**
+ * Three ways the verdict of a save went missing again, each found in review of
+ * the fix above and each a state the merchant reaches by doing nothing unusual.
+ */
+describe("the verdict survives the reload it triggers", () => {
+  const STOCK_BODY = {
+    ...BODY,
+    variants: [
+      {
+        ...BODY.variants[0],
+        levels: [
+          {
+            locationId: "gid://shopify/Location/1",
+            locationName: "Berlin",
+            locationActive: true,
+            onHand: 5,
+            available: 5,
+            committed: 0,
+            unavailable: 0,
+          },
+        ],
+      },
+    ],
+    shopLocations: [],
+  };
+  const TEXTS = {
+    warnings: { stockNotConfirmed: "Shopify did not confirm it." },
+    enumLabels: {},
+    saveConfirmed: "Saved.",
+    loadFailed: "Stock and channels could not be loaded.",
+  };
+
+  it("keeps the warning on screen while the post-save reload is in flight", async () => {
+    // `save()` ends with `load()`, and `load()` blanks `data` at once — so the
+    // card renders its spinner branch for as long as the reload takes. Under
+    // that branch the warning used to be gone, and the merchant was looking at
+    // a spinner under a save bar that had not moved.
+    /** Every loader request, held open until this test lets it answer. */
+    const pending: Array<(body: unknown) => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: { method?: string }) => {
+        if (init?.method === "POST") {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, warnings: ["stockNotConfirmed"] }),
+          });
+        }
+        return new Promise((resolve) => {
+          pending.push((body) => resolve({ ok: true, status: 200, json: async () => body }));
+        });
+      }),
+    );
+    const answer = () => pending.shift()?.(STOCK_BODY);
+
+    render(<AppProvider i18n={en}><Editor channels={false} t={TEXTS} /></AppProvider>);
+    await waitFor(() => expect(pending.length).toBe(1));
+    answer();
+
+    fireEvent.change(await screen.findByLabelText("On hand"), { target: { value: "7" } });
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("true"));
+    fireEvent.click(screen.getByTestId("save"));
+
+    // The post-save reload is in flight: nothing is loaded, and this is the
+    // window the warning used to vanish in.
+    await waitFor(() => expect(pending.length).toBe(1));
+    expect(screen.getByText("Shopify did not confirm it.")).toBeTruthy();
+    answer();
+    await waitFor(() => expect(screen.getByText("Shopify did not confirm it.")).toBeTruthy());
+  });
+
+  it("still shows it when that reload fails", async () => {
+    // The likeliest sequel to a refused write, and the branch that renders a
+    // load error INSTEAD of the table — where the save's own reason used to be
+    // dropped for good.
+    let sawPost = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) => {
+        if (init?.method === "POST") {
+          sawPost = true;
+          return { ok: true, status: 200, json: async () => ({ success: true, warnings: ["stockNotConfirmed"] }) };
+        }
+        return sawPost
+          ? { ok: true, status: 200, json: async () => ({ success: false, error: "boom" }) }
+          : { ok: true, status: 200, json: async () => STOCK_BODY };
+      }),
+    );
+    render(<AppProvider i18n={en}><Editor channels={false} t={TEXTS} /></AppProvider>);
+    fireEvent.change(await screen.findByLabelText("On hand"), { target: { value: "7" } });
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("true"));
+    fireEvent.click(screen.getByTestId("save"));
+
+    await waitFor(() => expect(screen.getByText("Stock and channels could not be loaded.")).toBeTruthy());
+    expect(screen.getByText("Shopify did not confirm it.")).toBeTruthy();
+  });
+
+  it("does not carry one product's verdict over to the next product", async () => {
+    // The provider is not keyed by product, and nothing else clears this.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) =>
+        init?.method === "POST"
+          ? { ok: true, status: 200, json: async () => ({ success: true, warnings: ["stockNotConfirmed"] }) }
+          : { ok: true, status: 200, json: async () => STOCK_BODY },
+      ),
+    );
+    const { rerender } = render(
+      <AppProvider i18n={en}><Editor channels={false} t={TEXTS} productId="gid://shopify/Product/1" /></AppProvider>,
+    );
+    fireEvent.change(await screen.findByLabelText("On hand"), { target: { value: "7" } });
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("true"));
+    fireEvent.click(screen.getByTestId("save"));
+    await waitFor(() => expect(screen.getByText("Shopify did not confirm it.")).toBeTruthy());
+
+    rerender(
+      <AppProvider i18n={en}><Editor channels={false} t={TEXTS} productId="gid://shopify/Product/2" /></AppProvider>,
+    );
+    // Waited for the NEW product's table, not merely for the blank frame in
+    // between: during the reload the card renders no table either way, so
+    // asserting there would pass while the notice sat untouched in state.
+    await waitFor(() => expect(screen.getByLabelText("On hand")).toBeTruthy());
+    expect(screen.queryByText("Shopify did not confirm it.")).toBeNull();
   });
 });

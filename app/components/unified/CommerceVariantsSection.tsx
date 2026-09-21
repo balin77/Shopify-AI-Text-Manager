@@ -66,6 +66,7 @@ import {
 import { HelpTooltip } from "../HelpTooltip";
 import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData, WEIGHT_UNITS } from "../../contexts/CommerceDataContext";
+import { CommerceNotices } from "./CommerceNotices";
 import { buildVariantScopes, commonValue, type VariantScope } from "../../services/variant-scope.shared";
 import {
   buildStockRows,
@@ -144,6 +145,21 @@ export function CommerceVariantsSection() {
   const { data, saving, priceEdits, setPriceEdits, itemEdits, setItemEdits, edits, setEdits, loadError, load } =
     commerce;
 
+  /**
+   * What the last save did to this card — in EVERY branch below, not only in
+   * the loaded one.
+   *
+   * A save ends by reloading, and `load()` blanks `data` the moment it starts:
+   * with this rendered only under the full table, the warning naming a refused
+   * stock write was invisible for the whole reload, and gone for good when
+   * that reload then failed — which is the state most likely to follow a
+   * refused write in the first place. The save bar stays up in exactly that
+   * case, so the card must be able to say why while it holds nothing else.
+   */
+  const saveNotices = (
+    <CommerceNotices surface="variants" notices={commerce.notices} setNotices={commerce.setNotices} />
+  );
+
   // A failed load used to leave this card EMPTY: the banner and its retry
   // button live in the channels card, which is somewhere else on the screen.
   // A merchant looking at the variants card saw nothing and no reason.
@@ -151,6 +167,7 @@ export function CommerceVariantsSection() {
     return (
       <BlockStack gap="300">
         <Divider />
+        {saveNotices}
         <Banner tone="warning">
           <BlockStack gap="200">
             <Text as="p">{loadError}</Text>
@@ -164,11 +181,21 @@ export function CommerceVariantsSection() {
     return (
       <BlockStack gap="300">
         <Divider />
+        {saveNotices}
         <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />
       </BlockStack>
     );
   }
-  if (variants.length === 0) return null;
+  // No variants at all — but a save that just refused still has something to
+  // say, and returning null here would swallow it.
+  if (variants.length === 0) {
+    return commerce.notices.some((notice) => notice.surface === "variants") ? (
+      <BlockStack gap="300">
+        <Divider />
+        {saveNotices}
+      </BlockStack>
+    ) : null;
+  }
 
   /** The chosen scope, falling back to the first variant. A selection pointing
    *  at a scope a reload no longer produces would otherwise show nothing. */
@@ -390,6 +417,14 @@ export function CommerceVariantsSection() {
           four states, and a divider placed around it by the card would be a
           rule under empty space in every one of them. */}
       <Divider />
+      {/* What the last save did to THIS card — the prices, the stock and the
+          shipping settings. It used to be shown only in the sales-channel
+          card, which is a different card somewhere else on the page: a stock
+          write that came back refused left the save bar up (the reload keeps
+          what was typed, on purpose) with its reason out of sight, and from
+          here the app read as having done nothing at all. Same reasoning as
+          the load error below it, which had already been moved for it. */}
+      {saveNotices}
       {/* No heading here. "Bestand" over the whole block titled the prices and
           the shipping settings too; it sits over the locations table, which is
           the thing it names. */}

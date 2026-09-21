@@ -729,6 +729,7 @@ export const es: Translation = {
       loading: "Cargando",
       loadFailed: "No se pudieron cargar el inventario y los canales.",
       saveFailed: "No se pudo guardar el cambio.",
+      saveConfirmed: "Guardado.",
       retry: "Reintentar",
       planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
       foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",

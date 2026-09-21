@@ -52,6 +52,7 @@ import { Badge, Banner, BlockStack, Box, Button, InlineStack, Spinner, Text } fr
 import { HelpTooltip } from "../HelpTooltip";
 import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData } from "../../contexts/CommerceDataContext";
+import { CommerceNotices } from "./CommerceNotices";
 import { groupPublications, type PublicationGroupId } from "../../services/commerce-sync.shared";
 import type { CommerceChannelView } from "../../routes/api.product-commerce";
 import { useHydrated } from "../../hooks/useHydrated";
@@ -242,18 +243,13 @@ export function CommerceField({ label }: { label: string }) {
         <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />
       )}
 
-      {/* The notices belong to whichever half produced them, and a save writes
-          both — so they are rendered here, where the panel has always shown
-          them, rather than duplicated into the variants card. */}
-      {notices.length > 0 && (
-        <Banner tone="warning" onDismiss={() => setNotices([])}>
-          <BlockStack gap="100">
-            {notices.map((notice, index) => (
-              <Text as="p" key={index}>{notice}</Text>
-            ))}
-          </BlockStack>
-        </Banner>
-      )}
+      {/* This half's notices only. A save writes both halves, and for a while
+          every line landed here — so a warning about a quantity appeared in
+          the channel column while the stock table it was about said nothing,
+          with the save bar still up and no reason given anywhere the merchant
+          was looking. The variants card renders its own; see
+          `CommerceNotice`. */}
+      <CommerceNotices surface="channels" notices={notices} setNotices={setNotices} />
 
       {/* The read itself failed. Said in place, because the alternative is an
           empty column that looks exactly like a shop with no channels — the

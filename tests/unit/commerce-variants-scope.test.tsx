@@ -28,11 +28,15 @@ function SaveButton() {
   );
 }
 
-/** The notices the provider produced. They RENDER in `CommerceField`, one
- *  component up, so a panel-only test has to read them from the context. */
+/** The notices the provider produced, whichever card they are rendered under
+ *  — read from the context so this stays a panel-only test. */
 function Notices() {
   const commerce = useCommerceData();
-  return <div data-testid="notices">{(commerce?.notices ?? []).join(" | ")}</div>;
+  return (
+    <div data-testid="notices">
+      {(commerce?.notices ?? []).map((notice) => `${notice.surface}:${notice.text}`).join(" | ")}
+    </div>
+  );
 }
 
 const PRODUCT = "gid://shopify/Product/1";

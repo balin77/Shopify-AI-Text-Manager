@@ -740,6 +740,9 @@ export const de = {
       loading: "Wird geladen",
       loadFailed: "Bestand und Kanäle konnten nicht geladen werden.",
       saveFailed: "Die Änderung konnte nicht gespeichert werden.",
+      // Die Antwort auf "hat das überhaupt etwas gespeichert?". Steht unter
+      // der Karte, in der gespeichert wurde, und verschwindet von selbst.
+      saveConfirmed: "Gespeichert.",
       retry: "Nochmal versuchen",
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",

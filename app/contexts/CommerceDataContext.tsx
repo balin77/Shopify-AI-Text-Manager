@@ -72,13 +72,40 @@ export interface LoadedState {
   shopLocations: Array<{ id: string; name: string; isActive: boolean }>;
 }
 
+/**
+ * One line a save produced, and WHICH CARD it belongs under.
+ *
+ * The panel is two views of one save — the stock/price table sits in the
+ * variants card and the sales channels in the Details aside — and for a while
+ * every notice was rendered in the channels half alone, on the reasoning that
+ * that is where the panel had always shown them. What that produced is the
+ * report this shape exists for: a merchant edits a quantity, presses Save, the
+ * write comes back with a warning, the save bar therefore STAYS UP (the
+ * reload keeps their typed values on purpose, see `keepEdits`) — and the only
+ * sentence saying why is in a different card, about a column they were not
+ * looking at. From where they stood, the app had silently done nothing.
+ *
+ * So a notice carries its surface and is rendered under the fields that
+ * produced it. Duplicating both halves into both cards is the other wrong
+ * answer: a channel warning above the stock table is the same confusion
+ * mirrored.
+ */
+export type CommerceNoticeSurface = "variants" | "channels";
+
+export interface CommerceNotice {
+  surface: CommerceNoticeSurface;
+  /** `success` is the answer to "did that save anything at all?" — see `save`. */
+  tone: "warning" | "success";
+  text: string;
+}
+
 export interface CommerceDataValue {
   data: LoadedState | null;
   loadError: string | null;
   planBlocked: boolean;
   saving: boolean;
-  notices: string[];
-  setNotices: (notices: string[]) => void;
+  notices: CommerceNotice[];
+  setNotices: (notices: CommerceNotice[]) => void;
   load: (options?: { keepEdits?: boolean }) => void;
   isPrimaryLocale: boolean;
   t: CommerceTexts;
@@ -169,7 +196,7 @@ export function CommerceDataProvider({
   /** Mirrors `saving` for the re-entrancy guard: state read inside the same
    *  handler is still the value from the render that scheduled it. */
   const savingRef = useRef(false);
-  const [notices, setNotices] = useState<string[]>([]);
+  const [notices, setNotices] = useState<CommerceNotice[]>([]);
 
 
   /** Edited selling prices, keyed `variantId::price` / `::compareAtPrice`. */
@@ -276,11 +303,19 @@ export function CommerceDataProvider({
     if (dirtyRef.current && !window.confirm((t.discardConfirm as string) || "Discard your unsaved changes?")) {
       return;
     }
+    // A re-read answers with what Shopify holds now, so the last save's
+    // verdict is no longer the current state of this card.
+    setNotices([]);
     load();
   }, [reloadNonce, isPrimaryLocale, load, t.discardConfirm]);
 
   useEffect(() => {
     if (!isPrimaryLocale) return;
+    // A notice is about the product that produced it. This effect re-runs when
+    // `load` changes identity, i.e. when the PRODUCT changes — without the
+    // reset, "Saved." or a refused-stock warning from the product the merchant
+    // just left renders over the next product's stock table, naming it.
+    setNotices([]);
     load();
     // Unmounting (or switching products) bumps the token, which is what makes
     // an in-flight answer land nowhere.
@@ -481,7 +516,23 @@ export function CommerceDataProvider({
     savingRef.current = true;
     setSaving(true);
     setNotices([]);
-    const collected: string[] = [];
+    /**
+     * Kept apart by SURFACE, because that is how they are rendered.
+     *
+     * Everything the variant half writes — prices, the unit price, stock,
+     * activations, the InventoryItem settings — belongs under the variants
+     * card; the channel write belongs under the channel list. See
+     * `CommerceNotice`: a stock warning shown in the other card is the same as
+     * no warning at all.
+     */
+    const variantWarnings: string[] = [];
+    const channelWarnings: string[] = [];
+    /** Captured BEFORE the writes: the reload that follows them clears the
+     *  edits these are derived from, and a confirmation has to know which half
+     *  actually had something to write. */
+    const variantWork =
+      dirtyPrices.length > 0 || dirtyStock.length > 0 || dirtyItemFields.length > 0;
+    const channelWork = dirtyChannels.toPublish.length > 0 || dirtyChannels.toUnpublish.length > 0;
     try {
       // Prices first: they are the cheapest write and the one a merchant is
       // most likely to be watching. Each variant is its own call — the mutation
@@ -525,7 +576,7 @@ export function CommerceDataProvider({
         // price needs all four entries" — and the merchant has no way to tell
         // which of twelve variants it is about, or that it is about a variant
         // at all rather than the whole save.
-        collected.push(
+        variantWarnings.push(
           ...warnings.map((code) => {
             const phrased = (t.warnings?.[code] as string) || code;
             return dirtyPrices.length > 1 && variant.title ? `${variant.title}: ${phrased}` : phrased;
@@ -574,7 +625,7 @@ export function CommerceDataProvider({
           // this feature avoids — but it is SAID, because dropping a typed
           // quantity and then clearing the field on the reload is how a stock
           // correction disappears with nobody noticing.
-          collected.push(
+          variantWarnings.push(
             nameStockWarning(variantId, (t.warnings?.stockNoBaseline as string) || "stockNoBaseline"),
           );
           continue;
@@ -595,7 +646,7 @@ export function CommerceDataProvider({
           },
           "activateFailed",
         );
-        collected.push(
+        variantWarnings.push(
           ...warnings.map((code) =>
             nameStockWarning(activation.variantId, (t.warnings?.[code] as string) || code),
           ),
@@ -605,7 +656,7 @@ export function CommerceDataProvider({
       for (const [variantId, list] of byVariant) {
         const variant = data.variants.find((v) => v.id === variantId);
         if (!variant?.inventoryItemId) {
-          collected.push(
+          variantWarnings.push(
             nameStockWarning(variantId, (t.warnings?.stockNoInventoryItem as string) || "stockNoInventoryItem"),
           );
           continue;
@@ -623,7 +674,7 @@ export function CommerceDataProvider({
             })),
           ),
         }, (t.saveFailed as string) || "The change could not be saved.");
-        collected.push(
+        variantWarnings.push(
           ...warnings.map((code) => nameStockWarning(variantId, (t.warnings?.[code] as string) || code)),
         );
       }
@@ -667,7 +718,7 @@ export function CommerceDataProvider({
           },
           (t.saveFailed as string) || "The change could not be saved.",
         );
-        collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
+        variantWarnings.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
       }
 
       if (dirtyChannels.toPublish.length > 0 || dirtyChannels.toUnpublish.length > 0) {
@@ -682,21 +733,71 @@ export function CommerceDataProvider({
           },
           (t.saveFailed as string) || "The change could not be saved.",
         );
-        collected.push(...warnings.map((code) => t.warnings?.[code] || code));
+        channelWarnings.push(...warnings.map((code) => t.warnings?.[code] || code));
       }
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
-    // Deduped: an identical sentence repeated once per variant is a wall of
-    // the same line, and where the sentence is per-variant it now carries the
-    // title, so it is no longer identical.
-    setNotices([...new Set(collected)]);
+    /**
+     * What each half did, said under that half.
+     *
+     * Deduped: an identical sentence repeated once per variant is a wall of
+     * the same line, and where the sentence is per-variant it now carries the
+     * title, so it is no longer identical.
+     *
+     * A surface that had work and produced NO warning says so, and that line
+     * is the whole point of the pair. The save bar disappearing is the other
+     * half of the answer, but it disappears for a save that wrote nothing too
+     * — so on its own it cannot tell "your stock is on Shopify" from "the
+     * panel dropped what you typed". `success` is an ANSWER, not decoration:
+     * the merchant who asked whether this saves anything at all was reading a
+     * screen that never said either way.
+     */
+    const confirmation = (surface: CommerceNoticeSurface): CommerceNotice => ({
+      surface,
+      tone: "success",
+      text: (t.saveConfirmed as string) || "Saved.",
+    });
+    const noticesForSave: CommerceNotice[] = [
+      ...[...new Set(variantWarnings)].map(
+        (text): CommerceNotice => ({ surface: "variants", tone: "warning", text }),
+      ),
+      ...[...new Set(channelWarnings)].map(
+        (text): CommerceNotice => ({ surface: "channels", tone: "warning", text }),
+      ),
+    ];
+    if (variantWork && variantWarnings.length === 0) noticesForSave.push(confirmation("variants"));
+    if (channelWork && channelWarnings.length === 0) noticesForSave.push(confirmation("channels"));
+    setNotices(noticesForSave);
     // Reload either way. On success it confirms; on a refused write it shows
     // the number that actually moved — and then KEEPS the merchant's input,
     // because that is exactly the case where they need it.
-    load({ keepEdits: collected.length > 0 });
+    load({ keepEdits: variantWarnings.length + channelWarnings.length > 0 });
   }, [data, hasChanges, dirtyPrices, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, postIsolated, productId, load, t]);
+
+  /**
+   * A confirmation is a moment; a warning is a state.
+   *
+   * "Saved." answers a question the merchant asked by pressing the button, and
+   * once they have read it, it is a banner sitting over a screen where nothing
+   * is wrong. Warnings are left exactly where they are — those name work that
+   * did NOT land, and the save bar is still up because of them.
+   */
+  useEffect(() => {
+    if (!notices.some((notice) => notice.tone === "success")) return;
+    // NOT while the reload the save started is still in flight. `load()` blanks
+    // `data`, the cards render a spinner, and a timer begun at `setNotices`
+    // would spend its seconds over a panel showing nothing — on a slow shop
+    // the confirmation expires before it is ever on screen, which leaves
+    // exactly the silence it was added to break. `loadError` counts as
+    // arrived: the card renders then too.
+    if (!data && !loadError) return;
+    const timer = setTimeout(() => {
+      setNotices((current) => current.filter((notice) => notice.tone !== "success"));
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [notices, data, loadError]);
 
   /**
    * The editor's save bar drives this panel. Registered rather than lifted:
@@ -734,11 +835,11 @@ export function CommerceDataProvider({
       registerCommerceSave(null);
       return;
     }
-    registerCommerceSave({ hasChanges, save, discard });
+    registerCommerceSave({ hasChanges, saving, save, discard });
     // Unregistering on unmount matters: a stale `save` bound to the previous
     // product would otherwise write that product's numbers.
     return () => registerCommerceSave(null);
-  }, [registerCommerceSave, hasChanges, save, discard, isPrimaryLocale, planBlocked]);
+  }, [registerCommerceSave, hasChanges, saving, save, discard, isPrimaryLocale, planBlocked]);
 
   /**
    * Read off `channelState`, not off the loaded rows: an untick has to move
