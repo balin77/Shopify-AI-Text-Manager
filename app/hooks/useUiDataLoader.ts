@@ -166,6 +166,11 @@ export interface UseUiDataLoaderReturn {
   /** When user clicks ReloadButton */
   onRefresh: (itemId: string | null) => void;
 
+  /** After a BACKGROUND re-translation this save started has finished and the
+   *  loader has been re-read. See the implementation for why it clears exactly
+   *  these two refs and leaves the primary cache alone. */
+  onBackgroundRetranslation: () => void;
+
   /** After resolveAll() completes — sets unified baseline and keeps legacy refs in sync */
   onDataLoaded: (values: Record<string, string>) => void;
 
@@ -291,6 +296,45 @@ export function getItemFieldValue(
   };
 
   return fieldMappings[fieldKey] || "";
+}
+
+/**
+ * What a BACKGROUND refresh may put on screen: the freshly resolved server
+ * values, except in the fields the merchant has typed in and not saved.
+ *
+ * Pure and exported because it is the one rule of this whole mechanism that
+ * holds under every circumstance — the reload reads, it never writes, and it
+ * never eats input. The reload is already deferred while the editor is dirty
+ * (see `useUnifiedContentEditor`), so in practice this changes nothing; it
+ * exists for the keystroke that lands between that decision and the re-resolve.
+ *
+ * `previousBaseline` is the baseline the current input is dirty AGAINST, i.e.
+ * the one captured BEFORE `onDataLoaded` installs the new values. Comparing
+ * against the new one would find every field clean and quietly discard the
+ * edit.
+ *
+ * The caller must still set the baseline from `resolved`, NEVER from what this
+ * returns: the baseline is what change detection compares against, so writing a
+ * preserved edit into it would mark that edit as already saved and the merchant
+ * could never save it.
+ */
+export function preserveUnsavedEdits(
+  resolved: Record<string, string>,
+  current: Record<string, string>,
+  previousBaseline: Record<string, string>,
+): { values: Record<string, string>; preservedKeys: string[] } {
+  const values: Record<string, string> = { ...resolved };
+  const preservedKeys: string[] = [];
+  for (const key of Object.keys(current)) {
+    const value = current[key];
+    if (value === undefined) continue;
+    // A field the merchant never touched matches the baseline it was loaded
+    // with, and takes the server's new value. Anything else is their input.
+    if (value === previousBaseline[key]) continue;
+    values[key] = value;
+    preservedKeys.push(key);
+  }
+  return { values, preservedKeys };
 }
 
 // ============================================================================
@@ -944,6 +988,45 @@ export function useUiDataLoader(
     deletedTranslationKeysRef.current.clear();
   }, []);
 
+  /**
+   * The detached re-translation the merchant's own primary save started
+   * (`reconcileAfterPrimarySave`) has finished, and the loader has just been
+   * re-read. The SERVER now holds the truth about every foreign value of this
+   * item, and two of the overlays here would hide it.
+   *
+   * `deletedTranslationKeysRef` is the load-bearing one: a primary save adds
+   * every changed field's translation key to it ("show empty, even if a
+   * revalidation brings the value back"), which is exactly right while the
+   * server is deleting those translations — and exactly wrong the moment the AI
+   * has written new ones. Left standing it turns the feature into its own
+   * symptom: the languages the run just filled keep rendering empty, which is
+   * the complaint this whole mechanism answers. `onSaveComplete` clears it on
+   * the save response, so in practice it is already empty here; clearing it
+   * again costs nothing and means a future save path that keeps entries past
+   * its response cannot silently re-introduce the bug.
+   *
+   * `localTranslationsRef` is dropped for the same reason one level down: every
+   * value in it mirrors something the server already stores (a saved foreign
+   * value, or a translate-to-all-locales run that registered on Shopify before
+   * answering), so re-reading it from the loader can only be more current — and
+   * a stale entry for a locale the AI has just rewritten would win over the new
+   * text and be written straight back by the next save.
+   *
+   * `savedPrimaryValuesRef` is deliberately NOT touched: it holds what the
+   * merchant just saved in the PRIMARY locale, which the AI never writes and
+   * the loader may not have caught up with yet. `resolveAll` retires it by
+   * itself once the server agrees.
+   *
+   * Nothing here reads or writes `editableValues` — the caller owns the
+   * merchant's unsaved input, and the refresh is only ever allowed to run when
+   * there is none (see `useUnifiedContentEditor`).
+   */
+  const onBackgroundRetranslation = useCallback(() => {
+    debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
+    deletedTranslationKeysRef.current.clear();
+    localTranslationsRef.current = {};
+  }, []);
+
   // ---------------------------------------------------------------------------
   // DEBUG
   // ---------------------------------------------------------------------------
@@ -974,6 +1057,7 @@ export function useUiDataLoader(
     onTranslateFieldToAllLocalesComplete,
     onItemSwitch,
     onRefresh,
+    onBackgroundRetranslation,
     refs: {
       localTranslationsRef,
       deletedTranslationKeysRef,

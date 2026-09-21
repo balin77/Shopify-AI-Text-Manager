@@ -66,6 +66,7 @@ import {
 } from "./translations/translation-change-policy.server";
 import { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } from "./bulk-editor/translations.server";
 import { logger } from "../utils/logger.server";
+import { collectRetranslationTaskIds } from "./translations/retranslation-tasks.shared";
 
 // No prose and no non-ASCII inside a #graphql literal (CLAUDE.md).
 
@@ -172,6 +173,12 @@ export interface MenuTreeSaveResult {
   /** Link GIDs whose translations were purged because their primary text changed. */
   purgedLinkIds: string[];
   purgedTranslationCount: number;
+  /**
+   * The Task row a rename handed the detached re-translation to, so the page
+   * can reload once the new titles are in. A menu has no webhook and no sync,
+   * so this response is the only thing that will ever mention the run.
+   */
+  retranslationTaskIds?: string[];
   message?: string;
 }
 
@@ -442,6 +449,8 @@ export async function saveMenuTree(
   let policy: TranslationChangePolicy | null = null;
   /** Did the repair actually take responsibility for these renames? */
   let repairDidSomething = false;
+  /** The Task row it started, if any — see `MenuTreeSaveResult`. */
+  const retranslationTaskIds: string[] = [];
   if (renamedOnly.length > 0 && foreignLocales.length > 0) {
     try {
       policy = await loadTranslationChangePolicy(shop, db);
@@ -507,6 +516,7 @@ export async function saveMenuTree(
       // no sync, so "nothing happened" means the stale title stays live for
       // good; the deletion this branch replaces has to take over instead.
       repairDidSomething = outcome.removed > 0 || outcome.retranslating > 0;
+      if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
     } catch (error) {
       // Never fail the save over the repair: the tree write has already gone
       // through, and a thrown error here would report it as broken.
@@ -628,5 +638,6 @@ export async function saveMenuTree(
     translationRepair,
     purgedLinkIds,
     purgedTranslationCount,
+    retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
   };
 }

@@ -515,6 +515,9 @@ export default function ProductsPage() {
     primaryLocale,
     selectedMarketId: editor.state.selectedMarketId,
     revalidator,
+    // The sub-resource save has its own fetcher, so its detached
+    // re-translation is handed to the editor's ONE watcher from here.
+    onSaveResponse: editor.helpers.trackRetranslationTasks,
     showInfoBox,
     enabledLanguages: editor.state.enabledLanguages,
     strings: {

@@ -8,6 +8,7 @@ import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../a
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
 import { featuredAltLockId, marketLayerLockId } from '../../app/services/translations/translation-locks.shared';
+import { collectRetranslationTaskIds } from '../../app/services/translations/retranslation-tasks.shared';
 import { isAuthError, localeName } from './ai.service';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
@@ -1604,6 +1605,14 @@ export class ShopifyContentService {
           ? await loadTranslationChangePolicy(shop, db)
           : null;
 
+      /**
+       * The Task rows this ONE save handed a detached re-translation to. A
+       * content save can start TWO — the resource's own fields and its featured
+       * alt text — so it is a list from the start rather than a field that the
+       * second repair would have to overwrite.
+       */
+      const retranslationTaskIds: string[] = [];
+
       // Does an automatic re-translation reach THIS resource's own fields?
       // With auto-translate on the answer is now yes for EVERY type this
       // service saves, the webhook-backed Collection included: the repair is
@@ -1801,7 +1810,7 @@ export class ShopifyContentService {
             const { reconcileAfterPrimarySave, featuredImageAltMirror } = await import(
               "../../app/services/translations/stale-translation-sync.server"
             );
-            await reconcileAfterPrimarySave({
+            const altOutcome = await reconcileAfterPrimarySave({
               client: this.admin,
               shop,
               // The GROUP is the collection / article the merchant saved; the
@@ -1827,6 +1836,10 @@ export class ShopifyContentService {
                 sourceLocale: primaryLocale,
               },
             });
+            // The run is DETACHED, so its Task id is the only thing the page
+            // can wait on. Without it the editor showed empty foreign alt texts
+            // for translations that were merely in flight.
+            if (altOutcome.taskId) retranslationTaskIds.push(altOutcome.taskId);
           }
         } catch (altError: unknown) {
           loggers.translation('warn', '[updateContent] Featured alt re-translation failed — translation kept', {
@@ -1844,7 +1857,7 @@ export class ShopifyContentService {
           const { reconcileAfterPrimarySave } = await import(
             "../../app/services/translations/stale-translation-sync.server"
           );
-          await reconcileAfterPrimarySave({
+          const contentOutcome = await reconcileAfterPrimarySave({
             client: this.admin,
             shop,
             resourceId,
@@ -1870,6 +1883,7 @@ export class ShopifyContentService {
             // doing anything, while the purge above has already stood down.
             policy: changePolicy!,
           });
+          if (contentOutcome.taskId) retranslationTaskIds.push(contentOutcome.taskId);
         } catch (retranslateError: unknown) {
           loggers.translation('warn', '[updateContent] Re-translation after primary save failed — translations kept', {
             resourceId,
@@ -1887,9 +1901,14 @@ export class ShopifyContentService {
           success: true,
           item: updatedResource,
           warning: `Saved, but these details could not be applied because their value was not recognised: ${rejectedAttributes.join(", ")}.`,
+          retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
         };
       }
-      return { success: true, item: updatedResource };
+      return {
+        success: true,
+        item: updatedResource,
+        retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+      };
     }
   }
 

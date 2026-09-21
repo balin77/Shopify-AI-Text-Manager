@@ -36,6 +36,7 @@
 
 import { data as json } from "react-router";
 import { logger } from "../../utils/logger.server";
+import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { getFormString } from "../../utils/form-data.utils";
 import { safeJsonParse } from "../../utils/validation";
@@ -207,6 +208,11 @@ export async function handleMetaobjectUpdate(
   // getForeignLocales() reads it, and a `let` further down would still be in
   // its temporal dead zone at that point.
   let foreignLocalesCache: string[] | null = null;
+  /** The Task row `repairForeign` handed the detached re-translation to — one
+   *  group for the whole save, so at most one. It travels back so the page can
+   *  reload once the AI is through: a metaobject field is outside every sync
+   *  and every webhook here, so nothing else would ever tell it. */
+  const retranslationTaskIds: string[] = [];
 
   const written = locale === primaryLocale
     ? await savePrimary()
@@ -225,7 +231,11 @@ export async function handleMetaobjectUpdate(
     fields: written,
     locale,
   });
-  return json({ success: true, actionType: "updateContent" });
+  return json({
+    success: true,
+    actionType: "updateContent",
+    retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+  });
 
   // ── 3a. Primary locale: the entry's own field values ────────────────────
   async function savePrimary(): Promise<number> {
@@ -412,7 +422,7 @@ export async function handleMetaobjectUpdate(
           entryIdsInSave.map((id) => [id, entries.get(id)?.type ?? ""] as const),
         );
         const types = [...new Set([...typeById.values()].filter(Boolean))];
-        await reconcileAfterPrimarySave({
+        const outcome = await reconcileAfterPrimarySave({
           client: admin,
           shop: session.shop,
           // The group's own id is only the Task row's and the in-flight key's;
@@ -446,6 +456,7 @@ export async function handleMetaobjectUpdate(
             sourceLocale: primaryLocaleCache,
           },
         });
+        if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
         return;
       }
 

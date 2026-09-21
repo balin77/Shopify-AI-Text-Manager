@@ -28,6 +28,7 @@ import {
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { altTextLockId, marketLayerLockId } from "~/services/translations/translation-locks.shared";
+import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 // THE field to translation-key map (CLAUDE.md: never re-declare it — the
 // historic local copies drifted).
 import { FIELD_TO_TRANSLATION_KEY } from "../../../src/services/shopify-content.service";
@@ -958,6 +959,15 @@ async function updatePrimaryProduct(
     );
   }
 
+  /**
+   * The Task rows this ONE save handed a detached re-translation to. A product
+   * save can start TWO of them — its own content fields and its alt texts, two
+   * groups and two rows — and the sub-resource save adds a third from its own
+   * action. They travel back so the page can stop showing empty foreign fields
+   * for translations that are merely in flight.
+   */
+  const retranslationTaskIds: string[] = [];
+
   // Build mutation input — every field is omitted unless the client sent it, so
   // an unsent field is left untouched on Shopify instead of being cleared.
   // (productType additionally honours changedFields: sending "" CLEARS it.)
@@ -1547,7 +1557,7 @@ async function updatePrimaryProduct(
         const { reconcileAfterPrimarySave } = await import(
           "~/services/translations/stale-translation-sync.server"
         );
-        await reconcileAfterPrimarySave({
+        const contentOutcome = await reconcileAfterPrimarySave({
           client: gateway,
           shop,
           resourceId: productId,
@@ -1563,6 +1573,7 @@ async function updatePrimaryProduct(
           foreignLocales: altForeignLocales,
           policy: changePolicy!,
         });
+        if (contentOutcome.taskId) retranslationTaskIds.push(contentOutcome.taskId);
       }
     } catch (repairError: unknown) {
       loggers.product("warn", "Auto-translation of the changed fields could not start", {
@@ -1775,7 +1786,7 @@ async function updatePrimaryProduct(
           const { reconcileAfterPrimarySave, productImageAltMirror } = await import(
             "~/services/translations/stale-translation-sync.server"
           );
-          await reconcileAfterPrimarySave({
+          const altOutcome = await reconcileAfterPrimarySave({
             client: gateway,
             shop,
             resourceId: productId,
@@ -1813,6 +1824,7 @@ async function updatePrimaryProduct(
               sourceLocale: primaryLocale,
             },
           });
+          if (altOutcome.taskId) retranslationTaskIds.push(altOutcome.taskId);
         }
       }
     } catch (retranslateError: unknown) {
@@ -1826,6 +1838,7 @@ async function updatePrimaryProduct(
   return json({
     success: true,
     product: data.data.productUpdate.product,
+    retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
     // §Phase 3.1 — a rule-based membership the picker asked to remove was
     // kept. Reported rather than silent: the merchant unticked a box and the
     // product is still in the collection, and only this line explains why.

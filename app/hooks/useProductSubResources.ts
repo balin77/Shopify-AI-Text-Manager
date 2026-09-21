@@ -149,6 +149,17 @@ interface UseProductSubResourcesProps {
   /** @deprecated No longer used — hook creates its own fetcher to avoid shared-fetcher race conditions */
   fetcher?: FetcherWithComponents<any>;
   revalidator?: { revalidate: () => void; state: string };
+  /**
+   * Every response of this hook's OWN fetcher, handed to the editor's single
+   * background-task watcher.
+   *
+   * The sub-resource save starts its own detached re-translation (a product's
+   * options, option values and metafields are one group and one Task row), and
+   * this fetcher is deliberately separate from the editor's — so without this
+   * the one surface whose translations have neither a webhook nor a sync would
+   * be the only one nothing ever waited for.
+   */
+  onSaveResponse?: (response: unknown) => void;
   showInfoBox?: (message: string, tone?: "success" | "info" | "warning" | "critical") => void;
   strings?: UseProductSubResourcesStrings;
 }
@@ -242,6 +253,7 @@ export function useProductSubResources({
   selectedMarketId = "",
   enabledLanguages = [],
   revalidator,
+  onSaveResponse,
   showInfoBox,
   strings = {},
 }: UseProductSubResourcesProps): { state: SubResourceState; handlers: SubResourceHandlers } {
@@ -618,6 +630,9 @@ export function useProductSubResources({
     }
 
     if (data.actionType === "savePrimarySubResources") {
+      // Offered whatever the outcome: a save can fail for one option and still
+      // have started the repair for the others.
+      onSaveResponse?.(data);
       const failedOptions = data.failedOptions || [];
       const failedMetafields = data.failedMetafields || [];
       // Create, delete and reorder failures have no id to report under, so

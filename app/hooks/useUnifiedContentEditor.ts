@@ -7,13 +7,15 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useBackgroundTaskRefresh } from "./useBackgroundTaskRefresh";
+import { readRetranslationTaskIds } from "../services/translations/retranslation-tasks.shared";
 import { useRevalidator } from "react-router";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { useEditorImageManagement } from "./useEditorImageManagement";
 import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
-import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
+import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, preserveUnsavedEdits } from "./useUiDataLoader";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -660,6 +662,117 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   });
 
   // ============================================================================
+  // BACKGROUND RE-TRANSLATION — the detached run this save started
+  // ============================================================================
+  //
+  // With `autoTranslateExternalChanges` on, a primary save hands the foreign
+  // languages to an AI run that takes seconds to minutes and finishes long
+  // after the response (`reconcileAfterPrimarySave`). Nothing told this page
+  // when, so the merchant sat in front of empty foreign fields for translations
+  // that were already on their way. The save response carries the run's Task
+  // id; `useBackgroundTaskRefresh` watches it and asks for ONE reload.
+  //
+  // It READS ONLY. No form is submitted, no value is written, and no comparison
+  // baseline or undo history is touched — the whole mechanism is a revalidation
+  // plus a re-resolve of the fields from the fresh loader data.
+
+  /** A reload has been asked for and the revalidation is under way; the
+   *  re-resolve happens once the loader data has actually landed. */
+  const backgroundRefreshPendingRef = useRef(false);
+  /** Consumed by the data-loading effect: THIS run is a background refresh, not
+   *  a ReloadButton press, and must not discard the merchant's caches wholesale
+   *  or overwrite a field they are typing in. */
+  const backgroundRefreshActiveRef = useRef(false);
+  /**
+   * The runs this SESSION started that have not been seen finished — a union
+   * across saves, exactly like the grid's. A merchant saves again while the
+   * first run is still working, and the second save may start none at all; a
+   * watch over only the newest list would drop the first one's ids and its
+   * translations would land with nothing reloading the editor.
+   */
+  const [watchedTaskIds, setWatchedTaskIds] = useState<string[]>([]);
+  const pendingRetranslationCount = watchedTaskIds.length;
+  /**
+   * Every response this editor's fetcher sees is offered here — one call rather
+   * than one per action type, because a response with no task ids adds nothing
+   * and a surface that started no run must not poll at all.
+   */
+  const trackRetranslationTasks = useCallback((response: unknown) => {
+    const ids = readRetranslationTaskIds(response);
+    if (ids.length === 0) return;
+    setWatchedTaskIds((prev) => [...new Set([...prev, ...ids])]);
+  }, []);
+
+  /**
+   * A reload the editor was not ready for is REMEMBERED, not dropped: the watch
+   * reports every id exactly once, so a refusal that forgot it would lose the
+   * reload for good.
+   */
+  const refreshOwedRef = useRef(false);
+  const [refreshAttempt, setRefreshAttempt] = useState(0);
+  useBackgroundTaskRefresh(watchedTaskIds, ({ settled, follow }) => {
+    const done = new Set(settled);
+    setWatchedTaskIds((prev) => [
+      ...new Set([...prev.filter((id) => !done.has(id)), ...follow]),
+    ]);
+    // Per batch, not once at the end: a product's three repair groups finish
+    // minutes apart, and holding the reload for the slowest would keep showing
+    // empty fields for translations that landed long ago.
+    if (settled.length > 0) {
+      refreshOwedRef.current = true;
+      setRefreshAttempt((n) => n + 1);
+    }
+  });
+
+  /**
+   * While the merchant has UNSAVED work the page may not be re-read at all.
+   * This is the one rule that holds under every circumstance, and it is wider
+   * than the dirty-field merge below on purpose: a staged translation for a
+   * language that is not on screen lives only in the overlay refs, where no
+   * merge can see it, so the safe answer is to wait until the editor is clean.
+   * A save in flight is the same question one moment earlier — re-reading the
+   * server mid-write shows the state before it.
+   */
+  const canBackgroundRefresh =
+    !hasChanges && fetcher.state === "idle" && revalidator.state === "idle";
+  useEffect(() => {
+    if (!refreshOwedRef.current) return;
+    if (!canBackgroundRefresh) return;
+    refreshOwedRef.current = false;
+    backgroundRefreshPendingRef.current = true;
+    try {
+      revalidatorRef.current.revalidate();
+    } catch {
+      // An AbortError from the Shopify admin interfering is not a failure of
+      // this refresh — put the debt back and let the next change re-run this.
+      backgroundRefreshPendingRef.current = false;
+      refreshOwedRef.current = true;
+    }
+    // `canBackgroundRefresh` is what re-runs this once the merchant saves or
+    // discards; the attempt counter is what re-runs it when a second batch
+    // settles while the editor was already clean.
+  }, [canBackgroundRefresh, refreshAttempt]);
+
+  // The revalidation has landed. Force a re-resolve even on a surface whose
+  // `item.translations` fingerprint did not move — a metaobject field, a theme
+  // key, an option name and an alt text all live outside it, so the signals the
+  // data-loading effect normally watches would never notice that the AI wrote
+  // anything at all.
+  useEffect(() => {
+    if (revalidator.state !== "idle") return;
+    if (!backgroundRefreshPendingRef.current) return;
+    backgroundRefreshPendingRef.current = false;
+    backgroundRefreshActiveRef.current = true;
+    // The revalidation's own fresh translations may already have re-run the
+    // data-loading effect once, in normal mode and with the stale overlays
+    // still in place. That run settles at whatever the overlays say and this
+    // one then corrects it — the visible cost is at most one frame, and both
+    // runs start from an editor with nothing unsaved (the refresh is deferred
+    // otherwise), so nothing of the merchant's is at stake in between.
+    setDataRefreshTrigger((prev) => prev + 1);
+  }, [revalidator.state]);
+
+  // ============================================================================
   // SUB-HOOK: useEditorAutoSave
   // ============================================================================
 
@@ -767,7 +880,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
     prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
 
-    if (refreshTriggered) {
+    // A refresh this page asked for AFTER a background re-translation finished
+    // is not a ReloadButton press, and the two differ in both directions.
+    //
+    // The flag is consumed ONLY by the run the trigger caused. The revalidation
+    // that precedes it re-runs this effect on its own (its fresh
+    // `item.translations` move the signal), and clearing the flag there handed
+    // the trigger's run to the ReloadButton branch instead: the primary cache
+    // would be dropped, an unsaved keystroke overwritten, and theme content
+    // would early-return without re-resolving at all — leaving the narrow path
+    // working only on the surfaces that live outside `item.translations`.
+    const isBackgroundRefresh = refreshTriggered && backgroundRefreshActiveRef.current;
+    if (refreshTriggered) backgroundRefreshActiveRef.current = false;
+
+    if (refreshTriggered && !isBackgroundRefresh) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
       dataLoader.onRefresh(selectedItemId);
 
@@ -779,6 +905,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         debugLog.dataLoad(' Templates refresh - skip stale data load, page-level effect handles update');
         return;
       }
+    } else if (isBackgroundRefresh) {
+      // Its OWN, narrower reset: the foreign overlays go (the server has just
+      // rewritten those languages and would otherwise lose to a stale entry —
+      // see `onBackgroundRetranslation`), the primary cache stays. Nothing was
+      // reloaded from an API here either, so the theme early return above does
+      // not apply: the loader data this re-resolves from IS the fresh data.
+      debugLog.dataLoad(' Data refresh after a background re-translation');
+      dataLoader.onBackgroundRetranslation();
     }
 
     // Mark as loading immediately
@@ -818,7 +952,35 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update the unified baseline and legacy refs via onDataLoaded.
     // This is the single authoritative update point — never update these refs
     // directly in save-response handlers (see "DO NOT REMOVE" comments below).
+    //
+    // The BASELINE is always the resolved SERVER values, even where a field on
+    // screen keeps a different one below: the baseline is what change detection
+    // compares against, so writing a preserved edit into it would mark that
+    // edit as saved and the merchant could never save it again.
+    // Captured BEFORE onDataLoaded overwrites it — it is the baseline the
+    // merchant's current input is dirty against, and comparing against the one
+    // this very call installs would find every field clean.
+    const previousBaseline = isBackgroundRefresh ? { ...baselineValuesRef.current } : null;
     dataLoader.onDataLoaded(newValues);
+
+    if (isBackgroundRefresh && previousBaseline) {
+      // Defence in depth for the one rule that holds under all circumstances:
+      // a field the merchant has typed in and not saved keeps what they typed.
+      // The refresh only runs while the editor is clean (see the deferral in
+      // the background-refresh callback), so this normally changes nothing —
+      // but a keystroke can land between that decision and this effect, and
+      // losing it would be the automation quietly eating merchant input.
+      const { values: merged, preservedKeys } = preserveUnsavedEdits(
+        newValues,
+        editableValuesRef.current,
+        previousBaseline,
+      );
+      if (preservedKeys.length > 0) {
+        debugLog.dataLoad(` Background refresh preserved ${preservedKeys.length} unsaved field(s)`);
+      }
+      setEditableValues(merged);
+      return;
+    }
 
     setEditableValues(newValues);
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
@@ -2567,6 +2729,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isFieldLoading,
       getValidationOverlays,
       validationVersion: baselineVersion,
+      /**
+       * Hand a save response from a fetcher this hook does NOT own to the ONE
+       * background-task watcher. The product page's sub-resource save is the
+       * case that needs it: it runs on its own fetcher (deliberately — a shared
+       * one would let one response prune the other's bookkeeping), so its
+       * re-translation task ids would otherwise never be watched by anything.
+       * A response without ids is ignored, so it is always safe to call.
+       */
+      trackRetranslationTasks,
+      /** Watched runs that have not finished — for a quiet "still writing the
+       *  translations" hint. Nothing is required to render it. */
+      pendingRetranslationCount,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

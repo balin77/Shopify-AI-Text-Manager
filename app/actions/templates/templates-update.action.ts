@@ -2,6 +2,7 @@ import { data as json } from "react-router";
 import { ENABLE_THEME_PRIMARY_EDIT } from "~/config/constants";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
+import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
@@ -143,6 +144,11 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   }
 
   const skippedKeys: string[] = [];
+  /** The Task row this save handed the detached re-translation to — one group
+   *  for the whole theme group, so at most one. Theme content has no webhook
+   *  and no sync-side detection, so this response is the page's only chance to
+   *  learn that a run is under way. */
+  const retranslationTaskIds: string[] = [];
   const noDigestKeys: string[] = [];
   const failedDeleteKeys: string[] = [];
   const shopifyErrors: string[] = [];
@@ -1035,7 +1041,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           const { reconcileAfterPrimarySave, themeTranslationMirror } = await import(
             "~/services/translations/stale-translation-sync.server"
           );
-          await reconcileAfterPrimarySave({
+          const outcome = await reconcileAfterPrimarySave({
             client: admin,
             shop: session.shop,
             // The GROUP is the theme group the merchant saved; each key names
@@ -1090,6 +1096,10 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               sourceLocale: primaryLocale,
             },
           });
+          // Detached, so its Task id is the page's only handle on it. Theme
+          // content has no webhook and no sync-side detection, so without this
+          // nothing at all would tell the editor the new texts had landed.
+          if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
         }
       } catch (retranslateError) {
         logger.warn("[TEMPLATES] Theme re-translation failed — translations kept", {
@@ -1195,5 +1205,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     }
   }
 
-  return json({ success: true, actionType: "updateContent" });
+  return json({
+    success: true,
+    actionType: "updateContent",
+    retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+  });
 }

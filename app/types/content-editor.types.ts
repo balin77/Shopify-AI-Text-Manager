@@ -665,6 +665,15 @@ export interface UseContentEditorReturn {
     getValidationOverlays: () => ValidationOverlays;
     /** Increments whenever overlays change — use as useMemo dependency to trigger recomputation */
     validationVersion: number;
+    /**
+     * Hand a save response from a fetcher the editor does NOT own to the ONE
+     * background-task watcher, so the detached re-translation it started is
+     * waited for like any other. A response with no task ids is ignored, so
+     * this is always safe to call.
+     */
+    trackRetranslationTasks: (response: unknown) => void;
+    /** Watched re-translation runs that have not finished yet. */
+    pendingRetranslationCount: number;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */

@@ -49,6 +49,8 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef, type ReactElement } from "react";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
+import { useBackgroundTaskRefresh } from "~/hooks/useBackgroundTaskRefresh";
+import { readRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import {
   Page,
   Card,
@@ -551,6 +553,10 @@ export default function MenusPage() {
     translationRepair: { restored: number; failed: Array<{ linkId: string; message: string }> };
     purgedLinkIds: string[];
     purgedTranslationCount: number;
+    /** The detached re-translation a rename started, so this page can reload
+     *  once the new titles are in — a menu has no webhook and no sync, so
+     *  nothing else would ever mention it. */
+    retranslationTaskIds?: string[];
     message?: string;
   };
 
@@ -906,6 +912,67 @@ export default function MenusPage() {
     fetcher.submit(fd, { method: "post" });
   }, [changeCount, changesByLocale, treeProblems, treeChanged, tree, menuFingerprint, selectedMenuId, fetcher]);
 
+  /**
+   * The detached re-translation a RENAME starts, and the reload it earns.
+   *
+   * A menu has no webhook and no sync, so this page's own save response is the
+   * only thing that will ever mention the run — and until it finished, the
+   * foreign title fields sat empty for translations that were on their way.
+   * The grid has had this since the bulk editor learned to watch its own runs;
+   * this is the same watch on the surface with the least to fall back on.
+   *
+   * A UNION across saves, like the grid's: a merchant can save again while the
+   * previous rename's run is still working, and watching only the newest list
+   * would drop the first one's ids.
+   */
+  const [watchedTaskIds, setWatchedTaskIds] = useState<string[]>([]);
+  const trackRetranslationTasks = useCallback((response: unknown) => {
+    const ids = readRetranslationTaskIds(response);
+    if (ids.length === 0) return;
+    setWatchedTaskIds((prev) => [...new Set([...prev, ...ids])]);
+  }, []);
+  /**
+   * A reload the page was not ready for is REMEMBERED, not dropped: the watch
+   * reports each id once, so a refusal that forgot it would lose the reload for
+   * good.
+   */
+  const refreshOwedRef = useRef(false);
+  const [refreshAttempt, setRefreshAttempt] = useState(0);
+  useBackgroundTaskRefresh(watchedTaskIds, ({ settled, follow }) => {
+    const done = new Set(settled);
+    setWatchedTaskIds((prev) => [
+      ...new Set([...prev.filter((id) => !done.has(id)), ...follow]),
+    ]);
+    if (settled.length > 0) {
+      refreshOwedRef.current = true;
+      setRefreshAttempt((n) => n + 1);
+    }
+  });
+  /**
+   * DEFERRED while anything is unsaved, and here that rule protects more than
+   * the usual unsaved field: a revalidation re-reads the tree, and a draft
+   * whose tree moved underneath it is DROPPED by design further down. Reloading
+   * under a merchant who is mid-drag would throw their whole reordering away.
+   * So it waits and tries again, and the reload lands as soon as they have
+   * saved or discarded.
+   */
+  const canRefresh =
+    changeCount === 0 &&
+    !treeChanged &&
+    Object.keys(treeDrafts).length === 0 &&
+    fetcher.state === "idle" &&
+    autoFetcher.state === "idle" &&
+    revalidator.state === "idle";
+  useEffect(() => {
+    if (!refreshOwedRef.current) return;
+    if (!canRefresh) return;
+    refreshOwedRef.current = false;
+    revalidator.revalidate();
+    // `canRefresh` is what re-runs this once the merchant is done editing; the
+    // attempt counter is what re-runs it when a second batch settles while the
+    // page was already clean.
+  }, [canRefresh, refreshAttempt, revalidator]);
+
   const onDiscard = useCallback(() => {
     // Only what this save bar would have written. The bar appears for the
     // VISIBLE menu, so discarding edits parked in another menu would throw
@@ -965,6 +1032,10 @@ export default function MenusPage() {
   useEffect(() => {
     const tree = fetcher.data?.tree;
     if (!tree) return;
+    // A rename with auto-translate on hands the foreign titles to a detached AI
+    // run. Watch it, so the page shows the new titles instead of the empty
+    // fields the merchant would otherwise read as the feature being broken.
+    trackRetranslationTasks(tree);
     setTreeResult(tree);
     if (tree.status !== "ok") return;
     const submitted = submittedTreeRef.current;

@@ -11,6 +11,7 @@ import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
+import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
 import { parseValueOrderPayload } from "~/services/product-options.shared";
 import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
@@ -856,6 +857,11 @@ export async function handleSavePrimarySubResources(
     );
     /** Failure CODES from the option writes — phrased by the client. */
     const optionWarnings: string[] = [];
+    /** The Task row this save handed the detached re-translation to (one group
+     *  for the whole product, so at most one) — on its way back to the page so
+     *  it can reload once the AI is through instead of leaving the merchant in
+     *  front of empty translations that are merely in flight. */
+    const retranslationTaskIds: string[] = [];
     /** Create / delete / reorder failures. They have no option id to report
      *  under, so they are counted here -- see the response below. */
     let structuralFailures = 0;
@@ -1351,7 +1357,7 @@ export async function handleSavePrimarySubResources(
           const { reconcileAfterPrimarySave } = await import(
             "~/services/translations/stale-translation-sync.server"
           );
-          await reconcileAfterPrimarySave({
+          const outcome = await reconcileAfterPrimarySave({
             client: admin,
             shop: session.shop,
             // The GROUP is the product: one Task row the merchant recognises,
@@ -1385,6 +1391,10 @@ export async function handleSavePrimarySubResources(
               sourceLocale: shopPrimaryLocale,
             },
           });
+          // The run is detached, so its Task id is the only handle the page has
+          // on it. Without it a merchant watched an option name's translations
+          // stay empty for the minute the AI was working.
+          if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
         }
       }
       } catch (err) {
@@ -1443,6 +1453,7 @@ export async function handleSavePrimarySubResources(
       failedOptions,
       savedMetafields,
       failedMetafields,
+      retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
     });
   } catch (error: unknown) {
     const msg = getFullErrorMessage(error);
