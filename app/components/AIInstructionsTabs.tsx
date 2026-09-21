@@ -672,17 +672,32 @@ export function AIInstructionsTabs({
                       What stays ON SCREEN is only what says why a switch
                       cannot be operated right now: the plan hint, and the
                       child's "the parent is off". Those are one line each. */}
-                  <ToggleRow
-                    layout="inline"
-                    label={
-                      t.settings.translationPurgeOnPrimaryChange ||
-                      'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'
-                    }
-                    helpKey="translationPurgeOnPrimaryChange"
-                    checked={!autoTranslateActive && localPurgeOnChange}
-                    onChange={setLocalPurgeOnChange}
-                    disabled={readOnly || autoTranslateActive}
-                  />
+                  <BlockStack gap="100">
+                    <ToggleRow
+                      layout="inline"
+                      label={
+                        t.settings.translationPurgeOnPrimaryChange ||
+                        'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'
+                      }
+                      helpKey="translationPurgeOnPrimaryChange"
+                      checked={!autoTranslateActive && localPurgeOnChange}
+                      onChange={setLocalPurgeOnChange}
+                      disabled={readOnly || autoTranslateActive}
+                    />
+                    {/* ONE line, like the two below it: the switch is greyed
+                        and a stored `true` renders unchecked, so without this
+                        the row says nothing about why. The enumeration that
+                        used to stand here — where the re-translation actually
+                        reaches, and where the bulk editor's run cap hands back
+                        to the deletion — is the ❓'s `details` now. A reason,
+                        not an explanation. */}
+                    {autoTranslateActive && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.settings.translationPurgeSupersededNote ||
+                          'Nicht nötig, solange automatisch neu übersetzt wird.'}
+                      </Text>
+                    )}
+                  </BlockStack>
 
                   <BlockStack gap="100">
                     <ToggleRow

@@ -1121,6 +1121,7 @@ export const en: Translation = {
     translationPurgeOnPrimaryChange: "Delete translations when the primary-language text is changed or cleared",
     autoTranslateExternalChanges: "Automatically re-translate texts when the source text changes",
     autoTranslateExternalChangesPlanHint: "Available from the {plan} plan.",
+    translationPurgeSupersededNote: "Not needed while texts are re-translated automatically.",
     autoTranslateHandles: "Also translate URL handles",
     autoTranslateHandlesRequiresParent: "Only possible while texts are re-translated automatically.",
     translationsDescription: "Manage translations for grouping fields (e.g. product type). All products that share a source value must share exactly one translation per target language — otherwise a single category fragments into several in Google Merchant Center.",

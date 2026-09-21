@@ -1,4 +1,13 @@
+/* A ❓ is never a CONTROL — it explains one. So it stays clickable inside a
+   panel that has switched its controls off with `pointer-events: none`: the
+   AI-instructions card renders read-only on Free and Basic exactly that way,
+   and with the explanations behind the ❓ (rather than as body text under the
+   control) an unclickable icon means the text is unreachable by mouse on the
+   plans that can only read it. `pointer-events: auto` on a descendant makes it
+   a hit target again even where an ancestor said `none`; the popover itself is
+   portalled to the document root and was never inside the wrapper. */
 .help-tooltip-trigger {
+  pointer-events: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;

@@ -1104,6 +1104,7 @@ export const es: Translation = {
     translationPurgeOnPrimaryChange: "Eliminar las traducciones cuando el texto del idioma principal se modifica o se borra",
     autoTranslateExternalChanges: "Volver a traducir automáticamente los textos cuando cambia el texto original",
     autoTranslateExternalChangesPlanHint: "Disponible a partir del plan {plan}.",
+    translationPurgeSupersededNote: "No hace falta mientras los textos se vuelven a traducir automáticamente.",
     autoTranslateHandles: "Traducir también los handles de URL",
     autoTranslateHandlesRequiresParent: "Solo es posible mientras los textos se vuelven a traducir automáticamente.",
     translationsDescription: "Gestiona las traducciones de los campos de agrupación (p. ej. tipo de producto). Todos los productos que comparten un mismo valor de origen deben compartir exactamente una traducción por idioma de destino; de lo contrario, una sola categoría se divide en varias en Google Merchant Center.",

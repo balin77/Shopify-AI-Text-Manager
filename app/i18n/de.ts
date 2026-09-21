@@ -1123,6 +1123,7 @@ export const de = {
     translationPurgeOnPrimaryChange: "Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird",
     autoTranslateExternalChanges: "Texte automatisch neu übersetzen, wenn sich der Originaltext ändert",
     autoTranslateExternalChangesPlanHint: "Ab dem {plan}-Plan verfügbar.",
+    translationPurgeSupersededNote: "Nicht nötig, solange automatisch neu übersetzt wird.",
     autoTranslateHandles: "Auch URL-Handles übersetzen",
     autoTranslateHandlesRequiresParent: "Nur möglich, wenn automatisch neu übersetzt wird.",
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
