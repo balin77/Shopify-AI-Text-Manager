@@ -880,7 +880,7 @@ export const de = {
     createdTitle: "\u201e{name}\u201c wurde angelegt",
     createdNotSyncedTitle: "Angelegt — in der Liste noch nicht sichtbar",
     createdNotSyncedBody: "Der Eintrag wurde in Shopify angelegt. Nur die lokale Kopie fehlt noch — lade neu, um ihn zu sehen. Lege ihn NICHT ein zweites Mal an.",
-    createdHandle: "Handle: {handle}",
+    createdHandleChanged: "Shopify hat den Handle als \u201e{handle}\u201c gespeichert \u2014 der gew\u00fcnschte war schon vergeben.",
     createModal: {
       titleFor: "Neu: {resource}",
       removeImage: "Entfernen",

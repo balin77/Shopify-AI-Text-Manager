@@ -862,7 +862,7 @@ export const es: Translation = {
     createdTitle: "\u201c{name}\u201d se ha creado",
     createdNotSyncedTitle: "Creado — todavía no visible en la lista",
     createdNotSyncedBody: "El elemento se creó en Shopify. Solo falta la copia local — recarga para verlo. NO lo crees por segunda vez.",
-    createdHandle: "Handle: {handle}",
+    createdHandleChanged: "Shopify guard\u00f3 el handle como \u201c{handle}\u201d: el que pediste ya estaba ocupado.",
     createModal: {
       titleFor: "Nuevo: {resource}",
       removeImage: "Quitar",

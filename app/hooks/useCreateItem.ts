@@ -21,7 +21,7 @@ type CreateOption = { value: string; label: string; disabled?: boolean; helpText
 type CreateValidationExtraFields = CreateFieldDef[];
 import { evaluateCreateGates, type CreateGateResult } from "../utils/create-gate";
 import { translatableCreateFields } from "../config/create-ai.shared";
-import { createSpecFor } from "../config/create-fields.config";
+import { createSpecFor, suggestHandle } from "../config/create-fields.config";
 import { getMaxForResource } from "../utils/planUtils";
 import type { Plan, ResourceType } from "../utils/planUtils";
 
@@ -31,6 +31,16 @@ export interface CreatedItemInfo {
   title: string | null;
   /** What Shopify ACTUALLY assigned — differs from the request on a collision. */
   handle: string | null;
+  /**
+   * Whether that handle is a DIFFERENT one than the merchant typed.
+   *
+   * Only then is it worth reporting: on a collision Shopify appends `-1`
+   * (§1.7) and someone looking for the handle they entered would not find it.
+   * A merchant who left the field empty asked for no particular handle, so
+   * Shopify deriving one from the title is not news — reporting it anyway is
+   * what made every single create carry a detail line.
+   */
+  handleChanged: boolean;
   /** False when the object exists on Shopify but the cache did not pick it up. */
   synced: boolean;
   notes: string[];
@@ -42,6 +52,59 @@ export interface CreatedItemInfo {
    * here would be English for a three-language app.
    */
   warningCodes?: string[];
+}
+
+/**
+ * Did Shopify store a handle OTHER than the one this create asked for?
+ *
+ * Two cases, and they are asked differently on purpose. A merchant who TYPED
+ * a handle asked for that exact string, so any difference is news. One who
+ * left the field empty asked for no particular handle — printing the derived
+ * one at them is what gave every single create a detail line — but a
+ * COLLISION still concerns them: a second page called "Contact" silently
+ * lands on `/pages/contact-1`.
+ *
+ * So the empty case reports only a numeric collision suffix on the handle we
+ * would have derived ourselves. `suggestHandle` is explicitly NOT
+ * authoritative — Shopify's transliteration may differ from ours — and that
+ * is exactly why the test is the suffix and not equality: a base that does
+ * not match ours produces SILENCE, never a wrong "Shopify changed your
+ * handle" on every create with an umlaut in the title.
+ */
+export function handleWasChanged(
+  requested: string | null,
+  title: string | null,
+  stored: string | null,
+): boolean {
+  if (!stored) return false;
+  if (requested) return requested !== stored;
+  const derived = title ? suggestHandle(title) : "";
+  if (!derived || !stored.startsWith(`${derived}-`)) return false;
+  const suffix = stored.slice(derived.length + 1);
+  return suffix.length > 0 && /^\d+$/.test(suffix);
+}
+
+/**
+ * Is there anything to say about this create BEYOND "it was created"?
+ *
+ * The ordinary create reports through the app-wide InfoBox, exactly like a
+ * delete or a duplicate — one sentence in the navigation strip, kept in the
+ * bell. The BANNER is for the cases where one sentence is not enough: a
+ * failed cache sync (which has to stand still and carry a reload), a note
+ * from the write path, a warning from the AI pass, or a handle Shopify
+ * changed under the merchant.
+ *
+ * It is a function rather than a flag on the info object because the answer
+ * moves: the chained translate-all can append a warning code seconds after
+ * the create was reported as clean, and the banner then has to appear.
+ */
+export function createResultNeedsDetail(info: CreatedItemInfo): boolean {
+  return (
+    !info.synced ||
+    info.handleChanged ||
+    info.notes.length > 0 ||
+    (info.warningCodes?.length ?? 0) > 0
+  );
 }
 
 export interface UseCreateItemOptions {
@@ -335,11 +398,21 @@ export function useCreateItem({
       return;
     }
 
+    // Read from the payload BEFORE it is dropped, and compared against what
+    // Shopify STORED rather than against what the form sanitized — the write
+    // path normalises the slug, so only the stored value can answer this.
+    const requestedHandle = payload.values.handle?.trim() || null;
+
     const info: CreatedItemInfo = {
       id: String(result.id),
       resource: payload.resource,
       title: (result.title as string | null) ?? null,
       handle: (result.handle as string | null) ?? null,
+      handleChanged: handleWasChanged(
+        requestedHandle,
+        (result.title as string | null) ?? null,
+        (result.handle as string | null) ?? null,
+      ),
       // §1.6 — a failed sync is a NOTE, not a failure.
       synced: result.synced !== false,
       notes: Array.isArray(result.notes) ? (result.notes as string[]) : [],

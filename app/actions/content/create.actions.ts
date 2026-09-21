@@ -555,6 +555,12 @@ async function createCollection(
   return { id: collection.id, handle: collection.handle, title: collection.title, notes: titleNote };
 }
 
+// A note repeating what the create dialog already said is not information.
+// `createsUnpublished` puts "this is created as a draft" in the form itself,
+// in the merchant's own language, BEFORE they press the button — while this
+// English sentence arrived afterwards, on every page and every article, and
+// was the one thing keeping those two types from reporting their success in
+// one line like every other create does.
 async function createPage(
   graphql: (q: string, v: Record<string, unknown>) => Promise<GraphQLResponse>,
   input: CreateInput,
@@ -581,7 +587,7 @@ async function createPage(
     id: page.id,
     handle: page.handle,
     title: page.title,
-    notes: [...titleNote, "The page is not published yet — publish it once the content is ready."],
+    notes: titleNote,
   };
 }
 
@@ -618,7 +624,7 @@ async function createArticle(
     id: article.id,
     handle: article.handle,
     title: article.title,
-    notes: [...titleNote, "The article is not published yet — publish it once the content is ready."],
+    notes: titleNote,
   };
 }
 

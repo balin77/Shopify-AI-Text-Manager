@@ -873,7 +873,7 @@ export const en: Translation = {
     createdTitle: "\u201c{name}\u201d was created",
     createdNotSyncedTitle: "Created — not visible in the list yet",
     createdNotSyncedBody: "The item was created in Shopify. Only the local copy is missing — reload to see it. Do NOT create it a second time.",
-    createdHandle: "Handle: {handle}",
+    createdHandleChanged: "Shopify stored the handle as \u201c{handle}\u201d \u2014 the one you asked for was taken.",
     createModal: {
       // The modal TITLE. `New {resource}` used to interpolate a raw config
       // slug, which is why it read "New metaobject" in every language.

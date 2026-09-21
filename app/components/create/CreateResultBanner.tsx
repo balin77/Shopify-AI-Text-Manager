@@ -1,5 +1,13 @@
 /**
- * PLAN_CONTENT_CREATION §1.6 — what the merchant sees right after a create.
+ * PLAN_CONTENT_CREATION §1.6 — what the merchant sees after a create that had
+ * MORE to report than its own success.
+ *
+ * The plain case does not come here at all: it reports through the app-wide
+ * InfoBox like a delete or a duplicate do (`createResultNeedsDetail` is the
+ * one predicate, and `UnifiedContentEditor` asks it). A banner unfolding at
+ * the bottom of the page to say one sentence was the odd one out among the
+ * three, and it has no history — once dismissed that sentence was gone, while
+ * the InfoBox keeps it in the bell.
  *
  * The load-bearing case is the one that looks like a failure and is not: the
  * object EXISTS on Shopify but the cache sync did not pick it up. Reporting
@@ -7,9 +15,16 @@
  * and the created thing is deletable from its own card (§0.1). So it reads
  * "created, will appear after a reload" with a reload button, never "failed".
  *
- * The handle shown is the one Shopify ACTUALLY assigned. On a collision it
- * appends `-1` (§1.7), and a merchant who later looks for the handle they typed
- * would not find it.
+ * The handle is shown only where Shopify assigned a DIFFERENT one than the
+ * merchant typed. On a collision it appends `-1` (§1.7), and someone looking
+ * for the handle they entered would not find it — but a merchant who left the
+ * field empty asked for no particular handle, and printing the derived one at
+ * them is what gave every single create a detail line to render.
+ *
+ * The chained translate-all (§2.5a) does NOT report here either: it goes to
+ * the InfoBox beside the create's own success, so one create speaks with one
+ * voice. Its FAILURE comes back as a warning code, which is what puts this
+ * banner up in the first place.
  *
  * There is deliberately NO undo. It was the §1.8 seam and it earned its
  * removal: what was just created is deletable from its own card with the same
@@ -17,7 +32,7 @@
  * on a SUCCESS banner.
  */
 
-import { Banner, BlockStack, Text, InlineStack, Button, Spinner } from "@shopify/polaris";
+import { Banner, BlockStack, Text, InlineStack, Button } from "@shopify/polaris";
 import type { CreatedItemInfo } from "~/hooks/useCreateItem";
 
 export interface CreateResultBannerProps {
@@ -28,21 +43,18 @@ export interface CreateResultBannerProps {
   /** §1.8 — routed through the ONE delete path, with its two-step
    *  confirmation. Absent (e.g. after a failed sync, where there is no
    *  confirmed id to remove) means the action is simply not offered. */
-  /** §2.5a — the chained translate-all has not answered yet. */
-  translating?: boolean;
   t?: {
     createdTitle?: string;
     createdNotSyncedTitle?: string;
     createdNotSyncedBody?: string;
     handleChanged?: string;
     reload?: string;
-    translating?: string;
     /** Keyed by `CreatedItemInfo.warningCodes` entries. */
     warnings?: Record<string, string>;
   };
 }
 
-export function CreateResultBanner({ info, onDismiss, onReload, translating = false, t = {} }: CreateResultBannerProps) {
+export function CreateResultBanner({ info, onDismiss, onReload, t = {} }: CreateResultBannerProps) {
   const name = info.title || info.id;
 
   return (
@@ -63,23 +75,12 @@ export function CreateResultBanner({ info, onDismiss, onReload, translating = fa
           </Text>
         )}
 
-        {/* §2.5a — the chained translate-all. Said here rather than nowhere:
-            the item is already created and selectable, so without a line the
-            merchant sees an item whose foreign fields fill in by themselves
-            some seconds later. Undo stays hidden while it runs — deleting the
-            item mid-translation would leave the task writing into nothing. */}
-        {translating && (
-          <InlineStack gap="200" blockAlign="center">
-            <Spinner size="small" />
-            <Text as="span" tone="subdued">
-              {t.translating || "Translating into your other languages…"}
-            </Text>
-          </InlineStack>
-        )}
-
-        {info.handle && (
+        {info.handleChanged && info.handle && (
           <Text as="p" tone="subdued">
-            {(t.handleChanged || "Handle: {handle}").replace("{handle}", info.handle)}
+            {(t.handleChanged || "Shopify stored the handle as “{handle}”.").replace(
+              "{handle}",
+              info.handle,
+            )}
           </Text>
         )}
 

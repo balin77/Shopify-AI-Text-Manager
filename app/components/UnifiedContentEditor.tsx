@@ -14,7 +14,8 @@ import {
 } from "~/config/details-layout";
 import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
-import { useCreateItem } from "../hooks/useCreateItem";
+import { useCreateItem, createResultNeedsDetail } from "../hooks/useCreateItem";
+import type { CreatedItemInfo } from "../hooks/useCreateItem";
 import { CreateItemModal } from "./create/CreateItemModal";
 import { CreateResultBanner } from "./create/CreateResultBanner";
 import { CreateResourceChooser } from "./create/CreateResourceChooser";
@@ -1062,6 +1063,53 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       revalidator?.revalidate();
     },
   });
+
+  /**
+   * The ordinary create reports through the InfoBox, like a delete and a
+   * duplicate — one sentence in the navigation strip, kept in the bell. Only
+   * a create with MORE to say keeps the banner (`createResultNeedsDetail`),
+   * and then the banner's own title carries this same sentence, so emitting
+   * it here as well would say it twice on one screen.
+   *
+   * Keyed on the created ID, not on the object: the chained translate-all
+   * appends a warning code to it seconds later, which mints a new object for
+   * the same create. Re-reporting that as a second success is what the ref
+   * prevents — the banner takes over from there.
+   *
+   * `created` is deliberately NOT dismissed on this path. It is invisible
+   * while nothing needs detail, and it is the state that late warning has to
+   * land on; clearing it here would drop a failed translation on the floor.
+   */
+  const reportedCreateIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const info: CreatedItemInfo | null = createItem.created;
+    if (!info || reportedCreateIdRef.current === info.id) return;
+    reportedCreateIdRef.current = info.id;
+    if (createResultNeedsDetail(info)) return;
+    showInfoBox(
+      (t.content?.createdTitle || "“{name}” was created").replace("{name}", info.title || info.id),
+      "success",
+    );
+  }, [createItem.created, showInfoBox, t.content?.createdTitle]);
+
+  /**
+   * §2.5a — the chained translate-all. Said rather than nowhere: the item is
+   * already created and selectable, so without a line the merchant watches
+   * its foreign fields fill in by themselves some seconds later.
+   *
+   * It reports HERE and not on the banner, so one create is one voice: the
+   * banner's title is the same "was created" sentence the InfoBox has just
+   * shown, and a plain create that happened to be translating raised both.
+   * The run's own failure comes back as a warning code, which is what puts
+   * the banner up — the InfoBox never claims the translation succeeded.
+   */
+  useEffect(() => {
+    if (!createItem.translating) return;
+    showInfoBox(
+      t.content?.createModal?.translatingAfterCreate || "Translating into your other languages…",
+      "info",
+    );
+  }, [createItem.translating, showInfoBox, t.content?.createModal?.translatingAfterCreate]);
 
   // registerItems() sets context state on every call, and every consumer
   // re-renders when it does. Depending that effect on a callback whose
@@ -2628,7 +2676,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
       )}
 
-      {createItem.created && (
+      {/* Only where there is more to report than the success itself — the
+          plain case, and the chained translation, went out through the
+          InfoBox above. */}
+      {createItem.created && createResultNeedsDetail(createItem.created) && (
         <div style={{ padding: "0 1rem 1rem" }}>
           <CreateResultBanner
             info={createItem.created}
@@ -2637,7 +2688,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // thing that was just created is deletable from its own card, with
             // the same confirmation, so a second path to the same delete only
             // added a destructive button to a SUCCESS banner.
-            translating={createItem.translating}
             onReload={
               createItem.created.synced
                 ? undefined
@@ -2650,9 +2700,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               createdTitle: t.content?.createdTitle,
               createdNotSyncedTitle: t.content?.createdNotSyncedTitle,
               createdNotSyncedBody: t.content?.createdNotSyncedBody,
-              handleChanged: t.content?.createdHandle,
+              handleChanged: t.content?.createdHandleChanged,
               reload: t.content?.reloadAllTooltip,
-              translating: t.content?.createModal?.translatingAfterCreate,
               warnings: t.content?.createModal?.createWarnings,
             }}
           />
