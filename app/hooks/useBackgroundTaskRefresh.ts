@@ -1,4 +1,19 @@
 import { useEffect, useRef } from "react";
+import {
+  MAX_TASK_STATUS_IDS,
+  POLL_INTERVAL_MS,
+  MAX_SILENT_WATCH_MS,
+  classifyWatchedTasks,
+  type TaskWatchUpdate,
+} from "../services/tasks/task-watch.shared";
+
+export {
+  MAX_TASK_STATUS_IDS,
+  MISSING_TASK_STATUS,
+  TERMINAL_TASK_STATUSES,
+  classifyWatchedTasks,
+  type TaskWatchUpdate,
+} from "../services/tasks/task-watch.shared";
 
 /**
  * Watch the `Task` rows a save started, and refresh the DISPLAY as they finish.
@@ -30,131 +45,7 @@ import { useEffect, useRef } from "react";
  * 4. GIVING UP MEANS "we stopped asking", never "there is nothing there". An id
  *    that runs out its deadline is reported settled like any other, so the page
  *    refreshes and stops watching it instead of waiting forever.
- */
-
-/** Statuses a Task never leaves. Everything else is still working. */
-export const TERMINAL_TASK_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "completed_with_errors",
-  "failed",
-  "cancelled",
-]);
-
-/** The loader answers `missing` for a row that is not there. */
-export const MISSING_TASK_STATUS = "missing";
-
-const POLL_INTERVAL_MS = 5_000;
-
-/**
- * How many ids one `/api/task-status` call may ask about.
  *
- * ONE constant, imported by the route as its own cap: a client that asks about
- * more than the loader answers gets no status for the surplus, which
- * `classifyWatchedTasks` correctly reads as "still working" — so those ids
- * could only ever leave the watch on their deadline, minutes after the runs
- * really finished. The watch set is a union across saves at 25 groups a save,
- * so it is a chunk size here, not a limit on what may be watched.
- */
-export const MAX_TASK_STATUS_IDS = 50;
-
-/**
- * How long an id is watched without ever being seen ALIVE.
- *
- * A repair run is spawned and not awaited, and runs for one resource are SERIAL
- * (they share an in-flight key — all three repair surfaces of one bulk-edited
- * product do, and so does a run left over from an earlier save), so a row
- * legitimately appears minutes after the save that reported its id. A shorter
- * bound was tried and removed: every expiry of it ended the wait against a run
- * that had written nothing, which is the empty cell this hook exists to fill.
- *
- * So the deadline is REFRESHED every time a poll sees the id alive — a row that
- * exists and has not finished is not a guess — and what it really bounds is the
- * one case with no evidence at all: a run that never created its row
- * (`startFailed`: it threw before `db.task.create`). Per ID and kept across
- * restarts, because the watched set is a union that grows with each save and a
- * deadline belonging to the WATCH was restarted by every one of them.
- */
-const MAX_SILENT_WATCH_MS = 5 * 60_000;
-
-export interface TaskWatchUpdate {
-  /** Ids that are finished with — terminal, or given up on. Stop watching. */
-  settled: string[];
-  /**
-   * Ids a settled task pointed AT: the bulk editor's large saves run inside a
-   * `seoBulkMeta` task, and the repairs they start are Task rows of their own
-   * that only that task's result names. Start watching these.
-   */
-  follow: string[];
-}
-
-/**
- * Which watched ids are done with, and which are still working.
- *
- * ONLY a terminal status finishes an id. The other two answers look different
- * and mean the same thing here: `missing` is a healthy poll saying the row is
- * not there YET, and an id absent from the map altogether is a poll that failed
- * — a throw, a non-2xx, the route's own 500 branch — which says nothing about
- * the task at all. Reading either as done refreshes the grid before a single
- * translation is written.
- *
- * `expired` is the other way out, and it is deliberately not a status: an id
- * whose deadline has passed is one we STOPPED ASKING about, which is a
- * different statement from "it finished" — and is why it may not hold the
- * refresh back for the ids that really did.
- */
-export function classifyWatchedTasks(
-  ids: readonly string[],
-  statuses: Readonly<Record<string, string>>,
-  expired: ReadonlySet<string> = new Set(),
-): { settled: string[]; working: string[]; alive: string[]; restamp: string[] } {
-  const settled: string[] = [];
-  const working: string[] = [];
-  /** The row EXISTS and has not finished — evidence, not a guess. */
-  const alive: string[] = [];
-  /**
-   * A live SIBLING is evidence too, and it is the difference between the two
-   * things a `missing` id can be. Repairs for one resource share an in-flight
-   * key and run strictly one after another, so while any watched task is
-   * running, an id with no row yet is most likely QUEUED behind it — giving up
-   * on it there drops a run that has not started, which is the empty cell this
-   * exists to remove. Only when nothing at all is alive does a deadline that
-   * has run out mean what it is for: a run that never created its row.
-   */
-  const anyAlive = ids.some((id) => {
-    const status = statuses[id];
-    return (
-      status !== undefined &&
-      status !== MISSING_TASK_STATUS &&
-      !TERMINAL_TASK_STATUSES.has(status)
-    );
-  });
-  for (const id of ids) {
-    const status = statuses[id];
-    if (status !== undefined && TERMINAL_TASK_STATUSES.has(status)) {
-      settled.push(id);
-      continue;
-    }
-    // ALIVE BEATS EXPIRED, and the order is the point: the deadline exists for
-    // an id we have no evidence about, so expiring one this very poll reports
-    // as running would drop a task we can SEE registering translations.
-    if (status !== undefined && status !== MISSING_TASK_STATUS) {
-      alive.push(id);
-      working.push(id);
-      continue;
-    }
-    if (expired.has(id) && !anyAlive) settled.push(id);
-    else working.push(id);
-  }
-  // The silence clock only TICKS while nothing is alive. Stamping just the
-  // live ids leaves a queued one on its original deadline, so it settles in
-  // the very poll its predecessor goes terminal — which is the poll its own
-  // run starts. Three serial repair groups of one product lost two of them
-  // that way, on exactly the shops whose first run is slow enough to matter.
-  const restamp = alive.length > 0 ? working : [];
-  return { settled, working, alive, restamp };
-}
-
-/**
  * @param taskIds  The ids to watch, or null/empty for "nothing to watch". The
  *                 watch is keyed on the ids THEMSELVES, not on the array's
  *                 identity: a caller that rebuilds the array every render (a
@@ -172,7 +63,12 @@ export function useBackgroundTaskRefresh(
   // Read at fire time, so a caller does not have to memoise it — a changed
   // identity must not restart the watch.
   const onUpdateRef = useRef(onUpdate);
-  onUpdateRef.current = onUpdate;
+  // In an EFFECT, never during render: an abandoned render under concurrent
+  // rendering would otherwise write the ref. The poll first fires a tick
+  // later, so the committed callback is always the one in hand.
+  useEffect(() => {
+    onUpdateRef.current = onUpdate;
+  }, [onUpdate]);
 
   /** id → when we stop asking about it without ever seeing it alive. Outlives
    *  the effect: a new save restarts the effect and must not restart these. */
@@ -206,6 +102,10 @@ export function useBackgroundTaskRefresh(
       if (cancelled) return;
       const statuses: Record<string, string> = {};
       const follow: string[] = [];
+      /** Some other translation run of this shop is going — see the shared
+       *  module's `othersAlive`. A poll that failed answers `false`, which only
+       *  means "no evidence", and the deadline is what that bounds. */
+      let othersAlive = false;
       try {
         // Chunked, because the loader answers at most MAX_TASK_STATUS_IDS per
         // call and a surplus id would come back with no status at all — read
@@ -221,9 +121,11 @@ export function useBackgroundTaskRefresh(
           const data = (await response.json()) as {
             statuses?: Record<string, string>;
             follow?: string[];
+            othersAlive?: boolean;
           };
           Object.assign(statuses, data?.statuses ?? {});
           for (const id of data?.follow ?? []) follow.push(id);
+          if (data?.othersAlive) othersAlive = true;
         }
       } catch {
         // A failed poll answers nothing for any id, which `classifyWatchedTasks`
@@ -234,7 +136,7 @@ export function useBackgroundTaskRefresh(
 
       const now = Date.now();
       const expired = new Set(ids.filter((id) => now > (deadlines.get(id) ?? Infinity)));
-      const { settled, working, restamp } = classifyWatchedTasks(ids, statuses, expired);
+      const { settled, working, restamp } = classifyWatchedTasks(ids, statuses, expired, othersAlive);
       // Something is alive ⇒ this page's work is progressing, so the silence
       // bound does not apply to anything still being waited for. A task stuck
       // running is ended by the task reaper, not by this page guessing.

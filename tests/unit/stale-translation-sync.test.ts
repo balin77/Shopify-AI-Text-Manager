@@ -1491,6 +1491,10 @@ describe("per-surface mirrors", () => {
     // by a cuid somebody captured earlier.
     const lookup = (db.productImage.findMany.mock.calls.at(-1) as unknown as [any])[0];
     expect(lookup.where).toMatchObject({ productId: product, mediaId: { in: [media] } });
+    // …and the TENANCY check rides on it. A `toMatchObject` that only names the
+    // pair passes with the shop filter deleted, which is how a multi-tenant
+    // lookup comes to read another shop's rows with every test still green.
+    expect(lookup.where.product).toEqual({ shop: SHOP });
   });
 
   it("writes under the cache row the product sync RECREATED mid-run, not the one collected", async () => {

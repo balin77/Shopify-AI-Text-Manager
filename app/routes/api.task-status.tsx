@@ -5,7 +5,7 @@ import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
 import {
   MAX_TASK_STATUS_IDS,
   TERMINAL_TASK_STATUSES,
-} from "~/hooks/useBackgroundTaskRefresh";
+} from "~/services/tasks/task-watch.shared";
 
 /**
  * "Are these particular Task rows still working?" — for a surface that started
@@ -21,7 +21,10 @@ import {
  *
  * Deliberately id-scoped rather than a second "what is running" feed: the page
  * may only poll while a known task OF ITS OWN SAVE is alive, so the poll ends
- * by itself instead of following whatever else the shop is doing.
+ * by itself instead of following whatever else the shop is doing. The one thing
+ * it reports about other work is a BOOLEAN — "some translation run of this shop
+ * is still going" — because our own run may be QUEUED behind one and have no
+ * row yet; see `othersAlive` below. No ids, no titles, nothing to follow.
  *
  * Shop-scoped, like every other task read — the ids are opaque cuids/uuids, but
  * a row belonging to another shop must not be answerable even so.
@@ -53,7 +56,9 @@ function repairTaskIdsOf(result: string | null): string[] {
     const parsed = JSON.parse(result) as { retranslation?: { taskIds?: unknown } };
     const ids = parsed?.retranslation?.taskIds;
     if (!Array.isArray(ids)) return [];
-    return ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+    return ids.filter(
+      (id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id),
+    );
   } catch {
     return [];
   }
@@ -67,7 +72,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         (new URL(request.url).searchParams.get("ids") ?? "")
           .split(",")
           .map((id) => id.trim())
-          .filter(Boolean),
+          // A cuid or a uuid, and nothing else. Not defensive about the
+          // database — it is about the WIRE: the client joins its watch set
+          // with commas twice over (its watch key and this query string), so an
+          // id carrying one would split into two ids that exist nowhere and be
+          // read as "still working" for the rest of the watch.
+          .filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id)),
       ),
     ].slice(0, MAX_IDS);
 
@@ -103,15 +113,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }
       }
 
+      // "Is some OTHER translation run of this shop still going?" — the one
+      // piece of evidence the client cannot have and cannot do without. The
+      // repairs of one resource share an in-flight key with the SYNC-side
+      // reconciliation and run strictly one after another, so a run started by
+      // a webhook (or by a save whose watch died with a page reload) can hold
+      // the queue while OUR run has created no row at all. Without this the
+      // watch sees nothing alive, gives up on its deadline, and refreshes
+      // before a single translation is written.
+      //
+      // A COUNT, never the rows: the ids and titles of other work are none of
+      // this answer's business, and one boolean is all the caller reads.
+      const othersAlive =
+        (await db.task.count({
+          where: {
+            shop: session.shop,
+            type: "translation",
+            status: { notIn: [...TERMINAL_TASK_STATUSES] },
+            id: { notIn: ids },
+          },
+        })) > 0;
+
       return json(
-        { statuses, ...(follow.length > 0 ? { follow: [...new Set(follow)] } : {}) },
+        {
+          statuses,
+          ...(follow.length > 0 ? { follow: [...new Set(follow)] } : {}),
+          ...(othersAlive ? { othersAlive: true } : {}),
+        },
         { headers: { "Cache-Control": "no-store" } },
       );
     } catch (dbError: unknown) {
       logger.error("Database error in task-status", {
         error: dbError instanceof Error ? dbError.message : String(dbError),
       });
-      return json({ statuses: {} as Record<string, string>, error: "Database error" }, { status: 500 });
+      return json(
+        { statuses: {} as Record<string, string>, error: "Database error" },
+        { status: 500, headers: { "Cache-Control": "no-store" } },
+      );
     }
   } catch (authError: unknown) {
     return handlePolledAuthError(authError, { statuses: {} });

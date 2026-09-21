@@ -1961,7 +1961,23 @@ async function purgeStaleEntries(
       }
 
       if (confirmed.length === 0) continue;
-      await mirror.remove(ref, locale, confirmed);
+      // Shopify has already CONFIRMED the removal by this line, so a failing
+      // local delete may not take the run with it: this purge is inline, ahead
+      // of the detached re-translation, and a throw here would abort the whole
+      // repair after the caller stood its own deletion down — the stale rows
+      // then survive with nothing left to refresh them. A local row the delete
+      // did not reach is corrected by the next sync; that is the cheap half.
+      try {
+        await mirror.remove(ref, locale, confirmed);
+      } catch (mirrorError: unknown) {
+        logger.warn("[StaleTranslations] Removed on Shopify but not in the local cache", {
+          context: "StaleTranslations",
+          resourceId: ref.resourceId,
+          locale,
+          keys: confirmed,
+          error: mirrorError instanceof Error ? mirrorError.message : String(mirrorError),
+        });
+      }
       // Counted from Shopify's confirmations, not from the DB result: a row
       // the cache never held (or already dropped) is still a translation that
       // is gone from the storefront, and that is what this number reports.
@@ -2521,7 +2537,11 @@ async function runRetranslation(
         processed: entries.length,
         completedAt: new Date(),
         ...(registered.length === 0 && !stoodDown
-          ? { error: "Automatic re-translation produced no usable translation." }
+          ? // A CODE, like its sibling below: this runs detached from the
+            // request that started it and has no merchant locale, so an
+            // English sentence stored here reaches a German merchant in
+            // English. `taskErrorText` renders it.
+            { error: "translations_none_usable" }
           : notMirrored.length > 0
             ? // A machine CODE, not a sentence: this runs detached from the
               // request that started it and has no merchant locale, and the

@@ -65,6 +65,7 @@ const FALLBACK: Record<string, string> = {
   someFailed: "Some entries could not be processed — open the task for details.",
   translationsNotMirrored:
     "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
+  translationsNoneUsable: "The automatic re-translation produced no usable translation.",
 };
 
 function phrase(t: any, key: string): string {
@@ -150,6 +151,11 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // it. The advice names the ITEM rather than a product: the repair is
     // generic over every surface (a page's body, a metaobject field, a theme
     // key, a menu title), and the Task row already says which resource it was.
+    // Nothing the AI returned could be registered — a provider error, an empty
+    // answer, an echo that never came. Its own code rather than a count: zero
+    // of zero says nothing a merchant can act on.
+    case "translations_none_usable":
+      return phrase(t, "translationsNoneUsable");
     case "translations_not_mirrored": {
       const missed = count(parts[1]);
       if (missed === null) return neutral();
