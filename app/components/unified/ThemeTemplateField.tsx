@@ -29,10 +29,9 @@
  * instead of disappearing, exactly as `TaxonomyValuePicker` does.
  */
 
-import { useEffect, useState } from "react";
 import { AttributeField, type AttributeFieldProps } from "./AttributeField";
+import { useThemeTemplateSuffixes } from "../../hooks/useThemeTemplateSuffixes";
 import type { ThemeTemplateResource } from "../../services/theme-templates.shared";
-import type { ThemeTemplatesResponse } from "../../routes/api.theme-templates";
 
 export interface ThemeTemplateTexts {
   /** The empty suffix — what a resource renders with when nothing is set. */
@@ -49,52 +48,15 @@ export interface ThemeTemplateFieldProps extends AttributeFieldProps {
   themeTemplateTexts?: ThemeTemplateTexts;
 }
 
-type Loaded = { ok: true; suffixes: string[] } | { ok: false };
-
-/**
- * One request per resource for the life of the page.
- *
- * The list belongs to the SHOP's published theme, not to the item, so clicking
- * through twenty products would otherwise fire twenty identical queries — the
- * same rule the taxonomy value picker follows. A FAILED result is dropped from
- * the map, so a network blip does not turn into a text box that stays for the
- * rest of the session.
- */
-const inFlight = new Map<string, Promise<Loaded>>();
-
-function loadSuffixes(resource: ThemeTemplateResource): Promise<Loaded> {
-  const cached = inFlight.get(resource);
-  if (cached) return cached;
-
-  const request = fetch(`/api/theme-templates?resource=${encodeURIComponent(resource)}`)
-    .then((r) => r.json() as Promise<ThemeTemplatesResponse>)
-    .then((data): Loaded => (data?.success ? { ok: true, suffixes: data.suffixes ?? [] } : { ok: false }))
-    .catch((): Loaded => ({ ok: false }));
-
-  inFlight.set(resource, request);
-  void request.then((result) => {
-    if (!result.ok) inFlight.delete(resource);
-  });
-  return request;
-}
-
 export function ThemeTemplateField({
   field,
   resource,
   themeTemplateTexts,
   ...rest
 }: ThemeTemplateFieldProps) {
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadSuffixes(resource).then((result) => {
-      if (!cancelled) setLoaded(result);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [resource]);
+  // The lookup (and its one-request-per-resource memo) is shared with the bulk
+  // editor's templateSuffix column — see useThemeTemplateSuffixes.
+  const loaded = useThemeTemplateSuffixes(resource);
 
   // The lookup failed: back to the plain text box, so the value stays readable
   // and changeable. `attributeNote` is AttributeField's own line under the

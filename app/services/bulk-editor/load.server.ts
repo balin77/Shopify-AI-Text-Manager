@@ -656,6 +656,7 @@ async function loadBulkRowsInner(
         // defaults, not the merchant's data.
         vendor: true,
         tags: true,
+        templateSuffix: true,
         attributesSyncedAt: true,
         featuredImageUrl: true,
         featuredImageAlt: true,
@@ -718,6 +719,7 @@ async function loadBulkRowsInner(
             // editor's chips serialise — the grid stores strings, and a save
             // REPLACES the product's tags rather than adding to them.
             tags: Array.isArray(i.tags) ? (i.tags as string[]).join(", ") : "",
+            templateSuffix: (i.templateSuffix as string | null) ?? "",
             attributesKnown: !!i.attributesSyncedAt,
             imageUrl: (i.featuredImageUrl as string | null) ?? undefined,
             imageAlt: (i.featuredImageAlt as string | null) ?? undefined,
@@ -743,6 +745,13 @@ async function loadBulkRowsInner(
         descriptionHtml: true,
         imageUrl: true,
         imageAltText: true,
+        // §Phase 3 attributes. `attributesSyncedAt` travels with them for the
+        // same reason it does on products: `sortOrder: null` and
+        // `templateSuffix: null` on a row an older sync wrote are the
+        // migration's defaults, not the merchant's data.
+        sortOrder: true,
+        templateSuffix: true,
+        attributesSyncedAt: true,
       } as const;
       const [items, total] = await Promise.all([
         db.collection.findMany({ where, select, orderBy, skip, take }),
@@ -759,6 +768,9 @@ async function loadBulkRowsInner(
           descriptionHtml: i.descriptionHtml ?? "",
           imageUrl: i.imageUrl ?? undefined,
           imageAlt: i.imageAltText ?? undefined,
+          sortOrder: i.sortOrder ?? "",
+          templateSuffix: i.templateSuffix ?? "",
+          attributesKnown: !!i.attributesSyncedAt,
         })),
         total,
         translationFilterApproximate,
@@ -777,6 +789,11 @@ async function loadBulkRowsInner(
         imageUrl: true,
         imageAltText: true,
         blogTitle: true,
+        author: true,
+        tags: true,
+        isPublished: true,
+        templateSuffix: true,
+        attributesSyncedAt: true,
       } as const;
       const [items, total] = await Promise.all([
         db.article.findMany({ where, select, orderBy, skip, take }),
@@ -795,6 +812,14 @@ async function loadBulkRowsInner(
           imageUrl: i.imageUrl ?? undefined,
           imageAlt: i.imageAltText ?? undefined,
           blogTitle: i.blogTitle ?? undefined,
+          author: i.author ?? "",
+          // ONE cell holding a list, comma-joined exactly like the product
+          // row's — a save REPLACES the article's tags rather than adding to
+          // them, which is what `articleUpdate` does with the field.
+          tags: i.tags.join(", "),
+          isPublished: String(i.isPublished),
+          templateSuffix: i.templateSuffix ?? "",
+          attributesKnown: !!i.attributesSyncedAt,
         })),
         total,
         translationFilterApproximate,
@@ -809,6 +834,9 @@ async function loadBulkRowsInner(
         seoDescription: true,
         handle: true,
         body: true,
+        isPublished: true,
+        templateSuffix: true,
+        attributesSyncedAt: true,
       } as const;
       const [items, total] = await Promise.all([
         db.page.findMany({ where, select, orderBy, skip, take }),
@@ -823,6 +851,9 @@ async function loadBulkRowsInner(
           seoDescription: i.seoDescription ?? "",
           handle: i.handle,
           body: i.body ?? "",
+          isPublished: String(i.isPublished),
+          templateSuffix: i.templateSuffix ?? "",
+          attributesKnown: !!i.attributesSyncedAt,
         })),
         total,
         translationFilterApproximate,
@@ -1254,6 +1285,7 @@ interface LiveBlogNode {
   id: string;
   title: string;
   handle: string;
+  templateSuffix?: string | null;
   seoTitle?: { value: string } | null;
   seoDescription?: { value: string } | null;
 }
@@ -1283,6 +1315,7 @@ async function loadBlogRows(
               id
               title
               handle
+              templateSuffix
               seoTitle: metafield(namespace: "global", key: "title_tag") { value }
               seoDescription: metafield(namespace: "global", key: "description_tag") { value }
             }
@@ -1303,6 +1336,11 @@ async function loadBlogRows(
     seoTitle: node.seoTitle?.value ?? "",
     seoDescription: node.seoDescription?.value ?? "",
     handle: node.handle,
+    templateSuffix: node.templateSuffix ?? "",
+    // Blog containers are read LIVE from Shopify, so their attribute values
+    // are never a migration default — the `attributesSyncedAt` gate the cached
+    // types need has nothing to discriminate here.
+    attributesKnown: true,
   }));
 
   if (opts.ids) {

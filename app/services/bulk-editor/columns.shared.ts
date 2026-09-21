@@ -14,6 +14,11 @@
 
 // zod-based pure validation helpers — no server-only imports (safe here).
 import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
+// The enum vocabularies the create form and the single editor already offer.
+// From the import-FREE leaf module, never from create-fields.config: that file
+// imports metaobject-fields.shared, which imports this one, and spreading a
+// constant across that cycle reads it before it is initialised.
+import { COLLECTION_SORT_ORDERS } from "../../config/shopify-enums.shared";
 
 // ─── Row types ─────────────────────────────────────────────────────────────
 
@@ -119,6 +124,24 @@ export interface ColumnDescriptor {
   /** DB column backing a server-side sort — absent means the column is NOT
    * sortable and the header must not render a sort affordance (Plan §3.3). */
   sortKey?: string;
+  /** inputType "select": the enum values this column accepts, in offer order.
+   *
+   * The VALUE vocabulary, never the labels — those are i18n and live in
+   * `t.bulkEditor.enumLabels` keyed `<column.label>.<value>`, so the grid can
+   * word "true" as "Sichtbar" on one column and "Ja" on the next. Carried on
+   * the descriptor rather than in the cell component because both ends need
+   * it: the cell offers exactly these, and the server refuses anything else
+   * before the value can fail at the GraphQL SCHEMA level — where a bad enum
+   * comes back as a top-level `errors` array with `data: null` that never
+   * reaches `userErrors`, i.e. a save that reads as a success while nothing
+   * was written.
+   *
+   * Deliberately NOT how `field.templateSuffix` gets its options: those are
+   * the published THEME's files, so they are per shop and per resource, which
+   * a static column universe cannot carry (and which the server, like the
+   * single editor, does not re-validate). The grid feeds that one list in as a
+   * prop; see `ThemeTemplateField` for the same lookup one item at a time. */
+  selectOptions?: string[];
   /** kind "metafield": the Shopify metafield type (drives cell rendering AND
    * is sent verbatim in metafieldsSet — §14 no. 4: type is mandatory when the
    * set creates a metafield without a definition). */
@@ -408,6 +431,7 @@ function fieldColumn(
   maxWidth?: number;
     sortKey?: string;
     group?: ColumnGroup;
+    selectOptions?: string[];
   },
 ): ColumnDescriptor {
   return {
@@ -420,6 +444,7 @@ function fieldColumn(
     inputType: opts.inputType,
     minWidth: opts.minWidth,
     ...(opts.sortKey ? { sortKey: opts.sortKey } : {}),
+    ...(opts.selectOptions ? { selectOptions: opts.selectOptions } : {}),
   };
 }
 
@@ -430,7 +455,30 @@ function fieldColumn(
 const COL_TITLE = fieldColumn("title", { translatable: true, inputType: "text", minWidth: 220, sortKey: "title" });
 const COL_DESCRIPTION_HTML = fieldColumn("descriptionHtml", { translatable: true, inputType: "textarea", minWidth: 280 });
 const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputType: "text", minWidth: 200, sortKey: "productType" });
-const COL_STATUS = fieldColumn("status", { translatable: false, inputType: "select", minWidth: 130, sortKey: "status" });
+/**
+ * The four values, in the order the grid has always offered them.
+ *
+ * Written out rather than spread from `CREATE_PRODUCT_STATUSES` because that
+ * constant leads with DRAFT (a create form's default) and reshuffling a
+ * dropdown merchants already know is a change nobody asked for. The two must
+ * still describe the same SET — `bulk-select-columns.test.ts` fails when they
+ * drift, which is the half that actually matters.
+ */
+const PRODUCT_STATUS_OPTIONS = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"];
+
+/** `isPublished`, `taxable`, … — a boolean cell is a two-value enum, so it
+ *  rides the same select machinery rather than growing a checkbox kind of its
+ *  own. The strings are what the diff, the CSV round trip and the edit map all
+ *  carry; only the LABEL differs per column (`enumLabels`). */
+export const BOOLEAN_SELECT_OPTIONS = ["true", "false"];
+
+const COL_STATUS = fieldColumn("status", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 130,
+  sortKey: "status",
+  selectOptions: PRODUCT_STATUS_OPTIONS,
+});
 // PLAN_CONTENT_CREATION §Phase 3.6 — the two merchandising attributes the
 // single editor gained in §3.1, pulled through to the grid where they are
 // worth most: vendor and tags are the fields a merchant fixes across a whole
@@ -445,6 +493,61 @@ const COL_STATUS = fieldColumn("status", { translatable: false, inputType: "sele
 // `productUpdate` does with it: a cell edit REPLACES the product's tags.
 const COL_VENDOR = fieldColumn("vendor", { translatable: false, inputType: "text", minWidth: 160, sortKey: "vendor" });
 const COL_TAGS = fieldColumn("tags", { translatable: false, inputType: "text", minWidth: 220 });
+
+// ─── The remaining merchandising attributes (PLAN_CONTENT_CREATION §3) ─────
+//
+// Until now these existed only in the single editor, which meant the one kind
+// of field a merchant fixes across a whole catalogue — "put every gift product
+// on the gift template", "unpublish last season's articles" — was the one kind
+// they had to open five hundred items to reach.
+//
+// Every one of them is UNTRANSLATABLE (`translationKey: ""` in the single
+// editor's config, one value per item), so `translatable: false` keeps them out
+// of the foreign-locale groups by the rule that already governs status, vendor
+// and tags. They also all live in the Phase-0 attribute block, so their cells
+// are read-only until `attributesSyncedAt` is set — see
+// ATTRIBUTE_BLOCK_COLUMNS, where an empty value and a never-fetched one are
+// finally told apart.
+
+/** The theme file that renders the item. A suffix nobody created renders the
+ *  DEFAULT template and reports nothing anywhere, which is why the single
+ *  editor made this a dropdown — and why it matters more here, where one typo
+ *  is applied to every selected row. The OPTIONS are the published theme's and
+ *  arrive as a prop (see `selectOptions`' note); with the lookup failed the
+ *  cell falls back to a text box, exactly as `ThemeTemplateField` does. */
+const COL_TEMPLATE_SUFFIX = fieldColumn("templateSuffix", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 190,
+});
+
+/** Pages and articles are visible or not. NOT the product's four-value status:
+ *  a different field on a different mutation, and conflating the two is how a
+ *  hidden article gets published by a title edit. */
+const COL_IS_PUBLISHED = fieldColumn("isPublished", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 170,
+  selectOptions: BOOLEAN_SELECT_OPTIONS,
+});
+
+/** Shopify's CollectionSortOrder. A GraphQL ENUM, so the offered set has to be
+ *  exactly the accepted one. */
+const COL_SORT_ORDER = fieldColumn("sortOrder", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 210,
+  selectOptions: [...COLLECTION_SORT_ORDERS],
+});
+
+/** An article's author. `ArticleCreateInput.author` is REQUIRED, so an article
+ *  always has one — which is why clearing this cell is refused rather than
+ *  written (attributeInputFor reports it as rejected). */
+const COL_AUTHOR = fieldColumn("author", {
+  translatable: false,
+  inputType: "text",
+  minWidth: 180,
+});
 const COL_HANDLE = fieldColumn("handle", { translatable: true, inputType: "text", minWidth: 220, sortKey: "handle" });
 const COL_SEO_TITLE = fieldColumn("seoTitle", { translatable: true, inputType: "text", minWidth: 200, group: "seo" });
 const COL_SEO_DESCRIPTION = fieldColumn("seoDescription", { translatable: true, inputType: "textarea", minWidth: 280, group: "seo" });
@@ -500,6 +603,7 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_STATUS,
     COL_VENDOR,
     COL_TAGS,
+    COL_TEMPLATE_SUFFIX,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
@@ -518,6 +622,8 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     IMAGE_COLUMN,
     COL_TITLE,
     COL_DESCRIPTION_HTML,
+    COL_SORT_ORDER,
+    COL_TEMPLATE_SUFFIX,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
@@ -529,18 +635,31 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_TITLE,
     COL_SUMMARY,
     COL_BODY,
+    COL_AUTHOR,
+    COL_TAGS,
+    COL_IS_PUBLISHED,
+    COL_TEMPLATE_SUFFIX,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
     FEATURED_IMAGE_ALT_COLUMN,
   ],
-  page: [IMAGE_COLUMN, COL_TITLE, COL_BODY, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
+  page: [
+    IMAGE_COLUMN,
+    COL_TITLE,
+    COL_BODY,
+    COL_IS_PUBLISHED,
+    COL_TEMPLATE_SUFFIX,
+    COL_HANDLE,
+    COL_SEO_TITLE,
+    COL_SEO_DESCRIPTION,
+  ],
   // Blog CONTAINERS (Plan §7): no body — Shopify's translatable keys for BLOG
   // are title/handle/meta_title/meta_description (Plan §14 no. 6), and the
   // primary write path (blogUpdate + global.title_tag/description_tag
   // metafields) covers exactly these four. Rows are live-fetched (no DB
   // cache), so the sortKeys here are resolved IN MEMORY by the loader.
-  blog: [COL_TITLE, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
+  blog: [COL_TITLE, COL_TEMPLATE_SUFFIX, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
   // Policies (Plan §7): title read-only (§14 — shopPolicyUpdate has no title
   // input), body editable exactly like descriptionHtml/body on other types.
   // body IS translatable — under the ShopPolicy key exception ("body", not
@@ -1091,6 +1210,15 @@ export interface BulkRow {
   // whole (productUpdate replaces the list rather than appending to it).
   vendor?: string;
   tags?: string;
+  /** The remaining merchandising attributes, as grid strings. `isPublished`
+   *  is "true"/"false" (a two-value enum; see BOOLEAN_SELECT_OPTIONS), the
+   *  other three are the stored value verbatim — an empty `templateSuffix` is
+   *  the theme's DEFAULT template and an empty `sortOrder` is "not set", both
+   *  of which the cell offers as a named option rather than as a blank. */
+  templateSuffix?: string;
+  isPublished?: string;
+  sortOrder?: string;
+  author?: string;
   /** False ⇒ `vendor`/`tags` above are the migration's defaults, not the
    *  merchant's data (§2.4). The grid shows them as unknown, never as empty. */
   attributesKnown?: boolean;
@@ -1188,8 +1316,22 @@ export type CellReadOnlyReason =
 
 /** The columns fed by the Phase-0 attribute block, whose emptiness only means
  *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
- *  predates that block and is non-null in the schema. */
-const ATTRIBUTE_BLOCK_COLUMNS = new Set(["field.vendor", "field.tags"]);
+ *  predates that block and is non-null in the schema.
+ *
+ *  `isPublished` is the one that would be silently destructive without this:
+ *  its column is `Boolean @default(true)`, so a row an older sync wrote reads
+ *  as "visible" whether or not it is, and a merchant who saw that and moved on
+ *  would publish a hidden page by touching a NEIGHBOURING cell. The same
+ *  argument as `tags`, where the migration default is `[]` and `productUpdate`
+ *  replaces rather than merges. A resync is the way out, for all of them. */
+export const ATTRIBUTE_BLOCK_COLUMNS = new Set([
+  "field.vendor",
+  "field.tags",
+  "field.templateSuffix",
+  "field.isPublished",
+  "field.sortOrder",
+  "field.author",
+]);
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */

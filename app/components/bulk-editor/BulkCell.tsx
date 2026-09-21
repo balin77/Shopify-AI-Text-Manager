@@ -33,6 +33,42 @@ export interface BulkCellStatusOptions {
   unlisted: string;
 }
 
+/**
+ * Labels for every OTHER select column, keyed `<column.label>.<value>`.
+ *
+ * Keyed by the column and not by the value alone because "true" is "Sichtbar"
+ * on `isPublished` and "Ja" on `taxable` — the same two strings carry the whole
+ * boolean vocabulary and the wording is what tells a merchant which question
+ * they are answering. A key the bundle does not carry falls back to the raw
+ * value, so a new enum shows something honest rather than an empty option.
+ */
+export type BulkCellEnumLabels = Record<string, string>;
+
+/**
+ * The options a select cell offers.
+ *
+ * `field.templateSuffix` is the one column whose vocabulary is not in the
+ * descriptor: the values are the PUBLISHED theme's template files, so they are
+ * per shop and per resource and are looked up at runtime. The grid hands them
+ * down; `undefined` means the lookup has not answered (or failed), and the
+ * cell then falls back to a TEXT box exactly as `ThemeTemplateField` does —
+ * an empty dropdown is a control whose next save clears a working value.
+ */
+export const TEMPLATE_SUFFIX_COLUMN_ID = "field.templateSuffix";
+
+function selectOptionsFor(
+  column: ColumnDescriptor,
+  templateSuffixes: string[] | undefined,
+): string[] | undefined {
+  if (column.id === TEMPLATE_SUFFIX_COLUMN_ID) {
+    // "" is a real, selectable value here — it IS the theme's default
+    // template — so it leads the list rather than becoming the disabled
+    // placeholder the other enums get for an unknown value.
+    return templateSuffixes ? ["", ...templateSuffixes] : undefined;
+  }
+  return column.selectOptions;
+}
+
 interface BulkCellProps {
   column: ColumnDescriptor;
   value: string;
@@ -57,6 +93,11 @@ interface BulkCellProps {
    * the translation; the ghost itself is never part of the value. */
   ghost?: string;
   statusOptions: BulkCellStatusOptions;
+  /** Labels for the non-status select columns (see BulkCellEnumLabels). */
+  enumLabels: BulkCellEnumLabels;
+  /** Suffixes offered by the published theme for this row type, or undefined
+   *  while the lookup is pending or after it failed. */
+  templateSuffixes?: string[];
   onChange: (value: string) => void;
   /** Grid coordinate "row:col" — stamped as data-cp-cell on the focusable
    * element so BulkGrid can move focus for Tab/Enter navigation (§8.4). Text
@@ -121,6 +162,8 @@ export function BulkCell({
   errorId,
   ghost,
   statusOptions,
+  enumLabels,
+  templateSuffixes,
   onChange,
   cellCoord,
   onNavigate,
@@ -149,6 +192,50 @@ export function BulkCell({
   }
 
   if (column.inputType === "select") {
+    const options = selectOptionsFor(column, templateSuffixes);
+    // A select with no known vocabulary is NOT an empty dropdown — that is a
+    // control whose next save clears a working value. Only the theme template
+    // can reach this (its list is looked up at runtime), and the fallback is
+    // the single editor's: put the plain text box back.
+    if (!options) {
+      return (
+        <LazyTextCell
+          value={value}
+          isDirty={isDirty}
+          error={error}
+          errorId={errorId}
+          ghost={ghost}
+          onChange={onChange}
+          cellCoord={cellCoord}
+          onNavigate={onNavigate}
+          onEscape={onEscape}
+          onPasteText={onPasteText}
+        />
+      );
+    }
+    if (column.id !== "field.status") {
+      // The generic branch. A stored value the offered list does not contain
+      // keeps its own DISABLED row at the top rather than disappearing: a
+      // Polaris `Select` whose value matches no option renders the FIRST one,
+      // so a page on a template the theme no longer has would read as
+      // "Default" and the next save would make that true.
+      const known = options.includes(value);
+      return (
+        <Select
+          label=""
+          labelHidden
+          options={[
+            ...(known ? [] : [{ label: value || "—", value, disabled: true } as const]),
+            ...options.map((option) => ({
+              label: enumLabels[`${column.label}.${option}`] ?? option,
+              value: option,
+            })),
+          ]}
+          value={value}
+          onChange={onChange}
+        />
+      );
+    }
     // Product status. Non-null in the schema, but a partial sync could leave
     // it "" — show a placeholder row instead of silently defaulting the
     // display to ACTIVE (which would cause a no-op click to write ACTIVE

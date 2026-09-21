@@ -33,6 +33,8 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
+import { useThemeTemplateSuffixes } from "../hooks/useThemeTemplateSuffixes";
+import { templateResourceFor, type ThemeTemplateResource } from "../services/theme-templates.shared";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
 import { AppSaveBar } from "../components/AppSaveBar";
@@ -558,6 +560,34 @@ const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
   metaobject: ["moDisplayName", "moHandle"],
   image: ["image", "imageUsage", "position", "field.altText"],
 };
+
+/**
+ * A row type → the template family whose files `field.templateSuffix` offers.
+ *
+ * Goes through `templateResourceFor` rather than restating its answers, so the
+ * blog tab's one real subtlety cannot drift: `templates/article.*` renders ONE
+ * POST and `templates/blog.*` the post LIST, which is the distinction that
+ * function takes `isBlogContainer` for — and which the grid already has in the
+ * row type itself. Every other type maps to its content type; the four with no
+ * templates at all (variant, image, policy, metaobject) answer null and never
+ * ask.
+ */
+function templateResourceForRowType(type: BulkRowType): ThemeTemplateResource | null {
+  switch (type) {
+    case "product":
+      return templateResourceFor("products");
+    case "collection":
+      return templateResourceFor("collections");
+    case "page":
+      return templateResourceFor("pages");
+    case "article":
+      return templateResourceFor("blogs", { isBlogContainer: false });
+    case "blog":
+      return templateResourceFor("blogs", { isBlogContainer: true });
+    default:
+      return null;
+  }
+}
 
 /** Maps a legacy stored column name ("title", "image", "blogTitle") to the
  * descriptor id ("field.title", "image", "blogTitle"). */
@@ -1937,6 +1967,25 @@ export default function BulkEditor() {
 
   const typeOptions = allowedTypes.map((rt) => ({ label: b.types[rt], value: rt }));
 
+  /**
+   * The published theme's template suffixes for the row type on screen.
+   *
+   * `field.templateSuffix` is the one select column whose vocabulary is not in
+   * the column universe: it is per shop and per resource family, so it is
+   * looked up at runtime through the SAME memoised fetch the single editor's
+   * `ThemeTemplateField` uses. A type with no templates (variant, image,
+   * policy, metaobject) never asks, and `undefined` — pending OR failed — makes
+   * the cell fall back to a text box rather than to an empty dropdown.
+   *
+   * Articles and blog containers template SEPARATELY (`templates/article.*` is
+   * one post, `templates/blog.*` the post list), which is exactly the
+   * distinction `templateResourceFor` draws for the blog tab; here the row type
+   * already says which of the two a row is.
+   */
+  const templateResource = templateResourceForRowType(type);
+  const templateSuffixesLoaded = useThemeTemplateSuffixes(templateResource);
+  const templateSuffixes = templateSuffixesLoaded?.ok ? templateSuffixesLoaded.suffixes : undefined;
+
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
   const hasPrev = page > 1;
@@ -2465,6 +2514,8 @@ export default function BulkEditor() {
                       }
                       columnHeading={columnHeading}
                       statusOptions={b.statusOptions}
+                      enumLabels={b.enumLabels}
+                      templateSuffixes={templateSuffixes}
                       handleWarning={b.handleWarning}
                       readOnlyTooltips={readOnlyTooltips}
                       sortButtonLabel={b.sortButtonLabel}

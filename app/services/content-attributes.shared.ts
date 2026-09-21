@@ -22,7 +22,7 @@
  * Collapsing the two is how a save silently stops being able to clear a field.
  */
 
-import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "../config/create-fields.config";
+import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "../config/shopify-enums.shared";
 
 export type AttributeResource = "Page" | "Blog" | "Article" | "Collection";
 
@@ -183,6 +183,22 @@ const ATTRIBUTES_BY_RESOURCE: Record<AttributeResource, Array<keyof AttributeInp
   Article: ["isPublished", "templateSuffix", "author", "tags"],
   Collection: ["sortOrder", "templateSuffix"],
 };
+
+/**
+ * Which attributes this resource declares — the same list `attributeInputFor`
+ * filters against, exported so a CALLER can tell "not declared here" from
+ * "dropped because it was empty".
+ *
+ * `attributeInputFor` drops both silently, which is right for the editor (it
+ * sends every field on a primary save and most of them are not attributes at
+ * all) and wrong for the bulk grid, where every cell in the diff is one the
+ * merchant TOUCHED: a column that exists on the grid but not in the list below
+ * would save, report success and write nothing — the false-success pattern.
+ * The grid asks this first and fails that cell loudly instead.
+ */
+export function attributesForResource(resource: AttributeResource): Array<keyof AttributeInput> {
+  return [...(ATTRIBUTES_BY_RESOURCE[resource] ?? [])];
+}
 
 /** Shopify trims tags and drops empties; mirror that so a save does not report
  *  a change the shop would never store. Case-insensitively de-duplicated,

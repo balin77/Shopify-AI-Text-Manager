@@ -4040,6 +4040,29 @@ export const es: Translation = {
       moHandle: "Handle",
       imageUsage: "Asignado a",
       altText: "Texto alternativo",
+      // Atributos de merchandising (§fase 3). No traducibles (un valor por
+      // objeto), por lo que solo se editan en el idioma principal.
+      templateSuffix: "Plantilla del tema",
+      isPublished: "Visible en la tienda online",
+      sortOrder: "Orden",
+      author: "Autor",
+    },
+    /** Etiquetas de las columnas de selección distintas de `status`, con
+     *  clave `<etiqueta de columna>.<valor>`: las mismas dos cadenas booleanas
+     *  responden una pregunta distinta según la columna. */
+    enumLabels: {
+      "isPublished.true": "Visible",
+      "isPublished.false": "Oculto",
+      "templateSuffix.": "Predeterminada",
+      "sortOrder.MANUAL": "Manual",
+      "sortOrder.BEST_SELLING": "Más vendidos",
+      "sortOrder.ALPHA_ASC": "Alfabético A–Z",
+      "sortOrder.ALPHA_DESC": "Alfabético Z–A",
+      "sortOrder.PRICE_ASC": "Precio ascendente",
+      "sortOrder.PRICE_DESC": "Precio descendente",
+      "sortOrder.CREATED": "Más recientes primero",
+      "sortOrder.CREATED_DESC": "Más antiguos primero",
+      "sortOrder.MOST_RELEVANT": "Más relevantes",
     },
     statusOptions: {
       active: "Activo",

@@ -37,13 +37,20 @@ import { EditIcon, SearchIcon } from "@shopify/polaris-icons";
 import {
   resolveCellValue,
   columnCanHaveCellActions,
+  ATTRIBUTE_BLOCK_COLUMNS,
   type BulkRow,
   type BulkRowType,
   type BulkSort,
   type CellReadOnlyReason,
   type ColumnDescriptor,
 } from "../../services/bulk-editor/columns.shared";
-import { BulkCell, type BulkCellActions, type BulkCellStatusOptions, type CellNavDirection } from "./BulkCell";
+import {
+  BulkCell,
+  type BulkCellActions,
+  type BulkCellEnumLabels,
+  type BulkCellStatusOptions,
+  type CellNavDirection,
+} from "./BulkCell";
 
 /** Fixed image-column width — must be a constant so the sticky title column
  * can sit at left:72px. */
@@ -54,11 +61,6 @@ const CELL_ACTIONS_ICON = 20;
 const CELL_ACTIONS_GUTTER = CELL_ACTIONS_ICON + 4;
 
 const IMAGE_COLUMN_WIDTH = 72;
-
-/** PLAN §Phase 3.6 — the columns fed by the Phase-0 attribute block, whose
- *  emptiness is only meaningful once `attributesSyncedAt` is set. `status` is
- *  NOT one of them: it predates that block and is non-null in the schema. */
-const ATTRIBUTE_BLOCK_COLUMN_IDS = new Set(["field.vendor", "field.tags"]);
 
 /** Field-colour state, mirroring the single editor: "untranslated" (yellow —
  * empty in the selected language) or "missingTranslation" (blue — primary set
@@ -113,6 +115,12 @@ interface BulkGridProps {
   cellActions?: (row: BulkRow, column: ColumnDescriptor) => BulkCellActions | undefined;
   columnHeading: (column: ColumnDescriptor) => string;
   statusOptions: BulkCellStatusOptions;
+  /** Labels for the select columns other than status (see BulkCellEnumLabels). */
+  enumLabels: BulkCellEnumLabels;
+  /** Template suffixes the PUBLISHED theme offers for this row type, or
+   *  undefined while the lookup is pending or after it failed — the cell then
+   *  falls back to a text box rather than an empty dropdown. */
+  templateSuffixes?: string[];
   handleWarning: string;
   /** Localized read-only explanations per reason (Plan §4.1–§4.3). */
   readOnlyTooltips: Record<CellReadOnlyReason, string>;
@@ -151,6 +159,8 @@ export function BulkGrid({
   cellActions,
   columnHeading,
   statusOptions,
+  enumLabels,
+  templateSuffixes,
   handleWarning,
   readOnlyTooltips,
   sortButtonLabel,
@@ -815,7 +825,7 @@ export function BulkGrid({
                       ghost={
                         isForeignLocale && !foreignReadOnly && resolved.editable
                           ? ghostFor(row, col)
-                          : ATTRIBUTE_BLOCK_COLUMN_IDS.has(col.id) && row.attributesKnown === false
+                          : ATTRIBUTE_BLOCK_COLUMNS.has(col.id) && row.attributesKnown === false
                             ? unknownAttributeGhost
                             : undefined
                       }
@@ -826,6 +836,8 @@ export function BulkGrid({
                       error={error}
                       errorId={error ? `cp-bulk-err-${type}-${rowIndex}-${i}` : undefined}
                       statusOptions={statusOptions}
+                      enumLabels={enumLabels}
+                      templateSuffixes={templateSuffixes}
                       onChange={(v) => setEdit(row, col, v)}
                       cellCoord={`${rowIndex}:${i}`}
                       onNavigate={(direction) => navigateFromCell(rowIndex, i, direction)}

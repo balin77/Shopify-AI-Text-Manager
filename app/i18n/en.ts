@@ -4052,6 +4052,29 @@ export const en: Translation = {
       moHandle: "Handle",
       imageUsage: "Used by",
       altText: "Alt text",
+      // §Phase 3 merchandising attributes. Not translatable (one value per
+      // item), so they are editable in the primary language only.
+      templateSuffix: "Theme template",
+      isPublished: "Visible in the online store",
+      sortOrder: "Sort order",
+      author: "Author",
+    },
+    /** Labels for the select columns other than `status`, keyed
+     *  `<column label>.<value>` — the same two boolean strings answer a
+     *  different question per column, so the column decides the wording. */
+    enumLabels: {
+      "isPublished.true": "Visible",
+      "isPublished.false": "Hidden",
+      "templateSuffix.": "Default",
+      "sortOrder.MANUAL": "Manual",
+      "sortOrder.BEST_SELLING": "Best selling",
+      "sortOrder.ALPHA_ASC": "Alphabetically A–Z",
+      "sortOrder.ALPHA_DESC": "Alphabetically Z–A",
+      "sortOrder.PRICE_ASC": "Price, low to high",
+      "sortOrder.PRICE_DESC": "Price, high to low",
+      "sortOrder.CREATED": "Newest first",
+      "sortOrder.CREATED_DESC": "Oldest first",
+      "sortOrder.MOST_RELEVANT": "Most relevant",
     },
     statusOptions: {
       active: "Active",

@@ -4065,6 +4065,29 @@ export const de = {
       moHandle: "Handle",
       imageUsage: "Zugeordnet zu",
       altText: "Alt-Text",
+      // §Phase 3 — Merchandising-Attribute. Nicht übersetzbar (ein Wert pro
+      // Objekt), deshalb nur in der Primärsprache editierbar.
+      templateSuffix: "Theme-Vorlage",
+      isPublished: "Im Onlineshop sichtbar",
+      sortOrder: "Sortierung",
+      author: "Autor",
+    },
+    /** Beschriftungen der Select-Spalten außer `status`, gekeyt
+     *  `<Spalten-Label>.<Wert>` — dieselben zwei Boolean-Strings tragen je
+     *  Spalte eine andere Frage, deshalb entscheidet die Spalte das Wort. */
+    enumLabels: {
+      "isPublished.true": "Sichtbar",
+      "isPublished.false": "Versteckt",
+      "templateSuffix.": "Standard",
+      "sortOrder.MANUAL": "Manuell",
+      "sortOrder.BEST_SELLING": "Bestseller",
+      "sortOrder.ALPHA_ASC": "Alphabetisch A–Z",
+      "sortOrder.ALPHA_DESC": "Alphabetisch Z–A",
+      "sortOrder.PRICE_ASC": "Preis aufsteigend",
+      "sortOrder.PRICE_DESC": "Preis absteigend",
+      "sortOrder.CREATED": "Neueste zuerst",
+      "sortOrder.CREATED_DESC": "Älteste zuerst",
+      "sortOrder.MOST_RELEVANT": "Relevanteste",
     },
     statusOptions: {
       active: "Aktiv",

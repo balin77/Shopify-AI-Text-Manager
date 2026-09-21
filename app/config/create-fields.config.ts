@@ -23,6 +23,11 @@
 // GIDs serialised" is how the create form and the editor would come to write
 // different bytes into the same field.
 import {
+  CREATE_PRODUCT_STATUSES,
+  COLLECTION_SORT_ORDERS,
+  BLOG_COMMENT_POLICIES,
+} from "./shopify-enums.shared";
+import {
   METAOBJECT_HEX_PATTERN,
   METAOBJECT_TYPE_COLOR,
   isMetaobjectTaxonomyListType,
@@ -204,26 +209,15 @@ export interface CreateResourceSpec {
   createsUnpublished?: boolean;
 }
 
-/** Shopify ProductStatus. Kept in step with PRODUCT_STATUSES in the bulk
- *  editor's apply.server.ts — the single editor must not offer a different set
- *  than the bulk editor (§2.3). Create defaults to DRAFT. */
-export const CREATE_PRODUCT_STATUSES = ["DRAFT", "ACTIVE", "UNLISTED", "ARCHIVED"] as const;
-
-/** Shopify CollectionSortOrder, measured against 2026-07 (PLAN §1.2a). */
-export const COLLECTION_SORT_ORDERS = [
-  "MANUAL",
-  "BEST_SELLING",
-  "ALPHA_ASC",
-  "ALPHA_DESC",
-  "PRICE_ASC",
-  "PRICE_DESC",
-  "CREATED",
-  "CREATED_DESC",
-  "MOST_RELEVANT",
-] as const;
-
-/** Shopify BlogCommentPolicy. */
-export const BLOG_COMMENT_POLICIES = ["CLOSED", "MODERATED", "AUTO_PUBLISHED"] as const;
+// The three enum vocabularies moved to an import-free leaf module: this file
+// sits inside an import cycle with the bulk editor's column descriptors, which
+// now need the same lists. Re-exported so the many call sites that reach for
+// them here keep working, and so there is still exactly one definition.
+export {
+  CREATE_PRODUCT_STATUSES,
+  COLLECTION_SORT_ORDERS,
+  BLOG_COMMENT_POLICIES,
+} from "./shopify-enums.shared";
 
 const TITLE_MAX = 255;
 const HANDLE_MAX = 255;

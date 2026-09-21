@@ -75,7 +75,13 @@ import { logger } from "../../utils/logger.server";
 import { redirectResourceFor, wasEverLive, type RedirectableResource } from "../seo/handle-redirect.shared";
 // The single editor parses tags with exactly this function — one rule, so the
 // two surfaces cannot disagree about what a tag list is.
-import { parseTagList } from "../content-attributes.shared";
+import {
+  parseTagList,
+  attributeInputFor,
+  attributesForResource,
+  type AttributeInput,
+  type AttributeResource,
+} from "../content-attributes.shared";
 import {
   groupDiffByRow,
   parseListMetafieldInput,
@@ -811,6 +817,12 @@ async function persistProductBaseFields(
     // otherwise report a change on every subsequent save.
     if (fields.vendor !== undefined) input.vendor = fields.vendor;
     if (fields.tags !== undefined) input.tags = parseTagList(fields.tags);
+    // "" is the theme's DEFAULT template, which Shopify expresses as null —
+    // the same rule `attributeInputFor` applies for the other four row types.
+    // Collapsing the two is how a field stops being clearable.
+    if (fields.templateSuffix !== undefined) {
+      input.templateSuffix = fields.templateSuffix.trim() || null;
+    }
     if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
       input.seo = {
         title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.seoTitle ?? "",
@@ -832,7 +844,7 @@ async function persistProductBaseFields(
       `#graphql
         mutation seoBulkMetaProductUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
-            product { id handle tags }
+            product { id handle tags templateSuffix }
             userErrors { field message }
           }
         }`,
@@ -841,7 +853,7 @@ async function persistProductBaseFields(
     const data = (await response.json()) as {
       data?: {
         productUpdate?: {
-          product?: { id: string; handle?: string; tags?: string[] } | null;
+          product?: { id: string; handle?: string; tags?: string[]; templateSuffix?: string | null } | null;
           userErrors?: { field?: string[] | string; message: string }[];
         };
       };
@@ -879,6 +891,16 @@ async function persistProductBaseFields(
     if (fields.tags !== undefined) {
       const echoedTags = echoedProduct?.tags;
       dbData.tags = Array.isArray(echoedTags) ? echoedTags : parseTagList(fields.tags);
+    }
+    // Prisma's column is nullable and "" is not the same value as "no custom
+    // template" — the 1:1 copy above would store the empty string and the grid
+    // would read it back as a suffix the theme does not have. Taken from the
+    // ECHO, like the handle and the tags beside it.
+    if (fields.templateSuffix !== undefined) {
+      dbData.templateSuffix =
+        echoedProduct && "templateSuffix" in echoedProduct
+          ? echoedProduct.templateSuffix ?? null
+          : fields.templateSuffix.trim() || null;
     }
     await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
 
@@ -1588,6 +1610,144 @@ async function persistImageRow(group: BulkDiffRowGroup, deps: PersistDeps): Prom
   return failures;
 }
 
+// ─── Merchandising attributes on a non-product row (PLAN §Phase 3) ────────
+
+/**
+ * Grid field names that are ATTRIBUTES rather than content.
+ *
+ * Mirrors what the single editor marks with `translationKey: ""` +
+ * `supportsTranslation: false` — the column descriptors carry the same fact as
+ * `translatable: false`, but a `status` is `translatable: false` too and is NOT
+ * one of these (it is a product field written straight into `ProductInput`).
+ * So the set is written down rather than derived from the descriptor, and
+ * `attributesForResource` is what keeps it honest per resource.
+ */
+const ATTRIBUTE_FIELD_NAMES = new Set(["templateSuffix", "isPublished", "sortOrder", "author", "tags"]);
+
+/** The grid row type → the resource `attributeInputFor` knows. Products are
+ *  deliberately absent: they have no entry in ATTRIBUTES_BY_RESOURCE and their
+ *  attributes ride `ProductInput` directly (persistProductBaseFields). */
+function attributeResourceForRowType(type: BulkRowType): AttributeResource | null {
+  switch (type) {
+    case "collection":
+      return "Collection";
+    case "page":
+      return "Page";
+    case "article":
+      return "Article";
+    case "blog":
+      return "Blog";
+    default:
+      return null;
+  }
+}
+
+/** Why an attribute cell was refused. The enum cases fail at the GraphQL
+ *  SCHEMA level if forwarded — where `userErrors` never sees them and the save
+ *  reads as a success — so they are refused HERE, per cell, and the rest of the
+ *  row still saves. */
+function rejectedAttributeMessage(name: string): string {
+  if (name === "author") {
+    return "An article always has an author — Shopify requires one, so this cannot be cleared here.";
+  }
+  return `"${name}" is not one of the values Shopify accepts for this field.`;
+}
+
+interface PreparedAttributes {
+  /** The attribute half of the mutation input, already typed for Shopify. */
+  input: AttributeInput;
+  /** Per-cell refusals — never fatal to the row. */
+  failures: BulkFailure[];
+}
+
+/**
+ * Turns the attribute cells of a row group into a Shopify input.
+ *
+ * `attributeInputFor` is the ONE place the string→enum/boolean/list conversion
+ * lives (the single editor calls the same function with the same arguments),
+ * and every cell in a bulk diff is by definition a CHANGED field, so the
+ * `changedFields` gate that protects the editor from writing an untouched
+ * attribute is satisfied by construction here.
+ */
+function prepareRowAttributes(
+  group: BulkDiffRowGroup,
+  resource: AttributeResource,
+  fields: Partial<Record<string, string>>,
+): PreparedAttributes {
+  const changed = Object.keys(fields).filter((name) => ATTRIBUTE_FIELD_NAMES.has(name));
+  if (changed.length === 0) return { input: {}, failures: [] };
+
+  const failures: BulkFailure[] = [];
+  const declared = new Set<string>(attributesForResource(resource));
+  const writable = changed.filter((name) => {
+    if (declared.has(name)) return true;
+    // A column the grid offers that this resource does not have. Sending it
+    // makes Shopify reject the WHOLE input (a `sortOrder` on a page does), and
+    // dropping it silently reports a save that wrote nothing.
+    failures.push(
+      failureOf(group, `"${name}" is not a field of this resource type.`, `field.${name}`),
+      );
+    return false;
+  });
+
+  const { rejected, ...input } = attributeInputFor(
+    resource,
+    fields as Record<string, string>,
+    writable,
+  );
+  for (const name of rejected ?? []) {
+    failures.push(failureOf(group, rejectedAttributeMessage(name), `field.${name}`));
+  }
+  return { input, failures };
+}
+
+/**
+ * The DB mirror of an attribute write, taken from what Shopify ECHOED.
+ *
+ * Never from what was sent: Shopify normalises (tags are trimmed and
+ * case-collapsed, an author is wrapped in an AuthorInput and comes back as a
+ * name, a cleared `templateSuffix` comes back null) and the grid reads this
+ * cache back on its next page. The same rule the handle and the product tags
+ * already follow one function up.
+ *
+ * A key absent from the echo is left out of the mirror rather than guessed:
+ * the cached value then stays whatever the last sync established, which is the
+ * honest reading of "Shopify did not tell us".
+ */
+function attributeMirrorFromEcho(
+  input: AttributeInput,
+  echo: EchoedResourceAttributes | null,
+): Record<string, unknown> {
+  const mirror: Record<string, unknown> = {};
+  if (input.templateSuffix !== undefined && echo && "templateSuffix" in echo) {
+    mirror.templateSuffix = echo.templateSuffix ?? null;
+  }
+  if (input.isPublished !== undefined && typeof echo?.isPublished === "boolean") {
+    mirror.isPublished = echo.isPublished;
+  }
+  if (input.sortOrder !== undefined && typeof echo?.sortOrder === "string") {
+    mirror.sortOrder = echo.sortOrder;
+  }
+  if (input.author !== undefined && typeof echo?.author?.name === "string") {
+    mirror.author = echo.author.name;
+  }
+  if (input.tags !== undefined && Array.isArray(echo?.tags)) {
+    mirror.tags = echo.tags;
+  }
+  return mirror;
+}
+
+/** What the four update mutations echo back beside the handle. Every one of
+ *  these is already in their selection sets (content.mutations.ts). */
+interface EchoedResourceAttributes {
+  handle?: string;
+  templateSuffix?: string | null;
+  isPublished?: boolean | null;
+  sortOrder?: string | null;
+  author?: { name?: string | null } | null;
+  tags?: string[] | null;
+}
+
 // ─── Non-product rows: single-mutation persist (unchanged from Phase 1) ────
 
 /** Resolves a row group's cells (columnId → value) into flat field names
@@ -1614,11 +1774,31 @@ function fieldsOfGroup(group: BulkDiffRowGroup, columns: ColumnDescriptor[]): Pa
   return fields;
 }
 
-async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<void> {
+async function persistSingleMutationRow(
+  group: BulkDiffRowGroup,
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
   const { rowType: type, rowId: id } = group;
   const { db, shop, contentService } = deps;
 
   const fields = fieldsOfGroup(group, deps.columnsByType[type]);
+
+  // §Phase 3 — the merchandising half. Split off BEFORE the content branches
+  // so the generic 1:1 DB mirror below never sees an attribute: `tags` is a
+  // Prisma scalar LIST and `isPublished` a Boolean, and copying the grid's
+  // strings into either fails the whole row.
+  const attributeResource = attributeResourceForRowType(type);
+  const { input: attributes, failures: attributeFailures } = attributeResource
+    ? prepareRowAttributes(group, attributeResource, fields)
+    : { input: {} as AttributeInput, failures: [] as BulkFailure[] };
+  for (const name of Object.keys(fields)) {
+    if (ATTRIBUTE_FIELD_NAMES.has(name)) delete fields[name];
+  }
+  const hasAttributes = Object.keys(attributes).length > 0;
+  // Everything the merchant touched was refused (a bad enum, a cleared author)
+  // — there is nothing left to send, and calling the mutation with only an id
+  // would report a successful save of nothing.
+  if (Object.keys(fields).length === 0 && !hasAttributes) return attributeFailures;
 
   // Shopify rejects an empty title outright for every one of these resource
   // types — reject it here too so it counts as a per-row failure instead of
@@ -1636,10 +1816,14 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   /** Applied AFTER the write, because only then is Shopify's own value known.
    *  Same reason as the product path: a slugified handle differs from the cell
    *  that produced it, and the grid reads this cache back. */
-  const withEchoedHandle = () =>
-    fields.handle !== undefined && echoedResource?.handle
-      ? { ...dbData, handle: echoedResource.handle }
-      : dbData;
+  const withEchoedValues = () => ({
+    ...dbData,
+    // The handle Shopify STORED, not the cell that produced it.
+    ...(fields.handle !== undefined && echoedResource?.handle
+      ? { handle: echoedResource.handle }
+      : {}),
+    ...attributeMirrorFromEcho(attributes, echoedResource),
+  });
 
   // §Phase 3.3 — read the old handle before the mutation below replaces it.
   const capturedHandle = await captureHandleForRedirect(group, fields.handle, deps);
@@ -1647,7 +1831,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   // resource with its handle, and Shopify slugifies a handle it is given —
   // so the stored value is the only safe basis for both the cache mirror and
   // the redirect target.
-  let echoedResource: { handle?: string } | null = null;
+  let echoedResource: EchoedResourceAttributes | null = null;
 
   switch (type) {
     case "collection": {
@@ -1689,8 +1873,9 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         // Featured-image alt: collectionUpdate carries it inline, the same
         // call the single editor makes (shopify-content.service updateContent).
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
+        ...attributes,
       });
-      await db.collection.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
+      await db.collection.update({ where: { shop_id: { shop, id } }, data: withEchoedValues() });
       break;
     }
     case "page": {
@@ -1700,8 +1885,9 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         ...(fields.body !== undefined ? { body: fields.body } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
+        ...attributes,
       });
-      await db.page.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
+      await db.page.update({ where: { shop_id: { shop, id } }, data: withEchoedValues() });
       break;
     }
     case "article": {
@@ -1717,8 +1903,9 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
         // See the collection branch — same inline alt write.
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
+        ...attributes,
       });
-      await db.article.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
+      await db.article.update({ where: { shop_id: { shop, id } }, data: withEchoedValues() });
       break;
     }
     case "blog": {
@@ -1735,6 +1922,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
+        ...attributes,
       });
       break;
     }
@@ -1789,6 +1977,10 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   // §Phase 3.3 — the write is confirmed (every branch above throws otherwise),
   // so the old URL can now be pointed at the new one.
   await finishBulkHandleRedirect(capturedHandle, echoedResource?.handle ?? fields.handle, group, deps);
+
+  // The row itself succeeded; these are the individual cells that were refused
+  // before the mutation ran.
+  return attributeFailures;
 }
 
 /**
@@ -3388,8 +3580,7 @@ async function persistRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<B
   }
 
   try {
-    await persistSingleMutationRow(group, deps);
-    return [];
+    return await persistSingleMutationRow(group, deps);
   } catch (err: unknown) {
     // Single-mutation rows fail as a whole — row-level failure (no columnId),
     // the UI falls back to marking the row's dirty cells.
