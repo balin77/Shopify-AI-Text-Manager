@@ -2073,7 +2073,7 @@ export default function BulkEditor() {
         ? b.saveSuccessWithFailures
             .replace("{saved}", String(lastSavedCount))
             .replace("{failed}", String(failedRowCount))
-        : b.saveSuccess.replace("{count}", String(lastSavedCount))
+        : t.common.successSaved
       : "";
 
   // Uncapped by design (.app-page-width-full, responsive.css :root): the grid is
@@ -2220,28 +2220,26 @@ export default function BulkEditor() {
                 {lastSavedCount !== null && (
                   <Banner tone={failedRowCount > 0 ? "warning" : "success"}>
                     <BlockStack gap="100">
+                      {/* A save that did what it says it does needs no
+                          arithmetic: the plain success line. Only a DEVIATION
+                          earns a sentence — rows that failed, and the two
+                          re-translation lines below, which report what did NOT
+                          happen. The started-runs count used to sit here and
+                          only restated the documented behaviour; the Tasks tab
+                          is where a background run is followed. */}
                       <Text as="p" variant="bodySm">
                         {failedRowCount > 0
                           ? b.saveSuccessWithFailures
                               .replace("{saved}", String(lastSavedCount))
                               .replace("{failed}", String(failedRowCount))
-                          : b.saveSuccess.replace("{count}", String(lastSavedCount))}
+                          : t.common.successSaved}
                       </Text>
                       {/* Auto-translate is a Max feature that spends the
                           merchant's own AI credit unattended, so a save that
-                          started runs says so — and a save that hit the cap
-                          says which rows it did NOT re-translate,
+                          hit the cap says which rows it did NOT re-translate,
                           because "everything is re-translated" plus silently
                           empty fields on row 30 is not a state anyone can
                           diagnose from the grid. */}
-                      {lastRetranslation && lastRetranslation.translations > 0 && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {b.retranslationStarted.replace(
-                            "{count}",
-                            String(lastRetranslation.translations),
-                          )}
-                        </Text>
-                      )}
                       {lastRetranslation && lastRetranslation.capped > 0 && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {b.retranslationCapped.replace("{count}", String(lastRetranslation.capped))}
