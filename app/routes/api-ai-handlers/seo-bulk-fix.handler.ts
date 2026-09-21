@@ -198,10 +198,11 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
       type: "seoBulkFix",
       status: "running",
       resourceType: "seo",
-      // Only the SINGLE-item entrance names an item; a store-wide run over a
-      // whole problem bucket names none and must stay linkless. Same rule as
-      // the fix-all-for-item row above.
-      resourceId: singleItemId || null,
+      // No `resourceId` — see the fix-all-for-item row below. This one has a
+      // second reason of its own: its subject is the PROBLEM ("meta
+      // description missing"), not the item, so a link on it would carry the
+      // merchant into one product's editor from a row that never names that
+      // product.
       resourceTitle: localeResolution.foreignLocale
         ? `${problemCode}:${localeResolution.foreignLocale}`
         : problemCode,
@@ -391,13 +392,17 @@ async function handleFixAllForItem(
       type: "seoBulkFix",
       status: "running",
       resourceType: "seo",
-      // The row names exactly ONE item, so it stores that item's GID: the
-      // Tasks page derives its in-app editor link from the GID alone
-      // (`task-deep-link.shared.ts`), and without this the merchant was told
-      // which product had been fixed with no way to go and look at it.
-      // `resourceType` stays `"seo"` — it decides the BADGE, and this is an
-      // SEO run whatever it ran on.
-      resourceId: itemId,
+      // Deliberately NO `resourceId`, though this row names exactly one item
+      // and the Tasks page would then link it into its editor
+      // (`task-deep-link.shared.ts` derives that from the GID).
+      // `Task.resourceId` is not only a label: the content editor polls
+      // `/api/running-field-tasks?resourceId=` on every item it opens and
+      // seeds its per-field spinner store from whatever comes back, with no
+      // filter on the task TYPE. Storing it here would therefore also decide
+      // which of that product's fields are locked while this runs — a
+      // defensible answer, but a different question from "can the merchant
+      // click through to it", and one nobody has asked yet. Making these rows
+      // linkable means answering it on purpose.
       resourceTitle: `fixAllForItem:${itemType}:${itemId.split("/").pop()}${
         localeResolution.foreignLocale ? `:${localeResolution.foreignLocale}` : ""
       }`,
