@@ -145,3 +145,67 @@ describe("the commerce action's unit-price rules", () => {
     expect(status).toBe(403);
   });
 });
+
+/**
+ * Activating a location, on a version that changed the quantity's TYPE.
+ *
+ * Production named this one outright: `Type mismatch on variable $onHand and
+ * argument onHand (Decimal / Int)`. A variable declared as a type the argument
+ * does not have fails at DOCUMENT VALIDATION, so the call never ran and no
+ * location was ever stocked — from the merchant's side, a button that did
+ * nothing and said nothing.
+ */
+describe("inventoryActivate speaks the pinned version's quantity type", () => {
+  const activate = () => {
+    const body = new FormData();
+    body.set("intent", "activate");
+    body.set("productId", PRODUCT);
+    body.set("inventoryItemId", "gid://shopify/InventoryItem/7");
+    body.set("locationId", "gid://shopify/Location/3");
+    body.set("quantity", "12");
+    return { method: "POST", formData: async () => body } as unknown as Request;
+  };
+
+  const runActivate = async (version: string) => {
+    const previous = process.env.SHOPIFY_API_VERSION;
+    process.env.SHOPIFY_API_VERSION = version;
+    try {
+      const graphql = vi.fn(async (_query: string, _options?: { variables?: Record<string, unknown> }) => ({
+        json: async () => ({
+          data: {
+            inventoryActivate: {
+              inventoryLevel: { id: "gid://shopify/InventoryLevel/1", location: { id: "gid://shopify/Location/3" } },
+              userErrors: [],
+            },
+          },
+        }),
+      }));
+      authenticate.admin.mockResolvedValue({ admin: { graphql }, session: { shop: "s" } });
+      const response = await action({ request: activate(), params: {}, context: {} } as never);
+      return {
+        body: (response as unknown as { data: Record<string, unknown> }).data,
+        document: graphql.mock.calls[0][0] as string,
+        onHand: (graphql.mock.calls[0][1] as { variables: { onHand: unknown } }).variables.onHand,
+      };
+    } finally {
+      // Set back rather than deleted — see the same rule in the hydration tests.
+      process.env.SHOPIFY_API_VERSION = previous ?? "";
+    }
+  };
+
+  it("declares Int and sends a NUMBER from 2026-04", async () => {
+    const { document, onHand, body } = await runActivate("2026-07");
+    expect(document).toContain("$onHand: Int");
+    expect(document).not.toContain("Decimal");
+    // `Decimal` travels as a string and `Int` does not, so the declaration
+    // alone is not the whole fix.
+    expect(onHand).toBe(12);
+    expect(body.success).toBe(true);
+  });
+
+  it("keeps Decimal and the string below it", async () => {
+    const { document, onHand } = await runActivate("2025-10");
+    expect(document).toContain("$onHand: Decimal");
+    expect(onHand).toBe("12");
+  });
+});

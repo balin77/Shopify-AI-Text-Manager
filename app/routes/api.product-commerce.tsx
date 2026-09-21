@@ -34,6 +34,7 @@ import { db } from "../db.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { meetsPlan } from "~/utils/planUtils";
+import { isApiVersionAtLeast } from "~/utils/api-version";
 import {
   INVENTORY_LEVEL_PAGE_SIZE,
   PUBLICATION_PAGE_SIZE,
@@ -779,6 +780,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 }
 
+/**
+ * From this version `inventoryActivate(onHand:)` takes an `Int` rather than a
+ * `Decimal` — the same 2026-04 inventory rework that renamed the
+ * compare-and-swap fields in `commerce-write.server.ts`, and measured the same
+ * way: from what the server answered, not from a document this app cannot
+ * reach.
+ */
+const INVENTORY_ONHAND_IS_INT_FROM = "2026-04" as const;
+
 export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   if (!(await requirePlan(session.shop))) {
@@ -827,15 +837,26 @@ export async function action({ request }: ActionFunctionArgs) {
       if (quantity === null) {
         return json({ success: false, error: "That is not a whole number." }, { status: 400 });
       }
+      // The QUANTITY's type changed with the same 2026-04 inventory rework the
+      // compare-and-swap did, and production named it for us:
+      //
+      //   Type mismatch on variable $onHand and argument onHand (Decimal / Int)
+      //
+      // A variable whose declared type does not match the argument fails at
+      // DOCUMENT VALIDATION, so this call never ran at all and no location was
+      // ever activated. `Decimal` is serialized as a string and `Int` is not,
+      // so the value travels differently too — sending the string under an
+      // `Int` variable would only move the refusal one step later.
+      const onHandIsInt = isApiVersionAtLeast(INVENTORY_ONHAND_IS_INT_FROM);
       const response = await admin.graphql(
         `#graphql
-          mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!, $onHand: Decimal) {
+          mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!, $onHand: ${onHandIsInt ? "Int" : "Decimal"}) {
             inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, onHand: $onHand) {
               inventoryLevel { id location { id } }
               userErrors { field message }
             }
           }`,
-        { variables: { inventoryItemId, locationId, onHand: String(quantity) } },
+        { variables: { inventoryItemId, locationId, onHand: onHandIsInt ? quantity : String(quantity) } },
       );
       const activateBody = (await response.json()) as {
         data?: {

@@ -23,14 +23,41 @@
  * directly would silently contradict the commitments. So only `on_hand` is
  * writable here; `available` is read and shown.
  *
- * ── This mutation has a deadline ────────────────────────────────────────────
- * `compareQuantity` / `ignoreCompareQuantity` are DEPRECATED from 2026-01 and
- * REMOVED from 2026-04, replaced by `changeFromQuantity` — and Shopify will
- * require `@idempotent` on inventory mutations from the same version. This app
- * pins 2025-10, so the shape below is correct today; the moment the pin moves
- * (the plan's Phase −1 targets 2026-07) this call sends fields that no longer
- * exist, which is a schema-level error and therefore a total, silent-looking
- * failure of every stock write. Whoever moves the pin has to come here.
+ * ── That deadline ARRIVED, and this is what it cost ─────────────────────────
+ * The note that used to stand here predicted it exactly: `compareQuantity` /
+ * `ignoreCompareQuantity` are REMOVED from 2026-04 in favour of
+ * `changeFromQuantity`, so the moment the pin moved past it every stock write
+ * would fail at the SCHEMA level — a total, silent-looking failure. The pin
+ * moved (the deployed `SHOPIFY_API_VERSION`, not the default in
+ * `api-version.ts`), nobody came here, and production answered exactly that,
+ * MEASURED from the server on 2026-09-21:
+ *
+ *   Variable $input of type InventorySetQuantitiesInput! was provided invalid
+ *   value for ignoreCompareQuantity (Field is not defined on
+ *   InventorySetQuantitiesInput), quantities.0.compareQuantity (Field is not
+ *   defined on InventoryQuantityInput)
+ *
+ * Two things that error PROVES, and they are why the fix below is narrow. A
+ * variable-coercion error is raised after the document has VALIDATED, so every
+ * other part of the call — the mutation, `inventoryAdjustmentGroup`,
+ * `changes(quantityNames:)`, `quantityAfterChange`, `userErrors { code }` —
+ * exists in that version and is not to be touched. And only the two named
+ * fields are wrong, so the entry type is still `InventoryQuantityInput`: this
+ * is a RENAME, not a new model.
+ *
+ * So the document is chosen by the PINNED VERSION (`isApiVersionAtLeast`), and
+ * both spellings keep the compare-and-swap — `changeFromQuantity` is the same
+ * value under the new name, and dropping the safety property to make a write
+ * go through is the one repair this module may never make. The name itself is
+ * the repo's own recorded research (the note quoted above), while the REMOVAL
+ * is measured; if that name is wrong the server says so in the same shape and
+ * the next line of this comment is a fact rather than a guess.
+ *
+ * Still UNMEASURED and deliberately not acted on: Shopify's `@idempotent`
+ * directive on inventory mutations, announced for the same version. The
+ * validation above would have named a missing required directive and did not,
+ * so it is not required today; adding a directive a version does not know is
+ * itself a schema error, which is the trap this whole comment is about.
  *
  * ── Never fails the save ────────────────────────────────────────────────────
  * Like the collection-rules and price paths: the content update has already
@@ -49,6 +76,7 @@ import {
   type UnitPriceFieldValues,
 } from "./unit-price.shared";
 import { logger } from "~/utils/logger.server";
+import { isApiVersionAtLeast } from "~/utils/api-version";
 
 /** Codes resolved to sentences by the client (`t.content.commerceWarnings`). */
 export type CommerceWarning =
@@ -109,6 +137,86 @@ export function parseQuantity(value: string): number | null {
 }
 
 /**
+ * Asked ONCE per process, and only after a write was refused at the schema
+ * level: what do these two input types actually carry on this version?
+ *
+ * This exists because of how the bug above was found — by a merchant pressing
+ * Save, seeing nothing happen, and a log line that named the two fields that
+ * were wrong but not the ones that are right. The new name below is the repo's
+ * own recorded research rather than a measurement (see the module header), so
+ * if it is wrong the same silence would repeat and the next round would start
+ * from the same place. It does not: the refusal now answers the question it
+ * raises, in the log, with the shop's real schema.
+ *
+ * Diagnostic only. It never throws, never changes what is returned, and never
+ * runs on a healthy write.
+ */
+let inventoryInputShapeAsked = false;
+
+/**
+ * The test seam for the ONCE-per-process rule above.
+ *
+ * That rule is the production behaviour and stays: the answer is a property of
+ * the API version this process talks, so asking again per save would repeat one
+ * log line for every refused write of every shop. A test that wants to observe
+ * the ask therefore has to clear the mark, rather than the module having to
+ * pretend the mark is not there.
+ */
+export function resetInventoryInputShapeProbe(): void {
+  inventoryInputShapeAsked = false;
+}
+async function logInventoryInputShape(admin: AdminApiContext, shop: string): Promise<void> {
+  if (inventoryInputShapeAsked) return;
+  inventoryInputShapeAsked = true;
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query commerceInventoryInputShape {
+          setInput: __type(name: "InventorySetQuantitiesInput") { inputFields { name } }
+          entryInput: __type(name: "InventoryQuantityInput") { inputFields { name } }
+        }`,
+    );
+    const body = (await response.json()) as {
+      data?: Record<string, { inputFields?: Array<{ name?: string }> | null } | null>;
+    };
+    const names = (key: string) =>
+      (body.data?.[key]?.inputFields ?? []).map((field) => field?.name).filter(Boolean).join(", ") || "none";
+    logger.warn("[Commerce] Inventory input shape on this API version", {
+      context: "Commerce",
+      shop,
+      InventorySetQuantitiesInput: names("setInput"),
+      InventoryQuantityInput: names("entryInput"),
+    });
+  } catch (error) {
+    logger.warn("[Commerce] Inventory input shape could not be read", {
+      context: "Commerce", shop, error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * The version from which `compareQuantity` / `ignoreCompareQuantity` are gone
+ * and `changeFromQuantity` carries the same meaning. See the module header:
+ * the removal is measured from the server, the new name is recorded research.
+ */
+const INVENTORY_COMPARE_RENAMED_IN = "2026-04" as const;
+
+/**
+ * Does this `userErrors` code mean "the quantity moved under you"?
+ *
+ * `STALE` and nothing else. The first cut also accepted any code NAMING the
+ * comparison, which reads as tolerant and is the opposite: a
+ * `COMPARE_QUANTITY_REQUIRED` — the shape of complaint this whole change is
+ * about — would then be reported to the merchant as "the stock changed
+ * meanwhile", sending them into a reload-and-retry loop over a request that
+ * will be refused identically every time, with the real defect hidden behind
+ * a sentence about somebody else's order.
+ */
+function isStaleCompareCode(code: string | null | undefined): boolean {
+  return typeof code === "string" && code.toUpperCase().includes("STALE");
+}
+
+/**
  * Writes ONE variant's on-hand quantities and mirrors what Shopify confirmed.
  *
  * All changes go in a single `inventorySetQuantities` call: Shopify applies it
@@ -139,6 +247,12 @@ export async function applyStockChanges(
   //
   // The prose stays out here on purpose: a `#` comment inside the document
   // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
+  /**
+   * Which spelling of the compare-and-swap this version has. See the module
+   * header: the FIELDS changed in 2026-04, the meaning did not.
+   */
+  const usesChangeFromQuantity = isApiVersionAtLeast(INVENTORY_COMPARE_RENAMED_IN);
+
   try {
     const response = await admin.graphql(
       `#graphql
@@ -165,14 +279,19 @@ export async function applyStockChanges(
             // Shopify requires a reason string; "correction" is what a manual
             // stock edit in the admin records too.
             reason: params.reason || "correction",
-            // The safety property. With this false, a stale page silently
-            // overwrites whatever happened in between.
-            ignoreCompareQuantity: false,
+            // The safety property, under whichever name this version has it.
+            // From 2026-04 the presence of `changeFromQuantity` IS the request
+            // to compare, so there is nothing to switch off beside it; before
+            // that the switch had to be sent explicitly, because its default
+            // is the silent overwrite.
+            ...(usesChangeFromQuantity ? {} : { ignoreCompareQuantity: false }),
             quantities: params.changes.map((change) => ({
               inventoryItemId: change.inventoryItemId,
               locationId: change.locationId,
               quantity: change.quantity,
-              compareQuantity: change.compareQuantity,
+              ...(usesChangeFromQuantity
+                ? { changeFromQuantity: change.compareQuantity }
+                : { compareQuantity: change.compareQuantity }),
             })),
           },
         },
@@ -200,6 +319,11 @@ export async function applyStockChanges(
       logger.warn("[Commerce] Stock schema-level error", {
         context: "Commerce", shop, error: body.errors[0]?.message,
       });
+      // The document this version WANTS, beside the one it refused. Awaited
+      // rather than fired off: this path already ends in a warning the
+      // merchant sees, and one more read before it costs a moment on a save
+      // that has failed anyway.
+      await logInventoryInputShape(admin, shop);
       return "stockFailed";
     }
 
@@ -215,7 +339,12 @@ export async function applyStockChanges(
       // prevent. The member is `COMPARE_QUANTITY_STALE` — spelling it the
       // other way round made the comparison never match, so the safety
       // message never appeared.
-      return first.code === "COMPARE_QUANTITY_STALE" ? "stockChangedMeanwhile" : "stockFailed";
+      // The exact member is the one measured on 2025-10. The rename above
+      // moved the FIELD, and Shopify may have moved this code with it — so a
+      // code that merely NAMES the situation counts too. Nothing about the
+      // write hangs on this: it picks which sentence the merchant reads, and
+      // guessing wrong costs a less specific one, never a wrong quantity.
+      return isStaleCompareCode(first.code) ? "stockChangedMeanwhile" : "stockFailed";
     }
 
     const changes = payload?.inventoryAdjustmentGroup?.changes ?? [];

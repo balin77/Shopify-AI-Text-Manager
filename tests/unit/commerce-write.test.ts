@@ -15,6 +15,7 @@ import {
   parseDecimal,
   parseQuantity,
   applyVariantPrices,
+  resetInventoryInputShapeProbe,
 } from "../../app/services/commerce-write.server";
 
 const ITEM = "gid://shopify/InventoryItem/1";
@@ -856,5 +857,134 @@ describe("the variant's own settings", () => {
       }),
     ).toBe("itemFieldsNotConfirmed");
     expect(updates).toEqual([]);
+  });
+});
+
+/**
+ * The shape Shopify's 2026-04 inventory rework left behind.
+ *
+ * This is the bug that made every stock save a silent no-op on a shop whose
+ * `SHOPIFY_API_VERSION` had moved past it: the document sent two fields the
+ * version no longer has, Shopify refused it before execution, and the panel
+ * had no way to say so. The module header quotes the server's own words.
+ *
+ * Pinned in both directions, because the app supports ten API versions and a
+ * document that is right for one of them is wrong for the other.
+ */
+describe("the compare-and-swap is spelled the way the pinned version spells it", () => {
+  const withVersion = async (version: string, run: () => Promise<void>) => {
+    const previous = process.env.SHOPIFY_API_VERSION;
+    process.env.SHOPIFY_API_VERSION = version;
+    try {
+      await run();
+    } finally {
+      // RESTORED by setting, never by deleting: a deleted variable is not the
+      // same as the one the runner started with on every platform.
+      process.env.SHOPIFY_API_VERSION = previous ?? "";
+    }
+  };
+
+  const inputOf = (admin: unknown) =>
+    (admin as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables.input as
+      Record<string, unknown>;
+
+  it("sends changeFromQuantity and NO ignoreCompareQuantity from 2026-04", async () => {
+    await withVersion("2026-07", async () => {
+      const admin = adminWith(echo([{ locationId: LOC_A, after: 12 }]));
+      const { db } = dbRecorder();
+      await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+
+      const input = inputOf(admin);
+      // Both of these were named by the live rejection; sending either again is
+      // the whole defect.
+      expect(input.ignoreCompareQuantity).toBeUndefined();
+      const entry = (input.quantities as Array<Record<string, unknown>>)[0];
+      expect(entry.compareQuantity).toBeUndefined();
+      // The safety property survives the rename — it is the point of the call.
+      expect(entry.changeFromQuantity).toBe(9);
+      expect(entry.quantity).toBe(12);
+    });
+  });
+
+  it("keeps the old spelling below it", async () => {
+    await withVersion("2025-10", async () => {
+      const admin = adminWith(echo([{ locationId: LOC_A, after: 12 }]));
+      const { db } = dbRecorder();
+      await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+
+      const input = inputOf(admin);
+      expect(input.ignoreCompareQuantity).toBe(false);
+      const entry = (input.quantities as Array<Record<string, unknown>>)[0];
+      expect(entry.compareQuantity).toBe(9);
+      expect(entry.changeFromQuantity).toBeUndefined();
+    });
+  });
+
+  it("never drops the comparison, whichever name it has", async () => {
+    // The one thing neither branch may do. A write with no baseline is the
+    // silent overwrite this module exists to refuse, and "make it go through"
+    // is exactly the repair someone would reach for after reading the bug.
+    for (const version of ["2025-10", "2026-07", "unstable"]) {
+      await withVersion(version, async () => {
+        const admin = adminWith(echo([{ locationId: LOC_A, after: 12 }]));
+        const { db } = dbRecorder();
+        await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+        const entry = (inputOf(admin).quantities as Array<Record<string, unknown>>)[0];
+        expect(entry.compareQuantity ?? entry.changeFromQuantity).toBe(9);
+      });
+    }
+  });
+});
+
+describe("a refused write says what the version WANTS", () => {
+  it("reports the real input shape and still fails the write", async () => {
+    // The ask is once per PROCESS, and an earlier test in this file already
+    // drove a schema-level refusal — so the mark has to be cleared to observe
+    // it here at all.
+    resetInventoryInputShapeProbe();
+    // The self-measurement the review asked for: the new field name is the
+    // repo's recorded research, not a measurement, so a refusal has to answer
+    // the question it raises instead of leaving the same silence behind.
+    const graphql = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({ errors: [{ message: "Field is not defined on InventoryQuantityInput" }], data: null }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          data: {
+            setInput: { inputFields: [{ name: "name" }, { name: "reason" }, { name: "quantities" }] },
+            entryInput: { inputFields: [{ name: "inventoryItemId" }, { name: "changeFromQuantity" }] },
+          },
+        }),
+      });
+    const { db, updates } = dbRecorder();
+    const warning = await applyStockChanges({ graphql } as never, db, "s", {
+      variantId: "42",
+      changes: [change(LOC_A, 12, 9)],
+    });
+
+    expect(warning).toBe("stockFailed");
+    // Nothing mirrored — a schema refusal wrote nothing on Shopify either.
+    expect(updates).toHaveLength(0);
+    const introspection = graphql.mock.calls[1][0] as string;
+    expect(introspection).toContain("InventorySetQuantitiesInput");
+    expect(introspection).toContain("InventoryQuantityInput");
+  });
+
+  it("tells a stale comparison from a demand for one", async () => {
+    // `COMPARE_QUANTITY_REQUIRED` reported as "someone else changed it" sends
+    // the merchant into a reload loop over a request that can never succeed.
+    const refuse = (code: string) => ({
+      data: { inventorySetQuantities: { inventoryAdjustmentGroup: null, userErrors: [{ message: "no", code }] } },
+    });
+    const stale = await applyStockChanges(adminWith(refuse("COMPARE_QUANTITY_STALE")), dbRecorder().db, "s", {
+      variantId: "42", changes: [change(LOC_A, 12, 9)],
+    });
+    const required = await applyStockChanges(adminWith(refuse("COMPARE_QUANTITY_REQUIRED")), dbRecorder().db, "s", {
+      variantId: "42", changes: [change(LOC_A, 12, 9)],
+    });
+    expect(stale).toBe("stockChangedMeanwhile");
+    expect(required).toBe("stockFailed");
   });
 });

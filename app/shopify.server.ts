@@ -91,7 +91,11 @@ logger.debug(`[SHOPIFY.SERVER]  - NODE_ENV: ${process.env.NODE_ENV || "developme
 
 const scopes = (process.env.SHOPIFY_SCOPES || "").split(",").map(s => s.trim()).filter(Boolean);
 logger.info(`[SHOPIFY.SERVER] Parsed scopes (${scopes.length}): ${scopes.join(",")}`);
-logger.debug(`[SHOPIFY.SERVER] Using API version: ${selectedApiVersion}`);
+// INFO, not debug: a schema-level rejection from Shopify ("field is not
+// defined on X") is always a question about which version this process talks,
+// and the answer lives in a dashboard env var rather than in the repo — the
+// 2026-04 inventory rework cost every stock write before anyone could see it.
+logger.info(`[SHOPIFY.SERVER] Using API version: ${selectedApiVersion}`);
 
 const shopify = shopifyApp({
   apiKey,

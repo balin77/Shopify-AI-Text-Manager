@@ -52,6 +52,27 @@ export function isSupportedApiVersion(value: string): value is ShopifyApiVersion
 }
 
 /**
+ * Is the version this process talks to at least `minimum`?
+ *
+ * For the handful of places where Shopify CHANGED a shape rather than adding
+ * one, and the app has to send the spelling the pinned version actually has.
+ * A document is still pinned per version — this only says which of two pinned
+ * documents to send, so nothing here guesses at a schema.
+ *
+ * The comparison is lexicographic because the strings are `YYYY-MM` with a
+ * zero-padded month, and `unstable` is the newest thing there is: it is ahead
+ * of every dated version and behind none.
+ */
+export function isApiVersionAtLeast(
+  minimum: ShopifyApiVersionString,
+  version: ShopifyApiVersionString = resolveApiVersionString(),
+): boolean {
+  if (version === "unstable") return true;
+  if (minimum === "unstable") return false;
+  return version >= minimum;
+}
+
+/**
  * The version this process talks to. `SHOPIFY_API_VERSION` is SET in every
  * deployed environment, so it — not the default above — is normally the answer.
  *

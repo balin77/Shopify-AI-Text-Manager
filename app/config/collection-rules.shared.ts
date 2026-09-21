@@ -34,7 +34,7 @@
  * reason. `rulesAvailableOn()` is the one predicate for that.
  */
 
-import { isSupportedApiVersion, type ShopifyApiVersionString } from "../utils/api-version";
+import { isApiVersionAtLeast, isSupportedApiVersion, type ShopifyApiVersionString } from "../utils/api-version";
 
 /** The first API version carrying `CollectionCreateInput.sources`. */
 export const RULES_MIN_API_VERSION = "2026-07";
@@ -56,14 +56,21 @@ export const RULES_UNREADABLE = "unreadable";
 /**
  * Can the rule editor talk to this API version?
  *
- * Compared as strings on purpose: Shopify's versions are `YYYY-MM`, which
- * sorts lexicographically exactly as it sorts chronologically. `unstable` is
- * treated as newest, because it is.
+ * The ORDERING is `isApiVersionAtLeast`'s and is not restated here — a second
+ * copy of "how two Shopify versions compare" is how two callers come to
+ * disagree about what a version is, and there is now more than one feature
+ * that turns on a version boundary (the inventory rework in
+ * `commerce-write.server.ts` is the other).
+ *
+ * What stays this function's own decision is the UNKNOWN string: an editor
+ * that cannot tell which model it is talking to is switched off rather than
+ * offered, because the value it writes back would change a collection's
+ * membership.
  */
 export function rulesAvailableOn(apiVersion: string): boolean {
   if (apiVersion === "unstable") return true;
   if (!isSupportedApiVersion(apiVersion)) return false;
-  return (apiVersion as ShopifyApiVersionString) >= RULES_MIN_API_VERSION;
+  return isApiVersionAtLeast(RULES_MIN_API_VERSION, apiVersion);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
