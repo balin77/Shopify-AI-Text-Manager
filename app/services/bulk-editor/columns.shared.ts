@@ -128,6 +128,12 @@ export interface ColumnDescriptor {
   /** DB column backing a server-side sort — absent means the column is NOT
    * sortable and the header must not render a sort affordance (Plan §3.3). */
   sortKey?: string;
+  /** Why a read-only column is read-only, where "it just is" is not the useful
+   *  answer — a category and a collection membership are set through a PICKER,
+   *  and the tooltip should say so rather than leaving a merchant to wonder
+   *  whether the grid is broken. Per-ROW reasons still win: `resolveCellValue`
+   *  returns its own for a cell whose row is the problem. */
+  readOnlyReason?: CellReadOnlyReason;
   /** inputType "select": the enum values this column accepts, in offer order.
    *
    * The VALUE vocabulary, never the labels — those are i18n and live in
@@ -293,6 +299,55 @@ const FEATURED_ALT_TRANSLATION_CALLS = 3;
 export function isFeaturedImageAltColumn(column: ColumnDescriptor): boolean {
   return column.id === FEATURED_IMAGE_ALT_COLUMN_ID;
 }
+
+/**
+ * The product's taxonomy category and its collection memberships.
+ *
+ * READ-ONLY, and that is a decision rather than a shortcut. Both are set
+ * through a PICKER in the single editor and neither survives a text cell:
+ *
+ *  - A category is a `TaxonomyCategory` GID chosen from Shopify's tree. Its
+ *    NAME is what a merchant reads and what this column shows, and a name is
+ *    not a value that can be written back — the tree has repeated names under
+ *    different parents.
+ *  - A membership is a JOIN/LEAVE DIFF (`collectionsToJoin`/`ToLeave`), never a
+ *    list: a product can belong to collections whose rows this shop never
+ *    cached, so a full-list write would silently drop them. Collection titles
+ *    are not unique either, and a RULE-BASED collection must be refused in both
+ *    directions — Shopify rejects a manual join on one, and because
+ *    `productUpdate` is atomic that refusal takes the merchant's text edits
+ *    down with it.
+ *
+ * What they ARE good for is scanning: "which products have no category", "which
+ * ones are in Sale". That is what a grid is for, and it is why these are
+ * columns at all rather than nothing.
+ */
+export const PRODUCT_CATEGORY_COLUMN_ID = "productCategory";
+export const PRODUCT_COLLECTIONS_COLUMN_ID = "productCollections";
+
+const PRODUCT_CATEGORY_COLUMN: ColumnDescriptor = {
+  id: PRODUCT_CATEGORY_COLUMN_ID,
+  kind: "readonly",
+  label: "productCategory",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "text",
+  minWidth: 220,
+  readOnlyReason: "needsPicker",
+};
+
+const PRODUCT_COLLECTIONS_COLUMN: ColumnDescriptor = {
+  id: PRODUCT_COLLECTIONS_COLUMN_ID,
+  kind: "readonly",
+  label: "productCollections",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "text",
+  minWidth: 240,
+  readOnlyReason: "needsPicker",
+};
 
 const BLOG_TITLE_COLUMN: ColumnDescriptor = {
   id: "blogTitle",
@@ -740,6 +795,9 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_VENDOR,
     COL_TAGS,
     COL_TEMPLATE_SUFFIX,
+    // Read-only context — see PRODUCT_CATEGORY_COLUMN_ID for why.
+    PRODUCT_CATEGORY_COLUMN,
+    PRODUCT_COLLECTIONS_COLUMN,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
@@ -1406,6 +1464,14 @@ export interface BulkRow {
    *  the shop's data (`ProductVariant.commerceSyncedAt`) — the variant twin of
    *  `attributesKnown`. The grid shows them as unknown, never as empty. */
   commerceKnown?: boolean;
+  /** PRODUCT rows, read-only context: the taxonomy category's NAME and the
+   *  collection memberships as a comma-joined list of titles. Both are set
+   *  through a picker in the single editor (see PRODUCT_CATEGORY_COLUMN_ID). */
+  productCategory?: string;
+  productCollections?: string;
+  /** PRODUCT rows: the membership list above is INCOMPLETE — the product
+   *  belongs to more collections than the sync's window fetched. */
+  hasMoreCollections?: boolean;
   /** PRODUCT rows: the product's ONE variant, when it has exactly one — the
    *  price, compare-at price and SKU cells then edit it directly. Absent means
    *  either "more than one variant" (`variantCount`, which the cell reports as
@@ -1495,7 +1561,9 @@ export type CellReadOnlyReason =
   | "commerceNotSynced" // §Phase 4 — `commerceSyncedAt` unset: unknown, not empty
   | "missingInventoryItem" // the variant has no InventoryItem GID to write to
   | "multipleVariants" // a product row's price cell: which of several? (see below)
-  | "variantsNotSynced"; // the product's variants were never cached
+  | "variantsNotSynced" // the product's variants were never cached
+  | "needsPicker" // set through a picker in the single editor, not as text
+  | "collectionsTruncated"; // the sync window cut the membership list short
 
 /** The columns fed by the Phase-0 attribute block, whose emptiness only means
  *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
@@ -1514,6 +1582,11 @@ export const ATTRIBUTE_BLOCK_COLUMNS = new Set([
   "field.isPublished",
   "field.sortOrder",
   "field.author",
+  // Read-only, and still in here: an empty category cell on a row an older sync
+  // wrote is "not fetched", not "no category", and the grid's ghost text is
+  // what says so.
+  PRODUCT_CATEGORY_COLUMN_ID,
+  PRODUCT_COLLECTIONS_COLUMN_ID,
 ]);
 
 export interface ResolvedCell {
@@ -1720,6 +1793,24 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       return { value: raw, editable: true };
     }
     case "readonly": {
+      if (column.id === PRODUCT_CATEGORY_COLUMN_ID || column.id === PRODUCT_COLLECTIONS_COLUMN_ID) {
+        const value =
+          column.id === PRODUCT_CATEGORY_COLUMN_ID
+            ? row.productCategory ?? ""
+            : row.productCollections ?? "";
+        // Empty is not evidence here either: the block may never have been
+        // fetched, and the grid shows the "unknown" ghost for exactly these ids.
+        if (row.attributesKnown === false) {
+          return { value, editable: false, readOnlyReason: "attributesNotSynced" };
+        }
+        // A truncated membership list is a DIFFERENT statement from a complete
+        // one, and it is per ROW — which is why the descriptor's own reason can
+        // be overridden here.
+        if (column.id === PRODUCT_COLLECTIONS_COLUMN_ID && row.hasMoreCollections) {
+          return { value, editable: false, readOnlyReason: "collectionsTruncated" };
+        }
+        return { value, editable: false, readOnlyReason: "needsPicker" };
+      }
       let value = "";
       if (column.id === "blogTitle") value = row.blogTitle ?? "";
       else if (column.id === "productTitle") value = row.productTitle ?? "";
@@ -1728,7 +1819,7 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       else if (column.id === "policyTitle" || column.id === "moDisplayName") value = row.title;
       else if (column.id === "moHandle") value = row.handle;
       else if (column.id === "imageUsage") value = row.imageUsage ?? row.productTitle ?? "";
-      return { value, editable: false, readOnlyReason: "column" };
+      return { value, editable: false, readOnlyReason: column.readOnlyReason ?? "column" };
     }
     default:
       return { value: "", editable: false, readOnlyReason: "column" };

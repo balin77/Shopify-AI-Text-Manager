@@ -4091,6 +4091,9 @@ export const de = {
       requiresShipping: "Versand nötig",
       countryCodeOfOrigin: "Herkunftsland (ISO)",
       harmonizedSystemCode: "Zolltarifnummer",
+      // Nur-Lese-Kontext: per Auswahldialog im Einzeleditor gesetzt.
+      productCategory: "Produktkategorie",
+      productCollections: "Kollektionen",
     },
     chooseColumns: "Spalten wählen",
     columnPicker: {
@@ -4123,6 +4126,11 @@ export const de = {
       // Resync, keine Einschränkung.
       multipleVariants: "Dieses Produkt hat mehrere Varianten, die unterschiedliche Preise haben können — bearbeite sie unter \"Produktvarianten\".",
       variantsNotSynced: "Die Varianten dieses Produkts sind noch nicht im Cache — lade die Produkte neu und bearbeite das dann.",
+      // Kategorie und Kollektionen: mit Auswahldialog gesetzt, hier nur zum
+      // Überblick. Ein Name ist kein schreibbarer Wert, und eine Zugehörigkeit
+      // ist ein Join/Leave-Diff — beides gehört in den Einzeleditor.
+      needsPicker: "Dieses Feld wird über einen Auswahldialog gesetzt — öffne das Produkt im Einzeleditor, um es zu ändern.",
+      collectionsTruncated: "Dieses Produkt ist in mehr Kollektionen, als der Sync geladen hat — die Liste hier ist unvollständig.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",

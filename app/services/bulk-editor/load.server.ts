@@ -657,6 +657,17 @@ async function loadBulkRowsInner(
         vendor: true,
         tags: true,
         templateSuffix: true,
+        // Read-only context columns. `categoryName` mirrors the taxonomy's
+        // `fullName`, and the memberships carry their collection TITLE
+        // denormalised — so neither needs a join beyond the relation.
+        // `hasMoreCollections` is what keeps a truncated list from reading as a
+        // complete one.
+        categoryName: true,
+        hasMoreCollections: true,
+        collections: {
+          orderBy: { collectionTitle: "asc" as const },
+          select: { collectionTitle: true },
+        },
         attributesSyncedAt: true,
         featuredImageUrl: true,
         featuredImageAlt: true,
@@ -707,6 +718,7 @@ async function loadBulkRowsInner(
               metafields?: { id: string; namespace: string; key: string; value: string; type: string }[];
               options?: { id: string; name: string; position: number; values: string; linkedMetafieldKey: string | null }[];
               images?: { mediaId: string | null; altText: string | null }[];
+              collections?: { collectionTitle: string }[];
               variants?: {
                 shopifyGid: string;
                 price: Prisma.Decimal | null;
@@ -742,6 +754,9 @@ async function loadBulkRowsInner(
             // REPLACES the product's tags rather than adding to them.
             tags: Array.isArray(i.tags) ? (i.tags as string[]).join(", ") : "",
             templateSuffix: (i.templateSuffix as string | null) ?? "",
+            productCategory: (i.categoryName as string | null) ?? "",
+            productCollections: (i.collections ?? []).map((c) => c.collectionTitle).join(", "),
+            hasMoreCollections: !!i.hasMoreCollections,
             attributesKnown: !!i.attributesSyncedAt,
             imageUrl: (i.featuredImageUrl as string | null) ?? undefined,
             imageAlt: (i.featuredImageAlt as string | null) ?? undefined,

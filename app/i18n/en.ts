@@ -4078,6 +4078,9 @@ export const en: Translation = {
       requiresShipping: "Requires shipping",
       countryCodeOfOrigin: "Country of origin (ISO)",
       harmonizedSystemCode: "HS code",
+      // Read-only context: set through a picker in the single editor.
+      productCategory: "Product category",
+      productCollections: "Collections",
     },
     chooseColumns: "Choose columns",
     columnPicker: {
@@ -4104,6 +4107,8 @@ export const en: Translation = {
       missingInventoryItem: "This variant has no Shopify inventory item, which is where cost, weight and customs data live — resync the product first.",
       multipleVariants: "This product has several variants, which can differ in price — edit them under \"Product variants\".",
       variantsNotSynced: "This product's variants are not in the cache yet — resync the products, then edit this.",
+      needsPicker: "This field is set through a picker — open the product in the single editor to change it.",
+      collectionsTruncated: "This product is in more collections than the sync fetched — the list here is incomplete.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",

@@ -4066,6 +4066,9 @@ export const es: Translation = {
       requiresShipping: "Requiere envío",
       countryCodeOfOrigin: "País de origen (ISO)",
       harmonizedSystemCode: "Código arancelario",
+      // Contexto de solo lectura: se establece con un selector en el editor.
+      productCategory: "Categoría de producto",
+      productCollections: "Colecciones",
     },
     chooseColumns: "Elegir columnas",
     columnPicker: {
@@ -4092,6 +4095,8 @@ export const es: Translation = {
       missingInventoryItem: "Esta variante no tiene artículo de inventario de Shopify, donde viven el coste, el peso y los datos aduaneros — vuelve a sincronizar el producto.",
       multipleVariants: "Este producto tiene varias variantes, que pueden diferir en precio — edítalas en \"Variantes de producto\".",
       variantsNotSynced: "Las variantes de este producto aún no están en la caché — vuelve a sincronizar los productos y edítalo después.",
+      needsPicker: "Este campo se establece con un selector — abre el producto en el editor individual para cambiarlo.",
+      collectionsTruncated: "Este producto está en más colecciones de las que cargó la sincronización — la lista aquí está incompleta.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",

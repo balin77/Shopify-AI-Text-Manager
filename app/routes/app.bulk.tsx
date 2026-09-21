@@ -1128,6 +1128,11 @@ export default function BulkEditor() {
     // restriction.
     multipleVariants: b.readOnlyReasons.multipleVariants,
     variantsNotSynced: b.readOnlyReasons.variantsNotSynced,
+    // A category and a collection membership are set through a PICKER: a name
+    // is not a writable value and a membership is a join/leave DIFF, so the
+    // tooltip names the single editor instead of leaving the cell mute.
+    needsPicker: b.readOnlyReasons.needsPicker,
+    collectionsTruncated: b.readOnlyReasons.collectionsTruncated,
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,
