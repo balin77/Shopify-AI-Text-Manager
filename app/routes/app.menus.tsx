@@ -937,6 +937,8 @@ export default function MenusPage() {
    * good.
    */
   const refreshOwedRef = useRef(false);
+  /** The revalidation now running is OURS — see the tree-report effect. */
+  const backgroundRevalidationRef = useRef(false);
   const [refreshAttempt, setRefreshAttempt] = useState(0);
   useBackgroundTaskRefresh(watchedTaskIds, ({ settled, follow }) => {
     const done = new Set(settled);
@@ -967,6 +969,12 @@ export default function MenusPage() {
     if (!refreshOwedRef.current) return;
     if (!canRefresh) return;
     refreshOwedRef.current = false;
+    // Ours, so the "a finished revalidation retires the last tree report"
+    // effect below stands down for it: that report is what the merchant is
+    // reading — the rename counts, and the translation-repair failures — and
+    // wiping it because a background run finished would take the one record of
+    // the save away mid-read.
+    backgroundRevalidationRef.current = true;
     revalidator.revalidate();
     // `canRefresh` is what re-runs this once the merchant is done editing; the
     // attempt counter is what re-runs it when a second batch settles while the
@@ -1067,6 +1075,13 @@ export default function MenusPage() {
     }
     if (!wasRevalidatingRef.current) return;
     wasRevalidatingRef.current = false;
+    if (backgroundRevalidationRef.current) {
+      // A reload WE asked for after a background re-translation. The report it
+      // would retire describes the very save that started that run, and the
+      // merchant is still reading it.
+      backgroundRevalidationRef.current = false;
+      return;
+    }
     setTreeResult(null);
   }, [revalidatorState]);
 

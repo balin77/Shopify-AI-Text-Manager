@@ -1124,7 +1124,16 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         pushedCount: pushedPrimaryKeys.size,
       });
       return json(
-        { success: false, error: message, actionType: "updateContent" },
+        {
+          success: false,
+          error: message,
+          actionType: "updateContent",
+          // The repair above has already started for the keys that DID land, so
+          // its ids travel even on this branch. Dropping them left a run
+          // nothing would ever wait for, on the one surface with neither a
+          // webhook nor a sync to notice later.
+          retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+        },
         { status: 500 }
       );
     }

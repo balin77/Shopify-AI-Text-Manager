@@ -674,6 +674,12 @@ export interface UseContentEditorReturn {
     trackRetranslationTasks: (response: unknown) => void;
     /** Watched re-translation runs that have not finished yet. */
     pendingRetranslationCount: number;
+    /**
+     * Bumped once per completed background refresh, for a card this hook does
+     * not resolve — the product page's options and metafields load themselves
+     * and would otherwise never re-read.
+     */
+    backgroundRefreshVersion: number;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */

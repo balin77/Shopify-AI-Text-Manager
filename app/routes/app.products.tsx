@@ -920,6 +920,16 @@ export default function ProductsPage() {
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
 
+  // A finished background re-translation reloaded the loader; the options and
+  // metafields card has to re-read too. Its own load effect short-circuits on
+  // `itemId::locale::market`, none of which a revalidation changes, so without
+  // this the refreshed sub-resource translations are fetched and never shown.
+  useEffect(() => {
+    if (editor.helpers.backgroundRefreshVersion === 0) return;
+    subResources.handlers.resetForReload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone
+  }, [editor.helpers.backgroundRefreshVersion]);
+
   // Check for sync parameter and trigger background sync
   useEffect(() => {
     if (!isMountedRef.current) return;

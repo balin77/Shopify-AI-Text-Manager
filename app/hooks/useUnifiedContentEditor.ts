@@ -679,10 +679,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** A reload has been asked for and the revalidation is under way; the
    *  re-resolve happens once the loader data has actually landed. */
   const backgroundRefreshPendingRef = useRef(false);
-  /** Consumed by the data-loading effect: THIS run is a background refresh, not
-   *  a ReloadButton press, and must not discard the merchant's caches wholesale
-   *  or overwrite a field they are typing in. */
+  /** Read by the data-loading effect: every pass while this is set is a
+   *  background refresh, not a ReloadButton press, and must not discard the
+   *  merchant's caches wholesale or overwrite a field they are typing in. */
   const backgroundRefreshActiveRef = useRef(false);
+  /** The `dataRefreshTrigger` value this refresh will bump to. A ReloadButton
+   *  press bumps to a different one and keeps its own, wider semantics. */
+  const backgroundRefreshTriggerRef = useRef<number | null>(null);
+  /**
+   * Bumped once per completed background refresh, for the parts of a page this
+   * hook does not resolve. The product page's options and metafields are the
+   * case: they are loaded by `useProductSubResources`, whose load effect
+   * short-circuits on `itemId::locale::market` — unchanged by a revalidation —
+   * so the refreshed sub-resource translations would never be rendered.
+   */
+  const [backgroundRefreshVersion, setBackgroundRefreshVersion] = useState(0);
   /**
    * The runs this SESSION started that have not been seen finished — a union
    * across saves, exactly like the grid's. A merchant saves again while the
@@ -702,6 +713,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (ids.length === 0) return;
     setWatchedTaskIds((prev) => [...new Set([...prev, ...ids])]);
   }, []);
+
+  // EVERY response this editor's fetcher sees is offered to the watcher — one
+  // call rather than one per action type, because a response carrying no task
+  // ids adds nothing and a surface that started no run must not poll at all.
+  // Without this line the ids the save actions now return are simply discarded
+  // and no reload ever happens, which is the whole mechanism.
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    trackRetranslationTasks(fetcher.data);
+  }, [fetcher.state, fetcher.data, trackRetranslationTasks]);
 
   /**
    * A reload the editor was not ready for is REMEMBERED, not dropped: the watch
@@ -733,19 +754,34 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * A save in flight is the same question one moment earlier — re-reading the
    * server mid-write shows the state before it.
    */
+  // `isLoadingData` is in here because `hasChanges` is forced to FALSE while it
+  // is true (useEditorChangeDetection) — so without it the deferral would read
+  // a genuinely dirty editor as clean during exactly the window a reload is
+  // most likely to be asked for.
   const canBackgroundRefresh =
-    !hasChanges && fetcher.state === "idle" && revalidator.state === "idle";
+    !hasChanges &&
+    !isLoadingData &&
+    fetcher.state === "idle" &&
+    revalidator.state === "idle";
   useEffect(() => {
     if (!refreshOwedRef.current) return;
     if (!canBackgroundRefresh) return;
     refreshOwedRef.current = false;
     backgroundRefreshPendingRef.current = true;
+    // Armed HERE, not when the revalidation lands. Its fresh data re-runs the
+    // data-loading effect on its own (the translation signal moves), and that
+    // pass would otherwise run in normal mode: it would overwrite a keystroke
+    // and install its own baseline, after which the merge below could only ever
+    // find everything clean. Every pass from this moment until the trigger's
+    // own preserves unsaved input.
+    backgroundRefreshActiveRef.current = true;
     try {
       revalidatorRef.current.revalidate();
     } catch {
       // An AbortError from the Shopify admin interfering is not a failure of
       // this refresh — put the debt back and let the next change re-run this.
       backgroundRefreshPendingRef.current = false;
+      backgroundRefreshActiveRef.current = false;
       refreshOwedRef.current = true;
     }
     // `canBackgroundRefresh` is what re-runs this once the merchant saves or
@@ -762,14 +798,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (revalidator.state !== "idle") return;
     if (!backgroundRefreshPendingRef.current) return;
     backgroundRefreshPendingRef.current = false;
-    backgroundRefreshActiveRef.current = true;
+    // The trigger value this refresh owns, taken from the setter itself so it
+    // cannot disagree with what React stores. It is what tells the run this
+    // causes apart from a ReloadButton press landing in the same window — the
+    // two want opposite things from the caches.
     // The revalidation's own fresh translations may already have re-run the
     // data-loading effect once, in normal mode and with the stale overlays
     // still in place. That run settles at whatever the overlays say and this
     // one then corrects it — the visible cost is at most one frame, and both
     // runs start from an editor with nothing unsaved (the refresh is deferred
     // otherwise), so nothing of the merchant's is at stake in between.
-    setDataRefreshTrigger((prev) => prev + 1);
+    setDataRefreshTrigger((prev) => {
+      backgroundRefreshTriggerRef.current = prev + 1;
+      return prev + 1;
+    });
+    setBackgroundRefreshVersion((v) => v + 1);
   }, [revalidator.state]);
 
   // ============================================================================
@@ -883,15 +926,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // A refresh this page asked for AFTER a background re-translation finished
     // is not a ReloadButton press, and the two differ in both directions.
     //
-    // The flag is consumed ONLY by the run the trigger caused. The revalidation
-    // that precedes it re-runs this effect on its own (its fresh
-    // `item.translations` move the signal), and clearing the flag there handed
-    // the trigger's run to the ReloadButton branch instead: the primary cache
-    // would be dropped, an unsaved keystroke overwritten, and theme content
-    // would early-return without re-resolving at all — leaving the narrow path
-    // working only on the surfaces that live outside `item.translations`.
-    const isBackgroundRefresh = refreshTriggered && backgroundRefreshActiveRef.current;
-    if (refreshTriggered) backgroundRefreshActiveRef.current = false;
+    // EVERY pass while the flag is set counts, not only the one the trigger
+    // causes: the revalidation re-runs this effect on its own (its fresh
+    // `item.translations` move the signal), and letting that pass run in normal
+    // mode overwrote an unsaved keystroke and installed its own baseline —
+    // after which the merge below could only ever find everything clean.
+    //
+    // The one pass that must NOT be reclassified is a ReloadButton press
+    // landing in the same window: it bumps the trigger to a different value and
+    // keeps its own, wider reset. The flag is retired by the trigger this
+    // refresh owns.
+    const isOwnTrigger =
+      refreshTriggered && dataRefreshTrigger === backgroundRefreshTriggerRef.current;
+    const isBackgroundRefresh =
+      backgroundRefreshActiveRef.current && (isOwnTrigger || !refreshTriggered);
+    if (isOwnTrigger || (refreshTriggered && !isBackgroundRefresh)) {
+      backgroundRefreshActiveRef.current = false;
+      backgroundRefreshTriggerRef.current = null;
+    }
 
     if (refreshTriggered && !isBackgroundRefresh) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
@@ -2741,6 +2793,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       /** Watched runs that have not finished — for a quiet "still writing the
        *  translations" hint. Nothing is required to render it. */
       pendingRetranslationCount,
+      /** Bumped once per completed background refresh — for a card this hook
+       *  does not resolve and that has to re-read on its own. */
+      backgroundRefreshVersion,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,
