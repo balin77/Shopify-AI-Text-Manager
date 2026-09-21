@@ -2327,6 +2327,7 @@ async function runRetranslation(
    * rather than reporting a clean success over a half-written repair.
    */
   const notMirrored: Array<{ resourceId: string; locale: string; key: string; error: string }> = [];
+  /**
    * Handle entries this run could not deliver — a provider error, an answer the
    * slug sanitiser could not use, a write Shopify did not echo back.
    *
