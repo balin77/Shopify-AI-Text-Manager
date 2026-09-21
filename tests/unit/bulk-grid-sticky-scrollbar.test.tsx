@@ -111,7 +111,7 @@ function grid() {
         onPreviewImage={() => {}}
         previewImageLabel="preview"
         columnHeading={(column) => column.label}
-        statusOptions={{ active: "Active", draft: "Draft", unlisted: "Unlisted", archived: "Archived" }}
+        enumLabels={{ "status.ACTIVE": "Active", "status.DRAFT": "Draft" }}
         handleWarning="handle"
         readOnlyTooltips={{
           column: "read only",
@@ -125,6 +125,12 @@ function grid() {
           listSeparatorInValue: "separator",
           altTextInImages: "alt in images",
           attributesNotSynced: "not synced",
+          commerceNotSynced: "commerce not synced",
+          missingInventoryItem: "no inventory item",
+          multipleVariants: "several variants",
+          variantsNotSynced: "variants not synced",
+          needsPicker: "use the single editor",
+          collectionsTruncated: "list incomplete",
         }}
         sortButtonLabel="sort"
         caption="products"
