@@ -31,6 +31,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Card, BlockStack, InlineStack, Text, TextField, Button, Select, Banner, Modal, Tooltip } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
@@ -622,6 +623,7 @@ export default function BulkEditor() {
   const data = useLoaderData<typeof loader>();
   const { gated, rows, allowedTypes, type, page, pageSize, total, search, filters, locale, marketId } = data;
   const { t, locale: uiLocale } = useI18n();
+  const { showInfoBox } = useInfoBox();
   const { handleNavigate } = useAppNavigation();
   const revalidator = useRevalidator();
   const b = t.bulkEditor;
@@ -963,6 +965,17 @@ export default function BulkEditor() {
       setLastFailures(saveFetcher.data.failures);
       setLastSavedCount(saveFetcher.data.saved);
       setLastRetranslation(saveFetcher.data.retranslation ?? null);
+      // A save that wrote every cell it was given is reported by the nav
+      // InfoBox and nowhere else: it auto-hides, it keeps a row in the bell,
+      // and it is the strip every other successful save in this app already
+      // announces through. The banner below stays for what did NOT happen —
+      // rows that failed, and translations that were not re-created — which
+      // has to stand still next to the grid it is about. A capped or skipped
+      // re-translation does NOT suppress this line: the save itself
+      // succeeded, and the two statements are about different things.
+      if (saveFetcher.data.failures.length === 0) {
+        showInfoBox(t.common.successSaved, "success");
+      }
       const startedTaskIds = saveFetcher.data.retranslation?.taskIds ?? [];
       if (startedTaskIds.length > 0) {
         setWatchedTaskIds((prev) => [...new Set([...prev, ...startedTaskIds])]);
@@ -2066,14 +2079,25 @@ export default function BulkEditor() {
     ...data.markets.map((m) => ({ label: m.name, value: m.id })),
   ];
 
+  /**
+   * Whether the last save needs a banner at all. A clean one does not — it is
+   * announced in the nav InfoBox (see the save effect above). Only what did
+   * NOT happen earns a strip above the grid.
+   */
+  const saveDeviation =
+    lastSavedCount !== null &&
+    (failedRowCount > 0 ||
+      (lastRetranslation?.capped ?? 0) > 0 ||
+      (lastRetranslation?.skipped ?? 0) > 0);
+
   // aria-live status for screen readers: announce save results (§2 ARIA).
+  // The clean save is NOT repeated here — the InfoBox strip carries its own
+  // role="status", so announcing it twice would read it out twice.
   const liveMessage =
-    lastSavedCount !== null
-      ? failedRowCount > 0
-        ? b.saveSuccessWithFailures
-            .replace("{saved}", String(lastSavedCount))
-            .replace("{failed}", String(failedRowCount))
-        : t.common.successSaved
+    lastSavedCount !== null && failedRowCount > 0
+      ? b.saveSuccessWithFailures
+          .replace("{saved}", String(lastSavedCount))
+          .replace("{failed}", String(failedRowCount))
       : "";
 
   // Uncapped by design (.app-page-width-full, responsive.css :root): the grid is
@@ -2217,23 +2241,16 @@ export default function BulkEditor() {
                     {b.priceActions.applied.replace("{count}", String(priceActionBanner))}
                   </Banner>
                 )}
-                {lastSavedCount !== null && (
-                  <Banner tone={failedRowCount > 0 ? "warning" : "success"}>
+                {saveDeviation && (
+                  <Banner tone="warning">
                     <BlockStack gap="100">
-                      {/* A save that did what it says it does needs no
-                          arithmetic: the plain success line. Only a DEVIATION
-                          earns a sentence — rows that failed, and the two
-                          re-translation lines below, which report what did NOT
-                          happen. The started-runs count used to sit here and
-                          only restated the documented behaviour; the Tasks tab
-                          is where a background run is followed. */}
-                      <Text as="p" variant="bodySm">
-                        {failedRowCount > 0
-                          ? b.saveSuccessWithFailures
-                              .replace("{saved}", String(lastSavedCount))
-                              .replace("{failed}", String(failedRowCount))
-                          : t.common.successSaved}
-                      </Text>
+                      {failedRowCount > 0 && (
+                        <Text as="p" variant="bodySm">
+                          {b.saveSuccessWithFailures
+                            .replace("{saved}", String(lastSavedCount))
+                            .replace("{failed}", String(failedRowCount))}
+                        </Text>
+                      )}
                       {/* Auto-translate is a Max feature that spends the
                           merchant's own AI credit unattended, so a save that
                           hit the cap says which rows it did NOT re-translate,
