@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner, Select } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
-import { ToggleSwitch } from "./ToggleSwitch";
 import { ToggleRow } from "./ToggleRow";
 import {
   AI_IMAGES_PER_REQUEST_MAX,
@@ -625,21 +624,20 @@ export function AIInstructionsTabs({
                   knob: it changes HOW the AI translates, not what it is told
                   about the shop. Saved with the rest of this tab. */}
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                <BlockStack gap="300">
-                  <Text as="h3" variant="headingMd">
-                    {t.settings.keywordAwareTranslation}
-                  </Text>
-                  <InlineStack gap="300" blockAlign="center" wrap={false}>
-                    <ToggleSwitch
-                      checked={localKeywordAware}
-                      onChange={setLocalKeywordAware}
-                      disabled={readOnly}
-                    />
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.settings.keywordAwareTranslationHelp}
-                    </Text>
-                  </InlineStack>
-                </BlockStack>
+                {/* A `ToggleRow` like every other decision in this card — it
+                    was a hand-rolled copy of the same shape with its
+                    explanation as body text, which is the third copy
+                    CLAUDE.md's "Field chrome" rule exists to prevent. The
+                    heading went with it: the switch's own label said the same
+                    words one line lower. */}
+                <ToggleRow
+                  layout="inline"
+                  label={t.settings.keywordAwareTranslation}
+                  help={t.settings.keywordAwareTranslationHelp}
+                  checked={localKeywordAware}
+                  onChange={setLocalKeywordAware}
+                  disabled={readOnly}
+                />
               </div>
               {/* What happens to a translation when its SOURCE text changes.
                   Two switches, one card: the first decides whether the stale
@@ -657,62 +655,43 @@ export function AIInstructionsTabs({
                     {t.settings.translationChangeHeading || 'Bei Änderung der Hauptsprache'}
                   </Text>
 
-                  {/* Both rows are `ToggleRow`s: a yes/no decision is a pill
-                      switch and what it MEANS belongs in the ❓, not in a
-                      paragraph under the control (CLAUDE.md, "Field chrome").
-                      The explanations are long because the subject is; in a
-                      popover that costs nothing, while as body text it pushed
-                      the second switch off the screen.
+                  {/* Three `ToggleRow`s: a yes/no decision is a pill switch,
+                      the switch leads (the row style the whole Settings page
+                      uses) and what it MEANS lives in the ❓ — never in a
+                      paragraph under the control.
 
-                      What must NOT move into the ❓ is anything that says why a
-                      switch is not operable right now — the plan hint and the
-                      superseded note. Those are not explanations of the
-                      feature, they are the reason for the state the merchant is
-                      looking at, and the rule is that such a reason is shown in
-                      place. */}
-                  <BlockStack gap="100">
-                    <ToggleRow
-                      label={
-                        t.settings.translationPurgeOnPrimaryChange ||
-                        'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'
-                      }
-                      help={
-                        t.settings.translationPurgeOnPrimaryChangeHelp ||
-                        'Eine Übersetzung eines Textes, den es so nicht mehr gibt, wird sonst weiter im Shop ausgeliefert. Aus: Die alten Übersetzungen bleiben stehen und Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet.'
-                      }
-                      checked={!autoTranslateActive && localPurgeOnChange}
-                      onChange={setLocalPurgeOnChange}
-                      disabled={readOnly || autoTranslateActive}
-                    />
-                    {/* Greyed out rather than hidden, with the reason in
-                        place: a switch that disappears reads as a bug. The
-                        note must NOT say "deletion is off" flatly — the
-                        precedence only holds where something actually
-                        re-translates (the two webhook types, plus the
-                        content types whose own save now does it), and saying
-                        otherwise would describe a destructive behaviour as
-                        disabled while it still runs: on the bulk editor's
-                        groups past MAX_REPAIR_GROUPS, and everywhere a
-                        save's own repair cannot run at all (no primary
-                        locale, an unresolvable image, a lookup that failed). */}
-                    {autoTranslateActive && (
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {t.settings.translationPurgeSupersededNote ||
-                          'Nicht nötig, solange automatisch neu übersetzt wird — bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern, im Editor wie im Bulk-Editor. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; darüber hinaus wird gelöscht.'}
-                      </Text>
-                    )}
-                  </BlockStack>
+                      They name a `t.help` key rather than a raw string,
+                      because these explanations do not fit in a popover
+                      either: the key carries a SHORT summary, the rules as
+                      bullet tips, and the long version behind "Mehr erfahren".
+                      Where auto-translate actually reaches, and where the
+                      bulk editor's run cap hands back to the deletion, is
+                      exactly that long version — it used to stand under the
+                      first switch as a paragraph nobody reads.
+
+                      What stays ON SCREEN is only what says why a switch
+                      cannot be operated right now: the plan hint, and the
+                      child's "the parent is off". Those are one line each. */}
+                  <ToggleRow
+                    layout="inline"
+                    label={
+                      t.settings.translationPurgeOnPrimaryChange ||
+                      'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'
+                    }
+                    helpKey="translationPurgeOnPrimaryChange"
+                    checked={!autoTranslateActive && localPurgeOnChange}
+                    onChange={setLocalPurgeOnChange}
+                    disabled={readOnly || autoTranslateActive}
+                  />
 
                   <BlockStack gap="100">
                     <ToggleRow
+                      layout="inline"
                       label={
                         t.settings.autoTranslateExternalChanges ||
                         'Texte automatisch neu übersetzen, wenn sich der Originaltext ändert'
                       }
-                      help={
-                        t.settings.autoTranslateExternalChangesHelp ||
-                        'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen.'
-                      }
+                      helpKey="autoTranslateExternalChanges"
                       checked={autoTranslateActive}
                       onChange={setLocalAutoTranslateExternal}
                       disabled={readOnly || !canAutoTranslateExternal}
@@ -734,11 +713,9 @@ export function AIInstructionsTabs({
                         switch does not discard this answer. */}
                     <div style={{ paddingInlineStart: "2.25rem" }}>
                       <ToggleRow
+                        layout="inline"
                         label={t.settings.autoTranslateHandles || 'Auch URL-Handles übersetzen'}
-                        help={
-                          t.settings.autoTranslateHandlesHelp ||
-                          'Ein Handle ist die Adresse einer Seite. Mit dieser Option übersetzt die KI auch ihn neu, sobald sich der Handle in der Hauptsprache ändert — und legt für die alte fremdsprachige Adresse eine Weiterleitung an.'
-                        }
+                        helpKey="autoTranslateHandles"
                         checked={autoTranslateActive && localAutoTranslateHandles}
                         onChange={setLocalAutoTranslateHandles}
                         disabled={readOnly || !canAutoTranslateExternal || !autoTranslateActive}

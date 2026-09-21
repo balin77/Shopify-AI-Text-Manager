@@ -1119,14 +1119,10 @@ export const en: Translation = {
     keywordAwareTranslationHelp: "When translating, the text is phrased so the keyword tracked for that target language appears in it — instead of rendering the source literally. Languages without their own keywords are translated unchanged. Turn this off when translations must stay strictly faithful.",
     translationChangeHeading: "When the primary language changes",
     translationPurgeOnPrimaryChange: "Delete translations when the primary-language text is changed or cleared",
-    translationPurgeOnPrimaryChangeHelp: "Applies everywhere: the editor, the bulk editor, and a sync that notices the text was changed outside the app. Off: the old translations stay and Shopify flags them as outdated in its own translation editor. Market-specific translations are never re-translated automatically — a market-specific wording is a deliberate departure no automation should overwrite. They are deleted, though, as soon as anything happens to the global translation beside them: when it is deleted, and also when it is re-translated automatically. Only with both options off does everything stay.",
     autoTranslateExternalChanges: "Automatically re-translate texts when the source text changes",
-    autoTranslateExternalChangesHelp: "When a primary-language text changes — in the Shopify admin, in another app, through an import, or here in ContentPilot — the AI re-translates it instead of only deleting the outdated translation — into every published language, including the ones that had no translation of that field yet. For products and collections that happens automatically on the next sync. For everything else — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles — it happens when you save, in the editor and in the bulk editor alike; if the text was changed elsewhere, on the next reload of that item. The bulk editor limits how many runs one save starts; anything beyond that is deleted as before. This spends AI credit without you being present. URL handles come along only if you switch that on explicitly below; otherwise they stay out of it as before. Market-specific translations are never translated automatically — they are deleted as soon as the primary-language text changes.",
     autoTranslateExternalChangesPlanHint: "Available from the {plan} plan.",
     autoTranslateHandles: "Also translate URL handles",
-    autoTranslateHandlesHelp: "A handle is a page's address, not its text — which is why this is a decision of its own and off by default. With it on, the AI also re-translates the handle as soon as the handle changes in the primary language (a text change alone does not trigger it). The translated value is normalised into a valid slug; anything that cannot be normalised is discarded rather than written. The old foreign URL gets a redirect to the new one. REFRESH only, never create: a language that had no handle of its own is still served under the primary-language handle — that address stays valid, and giving it a URL of its own unasked would be a change nobody requested. Where no redirect can be created the handle is left exactly as it is: when the old address still belongs to another language or another item, for market-specific translations, for blogs (their articles' URLs could not come along), for articles under a blog with a translated handle of its own, when \"Redirect when a handle changes\" is switched off, or when the translation does not come through. The old translated handle is not deleted in those cases either — an outdated address works, a deleted one does not.",
     autoTranslateHandlesRequiresParent: "Only possible while texts are re-translated automatically.",
-    translationPurgeSupersededNote: "Not needed while texts are re-translated automatically: for products and collections on the next sync, for everything else when you save, in the editor and in the bulk editor alike — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles. There the outdated text is replaced rather than deleted. The bulk editor limits how many runs one save starts, so that 200 rows cannot start 200 unattended AI runs; beyond that deletion continues.",
     translationsDescription: "Manage translations for grouping fields (e.g. product type). All products that share a source value must share exactly one translation per target language — otherwise a single category fragments into several in Google Merchant Center.",
     translationsProductType: "Product Type",
     translationsSearchLabel: "Search",
@@ -4362,6 +4358,42 @@ export const en: Translation = {
 
   // Help Tooltips
   help: {
+    translationPurgeOnPrimaryChange: {
+      title: "Delete translations on a change",
+      summary:
+        "When a primary-language text changes, its translation describes something that no longer exists — this option removes it. Off: the old translations stay, and Shopify flags them as outdated in its own translation editor.",
+      tips: [
+        "Applies everywhere: the editor, the bulk editor, and a sync that notices a change made outside the app",
+        "Greyed out once texts are re-translated automatically — the AI then replaces the text instead of deleting it",
+        "Market-specific translations go too, as soon as anything happens to the global translation beside them",
+      ],
+      details:
+        "Automatic re-translation supersedes this option, but only where it actually reaches: products and collections on the next sync, everything else on save — in the editor and the bulk editor alike: pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles. There the outdated text is replaced rather than deleted. The bulk editor limits how many runs one save starts, so that 200 rows do not start 200 unattended AI runs; anything beyond that is still deleted — as is anything the re-translation cannot run for at all. Market-specific translations are never re-translated automatically: a market-specific wording is a deliberate departure no automation should overwrite. They are deleted, though, as soon as anything happens to the global translation beside them — when it is deleted and also when it is re-translated. Only with both options off does everything stay.",
+    },
+    autoTranslateExternalChanges: {
+      title: "Re-translate automatically",
+      summary:
+        "When a primary-language text changes, the AI re-translates it instead of only deleting the outdated translation — into every published language, including the ones that did not have this text yet. This spends AI credit without you being present.",
+      tips: [
+        "Wherever the change came from: the Shopify admin, another app, an import, or ContentPilot itself",
+        "Products and collections on the next sync, everything else the moment you save",
+        "Supersedes the delete option above, as far as the re-translation reaches",
+      ],
+      details:
+        "For products and collections this happens automatically on the next sync. For everything else — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles — it happens when you save, in the editor and in the bulk editor alike; if the text was changed elsewhere, on the next reload of that item. The bulk editor limits how many runs one save starts; anything beyond that is deleted as before. Market-specific translations are never translated automatically — they are deleted as soon as the primary-language text changes. URL handles only come along if you switch that on explicitly below.",
+    },
+    autoTranslateHandles: {
+      title: "Translate URL handles too",
+      summary:
+        "A handle is a page's address, not its text — which is why this is a decision of its own and off by default. With it on, the AI also re-translates the handle as soon as the handle changes in the primary language, and redirects the old foreign URL to the new one.",
+      tips: [
+        "The trigger is the handle itself — a text change alone is not enough",
+        "Refresh only, never create: languages without a handle of their own keep the primary-language one",
+        "Where no redirect can be created the old handle stays — it is never deleted",
+      ],
+      details:
+        "The translated value is normalised into a valid slug; anything that cannot be normalised is discarded rather than written. A language that had no handle of its own is still served under the primary-language handle — that address stays valid, and giving it a URL of its own unasked would be a change nobody requested. The handle also stays as it is when the old address still belongs to another language or another item, for market-specific translations, for blogs (their articles' URLs could not come along), for articles under a blog with a translated handle of its own, when the \"Redirect when a handle changes\" setting is switched off, or when the translation does not come through. The old translated handle is not deleted in those cases — an outdated address works, a deleted one does not.",
+    },
     menuActionBar: {
       title: "This action bar",
       summary:

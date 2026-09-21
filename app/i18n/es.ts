@@ -1102,14 +1102,10 @@ export const es: Translation = {
     keywordAwareTranslationHelp: "Al traducir, el texto se redacta de modo que aparezca la palabra clave registrada para ese idioma de destino, en lugar de traducir el original de forma literal. Los idiomas sin palabras clave propias se traducen sin cambios. Desactívalo si las traducciones deben ser estrictamente fieles.",
     translationChangeHeading: "Al cambiar el idioma principal",
     translationPurgeOnPrimaryChange: "Eliminar las traducciones cuando el texto del idioma principal se modifica o se borra",
-    translationPurgeOnPrimaryChangeHelp: "Se aplica en todas partes: el editor, el editor masivo y la sincronización que detecta un cambio hecho fuera de la app. Desactivado: las traducciones antiguas se mantienen y Shopify las marca como desactualizadas en su propio editor de traducciones. Las traducciones específicas de un mercado nunca se vuelven a traducir automáticamente: una redacción específica de un mercado es una desviación deliberada que ninguna automatización debe sobrescribir. Sí se eliminan en cuanto ocurre algo con la traducción global que tienen al lado: cuando esta se elimina y también cuando se vuelve a traducir automáticamente. Solo con ambas opciones desactivadas se conserva todo.",
     autoTranslateExternalChanges: "Volver a traducir automáticamente los textos cuando cambia el texto original",
-    autoTranslateExternalChangesHelp: "Cuando un texto del idioma principal cambia — en el admin de Shopify, en otra app, mediante una importación o aquí en ContentPilot —, la IA lo vuelve a traducir en lugar de solo eliminar la traducción desactualizada, y lo hace en todos los idiomas publicados, incluidos aquellos que aún no tenían ninguna traducción de ese campo. En productos y colecciones ocurre automáticamente en la siguiente sincronización. En todo lo demás — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú — ocurre al guardar, tanto en el editor como en el editor masivo; si el texto se cambió fuera, en la siguiente recarga del elemento. El editor masivo limita cuántas ejecuciones inicia un guardado; lo que exceda se elimina como hasta ahora. Consume crédito de IA sin que estés presente. Los handles de URL solo se traducen si lo activas expresamente más abajo; si no, quedan fuera como hasta ahora. Las traducciones específicas de un mercado nunca se traducen automáticamente: se eliminan en cuanto cambia el texto del idioma principal.",
     autoTranslateExternalChangesPlanHint: "Disponible a partir del plan {plan}.",
     autoTranslateHandles: "Traducir también los handles de URL",
-    autoTranslateHandlesHelp: "Un handle es la dirección de una página, no su texto: por eso es una decisión aparte y está desactivada por defecto. Con ella activada, la IA vuelve a traducir también el handle en cuanto cambia el handle del idioma principal (un cambio de texto por sí solo no lo activa). El valor traducido se normaliza a un slug válido; lo que no se puede normalizar se descarta en lugar de escribirse. La dirección antigua en el otro idioma recibe una redirección a la nueva. Solo ACTUALIZAR, nunca crear: un idioma que no tenía handle propio se sigue sirviendo bajo el handle del idioma principal — esa dirección sigue siendo válida, y darle una URL propia sin pedirlo sería un cambio que nadie solicitó. Donde no se puede crear una redirección, el handle se deja tal cual: cuando la dirección antigua pertenece todavía a otro idioma o a otro elemento, en traducciones específicas de un mercado, en blogs (las URL de sus artículos no podrían acompañarlo), en artículos bajo un blog con handle traducido propio, cuando «Redirección al cambiar el identificador» está desactivada, o cuando la traducción no llega. En esos casos el handle traducido antiguo tampoco se elimina: una dirección desactualizada funciona, una eliminada no.",
     autoTranslateHandlesRequiresParent: "Solo es posible mientras los textos se vuelven a traducir automáticamente.",
-    translationPurgeSupersededNote: "No hace falta mientras los textos se vuelvan a traducir automáticamente: en productos y colecciones en la siguiente sincronización, y en todo lo demás al guardar, tanto en el editor como en el editor masivo — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú. Allí el texto desactualizado se reemplaza en lugar de eliminarse. El editor masivo limita cuántas ejecuciones inicia un guardado, para que 200 filas no inicien 200 ejecuciones de IA sin supervisión; más allá de eso se sigue eliminando.",
     translationsDescription: "Gestiona las traducciones de los campos de agrupación (p. ej. tipo de producto). Todos los productos que comparten un mismo valor de origen deben compartir exactamente una traducción por idioma de destino; de lo contrario, una sola categoría se divide en varias en Google Merchant Center.",
     translationsProductType: "Tipo de producto",
     translationsSearchLabel: "Buscar",
@@ -4351,6 +4347,42 @@ export const es: Translation = {
 
   // Help Tooltips
   help: {
+    translationPurgeOnPrimaryChange: {
+      title: "Eliminar traducciones al cambiar",
+      summary:
+        "Cuando cambia un texto del idioma principal, su traducción describe algo que ya no existe: esta opción la elimina. Desactivada: las traducciones antiguas se mantienen y Shopify las marca como desactualizadas en su propio editor de traducciones.",
+      tips: [
+        "Se aplica en todas partes: el editor, el editor masivo y la sincronización que detecta un cambio hecho fuera de la app",
+        "Se desactiva en cuanto los textos se vuelven a traducir automáticamente: la IA sustituye el texto en lugar de borrarlo",
+        "Las traducciones específicas de un mercado se eliminan en cuanto ocurre algo con la traducción global que tienen al lado",
+      ],
+      details:
+        "La retraducción automática sustituye a esta opción, pero solo donde realmente llega: en productos y colecciones en la siguiente sincronización, y en todo lo demás al guardar, tanto en el editor como en el editor masivo: páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú. Allí el texto desactualizado se sustituye en lugar de eliminarse. El editor masivo limita cuántas ejecuciones inicia un guardado, para que 200 filas no lancen 200 ejecuciones de IA sin supervisión; lo que exceda se sigue eliminando, igual que todo aquello donde la retraducción no puede ejecutarse. Las traducciones específicas de un mercado nunca se vuelven a traducir automáticamente: una redacción específica de un mercado es una desviación deliberada que ninguna automatización debe sobrescribir. Sí se eliminan en cuanto ocurre algo con la traducción global que tienen al lado: cuando esta se elimina y también cuando se vuelve a traducir. Solo con ambas opciones desactivadas se conserva todo.",
+    },
+    autoTranslateExternalChanges: {
+      title: "Volver a traducir automáticamente",
+      summary:
+        "Cuando cambia un texto del idioma principal, la IA lo vuelve a traducir en lugar de solo eliminar la traducción desactualizada, y lo hace en todos los idiomas publicados, incluidos aquellos que aún no tenían ese texto. Consume crédito de IA sin que estés presente.",
+      tips: [
+        "Da igual de dónde venga el cambio: el admin de Shopify, otra app, una importación o el propio ContentPilot",
+        "Productos y colecciones en la siguiente sincronización; todo lo demás al guardar",
+        "Sustituye a la opción de eliminar de arriba mientras la retraducción llegue",
+      ],
+      details:
+        "En productos y colecciones ocurre automáticamente en la siguiente sincronización. En todo lo demás — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú — ocurre al guardar, tanto en el editor como en el editor masivo; si el texto se cambió fuera, en la siguiente recarga del elemento. El editor masivo limita cuántas ejecuciones inicia un guardado; lo que exceda se elimina como hasta ahora. Las traducciones específicas de un mercado nunca se traducen automáticamente: se eliminan en cuanto cambia el texto del idioma principal. Los handles de URL solo se incluyen si lo activas expresamente más abajo.",
+    },
+    autoTranslateHandles: {
+      title: "Traducir también los handles de URL",
+      summary:
+        "Un handle es la dirección de una página, no su texto: por eso es una decisión aparte y está desactivada por defecto. Con ella activada, la IA vuelve a traducir también el handle en cuanto cambia el handle del idioma principal, y redirige la dirección antigua en el otro idioma a la nueva.",
+      tips: [
+        "El desencadenante es el propio handle: un cambio de texto por sí solo no basta",
+        "Solo actualizar, nunca crear: los idiomas sin handle propio siguen con el del idioma principal",
+        "Donde no se puede crear una redirección, el handle antiguo se queda: nunca se elimina",
+      ],
+      details:
+        "El valor traducido se normaliza a un slug válido; lo que no se puede normalizar se descarta en lugar de escribirse. Un idioma que no tenía handle propio se sigue sirviendo bajo el handle del idioma principal: esa dirección sigue siendo válida, y darle una URL propia sin pedirlo sería un cambio que nadie solicitó. El handle también se queda como está cuando la dirección antigua pertenece todavía a otro idioma o a otro elemento, en traducciones específicas de un mercado, en blogs (las URL de sus artículos no podrían acompañarlo), en artículos bajo un blog con handle traducido propio, cuando la opción «Redirección al cambiar el identificador» está desactivada, o cuando la traducción no llega. En esos casos el handle traducido antiguo no se elimina: una dirección desactualizada funciona, una eliminada no.",
+    },
     menuActionBar: {
       title: "Esta barra de acciones",
       summary:

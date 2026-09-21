@@ -15,22 +15,45 @@
  * control through `ariaLabel` instead, which is the only accessible name the
  * switch has.
  *
- * Two placements, and they are not a matter of taste. A row in a SETTINGS LIST
- * spreads: the labels line up on the left and every switch on the right, so a
- * column of them can be read as a column of states. A single decision inside a
- * FORM leads with its switch, where a checkbox would have been — it sits among
- * fields, not among other switches, and pushing it to the far right of a wide
- * dialog puts the control an eye-movement away from the words it answers.
+ * Two placements, and they are not a matter of taste. `inline` leads with the
+ * switch, where a checkbox would have been: that is the row style the SETTINGS
+ * page uses throughout (see the pill rows in
+ * [SettingsSEOTab.tsx](SettingsSEOTab.tsx)) and what a single decision standing
+ * among FORM FIELDS wants — pushing the control to the far right of a wide
+ * dialog puts it an eye-movement away from the words it answers. `spread` puts
+ * the labels left and every switch on the right, so a column of them reads as a
+ * column of states; it is the default for historic reasons and is what the
+ * direct-translations card uses. A new row on the Settings page takes `inline`.
  */
 
 import { InlineStack, Text } from "@shopify/polaris";
 import { HelpPopover } from "./HelpTrigger";
+import { HelpTooltip } from "./HelpTooltip";
 import { ToggleSwitch } from "./ToggleSwitch";
 
 export interface ToggleRowProps {
   label: string;
-  /** The explanation behind the ❓. Absent ⇒ no question mark. */
+  /**
+   * The explanation behind the ❓, as raw TEXT — for a caller with no `t.help`
+   * entry to name (the create dialog phrases six resource types out of one `t`
+   * prop). Absent ⇒ no question mark.
+   *
+   * Prefer `helpKey` wherever the explanation is longer than a few sentences:
+   * a wall of text in a popover is the same problem as a wall of text under
+   * the switch, one click further away.
+   */
   help?: string;
+  /**
+   * A `t.help.<key>` entry instead of raw text — the shape that already carries
+   * a SHORT summary, optional bullet tips and a "Mehr erfahren" modal for the
+   * long version (`HelpTooltip`). This is what a switch whose full explanation
+   * runs to a paragraph should name, so the popover stays readable and the
+   * detail is one click away rather than in the merchant's face.
+   *
+   * Wins over `help` when both are given; a key the language bundle does not
+   * carry renders nothing, so a key may be named before its text is written.
+   */
+  helpKey?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
@@ -48,6 +71,7 @@ export interface ToggleRowProps {
 export function ToggleRow({
   label,
   help,
+  helpKey,
   checked,
   onChange,
   disabled = false,
@@ -59,13 +83,20 @@ export function ToggleRow({
       <Text as="p" variant="bodyMd" tone={disabled ? "subdued" : undefined}>
         {label}
       </Text>
-      {help && (
-        /* The shared ❓ ([HelpTrigger.tsx](HelpTrigger.tsx)) — it owns the
-           scroll lock an overlay needs inside this app's inner scroll
-           containers, and the popover width every other help panel uses. */
-        <HelpPopover label={label} preferredPosition={helpPosition}>
-          <Text as="p" variant="bodySm">{help}</Text>
-        </HelpPopover>
+      {/* The shared ❓ ([HelpTrigger.tsx](HelpTrigger.tsx)) — it owns the
+          scroll lock an overlay needs inside this app's inner scroll
+          containers, and the popover width every other help panel uses.
+          `helpKey` routes through [HelpTooltip.tsx](HelpTooltip.tsx), which is
+          the same icon plus the summary/tips/"Mehr erfahren" shape the field
+          help already has; a second copy of that shape is what this avoids. */}
+      {helpKey ? (
+        <HelpTooltip helpKey={helpKey} position={helpPosition} />
+      ) : (
+        help && (
+          <HelpPopover label={label} preferredPosition={helpPosition}>
+            <Text as="p" variant="bodySm">{help}</Text>
+          </HelpPopover>
+        )
       )}
     </InlineStack>
   );

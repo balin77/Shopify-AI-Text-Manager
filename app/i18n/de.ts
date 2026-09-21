@@ -1121,14 +1121,10 @@ export const de = {
     keywordAwareTranslationHelp: "Beim Übersetzen wird der Text so formuliert, dass das für die jeweilige Zielsprache hinterlegte Keyword darin vorkommt — statt den Ausgangstext wörtlich zu übertragen. Sprachen ohne eigene Keywords werden unverändert übersetzt. Abschalten, wenn Übersetzungen streng wortgetreu bleiben müssen.",
     translationChangeHeading: "Bei Änderung der Hauptsprache",
     translationPurgeOnPrimaryChange: "Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird",
-    translationPurgeOnPrimaryChangeHelp: "Gilt überall: im Editor, im Bulk-Editor und beim Sync, wenn der Text ausserhalb der App geändert wurde. Aus: Die alten Übersetzungen bleiben stehen — Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet. Marktspezifische Übersetzungen werden nie automatisch neu übersetzt — eine marktspezifische Formulierung ist eine bewusste Abweichung, die keine Automatik überschreiben soll. Sie werden aber gelöscht, sobald mit der globalen Übersetzung daneben etwas passiert: also wenn diese gelöscht wird, und auch wenn sie automatisch neu übersetzt wird. Nur wenn beide Optionen aus sind, bleibt alles stehen.",
     autoTranslateExternalChanges: "Texte automatisch neu übersetzen, wenn sich der Originaltext ändert",
-    autoTranslateExternalChangesHelp: "Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen — und zwar in alle veröffentlichten Sprachen, auch in die, die noch gar keine Übersetzung dieses Feldes hatten. Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Verbraucht KI-Guthaben ohne dein Zutun. URL-Handles werden nur mitübersetzt, wenn du das unten ausdrücklich einschaltest; sonst bleiben sie wie bisher aussen vor. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert.",
     autoTranslateExternalChangesPlanHint: "Ab dem {plan}-Plan verfügbar.",
     autoTranslateHandles: "Auch URL-Handles übersetzen",
-    autoTranslateHandlesHelp: "Ein Handle ist die Adresse einer Seite, nicht ihr Text — deshalb ist das eine eigene Entscheidung und standardmässig aus. Mit dieser Option übersetzt die KI auch den Handle neu, sobald sich der Handle in der Hauptsprache ändert (der Text allein löst das nicht aus). Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Für die alte fremdsprachige Adresse wird eine Weiterleitung auf die neue angelegt. Nur AUFFRISCHEN, nie neu anlegen: Eine Sprache, die bisher keinen eigenen Handle hatte, wird weiter unter dem Handle der Hauptsprache ausgeliefert — diese Adresse bleibt gültig, und ihr ungefragt eine eigene URL zu geben wäre eine Änderung, die niemand verlangt hat. Wo keine Weiterleitung entstehen kann, bleibt der Handle unverändert stehen: wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen auch nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht.",
     autoTranslateHandlesRequiresParent: "Nur möglich, wenn automatisch neu übersetzt wird.",
-    translationPurgeSupersededNote: "Nicht nötig, solange automatisch neu übersetzt wird: Bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern — im Editor wie im Bulk-Editor: Seiten, Blogs, Artikel, Richtlinien, Optionen, Metafelder, Metaobjekte, Theme-Texte, Alt-Texte und Menü-Titel. Dort wird der veraltete Text ersetzt statt gelöscht. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt, damit 200 Zeilen nicht 200 unbeaufsichtigte KI-Läufe starten; darüber hinaus wird weiterhin gelöscht.",
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
     translationsProductType: "Produkttyp",
     translationsSearchLabel: "Suchen",
@@ -4388,6 +4384,42 @@ export const de = {
 
   // Help Tooltips
   help: {
+    translationPurgeOnPrimaryChange: {
+      title: "Übersetzungen löschen bei Änderung",
+      summary:
+        "Ändert sich ein Text in der Hauptsprache, beschreibt seine Übersetzung etwas, das es so nicht mehr gibt — diese Option entfernt sie dann. Aus: Die alten Übersetzungen bleiben stehen, und Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet.",
+      tips: [
+        "Gilt überall: im Editor, im Bulk-Editor und beim Sync, wenn der Text ausserhalb der App geändert wurde",
+        "Ausgegraut, sobald automatisch neu übersetzt wird — dann ersetzt die KI den Text, statt ihn zu löschen",
+        "Marktspezifische Übersetzungen gehen mit, sobald mit der globalen Übersetzung daneben etwas passiert",
+      ],
+      details:
+        "Automatisch neu übersetzen ersetzt diese Option, aber nur dort, wo die Neuübersetzung wirklich greift: bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern — im Editor wie im Bulk-Editor: Seiten, Blogs, Artikel, Richtlinien, Optionen, Metafelder, Metaobjekte, Theme-Texte, Alt-Texte und Menü-Titel. Dort wird der veraltete Text ersetzt statt gelöscht. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt, damit 200 Zeilen nicht 200 unbeaufsichtigte KI-Läufe starten; darüber hinaus wird weiterhin gelöscht — ebenso überall, wo die Neuübersetzung gar nicht laufen kann. Marktspezifische Übersetzungen werden nie automatisch neu übersetzt: eine marktspezifische Formulierung ist eine bewusste Abweichung, die keine Automatik überschreiben soll. Gelöscht werden sie aber, sobald mit der globalen Übersetzung daneben etwas passiert — wenn diese gelöscht wird und auch wenn sie neu übersetzt wird. Nur wenn beide Optionen aus sind, bleibt alles stehen.",
+    },
+    autoTranslateExternalChanges: {
+      title: "Automatisch neu übersetzen",
+      summary:
+        "Ändert sich ein Text in der Hauptsprache, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen — und zwar in alle veröffentlichten Sprachen, auch in die, die diesen Text noch gar nicht hatten. Verbraucht KI-Guthaben, ohne dass du dabei bist.",
+      tips: [
+        "Egal woher die Änderung kommt: Shopify-Admin, andere App, Import oder ContentPilot selbst",
+        "Produkte und Kollektionen beim nächsten Sync, alles andere sofort beim Speichern",
+        "Ersetzt die Löschoption darüber, solange die Neuübersetzung greift",
+      ],
+      details:
+        "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles kommen nur mit, wenn du das darunter ausdrücklich einschaltest.",
+    },
+    autoTranslateHandles: {
+      title: "URL-Handles mitübersetzen",
+      summary:
+        "Ein Handle ist die Adresse einer Seite, nicht ihr Text — deshalb eine eigene Entscheidung und standardmässig aus. Mit dieser Option übersetzt die KI auch den Handle neu, sobald sich der Handle in der Hauptsprache ändert, und legt für die alte fremdsprachige Adresse eine Weiterleitung auf die neue an.",
+      tips: [
+        "Auslöser ist der Handle selbst — eine reine Textänderung genügt nicht",
+        "Nur auffrischen, nie neu anlegen: Sprachen ohne eigenen Handle bleiben beim Handle der Hauptsprache",
+        "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — gelöscht wird er nie",
+      ],
+      details:
+        "Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Eine Sprache, die bisher keinen eigenen Handle hatte, wird weiter unter dem Handle der Hauptsprache ausgeliefert — diese Adresse bleibt gültig, und ihr ungefragt eine eigene URL zu geben wäre eine Änderung, die niemand verlangt hat. Unverändert bleibt der Handle ausserdem, wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn die Einstellung „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht.",
+    },
     menuActionBar: {
       title: "Diese Aktionsleiste",
       summary:

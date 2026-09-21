@@ -309,12 +309,18 @@ button of its own.**
   hand-rolled copy is what this rule exists to prevent. The label is TEXT beside
   the switch, never a `<label>` around it: the switch already is one, and the
   words reach it through `ariaLabel`, which is the only accessible name it has.
-  Two placements, and the choice is not taste: a row in a LIST OF SETTINGS
-  spreads (labels left, every switch on the right, so the column reads as a
-  column of states), while a single decision standing among FORM FIELDS leads
-  with its switch — `layout="inline"`, where the checkbox would have been.
-  Pushing that one to the far right of a wide dialog puts the control an
-  eye-movement away from the words it answers. A DISABLED decision still
+  **On the SETTINGS page the switch LEADS** — `layout="inline"`, where the
+  checkbox would have been — and that is the owner's instruction, not a
+  reading of the shape: every pill row there already sat that way
+  (`SettingsSEOTab` says so in a comment of its own), so a `spread` row put
+  into that column is the one that looks wrong. `spread` (labels left, every
+  switch at the right edge, so the column reads as a column of states) is the
+  component's default for historic reasons and is what the direct-translations
+  card uses; a row anywhere else picks the one its neighbours use, and a single
+  decision standing among FORM FIELDS leads with its switch for the same reason
+  the Settings rows do — pushing the control to the far right of a wide dialog
+  puts it an eye-movement away from the words it answers. A DISABLED decision
+  still
   renders, greyed, wrapped in `DisabledActionTooltip` (with `block`, or its
   shrink-wrapping span cuts the row off) — the single-language rules below are
   the same rule seen from the other side.
@@ -395,6 +401,20 @@ button of its own.**
   a handle is, what "write the rest with AI" will do all live in the ❓, and a
   create form that had three of those sentences stacked under three controls is
   what made the point.
+  **A paragraph does not fit in a popover either**, and that is the second half
+  of the same rule: moving a wall of text from under the control into the ❓
+  only puts it one click further away. Where the full explanation runs past a
+  few sentences, the control names a `t.help.<key>` instead of a raw string —
+  `ToggleRow`'s `helpKey`, which renders [HelpTooltip.tsx](app/components/HelpTooltip.tsx),
+  the same icon with the shape the field help has had all along: a SHORT
+  summary, the rules as bullet `tips`, and `details` behind "Mehr erfahren".
+  The translation-change card is the worked example — where auto-translate
+  reaches, what the bulk editor's run cap hands back to the deletion, and every
+  case in which a handle is left alone are three paragraphs that belong in
+  `details` and nowhere on the screen. What stays ON the screen next to a
+  greyed switch is only the one line saying why it cannot be operated right
+  now (the plan hint, "the parent switch is off") — a reason, not an
+  explanation.
 - **A decision goes BELOW everything it decides about, and "more fields" is
   part of that.** The create dialog ends with "write the rest with AI" and
   "translate afterwards", under the advanced-field disclosure rather than above
