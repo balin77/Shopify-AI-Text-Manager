@@ -121,6 +121,13 @@ interface AIInstructionsTabsProps {
    * already gone before any sync runs).
    */
   autoTranslateExternalChanges: boolean;
+  /**
+   * AISettings.autoTranslateHandles (Max) — the sub-decision under the switch
+   * above: may that re-translation also rewrite a URL handle? Stored on its
+   * own, so switching the parent off to try something does not discard it; the
+   * server ANDs the two on every read.
+   */
+  autoTranslateHandles: boolean;
   /** Drives the Max gate on the auto-translate switch. */
   subscriptionPlan: Plan;
   /**
@@ -147,6 +154,7 @@ export function AIInstructionsTabs({
   keywordAwareTranslation,
   translationPurgeOnPrimaryChange,
   autoTranslateExternalChanges,
+  autoTranslateHandles,
   subscriptionPlan,
   sendImagesToAI,
   aiImagesPerRequest,
@@ -160,6 +168,9 @@ export function AIInstructionsTabs({
   const [localPurgeOnChange, setLocalPurgeOnChange] = useState(translationPurgeOnPrimaryChange);
   const [localAutoTranslateExternal, setLocalAutoTranslateExternal] = useState(
     autoTranslateExternalChanges,
+  );
+  const [localAutoTranslateHandles, setLocalAutoTranslateHandles] = useState(
+    autoTranslateHandles,
   );
   // The auto-translate switch stays VISIBLE on every plan (hiding it would
   // read as "this app cannot do that") and is greyed out below Max, with the
@@ -335,6 +346,14 @@ export function AIInstructionsTabs({
       "autoTranslateExternalChanges",
       String(canAutoTranslateExternal ? localAutoTranslateExternal : autoTranslateExternalChanges),
     );
+    // The sub-decision is stored as the merchant LEFT it, exactly like the
+    // deletion switch above: the server resolves it against the parent on every
+    // read, so persisting the resolved `false` of a moment when the parent is
+    // off would throw away an answer they gave on purpose.
+    formData.append(
+      "autoTranslateHandles",
+      String(canAutoTranslateExternal ? localAutoTranslateHandles : autoTranslateHandles),
+    );
 
     fetcher.submit(formData, { method: "POST" });
   };
@@ -352,7 +371,8 @@ export function AIInstructionsTabs({
     localTranslationMode !== translationMode ||
     localKeywordAware !== keywordAwareTranslation ||
     localPurgeOnChange !== translationPurgeOnPrimaryChange ||
-    (canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges);
+    (canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges) ||
+    (canAutoTranslateExternal && localAutoTranslateHandles !== autoTranslateHandles);
   const hasChanges = instructionsChanged || visionChanged;
 
   // Propagate hasChanges to parent component
@@ -368,6 +388,7 @@ export function AIInstructionsTabs({
     setLocalKeywordAware(keywordAwareTranslation);
     setLocalPurgeOnChange(translationPurgeOnPrimaryChange);
     setLocalAutoTranslateExternal(autoTranslateExternalChanges);
+    setLocalAutoTranslateHandles(autoTranslateHandles);
     setLocalSendImages(sendImagesToAI);
     setLocalImagesPerRequest(clampImagesPerRequest(aiImagesPerRequest));
   };
@@ -636,68 +657,100 @@ export function AIInstructionsTabs({
                     {t.settings.translationChangeHeading || 'Bei Änderung der Hauptsprache'}
                   </Text>
 
-                  <InlineStack gap="300" blockAlign="center" wrap={false}>
-                    <ToggleSwitch
+                  {/* Both rows are `ToggleRow`s: a yes/no decision is a pill
+                      switch and what it MEANS belongs in the ❓, not in a
+                      paragraph under the control (CLAUDE.md, "Field chrome").
+                      The explanations are long because the subject is; in a
+                      popover that costs nothing, while as body text it pushed
+                      the second switch off the screen.
+
+                      What must NOT move into the ❓ is anything that says why a
+                      switch is not operable right now — the plan hint and the
+                      superseded note. Those are not explanations of the
+                      feature, they are the reason for the state the merchant is
+                      looking at, and the rule is that such a reason is shown in
+                      place. */}
+                  <BlockStack gap="100">
+                    <ToggleRow
+                      label={
+                        t.settings.translationPurgeOnPrimaryChange ||
+                        'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'
+                      }
+                      help={
+                        t.settings.translationPurgeOnPrimaryChangeHelp ||
+                        'Eine Übersetzung eines Textes, den es so nicht mehr gibt, wird sonst weiter im Shop ausgeliefert. Aus: Die alten Übersetzungen bleiben stehen und Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet.'
+                      }
                       checked={!autoTranslateActive && localPurgeOnChange}
                       onChange={setLocalPurgeOnChange}
                       disabled={readOnly || autoTranslateActive}
                     />
-                    <BlockStack gap="100">
-                      <Text as="p" variant="bodyMd">
-                        {t.settings.translationPurgeOnPrimaryChange ||
-                          'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'}
-                      </Text>
+                    {/* Greyed out rather than hidden, with the reason in
+                        place: a switch that disappears reads as a bug. The
+                        note must NOT say "deletion is off" flatly — the
+                        precedence only holds where something actually
+                        re-translates (the two webhook types, plus the
+                        content types whose own save now does it), and saying
+                        otherwise would describe a destructive behaviour as
+                        disabled while it still runs: on the bulk editor's
+                        groups past MAX_REPAIR_GROUPS, and everywhere a
+                        save's own repair cannot run at all (no primary
+                        locale, an unresolvable image, a lookup that failed). */}
+                    {autoTranslateActive && (
                       <Text as="p" variant="bodySm" tone="subdued">
-                        {t.settings.translationPurgeOnPrimaryChangeHelp ||
-                          'Eine Übersetzung eines Textes, den es so nicht mehr gibt, wird sonst weiter im Shop ausgeliefert. Aus: Die alten Übersetzungen bleiben stehen und Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet.'}
+                        {t.settings.translationPurgeSupersededNote ||
+                          'Nicht nötig, solange automatisch neu übersetzt wird — bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern, im Editor wie im Bulk-Editor. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; darüber hinaus wird gelöscht.'}
                       </Text>
-                      {/* Greyed out rather than hidden, with the reason in
-                          place: a switch that disappears reads as a bug. The
-                          note must NOT say "deletion is off" flatly — the
-                          precedence only holds where something actually
-                          re-translates (the two webhook types, plus the
-                          content types whose own save now does it), and saying
-                          otherwise would describe a destructive behaviour as
-                          disabled while it still runs: on the bulk editor's
-                          groups past MAX_REPAIR_GROUPS, and everywhere a
-                          save's own repair cannot run at all (no primary
-                          locale, an unresolvable image, a value the prompt
-                          would corrupt). */}
-                      {autoTranslateActive && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.settings.translationPurgeSupersededNote ||
-                            'Nicht nötig, solange automatisch neu übersetzt wird — bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern, im Editor wie im Bulk-Editor. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; darüber hinaus wird gelöscht.'}
-                        </Text>
-                      )}
-                    </BlockStack>
-                  </InlineStack>
+                    )}
+                  </BlockStack>
 
-                  <InlineStack gap="300" blockAlign="center" wrap={false}>
-                    <ToggleSwitch
+                  <BlockStack gap="100">
+                    <ToggleRow
+                      label={
+                        t.settings.autoTranslateExternalChanges ||
+                        'Texte automatisch neu übersetzen, wenn sich der Originaltext ändert'
+                      }
+                      help={
+                        t.settings.autoTranslateExternalChangesHelp ||
+                        'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen.'
+                      }
                       checked={autoTranslateActive}
                       onChange={setLocalAutoTranslateExternal}
                       disabled={readOnly || !canAutoTranslateExternal}
                     />
-                    <BlockStack gap="100">
-                      <Text as="p" variant="bodyMd">
-                        {t.settings.autoTranslateExternalChanges ||
-                          'Texte automatisch neu übersetzen, wenn sich der Originaltext ändert'}
-                      </Text>
+                    {!canAutoTranslateExternal && (
                       <Text as="p" variant="bodySm" tone="subdued">
-                        {t.settings.autoTranslateExternalChangesHelp ||
-                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen. Bei Produkten und Kollektionen automatisch beim nächsten Sync; bei allem anderen beim Speichern im Editor, bei Änderungen von aussen beim nächsten Reload. URL-Handles bleiben ausgenommen.'}
+                        {(t.settings.autoTranslateExternalChangesPlanHint ||
+                          'Ab dem {plan}-Plan verfügbar.').replace(
+                          '{plan}',
+                          PLAN_DISPLAY_NAMES[AUTO_TRANSLATE_MIN_PLAN],
+                        )}
                       </Text>
-                      {!canAutoTranslateExternal && (
+                    )}
+                    {/* The sub-decision, INDENTED under the switch it belongs
+                        to: a handle is a URL, so "translate the texts" must not
+                        silently move the shop's addresses as well. Off by
+                        default, disabled while the parent is off — and the
+                        stored value is kept either way, so trying the parent
+                        switch does not discard this answer. */}
+                    <div style={{ paddingInlineStart: "2.25rem" }}>
+                      <ToggleRow
+                        label={t.settings.autoTranslateHandles || 'Auch URL-Handles übersetzen'}
+                        help={
+                          t.settings.autoTranslateHandlesHelp ||
+                          'Ein Handle ist die Adresse einer Seite. Mit dieser Option übersetzt die KI auch ihn neu, sobald sich der Handle in der Hauptsprache ändert — und legt für die alte fremdsprachige Adresse eine Weiterleitung an.'
+                        }
+                        checked={autoTranslateActive && localAutoTranslateHandles}
+                        onChange={setLocalAutoTranslateHandles}
+                        disabled={readOnly || !canAutoTranslateExternal || !autoTranslateActive}
+                      />
+                      {canAutoTranslateExternal && !autoTranslateActive && (
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {(t.settings.autoTranslateExternalChangesPlanHint ||
-                            'Ab dem {plan}-Plan verfügbar.').replace(
-                            '{plan}',
-                            PLAN_DISPLAY_NAMES[AUTO_TRANSLATE_MIN_PLAN],
-                          )}
+                          {t.settings.autoTranslateHandlesRequiresParent ||
+                            'Nur möglich, wenn automatisch neu übersetzt wird.'}
                         </Text>
                       )}
-                    </BlockStack>
-                  </InlineStack>
+                    </div>
+                  </BlockStack>
                 </BlockStack>
               </div>
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>

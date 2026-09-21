@@ -3431,6 +3431,7 @@ export async function applyBulkDiff(
           purgeOnPrimaryChange: false,
           purgeUnreconciledSurfaces: false,
           autoTranslateExternalChanges: false,
+          autoTranslateHandles: false,
           plan: "free",
         };
   const purgeStaleTranslations = changePolicy.purgeOnPrimaryChange;

@@ -54,8 +54,13 @@ import {
 // One shape for "walk past this override", shared with every save path.
 import { marketOverrideKey } from "./market-layer-purge.server";
 import { TRANSLATION_BATCH } from "../../config/constants";
+import { sanitizeSlug } from "../../utils/slug.utils";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
+import type {
+  HandleRedirectResolver,
+  TranslatedHandleContext,
+} from "./handle-retranslation.server";
 import {
   registerAndVerify,
   removeAndVerify,
@@ -172,6 +177,24 @@ export interface RepairTarget {
    * keyed by GID + key + locale — which is why only the mirror is pluggable.
    */
   mirror?: TranslationMirror;
+  /**
+   * May a `handle` entry move, and where does its old foreign URL go?
+   *
+   * A handle is a URL, so the merchant's opt-in
+   * (`AISettings.autoTranslateHandles`) is only half the answer: the other half
+   * is whether a redirect can be put on the address the slug is moving away
+   * from, which needs the caches and Shopify, not a key and a value. This
+   * resolver answers it per (resource, locale), and a `handle` it declines —
+   * or that reaches a repair with NO resolver at all — is left alone entirely:
+   * not translated, and NOT purged either, because deleting the translation
+   * moves the foreign URL just as surely as rewriting it would.
+   *
+   * Both entry points build the standard one
+   * (handle-retranslation.server.ts) when the policy allows handles, so no
+   * caller has to remember it; the field exists so a test can answer without a
+   * shop.
+   */
+  handleRedirect?: HandleRedirectResolver;
 }
 
 /**
@@ -978,7 +1001,7 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
       autoTranslate: policy.autoTranslateExternalChanges,
     });
 
-    return await repairStaleTranslations(params, stale, policy, {
+    return await repairStaleTranslations(await withHandleResolver(params, policy), stale, policy, {
       keys: [...new Set(stale.map((entry) => entry.key))],
       // Every locale this shop could hold an override in: the rows the sync
       // fetched (all layers, so a market-only locale is in there) plus the
@@ -1591,7 +1614,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // this for a merchant write and abandon itself.
     markTranslationSaved(params.lockId ?? resourceId);
 
-    return await repairStaleTranslations(params, stale, policy, {
+    return await repairStaleTranslations(await withHandleResolver(params, policy), stale, policy, {
       // The caller's OWN change, not what the detection found: an override can
       // sit on a (locale, key) that has no global translation at all.
       keys: [...new Set(changed.map((item) => item.key))],
@@ -1625,6 +1648,179 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
  * NOTHING escapes it either — both callers wrap it, and the sync's contract
  * is that a stale row left behind must never fail the save or the webhook.
  */
+/**
+ * The standard handle-redirect resolver, attached by BOTH entry points rather
+ * than by every caller.
+ *
+ * There are two dozen call sites into this module and a handle that reaches one
+ * of them without a resolver is simply left alone — so forgetting it costs a
+ * refreshed slug, never a broken URL. Building it here instead means no caller
+ * has to know about it at all, and the one that wants to answer differently (a
+ * test) still can, because an explicit resolver is kept.
+ *
+ * A failure to even build it resolves to "no resolver", i.e. no handle moves.
+ */
+async function withHandleResolver<T extends RepairTarget>(
+  target: T,
+  policy: TranslationChangePolicy,
+): Promise<T> {
+  // No opt-in, a value surface (whose keys are field names, not URLs), or a
+  // caller that already answered: nothing to attach.
+  if (!policy.autoTranslateHandles || target.translateAs || target.handleRedirect) return target;
+  try {
+    const { db } = await import("../../db.server");
+    const { makeHandleRedirectResolver } = await import("./handle-retranslation.server");
+    return {
+      ...target,
+      handleRedirect: makeHandleRedirectResolver({
+        db,
+        shop: target.shop,
+        client: target.client,
+      }),
+    };
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] No handle-redirect resolver — handles left alone", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return target;
+  }
+}
+
+/**
+ * The old foreign URL's redirect, created AFTER the register Shopify confirmed.
+ *
+ * The order is not a preference. Register first and a failed redirect leaves
+ * the old address dead while the page is reachable at its new one; redirect
+ * first and a failed register leaves a 301 sitting on the page's OWN live URL,
+ * because Shopify serves a redirect in preference to a page — the resource
+ * unreachable at its own address. The first is the recoverable half, and it is
+ * the residual every redirect call site in this app already carries: a redirect
+ * never fails the write it accompanies, so a failure here is a log line and
+ * nothing else.
+ *
+ * `nextHandle` is what Shopify STORED, not what was submitted.
+ */
+async function createHandleRedirect(
+  gateway: ShopifyApiGateway,
+  target: RepairTarget,
+  context: TranslatedHandleContext | undefined,
+  nextHandle: string,
+): Promise<void> {
+  // Reserved before the AI ran; an entry without a context never reached the
+  // write. Belt and braces, because the alternative is a moved URL with no row.
+  if (!context) return;
+  try {
+    const { applyTranslatedHandleRedirect } = await import("../seo/handle-redirect.server");
+    const result = await applyTranslatedHandleRedirect(gateway as never, target.shop, {
+      resource: context.resource,
+      // GLOBAL layer only, like everything this repair writes: a market
+      // override is not a shop-wide path and the decision refuses one anyway.
+      marketId: "",
+      previousTranslatedHandle: context.previousTranslatedHandle,
+      nextTranslatedHandle: nextHandle,
+      primaryHandle: context.primaryHandle,
+      otherLocaleHandles: context.otherLocaleHandles,
+      previousHandleTakenElsewhere: context.previousHandleTakenElsewhere,
+      wanted: true,
+      previouslyLive: context.previouslyLive,
+      blogHandle: context.blogHandle,
+      blogHandleTranslatedInLocale: context.blogHandleTranslatedInLocale,
+    });
+    if (result.created) return;
+    // "unchanged" is the AI answering with the slug that was already there —
+    // routine, and the reason nothing had to be written. Anything else means
+    // the old URL is NOT covered, which is worth a line even though it cannot
+    // be acted on from here.
+    if (result.skippedReason === "unchanged") return;
+    logger.warn("[StaleTranslations] Handle re-translated but the old URL was not redirected", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      reason: result.skippedReason,
+      noteCode: result.noteCode,
+    });
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Handle redirect failed", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Decide, BEFORE any AI request, which `handle` entries may actually move.
+ *
+ * Split from the partition because the two questions are different in kind.
+ * `classifyStaleTranslation` is pure and answers "did the merchant switch
+ * handle re-translation on"; this one asks the caches and Shopify whether the
+ * address this particular slug would move away from can be redirected at all —
+ * the five refusals in `decideTranslatedHandleRedirect`, every one of which is
+ * a URL that would otherwise break.
+ *
+ * It runs FIRST, not after the translation, for two reasons: a refused handle
+ * must not cost an AI request, and — the load-bearing one — the alternative is
+ * to translate it and then decide, which leaves only two bad options (write the
+ * slug without a redirect, or throw away a value we already paid for).
+ *
+ * A repair with NO resolver declines every handle. That is the structural half
+ * of the rule: a new entry point cannot produce a broken foreign URL by
+ * forgetting to wire this up, it can only fail to refresh a slug.
+ */
+async function reserveHandleRedirects(
+  target: RepairTarget,
+  retranslate: readonly StaleTranslation[],
+  declined: readonly StaleTranslation[],
+): Promise<{
+  retranslate: StaleTranslation[];
+  declined: StaleTranslation[];
+  /** Handles left untouched: neither translated nor purged — see the caller. */
+  keptHandles: StaleTranslation[];
+  /** `tripleKey(resourceId, locale, "handle")` → the old state its redirect
+   *  needs, captured before the write. */
+  handleContexts: Map<string, TranslatedHandleContext>;
+}> {
+  const keptHandles: StaleTranslation[] = [];
+  const handleContexts = new Map<string, TranslatedHandleContext>();
+  // A value surface has no content `handle` key at all — its keys are field
+  // names — so nothing here applies and nothing is looked up.
+  if (target.translateAs || !retranslate.some((entry) => entry.key === "handle")) {
+    return { retranslate: [...retranslate], declined: [...declined], keptHandles, handleContexts };
+  }
+
+  const kept: StaleTranslation[] = [];
+  for (const entry of retranslate) {
+    if (entry.key !== "handle") {
+      kept.push(entry);
+      continue;
+    }
+    const ref = refOf(target, entry);
+    const context = target.handleRedirect
+      ? await target.handleRedirect(ref, entry.locale)
+      : null;
+    if (!context) {
+      keptHandles.push(entry);
+      continue;
+    }
+    handleContexts.set(tripleKey(ref.resourceId, entry.locale, entry.key), context);
+    kept.push(entry);
+  }
+
+  if (keptHandles.length > 0) {
+    logger.info("[StaleTranslations] Handle translations left untouched — no redirect possible", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      entries: keptHandles.length,
+    });
+  }
+  return { retranslate: kept, declined: [...declined], keptHandles, handleContexts };
+}
+
 async function repairStaleTranslations(
   target: RepairTarget,
   stale: readonly StaleTranslation[],
@@ -1651,15 +1847,32 @@ async function repairStaleTranslations(
   const lockId = target.lockId ?? resourceId;
   const gateway = gatewayFor(client, shop);
   const mirror = mirrorOf(target);
-  const { retranslate, purge, declined } = partitionStaleTranslations(
+  const partitioned = partitionStaleTranslations(
     stale,
     policy.autoTranslateExternalChanges,
     // The content-field allowlist exists to keep `handle` out. A surface that
     // translates bare values has no `handle` and no field vocabulary at all —
     // applying the list there would re-translate nothing while reporting that
     // it had.
-    { anyKey: !!target.translateAs },
+    {
+      anyKey: !!target.translateAs,
+      // The merchant's opt-in, already ANDed with the parent switch and the
+      // plan. It only says a handle MAY move; whether THIS URL may is asked
+      // below, where the old address can be looked at.
+      translateHandles: policy.autoTranslateHandles,
+    },
   );
+  const purge = partitioned.purge;
+  // A handle the app cannot put a redirect on is left ALONE — not translated,
+  // and deliberately not purged either. That is the one place this module
+  // departs from "what the automation cannot deliver is removed": for every
+  // other key a stale translation describes text that no longer exists, while a
+  // stale HANDLE is still a working URL. Deleting it would move the foreign
+  // address to the primary slug with no redirect, i.e. produce exactly the
+  // silently broken link the opt-in exists to avoid — and it is the merchant's
+  // own slug, which the automation was never asked to remove.
+  const { retranslate, declined, keptHandles, handleContexts } =
+    await reserveHandleRedirects(target, partitioned.retranslate, partitioned.declined);
 
   // May a stale translation be REMOVED here? Not the same question as the
   // merchant's purge switch, which auto-translate forces off (the two are
@@ -1698,9 +1911,9 @@ async function repairStaleTranslations(
   // row was deliberately kept, which is the richtext-theme bug CLAUDE.md already
   // records, one layer down. So the scope is the change MINUS what stood down.
   const keptDeclinedKeys = new Set(
-    declined
-      .filter((entry) => !toPurge.includes(entry))
-      .map((entry) => entry.key),
+    [...declined.filter((entry) => !toPurge.includes(entry)), ...keptHandles].map(
+      (entry) => entry.key,
+    ),
   );
   for (const entry of [...retranslate, ...toPurge]) keptDeclinedKeys.delete(entry.key);
   const marketKeys = scope.keys.filter((key) => !keptDeclinedKeys.has(key));
@@ -1805,6 +2018,7 @@ async function repairStaleTranslations(
           retranslate,
           supersededByMerchant,
           taskId!,
+          handleContexts,
         );
         // Entries the AI path could not deliver still have to lose their
         // stale translation — a failed automation must never leave the old
@@ -1993,6 +2207,9 @@ interface RetranslateOutcome {
   registered: StaleTranslation[];
   /** Entries the AI could not deliver — they must still be purged. */
   failed: StaleTranslation[];
+  /** Undelivered `handle` entries, which are deliberately NOT purged. Reported
+   *  for the log; see the list's note inside the run. */
+  kept?: StaleTranslation[];
   /**
    * The run could not START (a DB error on the settings read or the Task row).
    * NOT the same as "the AI failed": the entries are untouched and the fallback
@@ -2028,9 +2245,19 @@ async function retranslateStaleEntries(
   supersededByMerchant: (entryResourceId?: string) => boolean,
   /** The id the caller already handed to the merchant — see ReconcileResult. */
   taskId: string,
+  /** Redirect contexts reserved for the `handle` entries — see
+   *  `reserveHandleRedirects`. An entry without one never got this far. */
+  handleContexts: ReadonlyMap<string, TranslatedHandleContext>,
 ): Promise<RetranslateOutcome> {
   try {
-    return await runRetranslation(gateway, params, entries, supersededByMerchant, taskId);
+    return await runRetranslation(
+      gateway,
+      params,
+      entries,
+      supersededByMerchant,
+      taskId,
+      handleContexts,
+    );
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Re-translation could not start — stale rows kept", {
       context: "StaleTranslations",
@@ -2039,7 +2266,7 @@ async function retranslateStaleEntries(
       entries: entries.length,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { registered: [], failed: [], startFailed: true };
+    return { registered: [], failed: [], kept: [], startFailed: true };
   }
 }
 
@@ -2049,6 +2276,7 @@ async function runRetranslation(
   entries: readonly StaleTranslation[],
   supersededByMerchant: (entryResourceId?: string) => boolean,
   taskId: string,
+  handleContexts: ReadonlyMap<string, TranslatedHandleContext>,
 ): Promise<RetranslateOutcome> {
   const { shop, resourceId, resourceType, contentKind, resourceTitle } = params;
   const { db } = await import("../../db.server");
@@ -2075,6 +2303,24 @@ async function runRetranslation(
    * rather than reporting a clean success over a half-written repair.
    */
   const notMirrored: Array<{ resourceId: string; locale: string; key: string; error: string }> = [];
+   * Handle entries this run could not deliver — a provider error, an answer the
+   * slug sanitiser could not use, a write Shopify did not echo back.
+   *
+   * They go into a list of their OWN rather than into `failed`, because the
+   * caller PURGES that one. For every other key a stale translation describes
+   * text that no longer exists, so removing it is the safe fallback; a stale
+   * HANDLE is a working URL, and deleting it moves the foreign address to the
+   * primary slug with no redirect — the broken link the merchant switched this
+   * on to avoid. Left alone, the next change event tries again.
+   */
+  const keptHandles: StaleTranslation[] = [];
+  /** A content-surface `handle`. A value surface's keys are field names, and a
+   *  metaobject field called "handle" is not a URL. */
+  const isHandleEntry = (entry: StaleTranslation) => !params.translateAs && entry.key === "handle";
+  const undelivered = (entry: StaleTranslation) => {
+    if (isHandleEntry(entry)) keptHandles.push(entry);
+    else failed.push(entry);
+  };
 
   // Only the content-field path needs the key→field map; the generic value path
   // has no field semantics to look up (see RepairTarget.translateAs).
@@ -2322,7 +2568,7 @@ async function runRetranslation(
         ? untouched
         : untouched.filter((entry) => {
             if (keyToField[entry.key]) return true;
-            failed.push(entry);
+            undelivered(entry);
             return false;
           });
       if (translatable.length === 0) continue;
@@ -2401,9 +2647,18 @@ async function runRetranslation(
           input: { key: string; value: string; locale: string; translatableContentDigest: string };
         }> = [];
         for (const [index, entry] of translatable.entries()) {
-          const value = translatedFor(entry, index);
+          let value = translatedFor(entry, index);
+          if (isHandleEntry(entry)) {
+            // The generic translate prompt writes PROSE — "Kumiko Schatulle",
+            // possibly with an article, a capital and an umlaut. A handle is a
+            // slug, so every value goes through the same sanitiser the bulk
+            // translate page uses, and one that cannot be normalised at all
+            // (a non-Latin answer collapses to "" under an ASCII sanitiser) is
+            // DISCARDED rather than written.
+            value = sanitizeSlug(value ?? "");
+          }
           if (!value || !value.trim() || !entry.digest) {
-            failed.push(entry);
+            undelivered(entry);
             continue;
           }
           writes.push({
@@ -2444,7 +2699,7 @@ async function runRetranslation(
             });
             continue;
           }
-          const { confirmedKeys } = await registerAndVerify(
+          const { confirmedKeys, confirmedValues } = await registerAndVerify(
             gateway,
             ref.resourceId,
             resourceWrites.map((w) => w.input),
@@ -2454,7 +2709,7 @@ async function runRetranslation(
               // Shopify did not echo it back — treat it exactly like a failed
               // translation so the stale row is purged instead of being left
               // behind on the strength of an unverified write.
-              failed.push(entry);
+              undelivered(entry);
               continue;
             }
             // Shopify has CONFIRMED this write, so the entry is registered no
@@ -2464,8 +2719,33 @@ async function runRetranslation(
             // outcome that loses merchant content. The next sync re-reads it
             // from Shopify anyway.
             registered.push(entry);
+            // What Shopify STORED. For a `handle` that is load-bearing beyond
+            // this write: the mirror row is where the NEXT repair reads the
+            // "previous translated handle" its redirect is built from, so a
+            // value Shopify normalised differently would later produce a
+            // redirect FROM a path that was never live.
+            const stored = confirmedValues.get(input.key) ?? input.value;
+            if (isHandleEntry(entry)) {
+              // The old foreign URL owes a redirect, and it is created from the
+              // slug Shopify STORED, never the one submitted — the generic
+              // write path silently skips a handle translation equal to the
+              // primary handle, so a submitted value can describe an edit that
+              // never happened (CLAUDE.md).
+              await createHandleRedirect(
+                gateway,
+                params,
+                handleContexts.get(tripleKey(ref.resourceId, locale, input.key)),
+                stored,
+              );
+            }
             try {
-              await mirror.write(ref, locale, input.key, input.value, input.translatableContentDigest);
+              await mirror.write(
+                ref,
+                locale,
+                input.key,
+                isHandleEntry(entry) ? stored : input.value,
+                input.translatableContentDigest,
+              );
             } catch (mirrorError: unknown) {
               const message =
                 mirrorError instanceof Error ? mirrorError.message : String(mirrorError);
@@ -2495,7 +2775,13 @@ async function runRetranslation(
           error: error instanceof Error ? error.message : String(error),
         });
         for (const entry of localeEntries) {
-          if (!registered.includes(entry) && !failed.includes(entry)) failed.push(entry);
+          if (registered.includes(entry) || failed.includes(entry) || keptHandles.includes(entry)) {
+            continue;
+          }
+          // Through `undelivered`, so a `handle` lands in the kept list rather
+          // than in the one the caller purges: a provider error must not delete
+          // a working foreign URL.
+          undelivered(entry);
         }
       }
 
@@ -2519,7 +2805,11 @@ async function runRetranslation(
     // Standing down because the MERCHANT wrote is not that: the run did exactly
     // what it should, and a red task blaming it for their own save is a defect
     // report about nothing.
-    const stoodDown = registered.length === 0 && failed.length === 0 && supersededByMerchant();
+    const stoodDown =
+      registered.length === 0 &&
+      failed.length === 0 &&
+      keptHandles.length === 0 &&
+      supersededByMerchant();
     const succeeded = registered.length > 0 || stoodDown;
     // A run that registered on Shopify but could not write some of those rows
     // locally is NOT a clean success: every editor in this app reads the
@@ -2552,6 +2842,9 @@ async function runRetranslation(
         result: JSON.stringify({
           retranslated: registered.length,
           purged: failed.length,
+          // Reported rather than folded into `purged`: these are the opposite
+          // of a purge — a handle translation deliberately left standing.
+          ...(keptHandles.length > 0 ? { handlesKept: keptHandles.length } : {}),
           ...(notMirrored.length > 0 ? { notMirrored: notMirrored.length } : {}),
         }),
       },
@@ -2571,11 +2864,18 @@ async function runRetranslation(
       error: message,
     });
     for (const entry of entries) {
-      if (!registered.includes(entry) && !failed.includes(entry)) failed.push(entry);
+      if (registered.includes(entry) || failed.includes(entry) || keptHandles.includes(entry)) {
+        continue;
+      }
+      // Through `undelivered`, not straight into `failed`: this sweep is what
+      // decides the fate of everything the run did not reach, and a `handle`
+      // swept into the purge is the broken foreign URL the whole option exists
+      // to avoid.
+      undelivered(entry);
     }
   }
 
-  return { registered, failed };
+  return { registered, failed, kept: keptHandles };
 }
 
 /**

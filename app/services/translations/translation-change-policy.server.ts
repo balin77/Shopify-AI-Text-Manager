@@ -25,6 +25,12 @@
  *    feature; the column can legitimately hold `true` on a shop that has since
  *    downgraded, so the flag is ANDed with the plan on every read instead of
  *    being reset on downgrade (the same rule the SEO limits follow).
+ *  - **A sub-decision is ANDed with the decision it sits under.**
+ *    `autoTranslateHandles` only means anything while the re-translation runs,
+ *    so it is resolved against the parent switch here rather than at each
+ *    reader. Neither column is cleared when the other is switched off: a
+ *    merchant trying a switch must not lose the answer underneath it, which is
+ *    what makes the ANDing the only honest place for this.
  */
 
 import type { PrismaClient } from "@prisma/client";
@@ -78,6 +84,23 @@ export interface TranslationChangePolicy {
    * untranslated. Already ANDed with the plan gate.
    */
   autoTranslateExternalChanges: boolean;
+  /**
+   * The sub-decision under the switch above: may the automatic re-translation
+   * also rewrite a URL HANDLE? Already ANDed with BOTH the plan and
+   * `autoTranslateExternalChanges`, so a caller never has to remember either —
+   * without the parent switch there is no re-translation for this to be a part
+   * of, and reading the raw column would make the sub-decision outrank the
+   * decision it sits under.
+   *
+   * The stored column is deliberately NOT cleared when the parent is switched
+   * off (a merchant who tries the parent switch must not lose this answer), so
+   * the ANDing is the only thing that keeps the pair honest.
+   *
+   * It says "may a handle move at all", never "may THIS URL move": the repair
+   * still refuses a handle it cannot put a redirect on
+   * (handle-retranslation.server.ts).
+   */
+  autoTranslateHandles: boolean;
   /** The shop's plan, for callers that log or surface it. */
   plan: Plan;
 }
@@ -87,6 +110,10 @@ const DEFAULT_POLICY: TranslationChangePolicy = {
   purgeOnPrimaryChange: true,
   purgeUnreconciledSurfaces: true,
   autoTranslateExternalChanges: false,
+  // Fails OPEN in the same direction as the rest: with no re-translation there
+  // is no handle to refresh, and a slug that moves on the strength of a failed
+  // lookup is the one outcome this option must never produce.
+  autoTranslateHandles: false,
   plan: "free",
 };
 
@@ -105,6 +132,7 @@ export async function loadTranslationChangePolicy(
       select: {
         translationPurgeOnPrimaryChange: true,
         autoTranslateExternalChanges: true,
+        autoTranslateHandles: true,
         subscriptionPlan: true,
       },
     });
@@ -124,6 +152,10 @@ export async function loadTranslationChangePolicy(
       purgeOnPrimaryChange: !autoTranslate && storedPurge,
       purgeUnreconciledSurfaces: storedPurge,
       autoTranslateExternalChanges: autoTranslate,
+      // ANDed with the parent, not merely with the plan: the column survives
+      // the merchant switching the automation off, and reading it on its own
+      // would let a sub-decision act where the decision it belongs to does not.
+      autoTranslateHandles: autoTranslate && (row?.autoTranslateHandles ?? false),
       plan,
     };
   } catch (error: unknown) {

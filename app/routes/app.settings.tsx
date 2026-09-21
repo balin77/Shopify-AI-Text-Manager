@@ -560,6 +560,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // what would happen if it upgraded again.
         translationPurgeOnPrimaryChange: settings.translationPurgeOnPrimaryChange ?? true,
         autoTranslateExternalChanges: settings.autoTranslateExternalChanges ?? false,
+        autoTranslateHandles: settings.autoTranslateHandles ?? false,
 
         // Nightly SEO audit (Max) — merchant switch, see
         // services/seo/audit-auto-run.service.ts. Shown on every plan but only
@@ -697,14 +698,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // matches the stored value is a no-op and must not 403 (a downgraded
       // shop re-submits its stored `true` on every save of this tab).
       const rawAutoTranslate = formData.get("autoTranslateExternalChanges");
-      let autoTranslateUpdate: { autoTranslateExternalChanges: boolean } | Record<string, never> = {};
-      if (rawAutoTranslate !== null) {
-        const requested = rawAutoTranslate === "true";
+      // The sub-decision shares the parent's gate, so it shares the READ too:
+      // one query decides both, and neither can 403 on a value that is already
+      // stored. It is NOT gated on the parent being on — the column is
+      // deliberately independent (the server ANDs the two on every read), so a
+      // merchant may tick it before, or leave it ticked after, switching the
+      // automation off without losing the answer.
+      const rawAutoTranslateHandles = formData.get("autoTranslateHandles");
+      let autoTranslateUpdate: {
+        autoTranslateExternalChanges?: boolean;
+        autoTranslateHandles?: boolean;
+      } = {};
+      if (rawAutoTranslate !== null || rawAutoTranslateHandles !== null) {
         const row = await db.aISettings.findUnique({
           where: { shop: session.shop },
-          select: { subscriptionPlan: true, autoTranslateExternalChanges: true },
+          select: {
+            subscriptionPlan: true,
+            autoTranslateExternalChanges: true,
+            autoTranslateHandles: true,
+          },
         });
-        if ((row?.autoTranslateExternalChanges ?? false) !== requested) {
+        const changes: Array<[
+          "autoTranslateExternalChanges" | "autoTranslateHandles",
+          boolean,
+        ]> = [];
+        if (
+          rawAutoTranslate !== null &&
+          (row?.autoTranslateExternalChanges ?? false) !== (rawAutoTranslate === "true")
+        ) {
+          changes.push(["autoTranslateExternalChanges", rawAutoTranslate === "true"]);
+        }
+        if (
+          rawAutoTranslateHandles !== null &&
+          (row?.autoTranslateHandles ?? false) !== (rawAutoTranslateHandles === "true")
+        ) {
+          changes.push(["autoTranslateHandles", rawAutoTranslateHandles === "true"]);
+        }
+        if (changes.length > 0) {
           const { meetsPlan } = await import("../utils/planUtils");
           const { AUTO_TRANSLATE_MIN_PLAN } = await import(
             "../services/translations/translation-change-policy.shared"
@@ -720,7 +750,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               { status: 403 },
             );
           }
-          autoTranslateUpdate = { autoTranslateExternalChanges: requested };
+          autoTranslateUpdate = Object.fromEntries(changes);
         }
       }
 
@@ -1771,6 +1801,7 @@ export default function SettingsPage() {
                     keywordAwareTranslation={settings.keywordAwareTranslation}
                     translationPurgeOnPrimaryChange={settings.translationPurgeOnPrimaryChange}
                     autoTranslateExternalChanges={settings.autoTranslateExternalChanges}
+                    autoTranslateHandles={settings.autoTranslateHandles}
                     subscriptionPlan={subscriptionPlan as Plan}
                     sendImagesToAI={settings.sendImagesToAI}
                     aiImagesPerRequest={settings.aiImagesPerRequest}

@@ -331,24 +331,84 @@ export interface TranslatedHandleRedirectRequest {
  *    handle and THEN renaming `de`'s identical one repoints the row `fr` just
  *    created. Both rows are the same path, and one path can hold one redirect.
  */
-export function decideTranslatedHandleRedirect(
-  request: TranslatedHandleRedirectRequest,
-): HandleRedirectDecision {
-  if (!request.wanted) return { redirect: false, reason: "notWanted" };
-  if (request.previouslyLive === false) return { redirect: false, reason: "neverLive" };
-  if (request.marketId !== "") return { redirect: false, reason: "marketScoped" };
+/** The refusals that depend only on the OLD state — see the blocker below. */
+type TranslatedHandleState = Omit<TranslatedHandleRedirectRequest, "nextTranslatedHandle">;
 
-  const previous = normalizeHandle(request.previousTranslatedHandle ?? "");
-  if (!previous) return { redirect: false, reason: "notTranslatedBefore" };
-
-  const primary = normalizeHandle(request.primaryHandle ?? "");
+/** Rules 1, 3, 4 and the unknown-primary refusal: everything decidable before
+ *  the old handle is even compared with a new one. */
+function earlyTranslatedRefusal(
+  request: TranslatedHandleState,
+): Extract<HandleRedirectDecision, { redirect: false }>["reason"] | null {
+  if (!request.wanted) return "notWanted";
+  if (request.previouslyLive === false) return "neverLive";
+  if (request.marketId !== "") return "marketScoped";
+  if (!normalizeHandle(request.previousTranslatedHandle ?? "")) return "notTranslatedBefore";
   // Unknown primary handle ⇒ refuse. Rule 2's most important half is "the old
   // handle must not BE the primary one", and without the primary handle that
   // check silently passes — turning a cache miss or a throttled lookup into a
   // redirect on the shop's most important live URL. The primary path refuses
   // an unknown handle for the same reason; "unknown proceeds" applies to
   // whether an object was LIVE, never to what its address is.
-  if (!primary) return { redirect: false, reason: "primaryHandleUnknown" };
+  if (!normalizeHandle(request.primaryHandle ?? "")) return "primaryHandleUnknown";
+  return null;
+}
+
+/** Rule 2: is the OLD translated handle still somebody's live address? */
+function oldPathStillLive(request: TranslatedHandleState): boolean {
+  const previous = normalizeHandle(request.previousTranslatedHandle ?? "");
+  const live = new Set(
+    [
+      normalizeHandle(request.primaryHandle ?? ""),
+      ...(request.otherLocaleHandles ?? []).map(normalizeHandle),
+    ].filter(Boolean),
+  );
+  return live.has(previous) || !!request.previousHandleTakenElsewhere;
+}
+
+/**
+ * Every refusal that does NOT depend on the new handle, in one call.
+ *
+ * It exists for a caller that has to decide whether a handle may move BEFORE it
+ * knows what it would move to: the automatic re-translation
+ * (translations/handle-retranslation.server.ts) asks this first and leaves the
+ * handle translation alone when it answers, rather than spending an AI request
+ * on a slug it would then have to write without a redirect. Every blocking rule
+ * is about the OLD address, so the question is answerable that early — only
+ * `unchanged`/`wouldLoop`/`missingHandle` need the new value, and those are
+ * benign.
+ *
+ * It shares the predicates with `decideTranslatedHandleRedirect` rather than
+ * restating them, because two copies of "may this URL move" would drift — but
+ * the ORDER is deliberately not shared: the decision reports `unchanged` before
+ * `pathStillLive` so a no-op edit names the reason it actually had, while a
+ * pre-check has no no-op case to name.
+ */
+export function translatedHandleRedirectBlocker(
+  request: TranslatedHandleState,
+): Extract<HandleRedirectDecision, { redirect: false }>["reason"] | null {
+  const early = earlyTranslatedRefusal(request);
+  if (early) return early;
+  if (oldPathStillLive(request)) return "pathStillLive";
+  if (request.resource === "article" && request.blogHandleTranslatedInLocale) {
+    return "localeBlogHandleUnknown";
+  }
+  // The old URL is not derivable at all (an article with no blog handle), so
+  // there is no source path to redirect FROM.
+  const previous = normalizeHandle(request.previousTranslatedHandle ?? "");
+  if (!storefrontPathFor(request.resource, previous, request.blogHandle)) {
+    return request.resource === "article" ? "missingBlogHandle" : "missingHandle";
+  }
+  return null;
+}
+
+export function decideTranslatedHandleRedirect(
+  request: TranslatedHandleRedirectRequest,
+): HandleRedirectDecision {
+  const early = earlyTranslatedRefusal(request);
+  if (early) return { redirect: false, reason: early };
+
+  const previous = normalizeHandle(request.previousTranslatedHandle ?? "");
+  const primary = normalizeHandle(request.primaryHandle ?? "");
 
   // Cleared ⇒ the locale is served under the primary handle again, so that is
   // where the dead translated URL should point.
@@ -360,8 +420,7 @@ export function decideTranslatedHandleRedirect(
   // Rule 2. Checked AFTER "unchanged" so a no-op edit reports the reason it
   // actually had, and before the paths are built because it is a fact about the
   // handle rather than about the URL shape.
-  const live = new Set([primary, ...(request.otherLocaleHandles ?? []).map(normalizeHandle)].filter(Boolean));
-  if (live.has(previous) || request.previousHandleTakenElsewhere) {
+  if (oldPathStillLive(request)) {
     return { redirect: false, reason: "pathStillLive" };
   }
 

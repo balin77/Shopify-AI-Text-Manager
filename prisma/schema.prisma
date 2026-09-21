@@ -252,6 +252,18 @@ model AISettings {
   // may hold `true` from a period on a higher plan).
   autoTranslateExternalChanges Boolean @default(false)
 
+  // The sub-decision under autoTranslateExternalChanges: may the automatic
+  // re-translation also rewrite a URL HANDLE? Off by default, and deliberately
+  // its own column rather than part of the switch above — a slug is a URL, so
+  // rewriting one unattended moves a storefront page. With it on, a handle
+  // translation is REFRESHED (never created where none existed) and only where
+  // the app can put a redirect on the old foreign URL first; see
+  // services/translations/handle-retranslation.server.ts.
+  // Read through translation-change-policy.server.ts, which ANDs it with the
+  // parent switch AND the plan on every read — the stored value survives both
+  // a downgrade and a merchant switching the parent off to try something.
+  autoTranslateHandles Boolean @default(false)
+
   // Translation length policy. "exact" (default) preserves source length —
   // legal/rechts pages must not shrink. "seo_optimized" appends per-field
   // character constraints to the translate prompt for SEO-critical fields

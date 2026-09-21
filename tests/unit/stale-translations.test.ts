@@ -357,3 +357,90 @@ describe("partitionStaleTranslations", () => {
     expect(purge).toEqual([handle]);
   });
 });
+
+/**
+ * The opt-in (`AISettings.autoTranslateHandles`). Only the PURE half is here —
+ * "may a handle move at all". Whether THIS URL may move is the repair's
+ * question, because it needs the old address; see
+ * handle-retranslation.server.ts and its test.
+ */
+describe("partitionStaleTranslations — the handle opt-in", () => {
+  const staleHandle = {
+    key: "handle",
+    locale: "fr",
+    reason: "outdated" as const,
+    primaryValue: "kumiko-box",
+    digest: NEW,
+  };
+
+  it("re-translates a handle once the merchant switched it on", () => {
+    const { retranslate, purge, declined } = partitionStaleTranslations([staleHandle], true, {
+      translateHandles: true,
+    });
+    expect(retranslate).toEqual([staleHandle]);
+    expect(purge).toEqual([]);
+    expect(declined).toEqual([]);
+  });
+
+  it("keeps purging the handle while the option is off — unchanged behaviour", () => {
+    const { retranslate, purge } = partitionStaleTranslations([staleHandle], true, {
+      translateHandles: false,
+    });
+    expect(retranslate).toEqual([]);
+    expect(purge).toEqual([staleHandle]);
+  });
+
+  it("purges the handle when the automation itself is off, option or no option", () => {
+    const { retranslate, purge } = partitionStaleTranslations([staleHandle], false, {
+      translateHandles: true,
+    });
+    expect(retranslate).toEqual([]);
+    expect(purge).toEqual([staleHandle]);
+  });
+
+  it("still purges a handle whose PRIMARY value was cleared — nothing to translate", () => {
+    const cleared = { ...staleHandle, reason: "primary-empty" as const, primaryValue: "" };
+    const { retranslate, purge } = partitionStaleTranslations([cleared], true, {
+      translateHandles: true,
+    });
+    expect(retranslate).toEqual([]);
+    expect(purge).toEqual([cleared]);
+  });
+
+  it("REFRESHES a handle but never FILLS one: a locale with no handle keeps the primary URL", () => {
+    const filled = { ...staleHandle, locale: "de", filled: true };
+    const { retranslate, purge, declined } = partitionStaleTranslations([filled], true, {
+      translateHandles: true,
+    });
+    // Not translated (that would be a brand-new foreign URL), and not removed
+    // either — there is nothing there to remove.
+    expect(retranslate).toEqual([]);
+    expect(purge).toEqual([]);
+    expect(declined).toEqual([]);
+  });
+
+  it("leaves a metaobject field called `handle` alone — a value surface has no URLs", () => {
+    const fieldNamedHandle = { ...staleHandle, primaryValue: "Griff" };
+    const { retranslate } = partitionStaleTranslations([fieldNamedHandle], true, {
+      anyKey: true,
+      translateHandles: false,
+    });
+    // `anyKey` decides it, so the content-field handle rule must not reach it.
+    expect(retranslate).toEqual([fieldNamedHandle]);
+  });
+});
+
+describe("findStaleTranslations — the fill never creates a handle", () => {
+  it("fills title into an untranslated locale but not handle, even with the opt-in on", () => {
+    const stale = findStaleTranslations(
+      [translation({ locale: "fr" }), translation({ locale: "fr", key: "handle", value: "boite" })],
+      primary({ title: "Box", handle: "kumiko-box" }),
+      moved,
+      { fillLocales: ["fr", "de"], translateHandles: true },
+    );
+    const filled = stale.filter((entry) => entry.filled);
+    expect(filled.map((entry) => `${entry.locale}:${entry.key}`)).toEqual(["de:title"]);
+    // The `fr` handle it PROVED stale is still there — refreshing is the point.
+    expect(stale.some((entry) => entry.key === "handle" && entry.locale === "fr" && !entry.filled)).toBe(true);
+  });
+});

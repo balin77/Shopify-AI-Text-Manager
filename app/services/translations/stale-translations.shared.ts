@@ -171,12 +171,18 @@ export const MANAGED_TRANSLATION_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Keys a stale translation may be RE-translated for automatically (Max plan).
+ * Keys a stale translation may be RE-translated for automatically (Max plan)
+ * WITHOUT the merchant asking for that key by name.
  *
- * `handle` is deliberately absent: a slug is a URL. Rewriting it unattended
- * would move a storefront page nobody asked to move (and leave the old URL to
- * Shopify's redirect handling), so a stale handle translation is purged like
- * before and re-translated by the merchant on purpose.
+ * `handle` is deliberately absent, and stays absent: a slug is a URL, so
+ * rewriting one unattended moves a storefront page nobody asked to move. It is
+ * the one key behind an explicit second switch — `translateHandles` in
+ * `classifyStaleTranslation`, fed by `AISettings.autoTranslateHandles`. With
+ * that switch off the behaviour is unchanged (the stale handle translation is
+ * purged); with it on the handle is REFRESHED under the rules written at that
+ * option, never added to this list — because "may this key be translated at
+ * all" and "may it be translated by default" are different questions and the
+ * fill below asks the second one.
  */
 export const AUTO_RETRANSLATABLE_KEYS: ReadonlySet<string> = new Set([
   "title",
@@ -218,7 +224,7 @@ export function findStaleTranslations(
    * removal anyway would be an unechoed no-op logged as an unconfirmed removal
    * for every locale the merchant never translated.
    */
-  opts: { fillLocales?: readonly string[]; anyKey?: boolean } = {},
+  opts: { fillLocales?: readonly string[]; anyKey?: boolean; translateHandles?: boolean } = {},
 ): StaleTranslation[] {
   const primaryKnown = Object.keys(primaryContent).length > 0;
   const seen = new Set<string>();
@@ -315,7 +321,12 @@ export function findStaleTranslations(
         };
         // Only a candidate that will really be TRANSLATED is emitted: a purge
         // entry here would address a translation that does not exist.
-        if (classifyStaleTranslation(candidate, true, { anyKey: opts.anyKey }) !== "retranslate") {
+        if (
+          classifyStaleTranslation(candidate, true, {
+            anyKey: opts.anyKey,
+            translateHandles: opts.translateHandles,
+          }) !== "retranslate"
+        ) {
           continue;
         }
         seen.add(id);
@@ -390,12 +401,36 @@ export type StaleVerdict = "retranslate" | "purge" | "declined";
  * simply not in it, so applying it there would silently re-translate NOTHING
  * on those surfaces while reporting that it had. There is no `handle` among
  * them to protect: they name their own keys, and the caller has already
- * filtered to the ones it changed.
+ * filtered to the ones it changed — which is why the handle rule below is
+ * asked on the CONTENT path only.
+ *
+ * `translateHandles` is the merchant's opt-in (`AISettings.autoTranslateHandles`,
+ * ANDed with the parent switch and the plan in
+ * translation-change-policy.server.ts). Off — the default, and the behaviour
+ * that predates the option — a stale `handle` is a PURGE, exactly as before.
+ * On, it becomes a re-translation, with two limits that are part of the rule
+ * rather than of the caller:
+ *
+ *  - a FILLED entry is never a handle. The fill exists so a locale that holds
+ *    no translation gets one; for a handle that means a locale which has been
+ *    served under the PRIMARY slug all along suddenly gets a URL of its own,
+ *    unattended, for every published language at once. Nothing is broken by
+ *    leaving it alone (the primary path stays live and Shopify canonicalises
+ *    to it), and "refresh the slug I chose to translate" is what the merchant
+ *    ticked. So handles are REFRESHED, never CREATED — and the `declined`
+ *    verdict is what says so: we refuse to try, so their stored deletion
+ *    answer stands, and `partitionStaleTranslations` drops a filled entry that
+ *    is not a re-translation rather than turning it into a removal of nothing.
+ *  - the WRITE side has a second rail this function cannot see: the repair
+ *    refuses a handle it cannot put a redirect on
+ *    (handle-retranslation.server.ts). A pure classifier cannot ask Shopify
+ *    what else answers that path, so "may this key move at all" is decided
+ *    here and "may THIS URL move" is decided there.
  */
 export function classifyStaleTranslation(
   entry: StaleTranslation,
   autoTranslate: boolean,
-  opts: { anyKey?: boolean } = {},
+  opts: { anyKey?: boolean; translateHandles?: boolean } = {},
 ): StaleVerdict {
   if (!autoTranslate || !entry.primaryValue.trim() || !entry.digest) {
     // Nothing to translate, or nothing to register it against. The automation
@@ -411,28 +446,39 @@ export function classifyStaleTranslation(
     // not the same as a failure.
     return survivesValuePrompt(entry.primaryValue) ? "retranslate" : "declined";
   }
-  // A content surface: the allowlist keeps `handle` out, and that exclusion is
-  // deliberately a PURGE — a slug the merchant cannot have re-translated must
-  // not keep describing a URL that moved (CLAUDE.md).
+  // A content surface. `handle` is not in the allowlist and never will be; the
+  // merchant's own opt-in is what moves it, and only out of the two buckets
+  // above — see this function's note.
+  if (entry.key === "handle") {
+    if (!opts.translateHandles) return "purge";
+    // REFRESH, never CREATE. A locale with no handle translation is served
+    // under the primary slug, which is live and canonical; giving it one is a
+    // new URL nobody asked for.
+    return entry.filled ? "declined" : "retranslate";
+  }
+  // Everything else the allowlist does not name is a PURGE — a stale
+  // translation the automation cannot re-translate must not keep describing
+  // text that moved (CLAUDE.md).
   return AUTO_RETRANSLATABLE_KEYS.has(entry.key) ? "retranslate" : "purge";
 }
 
 export function partitionStaleTranslations(
   stale: readonly StaleTranslation[],
   autoTranslate: boolean,
-  opts: { anyKey?: boolean } = {},
+  opts: { anyKey?: boolean; translateHandles?: boolean } = {},
 ): { retranslate: StaleTranslation[]; purge: StaleTranslation[]; declined: StaleTranslation[] } {
   const retranslate: StaleTranslation[] = [];
   const purge: StaleTranslation[] = [];
   const declined: StaleTranslation[] = [];
   for (const entry of stale) {
-    // A fill has nothing to fall back to: with the auto-translation off it is
-    // not a purge candidate, it is not a candidate at all. Structural rather
-    // than a rule in a comment, because `fillLocales` is the caller's option
-    // and only the flag can stop a caller that passed it under the wrong switch
-    // from turning every filled entry into a removal of nothing.
-    if (entry.filled && !autoTranslate) continue;
     const verdict = classifyStaleTranslation(entry, autoTranslate, opts);
+    // A fill has nothing to fall back to: it is a candidate to be TRANSLATED or
+    // it is not a candidate at all. Structural rather than a rule in a comment,
+    // because `fillLocales` is the caller's option and only this can stop a
+    // caller that passed it under the wrong switch — or for a key the rules
+    // refuse to fill, which is what `handle` now is — from turning a filled
+    // entry into a removal of a translation that does not exist.
+    if (entry.filled && verdict !== "retranslate") continue;
     if (verdict === "retranslate") retranslate.push(entry);
     else if (verdict === "declined") declined.push(entry);
     else purge.push(entry);

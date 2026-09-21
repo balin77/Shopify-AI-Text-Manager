@@ -67,6 +67,8 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     rereadConfirms: null as null | Record<string, string[]>,
     registerConfirms: null as null | string[],
     registerCalls: [] as Array<{ key: string; locale: string; value: string }>,
+    /** The foreign-URL redirects a handle re-translation asked for. */
+    redirectCalls: [] as Array<{ from: string; to: string }>,
   };
   const ai = {
     translate: vi.fn(async () => ({})) as any,
@@ -76,6 +78,7 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     purgeOnPrimaryChange: true,
     purgeUnreconciledSurfaces: true,
     autoTranslateExternalChanges: false,
+    autoTranslateHandles: false,
     plan: "max",
   };
   return { db, shopify, ai, policy };
@@ -117,9 +120,27 @@ vi.mock("../../app/services/bulk-editor/translations.server", () => ({
         shopify.registerTargets.push(resourceId);
       }
       const confirmed = shopify.registerConfirms ?? inputs.map((i) => i.key);
-      return { confirmedKeys: new Set(confirmed), userErrors: [] };
+      return {
+        confirmedKeys: new Set(confirmed),
+        // What Shopify STORED — the value a redirect's target is built from.
+        confirmedValues: new Map(
+          inputs.filter((i) => confirmed.includes(i.key)).map((i) => [i.key, i.value]),
+        ),
+        userErrors: [],
+      };
     },
   ),
+}));
+
+vi.mock("../../app/services/seo/handle-redirect.server", () => ({
+  applyTranslatedHandleRedirect: vi.fn(async (_admin: unknown, _shop: string, request: any) => {
+    shopify.redirectCalls.push({
+      from: request.previousTranslatedHandle,
+      to: request.nextTranslatedHandle,
+    });
+    return { created: true, noteCode: "created" as const };
+  }),
+  handleTakenByOtherResource: vi.fn(async () => false),
 }));
 
 vi.mock("../../app/services/translations/translation-change-policy.server", () => ({
@@ -201,6 +222,8 @@ beforeEach(() => {
   policy.purgeOnPrimaryChange = true;
   policy.purgeUnreconciledSurfaces = true;
   policy.autoTranslateExternalChanges = false;
+  policy.autoTranslateHandles = false;
+  shopify.redirectCalls = [];
   db.contentTranslation.deleteMany.mockClear();
   db.contentTranslation.upsert.mockClear();
   db.productImage.findMany.mockClear();
@@ -1560,5 +1583,152 @@ describe("per-surface mirrors", () => {
       locale: "fr",
     });
     expect(call.create).toMatchObject({ resourceType: "Collection", value: "Vase", digest: "dg" });
+  });
+});
+
+/**
+ * The handle opt-in (`AISettings.autoTranslateHandles`).
+ *
+ * The pure half — "may a handle move at all" — is in stale-translations.test.ts.
+ * What is tested here is the part that costs a URL if it is wrong: the value is
+ * written as a SLUG, the old foreign address gets its redirect, and a handle
+ * with no redirect available is left exactly where it is — neither translated
+ * nor deleted.
+ */
+describe("handle re-translation", () => {
+  /** A resource whose stale set is one `handle` in German. */
+  function handleParams(over: Record<string, unknown> = {}) {
+    return baseParams({
+      translations: [{ key: "handle", value: "kiste-alt", locale: "de", marketId: "", outdated: true }],
+      primaryContent: { handle: { value: "kumiko-box", digest: NEW } },
+      previousDigests: { [digestBaselineKey("de", "handle")]: OLD },
+      ...over,
+    });
+  }
+
+  /** A resolver that answers: the German handle may move, and here is its old
+   *  address plus everything the redirect decision needs. */
+  const resolver = async () => ({
+    resource: "product" as const,
+    previousTranslatedHandle: "kiste-alt",
+    primaryHandle: "kumiko-box",
+    otherLocaleHandles: [],
+    previousHandleTakenElsewhere: false,
+    previouslyLive: true,
+    blogHandle: null,
+    blogHandleTranslatedInLocale: false,
+  });
+
+  it("writes the AI's answer as a SLUG and redirects the old foreign URL", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    policy.purgeOnPrimaryChange = false;
+    // The generic prompt answers with prose — capitals, an umlaut, punctuation.
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle!" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([
+      { key: "handle", locale: "de", value: "kumiko-schatulle", translatableContentDigest: NEW },
+    ]);
+    expect(shopify.redirectCalls).toEqual([{ from: "kiste-alt", to: "kumiko-schatulle" }]);
+    // Nothing was deleted: the whole point is that the old URL survives as a
+    // redirect rather than as a hole.
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("leaves the handle ALONE when no redirect can be established — no write, no purge", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    // The merchant's stored deletion answer is ON, which is what would
+    // otherwise sweep a declined entry into the removal.
+    policy.purgeUnreconciledSurfaces = true;
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+
+    const result = await reconcileStaleTranslations(
+      handleParams({ handleRedirect: async () => null }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.redirectCalls).toEqual([]);
+    // A stale handle is still a WORKING URL, so deleting it would move the
+    // foreign address with no redirect — the outcome the option exists to avoid.
+    expect(shopify.removeCalls).toEqual([]);
+    expect(result.removed).toBe(0);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("purges the handle when the opt-in is off — unchanged behaviour", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = false;
+    ai.translate = vi.fn(async () => ({ de: { handle: "egal" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.removeCalls).toEqual([{ keys: ["handle"], locale: "de" }]);
+  });
+
+  it("discards an answer that cannot be normalised into a slug, and keeps the old one", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    // A non-Latin answer collapses to "" under the ASCII sanitiser.
+    ai.translate = vi.fn(async () => ({ de: { handle: "組子箱" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.redirectCalls).toEqual([]);
+    // Undelivered, but NOT swept into the fallback purge with the other
+    // failures: that list deletes, and a deleted handle is a moved URL.
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("does not purge the handle when the AI request itself fails", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => {
+      throw new Error("provider down");
+    });
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    // The locale's fallback sweep purges what it could not deliver — except a
+    // handle, whose stale translation is a working URL.
+    expect(shopify.removeCalls).toEqual([]);
+    expect(shopify.registerCalls).toEqual([]);
+  });
+
+  it("still re-translates the other fields when a handle is left alone", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => ({ de: { title: "Kumiko Schatulle", handle: "egal" } }));
+
+    await reconcileStaleTranslations(
+      handleParams({
+        translations: [
+          { key: "handle", value: "kiste-alt", locale: "de", marketId: "", outdated: true },
+          { key: "title", value: "Kiste", locale: "de", marketId: "", outdated: true },
+        ],
+        primaryContent: {
+          handle: { value: "kumiko-box", digest: NEW },
+          title: { value: "Kumiko Box", digest: NEW },
+        },
+        previousDigests: {
+          [digestBaselineKey("de", "handle")]: OLD,
+          [digestBaselineKey("de", "title")]: OLD,
+        },
+        handleRedirect: async () => null,
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls.map((c) => c.key)).toEqual(["title"]);
+    expect(shopify.removeCalls).toEqual([]);
   });
 });

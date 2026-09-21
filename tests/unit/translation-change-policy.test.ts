@@ -145,6 +145,32 @@ describe("loadTranslationChangePolicy", () => {
     }
   });
 
+  it("ANDs the handle sub-decision with the parent switch and the plan", async () => {
+    const base = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateHandles: true,
+    };
+    // Granted only where BOTH the plan and the parent switch allow it.
+    row.value = { ...base, autoTranslateExternalChanges: true, subscriptionPlan: "max" };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateHandles).toBe(true);
+
+    // Parent off: the stored column stays, the behaviour does not. A merchant
+    // who switches the automation off to try something must not lose the
+    // answer underneath it.
+    row.value = { ...base, autoTranslateExternalChanges: false, subscriptionPlan: "max" };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateHandles).toBe(false);
+
+    // Downgraded: the parent is already inert, so this is too.
+    row.value = { ...base, autoTranslateExternalChanges: true, subscriptionPlan: "pro" };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateHandles).toBe(false);
+  });
+
+  it("never grants handles on a lookup error — a slug must not move on a guess", async () => {
+    row.error = new Error("connection lost");
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.autoTranslateHandles).toBe(false);
+  });
+
   it("defaults both switches when the row carries neither field", async () => {
     // Defensive only. The real pre-migration case does NOT reach here: Prisma
     // raises P2022 for a `select` of a column the database does not have, so a
@@ -154,5 +180,6 @@ describe("loadTranslationChangePolicy", () => {
     const policy = await loadTranslationChangePolicy("shop.myshopify.com");
     expect(policy.purgeOnPrimaryChange).toBe(true);
     expect(policy.autoTranslateExternalChanges).toBe(false);
+    expect(policy.autoTranslateHandles).toBe(false);
   });
 });
