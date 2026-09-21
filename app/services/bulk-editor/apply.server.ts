@@ -113,6 +113,7 @@ import {
   VAR_HS_CODE_COLUMN_ID,
   INVENTORY_ITEM_COLUMN_IDS,
   PRODUCT_VARIANT_COLUMN_IDS,
+  canonicalSelectValue,
   type BulkRowType,
   type BulkDiffEntry,
   type BulkDiffRowGroup,
@@ -1883,6 +1884,30 @@ async function persistSingleMutationRow(
     if (ATTRIBUTE_FIELD_NAMES.has(name)) delete fields[name];
   }
   const hasAttributes = Object.keys(attributes).length > 0;
+
+  /**
+   * §Phase 3.4 — pages and articles have NO Shopify webhook, so this save is
+   * the only moment anything can tell IndexNow that a URL went live or went
+   * away. The single editor has done this since the column existed; the grid
+   * could not, because it had no `isPublished` cell to do it for. It has one
+   * now, and a bulk publish that nothing announces is the same gap on a
+   * hundred pages at once.
+   *
+   * The BEFORE side comes from the cache and is read before the mutation
+   * replaces it. `attributesSyncedAt` unset makes it UNKNOWN rather than
+   * `true`: the column defaults to published, so reading it as "was visible"
+   * would make the first save of every draft look like a publish.
+   *
+   * Products and collections are covered by their own webhooks and are
+   * deliberately not repeated. A BLOG container is left out too — its handle
+   * is the only thing that can move it, it has no cache row to read the old
+   * one from, and that gap predates this column.
+   */
+  const indexNowResource = type === "page" || type === "article" ? type : null;
+  const beforeIndexNow =
+    indexNowResource && (attributes.isPublished !== undefined || fields.handle !== undefined)
+      ? await loadRedirectStateForRow(deps, group).catch(() => null)
+      : null;
   // Everything the merchant touched was refused (a bad enum, a cleared author)
   // — there is nothing left to send, and calling the mutation with only an id
   // would report a successful save of nothing.
@@ -2065,6 +2090,34 @@ async function persistSingleMutationRow(
   // §Phase 3.3 — the write is confirmed (every branch above throws otherwise),
   // so the old URL can now be pointed at the new one.
   await finishBulkHandleRedirect(capturedHandle, echoedResource?.handle ?? fields.handle, group, deps);
+
+  // Announce a visibility or URL change to IndexNow. Never throws — the save
+  // has already happened, and `enqueuePublishChange` catches its own.
+  if (indexNowResource && beforeIndexNow) {
+    const nextPublished =
+      attributes.isPublished !== undefined
+        ? attributes.isPublished
+        : beforeIndexNow.state.attributesKnown
+          ? beforeIndexNow.state.isPublished
+          : undefined;
+    const { enqueuePublishChange } = await import("~/services/seo/index-now-content.server");
+    await enqueuePublishChange(db, shop, {
+      resource: indexNowResource,
+      previousPublished: beforeIndexNow.state.attributesKnown
+        ? beforeIndexNow.state.isPublished
+        : undefined,
+      nextPublished,
+      previousHandle: beforeIndexNow.handle,
+      nextHandle: echoedResource?.handle ?? fields.handle ?? beforeIndexNow.handle,
+      // A THUNK: resolving an article's blog costs a DB read plus a GraphQL
+      // call, and `enqueuePublishChange` returns early for every shop with
+      // IndexNow switched off — the same reason the single editor passes one.
+      loadBlogHandle:
+        indexNowResource === "article"
+          ? () => loadArticleBlogHandleForRedirect(deps, group.rowId)
+          : undefined,
+    });
+  }
 
   // The row itself succeeded; these are the individual cells that were refused
   // before the mutation ran.
@@ -3742,21 +3795,31 @@ async function persistVariantInventoryItems(
     });
     if (result.ok) continue;
 
-    // `inventoryItemUpdate` applies as a unit, so a refusal this app made
-    // before sending lands on its own cell and a refusal by Shopify lands on
-    // every cell that went with it — the same semantics the variant bulk
-    // update already reports.
+    // `inventoryItemUpdate` applies as a UNIT, and a value this app refuses
+    // before sending aborts the same unit — so nothing was written for ANY of
+    // this variant's item cells and every one of them has to say so. Reporting
+    // only the cell that was named let the grid prune the others as saved: a
+    // cost of "12.00" beside a country of "Germany" was silently lost, which is
+    // the false-success pattern one cell at a time.
+    //
+    // The named cell still gets Shopify's own words (or this app's specific
+    // refusal); the rest get the atomicity explanation, exactly as the variant
+    // bulk update already reports for a refused sibling.
     const message = result.message ?? inventoryItemWarningMessage(result.warning);
     const named = result.field ? COLUMN_BY_INVENTORY_ITEM_FIELD[result.field] : undefined;
-    if (named && result.warning === "itemFieldsInvalid") {
-      failures.push(failureOf(group, message, named));
-      continue;
-    }
     for (const columnId of columnIds) {
       if (weightFailed && (columnId === VAR_WEIGHT_COLUMN_ID || columnId === VAR_WEIGHT_UNIT_COLUMN_ID)) {
         continue;
       }
-      failures.push(failureOf(group, message, columnId));
+      failures.push(
+        failureOf(
+          group,
+          columnId === named || !named
+            ? message
+            : `Not saved — another inventory field of this variant was refused (${message})`,
+          columnId,
+        ),
+      );
     }
   }
 
@@ -3956,7 +4019,56 @@ export async function applyBulkDiff(
   const gateway = new ShopifyApiGateway(admin, shop);
   const contentService = new ShopifyContentService(gateway as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-  const groups = groupDiffByRow(diff);
+  const allGroups = groupDiffByRow(diff);
+
+  // ── Select columns: the VALUE, before anything dispatches on it ───────────
+  //
+  // Every select cell carries a closed vocabulary, and every one of those
+  // values is a GraphQL enum or a boolean somewhere downstream — where a wrong
+  // one either fails at the SCHEMA level (a top-level `errors` array with
+  // `data: null` that never reaches `userErrors`, i.e. a save that reads as a
+  // success while nothing was written) or, worse, parses: the boolean readers
+  // take anything that is not the exact string "false" as true, so a pasted
+  // "Ja" column switches tax on for every tax-exempt variant it covers.
+  //
+  // ONE pass, here, because there are three entrances (the route action, the
+  // seoBulkMeta task, the bulkEditorTranslate task) and four dispatchers below
+  // — and because a rectangular paste and a CSV import bypass the dropdown
+  // that would otherwise be the only guard. The offending cell is DROPPED from
+  // its group and reported; the rest of the row still saves, like every other
+  // per-cell refusal in this file.
+  const selectFailures: BulkFailure[] = [];
+  for (const group of allGroups) {
+    const columns = columnsByType[group.rowType] ?? [];
+    for (const columnId of Object.keys(group.cells)) {
+      const column = columns.find((c) => c.id === columnId);
+      if (!column) continue;
+      const value = group.cells[columnId];
+      const canonical = canonicalSelectValue(column, value);
+      if (canonical === null) {
+        // The message NAMES the vocabulary: a merchant fixing a CSV needs to
+        // know what to write, and for most of these columns there is no
+        // dropdown in front of them to look at.
+        const accepted = column.selectOptions ?? [];
+        const expected =
+          accepted.length > 1
+            ? `${accepted.slice(0, -1).join(", ")} or ${accepted[accepted.length - 1]}`
+            : accepted.join("");
+        selectFailures.push(
+          failureOf(group, `"${value}" is not a value this column accepts — expected ${expected}.`, columnId),
+        );
+        delete group.cells[columnId];
+      } else if (canonical !== value) {
+        // A spreadsheet's spelling, normalized once so every reader below sees
+        // the enum and not the merchant's typing.
+        group.cells[columnId] = canonical;
+      }
+    }
+  }
+  // A row whose ONLY cell was refused has nothing left to write, and
+  // dispatching it anyway would run every stage as a no-op and then count the
+  // row as saved — "1 row saved" about a row where nothing was.
+  const groups = allGroups.filter((g) => Object.keys(g.cells).length > 0);
 
   // Published foreign locales for the Phase-4b invalidation come from the
   // caller (which already loaded them) — no extra fetch here.
@@ -4081,7 +4193,7 @@ export async function applyBulkDiff(
     repairPlan,
     primaryLocale: ctx.primaryLocale,
   };
-  const failures: BulkFailure[] = [];
+  const failures: BulkFailure[] = [...selectFailures];
   let saved = 0;
 
   // Persist units (Plan §5.4 groupDiffByMutationTarget): primary variant row

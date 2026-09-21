@@ -658,8 +658,9 @@ const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputT
  * Written out rather than spread from `CREATE_PRODUCT_STATUSES` because that
  * constant leads with DRAFT (a create form's default) and reshuffling a
  * dropdown merchants already know is a change nobody asked for. The two must
- * still describe the same SET — `bulk-select-columns.test.ts` fails when they
- * drift, which is the half that actually matters.
+ * still describe the same SET, which is the half that actually matters —
+ * `bulk-editor.attributes.test.ts` ("offers exactly the enum values the single
+ * editor does") fails when they drift.
  */
 const PRODUCT_STATUS_OPTIONS = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"];
 
@@ -885,6 +886,39 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
 
 export function getColumnForType(type: BulkRowType, columnId: string): ColumnDescriptor | undefined {
   return BULK_COLUMNS_BY_TYPE[type].find((c) => c.id === columnId);
+}
+
+/**
+ * The canonical spelling of a select cell's value, or null if it has none.
+ *
+ * The grid's dropdown can only ever produce the vocabulary, but the grid is not
+ * the only entrance: a rectangular PASTE writes raw text into whatever cells it
+ * covers, and a CSV import writes whatever the file says. Without this, one
+ * pasted "Ja" column read as `true` on every boolean cell it touched — turning
+ * tax on for tax-exempt variants and publishing hidden pages — because the
+ * boolean readers treat anything that is not the exact string "false" as true.
+ * That is the right reading of a two-value enum and the wrong reading of
+ * arbitrary text, and the fix is to make sure only the enum ever reaches them.
+ *
+ * It NORMALIZES rather than merely judging, because the values come out of
+ * spreadsheets: "  unlisted  " is the merchant meaning UNLISTED, and the
+ * product status path has trimmed and uppercased for exactly that reason since
+ * before this existed. Matching case-insensitively and writing the canonical
+ * option back does it once, for every select column, instead of each reader
+ * inventing its own tolerance — which is also what makes `value !== "false"`
+ * downstream a safe reading again.
+ *
+ * `templateSuffix` is the one select with no static vocabulary (its options are
+ * the published theme's files), so it is deliberately not judged here — its
+ * cell falls back to a text box for the same reason.
+ *
+ * An EMPTY value has no canonical form either: none of these enums has a blank
+ * member, so "" is a cell somebody cleared into a value Shopify will not take.
+ */
+export function canonicalSelectValue(column: ColumnDescriptor, value: string): string | null {
+  if (column.inputType !== "select" || !column.selectOptions) return value;
+  const needle = value.trim().toLowerCase();
+  return column.selectOptions.find((option) => option.toLowerCase() === needle) ?? null;
 }
 
 /** True if `columnId` is a valid EDITABLE column for `type`. Server-side

@@ -15,6 +15,20 @@ import { attributesForResource } from "~/services/content-attributes.shared";
 import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "~/config/shopify-enums.shared";
 
 /**
+ * `enqueuePublishChange` is reached through a DYNAMIC import inside the persist
+ * path (it is skipped entirely for the many saves that cannot use it), so the
+ * module is mocked whole. `vi.hoisted` because `vi.mock` is lifted above every
+ * declaration in the file and the factory would otherwise close over a spy that
+ * does not exist yet.
+ */
+const indexNow = vi.hoisted(() => ({
+  // Typed with the real parameter list, so the assertions below can read the
+  // third argument (the change) without the spy's arg tuple being empty.
+  enqueuePublishChange: vi.fn(async (_db: unknown, _shop: string, _change: unknown) => undefined),
+}));
+vi.mock("~/services/seo/index-now-content.server", () => indexNow);
+
+/**
  * The merchandising attributes in the GRID (§Phase 3).
  *
  * They existed only in the single editor, which meant the one kind of field a
@@ -568,5 +582,94 @@ describe("the product row's category and collection columns", () => {
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0].columnId).toBe("productCategory");
     expect(calls).toHaveLength(0);
+  });
+});
+
+// ─── IndexNow: the webhook these types do not have ─────────────────────────
+
+describe("a bulk publish of a page or an article", () => {
+  beforeEach(() => {
+    indexNow.enqueuePublishChange.mockClear();
+  });
+
+  function dbWithPage(isPublished: boolean, attributesSynced: boolean) {
+    const db = mockDb();
+    return {
+      ...db,
+      page: {
+        ...db.page,
+        findUnique: vi.fn(async () => ({
+          handle: "impressum",
+          isPublished,
+          attributesSyncedAt: attributesSynced ? new Date() : null,
+        })),
+      },
+    };
+  }
+
+  it("announces the change — these types have NO webhook to do it for them", async () => {
+    // The single editor has enqueued this since the column existed; the grid
+    // could not, because it had no `isPublished` cell. A bulk publish that
+    // nothing announces is the same gap on a hundred pages at once.
+    const { admin } = mockAdmin(respondWith());
+    const db = dbWithPage(false, true);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [entry(PAGE_ID, "page", "field.isPublished", "true")],
+    );
+
+    expect(indexNow.enqueuePublishChange).toHaveBeenCalledTimes(1);
+    const change = indexNow.enqueuePublishChange.mock.calls[0]![2] as unknown as {
+      resource: string;
+      previousPublished: unknown;
+      nextPublished: unknown;
+      previousHandle: unknown;
+    };
+    expect(change.resource).toBe("page");
+    expect(change.previousPublished).toBe(false);
+    expect(change.nextPublished).toBe(true);
+    expect(change.previousHandle).toBe("impressum");
+  });
+
+  it("reports the BEFORE side as unknown on a row that was never attribute-synced", async () => {
+    // The column defaults to published, so reading it as "was visible" would
+    // make the first save of every draft look like a publish.
+    const { admin } = mockAdmin(respondWith());
+    const db = dbWithPage(true, false);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [entry(PAGE_ID, "page", "field.isPublished", "true")],
+    );
+
+    const change = indexNow.enqueuePublishChange.mock.calls[0]![2] as unknown as { previousPublished: unknown };
+    expect(change.previousPublished).toBeUndefined();
+  });
+
+  it("says nothing when neither the visibility nor the URL moved", async () => {
+    // A title edit is not a publish, and the cache read it would cost is not
+    // worth paying on every save.
+    const { admin } = mockAdmin(respondWith());
+    const db = dbWithPage(true, true);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [entry(PAGE_ID, "page", "field.title", "Impressum")],
+    );
+
+    expect(indexNow.enqueuePublishChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves collections alone — they have a webhook of their own", async () => {
+    const { admin } = mockAdmin(respondWith());
+    const db = mockDb();
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [entry(COLLECTION_ID, "collection", "field.templateSuffix", "sale")],
+    );
+
+    expect(indexNow.enqueuePublishChange).not.toHaveBeenCalled();
   });
 });

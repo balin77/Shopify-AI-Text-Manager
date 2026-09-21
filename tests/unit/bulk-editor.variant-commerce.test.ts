@@ -548,3 +548,94 @@ describe("applyBulkDiff — the InventoryItem half", () => {
     expect("taxable" in input).toBe(false);
   });
 });
+
+// ─── Review findings, pinned ───────────────────────────────────────────────
+
+describe("an aborted InventoryItem write", () => {
+  it("reports EVERY cell it would have sent, not just the refused one", async () => {
+    // `inventoryItemUpdate` applies as a unit and a pre-send refusal aborts the
+    // same unit, so nothing was written for any of them. Reporting only the
+    // named cell let the grid prune the others as saved: the cost edit beside
+    // an invalid country code was silently lost.
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType },
+      [
+        entry(V1, VAR_COST_COLUMN_ID, "12.00"),
+        entry(V1, VAR_COUNTRY_OF_ORIGIN_COLUMN_ID, "Germany"),
+      ],
+    );
+
+    expect(result.failures.map((f) => f.columnId).sort()).toEqual(
+      [VAR_COST_COLUMN_ID, VAR_COUNTRY_OF_ORIGIN_COLUMN_ID].sort(),
+    );
+    // The named cell keeps the specific reason; the other says why it went
+    // down with it.
+    const cost = result.failures.find((f) => f.columnId === VAR_COST_COLUMN_ID)!;
+    expect(cost.message).toContain("another inventory field");
+    expect(inventoryCall(calls)).toBeUndefined();
+  });
+});
+
+describe("a select value that did not come from the dropdown", () => {
+  it("refuses a pasted boolean instead of reading it as TRUE", async () => {
+    // The boolean readers take anything that is not the exact string "false"
+    // as true — right for a two-value enum, wrong for arbitrary text. A pasted
+    // "Ja" column would have switched tax on for every tax-exempt variant.
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType },
+      [entry(V1, VAR_TAXABLE_COLUMN_ID, "Ja")],
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBe(VAR_TAXABLE_COLUMN_ID);
+    // …and it names what to write instead, because a CSV has no dropdown in
+    // front of it.
+    expect(result.failures[0].message).toContain("true");
+    expect(calls).toHaveLength(0);
+    // A row with nothing left to write must not be counted as saved.
+    expect(result.saved).toBe(0);
+  });
+
+  it("normalizes a spreadsheet's spelling rather than refusing it", async () => {
+    // "  kilograms  " is the merchant meaning KILOGRAMS. The product status
+    // path has trimmed and uppercased for exactly this reason since before the
+    // guard existed; doing it once, for every select column, is what keeps the
+    // downstream readers seeing the enum and not the typing.
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType },
+      [entry(V2, VAR_WEIGHT_COLUMN_ID, "500"), entry(V2, VAR_WEIGHT_UNIT_COLUMN_ID, "  kilograms  ")],
+    );
+
+    expect(result.failures).toEqual([]);
+    const input = inventoryCall(calls)!.variables?.input as {
+      measurement?: { weight?: { value: number; unit: string } };
+    };
+    expect(input.measurement?.weight).toEqual({ value: 500, unit: "KILOGRAMS" });
+  });
+
+  it("drops only the bad cell — the rest of the row still saves", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType },
+      [entry(V1, VAR_TAXABLE_COLUMN_ID, "vielleicht"), entry(V1, VAR_PRICE_COLUMN_ID, "19.90")],
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBe(VAR_TAXABLE_COLUMN_ID);
+    const sent = (calls.find((c) => c.query.includes("productVariantsBulkUpdate("))!.variables
+      ?.variants ?? []) as Record<string, unknown>[];
+    expect(sent[0].price).toBe("19.90");
+    expect("taxable" in sent[0]).toBe(false);
+  });
+});

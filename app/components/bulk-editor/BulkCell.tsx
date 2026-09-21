@@ -228,20 +228,39 @@ export function BulkCell({
     // gate is PRODUCT_STATUSES in apply.server.ts.
     // https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus
     const known = options.includes(value);
+    // A select cell carries the same three states as a text one — unchanged,
+    // dirty, failed — and shipped with none of them: the ten select columns
+    // showed no unsaved-edit highlight and no red on a save failure, so a cell
+    // Shopify had refused looked exactly like one that had saved. The wrapper
+    // holds the state classes (the grid's own stylesheet paints Polaris'
+    // Backdrop through them, the same element responsive.css already owns),
+    // and `error` gives the control its `aria-invalid`.
     return (
-      <Select
-        label=""
-        labelHidden
-        options={[
-          ...(known ? [] : [{ label: value || "\u2014", value, disabled: true } as const]),
-          ...options.map((option) => ({
-            label: enumLabels[`${column.label}.${option}`] ?? option,
-            value: option,
-          })),
-        ]}
-        value={value}
-        onChange={onChange}
-      />
+      <span className={`cp-bulk-select${isDirty ? " cp-bulk-cell-dirty" : ""}${error ? " cp-bulk-cell-error" : ""}`}>
+        <Select
+          label=""
+          labelHidden
+          error={error ? true : undefined}
+          options={[
+            ...(known ? [] : [{ label: value || "\u2014", value, disabled: true } as const]),
+            ...options.map((option) => ({
+              label: enumLabels[`${column.label}.${option}`] ?? option,
+              value: option,
+            })),
+          ]}
+          value={value}
+          onChange={onChange}
+        />
+        {/* Polaris' Select takes no `ariaDescribedBy`, and its own string-error
+            form would add a message LINE inside a grid cell and break the row
+            height. The message rides here instead, where a screen reader
+            reaching the cell still meets it. */}
+        {error && errorId && (
+          <span id={errorId} className="cp-bulk-visually-hidden">
+            {error}
+          </span>
+        )}
+      </span>
     );
   }
 

@@ -691,6 +691,22 @@ export function BulkGrid({
           outline-offset: -1px;
           border-radius: 4px;
         }
+        /* A select cell wears the same two states. Polaris draws the control's
+           box on its Backdrop element (the one responsive.css already owns for
+           the app-wide field outline), and the input above it is transparent —
+           so a background on the wrapper would be hidden and these have to name
+           the Backdrop. Two classes plus the descendant win on specificity, so
+           the load order against Polaris' own sheet does not matter. */
+        .cp-bulk-select.cp-bulk-cell-dirty .Polaris-Select__Backdrop {
+          background: var(--p-color-bg-surface-caution, #fff8db);
+        }
+        .cp-bulk-select.cp-bulk-cell-error .Polaris-Select__Backdrop {
+          background: var(--p-color-bg-surface-critical, #fff0f0);
+          border-color: var(--p-color-border-critical, #d72c0d);
+        }
+        .cp-bulk-select.cp-bulk-cell-dirty .Polaris-Select__SelectedOption {
+          color: var(--p-color-text-magic, #7f56d9);
+        }
         /* Ghost (untranslated) state: the primary value greyed out in an
            empty foreign cell (§2 "▒grau▒"). The focused textarea repeats it
            as a native placeholder. */
