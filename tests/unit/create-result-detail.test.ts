@@ -40,7 +40,7 @@ describe("createResultNeedsDetail", () => {
   });
 
   it("says YES for a note from the write path", () => {
-    expect(createResultNeedsDetail({ ...clean, notes: ["The price was not stored."] })).toBe(true);
+    expect(createResultNeedsDetail({ ...clean, notes: [{ code: "priceNotStored" }] })).toBe(true);
   });
 
   it("says YES for a warning code, including one appended after the fact", () => {

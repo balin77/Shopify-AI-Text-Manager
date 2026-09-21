@@ -22,6 +22,7 @@ type CreateValidationExtraFields = CreateFieldDef[];
 import { evaluateCreateGates, type CreateGateResult } from "../utils/create-gate";
 import { translatableCreateFields } from "../config/create-ai.shared";
 import { createSpecFor, suggestHandle } from "../config/create-fields.config";
+import type { CreateNoteLike } from "../utils/create-note-message";
 import { getMaxForResource } from "../utils/planUtils";
 import type { Plan, ResourceType } from "../utils/planUtils";
 
@@ -43,7 +44,13 @@ export interface CreatedItemInfo {
   handleChanged: boolean;
   /** False when the object exists on Shopify but the cache did not pick it up. */
   synced: boolean;
-  notes: string[];
+  /**
+   * Server-side CODES, phrased by the banner — see [create-note-message.ts].
+   * Typed as the wire shape rather than as `CreateNote[]`, because across a
+   * restart an instance can still answer with the finished sentences these
+   * replaced.
+   */
+  notes: CreateNoteLike[];
   /**
    * §2.5a/§2.5d — warning CODES decided CLIENT-side and phrased by the banner:
    * what the AI pass could not write before the create, and a chained
@@ -135,6 +142,15 @@ export interface UseCreateItemOptions {
     optionsFailed?: string;
     alreadyCreating?: string;
     createFailed?: string;
+    /**
+     * Keyed by the action's `errorCode`. The refusals it answers with are
+     * phrased HERE and not on the server, which has no idea which language
+     * the merchant reads — the same rule the create notes and the greyed-out
+     * type's help text already follow. A code with no entry falls through to
+     * the server's `error`, which is where a Shopify userError arrives and is
+     * worth showing verbatim.
+     */
+    errorCodes?: Record<string, string | undefined>;
   };
   /**
    * §2.5a — the shop's published locales MINUS the primary one.
@@ -323,6 +339,27 @@ export function useCreateItem({
     aiWarningCodes: string[];
   } | null>(null);
 
+  /**
+   * A refused create, in the merchant's language where we have one.
+   *
+   * The action answers with an `errorCode` AND an English `error`, and for as
+   * long as both existed nothing read the code — so "Invalid payload." and
+   * "Plan limit reached for articles." were shown verbatim on a German shop
+   * while the translated sentences for exactly those refusals already sat in
+   * the bundles, spent only on the greyed-out button's tooltip.
+   */
+  const errorText = (data: Record<string, unknown>): string => {
+    const code = typeof data.errorCode === "string" ? data.errorCode : "";
+    const phrased = code ? texts?.errorCodes?.[code] : undefined;
+    // `{detail}` is the one slot these sentences have — the unsupported-field
+    // refusal names the field types, and the server is the only side that
+    // knows them.
+    if (phrased) return phrased.replace("{detail}", typeof data.detail === "string" ? data.detail : "").trim();
+    // No translation for this code: the server's own sentence is better than
+    // a generic one, because this is where a Shopify userError arrives.
+    return typeof data.error === "string" ? data.error : (texts?.createFailed || "Could not create the item.");
+  };
+
   const create = useCallback(
     (payload: {
       resource: CreatableResource;
@@ -386,14 +423,12 @@ export function useCreateItem({
       // nothing at all just stops the spinner, which is exactly what invites
       // the extra click this guard exists to absorb.
       setPendingNotice(
-        typeof result.message === "string"
-          ? result.message
-          : (texts?.alreadyCreating || "This is already being created — please wait a moment rather than submitting again."),
+        texts?.alreadyCreating || "This is already being created — please wait a moment rather than submitting again.",
       );
       return;
     }
     if (!result.success) {
-      setError(typeof result.error === "string" ? result.error : (texts?.createFailed || "Could not create the item."));
+      setError(errorText(result));
       if (Array.isArray(result.fieldErrors)) setFieldErrors(result.fieldErrors as CreateValidationError[]);
       return;
     }
@@ -415,7 +450,7 @@ export function useCreateItem({
       ),
       // §1.6 — a failed sync is a NOTE, not a failure.
       synced: result.synced !== false,
-      notes: Array.isArray(result.notes) ? (result.notes as string[]) : [],
+      notes: Array.isArray(result.notes) ? (result.notes as CreateNoteLike[]) : [],
       // The AI pass ran BEFORE the create, so whatever it could not write is
       // already known here — and the item exists either way, which is why
       // these are warnings on a success banner rather than an error.
@@ -492,7 +527,7 @@ export function useCreateItem({
     if (fetcher.state === "idle" && submitting && fetcher.data && fetcher.data.actionType !== "createContent") {
       setSubmitting(false);
       if (fetcher.data.success === false) {
-        setError(typeof fetcher.data.error === "string" ? fetcher.data.error : (texts?.createFailed || "Could not create the item."));
+        setError(errorText(fetcher.data));
         if (Array.isArray(fetcher.data.fieldErrors)) setFieldErrors(fetcher.data.fieldErrors as CreateValidationError[]);
       }
     }

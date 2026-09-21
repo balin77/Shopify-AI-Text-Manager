@@ -602,6 +602,8 @@ export const en: Translation = {
     createPlanContentType: "Your plan does not include this content type.",
     createPlanLimit: "You have reached your plan's limit for this content type.",
     createUnavailable: "Nothing can be created here.",
+    createInvalidPayload: "The input was rejected \u2014 please check the marked fields.",
+    createInvalidRules: "The collection's rules were rejected \u2014 please check the marked conditions.",
     createNeedsBlogFirst: "This shop has no blog yet. A post has to live in one, so create the blog first.",
     // ── Deleting (two-step confirmation) ──────────────────────────────────
     deleteButtonLabel: "Delete",
@@ -882,6 +884,16 @@ export const en: Translation = {
     createdNotSyncedTitle: "Created — not visible in the list yet",
     createdNotSyncedBody: "The item was created in Shopify. Only the local copy is missing — reload to see it. Do NOT create it a second time.",
     createdHandleChanged: "Shopify stored the handle as \u201c{handle}\u201d \u2014 the one you asked for was taken.",
+    createNotes: {
+      titleDrift: "Shopify stored the title as \u201c{got}\u201d instead of \u201c{sent}\u201d.",
+      priceNotStored: "The price was not stored \u2014 please set it on the product.",
+      imageProcessing: "The image is being processed by Shopify and may take a moment to appear.",
+      seoNotStored: "These SEO fields were not stored ({fields}) \u2014 please set them on the item.",
+      seoStepFailed: "The SEO fields could not be stored \u2014 please set them on the item.",
+      keywordNotAssigned: "The keyword could not be assigned \u2014 you can set it in the SEO sidebar.",
+      finishFailed: "The item was created, but finishing up failed. Reload to see it \u2014 do NOT create it a second time.",
+      fieldsNotStored: "Not stored by Shopify: {fields}",
+    },
     createModal: {
       // The modal TITLE. `New {resource}` used to interpolate a raw config
       // slug, which is why it read "New metaobject" in every language.

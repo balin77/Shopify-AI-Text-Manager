@@ -594,6 +594,8 @@ export const es: Translation = {
     createPlanContentType: "Tu plan no incluye este tipo de contenido.",
     createPlanLimit: "Has alcanzado el límite de tu plan para este tipo de contenido.",
     createUnavailable: "Aquí no se puede crear nada.",
+    createInvalidPayload: "Se rechaz\u00f3 la entrada: revisa los campos marcados.",
+    createInvalidRules: "Se rechazaron las reglas de la colecci\u00f3n: revisa las condiciones marcadas.",
     createNeedsBlogFirst: "Esta tienda todavía no tiene ningún blog. Una entrada debe estar en uno, así que crea primero el blog.",
     // ── Eliminar (confirmación en dos pasos) ──────────────────────────────
     deleteButtonLabel: "Eliminar",
@@ -871,6 +873,16 @@ export const es: Translation = {
     createdNotSyncedTitle: "Creado — todavía no visible en la lista",
     createdNotSyncedBody: "El elemento se creó en Shopify. Solo falta la copia local — recarga para verlo. NO lo crees por segunda vez.",
     createdHandleChanged: "Shopify guard\u00f3 el handle como \u201c{handle}\u201d: el que pediste ya estaba ocupado.",
+    createNotes: {
+      titleDrift: "Shopify guard\u00f3 el t\u00edtulo como \u201c{got}\u201d en lugar de \u201c{sent}\u201d.",
+      priceNotStored: "El precio no se guard\u00f3: config\u00faralo en el producto.",
+      imageProcessing: "Shopify a\u00fan est\u00e1 procesando la imagen; aparecer\u00e1 en un momento.",
+      seoNotStored: "Estos campos SEO no se guardaron ({fields}): config\u00faralos en el elemento.",
+      seoStepFailed: "Los campos SEO no se pudieron guardar: config\u00faralos en el elemento.",
+      keywordNotAssigned: "La palabra clave no se pudo asignar: puedes establecerla en la barra lateral de SEO.",
+      finishFailed: "El elemento se cre\u00f3, pero no se pudo finalizar. Recarga para verlo y NO lo crees una segunda vez.",
+      fieldsNotStored: "Shopify no guard\u00f3: {fields}",
+    },
     createModal: {
       titleFor: "Nuevo: {resource}",
       removeImage: "Quitar",

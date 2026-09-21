@@ -61,6 +61,7 @@ import {
   type RuleSource,
 } from "~/config/collection-rules.shared";
 import { resolveApiVersionString } from "~/utils/api-version";
+import type { CreateNote } from "~/utils/create-note-message";
 import { CREATE_COLLECTION_WITH_SOURCES } from "~/graphql/content.mutations";
 import {
   claimCreateRequest,
@@ -78,8 +79,12 @@ interface CreateOutcome {
   /** What Shopify ACTUALLY assigned — on a collision it appends `-1` (§1.7). */
   handle?: string | null;
   title?: string | null;
-  /** Extra info the client shows in the post-create box. */
-  notes: string[];
+  /**
+   * Extra info the client shows in the post-create box, as CODES — the
+   * sentences live in the language bundles ([create-note-message.ts]), because
+   * these are read by a merchant and this app ships in three languages.
+   */
+  notes: CreateNote[];
 }
 
 /** Everything the per-type builders need, without re-deriving it five times. */
@@ -167,11 +172,13 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
   // wrong and alarming: the object it is waiting for is the very thing being
   // counted against it.
   if (isCreateRequestInFlight(session.shop, requestId)) {
+    // No `message`: the client has a translated sentence for this and used to
+    // PREFER the server's English one over it, so the German string existed
+    // and never once reached a merchant.
     return json({
       actionType: "createContent",
       success: true,
       pending: true,
-      message: "This create is already in progress.",
     });
   }
 
@@ -288,7 +295,6 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
         actionType: "createContent",
         success: true,
         pending: true,
-        message: "This create is already in progress.",
       });
     }
     claimedHere = true;
@@ -322,7 +328,7 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
       } catch (seoError) {
         const message = seoError instanceof Error ? seoError.message : String(seoError);
         logger.warn("[CreateContent] SEO metafield step failed", { context: "CreateContent", id: outcome.id, error: message });
-        outcome.notes.push("SEO fields could not be stored — please set them on the item.");
+        outcome.notes.push({ code: "seoStepFailed" });
       }
     }
 
@@ -351,7 +357,7 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
       } catch (error) {
         // Same reasoning as the sync: a keyword that did not stick is a note,
         // not a reason to tell the merchant their product was not created.
-        outcome.notes.push("The keyword could not be assigned — you can set it in the SEO sidebar.");
+        outcome.notes.push({ code: "keywordNotAssigned" });
         logger.warn("[CreateContent] assignKeyword failed", {
           context: "CreateContent",
           error: error instanceof Error ? error.message : String(error),
@@ -399,7 +405,7 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
         handle: createdSoFar.handle ?? null,
         title: createdSoFar.title ?? null,
         synced: false,
-        notes: [...createdSoFar.notes, "The item was created, but finishing up failed. Reload to see it — do not create it again."],
+        notes: [...createdSoFar.notes, { code: "finishFailed" as const }],
       };
       recordCreateResult(session.shop, requestId, salvaged);
       return json(salvaged);
@@ -423,8 +429,8 @@ function assertEcho(condition: unknown, what: string, detail: string): asserts c
 }
 
 /** Shopify normalises and truncates titles. Worth saying, not worth failing. */
-function titleDriftNote(sent: string, got: string): string {
-  return `Shopify stored the title as “${got}” instead of “${sent}”.`;
+function titleDriftNote(sent: string, got: string): CreateNote {
+  return { code: "titleDrift", params: { sent, got } };
 }
 
 async function createProduct(
@@ -497,14 +503,14 @@ async function createProduct(
   // idempotency claim, and hand the merchant a duplicate on their retry.
   assertEcho(product?.id, "Product create", errorText);
 
-  const notes: string[] = [];
+  const notes: CreateNote[] = [];
   if (product.title !== title) notes.push(titleDriftNote(title, product.title));
   const variant = product.variants?.nodes?.[0];
   if (price && (!variant || variant.price == null)) {
     // Explicit rather than silent: the product exists but is not sellable.
-    notes.push("The price was not stored — please set it on the product.");
+    notes.push({ code: "priceNotStored" });
   }
-  if (input.imageUrl) notes.push("The image is being processed by Shopify and may take a moment to appear.");
+  if (input.imageUrl) notes.push({ code: "imageProcessing" });
 
   return { id: product.id, handle: product.handle, title: product.title, notes };
 }
@@ -682,7 +688,7 @@ async function createMetaobject(
   // otherwise show up as an empty entry the merchant has to re-fill.
   const echoed = new Map<string, string>((metaobject.fields ?? []).map((f: any) => [f.key, f.value ?? ""]));
   const missing = fields.filter((f) => (echoed.get(f.key) ?? "") !== f.value).map((f) => f.key);
-  const notes = missing.length > 0 ? [`Not stored by Shopify: ${missing.join(", ")}`] : [];
+  const notes: CreateNote[] = missing.length > 0 ? [{ code: "fieldsNotStored", params: { fields: missing.join(", ") } }] : [];
 
   return { id: metaobject.id, handle: metaobject.handle, title: metaobject.displayName, notes };
 }
@@ -716,7 +722,7 @@ async function writeSeoMetafields(
   ownerId: string,
   seoTitle: string,
   metaDescription: string,
-): Promise<string | null> {
+): Promise<CreateNote | null> {
   const metafields: Array<Record<string, string>> = [];
   if (seoTitle) {
     metafields.push({ ownerId, namespace: SEO_METAFIELD_NAMESPACE, key: "title_tag", type: "single_line_text_field", value: seoTitle });
@@ -735,7 +741,10 @@ async function writeSeoMetafields(
   if (failed.length === 0) return null;
 
   logger.warn("[CreateContent] SEO metafields not echoed back", { context: "CreateContent", ownerId, failed, errorText });
-  return `SEO fields were not stored (${failed.join(", ")}) — please set them on the item.${errorText ? ` ${errorText}` : ""}`;
+  return {
+    code: "seoNotStored",
+    params: { fields: failed.join(", "), ...(errorText ? { detail: errorText } : {}) },
+  };
 }
 
 /** Drop undefined keys so a partial input never sends explicit nulls. */

@@ -194,7 +194,11 @@ describe("the echo rule", () => {
     });
     const result = await body(await handleCreateContent(ctx, form({ title: "A shirt" })));
     expect(result.success).toBe(true);
-    expect((result.notes as string[]).join(" ")).toContain("A shirt (truncated)");
+    // The note is a CODE now — the sentence is in the language bundles, so
+    // what the write path owes the client is the stored title, not prose.
+    expect(result.notes).toEqual([
+      { code: "titleDrift", params: { sent: "A shirt", got: "A shirt (truncated)" } },
+    ]);
   });
 });
 
@@ -226,7 +230,7 @@ describe("a failure AFTER the object exists", () => {
     );
     expect(result.success).toBe(true);
     expect(result.id).toBe("gid://shopify/Page/1");
-    expect((result.notes as string[]).join(" ")).toMatch(/SEO/i);
+    expect(result.notes).toEqual([{ code: "seoStepFailed" }]);
   });
 
   it("keeps the claim, so the retry gets the FIRST result", async () => {

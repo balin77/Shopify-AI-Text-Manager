@@ -34,6 +34,7 @@
 
 import { Banner, BlockStack, Text, InlineStack, Button } from "@shopify/polaris";
 import type { CreatedItemInfo } from "~/hooks/useCreateItem";
+import { createNoteText } from "~/utils/create-note-message";
 
 export interface CreateResultBannerProps {
   info: CreatedItemInfo;
@@ -51,6 +52,8 @@ export interface CreateResultBannerProps {
     reload?: string;
     /** Keyed by `CreatedItemInfo.warningCodes` entries. */
     warnings?: Record<string, string>;
+    /** Keyed by `CreateNote.code` — the bundle's `content.createNotes`. */
+    notes?: Record<string, string>;
   };
 }
 
@@ -84,12 +87,14 @@ export function CreateResultBanner({ info, onDismiss, onReload, t = {} }: Create
           </Text>
         )}
 
+        {/* Both lists are CODES phrased here. The notes used to arrive as
+            finished English sentences from the write path, which is what a
+            German shop read at the one moment something had gone wrong. */}
         {info.notes.map((note, i) => (
-          <Text as="p" key={i} tone="subdued">{note}</Text>
+          <Text as="p" key={i} tone="subdued">{createNoteText(note, t.notes)}</Text>
         ))}
 
-        {/* CODES decided client-side, phrased here — `notes` above arrive from
-            the server already phrased, these would be English otherwise. */}
+
         {(info.warningCodes ?? []).map((code) => (
           <Text as="p" key={code} tone="subdued">{t.warnings?.[code] || code}</Text>
         ))}

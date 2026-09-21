@@ -599,6 +599,8 @@ export const de = {
     createPlanContentType: "Dein Tarif enthält diesen Inhaltstyp nicht.",
     createPlanLimit: "Du hast das Limit deines Tarifs für diesen Inhaltstyp erreicht.",
     createUnavailable: "Hier lässt sich nichts anlegen.",
+    createInvalidPayload: "Die Eingaben wurden abgelehnt \u2014 bitte die markierten Felder pr\u00fcfen.",
+    createInvalidRules: "Die Regeln der Kollektion wurden abgelehnt \u2014 bitte die markierten Bedingungen pr\u00fcfen.",
     createNeedsBlogFirst: "Dieser Shop hat noch keinen Blog. Ein Beitrag muss in einem liegen — lege also zuerst den Blog an.",
     // ── Löschen (zweistufige Bestätigung) ─────────────────────────────────
     deleteButtonLabel: "Löschen",
@@ -889,6 +891,18 @@ export const de = {
     createdNotSyncedTitle: "Angelegt — in der Liste noch nicht sichtbar",
     createdNotSyncedBody: "Der Eintrag wurde in Shopify angelegt. Nur die lokale Kopie fehlt noch — lade neu, um ihn zu sehen. Lege ihn NICHT ein zweites Mal an.",
     createdHandleChanged: "Shopify hat den Handle als \u201e{handle}\u201c gespeichert \u2014 der gew\u00fcnschte war schon vergeben.",
+    // Notizen des Schreibpfads nach dem Anlegen, als Codes vom Server
+    // geliefert und hier formuliert ([create-note-message.ts]).
+    createNotes: {
+      titleDrift: "Shopify hat den Titel als \u201e{got}\u201c gespeichert statt \u201e{sent}\u201c.",
+      priceNotStored: "Der Preis wurde nicht gespeichert \u2014 bitte am Produkt nachtragen.",
+      imageProcessing: "Das Bild wird von Shopify noch verarbeitet und erscheint gleich.",
+      seoNotStored: "Diese SEO-Felder wurden nicht gespeichert ({fields}) \u2014 bitte am Eintrag nachtragen.",
+      seoStepFailed: "Die SEO-Felder konnten nicht gespeichert werden \u2014 bitte am Eintrag nachtragen.",
+      keywordNotAssigned: "Das Keyword konnte nicht zugewiesen werden \u2014 du kannst es in der SEO-Seitenleiste setzen.",
+      finishFailed: "Der Eintrag wurde angelegt, aber das Fertigstellen ist fehlgeschlagen. Lade neu, um ihn zu sehen \u2014 lege ihn NICHT ein zweites Mal an.",
+      fieldsNotStored: "Von Shopify nicht gespeichert: {fields}",
+    },
     createModal: {
       titleFor: "Neu: {resource}",
       removeImage: "Entfernen",

@@ -1046,6 +1046,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       optionsFailed: t.content?.createOptionsFailed,
       alreadyCreating: t.content?.createAlreadyRunning,
       createFailed: t.content?.createModal?.createFailed,
+      // The same sentences the greyed-out button and the disabled type
+      // already use — the server's refusals reach the modal only on a direct
+      // POST or a race the client gate could not see, and both deserve the
+      // wording the merchant would have got a click earlier.
+      errorCodes: {
+        planContentType: t.content?.createPlanContentType,
+        planLimit: t.content?.createPlanLimit,
+        rulesUnavailable: (t.content?.rulesNeedApiUpgrade || "").replace("{version}", RULES_MIN_API_VERSION),
+        validation: t.content?.createInvalidPayload,
+        ruleValidation: t.content?.createInvalidRules,
+        requiredUnknown: t.content?.createTypeUnknownRequired,
+        unsupportedRequiredType: t.content?.createTypeUnsupportedFields,
+      },
     },
     onCreated: (info) => {
       // A page with its own sub-list hears about EVERY create, synced or not:
@@ -2703,6 +2716,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               handleChanged: t.content?.createdHandleChanged,
               reload: t.content?.reloadAllTooltip,
               warnings: t.content?.createModal?.createWarnings,
+              notes: t.content?.createNotes,
             }}
           />
         </div>
