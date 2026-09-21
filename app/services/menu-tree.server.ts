@@ -466,8 +466,10 @@ export async function saveMenuTree(
         resourceId: menuId,
         resourceType: "Menu",
         // The prompt comes from `translateAs`; this only decides the Task
-        // label, and `taskResourceType` keeps a menu OUT of the admin-path map,
-        // which has no entry for it and must not guess one.
+        // BADGE, which must say "menu" and not "page". The row's LINK is not
+        // this string's business at all: the Tasks page derives it from the
+        // GID (`task-deep-link.shared.ts`), so the menu opens at /app/menus
+        // however this is spelled.
         contentKind: "page",
         taskResourceType: "menu",
         resourceTitle: menuTitle || menuId,

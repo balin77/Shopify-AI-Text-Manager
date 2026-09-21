@@ -29,6 +29,8 @@ import {
   taskSubjectLabel,
 } from "~/services/tasks/task-labels.shared";
 import { hasTaskDetails } from "~/services/tasks/task-details.shared";
+import { taskEditorDeepLink } from "~/services/tasks/task-deep-link.shared";
+import { useAppNavigation } from "~/hooks/useAppNavigation";
 import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
 import { TaskDetailsPanel } from "~/components/tasks/TaskDetailsPanel";
 
@@ -45,7 +47,7 @@ import { TaskDetailsPanel } from "~/components/tasks/TaskDetailsPanel";
  * out of it and phrased here rather than in `task-labels.shared.ts`, whose
  * current answer other callers (MainNavigation's toast) depend on: the
  * resource type through the same label map the badge uses, and the numeric id
- * — the one the Shopify admin URL carries.
+ * — the one both editors show in their own address bar.
  */
 const FIX_ALL_FOR_ITEM_PREFIX = "fixAllForItem:";
 
@@ -76,23 +78,26 @@ function fixAllForItemSubject(
 
 /**
  * A row that stored a `resourceId` but no title used to render NOTHING — no
- * badge, no subject, and no Shopify deep link, because the whole resource row
- * was gated on the resolved subject. Every per-item creation site now names
- * its item, but rows written by older builds (and the 3-day retention window
- * they sit in) still carry the gap, so the id itself becomes the subject: the
- * numeric tail of the GID, which is exactly what the admin URL beside it
- * carries and what the Shopify admin shows in its own address bar.
+ * badge, no subject, and no deep link, because the whole resource row was
+ * gated on the resolved subject. Every per-item creation site now names its
+ * item, but rows written by older builds (and the 3-day retention window they
+ * sit in) still carry the gap, so the id itself becomes the subject: the
+ * numeric tail of the GID, which is what both editors show in their own
+ * address bar.
  *
  * Deliberately no invented wording — the app ships in three languages and a
  * hand-written English word here would be untranslated on two of them.
  */
 function resourceIdSubject(resourceId: string | null | undefined): string | null {
   if (typeof resourceId !== "string") return null;
-  // A GID with a numeric tail and nothing else. That is deliberately the SAME
-  // shape `getShopifyAdminUrl` requires, so the subject and the link it
-  // becomes can never disagree — and it keeps internal ids that are not
-  // Shopify objects (theme content's `group_<groupId>`) off the card, where
-  // they would be machine text pretending to be a name.
+  // A GID with a numeric tail and nothing else. This keeps internal ids that
+  // are not Shopify objects (theme content's `group_<groupId>`) off the card,
+  // where they would be machine text pretending to be a name.
+  //
+  // Deliberately WIDER than `taskEditorDeepLink`, which additionally requires
+  // the GID's TYPE to be one this app can open: a `MediaImage` row still names
+  // itself `#<id>` and simply gets no link. The narrower test is the one on
+  // the link, so a subject can never be rendered as a link to nowhere.
   const numeric = resourceId.trim().match(/^gid:\/\/shopify\/[A-Za-z0-9_]+\/(\d+)$/);
   return numeric ? `#${numeric[1]}` : null;
 }
@@ -197,7 +202,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     return json({
       tasks: sanitizedTasks,
-      shop: session.shop,
       pagination: {
         page,
         pageSize,
@@ -213,7 +217,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.error("Failed to load tasks", { context: "TasksRoute", error: error instanceof Error ? error.message : String(error) });
     return json({
       tasks: [],
-      shop: session.shop,
       error: "An internal error occurred",
       pagination: { page: 1, pageSize: 20, totalCount: 0, totalPages: 0 },
       filters: { status: "all", hours: 24 }
@@ -262,7 +265,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function TasksPage() {
   const loaderData = useLoaderData<typeof loader>();
-  const { tasks, shop, pagination, filters } = loaderData;
+  const { tasks, pagination, filters } = loaderData;
   const error = 'error' in loaderData ? loaderData.error : undefined;
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
@@ -270,6 +273,7 @@ export default function TasksPage() {
   const revalidatorRef = useRef(revalidator);
   revalidatorRef.current = revalidator;
   const { t } = useI18n();
+  const { handleNavigate } = useAppNavigation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
   // Timestamps are rendered in the merchant's time zone, which the server does
@@ -370,42 +374,24 @@ export default function TasksPage() {
     });
   };
 
-  // Generate Shopify admin URL from resourceId and resourceType
-  const getShopifyAdminUrl = (resourceId: string | null, resourceType: string | null): string | null => {
-    if (!resourceId || !resourceType || !shop) return null;
-
-    // Extract numeric ID from Shopify GID (e.g., "gid://shopify/Product/123456789" -> "123456789")
-    const match = resourceId.match(/\/(\d+)$/);
-    if (!match) return null;
-
-    const numericId = match[1];
-
-    // Map resourceType to Shopify admin path.
-    //
-    // Runners write this column in several spellings — `"products"`
-    // (api.translate-alt-text-template.tsx), `"Product"`
-    // (app.seo.performance.tsx), plus `"seo"` and `"templateTitles"`, which
-    // name no single admin object at all. The lookup is therefore normalised
-    // and the map lists every spelling EXPLICITLY: a type that is not in it
-    // (site-wide SEO tasks, e-mail templates) yields no link, which is the
-    // right answer — never a guessed, broken admin URL.
-    const pathMap: Record<string, string> = {
-      product: "products",
-      products: "products",
-      collection: "collections",
-      collections: "collections",
-      page: "pages",
-      pages: "pages",
-      blog: "articles", // Blog articles use /articles path
-      blogs: "articles",
-    };
-
-    const path = pathMap[resourceType.trim().toLowerCase()];
-    if (!path) return null;
-
-    // Return full Shopify admin URL
-    return `https://${shop}/admin/${path}/${numericId}`;
-  };
+  /**
+   * Where a Task row's item opens: THIS app's editor, never the Shopify admin.
+   *
+   * The row used to link at `https://<shop>/admin/<path>/<id>`, which sent the
+   * merchant to the one editor that cannot show what the task did — a
+   * translation, an alt text, a metaobject field are all this app's surfaces.
+   * `taskEditorDeepLink` answers with the in-app route plus the `?select=`
+   * every content page already understands, and it derives that from the GID
+   * rather than from the `resourceType` STRING, which is what the old map did
+   * and where it had drifted (a blog post stores `"Article"`, which that map
+   * did not list, so it got no link at all; a blog CONTAINER stored `"Blog"`
+   * and got `/admin/articles/<blog id>`, an address for a different object).
+   *
+   * Navigation goes through `handleNavigate` like every other deep link in the
+   * app: Shopify's session params (`shop`, `host`, `embedded`) have to travel
+   * with it, and a client-side navigation keeps the layout route — and with it
+   * the running-task badge this very page feeds — mounted.
+   */
 
   return (
     <Page fullWidth>
@@ -582,7 +568,7 @@ export default function TasksPage() {
                         null for it and `fixAllForItemSubject` phrases the item
                         instead — the row must still say WHICH product was
                         fixed. And a row that has a resourceId but no title
-                        falls back to the id, so the badge and the admin link
+                        falls back to the id, so the badge and the editor link
                         survive: gating those on the TITLE meant a task whose
                         item nobody had named showed no way to go and look at
                         it. Rows with no resourceId at all (the site-wide SEO
@@ -591,18 +577,29 @@ export default function TasksPage() {
                       <InlineStack gap="200">
                         {resourceLabel && <Badge tone="info">{resourceLabel}</Badge>}
                         {(() => {
-                          const adminUrl = getShopifyAdminUrl(task.resourceId, task.resourceType);
-                          if (adminUrl) {
+                          const editorLink = taskEditorDeepLink(task.resourceType, task.resourceId);
+                          if (editorLink) {
                             return (
-                              <a
-                                href={adminUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ color: "#008060", textDecoration: "none" }}
-                                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                              <Button
+                                variant="plain"
+                                onClick={(event?: React.MouseEvent<HTMLButtonElement>) => {
+                                  // Belt and braces. What actually keeps this
+                                  // from toggling the details panel is the
+                                  // LAYOUT: the expand control is the header's
+                                  // left half, and this row is its sibling —
+                                  // Polaris types `onClick` as taking no
+                                  // argument, so the event is a courtesy of
+                                  // the current implementation and must never
+                                  // be the only thing standing between a link
+                                  // and a click target it sits inside.
+                                  event?.stopPropagation();
+                                  handleNavigate(editorLink.path, {
+                                    searchParams: new URLSearchParams({ select: editorLink.select }),
+                                  });
+                                }}
                               >
                                 {subjectLine}
-                              </a>
+                              </Button>
                             );
                           }
                           return (

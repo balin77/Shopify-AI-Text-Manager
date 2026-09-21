@@ -48,7 +48,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef, type ReactElement } from "react";
-import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import {
   Page,
   Card,
@@ -563,6 +563,9 @@ export default function MenusPage() {
    */
   const autoFetcher = useFetcher<SaveResponse>();
 
+  /** `?select=<Menu GID>` — the Tasks page's deep link. Read below. */
+  const [searchParams] = useSearchParams();
+
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
   const [activeLocale, setActiveLocale] = useState<string>(primaryLocale);
   /**
@@ -681,9 +684,34 @@ export default function MenusPage() {
   );
   const selectedMenu = parsedMenus.find((m: any) => m.id === selectedMenuId);
 
+  /**
+   * Which menu opens: the deep link's, else the first one.
+   *
+   * `?select=<Menu GID>` is what a Tasks row links with — a menu save can start
+   * an auto re-translation of its renamed items (`menu-tree.server.ts`), and
+   * that Task row names the MENU. It is the same `?select=` every content page
+   * takes, only resolved here against local state rather than by the editor
+   * hook, because this page is not built on `UnifiedContentEditor`.
+   *
+   * Validated against the loaded menus: an id that matches nothing (a menu
+   * deleted since the task ran) leaves the page where it usually opens instead
+   * of on an empty editor. It only ever decides the FIRST selection — spending
+   * it again would drag the merchant back here on every revalidation.
+   */
+  const deepLinkMenuId = searchParams.get("select");
+  const deepLinkSpentRef = useRef(false);
   useEffect(() => {
-    if (parsedMenus.length > 0 && !selectedMenuId) setSelectedMenuId(parsedMenus[0].id);
-  }, [parsedMenus, selectedMenuId]);
+    if (parsedMenus.length === 0 || selectedMenuId) return;
+    if (!deepLinkSpentRef.current) {
+      deepLinkSpentRef.current = true;
+      const requested = parsedMenus.find((m: any) => m.id === deepLinkMenuId);
+      if (requested) {
+        setSelectedMenuId(requested.id);
+        return;
+      }
+    }
+    setSelectedMenuId(parsedMenus[0].id);
+  }, [parsedMenus, selectedMenuId, deepLinkMenuId]);
 
   // ── Values ───────────────────────────────────────────────────────────────
 

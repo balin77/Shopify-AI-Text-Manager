@@ -198,6 +198,10 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
       type: "seoBulkFix",
       status: "running",
       resourceType: "seo",
+      // Only the SINGLE-item entrance names an item; a store-wide run over a
+      // whole problem bucket names none and must stay linkless. Same rule as
+      // the fix-all-for-item row above.
+      resourceId: singleItemId || null,
       resourceTitle: localeResolution.foreignLocale
         ? `${problemCode}:${localeResolution.foreignLocale}`
         : problemCode,
@@ -387,6 +391,13 @@ async function handleFixAllForItem(
       type: "seoBulkFix",
       status: "running",
       resourceType: "seo",
+      // The row names exactly ONE item, so it stores that item's GID: the
+      // Tasks page derives its in-app editor link from the GID alone
+      // (`task-deep-link.shared.ts`), and without this the merchant was told
+      // which product had been fixed with no way to go and look at it.
+      // `resourceType` stays `"seo"` — it decides the BADGE, and this is an
+      // SEO run whatever it ran on.
+      resourceId: itemId,
       resourceTitle: `fixAllForItem:${itemType}:${itemId.split("/").pop()}${
         localeResolution.foreignLocale ? `:${localeResolution.foreignLocale}` : ""
       }`,

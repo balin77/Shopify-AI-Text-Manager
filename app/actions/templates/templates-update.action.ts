@@ -1043,8 +1043,10 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             resourceId,
             resourceType: "OnlineStoreTheme",
             // The AI prompt comes from `translateAs`; this only decides the
-            // Task label, and `taskResourceType` keeps a theme group out of the
-            // admin-path map, which has no entry for it and must not guess one.
+            // Task BADGE, which must say "templates" and not "page". The row
+            // gets no LINK either way: the Tasks page derives that from the
+            // GID, and a theme group is not an item this app selects by id
+            // (`task-deep-link.shared.ts` answers null for it).
             contentKind: "page",
             taskResourceType: "templates",
             resourceTitle: themeGroups?.find((g) => g.groupId === groupId)?.groupName || groupId,

@@ -419,9 +419,11 @@ export async function flushBulkRepairs(params: {
           if (!prompt) return null;
           return {
             resourceType: "Metaobject",
-            // The AI prompt comes from `translateAs`, so this only decides the
-            // Task label — and `taskResourceType` keeps a metaobject OUT of the
-            // admin-path map, which would otherwise offer /admin/pages/<id>.
+            // The AI prompt comes from `translateAs`, so this only decides
+            // the Task BADGE, which must say "metaobject" and not "page". The
+            // row's LINK is not this string's business at all: the Tasks page
+            // derives it from the GID (`task-deep-link.shared.ts`), so the
+            // entry opens at /app/metaobjects however this is spelled.
             contentKind: "page",
             taskResourceType: "metaobject",
             mirror: null, // resolved below: it needs the entries' types

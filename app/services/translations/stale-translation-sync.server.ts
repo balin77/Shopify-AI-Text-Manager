@@ -91,21 +91,24 @@ export interface RepairTarget {
   /** `ContentTranslation.resourceType` — "Product" | "Collection" | "Article" | "Page" | "Blog" | "ShopPolicy". */
   resourceType: string;
   /**
-   * The merchant-facing kind, used for BOTH the AI prompt and the Task row.
-   * These four strings are the ones `AIService.translateFields` recognises AND
-   * the ones the Tasks tab maps to a label and a Shopify admin link — an
-   * article is a "blog" to both. Passing the Shopify resource type here (the
-   * capitalised one) silently degrades the prompt to "product fields" and
-   * leaves the task without a link.
+   * The merchant-facing kind, used for BOTH the AI prompt and the Task row's
+   * badge. These four strings are the ones `AIService.translateFields`
+   * recognises AND the ones the Tasks tab has a label for — an article is a
+   * "blog" to both. Passing the Shopify resource type here (the capitalised
+   * one) silently degrades the prompt to "product fields".
    */
   contentKind: "product" | "collection" | "blog" | "page";
   /**
    * What goes into `Task.resourceType`, when that is NOT the same question as
-   * the AI prompt's kind. The Tasks tab maps this to a Shopify admin path and
-   * deliberately yields NO link for a type its map does not list — so a
-   * metaobject must not travel as "page", or the row offers
-   * `/admin/pages/<metaobject id>`, the guessed broken URL that map exists to
-   * prevent. Defaults to `contentKind`, which is right wherever the two agree.
+   * the AI prompt's kind: a metaobject, a menu or a theme group must not
+   * travel as "page", or the Tasks row is BADGED as a page. Defaults to
+   * `contentKind`, which is right wherever the two agree.
+   *
+   * It decides the badge and nothing else. The row's in-app editor link is
+   * derived from the GID (`task-deep-link.shared.ts`), never from this string
+   * — which is what retired the old admin-path map this used to steer around,
+   * and why a metaobject or a menu now links to its own editor rather than to
+   * nothing.
    */
   taskResourceType?: string;
   /**
@@ -2094,8 +2097,9 @@ async function runRetranslation(
       shop,
       type: "translation",
       status: "running",
-      // The Tasks tab maps this to a label and a Shopify admin link, and it
-      // speaks the merchant-facing kind, not the Shopify resource type.
+      // The Tasks tab maps this to the row's BADGE, so it speaks the
+      // merchant-facing kind, not the Shopify resource type. (The row's link
+      // comes from `resourceId` below — see `task-deep-link.shared.ts`.)
       resourceType: params.taskResourceType ?? contentKind,
       resourceId,
       resourceTitle: resourceTitle || resourceId,
