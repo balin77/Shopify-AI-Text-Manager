@@ -4090,6 +4090,8 @@ export const es: Translation = {
       attributesNotSynced: "Los datos de este producto aún no se han cargado desde Shopify — recarga los productos y edítalo después.",
       commerceNotSynced: "Los detalles de precio, envío e inventario de esta variante aún no se han cargado desde Shopify — vuelve a sincronizar los productos y edítalo después.",
       missingInventoryItem: "Esta variante no tiene artículo de inventario de Shopify, donde viven el coste, el peso y los datos aduaneros — vuelve a sincronizar el producto.",
+      multipleVariants: "Este producto tiene varias variantes, que pueden diferir en precio — edítalas en \"Variantes de producto\".",
+      variantsNotSynced: "Las variantes de este producto aún no están en la caché — vuelve a sincronizar los productos y edítalo después.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",

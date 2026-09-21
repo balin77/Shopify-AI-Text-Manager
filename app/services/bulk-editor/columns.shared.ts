@@ -398,6 +398,29 @@ export const VAR_REQUIRES_SHIPPING_COLUMN_ID = "var.requiresShipping";
 export const VAR_COUNTRY_OF_ORIGIN_COLUMN_ID = "var.countryCodeOfOrigin";
 export const VAR_HS_CODE_COLUMN_ID = "var.harmonizedSystemCode";
 
+/**
+ * The three variant columns a PRODUCT row may carry.
+ *
+ * A price is not a property of a product — it is a property of a variant, which
+ * is why "where is the price column?" has an answer that is correct and
+ * unhelpful at the same time ("under Produktvarianten"). For the shop that
+ * sells one thing per product, though, the product's ONE variant is the
+ * product, and making a merchant switch row types to reprice it is the kind of
+ * correctness nobody asked for.
+ *
+ * So exactly these three appear on product rows, editable only where the
+ * product has exactly ONE variant — otherwise the cell would have to pick one
+ * of several prices to show and one to overwrite, and either choice is wrong.
+ * The rest of the commerce block stays on the variant rows: cost, customs and
+ * the stock policy are per-variant settings a merchant goes looking for, not
+ * numbers they scan a catalogue for.
+ */
+export const PRODUCT_VARIANT_COLUMN_IDS = new Set([
+  VAR_PRICE_COLUMN_ID,
+  VAR_COMPARE_AT_COLUMN_ID,
+  VAR_SKU_COLUMN_ID,
+]);
+
 /** The commerce columns whose value lives on the variant's INVENTORY ITEM —
  *  a second mutation, and unreachable without an `inventoryItemId`. */
 export const INVENTORY_ITEM_COLUMN_IDS = new Set([
@@ -720,6 +743,11 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
+    // The single variant's price, compare-at price and SKU — see
+    // PRODUCT_VARIANT_COLUMN_IDS for why only these three and only here.
+    VAR_PRICE_COLUMN,
+    VAR_COMPARE_AT_COLUMN,
+    VAR_SKU_COLUMN,
   ],
   variant: [
     IMAGE_COLUMN,
@@ -1378,6 +1406,15 @@ export interface BulkRow {
    *  the shop's data (`ProductVariant.commerceSyncedAt`) — the variant twin of
    *  `attributesKnown`. The grid shows them as unknown, never as empty. */
   commerceKnown?: boolean;
+  /** PRODUCT rows: the product's ONE variant, when it has exactly one — the
+   *  price, compare-at price and SKU cells then edit it directly. Absent means
+   *  either "more than one variant" (`variantCount`, which the cell reports as
+   *  such) or "the variants were never cached". */
+  singleVariant?: { id: string; price: string; compareAtPrice: string; sku: string };
+  /** PRODUCT rows: how many variants the cache holds, capped at the loader's
+   *  peek. Null ⇒ not cached at all, which is a different cell state from
+   *  "several". */
+  variantCount?: number | null;
   /** The variant's InventoryItem GID — the address cost, weight, the customs
    *  fields and `tracked` are written at. Absent ⇒ those cells are read-only:
    *  there is nothing to write them to, and a resync is the way in. */
@@ -1456,7 +1493,9 @@ export type CellReadOnlyReason =
   | "altTextInImages" // product main-image alt — edit it under the Images row type
   | "attributesNotSynced" // PLAN §2.4 — the block was never fetched (see below)
   | "commerceNotSynced" // §Phase 4 — `commerceSyncedAt` unset: unknown, not empty
-  | "missingInventoryItem"; // the variant has no InventoryItem GID to write to
+  | "missingInventoryItem" // the variant has no InventoryItem GID to write to
+  | "multipleVariants" // a product row's price cell: which of several? (see below)
+  | "variantsNotSynced"; // the product's variants were never cached
 
 /** The columns fed by the Phase-0 attribute block, whose emptiness only means
  *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
@@ -1482,6 +1521,39 @@ export interface ResolvedCell {
   value: string;
   editable: boolean;
   readOnlyReason?: CellReadOnlyReason;
+}
+
+/**
+ * A variant column on a PRODUCT row.
+ *
+ * Three states, and collapsing any two of them is a wrong answer rather than a
+ * shorter one: the product has one variant (edit it), it has several (which
+ * price would the cell show, and which would a save overwrite?), or the
+ * variants were never cached (a resync, not a restriction). A product with
+ * more than 100 variants is the same "several" as one with two — the sync
+ * window is capped, and `variantCount` is only ever the loader's peek.
+ */
+function resolveProductVariantCell(row: BulkRow, column: ColumnDescriptor): ResolvedCell {
+  // Shopify guarantees every product at least one variant, so a count of ZERO
+  // is the cache lacking them rather than a product without any — the same
+  // "empty is not evidence" rule as `attributesSyncedAt`.
+  if (!row.variantCount) {
+    return { value: "", editable: false, readOnlyReason: "variantsNotSynced" };
+  }
+  const variant = row.singleVariant;
+  if (!variant) return { value: "", editable: false, readOnlyReason: "multipleVariants" };
+  switch (column.id) {
+    case VAR_PRICE_COLUMN_ID:
+      return { value: variant.price, editable: true };
+    case VAR_COMPARE_AT_COLUMN_ID:
+      return { value: variant.compareAtPrice, editable: true };
+    case VAR_SKU_COLUMN_ID:
+      return { value: variant.sku, editable: true };
+    default:
+      // A product row offers no other variant column — see
+      // PRODUCT_VARIANT_COLUMN_IDS.
+      return { value: "", editable: false, readOnlyReason: "column" };
+  }
 }
 
 /** The commerce block's value for one column. Flat properties on the row, so
@@ -1589,6 +1661,8 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       return { value: "", editable: false, readOnlyReason: "column" };
     }
     case "variant": {
+      // A PRODUCT row carries three of these, for its ONE variant.
+      if (row.type === "product") return resolveProductVariantCell(row, column);
       // Editable variant cells (Plan §5.3): SKU, price, compareAtPrice,
       // barcode. Money values are stored normalized; display formatting
       // happens at render time.
@@ -2038,6 +2112,9 @@ export function estimateCalls(
     let metafieldSets = 0;
     let metafieldDeletes = 0;
     let imageAlt = 0;
+    // The three single-variant cells share ONE productVariantsBulkUpdate, so
+    // they are a flag and not a count — the same shape as `base`.
+    let variantWrite = 0;
     const optionPositions = new Set<number>();
     for (const [columnId, value] of entries) {
       const column = columnById.get(columnId);
@@ -2056,6 +2133,9 @@ export function estimateCalls(
         case "option":
           optionPositions.add(column.optionPosition ?? 0);
           break;
+        case "variant":
+          variantWrite = 1;
+          break;
         default:
           if (column.id === IMG_ALT_COLUMN_ID) imageAlt = 1;
           else calls += 1;
@@ -2066,7 +2146,8 @@ export function estimateCalls(
       Math.ceil(metafieldSets / METAFIELDS_SET_CHUNK) +
       Math.ceil(metafieldDeletes / METAFIELDS_SET_CHUNK) +
       optionPositions.size +
-      imageAlt;
+      imageAlt +
+      variantWrite;
   }
 
   calls += variantTargets.size;

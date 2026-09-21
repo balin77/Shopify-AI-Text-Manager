@@ -540,7 +540,19 @@ const LEGACY_COLUMNS_STORAGE_KEY = "contentpilot:bulkMeta:columns";
  * grid for a type. Product defaults to a compact "image + meta" view to fit
  * on-screen without horizontal scrolling for the common case. */
 const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
-  product: ["image", "field.title", "field.productType", "field.handle", "field.seoTitle", "field.seoDescription"],
+  // `var.price` is visible from the start: "where is the price column" is what
+  // a merchant asks first, and the honest answer ("on the variant rows") was
+  // correct and unhelpful. On a product with several variants the cell says so
+  // rather than showing one of them.
+  product: [
+    "image",
+    "field.title",
+    "field.productType",
+    "var.price",
+    "field.handle",
+    "field.seoTitle",
+    "field.seoDescription",
+  ],
   variant: ["image", "productTitle", "variantTitle", "var.sku", "var.price", "var.compareAtPrice", "var.barcode"],
   collection: ["image", "field.title", "field.handle", "field.seoTitle", "field.seoDescription", "img.featuredAlt"],
   article: [
@@ -1111,6 +1123,11 @@ export default function BulkEditor() {
     // (`commerceSyncedAt`), so a merchant is not sent to resync the wrong half.
     commerceNotSynced: b.readOnlyReasons.commerceNotSynced,
     missingInventoryItem: b.readOnlyReasons.missingInventoryItem,
+    // A product row's price cell. "Several variants" and "never cached" are
+    // two different answers, and one of them is a resync rather than a
+    // restriction.
+    multipleVariants: b.readOnlyReasons.multipleVariants,
+    variantsNotSynced: b.readOnlyReasons.variantsNotSynced,
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,

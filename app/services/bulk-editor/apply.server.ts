@@ -112,6 +112,7 @@ import {
   VAR_COUNTRY_OF_ORIGIN_COLUMN_ID,
   VAR_HS_CODE_COLUMN_ID,
   INVENTORY_ITEM_COLUMN_IDS,
+  PRODUCT_VARIANT_COLUMN_IDS,
   type BulkRowType,
   type BulkDiffEntry,
   type BulkDiffRowGroup,
@@ -266,6 +267,9 @@ interface ProductCellGroups {
   metafields: { columnId: string; column: ColumnDescriptor; value: string }[];
   options: Map<number, OptionCells>;
   imageAlt?: { columnId: string; value: string };
+  /** §Phase 4 — the price/compare-at/SKU cells of a SINGLE-variant product,
+   *  written on the variant itself (PRODUCT_VARIANT_COLUMN_IDS). */
+  variant: Record<string, string>;
   /** Cells whose column could not be classified — validation rejected these
    * already, so hitting this is a programming error surfaced per cell. */
   failures: BulkFailure[];
@@ -277,6 +281,7 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
     baseColumnIds: [],
     metafields: [],
     options: new Map(),
+    variant: {},
     failures: [],
   };
   for (const [columnId, value] of Object.entries(group.cells)) {
@@ -301,6 +306,16 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
         out.options.set(position, cells);
         break;
       }
+      case "variant":
+        // A product row offers exactly three of these, for its ONE variant.
+        if (PRODUCT_VARIANT_COLUMN_IDS.has(columnId)) {
+          out.variant[columnId] = value;
+        } else {
+          out.failures.push(
+            failureOf(group, `Column "${columnId}" is not editable on ${group.rowType}.`, columnId),
+          );
+        }
+        break;
       case "image": {
         if (column.id === IMG_ALT_COLUMN_ID) {
           out.imageAlt = { columnId, value };
@@ -1508,7 +1523,64 @@ async function persistProductRow(group: BulkDiffRowGroup, deps: PersistDeps): Pr
   failures.push(...(await persistProductMetafields(group, cells, deps)));
   failures.push(...(await persistProductOptions(group, cells, deps)));
   failures.push(...(await persistProductImageAlt(group, cells, deps)));
+  failures.push(...(await persistProductSingleVariant(group, cells, deps)));
   return failures;
+}
+
+/**
+ * The price, compare-at price and SKU of a single-variant product.
+ *
+ * The product row's three variant cells (PRODUCT_VARIANT_COLUMN_IDS) go through
+ * the SAME `productVariantsBulkUpdate` path a variant row does — including the
+ * money parser that refuses an ambiguous "1.299", the "price is not nullable"
+ * rule and the echo mirror — because the only thing that differs is which id
+ * the grid put the cells under.
+ *
+ * The single-variant condition is re-checked HERE and not taken from the row:
+ * the grid renders these cells read-only for a multi-variant product, but this
+ * path is also reached by direct POST and by CSV import, and writing one of
+ * several variants' prices is the one outcome that would be silently wrong.
+ * `take: 2` answers it without counting, exactly as the loader does.
+ */
+async function persistProductSingleVariant(
+  group: BulkDiffRowGroup,
+  cells: ProductCellGroups,
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
+  const columnIds = Object.keys(cells.variant);
+  if (columnIds.length === 0) return [];
+  const failEveryCell = (message: string): BulkFailure[] =>
+    columnIds.map((columnId) => failureOf(group, message, columnId));
+
+  let variants: { shopifyGid: string }[];
+  try {
+    variants = await deps.db.productVariant.findMany({
+      where: { productId: group.rowId, product: { shop: deps.shop } },
+      orderBy: { position: "asc" },
+      take: 2,
+      select: { shopifyGid: true },
+    });
+  } catch (err: unknown) {
+    return failEveryCell(err instanceof Error ? err.message : String(err));
+  }
+
+  if (variants.length === 0) {
+    // Shopify gives every product at least one variant, so none cached means
+    // the cache lacks them — a resync, not a product without a price.
+    return failEveryCell("This product's variants are not in the local cache — resync the products first.");
+  }
+  if (variants.length > 1) {
+    return failEveryCell(
+      "This product has several variants, which can differ in price — edit them under the Product variants row type.",
+    );
+  }
+
+  const target: VariantWriteTarget = {
+    group,
+    variantId: variants[0].shopifyGid,
+    cells: cells.variant,
+  };
+  return persistVariantProductGroup(group.rowId, [target], deps);
 }
 
 /**
@@ -3354,8 +3426,28 @@ interface VariantBulkInput {
   inventoryPolicy?: string;
 }
 
-interface PreparedVariantInput {
+/**
+ * One variant to write, and the grid row a failure belongs to.
+ *
+ * The two came apart when a PRODUCT row learned to carry its single variant's
+ * price: the mutation addresses the VARIANT, while a failure has to be marked
+ * on the cell the merchant typed in — which is a product row's cell. For an
+ * ordinary variant row the two ids are the same, and were until now the same
+ * field, which is why the mirror below used to key on `group.rowId`.
+ */
+interface VariantWriteTarget {
+  /** The row group the failures belong to — a variant row, or the product row
+   *  whose one variant this is. */
   group: BulkDiffRowGroup;
+  /** The ProductVariant GID the mutation addresses. */
+  variantId: string;
+  /** The variant-shaped cells of that group (a product row's other cells go
+   *  through the product's own stages). */
+  cells: Record<string, string>;
+}
+
+interface PreparedVariantInput {
+  target: VariantWriteTarget;
   input: VariantBulkInput;
   /** columnIds actually carried by `input` — failure attribution set. */
   columnIds: string[];
@@ -3407,12 +3499,13 @@ function moneyErrorMessage(error: "negative" | "invalid" | "ambiguous", value: s
  * fields). Money rules (Plan §5.5/§14): price is NOT nullable — clearing it
  * is a cell error; compareAtPrice cleared ⇒ explicit null.
  */
-function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariantInput | null; failures: BulkFailure[] } {
+function buildVariantInput(target: VariantWriteTarget): { prepared: PreparedVariantInput | null; failures: BulkFailure[] } {
+  const { group } = target;
   const failures: BulkFailure[] = [];
-  const input: VariantBulkInput = { id: group.rowId };
+  const input: VariantBulkInput = { id: target.variantId };
   const columnIds: string[] = [];
 
-  for (const [columnId, value] of Object.entries(group.cells)) {
+  for (const [columnId, value] of Object.entries(target.cells)) {
     // Cost, weight, customs and `tracked` are fields of the variant's
     // InventoryItem, not of the variant — a different mutation, run after this
     // one (persistVariantInventoryItems).
@@ -3486,7 +3579,7 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
   }
 
   if (columnIds.length === 0) return { prepared: null, failures };
-  return { prepared: { group, input, columnIds }, failures };
+  return { prepared: { target, input, columnIds }, failures };
 }
 
 /** Shopify's `ProductVariantInventoryPolicy`, as the server-side gate. The
@@ -3555,12 +3648,12 @@ interface VariantCommerceRow {
  * to take, because a number with no unit is not a weight.
  */
 async function persistVariantInventoryItems(
-  groups: BulkDiffRowGroup[],
+  targets: VariantWriteTarget[],
   deps: PersistDeps,
 ): Promise<BulkFailure[]> {
   const failures: BulkFailure[] = [];
-  const relevant = groups.filter((g) =>
-    Object.keys(g.cells).some((columnId) => INVENTORY_ITEM_COLUMN_IDS.has(columnId)),
+  const relevant = targets.filter((t) =>
+    Object.keys(t.cells).some((columnId) => INVENTORY_ITEM_COLUMN_IDS.has(columnId)),
   );
   if (relevant.length === 0) return failures;
 
@@ -3569,26 +3662,29 @@ async function persistVariantInventoryItems(
   const rows = new Map<string, VariantCommerceRow>();
   try {
     const found = await deps.db.productVariant.findMany({
-      where: { shopifyGid: { in: relevant.map((g) => g.rowId) }, product: { shop: deps.shop } },
+      where: { shopifyGid: { in: relevant.map((t) => t.variantId) }, product: { shop: deps.shop } },
       select: { id: true, shopifyGid: true, inventoryItemId: true, weight: true, weightUnit: true },
     });
     for (const row of found) rows.set(row.shopifyGid, row);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    for (const group of relevant) {
-      for (const columnId of Object.keys(group.cells)) {
-        if (INVENTORY_ITEM_COLUMN_IDS.has(columnId)) failures.push(failureOf(group, message, columnId));
+    for (const target of relevant) {
+      for (const columnId of Object.keys(target.cells)) {
+        if (INVENTORY_ITEM_COLUMN_IDS.has(columnId)) {
+          failures.push(failureOf(target.group, message, columnId));
+        }
       }
     }
     return failures;
   }
 
-  for (const group of relevant) {
-    const cells = Object.entries(group.cells).filter(([columnId]) =>
+  for (const target of relevant) {
+    const group = target.group;
+    const cells = Object.entries(target.cells).filter(([columnId]) =>
       INVENTORY_ITEM_COLUMN_IDS.has(columnId),
     );
     const columnIds = cells.map(([columnId]) => columnId);
-    const row = rows.get(group.rowId);
+    const row = rows.get(target.variantId);
     const failEveryCell = (message: string) => {
       for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
     };
@@ -3616,8 +3712,8 @@ async function persistVariantInventoryItems(
       }
     }
 
-    const weightCell = group.cells[VAR_WEIGHT_COLUMN_ID];
-    const unitCell = group.cells[VAR_WEIGHT_UNIT_COLUMN_ID];
+    const weightCell = target.cells[VAR_WEIGHT_COLUMN_ID];
+    const unitCell = target.cells[VAR_WEIGHT_UNIT_COLUMN_ID];
     if (weightCell !== undefined || unitCell !== undefined) {
       const value = weightCell !== undefined ? weightCell : row.weight?.toString() ?? "";
       const unit = unitCell !== undefined ? unitCell : row.weightUnit ?? "";
@@ -3691,23 +3787,23 @@ function inventoryItemWarningMessage(warning: CommerceWarning): string {
  */
 async function persistVariantProductGroup(
   productId: string,
-  groups: BulkDiffRowGroup[],
+  targets: VariantWriteTarget[],
   deps: PersistDeps,
 ): Promise<BulkFailure[]> {
   const { db, gateway } = deps;
   const failures: BulkFailure[] = [];
   const sent: PreparedVariantInput[] = [];
 
-  for (const group of groups) {
-    const { prepared, failures: buildFailures } = buildVariantInput(group);
+  for (const target of targets) {
+    const { prepared, failures: buildFailures } = buildVariantInput(target);
     failures.push(...buildFailures);
     if (prepared) sent.push(prepared);
   }
   if (sent.length === 0) return failures;
 
   const failEverySentCell = (message: string) => {
-    for (const { group, columnIds } of sent) {
-      for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
+    for (const { target, columnIds } of sent) {
+      for (const columnId of columnIds) failures.push(failureOf(target.group, message, columnId));
     }
   };
 
@@ -3758,18 +3854,18 @@ async function persistVariantProductGroup(
         const tail = path.length > 0 ? path[path.length - 1] : "";
         const columnId = variantColumnForErrorField(tail);
         if (index !== undefined && index < sent.length && columnId) {
-          messageByCell.set(`${sent[index].group.rowId}|${columnId}`, err.message);
+          messageByCell.set(`${sent[index].target.variantId}|${columnId}`, err.message);
         }
       }
       // The mutation applies atomically (no partial updates requested): cells
       // named in an error get the specific message, every other sent cell the
       // atomicity explanation. Nothing is mirrored.
-      for (const { group, columnIds } of sent) {
+      for (const { target, columnIds } of sent) {
         for (const columnId of columnIds) {
-          const specific = messageByCell.get(`${group.rowId}|${columnId}`);
+          const specific = messageByCell.get(`${target.variantId}|${columnId}`);
           failures.push(
             failureOf(
-              group,
+              target.group,
               specific ??
                 (messageByCell.size > 0
                   ? "Not saved — another variant of the same product failed (Shopify applies the call atomically)."
@@ -3785,11 +3881,11 @@ async function persistVariantProductGroup(
     // Echo check + DB mirror: only the values Shopify RETURNED go into the
     // cache (Plan §5.4 "nur zurückgemeldete Werte spiegeln").
     const echoed = payload?.productVariants ?? [];
-    for (const { group, input, columnIds } of sent) {
-      const echo = echoed?.find((v) => v.id === group.rowId);
+    for (const { target, input, columnIds } of sent) {
+      const echo = echoed?.find((v) => v.id === target.variantId);
       if (!echo) {
         for (const columnId of columnIds) {
-          failures.push(failureOf(group, "Shopify did not confirm the variant update.", columnId));
+          failures.push(failureOf(target.group, "Shopify did not confirm the variant update.", columnId));
         }
         continue;
       }
@@ -3802,7 +3898,7 @@ async function persistVariantProductGroup(
       if (input.barcode !== undefined) mirror.barcode = echo.barcode ?? null;
       if (input.taxable !== undefined) mirror.taxable = echo.taxable ?? null;
       if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echo.inventoryPolicy ?? null;
-      await db.productVariant.updateMany({ where: { shopifyGid: group.rowId }, data: mirror });
+      await db.productVariant.updateMany({ where: { shopifyGid: target.variantId }, data: mirror });
     }
   } catch (err: unknown) {
     failEverySentCell(err instanceof Error ? err.message : String(err));
@@ -3996,7 +4092,7 @@ export async function applyBulkDiff(
   // shop simply doesn't resolve.
   type PersistUnit =
     | { kind: "single"; groups: [BulkDiffRowGroup] }
-    | { kind: "variantProduct"; productId: string; groups: BulkDiffRowGroup[] }
+    | { kind: "variantProduct"; productId: string; groups: BulkDiffRowGroup[]; targets: VariantWriteTarget[] }
     | { kind: "unresolvedVariant"; groups: [BulkDiffRowGroup] };
 
   const units: PersistUnit[] = [];
@@ -4011,7 +4107,7 @@ export async function applyBulkDiff(
       select: { shopifyGid: true, productId: true },
     });
     const productIdByGid = new Map(owned.map((v) => [v.shopifyGid, v.productId] as const));
-    const byProduct = new Map<string, BulkDiffRowGroup[]>();
+    const byProduct = new Map<string, VariantWriteTarget[]>();
     for (const group of variantPrimaryGroups) {
       const productId = productIdByGid.get(group.rowId);
       if (!productId) {
@@ -4019,11 +4115,17 @@ export async function applyBulkDiff(
         continue;
       }
       const list = byProduct.get(productId) ?? [];
-      list.push(group);
+      // A variant ROW addresses itself: its row id IS the variant GID.
+      list.push({ group, variantId: group.rowId, cells: group.cells });
       byProduct.set(productId, list);
     }
-    for (const [productId, productGroups] of byProduct) {
-      units.push({ kind: "variantProduct", productId, groups: productGroups });
+    for (const [productId, targets] of byProduct) {
+      units.push({
+        kind: "variantProduct",
+        productId,
+        groups: targets.map((t) => t.group),
+        targets,
+      });
     }
   }
 
@@ -4048,8 +4150,8 @@ export async function applyBulkDiff(
         // time. The order matters only in that both write the same variant's
         // SKU path — running them concurrently would race on it.
         unitFailures = [
-          ...(await persistVariantProductGroup(unit.productId, unit.groups, deps)),
-          ...(await persistVariantInventoryItems(unit.groups, deps)),
+          ...(await persistVariantProductGroup(unit.productId, unit.targets, deps)),
+          ...(await persistVariantInventoryItems(unit.targets, deps)),
         ];
       } else if (unit.kind === "unresolvedVariant") {
         unitFailures = [

@@ -688,6 +688,17 @@ async function loadBulkRowsInner(
               },
             }
           : {}),
+        // The price/compare-at/SKU columns of a PRODUCT row edit its ONE
+        // variant. `take: 2` is the whole cost of the feature: it answers
+        // "exactly one?" without counting, and a product with two is the same
+        // "several" as one with two hundred. `hasMoreVariants` is not consulted
+        // here — it means "more than the sync's 100-variant window", which two
+        // rows already rule out.
+        variants: {
+          orderBy: { position: "asc" as const },
+          take: 2,
+          select: { shopifyGid: true, price: true, compareAtPrice: true, sku: true },
+        },
       };
       const [items, total] = await Promise.all([
         db.product.findMany({ where, select, orderBy, skip, take }) as Promise<
@@ -696,6 +707,12 @@ async function loadBulkRowsInner(
               metafields?: { id: string; namespace: string; key: string; value: string; type: string }[];
               options?: { id: string; name: string; position: number; values: string; linkedMetafieldKey: string | null }[];
               images?: { mediaId: string | null; altText: string | null }[];
+              variants?: {
+                shopifyGid: string;
+                price: Prisma.Decimal | null;
+                compareAtPrice: Prisma.Decimal | null;
+                sku: string | null;
+              }[];
             }
           >
         >,
@@ -704,6 +721,11 @@ async function loadBulkRowsInner(
       return {
         rows: items.map((i) => {
           const mainImage = i.images?.[0];
+          const variants = i.variants ?? [];
+          // Exactly one ⇒ the product IS its variant and the three cells edit
+          // it. Several ⇒ no `singleVariant`, and the cell says which of the
+          // two situations it is in rather than showing one of several prices.
+          const single = variants.length === 1 ? variants[0] : undefined;
           return {
             id: i.id as string,
             type: "product" as const,
@@ -727,6 +749,15 @@ async function loadBulkRowsInner(
             options: mapRowOptions(i.options),
             mainImage: mainImage
               ? { mediaId: mainImage.mediaId ?? null, alt: mainImage.altText ?? "" }
+              : undefined,
+            variantCount: variants.length,
+            singleVariant: single
+              ? {
+                  id: single.shopifyGid,
+                  price: decimalToGridValue(single.price),
+                  compareAtPrice: decimalToGridValue(single.compareAtPrice),
+                  sku: single.sku ?? "",
+                }
               : undefined,
           };
         }),

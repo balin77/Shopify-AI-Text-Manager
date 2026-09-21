@@ -4118,6 +4118,11 @@ export const de = {
       // falschen Teil neu synchronisieren.
       commerceNotSynced: "Preis-, Versand- und Bestandsdetails dieser Variante wurden noch nicht von Shopify geladen — lade die Produkte neu und bearbeite das dann.",
       missingInventoryItem: "Dieser Variante fehlt der Shopify-Lagerartikel, an dem Einkaufspreis, Gewicht und Zolldaten hängen — Produkt zuerst neu synchronisieren.",
+      // §Phase 4 — Preis-Zellen auf der Produktzeile. "Mehrere Varianten" und
+      // "nie gecacht" sind zwei verschiedene Antworten; die zweite ist ein
+      // Resync, keine Einschränkung.
+      multipleVariants: "Dieses Produkt hat mehrere Varianten, die unterschiedliche Preise haben können — bearbeite sie unter \"Produktvarianten\".",
+      variantsNotSynced: "Die Varianten dieses Produkts sind noch nicht im Cache — lade die Produkte neu und bearbeite das dann.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",

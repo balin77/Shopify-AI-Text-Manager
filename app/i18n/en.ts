@@ -4102,6 +4102,8 @@ export const en: Translation = {
       attributesNotSynced: "This product's details have not been loaded from Shopify yet — reload the products, then edit this.",
       commerceNotSynced: "This variant's price, shipping and stock details have not been loaded from Shopify yet — resync the products, then edit this.",
       missingInventoryItem: "This variant has no Shopify inventory item, which is where cost, weight and customs data live — resync the product first.",
+      multipleVariants: "This product has several variants, which can differ in price — edit them under \"Product variants\".",
+      variantsNotSynced: "This product's variants are not in the cache yet — resync the products, then edit this.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",
