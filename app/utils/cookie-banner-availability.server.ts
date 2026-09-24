@@ -213,7 +213,7 @@ export async function readCookieBannerTranslations(
     if (!resource) return null;
     return resource.translations ?? [];
   } catch (e) {
-    logger.debug("[CookieBanner] translations fetch threw → returning empty", {
+    logger.debug("[CookieBanner] translations fetch threw → returning null (unread)", {
       context: "CookieBanner",
       shop: session.shop,
       resourceId,

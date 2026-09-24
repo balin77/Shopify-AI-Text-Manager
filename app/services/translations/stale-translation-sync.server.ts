@@ -1538,11 +1538,20 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
     // (owner's decision, 2026-09). A handle-only move therefore pays the policy
     // read — it is a rare event (a URL change), and without the opt-in the
     // second pass below simply yields nothing for it.
-    const movedByBaseline = primaryBaseline ? primaryBaselineMovedKeys(primaryContent, primaryBaseline) : [];
+    // A BLOG's handle is never re-translated (its articles' URLs cannot be
+    // redirected with it — the resolver refuses it), so its move must not pay
+    // the policy read, the existence query, the claim and a budget unit only to
+    // be refused at the very end.
+    const movedByBaseline = primaryBaseline
+      ? primaryBaselineMovedKeys(primaryContent, primaryBaseline).filter(
+          (key) => key !== "handle" || resourceType !== "Blog",
+        )
+      : [];
     if (stale.length === 0 && movedByBaseline.length === 0) return NOTHING;
 
     const policy = await loadTranslationChangePolicy(shop);
     if (!policy.purgeOnPrimaryChange && !policy.autoTranslateExternalChanges) return NOTHING;
+    const handlesMayFill = policy.autoTranslateHandles && resourceType !== "Blog";
 
     // Now that the switch is known: translate the proven keys into the locales
     // that hold nothing yet as well. Same input, same gate — the second call is
@@ -1559,12 +1568,37 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
         // The rails are the resolver's, shared with the in-app save (Shopify is
         // asked before an absent mirror row is read as a fill; a slug whose
         // path already carries a redirect is discarded; a blog is refused).
-        translateHandles: policy.autoTranslateHandles,
+        translateHandles: handlesMayFill,
         ...(primaryBaseline ? { previousPrimaryDigests: primaryBaseline } : {}),
       });
       if (params.unreadLocales?.length) {
         const unread = new Set(params.unreadLocales);
-        stale = stale.filter((entry) => !(entry.filled && !entry.baselineFill && unread.has(entry.locale)));
+        const unreadFills = stale.filter((entry) => entry.filled && !entry.baselineFill && unread.has(entry.locale));
+        if (unreadFills.length > 0) {
+          stale = stale.filter((entry) => !unreadFills.includes(entry));
+          // Deferred, not dropped: a locale that never held a translation has
+          // no row digest to prove this move with later, and the baseline is
+          // about to advance past it — so without this it would stay empty
+          // until the text changes again. The retry RE-READS Shopify and only
+          // fills a locale that really holds nothing, which is exactly the
+          // question this read could not answer. Handles never go on the list
+          // (a kept handle is deliberate; the retry does not translate them).
+          const owed = unreadFills.filter((entry) => entry.key !== "handle");
+          if (owed.length > 0) {
+            await enqueueTranslationRetry(
+              {
+                shop,
+                resourceId,
+                resourceType,
+                contentKind: params.contentKind,
+                ...(params.resourceTitle ? { resourceTitle: params.resourceTitle } : {}),
+                pairs: owed.map((entry) => ({ key: entry.key, locale: entry.locale })),
+                reason: "failed",
+              },
+              baseline.db,
+            );
+          }
+        }
       }
     }
 
@@ -1604,7 +1638,10 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
           resourceType,
           contentKind: params.contentKind,
           ...(params.resourceTitle ? { resourceTitle: params.resourceTitle } : {}),
-          pairs: refused.map((entry) => ({ key: entry.key, locale: entry.locale })),
+          // Never handles: the retry does not translate them (a kept handle is
+          // deliberate), so the row would only be settled as a no-op — the
+          // held baseline brings the move back at the next change event.
+          pairs: refused.filter((entry) => entry.key !== "handle").map((entry) => ({ key: entry.key, locale: entry.locale })),
           reason: "limit",
         },
         baseline.db,

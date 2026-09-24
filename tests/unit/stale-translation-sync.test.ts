@@ -479,6 +479,13 @@ describe("auto-translation path (Max)", () => {
     await awaitDetachedRetranslations();
 
     expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual(["de:title", "it:title"]);
+    // Deferred, not lost: fr never held a translation, so no row digest could
+    // prove this move later — the retry list re-reads Shopify and fills it.
+    const retry = (db.autoTranslateRetry.upsert.mock.calls[0] as any[])[0];
+    expect(retry.create).toMatchObject({ reason: "failed", resourceType: "Product" });
+    expect((retry.create.pairs as Array<{ key: string; locale: string }>).map((p) => `${p.locale}:${p.key}`)).toEqual([
+      "fr:title",
+    ]);
   });
 
   it("fills nothing when this sync proved no key moved", async () => {
@@ -2276,6 +2283,26 @@ describe("the PRIMARY digest baseline — a resource nobody has translated yet",
     expect(result.retranslating).toBe(1);
     expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}:${c.value}`)).toEqual(["de:handle:de-handle"]);
     expect(shopify.redirectCalls).toEqual([]);
+  });
+
+  it("a BLOG's handle-only move costs nothing — the resolver would refuse it at the very end", async () => {
+    policy.autoTranslateHandles = true;
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { handle: OLD } });
+
+    const result = await reconcileStaleTranslations(
+      untranslated({
+        resourceType: "Blog",
+        contentKind: "blog",
+        primaryContent: { handle: { value: "news", digest: NEW } },
+        foreignLocales: ["de"],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(ai.translate).not.toHaveBeenCalled();
+    // No claim, no budget unit spent on it.
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
   });
 
   it("a HANDLE-only move fills nothing without the opt-in", async () => {

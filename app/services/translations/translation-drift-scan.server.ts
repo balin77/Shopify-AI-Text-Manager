@@ -356,8 +356,10 @@ export async function scanTranslationDrift(params: {
             fillLocales: foreignLocales,
             previousPrimaryDigests: previousPrimary,
             // The same option the reconciliation passes, or a handle-only move
-            // is refused here and never reaches the fill that exists for it.
-            translateHandles,
+            // is refused here and never reaches the fill that exists for it —
+            // and, like there, never for a BLOG, whose handle the resolver
+            // always refuses (a handover slot spent on nothing).
+            translateHandles: translateHandles && type.mirror !== "Blog",
           }).length > 0;
         if (!stale) {
           // Nothing to repair: record what we saw, so the NEXT move of this

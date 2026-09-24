@@ -1331,9 +1331,10 @@ export class BackgroundSyncService {
     // (and their partial fresh rows are dropped — a bare `create` would
     // otherwise collide with the surviving row on the unique tuple).
     const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
-    // Rows nobody could read this run: neither rewritten nor stale-deleted,
-    // and their fresh half (another layer of the same locale read fine) is
-    // dropped too, so the pair is left exactly as it was.
+    // Rows nobody could read this run — a resource whose content read failed,
+    // or the GLOBAL layer of a (resource, locale) whose read failed: neither
+    // rewritten nor stale-deleted. Market rows of that locale are judged on
+    // their own read, like before.
     const untouchable = (r: { resourceId: string; locale: string; marketId: string }) =>
       failedResources.has(r.resourceId) ||
       (r.marketId === '' && failedGlobalLocaleKeys.has(globalLocaleKey(r.resourceId, r.locale)));

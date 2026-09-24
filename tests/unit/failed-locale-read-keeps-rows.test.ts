@@ -182,9 +182,12 @@ describe("ContentSyncService — a failed locale read keeps that locale's rows",
     );
   });
 
-  it("syncCollection: a locale whose IMAGE read failed is kept whole — its fresh title row is not inserted", async () => {
+  it("syncCollection: a failed IMAGE read keeps only that locale's alt rows — its own fields are refreshed", async () => {
     const service = new ContentSyncService({ graphql: vi.fn() } as never, shop);
-    vi.spyOn(service as never, "fetchCollectionData").mockResolvedValue({
+    vi.spyOn(
+      service as unknown as { fetchCollectionData: (id: string) => Promise<unknown> },
+      "fetchCollectionData",
+    ).mockResolvedValue({
       id: "gid://shopify/Collection/1",
       title: "Sale",
       handle: "sale",
@@ -205,12 +208,16 @@ describe("ContentSyncService — a failed locale read keeps that locale's rows",
       },
     );
 
-    await service.syncCollection("gid://shopify/Collection/1", true);
+    await service.syncCollection("gid://shopify/Collection/1", true, { reconcileTranslations: true });
 
-    expect(tx.contentTranslation.deleteMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({ NOT: { marketId: "", locale: { in: ["fr"] } } }),
-    });
+    const where = tx.contentTranslation.deleteMany.mock.calls[0][0].where;
+    // The parent's own fr read succeeded: no locale-wide keep …
+    expect(where).not.toHaveProperty("NOT");
+    // … only the fr ALT rows survive the delete.
+    expect(where.AND).toEqual([{ NOT: { marketId: "", key: "image_alt_text", locale: { in: ["fr"] } } }]);
     const inserted = tx.contentTranslation.createMany.mock.calls[0][0].data as Array<{ locale: string; key: string }>;
-    expect(inserted.map((r) => `${r.locale}:${r.key}`).sort()).toEqual(["en:image_alt_text", "en:title"]);
+    expect(inserted.map((r) => `${r.locale}:${r.key}`).sort()).toEqual(["en:image_alt_text", "en:title", "fr:title"]);
+    // fr was READ for the collection itself, so it is not reported unread.
+    expect(reconcileMock).toHaveBeenCalledWith(expect.objectContaining({ unreadLocales: [] }));
   });
 });

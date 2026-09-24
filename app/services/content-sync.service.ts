@@ -173,6 +173,7 @@ export class ContentSyncService {
       // Locales whose GLOBAL read failed: their rows survive the rewrite and
       // they are left out of the fill below (sync-utils translationWriteScope).
       const failedGlobalLocales = new Set<string>();
+      const imageAltFailedLocales = new Set<string>();
       const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         collectionId,
@@ -202,9 +203,10 @@ export class ContentSyncService {
             markets,
             failedMarketIds,
             undefined,
-            // The image's read counts for the same locale: a locale whose
-            // alt read failed keeps its rows WHOLE (translationWriteScope).
-            failedGlobalLocales
+            // Its OWN set: a failed alt read keeps only that locale's
+            // `image_alt_text` rows — the parent's own fields were read fine
+            // and are refreshed as usual.
+            imageAltFailedLocales
           );
           // Remap: store with key "image_alt_text" and use the collection's resourceId
           for (const t of imageTranslations) {
@@ -234,7 +236,7 @@ export class ContentSyncService {
           )
         : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
-      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales);
+      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales, imageAltFailedLocales);
 
       // 5. Stale-translation reconciliation (change events only) — best-effort.
       if (options.reconcileTranslations) {
@@ -331,6 +333,7 @@ export class ContentSyncService {
       // Locales whose GLOBAL read failed: their rows survive the rewrite and
       // they are left out of the fill below (sync-utils translationWriteScope).
       const failedGlobalLocales = new Set<string>();
+      const imageAltFailedLocales = new Set<string>();
       const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         articleId,
@@ -357,9 +360,10 @@ export class ContentSyncService {
             markets,
             failedMarketIds,
             undefined,
-            // The image's read counts for the same locale: a locale whose
-            // alt read failed keeps its rows WHOLE (translationWriteScope).
-            failedGlobalLocales
+            // Its OWN set: a failed alt read keeps only that locale's
+            // `image_alt_text` rows — the parent's own fields were read fine
+            // and are refreshed as usual.
+            imageAltFailedLocales
           );
           for (const t of imageTranslations) {
             if (t.key === 'alt') {
@@ -385,7 +389,7 @@ export class ContentSyncService {
           )
         : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
-      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales);
+      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales, imageAltFailedLocales);
 
       // 5. Stale-translation reconciliation (change events only) — best-effort.
       if (options.reconcileTranslations) {
@@ -558,7 +562,7 @@ export class ContentSyncService {
   // SAVE TO DATABASE
   // ============================================
 
-  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>) {
+  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>, imageAltFailedLocales?: ReadonlySet<string>) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
@@ -570,8 +574,13 @@ export class ContentSyncService {
     // A locale whose global read failed is out of scope too
     // (`translationWriteScope`): its old rows are kept, not emptied.
     const scope = translationWriteScope(markets, failedGlobalLocales);
+    // The featured image's alt is a separate read: where it failed, only the
+    // `image_alt_text` rows of that locale are kept (and not re-inserted).
+    const altKept = [...(imageAltFailedLocales ?? [])];
+    const keepsAlt = (t: { key: string; locale: string; marketId?: string | null }) =>
+      t.key === "image_alt_text" && !(t.marketId || "") && altKept.includes(t.locale);
     const validTranslations = translations.filter(t =>
-      t.value != null && t.value !== undefined && scope.covers(t));
+      t.value != null && t.value !== undefined && scope.covers(t) && !keepsAlt(t));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
@@ -650,6 +659,9 @@ export class ContentSyncService {
             resourceId: collectionData.id,
             resourceType: "Collection",
             ...scope.where,
+            ...(altKept.length > 0
+              ? { AND: [{ NOT: { marketId: "", key: "image_alt_text", locale: { in: altKept } } }] }
+              : {}),
           },
         });
 
@@ -675,7 +687,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
-  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>) {
+  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>, imageAltFailedLocales?: ReadonlySet<string>) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
@@ -687,8 +699,13 @@ export class ContentSyncService {
     // A locale whose global read failed is out of scope too
     // (`translationWriteScope`): its old rows are kept, not emptied.
     const scope = translationWriteScope(markets, failedGlobalLocales);
+    // The featured image's alt is a separate read: where it failed, only the
+    // `image_alt_text` rows of that locale are kept (and not re-inserted).
+    const altKept = [...(imageAltFailedLocales ?? [])];
+    const keepsAlt = (t: { key: string; locale: string; marketId?: string | null }) =>
+      t.key === "image_alt_text" && !(t.marketId || "") && altKept.includes(t.locale);
     const validTranslations = translations.filter(t =>
-      t.value != null && t.value !== undefined && scope.covers(t));
+      t.value != null && t.value !== undefined && scope.covers(t) && !keepsAlt(t));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
@@ -760,6 +777,9 @@ export class ContentSyncService {
             resourceId: articleData.id,
             resourceType: "Article",
             ...scope.where,
+            ...(altKept.length > 0
+              ? { AND: [{ NOT: { marketId: "", key: "image_alt_text", locale: { in: altKept } } }] }
+              : {}),
           },
         });
 

@@ -12,6 +12,8 @@ import {
   getCookieBannerResources,
   writeCookieBannerTranslations,
   removeCookieBannerTranslations,
+  readCookieBannerTranslations,
+  getCookieBannerTranslations,
   __clearCookieBannerCache,
 } from '~/utils/cookie-banner-availability.server';
 
@@ -248,5 +250,39 @@ describe('removeCookieBannerTranslations', () => {
     const res = await removeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', ['policy_link_text'], ['de']);
     expect(res.ok).toBe(false);
     expect(res.error).toContain('ECONNRESET');
+  });
+});
+
+describe('readCookieBannerTranslations — a failed read is null, never []', () => {
+  beforeEach(() => {
+    __clearCookieBannerCache();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const rid = 'gid://shopify/CookieBanner/1';
+
+  it('returns the translations on success', async () => {
+    global.fetch = mockFetchJson({
+      data: { translatableResource: { translations: [{ key: 'title', value: 'Cookies', locale: 'de' }] } },
+    }) as unknown as typeof fetch;
+    expect(await readCookieBannerTranslations(session, rid, 'de')).toEqual([
+      { key: 'title', value: 'Cookies', locale: 'de' },
+    ]);
+  });
+
+  it('returns null on GraphQL errors, a null resource and a throw — the sync keeps that locale', async () => {
+    global.fetch = mockFetchJson({ errors: [{ message: 'Throttled' }] }) as unknown as typeof fetch;
+    expect(await readCookieBannerTranslations(session, rid, 'de')).toBeNull();
+    global.fetch = mockFetchJson({ data: { translatableResource: null } }) as unknown as typeof fetch;
+    expect(await readCookieBannerTranslations(session, rid, 'de')).toBeNull();
+    global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET')) as unknown as typeof fetch;
+    expect(await readCookieBannerTranslations(session, rid, 'de')).toBeNull();
+  });
+
+  it('the older reader keeps its [] for callers that delete nothing', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET')) as unknown as typeof fetch;
+    expect(await getCookieBannerTranslations(session, rid, 'de')).toEqual([]);
   });
 });
