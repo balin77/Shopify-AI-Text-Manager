@@ -63,7 +63,11 @@ export async function action({ request }: ActionFunctionArgs) {
         // Sync single product with plan-aware image loading
         result = await productSyncService.syncSingleProduct(
           shopifyId,
-          planLimits.cacheEnabled.productImages
+          planLimits.cacheEnabled.productImages,
+          // An AUTOMATIC fetch (the product page's "no translations cached
+          // yet") respects the save lock; a reload the merchant pressed does
+          // not. See syncSingleProduct.
+          getFormString(formData, "trigger") !== "auto",
         );
         break;
       }

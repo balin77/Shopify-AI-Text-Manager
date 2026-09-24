@@ -16,6 +16,7 @@ import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
 import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, preserveUnsavedEdits } from "./useUiDataLoader";
+import type { PartialSave } from "./useUiDataLoader";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -593,6 +594,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const isSavePendingRef = useRef(false);
   // Ref to suppress the generic "Changes saved" toast when triggered by translate action
   const isSaveFromTranslateRef = useRef(false);
+  /** The fields a PARTIAL save carried (a single-field translate / Accept &
+   *  Translate). The response handling then treats only these as saved: the
+   *  overlay and the baseline must not absorb unsaved input in other fields. */
+  const partialSaveRef = useRef<PartialSave | null>(null);
   // Ref to track the fieldKey of a pending copy save so we can clear its loading state on response
   const pendingCopyFieldKeyRef = useRef<string | null>(null);
 
@@ -1859,11 +1864,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       debugLog.response(' Processing save response for locale:', savedLocale);
 
       // Delegate ref mutations to transition method
+      // A partial save overlays exactly what it SENT — from its own values,
+      // not the live view, which may meanwhile show another locale.
+      const partial = partialSaveRef.current;
       const result = dataLoader.onSaveComplete(
         savedLocale,
-        editableValues,
+        partial ? { ...editableValues, ...partial.values } : editableValues,
         effectiveFieldDefinitions,
-        fallbackFieldsRef.current
+        fallbackFieldsRef.current,
+        partial ? new Set(Object.keys(partial.values)) : null
       );
 
       // Image alt-text updates (not managed by dataLoader — separate concern)
@@ -1934,6 +1943,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       setIsSaving(false);
+      // Consumed by exactly one response, whatever happens below — a stale set
+      // would make the NEXT full save count as partial.
+      const partial = partialSaveRef.current;
+      partialSaveRef.current = null;
 
       // Guard: check if the item that was saved is still the currently-selected item.
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
@@ -1968,6 +1981,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           ) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
+          } else if (partial) {
+            // A partial save: only the fields it carried are now saved, and
+            // only if their locale is still the one on screen; the rest keep
+            // the baseline they are dirty against.
+            if (currentLanguageRef.current === partial.locale) {
+              baselineValuesRef.current = { ...baselineValuesRef.current, ...partial.values };
+              setBaselineVersion(v => v + 1);
+            }
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
@@ -2330,6 +2351,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
+      partialSaveRef.current = null;
       setIsSaving(false);
 
       // Clear a copy ("Übertragen") spinner on failure too — otherwise the field's
@@ -2358,6 +2380,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+      partialSaveRef.current = null;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
 
@@ -2553,6 +2576,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isSavePendingRef,
     isSavingCurrentItem,
     isSaveFromTranslateRef,
+    partialSaveRef,
+    currentLanguageRef,
     pendingCopyFieldKeyRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,

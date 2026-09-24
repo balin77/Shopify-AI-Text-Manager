@@ -65,6 +65,15 @@ export function buildDeletedKey(translationKey: string, marketId: string): strin
   return marketId ? `${translationKey}${LOCALE_MARKET_SEP}${marketId}` : translationKey;
 }
 
+/** A save that carried only SOME fields, in one locale (a single-field
+ *  translate, Accept & Translate). The response handling treats only these
+ *  values as saved: not the rest of the view, and not the view at all when the
+ *  merchant has switched to another locale meanwhile. */
+export interface PartialSave {
+  locale: string;
+  values: Record<string, string>;
+}
+
 export interface ResolvedField {
   value: string;
   source: ValueSource;
@@ -122,7 +131,8 @@ export interface UseUiDataLoaderReturn {
     translatedValue: string,
     targetLocale: string,
     currentEditableValues: Record<string, string>,
-    marketIdArg?: string
+    marketIdArg?: string,
+    viewing?: boolean
   ) => TransitionResult;
 
   /** After translateAll response (all fields → all locales) */
@@ -150,7 +160,8 @@ export interface UseUiDataLoaderReturn {
     /** Fields still inherited from global (current fallbackFields) — skipped when
      *  storing market overlays so a single-field market save doesn't drop the
      *  inherited styling on the rest. Ignored in the global context. */
-    inheritedFieldKeys?: Set<string>
+    inheritedFieldKeys?: Set<string>,
+    onlyKeys?: ReadonlySet<string> | null
   ) => TransitionResult;
 
   /** After translateFieldToAllLocales callback (Accept & Translate) */
@@ -627,7 +638,11 @@ export function useUiDataLoader(
       // pass "" for globally-saved flows (e.g. Accept & Translate → all locales)
       // and the selected market for market-scoped saves. Defaults to the current
       // market so market-aware callers can omit it.
-      marketIdArg?: string
+      marketIdArg?: string,
+      // `false` when the merchant has switched away from `targetLocale` while
+      // the AI worked: the translation is still staged for that locale, but
+      // nothing on screen or in the baseline belongs to it any more.
+      viewing: boolean = true
     ): TransitionResult => {
       debugLog.transition(
         `onTranslateFieldComplete: field=${fieldKey} locale=${targetLocale} value="${translatedValue.substring(0, 40)}..."`
@@ -654,15 +669,22 @@ export function useUiDataLoader(
       localTranslationsRef.current[translationKey][localeKey] =
         translatedValue;
 
+      if (!viewing) {
+        return { updatedValues: null, clearedFallbackKeys: [], shouldMarkLoading: false };
+      }
+
       // 3. Compute updated values
       const updatedValues = {
         ...currentEditableValues,
         [fieldKey]: translatedValue,
       };
 
-      // 4. Update baselines (unified + legacy)
-      originalLoadedValuesRef.current = { ...updatedValues };
-      baselineValuesRef.current = { ...updatedValues };
+      // 4. Update baselines (unified + legacy) for THIS field only. The save
+      // that follows writes this one field; taking every current value as the
+      // baseline marked the merchant's unsaved edits in OTHER fields clean, so
+      // they were never sent and vanished at the next reload or item switch.
+      originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, [fieldKey]: translatedValue };
+      baselineValuesRef.current = { ...baselineValuesRef.current, [fieldKey]: translatedValue };
       setBaselineVersion((v) => v + 1);
 
       // 5. Template change detection
@@ -832,7 +854,11 @@ export function useUiDataLoader(
       savedLocale: string,
       editableValues: Record<string, string>,
       fieldDefinitions: FieldDefinition[],
-      inheritedFieldKeys?: Set<string>
+      inheritedFieldKeys?: Set<string>,
+      /** The fields the save actually CARRIED, when it was a partial one (a
+       *  single-field translate). Absent = every field. Overlaying the others
+       *  would stage the merchant's unsaved input as if it had been saved. */
+      onlyKeys?: ReadonlySet<string> | null
     ): TransitionResult => {
       debugLog.transition(`onSaveComplete: locale=${savedLocale}`);
 
@@ -875,6 +901,7 @@ export function useUiDataLoader(
 
         for (const fieldDef of fieldDefinitions) {
           if (fieldDef.type === "image-gallery") continue;
+          if (onlyKeys && !onlyKeys.has(fieldDef.key)) continue;
           const value = editableValues[fieldDef.key];
 
           // In a market context, only fields the save actually wrote as market

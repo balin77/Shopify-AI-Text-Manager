@@ -173,6 +173,25 @@ describe('ProductSyncService', () => {
       });
     });
 
+    it('keeps the local rows of a locale whose GLOBAL read failed', async () => {
+      // One throttled read used to wipe that locale's whole mirror: its rows
+      // were deleted with the layer while none came back to recreate them.
+      const productId = 'gid://shopify/Product/123456789';
+      const inner = mockAdmin.graphql.getMockImplementation()!;
+      mockAdmin.graphql.mockImplementation(async (query: string, opts?: any) => {
+        if (query.includes('query getTranslations') && opts?.variables?.locale === 'fr' && !opts?.variables?.marketId) {
+          return { json: async () => ({ errors: [{ message: 'Throttled' }] }) } as any;
+        }
+        return inner(query, opts);
+      });
+
+      await service.syncProduct(productId);
+
+      const deletes = mockDb.contentTranslation.deleteMany.mock.calls.map((call: any[]) => call[0].where);
+      const rewrite = deletes.find((where: any) => where.resourceType === 'Product' && where.marketId);
+      expect(rewrite).toMatchObject({ NOT: { marketId: '', locale: { in: ['fr'] } } });
+    });
+
     it('sollte Image Alt-Text Übersetzungen speichern', async () => {
       const productId = 'gid://shopify/Product/123456789';
 

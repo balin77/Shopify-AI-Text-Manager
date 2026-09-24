@@ -886,6 +886,10 @@ export default function ProductsPage() {
           resourceId: selectedProductId,
           resourceType: "product",
           locale: primaryLocale,
+          // Not a reload the merchant pressed: the save lock must hold, or a
+          // translation written in the seconds before this lands is dropped by
+          // its delete-and-recreate of the translation rows.
+          trigger: "auto",
         },
         { method: "POST", action: "/api/sync-single-resource" }
       );
