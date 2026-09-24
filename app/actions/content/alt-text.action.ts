@@ -111,19 +111,20 @@ export async function saveImageAltTextPrimary(opts: {
 }): Promise<{ saved: boolean; userErrors: string[]; apiError?: string; retranslationTaskId?: string }> {
   const { admin, db, shop, mediaId, altText } = opts;
   // The alt as it stood BEFORE this write — read first, because the cache write
-  // below replaces it. An unchanged alt is no change event: pressing save on
-  // the same text must neither re-translate nor delete anything.
-  const before = await db.productImage
-    .findFirst({
-      where: { mediaId, product: { shop } },
-      select: { id: true, productId: true, altText: true, product: { select: { title: true } } },
-    })
-    .catch(() => null);
+  // below replaces it (product-alt-repair.server.ts).
+  const { snapshotProductAlts, repairAltsAfterWrite } = await import(
+    "../../services/translations/product-alt-repair.server"
+  );
+  const snapshot = await snapshotProductAlts(db, shop, [mediaId]);
+  let stored = altText;
   try {
     const r = await admin.graphql(
       `#graphql
         mutation fileUpdate($files: [FileUpdateInput!]!) {
-          fileUpdate(files: $files) { userErrors { field message } }
+          fileUpdate(files: $files) {
+            files { id alt }
+            userErrors { field message }
+          }
         }`,
       { variables: { files: [{ id: mediaId, alt: altText }] } }
     );
@@ -132,6 +133,11 @@ export async function saveImageAltTextPrimary(opts: {
     if (userErrors.length > 0) {
       return { saved: false, userErrors: userErrors.map((e) => e.message) };
     }
+    // What Shopify STORED, where it says: the repair checks its read-back
+    // against this, and a normalised value compared with the raw input would
+    // read as a mismatch and decline the whole repair.
+    const echoed = (d.data?.fileUpdate?.files ?? []).find((f: { id?: string }) => f?.id === mediaId)?.alt;
+    if (typeof echoed === "string") stored = echoed;
   } catch (err: unknown) {
     logger.error("[saveImageAltText] fileUpdate error", { error: String(err) });
     return { saved: false, userErrors: [], apiError: String(err) };
@@ -139,7 +145,7 @@ export async function saveImageAltTextPrimary(opts: {
 
   await db.productImage.updateMany({
     where: { mediaId, product: { shop } },
-    data: { altText: altText || null, altTextModifiedAt: new Date() },
+    data: { altText: stored || null, altTextModifiedAt: new Date() },
   }).catch((e) => {
     logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
   });
@@ -149,41 +155,13 @@ export async function saveImageAltTextPrimary(opts: {
   // path used to do neither — the product editor's save did, this one (the
   // image manager's per-image save, and the SEO performance page's generator)
   // did not, so an alt edited here was never translated anywhere.
-  let retranslationTaskId: string | undefined;
-  if (before && (before.altText ?? "").trim() !== altText.trim()) {
-    try {
-      const [{ loadTranslationChangePolicy }, { fetchShopLocales }, { repairChangedProductAlts }, { translationForeignLocales }] =
-        await Promise.all([
-          import("../../services/translations/translation-change-policy.server"),
-          import("../../services/sync-utils"),
-          import("../../services/translations/product-alt-repair.server"),
-          import("../../services/translations/stale-translations.shared"),
-        ]);
-      const policy = await loadTranslationChangePolicy(shop, db);
-      if (policy.autoTranslateExternalChanges || policy.purgeUnreconciledSurfaces) {
-        const gateway = new ShopifyApiGateway(admin as never, shop);
-        const locales = await fetchShopLocales(gateway.graphql.bind(gateway));
-        const outcome = await repairChangedProductAlts({
-          gateway,
-          db,
-          shop,
-          productId: before.productId,
-          productTitle: before.product?.title ?? before.productId,
-          changes: [{ imageId: before.id, mediaId, alt: altText }],
-          policy,
-          foreignLocales: translationForeignLocales(locales),
-          primaryLocale: locales.find((l) => l.primary)?.locale ?? "",
-        });
-        retranslationTaskId = outcome.taskId;
-      }
-    } catch (repairError: unknown) {
-      // Non-fatal: the primary alt is saved.
-      logger.warn("[saveImageAltText] alt translation repair skipped", {
-        mediaId,
-        error: repairError instanceof Error ? repairError.message : String(repairError),
-      });
-    }
-  }
+  const [retranslationTaskId] = await repairAltsAfterWrite({
+    gateway: new ShopifyApiGateway(admin as never, shop),
+    db,
+    shop,
+    snapshot,
+    written: [{ mediaId, alt: stored }],
+  });
 
   return { saved: true, userErrors: [], ...(retranslationTaskId ? { retranslationTaskId } : {}) };
 }
@@ -819,12 +797,31 @@ export async function handleGenerateAltTextFromSku(
     return json({ success: false, error: "No variants with SKU found for these images" }, { status: 404 });
   }
 
+  // The alts BEFORE the write, for the translation repair below.
+  const { snapshotProductAlts, repairAltsAfterWrite } = await import(
+    "../../services/translations/product-alt-repair.server"
+  );
+  const snapshot = await snapshotProductAlts(ctx.db, ctx.session.shop, results.map((r) => r.mediaId));
+
   // 2. Alt-Text zu Shopify synchronisieren
-  await ctx.admin.graphql(`
+  const updateResponse = await ctx.admin.graphql(`#graphql
     mutation fileUpdate($files: [FileUpdateInput!]!) {
       fileUpdate(files: $files) { userErrors { field message } }
     }
   `, { variables: { files: results.map(r => ({ id: r.mediaId, alt: r.altText })) } });
+  const updateData = (await updateResponse.json()) as {
+    data?: { fileUpdate?: { userErrors?: Array<{ message: string }> } };
+    errors?: Array<{ message: string }>;
+  };
+  const updateErrors = [
+    ...(updateData.errors ?? []),
+    ...(updateData.data?.fileUpdate?.userErrors ?? []),
+  ];
+  if (updateErrors.length > 0) {
+    // `fileUpdate` applies the batch as a unit; nothing was written, so the
+    // cache is left alone and nothing is repaired.
+    return json({ success: false, error: updateErrors.map((e) => e.message).join("; ") }, { status: 502 });
+  }
 
   // 3. DB updaten
   // R4-DI7: scope by the owning product's shop. Shopify media GIDs are only
@@ -835,7 +832,21 @@ export async function handleGenerateAltTextFromSku(
     ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId, product: { shop: ctx.session.shop } }, data: { altText: r.altText } })
   ));
 
-  return json({ success: true, updated: results.length });
+  // The foreign alts of what changed — one run per product
+  // (product-alt-repair.server.ts); never fails the write.
+  const retranslationTaskIds = await repairAltsAfterWrite({
+    gateway: new ShopifyApiGateway(ctx.admin as never, ctx.session.shop),
+    db: ctx.db,
+    shop: ctx.session.shop,
+    snapshot,
+    written: results.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
+  });
+
+  return json({
+    success: true,
+    updated: results.length,
+    ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+  });
 }
 
 // ============================================================================

@@ -13,19 +13,10 @@ vi.mock("~/utils/logger.server", () => ({
   loggers: new Proxy({}, { get: () => vi.fn() }),
 }));
 
-const policy = { autoTranslateExternalChanges: true, purgeUnreconciledSurfaces: false, purgeOnPrimaryChange: false };
-vi.mock("~/services/translations/translation-change-policy.server", () => ({
-  loadTranslationChangePolicy: vi.fn(async () => policy),
-}));
-vi.mock("~/services/sync-utils", () => ({
-  fetchShopLocales: vi.fn(async () => [
-    { locale: "de", primary: true, published: true },
-    { locale: "en", primary: false, published: true },
-    { locale: "fr", primary: false, published: false },
-  ]),
-}));
-const repair = vi.fn(async (_params: Record<string, unknown>) => ({ taskId: "task-1" }));
-vi.mock("~/services/translations/product-alt-repair.server", () => ({ repairChangedProductAlts: repair }));
+const snapshot = new Map([["gid://shopify/MediaImage/9", { imageId: "img-row", productId: "p", altText: null, productTitle: "Box" }]]);
+const snapshotProductAlts = vi.fn(async (_db: unknown, _shop: string, _ids: string[]) => snapshot);
+const repairAltsAfterWrite = vi.fn(async (_params: Record<string, unknown>) => ["task-1"]);
+vi.mock("~/services/translations/product-alt-repair.server", () => ({ snapshotProductAlts, repairAltsAfterWrite }));
 vi.mock("~/services/shopify-api-gateway.service", () => ({
   ShopifyApiGateway: class {
     graphql = vi.fn();
@@ -36,62 +27,51 @@ const { saveImageAltTextPrimary } = await import("~/actions/content/alt-text.act
 
 const MEDIA = "gid://shopify/MediaImage/9";
 
-function setup(previousAlt: string | null) {
+function setup(echoedAlt?: string) {
   const admin = {
     graphql: vi.fn(async () => ({
-      json: async () => ({ data: { fileUpdate: { userErrors: [] as Array<{ message: string }> } } }),
+      json: async () => ({
+        data: {
+          fileUpdate: {
+            files: echoedAlt === undefined ? [] : [{ id: MEDIA, alt: echoedAlt }],
+            userErrors: [] as Array<{ message: string }>,
+          },
+        },
+      }),
     })),
   };
-  const db = {
-    productImage: {
-      findFirst: vi.fn(async () => ({
-        id: "img-row",
-        productId: "gid://shopify/Product/1",
-        altText: previousAlt,
-        product: { title: "Box" },
-      })),
-      updateMany: vi.fn(async () => ({ count: 1 })),
-    },
-  };
+  const db = { productImage: { updateMany: vi.fn(async () => ({ count: 1 })) } };
   return { admin, db };
 }
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("saveImageAltTextPrimary — the image manager's alt save repairs translations", () => {
-  it("hands a CHANGED alt to the repair — every foreign locale, unpublished included", async () => {
-    const { admin, db } = setup(null);
+  it("snapshots BEFORE the write and hands what Shopify stored to the repair", async () => {
+    const { admin, db } = setup("Neue Box");
     const result = await saveImageAltTextPrimary({
       admin: admin as never,
       db: db as never,
       shop: "s.myshopify.com",
       mediaId: MEDIA,
-      altText: "Neue Box",
+      altText: "Neue Box ",
     });
 
     expect(result).toMatchObject({ saved: true, retranslationTaskId: "task-1" });
-    expect(repair).toHaveBeenCalledTimes(1);
-    expect(repair.mock.calls[0][0]).toMatchObject({
-      productId: "gid://shopify/Product/1",
-      changes: [{ imageId: "img-row", mediaId: MEDIA, alt: "Neue Box" }],
-      foreignLocales: ["en", "fr"],
-      primaryLocale: "de",
+    expect(snapshotProductAlts.mock.invocationCallOrder[0]).toBeLessThan(admin.graphql.mock.invocationCallOrder[0]);
+    expect(repairAltsAfterWrite.mock.calls[0][0]).toMatchObject({
+      snapshot,
+      written: [{ mediaId: MEDIA, alt: "Neue Box" }],
     });
-  });
-
-  it("an UNCHANGED alt is no change event — nothing re-translated, nothing deleted", async () => {
-    const { admin, db } = setup("Neue Box");
-    await saveImageAltTextPrimary({ admin: admin as never, db: db as never, shop: "s", mediaId: MEDIA, altText: "Neue Box " });
-    expect(repair).not.toHaveBeenCalled();
   });
 
   it("a failed primary write repairs nothing", async () => {
-    const { admin, db } = setup("alt");
+    const { admin, db } = setup();
     admin.graphql.mockResolvedValueOnce({
-      json: async () => ({ data: { fileUpdate: { userErrors: [{ message: "bad" }] } } }),
+      json: async () => ({ data: { fileUpdate: { files: [], userErrors: [{ message: "bad" }] } } }),
     });
     const result = await saveImageAltTextPrimary({ admin: admin as never, db: db as never, shop: "s", mediaId: MEDIA, altText: "x" });
     expect(result.saved).toBe(false);
-    expect(repair).not.toHaveBeenCalled();
+    expect(repairAltsAfterWrite).not.toHaveBeenCalled();
   });
 });

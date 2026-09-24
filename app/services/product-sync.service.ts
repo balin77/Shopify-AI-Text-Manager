@@ -25,7 +25,7 @@ import {
   type ShopifyProductAttributes,
   type ShopifyProductCollections,
 } from './attribute-sync.shared';
-import { subResourceLockId, altTextLockId, marketLayerLockId } from "./translations/translation-locks.shared";
+import { subResourceLockId, altTextLockId, altTextSyncShieldId, marketLayerLockId } from "./translations/translation-locks.shared";
 import { translationForeignLocales } from "./translations/stale-translations.shared";
 
 /** GraphQL error shape */
@@ -1970,7 +1970,8 @@ export class ProductSyncService {
           // with), while the rewrite below deletes every fetched layer and has
           // to. See translation-locks.shared.ts.
           isTranslationRecentlySaved(marketLayerLockId(subResourceLockId(productData.id))) ||
-          isTranslationRecentlySaved(altTextLockId(productData.id)));
+          isTranslationRecentlySaved(altTextLockId(productData.id)) ||
+          isTranslationRecentlySaved(altTextSyncShieldId(productData.id)));
 
       if (skipTranslationSync) {
         logger.info(`[ProductSync] Skipping translation sync - recently saved by user`, { productId: productData.id });

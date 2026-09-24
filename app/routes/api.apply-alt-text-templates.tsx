@@ -6,6 +6,7 @@ import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 
 // Resolve a fresh image URL from Shopify for stub-row creation. Returns the gid
 // itself as a last-resort placeholder so we never lose a translation due to a
@@ -271,6 +272,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // with the primary-locale fallback while others showed the translation.
   const translationCache = createTranslationCache();
 
+  // PRIMARY applies overwrite alts, so their foreign translations need the
+  // same repair every primary alt write gets (product-alt-repair.server.ts):
+  // the alts BEFORE the loop, and what was written, last write per image wins.
+  const { snapshotProductAlts, repairAltsAfterWrite } = await import(
+    "../services/translations/product-alt-repair.server"
+  );
+  const altSnapshot = isPrimary
+    ? await snapshotProductAlts(
+        db,
+        session.shop,
+        [...new Set(variants.flatMap((v) => [v.mainImageGid, ...v.galleryFileGids].filter((g): g is string => !!g)))],
+      )
+    : new Map();
+  const primaryWritten = new Map<string, string>();
+
   try {
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
@@ -318,6 +334,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const errs = d.data?.fileUpdate?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
+            primaryWritten.set(gid, altText);
             try {
               await persistAltText(productId, gid, session.shop, locale, true, altText, admin);
             } catch (dbErr: unknown) {
@@ -405,6 +422,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  // One repair per product for the alts this apply changed; never fails it.
+  const retranslationTaskIds =
+    primaryWritten.size > 0
+      ? await repairAltsAfterWrite({
+          gateway: new ShopifyApiGateway(admin as never, session.shop),
+          db,
+          shop: session.shop,
+          snapshot: altSnapshot,
+          written: [...primaryWritten].map(([mediaId, alt]) => ({ mediaId, alt })),
+        })
+      : [];
+
   // Finalize the running task with the real outcome. status: "failed" when
   // nothing was applied, "completed" otherwise — the navigation logic
   // differentiates partial vs. full success via processed/total.
@@ -434,6 +463,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     success: errors.length === 0,
     applied,
     attempted,
+    ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
     errors: errors.length > 0 ? errors : undefined,
     error: errorSummary,
   });

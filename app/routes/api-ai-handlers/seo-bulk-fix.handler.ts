@@ -1204,6 +1204,13 @@ async function persistImageAltText(params: PersistImageAltTextArgs): Promise<voi
     }
     if (!mediaId) throw new Error("No Shopify MediaImage found for this product image");
 
+    // The alt BEFORE the write, for the translation repair below
+    // (product-alt-repair.server.ts) — every primary alt write gets it.
+    const { snapshotProductAlts, repairAltsAfterWrite } = await import(
+      "~/services/translations/product-alt-repair.server"
+    );
+    const altSnapshot = await snapshotProductAlts(db, shop, [mediaId]);
+
     const response = await gateway.graphql(
       `#graphql
         mutation seoAltFixProductUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
@@ -1236,6 +1243,15 @@ async function persistImageAltText(params: PersistImageAltTextArgs): Promise<voi
         data: { featuredImageAlt: altText, lastSyncedAt: new Date() },
       });
     }
+    // Shopify's echo where it gave one (one medium in, one out).
+    const echoedAlt = data.data?.productUpdateMedia?.media?.[0]?.alt;
+    await repairAltsAfterWrite({
+      gateway,
+      db,
+      shop,
+      snapshot: altSnapshot,
+      written: [{ mediaId, alt: typeof echoedAlt === "string" ? echoedAlt : altText }],
+    });
     return;
   }
 

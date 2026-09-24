@@ -64,14 +64,25 @@ export function SettingsShopLanguagesTab({ shopLocales, fetcher, t, onHasChanges
   useEffect(() => () => onHasChangesChange?.(false), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A partial failure answers `success: false` with no `error` (the page's
-  // generic info box would print raw codes) — the tab lists the failures and
-  // reloads, so what DID go through shows as stored.
-  const response = fetcher.data?.actionType === ACTION ? fetcher.data : null;
+  // generic info box would print raw codes) — the tab lists the failures,
+  // puts the refused switches BACK (a refusal must not leave a draft that
+  // looks saved) and reloads when anything did go through. Only a response to
+  // a save made in THIS mount counts: the shared fetcher keeps its data across
+  // tab switches, and an old failure must not reappear on the next visit.
+  const [submittedHere, setSubmittedHere] = useState(false);
+  const response = submittedHere && fetcher.data?.actionType === ACTION ? fetcher.data : null;
   const failed: Array<{ locale: string; error: string }> = response && !response.success ? response.failed ?? [] : [];
   useEffect(() => {
-    if (fetcher.state === "idle" && response && !response.success && (response.confirmed?.length ?? 0) > 0) {
-      revalidator.revalidate();
+    if (fetcher.state !== "idle" || !response || response.success) return;
+    const refused = new Set(failed.map((f) => f.locale));
+    if (refused.size > 0) {
+      setDraft((prev) => {
+        const next = { ...prev };
+        for (const locale of refused) if (locale in stored) next[locale] = stored[locale];
+        return next;
+      });
     }
+    if ((response.confirmed?.length ?? 0) > 0) revalidator.revalidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.state, response]);
 
@@ -92,6 +103,7 @@ export function SettingsShopLanguagesTab({ shopLocales, fetcher, t, onHasChanges
     const form = new FormData();
     form.append("actionType", ACTION);
     form.append("changes", JSON.stringify(changes));
+    setSubmittedHere(true);
     fetcher.submit(form, { method: "post" });
   };
 

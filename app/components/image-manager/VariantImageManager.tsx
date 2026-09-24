@@ -307,6 +307,12 @@ export function VariantImageManager({
     if (saveAltTextFetcher.state !== "idle" || !saveAltTextFetcher.data) return;
     onSaveResponse?.(saveAltTextFetcher.data);
   }, [saveAltTextFetcher.state, saveAltTextFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  // …and the SKU-generated alts, which ride the general fetcher. A response
+  // without task ids is ignored by the watcher, so forwarding every one is safe.
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    onSaveResponse?.(fetcher.data);
+  }, [fetcher.state, fetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const translationsFetcher = useFetcher<any>();     // load foreign locale alt texts from DB
   const prevAltFetcherData = useRef<any>(null);
   const productGalleryBlurSkipRef = useRef(false);
