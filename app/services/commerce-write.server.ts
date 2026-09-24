@@ -1337,7 +1337,7 @@ export async function applyVariantPrices(
   /**
    * THE money parser — the bulk grid's, not this module's `parseDecimal`.
    *
-   * `parseDecimal` folds one comma and accepts anything matching `\d+(\.\d+)?`,
+   * `parseDecimal` folds one comma and accepts any plain decimal,
    * which reads a German merchant's "1.299" as ONE EURO THIRTY. `parseMoney`
    * knows that "1.299" is genuinely ambiguous — 1299 to a German, 1.299 to an
    * American — and refuses it with a message telling the merchant how to write
