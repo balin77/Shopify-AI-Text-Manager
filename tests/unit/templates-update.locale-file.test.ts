@@ -35,7 +35,12 @@ function file(filename: string, title: string) {
 
 let upserts: Array<{ filename: string; value: string }> = [];
 
-function makeCtx(files: ReturnType<typeof file>[]) {
+type FileNode = { filename: string; body: { content: string } };
+
+function makeCtx(
+  files: FileNode[],
+  edits: Record<string, { old: string; next: string }> = { [KEY]: { old: "Seite nicht gefunden", next: "Diese Seite gibt es nicht" } },
+) {
   const admin = {
     graphql: vi.fn(async (query: string, opts?: { variables?: any }) => {
       if (query.includes("themeFilesUpsert")) {
@@ -65,12 +70,12 @@ function makeCtx(files: ReturnType<typeof file>[]) {
   const formData = new FormData();
   formData.set("locale", "de");
   formData.set("primaryLocale", "de");
-  formData.set(KEY, "Diese Seite gibt es nicht");
-  formData.set("changedFields", JSON.stringify([KEY]));
+  for (const [key, edit] of Object.entries(edits)) formData.set(key, edit.next);
+  formData.set("changedFields", JSON.stringify(Object.keys(edits)));
   const group = {
     groupId: "g",
     resourceId: "gid://shopify/OnlineStoreThemeLocaleContent/1",
-    translatableContent: [{ key: KEY, value: "Seite nicht gefunden", digest: "d" }],
+    translatableContent: Object.entries(edits).map(([key, edit]) => ({ key, value: edit.old, digest: "d" })),
   };
   return {
     admin,
@@ -82,8 +87,8 @@ function makeCtx(files: ReturnType<typeof file>[]) {
     themeGroups: [group],
     firstGroup: group,
     resourceId: group.resourceId,
-    keyToResourceId: new Map([[KEY, group.resourceId]]),
-    keyToResourceType: new Map([[KEY, "ONLINE_STORE_THEME_LOCALE_CONTENT"]]),
+    keyToResourceId: new Map(Object.keys(edits).map((key) => [key, group.resourceId])),
+    keyToResourceType: new Map(Object.keys(edits).map((key) => [key, "ONLINE_STORE_THEME_LOCALE_CONTENT"])),
     selectedThemeId: "gid://shopify/OnlineStoreTheme/1",
   } as never;
 }
@@ -118,5 +123,33 @@ describe("primary locale-content save — which locale file", () => {
       makeCtx([file("locales/en.default.json", "Seite nicht gefunden")]),
     );
     expect(upserts.map((u) => u.filename)).toEqual(["locales/en.default.json"]);
+  });
+
+  it("writes each key to the file that holds it — a PARTIAL de.json splits one save", async () => {
+    const files = [
+      { filename: "locales/en.default.json", body: { content: JSON.stringify({ a: { title: "Titel A" }, b: { title: "Titel B" } }) } },
+      { filename: "locales/de.json", body: { content: JSON.stringify({ a: { title: "Titel A" } }) } },
+    ];
+    await handleUpdateContent(
+      makeCtx(files, { "a.title": { old: "Titel A", next: "Neu A" }, "b.title": { old: "Titel B", next: "Neu B" } }),
+    );
+    const byFile = Object.fromEntries(upserts.map((u) => [u.filename, JSON.parse(u.value)]));
+    expect(Object.keys(byFile).sort()).toEqual(["locales/de.json", "locales/en.default.json"]);
+    expect(byFile["locales/de.json"].a.title).toBe("Neu A");
+    expect(byFile["locales/en.default.json"].b.title).toBe("Neu B");
+    // The default file's copy of A is not the one the storefront serves.
+    expect(byFile["locales/en.default.json"].a.title).toBe("Titel A");
+  });
+
+  it("never rewrites ANOTHER key that happens to hold the same words", async () => {
+    // K is not in de.json (the storefront falls back to the default file for
+    // it); J in de.json holds the same text. A value search would take J.
+    const files = [
+      { filename: "locales/en.default.json", body: { content: JSON.stringify({ k: { label: "Suchen" } }) } },
+      { filename: "locales/de.json", body: { content: JSON.stringify({ j: { label: "Suchen" } }) } },
+    ];
+    await handleUpdateContent(makeCtx(files, { "k.label": { old: "Suchen", next: "Finden" } }));
+    expect(upserts.map((u) => u.filename)).toEqual(["locales/en.default.json"]);
+    expect(JSON.parse(upserts[0].value).k.label).toBe("Finden");
   });
 });

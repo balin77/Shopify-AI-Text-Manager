@@ -1205,6 +1205,27 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual(["de:title", "fr:title"]);
   });
 
+  it("does NOT re-read a resource whose read FAILED — only one that answered and disagrees", async () => {
+    // A failed read is absent from the map; re-asking it put every gateway
+    // retry inline in the save, for an outcome that stays "skipped".
+    setReadBackRetryDelaysForTests([0, 0, 0]);
+    const client = saveClient();
+    const inner = client.graphql;
+    let reads = 0;
+    client.graphql = vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => {
+      if (query.includes("stalePrimaryContent")) {
+        reads++;
+        return { ok: true, json: async () => ({ data: { translatableResourcesByIds: { edges: [] } } }) };
+      }
+      return inner(query, opts);
+    }) as never;
+
+    await reconcileAfterPrimarySave(
+      saveParams({ client: client as never, changed: [{ key: "title", expectedValue: "About us" }] }),
+    );
+    expect(reads).toBe(1);
+  });
+
   it("does not count surrounding whitespace as a lagging read-back", async () => {
     setReadBackRetryDelaysForTests([0, 0, 0]);
     const result = await reconcileAfterPrimarySave(

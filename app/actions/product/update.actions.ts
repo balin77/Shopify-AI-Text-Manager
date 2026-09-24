@@ -65,6 +65,10 @@ interface UpdateProductParams {
    *  (see `diffCollectionMembership`). */
   collections?: string;
   imageAltTexts?: Record<number, string>;
+  /** Filled by the primary alt write: the alt Shopify ECHOED per index. The
+   *  repair checks its read-back against what Shopify STORED, never against
+   *  what was submitted (the rule the handle redirect follows too). */
+  confirmedAltTexts?: Record<number, string>;
   productId: string;
   /** Market scope ("" = global). Only applies to foreign-locale text saves. */
   marketId?: string;
@@ -358,6 +362,9 @@ async function updateImageAltTexts(
         const updateMediaData = await updateMediaResponse.json() as any;
         const mediaUserErrors = updateMediaData.data?.productUpdateMedia?.mediaUserErrors || [];
         const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
+        if (typeof returnedAlt === "string") {
+          params.confirmedAltTexts = { ...(params.confirmedAltTexts ?? {}), [index]: returnedAlt };
+        }
         logger.debug(`[ProductUpdate] [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
 
         if (mediaUserErrors.length > 0) {
@@ -1770,7 +1777,7 @@ async function updatePrimaryProduct(
           if (!image) continue;
           if (image.mediaId) {
             imageIdByMedia.set(image.mediaId, image.id);
-            const written = params.imageAltTexts?.[index];
+            const written = params.confirmedAltTexts?.[index] ?? params.imageAltTexts?.[index];
             if (typeof written === "string") altByMedia.set(image.mediaId, written);
           } else unaddressableImageIds.push(image.id);
         }

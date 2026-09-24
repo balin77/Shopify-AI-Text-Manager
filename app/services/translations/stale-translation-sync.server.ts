@@ -1808,6 +1808,25 @@ async function foreignTranslationTriples(
   return triples;
 }
 
+/** Pauses before re-reading a primary value that does not yet show what the
+ *  caller wrote (see `reconcileAfterPrimarySave`) — about four seconds in all. */
+let READ_BACK_RETRY_DELAYS_MS: readonly number[] = [800, 1500, 2000];
+
+/** Test seam: the pauses above, so a test of the lag case does not sleep. */
+export function setReadBackRetryDelaysForTests(delays: readonly number[]): void {
+  READ_BACK_RETRY_DELAYS_MS = delays;
+}
+
+/** Does the read-back show what the caller wrote? Surrounding whitespace is
+ *  not a difference: a write path may trim (the menu save does), and reading a
+ *  trimmed echo as "not caught up yet" would decline a translation that is
+ *  exactly right. */
+function sameWrittenValue(readBack: string, written: string): boolean {
+  return readBack.trim() === written.trim();
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /**
  * The CURRENT primary value and digest of every (resource, key) the caller
  * changed, read back from Shopify after the write.
@@ -1829,25 +1848,6 @@ async function foreignTranslationTriples(
  * A resource that IS in the result but has no entry for a key is the real
  * cleared field: Shopify omits a key with no value at all.
  */
-/** Pauses before re-reading a primary value that does not yet show what the
- *  caller wrote (see `reconcileAfterPrimarySave`) — about four seconds in all. */
-let READ_BACK_RETRY_DELAYS_MS: readonly number[] = [800, 1500, 2000];
-
-/** Test seam: the pauses above, so a test of the lag case does not sleep. */
-export function setReadBackRetryDelaysForTests(delays: readonly number[]): void {
-  READ_BACK_RETRY_DELAYS_MS = delays;
-}
-
-/** Does the read-back show what the caller wrote? Surrounding whitespace is
- *  not a difference: a write path may trim (the menu save does), and reading a
- *  trimmed echo as "not caught up yet" would decline a translation that is
- *  exactly right. */
-function sameWrittenValue(readBack: string, written: string): boolean {
-  return readBack.trim() === written.trim();
-}
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 async function currentPrimaryContent(
   gateway: ShopifyApiGateway,
   resourceIds: readonly string[],
@@ -2039,7 +2039,11 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // because this sits behind a primary write that has already succeeded.
     if (expected.size > 0) {
       for (const delay of READ_BACK_RETRY_DELAYS_MS) {
-        const lagging = resourceIds.filter((id) =>
+        // Only a resource that WAS read and disagrees. One whose read failed
+        // outright is absent from the map — re-asking it would put every
+        // gateway retry (seconds each under throttling) inline in the save,
+        // for an outcome that stays "skipped" either way.
+        const lagging = resourceIds.filter((id) => primaryByResource.has(id) &&
           [...(wantedKeys.get(id) ?? [])].some((key) => {
             const want = expected.get(`${id}${PAIR_SEP}${key}`);
             return want !== undefined && !sameWrittenValue(primaryByResource.get(id)?.[key]?.value ?? "", want);

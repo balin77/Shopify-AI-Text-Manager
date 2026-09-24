@@ -630,6 +630,82 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         const fileShopifyErrors: string[] = [];
         const leadingCommentRegex = /^\s*\/\*[\s\S]*?\*\/\s*/;
 
+        // A locale-content key IS a JSON path: `templates.404.title` is
+        // `templates["404"].title` in the locale file. Asking by path is exact,
+        // where the value search beside it matches the old text ANYWHERE and
+        // can rewrite a different key that happens to hold the same words
+        // ("Suchen", "Schliessen", an untranslated copy).
+        const pathOf = (key: string) => key.split(".");
+        const getByPath = (obj: unknown, key: string): unknown => {
+          let cursor: unknown = obj;
+          for (const part of pathOf(key)) {
+            if (!cursor || typeof cursor !== "object") return undefined;
+            cursor = (cursor as Record<string, unknown>)[part];
+          }
+          return cursor;
+        };
+        const replaceByPath = (
+          obj: unknown,
+          replacements: Map<string, { oldValue: string; newValue: string; keyHint: string }>,
+        ): Set<string> => {
+          const done = new Set<string>();
+          for (const [key, { oldValue, newValue }] of replacements) {
+            if (getByPath(obj, key) !== oldValue) continue;
+            const parts = pathOf(key);
+            const parent = getByPath(obj, parts.slice(0, -1).join(".")) as Record<string, unknown>;
+            parent[parts[parts.length - 1]] = newValue;
+            done.add(key);
+          }
+          return done;
+        };
+        // Per KEY, which locale file holds its old primary value at its own
+        // path — the exact constructed name, the primary language's own file,
+        // then the theme's default file, first match wins. A partial de.json
+        // serves some keys itself and leaves the rest to the default file, so
+        // one file per SAVE would miss every key of the other.
+        const assignLocaleKeysByPath = (
+          filename: string,
+          keys: string[],
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ): { groups: Map<string, { node: any; keys: string[] }>; unresolved: string[] } => {
+          const lower = (value: unknown) => (typeof value === "string" ? value.toLowerCase() : "");
+          const own = `locales/${primaryLocale.toLowerCase()}.json`;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const candidates: any[] = [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => lower(n.filename) === filename.toLowerCase()),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => lower(n.filename) === own),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => typeof n.filename === "string" && isLocaleDefaultFile(n.filename)),
+          ].filter((node, index, all) => node && all.indexOf(node) === index);
+          const parsed = candidates.map((node) => {
+            const raw = node?.body?.content ?? node?.body;
+            if (typeof raw !== "string") return undefined;
+            try {
+              return JSON.parse(raw.replace(leadingCommentRegex, ""));
+            } catch {
+              return undefined;
+            }
+          });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const groups = new Map<string, { node: any; keys: string[] }>();
+          const unresolved: string[] = [];
+          for (const key of keys) {
+            const oldValue = oldValueMap.get(key) ?? "";
+            const at = parsed.findIndex((json) => json !== undefined && getByPath(json, key) === oldValue);
+            if (at < 0) {
+              unresolved.push(key);
+              continue;
+            }
+            const node = candidates[at];
+            const group = groups.get(node.filename) ?? { node, keys: [] };
+            group.keys.push(key);
+            groups.set(node.filename, group);
+          }
+          return { groups, unresolved };
+        };
+
         // Which locale file holds the primary values of `keys`: the exact
         // constructed name first, then the primary language's own file, then
         // the theme's default file — and among those the first that contains
@@ -690,6 +766,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           filename: string,
           keys: string[],
           normalizeSettings: boolean,
+          // A locale-file group already resolved PER KEY by JSON path (see
+          // `assignLocaleKeysByPath`): the node to write, and replace by path.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // `searchKeys`: keys of the SAME file that no path matched — searched
+          // by value in this one build, because two upsert entries for one
+          // file would each start from the original and the second would
+          // throw the first one's change away.
+          resolved?: { node: any; searchKeys?: Set<string> },
         ): {
           entry?: { filename: string; body: { type: string; value: string } };
           replacedKeys: string[];
@@ -708,7 +792,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           // file — so the candidates are tried in that order and the one that
           // actually holds the old values wins (see the filename list above).
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const fileNode = isLocaleDefaultFile(filename)
+          const fileNode = resolved
+            ? resolved.node
+            : isLocaleDefaultFile(filename)
             ? pickLocaleFileNode(filename, keys)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             : fileNodes.find((n: any) => n.filename === filename);
@@ -752,7 +838,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             replacements.set(key, { oldValue, newValue, keyHint });
           }
 
-          const replacedKeys = replaceValuesInJson(fileJson, replacements);
+          let replacedKeys: Set<string>;
+          if (resolved) {
+            const byPath = new Map([...replacements].filter(([k]) => !resolved.searchKeys?.has(k)));
+            const bySearch = new Map([...replacements].filter(([k]) => resolved.searchKeys?.has(k)));
+            replacedKeys = new Set([...replaceByPath(fileJson, byPath), ...replaceValuesInJson(fileJson, bySearch)]);
+          } else {
+            replacedKeys = replaceValuesInJson(fileJson, replacements);
+          }
           const missedKeys = keys.filter((k) => !replacedKeys.has(k));
 
           // Record the value that actually went into the file (post-normalization)
@@ -808,8 +901,38 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         // "autofix"/"error" push the merchant's HTML verbatim and only react on error.
         const filesToUpsert: Array<{ filename: string; body: { type: string; value: string } }> = [];
         const stagedKeys: string[] = [];
+        // Locale-file keys are resolved per key by path first; only what no
+        // file holds at its path falls back to the value search (a key whose
+        // path in the file differs from its translation key).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const passes: Array<{ filename: string; keys: string[]; resolved?: { node: any; searchKeys?: Set<string> } }> = [];
         for (const [filename, keys] of keysByFilename) {
-          const result = buildFileEntry(filename, keys, richtextMode === "normalize");
+          if (!isLocaleDefaultFile(filename)) {
+            passes.push({ filename, keys });
+            continue;
+          }
+          const { groups, unresolved } = assignLocaleKeysByPath(filename, keys);
+          const searchKeysByFile = new Map<string, Set<string>>();
+          if (unresolved.length > 0) {
+            const fallback = pickLocaleFileNode(filename, unresolved);
+            const shared = fallback && groups.get(fallback.filename);
+            if (shared) {
+              shared.keys.push(...unresolved);
+              searchKeysByFile.set(fallback.filename, new Set(unresolved));
+            } else {
+              passes.push({ filename, keys: unresolved });
+            }
+          }
+          for (const [actual, group] of groups) {
+            passes.push({
+              filename: actual,
+              keys: group.keys,
+              resolved: { node: group.node, searchKeys: searchKeysByFile.get(actual) },
+            });
+          }
+        }
+        for (const { filename, keys, resolved } of passes) {
+          const result = buildFileEntry(filename, keys, richtextMode === "normalize", resolved);
           if (result.error) {
             fileShopifyErrors.push(result.error);
             failedPrimaryKeys.push(...keys);
