@@ -180,6 +180,22 @@ button of its own.**
   `--app-details-card-half-height` and the two flex bases DERIVED from them) and
   `--app-attribute-grid-min-width`, which is now only the sales-channel panel's
   own column.
+- **A button is as tall as the field beside it — `--app-control-height`.**
+  Polaris 13 draws `TextField`/`Select` at `--pg-control-height` (32px) but a
+  medium or slim `Button` at 28px from 48em up, so every row that mixed the two
+  stepped by 4px — the bulk editor's toolbar, filter bars, pagination, the
+  Settings forms. ONE rule in [responsive.css](app/styles/responsive.css)
+  lifts every bordered medium/slim button to the token (icon-only ones in both
+  directions, so they stay square) and deliberately leaves `plain`,
+  `monochromePlain` and `tertiary` alone — they have no box to line up, and the
+  field clear control is plain, so growing it would push the label row it
+  sits on. A hand-built input or swatch that stands beside Polaris controls
+  spends the same token (`height: var(--app-control-height)` with
+  `box-sizing: border-box`), never its own number: the rate-limit fields were
+  36px, the colour swatch 34px and the image manager's alt box ~28px, each
+  next to controls of a different height. Below 768px the older touch-target
+  rules take over (buttons and text inputs at `--touch-target-min`, 44px), and
+  `.Polaris-Select__Content` is in that set too — it had been left at 36px.
 - **A grey frame is one of THREE tokens, and which one is a question about the
   thing being framed.** `--app-field-border-color` is a box a merchant types in
   (every input, the body editors, the probe textareas, and the formatting

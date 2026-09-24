@@ -1,16 +1,13 @@
 /* Rate Limit Fields Styling */
 
-/* Reduce height of rate limit input fields */
-.rate-limit-field input[type="number"] {
-  height: 36px !important;
-  min-height: 36px !important;
-  padding: 10px 16px !important;
-}
-
+/* The same height as every other field and button in the app
+   (`--app-control-height`, responsive.css) — these were 36px, one step taller
+   than the fields and buttons beside them. The input keeps Polaris' own
+   padding, which is what fits a line of text into that height. */
+.rate-limit-field input[type="number"],
 .rate-limit-field .Polaris-TextField__Input {
-  height: 36px !important;
-  min-height: 36px !important;
-  padding: 10px 16px !important;
+  height: var(--app-control-height) !important;
+  min-height: var(--app-control-height) !important;
 }
 
 /* Override touch target minimum for rate limit fields */
@@ -18,14 +15,14 @@
 .rate-limit-field .Polaris-Button,
 .rate-limit-field [role="button"] {
   min-height: auto !important;
-  height: 36px !important;
-  padding: 10px 16px !important;
+  height: var(--app-control-height) !important;
+  padding: 0 16px !important;
 }
 
 /* Fix Polaris Spinner styling */
 .rate-limit-field .Polaris-TextField__Spinner {
   width: auto !important;
-  height: 36px !important;
+  height: var(--app-control-height) !important;
 }
 
 /* Remove blue focus border/outline */
@@ -50,7 +47,7 @@
 .rate-limit-field input[type="number"]::-webkit-inner-spin-button,
 .rate-limit-field input[type="number"]::-webkit-outer-spin-button {
   opacity: 1;
-  height: 34px;
+  height: calc(var(--app-control-height) - 2px);
   margin: 0;
   position: relative;
   right: 2px;

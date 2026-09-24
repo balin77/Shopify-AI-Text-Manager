@@ -91,7 +91,9 @@ export function HexColorInput({
         onChange={(e) => onChange(e.target.value)}
         style={{
           width: "40px",
-          height: "34px",
+          // As tall as the hex TextField beside it (responsive.css token).
+          height: "var(--app-control-height)",
+          boxSizing: "border-box",
           padding: 0,
           border: "1px solid var(--p-color-border)",
           // The swatch corner, from responsive.css. This control and the

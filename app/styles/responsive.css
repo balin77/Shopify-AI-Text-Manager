@@ -272,6 +272,13 @@
                                      more in it than fits still grows rather
                                      than clipping. Measured against a card
                                      holding a label and one Polaris input. */
+  /* One height for every bordered CONTROL in a row — a button beside a
+     dropdown or a text field. Polaris draws its inputs at
+     `--pg-control-height` (32px) but its default button at 28px on desktop,
+     so every toolbar that mixed the two stepped by 4px. Spent by the button
+     rule below the field-frame rules. Polaris' own token, so the two cannot
+     drift; the fallback is its current value, for a Polaris that renames it. */
+  --app-control-height: var(--pg-control-height, 2rem);
   --app-field-border-color: #c9cccf;
   --app-field-border-color-disabled: #dfe1e3;
   --app-field-border-radius: 8px;
@@ -396,6 +403,37 @@
 .Polaris-TextField--readOnly.Polaris-TextField--readOnly.Polaris-TextField--focus > .Polaris-TextField__Backdrop,
 .Polaris-Select--disabled .Polaris-Select__Backdrop {
   border: var(--p-border-width-0165, 0.04125rem) solid var(--app-field-border-color-disabled);
+}
+
+/* Buttons as tall as the fields beside them — app-wide, not per toolbar.
+   Polaris 13 renders `size="medium"` AND `size="slim"` (the two are identical)
+   at `--p-height-700` = 28px from 48em up, while TextField and Select sit at
+   `--pg-control-height` = 32px, so a button next to a dropdown was visibly
+   shorter everywhere the two meet: the bulk editor's toolbar, filter bars,
+   pagination, the settings forms. Below 48em Polaris already draws both at
+   32px (and the touch-target rule further down takes buttons past that), so
+   this is desktop only.
+
+   What is deliberately NOT stretched:
+   - `plain` / `monochromePlain` — a link-shaped button has no box, so there is
+     no height to line up, and the field clear control (`FieldClearButton`) is
+     one: growing it would push the label row it shares.
+   - `tertiary` — borderless as well; its height is invisible and it is used
+     for dense icon rows.
+   - `micro` and `large` — explicit size choices (large is 32px here already).
+   An ICON-ONLY button grows in both directions, or it turns into a 28x32
+   sliver instead of a square.
+
+   One class of extra specificity beats Polaris' size rule, which is stated in
+   a media query of the same width, so no `!important` is needed. */
+@media (min-width: 48em) {
+  .Polaris-Button:is(.Polaris-Button--sizeMedium, .Polaris-Button--sizeSlim):not(.Polaris-Button--variantPlain, .Polaris-Button--variantMonochromePlain, .Polaris-Button--variantTertiary) {
+    min-height: var(--app-control-height);
+  }
+
+  .Polaris-Button--iconOnly:is(.Polaris-Button--sizeMedium, .Polaris-Button--sizeSlim):not(.Polaris-Button--variantPlain, .Polaris-Button--variantMonochromePlain, .Polaris-Button--variantTertiary) {
+    min-width: var(--app-control-height);
+  }
 }
 
 /* The other half of the field chrome: one weight for every field LABEL.
@@ -1249,6 +1287,14 @@ html {
   .Polaris-TextField__Input {
     min-height: var(--touch-target-min);
     font-size: 16px; /* Prevents iOS zoom */
+  }
+
+  /* Dropdowns at the same touch height as the text inputs and buttons above —
+     without it a Select stayed at Polaris' 36px beside 44px fields and
+     buttons. Height only: the Select's visible box is `__Content`, and its
+     Backdrop is absolutely positioned over it, so the frame follows. */
+  .Polaris-Select__Content {
+    min-height: var(--touch-target-min);
   }
 
   /* Keep multiline fields (meta description, body, alt texts) as tall as their
