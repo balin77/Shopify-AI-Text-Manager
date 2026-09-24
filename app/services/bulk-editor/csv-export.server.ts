@@ -19,7 +19,13 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { loadBulkRows, type BulkAdminClient } from "./load.server";
-import { buildCsv, csvIdHeaderFor, CSV_EXPORT_MAX_ROWS, type CsvDelimiter } from "./csv.shared";
+import {
+  buildCsv,
+  csvIdHeaderFor,
+  CSV_EXPORT_MAX_ROWS,
+  CSV_IMPORT_MAX_BYTES,
+  type CsvDelimiter,
+} from "./csv.shared";
 import {
   columnAllowedForType,
   resolveCellValue,
@@ -72,7 +78,10 @@ export interface BulkCsvExportOptions {
 }
 
 export type BulkCsvExportResult =
-  | { ok: true; csv: string; rowCount: number }
+  /** `exceedsImportLimit`: the file is larger than CSV_IMPORT_MAX_BYTES, so it
+   *  cannot be imported back as a whole — said at export time, not discovered
+   *  after an afternoon of editing it. */
+  | { ok: true; csv: string; rowCount: number; exceedsImportLimit: boolean }
   | { ok: false; error: "tooLarge"; total: number };
 
 /** The cell text that lands in the CSV: in a foreign view, translatable
@@ -167,5 +176,11 @@ export async function buildBulkCsvExport(
     row.id,
     ...exportColumns.map((column) => exportCellValue(row, column, opts.locale, opts.marketId)),
   ]);
-  return { ok: true, csv: buildCsv(header, body, opts.delimiter), rowCount: rows.length };
+  const csv = buildCsv(header, body, opts.delimiter);
+  return {
+    ok: true,
+    csv,
+    rowCount: rows.length,
+    exceedsImportLimit: Buffer.byteLength(csv, "utf8") > CSV_IMPORT_MAX_BYTES,
+  };
 }

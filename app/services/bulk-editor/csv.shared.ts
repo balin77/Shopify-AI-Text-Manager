@@ -34,17 +34,22 @@ import type { ColumnDescriptor } from "./columns.shared";
 
 // ─── Limits (§8.2 hard caps, §8.1 export ceiling) ──────────────────────────
 
-/** Import file hard cap (5 MB) — checked client-side before reading AND
- * server-side on the posted text length. */
-export const CSV_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+/** Import file hard cap, in UTF-8 bytes of the decoded text — checked
+ * client-side after decoding AND server-side on the posted text. 50 MB, not
+ * the original 5: the export carries every column, bodies included, and at
+ * 2–3 KB of HTML per product a 5 MB cap refused the re-import of any catalogue
+ * past ~2 000 products — the very round trip the large import exists for. The
+ * export still reports a file that outgrows even this (`exceedsImportLimit`). */
+export const CSV_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 
 /** Import row hard cap (data rows, header excluded). */
 export const CSV_IMPORT_MAX_ROWS = 10_000;
 
 /**
- * Synchronous export ceiling — the SAME number as the import's row cap, so any
- * file the import accepts can also be produced by the export (a lower export
- * cap made a full round trip of a 6 000-product catalogue impossible). The
+ * Synchronous export ceiling — the SAME number as the import's row cap, so a
+ * full export can be re-imported by row count (a lower export cap made a full
+ * round trip of a 6 000-product catalogue impossible); the BYTE cap is checked
+ * on the finished file and reported, see `exceedsImportLimit`. The
  * plan (§8.1) foresaw a Task with a download link beyond 5 000 rows, but the
  * Task infrastructure has NO result-file delivery (Task.result is a DB text
  * column); beyond this cap the export is refused with a "narrow your filter"

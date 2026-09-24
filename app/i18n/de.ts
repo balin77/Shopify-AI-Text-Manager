@@ -4337,6 +4337,7 @@ export const de = {
       importProTooltip: "CSV-Import ist ab dem Pro-Plan verfügbar.",
       exportTooLarge: "Der Export umfasst {total} Zeilen (Maximum {max}). Bitte den Filter enger ziehen und erneut exportieren.",
       exportFailed: "CSV-Export fehlgeschlagen. Bitte erneut versuchen.",
+      exportExceedsImport: "Die exportierte Datei ist größer als {max} MB und kann deshalb nicht in einem Stück wieder importiert werden. Für den Re-Import den Filter enger ziehen und in mehreren Dateien exportieren.",
       fileTooLarge: "Die Datei ist größer als {max} MB.",
       tooManyRows: "Die Datei hat mehr als {max} Datenzeilen.",
       emptyFile: "Die Datei enthält keine Datenzeilen.",

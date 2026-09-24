@@ -692,6 +692,8 @@ export default function BulkEditor() {
   /** The file text and the layer the open preview was built for — what a
    * large import posts back on confirm, never the grid's CURRENT selection. */
   const importRequestRef = useRef<{ csv: string; type: string; locale: string; market: string } | null>(null);
+  /** The request the in-flight `csvImportApply` was posted with. */
+  const postedImportRequestRef = useRef<{ csv: string; type: string; locale: string; market: string } | null>(null);
   /** Manual trigger for the media-library cache — the image view is empty
    * beyond product media until it has run once. */
   const syncMediaLibraryFetcher = useFetcher();
@@ -738,6 +740,7 @@ export default function BulkEditor() {
   const [priceActionBanner, setPriceActionBanner] = useState<number | null>(null);
   // ── CSV export/import + paste/undo state (Phase 6) ───────────────────────
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportWarning, setExportWarning] = useState<string | null>(null);
   /** One-download guard: the effect below fires on every render while the
    * fetcher holds data — remember what was already downloaded. */
   const downloadedExportKeyRef = useRef<string | null>(null);
@@ -1495,6 +1498,7 @@ export default function BulkEditor() {
 
   const handleExport = () => {
     setExportError(null);
+    setExportWarning(null);
     const params = new URLSearchParams({
       type,
       locale,
@@ -1526,6 +1530,16 @@ export default function BulkEditor() {
       return;
     }
     if (!payload.csv || !payload.filename) return;
+    // Not an error — the file is delivered — but said NOW: a file too large to
+    // import back is otherwise discovered after the editing is done.
+    setExportWarning(
+      payload.exceedsImportLimit
+        ? b.csv.exportExceedsImport.replace(
+            "{max}",
+            String(Math.round(CSV_IMPORT_MAX_BYTES / (1024 * 1024))),
+          )
+        : null,
+    );
     const key = `${payload.filename}:${payload.generatedAt ?? 0}`;
     if (downloadedExportKeyRef.current === key) return;
     downloadedExportKeyRef.current = key;
@@ -1546,6 +1560,46 @@ export default function BulkEditor() {
   // ── CSV import (§8.2 — Pro; preview first, save through submitDiff) ──────
 
   const importMaxMb = String(Math.round(CSV_IMPORT_MAX_BYTES / (1024 * 1024)));
+
+  /** The merchant-facing sentence for a refused preview OR a refused apply.
+   *  `request` is the layer that was POSTED — the scope-mismatch message names
+   *  it, not whatever the grid shows by the time the answer arrives. */
+  const importErrorText = (
+    result: Exclude<CsvImportActionResult | CsvImportApplyActionResult, { ok: true } | CsvImportPreview>,
+    request: { locale: string; market: string } | null,
+  ): string => {
+    switch (result.error) {
+      case "tooLarge":
+        return b.csv.fileTooLarge.replace("{max}", importMaxMb);
+      case "tooManyRows":
+        return b.csv.tooManyRows.replace("{max}", String(CSV_IMPORT_MAX_ROWS));
+      case "empty":
+        return b.csv.emptyFile;
+      case "noIdColumn":
+        return b.csv.noIdColumn;
+      case "badEncoding":
+        return b.csv.badEncoding;
+      case "scopeMismatch":
+        return b.csv.scopeMismatch
+          .replace("{file}", importScopeLabel(result.fileLocale, result.fileMarketId))
+          .replace(
+            "{view}",
+            request
+              ? importScopeLabel(request.locale, request.market)
+              : importScopeLabel(locale, isForeign ? marketId : ""),
+          );
+      case "gated":
+        return b.csv.importProTooltip;
+      case "alreadyRunning":
+        return b.csv.alreadyRunning;
+      case "noChanges":
+        return b.csv.preview.noChanges;
+      case "invalidLocale":
+        return result.message;
+      default:
+        return b.csv.importFailed;
+    }
+  };
 
   /** "Deutsch (Primär)" / "Français" / "Français · Schweiz" — the layer a CSV
    * import writes into, named in the preview and in a scope-mismatch refusal.
@@ -1599,25 +1653,7 @@ export default function BulkEditor() {
     if (result.ok) {
       setImportPreview(result);
     } else {
-      setImportError(
-        result.error === "tooLarge"
-          ? b.csv.fileTooLarge.replace("{max}", importMaxMb)
-          : result.error === "tooManyRows"
-            ? b.csv.tooManyRows.replace("{max}", String(CSV_IMPORT_MAX_ROWS))
-            : result.error === "empty"
-              ? b.csv.emptyFile
-              : result.error === "noIdColumn"
-                ? b.csv.noIdColumn
-                : result.error === "badEncoding"
-                  ? b.csv.badEncoding
-                  : result.error === "scopeMismatch"
-                    ? b.csv.scopeMismatch
-                        .replace("{file}", importScopeLabel(result.fileLocale, result.fileMarketId))
-                        .replace("{view}", importScopeLabel(locale, isForeign ? marketId : ""))
-                    : result.error === "gated"
-                      ? b.csv.importProTooltip
-                      : b.csv.importFailed,
-      );
+      setImportError(importErrorText(result, importRequestRef.current));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importFetcher.state, importFetcher.data]);
@@ -1635,6 +1671,7 @@ export default function BulkEditor() {
     }
     const request = importRequestRef.current;
     if (!request) return;
+    postedImportRequestRef.current = request;
     importApplyFetcher.submit(
       { actionType: "csvImportApply", ...request },
       { method: "post", action: "/app/bulk/import" },
@@ -1644,8 +1681,11 @@ export default function BulkEditor() {
   useEffect(() => {
     if (importApplyFetcher.state !== "idle" || !importApplyFetcher.data) return;
     const result = importApplyFetcher.data;
+    const posted = postedImportRequestRef.current;
     if (result.ok) {
-      importRequestRef.current = null;
+      // Only the request THIS answer belongs to: a second file previewed while
+      // the first import was starting must keep its own.
+      if (importRequestRef.current === posted) importRequestRef.current = null;
       setImportError(null);
       setImportStartedBanner({ rows: result.rows, cells: result.cells });
       // Same watch as a large grid save: the grid reloads when the import (and
@@ -1653,23 +1693,7 @@ export default function BulkEditor() {
       setWatchedTaskIds((prev) => [...new Set([...prev, result.taskId])]);
       return;
     }
-    setImportError(
-      result.error === "alreadyRunning"
-        ? b.csv.alreadyRunning
-        : result.error === "noChanges"
-          ? b.csv.preview.noChanges
-          : result.error === "invalidLocale"
-            ? result.message
-            : result.error === "badEncoding"
-              ? b.csv.badEncoding
-              : result.error === "scopeMismatch"
-                ? b.csv.scopeMismatch
-                    .replace("{file}", importScopeLabel(result.fileLocale, result.fileMarketId))
-                    .replace("{view}", importScopeLabel(locale, isForeign ? marketId : ""))
-                : result.error === "gated"
-                  ? b.csv.importProTooltip
-                  : b.csv.importFailed,
-    );
+    setImportError(importErrorText(result, posted));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importApplyFetcher.state, importApplyFetcher.data]);
 
@@ -2371,6 +2395,11 @@ export default function BulkEditor() {
                     {exportError}
                   </Banner>
                 )}
+                {exportWarning && (
+                  <Banner tone="warning" onDismiss={() => setExportWarning(null)}>
+                    {exportWarning}
+                  </Banner>
+                )}
                 {importError && (
                   <Banner tone="critical" onDismiss={() => setImportError(null)}>
                     {importError}
@@ -2562,6 +2591,7 @@ export default function BulkEditor() {
                       <Button
                         onClick={() => importFileRef.current?.click()}
                         loading={importFetcher.state !== "idle"}
+                        disabled={saving}
                       >
                         {b.csv.importButton}
                       </Button>

@@ -4312,6 +4312,7 @@ export const en: Translation = {
       importProTooltip: "CSV import is available from the Pro plan.",
       exportTooLarge: "The export spans {total} rows (maximum {max}). Please narrow the filter and export again.",
       exportFailed: "CSV export failed. Please try again.",
+      exportExceedsImport: "The exported file is larger than {max} MB and therefore cannot be imported back in one piece. To re-import it, narrow the filter and export in several files.",
       fileTooLarge: "The file is larger than {max} MB.",
       tooManyRows: "The file has more than {max} data rows.",
       emptyFile: "The file contains no data rows.",

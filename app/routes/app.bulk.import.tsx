@@ -38,6 +38,7 @@ import {
   type CsvImportApplyResult,
 } from "../services/bulk-editor/csv-import-run.server";
 import type { DataResponse } from "~/types/data-response";
+import { logger } from "~/utils/logger.server";
 
 export type CsvImportActionResult =
   | CsvImportPreviewResult
@@ -46,7 +47,7 @@ export type CsvImportActionResult =
 /** The answer to `csvImportApply` — a started background Task, or why not. */
 export type CsvImportApplyActionResult =
   | CsvImportApplyResult
-  | { ok: false; error: "gated" | "invalid" | "tooLarge" };
+  | { ok: false; error: "gated" | "invalid" | "tooLarge" | "startFailed" };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
@@ -124,12 +125,25 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   // background Task in save-sized batches (csv-import-run.server.ts). The
   // client posts the file again, never a diff — see that module's head.
   if (actionType === "csvImportApply") {
-    const started = await startCsvImportTask(db, shop, {
-      ...importArgs,
-      admin,
-      columnsByType,
-      allowedTypes,
-    });
+    // A throw here (a DB error, a diff the universe rejects) must still answer
+    // the fetcher: an action that throws renders the route's error boundary
+    // and leaves the merchant with a dialog that closed and nothing started.
+    let started: CsvImportApplyResult;
+    try {
+      started = await startCsvImportTask(db, shop, {
+        ...importArgs,
+        admin,
+        columnsByType,
+        allowedTypes,
+      });
+    } catch (err: unknown) {
+      logger.error("[BulkCsvImport] Could not start the import", {
+        context: "BulkEditor",
+        shop,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return json<CsvImportApplyActionResult>({ ok: false, error: "startFailed" }, { status: 500 });
+    }
     return json<CsvImportApplyActionResult>(started, {
       status: started.ok ? 200 : started.error === "alreadyRunning" ? 409 : 400,
     });

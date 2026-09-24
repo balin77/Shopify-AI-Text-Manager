@@ -39,6 +39,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { applyBulkDiff } from "./apply.server";
+import { MAX_REPAIR_GROUPS } from "./retranslate.server";
 import { buildCsvImportPreview, type CsvImportArgs, type CsvImportPreviewResult } from "./csv-import.server";
 import { findInvalidLocaleOrMarket } from "./translations.server";
 import {
@@ -253,14 +254,20 @@ export async function runCsvImport(taskId: string, args: RunArgs): Promise<void>
     const foreignLocales = shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale);
     const primaryLocale = shopLocales.find((l) => l.primary)?.locale;
 
+    // ONE auto-translation budget for the whole file, not one per batch: every
+    // group is an unattended AI run on the merchant's own key, and the per-save
+    // cap exists to bound exactly that. What the budget refuses falls back to
+    // the stored deletion answer and is reported as `capped`, as in any save.
+    let repairBudget = MAX_REPAIR_GROUPS;
     let rowsBefore = 0;
     for (const batch of batches) {
       const result = await applyBulkDiff(
-        { db, shop, admin, columnsByType, foreignLocales, primaryLocale },
+        { db, shop, admin, columnsByType, foreignLocales, primaryLocale, repairGroupBudget: repairBudget },
         batch,
         async (processed) => persistProgress(rowsBefore + processed),
       );
       results.push(result);
+      repairBudget = Math.max(0, repairBudget - (result.retranslation?.started ?? 0));
       rowsBefore += new Set(batch.map(rowKey)).size;
       await persistProgress(rowsBefore);
     }

@@ -4300,6 +4300,7 @@ export const es: Translation = {
       importProTooltip: "La importación CSV está disponible a partir del plan Pro.",
       exportTooLarge: "La exportación abarca {total} filas (máximo {max}). Ajusta el filtro e inténtalo de nuevo.",
       exportFailed: "La exportación CSV falló. Inténtalo de nuevo.",
+      exportExceedsImport: "El archivo exportado supera los {max} MB y por eso no se puede volver a importar de una sola vez. Para reimportarlo, acota el filtro y exporta en varios archivos.",
       fileTooLarge: "El archivo supera los {max} MB.",
       tooManyRows: "El archivo tiene más de {max} filas de datos.",
       emptyFile: "El archivo no contiene filas de datos.",

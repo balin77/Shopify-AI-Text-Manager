@@ -158,4 +158,26 @@ describe("runCsvImport", () => {
     expect(final.status).toBe("failed");
     expect(JSON.parse(final.result as string)).toMatchObject({ saved: 10, batches: 2, batchesDone: 1 });
   });
+
+  it("spends ONE auto-translation budget across all batches", async () => {
+    const batches = chunkImportDiff(productDiff(30, ["field.title"]), productColumns, { maxCells: 10 });
+    applyBulkDiffMock.mockImplementation(async () => ({
+      saved: 10,
+      failures: [],
+      retranslation: { started: 10, translations: 20, skipped: 0, capped: 0 },
+    }));
+    const { db } = fakeDb();
+    await runCsvImport("task-3", {
+      db,
+      shop: "shop",
+      admin: {} as never,
+      columnsByType: BULK_COLUMNS_BY_TYPE,
+      batches,
+      rowTotal: 30,
+    });
+    const budgets = applyBulkDiffMock.mock.calls
+      .filter((c) => c.length > 0)
+      .map((c) => (c[0] as { repairGroupBudget: number }).repairGroupBudget);
+    expect(budgets).toEqual([25, 15, 5]);
+  });
 });

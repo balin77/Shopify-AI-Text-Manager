@@ -157,6 +157,11 @@ interface ApplyContext {
    *  to the merchant's stored deletion answer rather than translating FROM an
    *  unknown language — the same rule the metaobject editor's repair follows. */
   primaryLocale?: string;
+  /** How many auto-translation repair groups this call may open (see
+   *  `BulkRepairPlan.maxGroups`). Omitted ⇒ MAX_REPAIR_GROUPS, the per-save
+   *  cap. The batched CSV import passes the remainder of ONE budget for the
+   *  whole file, so its batches together open no more runs than one save. */
+  repairGroupBudget?: number;
 }
 
 /** Settable `ProductStatus` values for `productUpdate`'s `ProductInput`.
@@ -4322,7 +4327,7 @@ export async function applyBulkDiff(
         };
   const purgeStaleTranslations = changePolicy.purgeOnPrimaryChange;
   const purgeStaleSubResourceTranslations = changePolicy.purgeUnreconciledSurfaces;
-  const repairPlan = newBulkRepairPlan();
+  const repairPlan = newBulkRepairPlan(ctx.repairGroupBudget);
 
   // Digest prefetch for every foreign group in ONE batched pass (Plan §6.1:
   // only digests are bündelbar — the register itself is per resource).
