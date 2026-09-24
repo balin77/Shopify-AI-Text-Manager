@@ -1229,7 +1229,6 @@ export const de = {
       primaryHint: "Die Hauptsprache ist immer veröffentlicht.",
       marketsNote:
         "Ob eine veröffentlichte Sprache in einem bestimmten Markt angezeigt wird, legst du in Shopify unter Einstellungen → Märkte fest.",
-      addLanguageNote: "Neue Sprachen fügst du in Shopify unter Einstellungen → Sprachen hinzu; danach erscheinen sie hier.",
       failedTitle: "Diese Änderungen hat Shopify nicht übernommen",
       errorPrimaryLocale: "Die Hauptsprache kann nicht unveröffentlicht werden.",
       errorUnknownLocale: "Diese Sprache gibt es im Shop nicht mehr – lade die Seite neu.",
@@ -1237,6 +1236,28 @@ export const de = {
       scopeHint:
         "Falls Shopify „Access denied“ meldet: Die App braucht dafür eine neue Berechtigung. Öffne die App einmal neu und bestätige die Berechtigungsanfrage.",
       noForeign: "Dein Shop hat bisher nur die Hauptsprache.",
+      addTitle: "Sprache hinzufügen",
+      addPlaceholder: "Sprache wählen …",
+      addButton: "Hinzufügen",
+      addHint:
+        "Eine neue Sprache wird zunächst unveröffentlicht angelegt – du kannst sie in Ruhe übersetzen (z. B. im Bulk-Editor mit „Fehlende Übersetzungen ergänzen“) und später veröffentlichen. Sie wird erst mit „Speichern“ in Shopify angelegt.",
+      addUnavailable: "Die verfügbaren Sprachen konnten nicht geladen werden. Lade die Seite neu, um Sprachen hinzuzufügen.",
+      newBadge: "Neu – wird beim Speichern angelegt",
+      undoAdd: "Nicht hinzufügen",
+      removeButton: "Entfernen",
+      removeBlockedByDraft: "Speichere oder verwirf zuerst deine offenen Änderungen.",
+      removedMessage: "Die Sprache „{name}“ wurde entfernt.",
+      errorAlreadyEnabled: "Diese Sprache ist im Shop bereits vorhanden.",
+      errorNotAvailable: "Shopify bietet diese Sprache nicht an.",
+      errorAvailableLookupFailed: "Die verfügbaren Sprachen konnten nicht gelesen werden – versuche es erneut.",
+      removeModal: {
+        step1Title: "Sprache „{name}“ entfernen?",
+        intro: "Das entfernt die Sprache aus deinem Shopify-Shop, nicht nur aus dieser App.",
+        consequenceShopLocale:
+          "Laut Shopify werden dabei alle Übersetzungen in diese Sprache aus deinem Shop gelöscht; die App entfernt ihre lokale Kopie ebenfalls.",
+        confirm: "Sprache endgültig entfernen",
+        deleting: "Wird entfernt …",
+      },
     },
     // Feedback Tab
     feedbackTitle: "Feedback senden",

@@ -1208,7 +1208,6 @@ export const es: Translation = {
       primaryHint: "El idioma principal siempre está publicado.",
       marketsNote:
         "Si un idioma publicado se muestra en un mercado concreto se configura en Shopify, en Configuración → Mercados.",
-      addLanguageNote: "Los idiomas nuevos se añaden en Shopify, en Configuración → Idiomas; después aparecen aquí.",
       failedTitle: "Shopify no aplicó estos cambios",
       errorPrimaryLocale: "El idioma principal no se puede despublicar.",
       errorUnknownLocale: "Este idioma ya no existe en la tienda: recarga la página.",
@@ -1216,6 +1215,28 @@ export const es: Translation = {
       scopeHint:
         "Si Shopify indica «Access denied»: la app necesita un permiso nuevo para esto. Vuelve a abrir la app y acepta la solicitud de permisos.",
       noForeign: "Por ahora tu tienda solo tiene su idioma principal.",
+      addTitle: "Añadir un idioma",
+      addPlaceholder: "Elige un idioma …",
+      addButton: "Añadir",
+      addHint:
+        "Un idioma nuevo se crea sin publicar: tradúcelo con calma (p. ej. con «Completar traducciones que faltan» en el editor masivo) y publícalo después. Se crea en Shopify solo al pulsar Guardar.",
+      addUnavailable: "No se pudieron cargar los idiomas disponibles. Recarga la página para añadir idiomas.",
+      newBadge: "Nuevo – se crea al guardar",
+      undoAdd: "No añadir",
+      removeButton: "Eliminar",
+      removeBlockedByDraft: "Guarda o descarta primero tus cambios pendientes.",
+      removedMessage: "Se eliminó el idioma «{name}».",
+      errorAlreadyEnabled: "Este idioma ya existe en la tienda.",
+      errorNotAvailable: "Shopify no ofrece este idioma.",
+      errorAvailableLookupFailed: "No se pudieron leer los idiomas disponibles: inténtalo de nuevo.",
+      removeModal: {
+        step1Title: "¿Eliminar el idioma «{name}»?",
+        intro: "Esto elimina el idioma de tu tienda Shopify, no solo de esta app.",
+        consequenceShopLocale:
+          "Según Shopify, se eliminan de tu tienda todas las traducciones a este idioma; esta app también elimina su copia local.",
+        confirm: "Eliminar idioma definitivamente",
+        deleting: "Eliminando …",
+      },
     },
     // Feedback Tab
     feedbackTitle: "Enviar comentarios",

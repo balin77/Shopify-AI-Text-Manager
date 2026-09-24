@@ -12,7 +12,9 @@ vi.mock("~/utils/logger.server", () => ({
 const clearShopLocalesCache = vi.fn();
 vi.mock("~/utils/shop-locales-cache.server", () => ({ clearShopLocalesCache }));
 
-const { planLocalePublication, setShopLocalesPublished } = await import("~/services/shop-locale-publish.server");
+const { planLocalePublication, setShopLocalesPublished, planLocaleChanges, applyLocaleChanges, loadAvailableLocales } = await import(
+  "~/services/shop-locale-publish.server"
+);
 
 const current = [
   { locale: "de", primary: true, published: true },
@@ -83,5 +85,113 @@ describe("setShopLocalesPublished", () => {
     ]);
     expect(result.failed).toEqual([{ locale: "en", error: "nope" }]);
     expect(result.confirmed).toEqual([{ locale: "fr", published: true }]);
+  });
+});
+
+describe("planLocaleChanges — adding and removing", () => {
+  const available = [
+    { isoCode: "it", name: "Italian" },
+    { isoCode: "fr", name: "French" },
+  ];
+
+  it("adds only what Shopify offers and the shop lacks; removes only known foreign locales", () => {
+    const plan = planLocaleChanges(current, available, {
+      publish: [],
+      add: [
+        { locale: "it", published: true },
+        { locale: "fr", published: false },
+        { locale: "xx", published: false },
+      ],
+      remove: ["de", "zz"],
+    });
+    expect(plan.add).toEqual([{ locale: "it", published: true }]);
+    expect(plan.remove).toEqual([]);
+    expect(plan.refused).toEqual(
+      expect.arrayContaining([
+        { locale: "fr", error: "alreadyEnabled" },
+        { locale: "xx", error: "notAvailable" },
+        { locale: "de", error: "primaryLocale" },
+        { locale: "zz", error: "unknownLocale" },
+      ]),
+    );
+  });
+
+  it("an unreadable list of available languages refuses additions rather than guessing", () => {
+    const plan = planLocaleChanges(current, null, { publish: [], add: [{ locale: "it", published: false }], remove: [] });
+    expect(plan.add).toEqual([]);
+    expect(plan.refused).toEqual([{ locale: "it", error: "availableLookupFailed" }]);
+  });
+
+  it("a locale being removed carries no publication change", () => {
+    const plan = planLocaleChanges(current, available, {
+      publish: [{ locale: "fr", published: true }],
+      add: [],
+      remove: ["fr"],
+    });
+    expect(plan.remove).toEqual(["fr"]);
+    expect(plan.publish).toEqual([]);
+  });
+});
+
+describe("applyLocaleChanges", () => {
+  function db() {
+    return {
+      contentTranslation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      themeTranslation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      metaobjectTranslation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      productImageAltTranslation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+    };
+  }
+
+  it("enables an added locale on its echo and publishes it when the draft asked for it", async () => {
+    const admin = {
+      graphql: vi.fn(async (query: string, opts?: { variables?: Record<string, unknown> }) => {
+        const body = query.includes("shopLocaleEnable")
+          ? { data: { shopLocaleEnable: { shopLocale: { locale: "it", published: false }, userErrors: [] } } }
+          : { data: { shopLocaleUpdate: { shopLocale: { locale: opts?.variables?.locale, published: true }, userErrors: [] } } };
+        return { json: async () => body } as unknown as Response;
+      }),
+    };
+    const result = await applyLocaleChanges(admin, db() as never, "s", {
+      add: [{ locale: "it", published: true }],
+      remove: [],
+      publish: [],
+    });
+    expect(result.added).toEqual(["it"]);
+    expect(result.confirmed).toEqual([{ locale: "it", published: true }]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it("purges the local mirrors of a locale only after Shopify CONFIRMED its removal", async () => {
+    const d = db();
+    const admin = {
+      graphql: vi.fn(async () =>
+        ({ json: async () => ({ data: { shopLocaleDisable: { locale: "fr", userErrors: [] } } }) }) as unknown as Response,
+      ),
+    };
+    const result = await applyLocaleChanges(admin, d as never, "s", { add: [], remove: ["fr"], publish: [] });
+    expect(result.removed).toEqual(["fr"]);
+    expect(d.contentTranslation.deleteMany).toHaveBeenCalledWith({ where: { shop: "s", locale: { in: ["fr"] } } });
+    expect(d.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { locale: { in: ["fr"] }, image: { product: { shop: "s" } } },
+    });
+  });
+
+  it("an unconfirmed removal deletes nothing locally", async () => {
+    const d = db();
+    const admin = {
+      graphql: vi.fn(async () =>
+        ({ json: async () => ({ data: { shopLocaleDisable: { locale: null, userErrors: [] } } }) }) as unknown as Response,
+      ),
+    };
+    const result = await applyLocaleChanges(admin, d as never, "s", { add: [], remove: ["fr"], publish: [] });
+    expect(result.removed).toEqual([]);
+    expect(result.failed).toEqual([{ locale: "fr", error: "notConfirmed" }]);
+    expect(d.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("loadAvailableLocales answers null on a failed read, never an empty list", async () => {
+    const admin = { graphql: vi.fn(async () => ({ json: async () => ({ errors: [{ message: "x" }] }) }) as unknown as Response) };
+    expect(await loadAvailableLocales(admin)).toBeNull();
   });
 });

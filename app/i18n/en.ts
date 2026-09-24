@@ -1225,7 +1225,6 @@ export const en: Translation = {
       primaryHint: "The primary language is always published.",
       marketsNote:
         "Whether a published language is shown in a particular market is set in Shopify under Settings → Markets.",
-      addLanguageNote: "Add new languages in Shopify under Settings → Languages; they then appear here.",
       failedTitle: "Shopify did not apply these changes",
       errorPrimaryLocale: "The primary language cannot be unpublished.",
       errorUnknownLocale: "This language no longer exists in the shop – reload the page.",
@@ -1233,6 +1232,28 @@ export const en: Translation = {
       scopeHint:
         "If Shopify reports “Access denied”: the app needs a new permission for this. Open the app again and accept the permission request.",
       noForeign: "Your shop only has its primary language so far.",
+      addTitle: "Add a language",
+      addPlaceholder: "Choose a language …",
+      addButton: "Add",
+      addHint:
+        "A new language is created unpublished – translate it at your own pace (e.g. with “Add missing translations” in the bulk editor) and publish it later. It is created in Shopify only when you press Save.",
+      addUnavailable: "The available languages could not be loaded. Reload the page to add languages.",
+      newBadge: "New – created on save",
+      undoAdd: "Don't add",
+      removeButton: "Remove",
+      removeBlockedByDraft: "Save or discard your open changes first.",
+      removedMessage: "The language “{name}” was removed.",
+      errorAlreadyEnabled: "This language already exists in the shop.",
+      errorNotAvailable: "Shopify does not offer this language.",
+      errorAvailableLookupFailed: "The available languages could not be read – try again.",
+      removeModal: {
+        step1Title: "Remove the language “{name}”?",
+        intro: "This removes the language from your Shopify store, not just from this app.",
+        consequenceShopLocale:
+          "According to Shopify, every translation into this language is deleted from your store; this app removes its local copy as well.",
+        confirm: "Remove language permanently",
+        deleting: "Removing …",
+      },
     },
     // Feedback Tab
     feedbackTitle: "Send Feedback",

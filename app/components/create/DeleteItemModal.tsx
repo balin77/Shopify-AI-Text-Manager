@@ -50,6 +50,8 @@ export interface DeleteItemModalTexts {
   /** The TYPE takes its entries with it, and Shopify does not ask about them. */
   consequenceMetaobjectDefinitionEntries?: string;
   consequenceMetaobjectDefinitionOptions?: string;
+  /** Shop-language removal: what Shopify does to that language's translations. */
+  consequenceShopLocale?: string;
   confirmPrompt?: string;
   mismatch?: string;
   cancel?: string;
@@ -174,6 +176,17 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
                   </List.Item>
                 </>
               )}
+              {/* Removing a SHOP LANGUAGE: Shopify discards its translations
+                  (its own documentation — not measured by this app, and
+                  worded as Shopify's statement rather than ours). */}
+              {item.resource === "shopLocale" && (
+                <List.Item>
+                  <Text as="span" fontWeight="semibold">
+                    {t.consequenceShopLocale ||
+                      "According to Shopify, every translation into this language is deleted from your store, and this app removes its local copy too."}
+                  </Text>
+                </List.Item>
+              )}
               {item.resource === "metaobject" && (
                 <List.Item>
                   {t.consequenceMetaobjectUsage ||
@@ -185,7 +198,7 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
                   warning, only a false one. A menu row carries no translations
                   of its own — its items do, which the line above says — and it
                   can never carry a keyword assignment. */}
-              {item.resource !== "menu" && (
+              {item.resource !== "menu" && item.resource !== "shopLocale" && (
                 <>
                   <List.Item>{t.consequenceTranslations || "All translations of this item are deleted."}</List.Item>
                   <List.Item>{t.consequenceKeyword || "Its keyword assignment is removed."}</List.Item>

@@ -97,6 +97,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales: Array<{ locale: string; name?: string; primary: boolean; published: boolean }> =
       localesData.data.shopLocales || [];
     const primaryShopLocale = shopLocales.find((l) => l.primary)?.locale || "en";
+    // The languages Shopify lets this shop ADD (Settings → Shop-Sprachen).
+    // Its own query: a failure here must not take the settings page down, and
+    // `null` tells the tab "could not load", never "nothing can be added".
+    const { loadAvailableLocales } = await import("../services/shop-locale-publish.server");
+    const availableShopLocales = await loadAvailableLocales(admin);
     const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
@@ -523,6 +528,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       optionValueMemory,
       primaryShopLocale,
       shopLocales,
+      availableShopLocales,
       glossaryEntries,
       corruptedApiKeys,
       enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
@@ -987,20 +993,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
-    } else if (actionType === "saveShopLocalePublication") {
-      // Settings → Shop-Sprachen. The submitted list is replayed over the
+    } else if (actionType === "saveShopLocalePublication" || actionType === "removeShopLocale") {
+      // Settings → Shop-Sprachen. Everything submitted is replayed over the
       // shop's CURRENT locales, read fresh here: the client's copy may be a
       // minute old, and an unknown or primary locale is refused rather than
-      // sent (shop-locale-publish.server.ts).
-      let requested: Array<{ locale: string; published: boolean }> = [];
-      try {
-        const parsed = JSON.parse(String(formData.get("changes") || "[]"));
-        if (Array.isArray(parsed)) {
-          requested = parsed
-            .filter((c) => c && typeof c.locale === "string" && typeof c.published === "boolean")
-            .map((c) => ({ locale: c.locale as string, published: c.published as boolean }));
+      // sent (shop-locale-publish.server.ts). A REMOVAL is its own action,
+      // behind the two-step typed confirmation — it is irreversible, so it
+      // never rides along with a save of switches.
+      const parseList = <T,>(raw: FormDataEntryValue | null, pick: (c: any) => T | null): T[] | null => {
+        try {
+          const parsed = JSON.parse(String(raw || "[]"));
+          if (!Array.isArray(parsed)) return null;
+          return parsed.map(pick).filter((x): x is T => x !== null);
+        } catch {
+          return null;
         }
-      } catch {
+      };
+      const publish = parseList(formData.get("changes"), (c) =>
+        c && typeof c.locale === "string" && typeof c.published === "boolean"
+          ? { locale: c.locale as string, published: c.published as boolean }
+          : null,
+      );
+      const add = parseList(formData.get("add"), (c) =>
+        c && typeof c.locale === "string" ? { locale: c.locale as string, published: c.published === true } : null,
+      );
+      const removeLocale = actionType === "removeShopLocale" ? getFormString(formData, "locale") : null;
+      if (publish === null || add === null || (actionType === "removeShopLocale" && !removeLocale)) {
         return json({ success: false, error: "Invalid changes", actionType }, { status: 400 });
       }
       const localesResponse = await admin.graphql(`#graphql
@@ -1019,18 +1037,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // A failed lookup is not "no languages": refuse rather than guess.
         return json({ success: false, error: "Could not read the shop's languages", actionType }, { status: 502 });
       }
-      const { planLocalePublication, setShopLocalesPublished } = await import(
+      const { planLocaleChanges, applyLocaleChanges, loadAvailableLocales } = await import(
         "../services/shop-locale-publish.server"
       );
-      const plan = planLocalePublication(current, requested);
-      const outcome = await setShopLocalesPublished(admin, session.shop, plan.changes);
+      const available = add.length > 0 ? await loadAvailableLocales(admin) : [];
+      const plan =
+        actionType === "removeShopLocale"
+          ? planLocaleChanges(current, [], { publish: [], add: [], remove: [removeLocale as string] })
+          : planLocaleChanges(current, available, { publish, add, remove: [] });
+      const outcome = await applyLocaleChanges(admin, db, session.shop, plan);
       const failed = [...plan.refused, ...outcome.failed];
       return json({
         success: failed.length === 0,
         actionType,
         confirmed: outcome.confirmed,
-        // No `error` key on a partial failure: the page's generic info box
-        // would print the raw codes. The tab renders `failed` itself, in the
+        added: outcome.added,
+        removed: outcome.removed,
+        // No `error` key on a failure: the page's generic info box would
+        // print the raw codes. The tab renders `failed` itself, in the
         // merchant's language.
         failed,
       });
@@ -1510,7 +1534,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, autoTranslateRetrySummary = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], availableShopLocales = null, glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, autoTranslateRetrySummary = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1935,6 +1959,7 @@ export default function SettingsPage() {
               {selectedSection === "languages" && (
                 <SettingsShopLanguagesTab
                   shopLocales={shopLocales}
+                  availableLocales={availableShopLocales}
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasShopLanguageChanges}

@@ -26,6 +26,7 @@
  * "Publish" button flips too.
  */
 
+import type { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger.server";
 
 export interface LocalePublicationChange {
@@ -144,4 +145,261 @@ export async function setShopLocalesPublished(
     });
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Adding and removing a language
+// ---------------------------------------------------------------------------
+//
+// A language ADDED here is enabled UNPUBLISHED (Shopify's own default), which
+// is exactly the "prepare, then launch" flow: the app fills it like any other
+// locale and the merchant publishes it when it is ready. A language REMOVED
+// here is disabled on Shopify — which, per Shopify's documentation, takes its
+// translations with it (NOT measured by this app; the tab states it as a
+// warning and asks for a separate confirmation). After a CONFIRMED removal the
+// local mirrors of that locale go too, every layer: they describe nothing any
+// more, and if Shopify should keep the translations after all, re-adding the
+// language and the next sync bring them back.
+
+const AVAILABLE_LOCALES = `#graphql
+  query appAvailableLocales {
+    availableLocales {
+      isoCode
+      name
+    }
+  }`;
+
+const SHOP_LOCALE_ENABLE = `#graphql
+  mutation appShopLocaleEnable($locale: String!) {
+    shopLocaleEnable(locale: $locale) {
+      shopLocale {
+        locale
+        published
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
+const SHOP_LOCALE_DISABLE = `#graphql
+  mutation appShopLocaleDisable($locale: String!) {
+    shopLocaleDisable(locale: $locale) {
+      locale
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
+export interface AvailableLocale {
+  isoCode: string;
+  name: string;
+}
+
+/**
+ * Every language Shopify lets a shop add. `null` on a failed read — "we cannot
+ * tell" must not render as "nothing can be added".
+ */
+export async function loadAvailableLocales(admin: GraphqlClient): Promise<AvailableLocale[] | null> {
+  try {
+    const response = await admin.graphql(AVAILABLE_LOCALES);
+    const body = (await response.json()) as {
+      errors?: unknown[];
+      data?: { availableLocales?: AvailableLocale[] | null } | null;
+    };
+    if (body.errors?.length || !Array.isArray(body.data?.availableLocales)) return null;
+    return body.data!.availableLocales!.filter((l) => l && typeof l.isoCode === "string");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The full set of changes one save may carry, replayed over the shop's CURRENT
+ * locales and the languages Shopify offers. Pure (the route and the tests share
+ * it). A locale in both `add` and `remove` is dropped from both; a locale being
+ * removed carries no publication change; an ADDED locale may ask to be
+ * published right away (it is enabled unpublished first).
+ */
+export function planLocaleChanges(
+  current: ReadonlyArray<{ locale: string; primary: boolean; published: boolean }>,
+  available: ReadonlyArray<AvailableLocale> | null,
+  requested: {
+    publish: readonly LocalePublicationChange[];
+    add: ReadonlyArray<{ locale: string; published: boolean }>;
+    remove: readonly string[];
+  },
+): {
+  add: Array<{ locale: string; published: boolean }>;
+  remove: string[];
+  publish: LocalePublicationChange[];
+  refused: Array<{ locale: string; error: string }>;
+} {
+  const refused: Array<{ locale: string; error: string }> = [];
+  const enabled = new Map(current.map((l) => [l.locale, l]));
+  const addSet = new Set(requested.add.map((a) => a.locale));
+  const removeSet = new Set(requested.remove);
+  const both = new Set([...addSet].filter((l) => removeSet.has(l)));
+
+  const add: Array<{ locale: string; published: boolean }> = [];
+  const seenAdd = new Set<string>();
+  for (const entry of requested.add) {
+    if (both.has(entry.locale) || seenAdd.has(entry.locale)) continue;
+    seenAdd.add(entry.locale);
+    if (enabled.has(entry.locale)) {
+      refused.push({ locale: entry.locale, error: "alreadyEnabled" });
+      continue;
+    }
+    if (available === null) {
+      refused.push({ locale: entry.locale, error: "availableLookupFailed" });
+      continue;
+    }
+    if (!available.some((a) => a.isoCode === entry.locale)) {
+      refused.push({ locale: entry.locale, error: "notAvailable" });
+      continue;
+    }
+    add.push({ locale: entry.locale, published: !!entry.published });
+  }
+
+  const remove: string[] = [];
+  for (const locale of new Set(requested.remove)) {
+    if (both.has(locale)) continue;
+    const known = enabled.get(locale);
+    if (!known) {
+      refused.push({ locale, error: "unknownLocale" });
+      continue;
+    }
+    if (known.primary) {
+      refused.push({ locale, error: "primaryLocale" });
+      continue;
+    }
+    remove.push(locale);
+  }
+
+  const removing = new Set(remove);
+  const plan = planLocalePublication(
+    current,
+    requested.publish.filter((c) => !removing.has(c.locale) && !addSet.has(c.locale)),
+  );
+  return { add, remove, publish: plan.changes, refused: [...refused, ...plan.refused] };
+}
+
+type MinimalDb = Pick<
+  PrismaClient,
+  "contentTranslation" | "themeTranslation" | "metaobjectTranslation" | "productImageAltTranslation"
+>;
+
+async function runLocaleMutation(
+  admin: GraphqlClient,
+  document: string,
+  locale: string,
+  confirmed: (payload: Record<string, unknown> | null | undefined) => boolean,
+  field: "shopLocaleEnable" | "shopLocaleDisable",
+): Promise<string | null> {
+  try {
+    const response = await admin.graphql(document, { variables: { locale } });
+    const body = (await response.json()) as {
+      errors?: Array<{ message?: string }>;
+      data?: Record<string, { userErrors?: Array<{ message?: string }> } & Record<string, unknown>> | null;
+    };
+    if (body.errors?.length) return body.errors[0]?.message || "GraphQL error";
+    const payload = body.data?.[field];
+    const userErrors = payload?.userErrors ?? [];
+    if (userErrors.length > 0) return userErrors.map((e) => e.message).join("; ");
+    return confirmed(payload) ? null : "notConfirmed";
+  } catch (error: unknown) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * Apply one planned save: enable what is added (then publish those asked to
+ * be), flip the publications, disable what is removed and purge its local
+ * mirrors. Each step counts only on Shopify's ECHO; one failure never stops
+ * the others.
+ */
+export async function applyLocaleChanges(
+  admin: GraphqlClient,
+  db: MinimalDb,
+  shop: string,
+  plan: { add: Array<{ locale: string; published: boolean }>; remove: string[]; publish: LocalePublicationChange[] },
+): Promise<{
+  added: string[];
+  removed: string[];
+  confirmed: LocalePublicationChange[];
+  failed: Array<{ locale: string; error: string }>;
+}> {
+  const added: string[] = [];
+  const removed: string[] = [];
+  const failed: Array<{ locale: string; error: string }> = [];
+  const publishAfterAdd: LocalePublicationChange[] = [];
+
+  for (const entry of plan.add) {
+    const error = await runLocaleMutation(
+      admin,
+      SHOP_LOCALE_ENABLE,
+      entry.locale,
+      (payload) => (payload?.shopLocale as { locale?: string } | undefined)?.locale === entry.locale,
+      "shopLocaleEnable",
+    );
+    if (error) {
+      failed.push({ locale: entry.locale, error });
+      continue;
+    }
+    added.push(entry.locale);
+    if (entry.published) publishAfterAdd.push({ locale: entry.locale, published: true });
+  }
+
+  const published = await setShopLocalesPublished(admin, shop, [...plan.publish, ...publishAfterAdd]);
+  failed.push(...published.failed);
+
+  for (const locale of plan.remove) {
+    const error = await runLocaleMutation(
+      admin,
+      SHOP_LOCALE_DISABLE,
+      locale,
+      (payload) => payload?.locale === locale,
+      "shopLocaleDisable",
+    );
+    if (error) {
+      failed.push({ locale, error });
+      continue;
+    }
+    removed.push(locale);
+  }
+
+  if (removed.length > 0) {
+    // Every layer of the removed locales; a failure here is bookkeeping after
+    // an irreversible act and must not report the removal as failed — the
+    // next sync of each resource drops what is left (it no longer reads the
+    // locale, and its delete scope has no locale filter).
+    try {
+      const where = { shop, locale: { in: removed } };
+      await Promise.all([
+        db.contentTranslation.deleteMany({ where }),
+        db.themeTranslation.deleteMany({ where }),
+        db.metaobjectTranslation.deleteMany({ where }),
+        db.productImageAltTranslation.deleteMany({
+          where: { locale: { in: removed }, image: { product: { shop } } },
+        }),
+      ]);
+    } catch (error: unknown) {
+      logger.warn("[ShopLocalePublish] Local mirrors of a removed locale could not be purged", {
+        context: "ShopLocalePublish",
+        shop,
+        removed,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (added.length > 0 || removed.length > 0) {
+    const { clearShopLocalesCache } = await import("../utils/shop-locales-cache.server");
+    clearShopLocalesCache(shop);
+  }
+
+  return { added, removed, confirmed: published.confirmed, failed };
 }
