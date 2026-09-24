@@ -886,6 +886,16 @@ export interface ReconcileParams extends RepairTarget {
    */
   foreignLocales?: readonly string[];
   /**
+   * Locales whose GLOBAL read FAILED in the sync that called — they are absent
+   * from `translations` because nobody could see them, not because they hold
+   * nothing. The first entrance's fill would otherwise translate over whatever
+   * they hold (a hand-written value included), so its fill entries for these
+   * locales are dropped; their kept rows still carry the old digest, so the
+   * next successful sync proves the move for them. The second entrance keeps
+   * them: it asks SHOPIFY whether a locale is empty before it fills one.
+   */
+  unreadLocales?: readonly string[];
+  /**
    * The PRIMARY digest baseline of this resource (`PrimaryDigestBaseline`), for
    * the gate's second entrance. Omitted ⇒ read here, BEFORE anything is
    * written; the drift sweep passes the map it already loaded for the whole
@@ -1522,13 +1532,13 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
     // keys one of the two entrances proved, so if neither found anything there
     // is nothing to do with it either.
     let stale = findStaleTranslations(translations, primaryContent, previousDigests);
-    // `handle` is left out: the second entrance only FILLS, and on the sync
-    // side a handle is only ever REFRESHED (the fill of handles is an in-app
-    // save's, where the merchant is present — CLAUDE.md) — so a handle-only
-    // move here could never do anything and must not cost a policy read.
-    const movedByBaseline = primaryBaseline
-      ? primaryBaselineMovedKeys(primaryContent, primaryBaseline).filter((key) => key !== "handle")
-      : [];
+    // `handle` counts here too: with the merchant's handle opt-in a changed
+    // primary handle made in the Shopify admin FILLS the languages that have no
+    // translated handle yet, exactly like the same change made in this app
+    // (owner's decision, 2026-09). A handle-only move therefore pays the policy
+    // read — it is a rare event (a URL change), and without the opt-in the
+    // second pass below simply yields nothing for it.
+    const movedByBaseline = primaryBaseline ? primaryBaselineMovedKeys(primaryContent, primaryBaseline) : [];
     if (stale.length === 0 && movedByBaseline.length === 0) return NOTHING;
 
     const policy = await loadTranslationChangePolicy(shop);
@@ -1543,8 +1553,19 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
       stale = findStaleTranslations(translations, primaryContent, previousDigests, {
         fillLocales: params.foreignLocales,
         anyKey: !!params.translateAs,
+        // The SAME option the repair partitions with: without it a handle
+        // fill is never emitted, and a changed primary handle made in the
+        // Shopify admin left every untranslated language on the primary slug.
+        // The rails are the resolver's, shared with the in-app save (Shopify is
+        // asked before an absent mirror row is read as a fill; a slug whose
+        // path already carries a redirect is discarded; a blog is refused).
+        translateHandles: policy.autoTranslateHandles,
         ...(primaryBaseline ? { previousPrimaryDigests: primaryBaseline } : {}),
       });
+      if (params.unreadLocales?.length) {
+        const unread = new Set(params.unreadLocales);
+        stale = stale.filter((entry) => !(entry.filled && !entry.baselineFill && unread.has(entry.locale)));
+      }
     }
 
     // THE BRAKE. The second entrance can reach resources that never had a

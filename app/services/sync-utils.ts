@@ -102,6 +102,49 @@ export function fetchedMarketLayers(markets: MarketInfo[]): string[] {
 }
 
 /**
+ * What a delete-then-recreate sync may touch, as ONE answer for the delete
+ * and for the insert: every layer it fetched, MINUS the global rows of any
+ * locale whose read FAILED. A failed read is not evidence of anything — a
+ * Shopify error that is fixed ten minutes later must not have emptied that
+ * language in the app for good (nothing re-creates the rows until the next
+ * successful sync, and the reconciliation reads a missing locale as "holds
+ * nothing"). The market half has always worked this way (`failedMarketIds`,
+ * excluded from `markets` by the caller); this is the global half.
+ *
+ * `covers` is the insert-side twin: a fetched row outside the scope is DROPPED
+ * rather than inserted, because its locale's old rows were kept and a partial
+ * insert would collide with them on the composite unique key — and because a
+ * locale whose second read (a featured image, an alt text) failed must keep
+ * its rows whole rather than half-refreshed.
+ */
+export interface TranslationWriteScope {
+  where: {
+    marketId: { in: string[] };
+    NOT?: { marketId: string; locale: { in: string[] } };
+  };
+  covers(t: { marketId?: string | null; locale: string }): boolean;
+}
+
+export function translationWriteScope(
+  markets: MarketInfo[],
+  failedGlobalLocales?: ReadonlySet<string>,
+): TranslationWriteScope {
+  const layers = fetchedMarketLayers(markets);
+  const failed = [...(failedGlobalLocales ?? [])];
+  return {
+    where: {
+      marketId: { in: layers },
+      ...(failed.length > 0 ? { NOT: { marketId: '', locale: { in: failed } } } : {}),
+    },
+    covers(t) {
+      const marketId = t.marketId || '';
+      if (!layers.includes(marketId)) return false;
+      return !(marketId === '' && failedGlobalLocales?.has(t.locale));
+    },
+  };
+}
+
+/**
  * Fetch translations for all locales for a single resource
  *
  * IMPORTANT: Only saves ACTUAL translations from Shopify.
@@ -126,6 +169,11 @@ export function fetchedMarketLayers(markets: MarketInfo[]): string[] {
  *   that HAVE a value, so an absent key means the merchant cleared that field
  *   — which is what the stale-translation reconciliation reads it for
  *   (services/translations/stale-translations.shared.ts).
+ * @param failedGlobalLocales - OUT param: the locales whose GLOBAL read failed
+ *   (an error, a null resource, a throw). The global twin of
+ *   `failedMarketIds` — hand it to `translationWriteScope` so that locale's
+ *   rows survive the rewrite, and leave those locales out of the
+ *   reconciliation's fill (a locale nobody could read is not an empty one).
  */
 export async function fetchAllTranslations(
   graphqlFn: GraphQLFunction,
@@ -134,7 +182,8 @@ export async function fetchAllTranslations(
   resourceType: string,
   markets: MarketInfo[] = [],
   failedMarketIds?: Set<string>,
-  primaryContentOut?: PrimaryContentMap
+  primaryContentOut?: PrimaryContentMap,
+  failedGlobalLocales?: Set<string>
 ): Promise<ResolvedTranslation[]> {
   const allTranslationsMap = new Map<string, ResolvedTranslation>();
 
@@ -168,6 +217,7 @@ export async function fetchAllTranslations(
         if (data.errors?.length > 0) {
           logger.warn(`[SyncUtils] GraphQL error fetching translations for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}: ${data.errors[0].message}`);
           if (marketId) failedMarketIds?.add(marketId);
+          else failedGlobalLocales?.add(locale.locale);
           continue;
         }
 
@@ -177,6 +227,7 @@ export async function fetchAllTranslations(
           // product-sync's own fetchAllTranslations) so the caller's delete
           // scope stays conservative on this ambiguous response.
           if (marketId) failedMarketIds?.add(marketId);
+          else failedGlobalLocales?.add(locale.locale);
           continue;
         }
 
@@ -214,6 +265,7 @@ export async function fetchAllTranslations(
       } catch (error) {
         logger.warn(`[SyncUtils] Error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
         if (marketId) failedMarketIds?.add(marketId);
+        else failedGlobalLocales?.add(locale.locale);
       }
     }
   }

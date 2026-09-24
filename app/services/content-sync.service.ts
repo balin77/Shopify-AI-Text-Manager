@@ -14,7 +14,7 @@ import { featuredAltLockId, marketLayerLockId } from '~/services/translations/tr
 import { publishedForeignLocales } from '~/services/translations/stale-translations.shared';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
-import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers } from './sync-utils';
+import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, translationWriteScope } from './sync-utils';
 // NOT `apiVersion` from shopify.server: importing that module boots the whole
 // embedded app (session storage, Prisma, billing) as a side effect. This
 // service only needs to KNOW the version it is talking to.
@@ -170,6 +170,9 @@ export class ContentSyncService {
 
       // 3. Fetch translations for all non-primary locales (global + market layers)
       const failedMarketIds = new Set<string>();
+      // Locales whose GLOBAL read failed: their rows survive the rewrite and
+      // they are left out of the fill below (sync-utils translationWriteScope).
+      const failedGlobalLocales = new Set<string>();
       const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         collectionId,
@@ -177,7 +180,8 @@ export class ContentSyncService {
         "Collection",
         markets,
         failedMarketIds,
-        primaryContent
+        primaryContent,
+        failedGlobalLocales
       );
       // The collection's OWN translations — captured before the image block
       // below appends the remapped `image_alt_text` rows, which live on the
@@ -196,7 +200,11 @@ export class ContentSyncService {
             locales.filter((l) => !l.primary),
             "Collection", // Store under Collection resourceType with the parent's resourceId
             markets,
-            failedMarketIds
+            failedMarketIds,
+            undefined,
+            // The image's read counts for the same locale: a locale whose
+            // alt read failed keeps its rows WHOLE (translationWriteScope).
+            failedGlobalLocales
           );
           // Remap: store with key "image_alt_text" and use the collection's resourceId
           for (const t of imageTranslations) {
@@ -226,7 +234,7 @@ export class ContentSyncService {
           )
         : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
-      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets);
+      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales);
 
       // 5. Stale-translation reconciliation (change events only) — best-effort.
       if (options.reconcileTranslations) {
@@ -244,7 +252,9 @@ export class ContentSyncService {
           // The FILL: a key this sync proved moved is translated into every
           // published language, not only into the ones that already carried a
           // translation (stale-translations.shared.ts).
+          // A locale whose read FAILED is not an empty one — see unreadLocales.
           foreignLocales: publishedForeignLocales(locales),
+          unreadLocales: [...failedGlobalLocales],
         });
       }
 
@@ -318,6 +328,9 @@ export class ContentSyncService {
 
       // 3. Fetch translations (global + market layers)
       const failedMarketIds = new Set<string>();
+      // Locales whose GLOBAL read failed: their rows survive the rewrite and
+      // they are left out of the fill below (sync-utils translationWriteScope).
+      const failedGlobalLocales = new Set<string>();
       const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         articleId,
@@ -325,7 +338,8 @@ export class ContentSyncService {
         "Article",
         markets,
         failedMarketIds,
-        primaryContent
+        primaryContent,
+        failedGlobalLocales
       );
       // See syncCollection: the article's own rows, before the ArticleImage
       // alt-text rows are remapped into the list below.
@@ -341,7 +355,11 @@ export class ContentSyncService {
             locales.filter((l) => !l.primary),
             "Article",
             markets,
-            failedMarketIds
+            failedMarketIds,
+            undefined,
+            // The image's read counts for the same locale: a locale whose
+            // alt read failed keeps its rows WHOLE (translationWriteScope).
+            failedGlobalLocales
           );
           for (const t of imageTranslations) {
             if (t.key === 'alt') {
@@ -367,7 +385,7 @@ export class ContentSyncService {
           )
         : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
-      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets);
+      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales);
 
       // 5. Stale-translation reconciliation (change events only) — best-effort.
       if (options.reconcileTranslations) {
@@ -387,7 +405,9 @@ export class ContentSyncService {
           // The FILL: a key this sync proved moved is translated into every
           // published language, not only into the ones that already carried a
           // translation (stale-translations.shared.ts).
+          // A locale whose read FAILED is not an empty one — see unreadLocales.
           foreignLocales: publishedForeignLocales(locales),
+          unreadLocales: [...failedGlobalLocales],
         });
       }
 
@@ -538,7 +558,7 @@ export class ContentSyncService {
   // SAVE TO DATABASE
   // ============================================
 
-  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = []) {
+  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
@@ -547,9 +567,11 @@ export class ContentSyncService {
     // Rows of layers outside the (successfully fetched) delete scope are
     // dropped: their old rows stay untouched and a partial insert would
     // collide with them on the composite unique key.
-    const layers = fetchedMarketLayers(markets);
+    // A locale whose global read failed is out of scope too
+    // (`translationWriteScope`): its old rows are kept, not emptied.
+    const scope = translationWriteScope(markets, failedGlobalLocales);
     const validTranslations = translations.filter(t =>
-      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
+      t.value != null && t.value !== undefined && scope.covers(t));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
@@ -627,7 +649,7 @@ export class ContentSyncService {
             shop: this.shop,
             resourceId: collectionData.id,
             resourceType: "Collection",
-            marketId: { in: fetchedMarketLayers(markets) },
+            ...scope.where,
           },
         });
 
@@ -653,7 +675,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
-  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = []) {
+  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
@@ -662,9 +684,11 @@ export class ContentSyncService {
     // Rows of layers outside the (successfully fetched) delete scope are
     // dropped: their old rows stay untouched and a partial insert would
     // collide with them on the composite unique key.
-    const layers = fetchedMarketLayers(markets);
+    // A locale whose global read failed is out of scope too
+    // (`translationWriteScope`): its old rows are kept, not emptied.
+    const scope = translationWriteScope(markets, failedGlobalLocales);
     const validTranslations = translations.filter(t =>
-      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
+      t.value != null && t.value !== undefined && scope.covers(t));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
@@ -735,7 +759,7 @@ export class ContentSyncService {
             shop: this.shop,
             resourceId: articleData.id,
             resourceType: "Article",
-            marketId: { in: fetchedMarketLayers(markets) },
+            ...scope.where,
           },
         });
 
@@ -1124,6 +1148,8 @@ export class ContentSyncService {
     const locales = await fetchShopLocales(this.graphqlFn());
     const markets = await this.getMarkets();
     const failedMarketIds = new Set<string>();
+    // Global twin of failedMarketIds (sync-utils translationWriteScope).
+    const failedGlobalLocales = new Set<string>();
 
     const primaryContent: PrimaryContentMap = {};
     const allTranslations = await fetchAllTranslations(
@@ -1133,7 +1159,8 @@ export class ContentSyncService {
       "Blog",
       markets,
       failedMarketIds,
-      primaryContent
+      primaryContent,
+      failedGlobalLocales
     );
 
     // Blogs have NO Shopify webhook, so this explicit reload is the only event
@@ -1148,9 +1175,10 @@ export class ContentSyncService {
     // fetched. A market whose fetch errored keeps its existing rows rather
     // than losing them to a partial refresh (same rule as collections).
     const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
-    const layers = fetchedMarketLayers(effectiveMarkets);
+    // …and so does a locale whose global read failed.
+    const scope = translationWriteScope(effectiveMarkets, failedGlobalLocales);
     const validTranslations = allTranslations.filter(
-      (t) => t.value != null && layers.includes(t.marketId || "")
+      (t) => t.value != null && scope.covers(t)
     );
 
     const { db } = await import("../db.server");
@@ -1160,7 +1188,7 @@ export class ContentSyncService {
           shop: this.shop,
           resourceId: gid,
           resourceType: "Blog",
-          marketId: { in: layers },
+          ...scope.where,
         },
       });
 
@@ -1192,7 +1220,9 @@ export class ContentSyncService {
       translations: allTranslations,
       primaryContent,
       previousDigests,
+      // A locale nobody could read is not an empty one (see syncCollection).
       foreignLocales: publishedForeignLocales(locales),
+      unreadLocales: [...failedGlobalLocales],
     });
 
     const translations = await db.contentTranslation.findMany({

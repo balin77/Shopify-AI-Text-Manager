@@ -12,7 +12,7 @@ import { markProductDeleted, isProductRecentlyDeleted } from '~/utils/product-de
 import { withDbRaceRetry } from '~/utils/db-retry.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
-import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
+import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale, translationWriteScope } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 import { syncProductVariantRows, type ShopifySyncVariant } from './product-variant-sync.server';
 import { PRODUCT_VIDEO_MEDIA_FIELDS, videoUploadDatesFromMedia } from './seo/video-schema.shared';
@@ -1083,21 +1083,25 @@ export class ProductSyncService {
 
       // 4. Fetch image alt-text translations (API 2025-10+)
       const altFailedMarketIds = new Set<string>();
+      const altFailedGlobalLocales = new Set<string>();
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
         productData,
         locales.filter((l) => !l.primary && l.published),
         markets,
-        altFailedMarketIds
+        altFailedMarketIds,
+        altFailedGlobalLocales
       );
       logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
       // 4b. Fetch sub-resource translations (options, option values, metafields)
       const subResFailedMarketIds = new Set<string>();
+      const subResFailedGlobalLocales = new Set<string>();
       const subResourceTranslations = await this.fetchSubResourceTranslations(
         productData,
         locales.filter((l) => !l.primary && l.published),
         markets,
-        subResFailedMarketIds
+        subResFailedMarketIds,
+        subResFailedGlobalLocales
       );
       logger.debug(`[ProductSync] Fetched ${subResourceTranslations.length} sub-resource translations`);
 
@@ -1119,7 +1123,9 @@ export class ProductSyncService {
         productFields: translationResult.failedMarketIds,
         productFieldsGlobalLocales: translationResult.failedGlobalLocales,
         imageAlt: altFailedMarketIds,
+        imageAltGlobalLocales: altFailedGlobalLocales,
         subResources: subResFailedMarketIds,
+        subResourcesGlobalLocales: subResFailedGlobalLocales,
       });
 
       // Video upload dates → product metafield. AFTER the save (the mirror
@@ -1152,8 +1158,10 @@ export class ProductSyncService {
           previousDigests,
           // The FILL: a key this sync proved moved is translated into every
           // published language, not only into the ones that already carried a
-          // translation (stale-translations.shared.ts).
+          // translation (stale-translations.shared.ts). A locale whose read
+          // FAILED is not an empty one — see unreadLocales.
           foreignLocales: publishedForeignLocales(locales),
+          unreadLocales: [...translationResult.failedGlobalLocales],
         });
       }
 
@@ -1175,7 +1183,9 @@ export class ProductSyncService {
     locales: ShopLocale[],
     markets: MarketInfo[] = [],
     /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
-    failedMarketIds?: Set<string>
+    failedMarketIds?: Set<string>,
+    /** OUT: locales whose GLOBAL read errored — same rule, global layer. */
+    failedGlobalLocales?: Set<string>
   ): Promise<Array<{ mediaId: string; locale: string; altText: string; marketId: string }>> {
     const altTranslations: Array<{ mediaId: string; locale: string; altText: string; marketId: string }> = [];
 
@@ -1216,13 +1226,15 @@ export class ProductSyncService {
 
           const data = await response.json();
 
-          if (data.errors) {
-            logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+          const edges = data.data?.translatableResourcesByIds?.edges;
+          if (data.errors || !edges) {
+            logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors?.[0]?.message ?? 'no translatableResourcesByIds');
             if (marketId) failedMarketIds?.add(marketId);
+            else failedGlobalLocales?.add(locale.locale);
             continue;
           }
 
-          const resources = data.data?.translatableResourcesByIds?.edges || [];
+          const resources = edges;
 
           let foundCount = 0;
           for (const edge of resources) {
@@ -1247,6 +1259,7 @@ export class ProductSyncService {
         } catch (error) {
           logger.warn(`[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
           if (marketId) failedMarketIds?.add(marketId);
+          else failedGlobalLocales?.add(locale.locale);
         }
       }
     }
@@ -1267,7 +1280,9 @@ export class ProductSyncService {
     locales: ShopLocale[],
     markets: MarketInfo[] = [],
     /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
-    failedMarketIds?: Set<string>
+    failedMarketIds?: Set<string>,
+    /** OUT: locales whose GLOBAL read errored — same rule, global layer. */
+    failedGlobalLocales?: Set<string>
   ): Promise<Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }>> {
     const results: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }> = [];
 
@@ -1320,13 +1335,15 @@ export class ProductSyncService {
 
           const data = await response.json();
 
-          if (data.errors) {
-            logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+          const edges = data.data?.translatableResourcesByIds?.edges;
+          if (data.errors || !edges) {
+            logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors?.[0]?.message ?? 'no translatableResourcesByIds');
             if (marketId) failedMarketIds?.add(marketId);
+            else failedGlobalLocales?.add(locale.locale);
             continue;
           }
 
-          const resources = data.data?.translatableResourcesByIds?.edges || [];
+          const resources = edges;
 
           let foundCount = 0;
           for (const edge of resources) {
@@ -1355,6 +1372,7 @@ export class ProductSyncService {
         } catch (error) {
           logger.warn(`[ProductSync] Failed to fetch sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
           if (marketId) failedMarketIds?.add(marketId);
+          else failedGlobalLocales?.add(locale.locale);
         }
       }
     }
@@ -1747,7 +1765,11 @@ export class ProductSyncService {
       /** Locales whose GLOBAL product-field read failed. */
       productFieldsGlobalLocales?: Set<string>;
       imageAlt?: Set<string>;
+      /** Locales whose GLOBAL alt-text read failed. */
+      imageAltGlobalLocales?: Set<string>;
       subResources?: Set<string>;
+      /** Locales whose GLOBAL sub-resource read failed. */
+      subResourcesGlobalLocales?: Set<string>;
     } = {}
   ) {
     const { db } = await import("../db.server");
@@ -1774,7 +1796,13 @@ export class ProductSyncService {
       ? { NOT: { marketId: "", locale: { in: failedGlobalLocales } } }
       : {};
     const altFetchedLayers = fetchedMarketLayers(markets.filter((m) => !imageAltFailed.has(m.id)));
-    const subResFetchedLayers = fetchedMarketLayers(markets.filter((m) => !subResourcesFailed.has(m.id)));
+    // The same global-locale rule for the two side pipelines, which fail
+    // independently of the product fields.
+    const altFailedGlobal = failedMarkets.imageAltGlobalLocales ?? new Set<string>();
+    const subResScope = translationWriteScope(
+      markets.filter((m) => !subResourcesFailed.has(m.id)),
+      failedMarkets.subResourcesGlobalLocales,
+    );
 
     // R4-DI5: do not resurrect a product that was deleted while this sync was
     // in flight (we fetched it from Shopify before a products/delete webhook
@@ -1822,7 +1850,15 @@ export class ProductSyncService {
     // cascade — no marketId scoping can protect them there. Snapshot them and
     // re-attach to the recreated images (matched by mediaId).
     const preservedAltRows = await db.productImageAltTranslation.findMany({
-      where: { image: { productId: productData.id }, marketId: { notIn: altFetchedLayers } },
+      where: {
+        image: { productId: productData.id },
+        OR: [
+          { marketId: { notIn: altFetchedLayers } },
+          // …and the global rows of a locale whose alt read FAILED: a failed
+          // read is not a removal, and the image recreate cascades them away.
+          ...(altFailedGlobal.size > 0 ? [{ marketId: "", locale: { in: [...altFailedGlobal] } }] : []),
+        ],
+      },
       select: { locale: true, altText: true, marketId: true, image: { select: { mediaId: true } } },
     });
 
@@ -2012,9 +2048,7 @@ export class ProductSyncService {
           // Rows of markets whose sub-resource fetch failed are dropped: their
           // old rows stay untouched (excluded from the delete scope below) and
           // a partial insert would collide with them on the unique key.
-          const freshSubResourceRows = subResourceTranslations.filter(
-            t => subResFetchedLayers.includes(t.marketId || "")
-          );
+          const freshSubResourceRows = subResourceTranslations.filter(t => subResScope.covers(t));
           const subResourceIds = [...new Set(freshSubResourceRows.map(t => t.resourceId))];
 
           if (subResourceIds.length > 0) {
@@ -2023,7 +2057,8 @@ export class ProductSyncService {
                 shop: this.shop,
                 resourceId: { in: subResourceIds },
                 resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
-                marketId: { in: subResFetchedLayers },
+                // Also keeps the global rows of a locale whose read failed.
+                ...subResScope.where,
               },
             });
             logger.debug(`[ProductSync] Deleted ${deletedSubTrans.count} old sub-resource translations`);
@@ -2112,6 +2147,7 @@ export class ProductSyncService {
             // Rows of failed market layers are dropped — the preserved
             // snapshot below carries those layers over instead.
             if (!altFetchedLayers.includes(altTrans.marketId || "")) continue;
+            if (!altTrans.marketId && altFailedGlobal.has(altTrans.locale)) continue;
             const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
             if (dbImageId) {
               await tx.productImageAltTranslation.create({

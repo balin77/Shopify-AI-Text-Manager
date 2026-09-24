@@ -210,8 +210,9 @@ export const MANAGED_TRANSLATION_KEYS: ReadonlySet<string> = new Set([
  * the one key behind an explicit second switch — `translateHandles` in
  * `classifyStaleTranslation`, fed by `AISettings.autoTranslateHandles`. With
  * that switch off the behaviour is unchanged (the stale handle translation is
- * purged); with it on the handle is REFRESHED under the rules written at that
- * option, never added to this list — because "may this key be translated at
+ * purged); with it on the handle is REFRESHED and FILLED under the rules
+ * written at that option — on every entrance, in-app and sync-side alike —
+ * never added to this list — because "may this key be translated at
  * all" and "may it be translated by default" are different questions and the
  * fill below asks the second one.
  */

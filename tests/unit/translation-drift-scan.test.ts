@@ -50,6 +50,8 @@ interface NodeSpec {
   outdated?: boolean;
   /** Keys with no `translatableContent` entry — how a CLEARED field looks. */
   clearedKeys?: string[];
+  /** Adds a primary `handle` with this digest (independent of `digest`). */
+  handleDigest?: string;
 }
 
 /** A gateway answering the sweep with one page of the given nodes per type. */
@@ -70,6 +72,7 @@ function fakeGateway(nodesByType: Record<string, NodeSpec[]>) {
           translatableContent: [
             { key: "title", value: "About us", digest: spec.digest },
             { key: "body_html", value: "<p>Text</p>", digest: spec.digest },
+            ...(spec.handleDigest ? [{ key: "handle", value: "about-us", digest: spec.handleDigest }] : []),
           ].filter((entry) => !(spec.clearedKeys ?? []).includes(entry.key)),
         };
         locales.forEach((locale, index) => {
@@ -166,6 +169,39 @@ describe("scanTranslationDrift", () => {
       ...(db.primaryDigestBaseline.updateMany.mock.calls as any[]),
     ];
     expect(written).toEqual([]);
+  });
+
+  it("hands over a page whose only move is its HANDLE — when the handle opt-in is on", async () => {
+    // A slug changed in the Shopify admin: with the opt-in the reconciliation
+    // fills the untranslated languages' handles, so the pre-check must not
+    // refuse the page (it used to, by running the gate without the option).
+    db.primaryDigestBaseline.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page"
+        ? [{ resourceId: PAGE, digests: { title: NEW, body_html: NEW, handle: OLD } }]
+        : [],
+    );
+    const spec = { resourceId: PAGE, digest: NEW, handleDigest: NEW, translated: {} };
+    const reconcile = vi.fn(async (_params: ReconcileParams) => ({ removed: 0, retranslating: 1 }));
+
+    const on = await scanTranslationDrift({
+      gateway: fakeGateway({ PAGE: [spec] }).gateway,
+      shop: SHOP,
+      foreignLocales: ["de"],
+      reconcile,
+      translateHandles: true,
+    });
+    expect(on.handed).toBe(1);
+
+    reconcile.mockClear();
+    const off = await scanTranslationDrift({
+      gateway: fakeGateway({ PAGE: [spec] }).gateway,
+      shop: SHOP,
+      foreignLocales: ["de"],
+      reconcile,
+      translateHandles: false,
+    });
+    expect(off.handed).toBe(0);
+    expect(reconcile).not.toHaveBeenCalled();
   });
 
   it("in BASELINE-ONLY mode re-records a moved baseline and hands nothing over", async () => {

@@ -185,16 +185,33 @@ export async function getCookieBannerTranslations(
   resourceId: string,
   locale: string
 ): Promise<CookieBannerTranslation[]> {
+  return (await readCookieBannerTranslations(session, resourceId, locale)) ?? [];
+}
+
+/**
+ * The same read, but a failure is `null` rather than `[]` — for a caller that
+ * DELETES what the answer does not contain. A failed read is not evidence that
+ * a locale's translations were removed, and reading it as `[]` emptied that
+ * language in the app on every Shopify blip (a null resource counts as a
+ * failure for the same reason: one ambiguous answer is not a removal).
+ */
+export async function readCookieBannerTranslations(
+  session: CookieBannerSession,
+  resourceId: string,
+  locale: string
+): Promise<CookieBannerTranslation[] | null> {
   try {
     const data = (await unstableGraphQL(session, TRANSLATIONS_QUERY, { resourceId, locale })) as {
-      data?: { translatableResource?: { translations?: CookieBannerTranslation[] } };
+      data?: { translatableResource?: { translations?: CookieBannerTranslation[] } | null };
       errors?: Array<{ message: string }>;
     };
     if (data.errors?.length) {
       cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
-      return [];
+      return null;
     }
-    return data.data?.translatableResource?.translations ?? [];
+    const resource = data.data?.translatableResource;
+    if (!resource) return null;
+    return resource.translations ?? [];
   } catch (e) {
     logger.debug("[CookieBanner] translations fetch threw → returning empty", {
       context: "CookieBanner",
@@ -203,7 +220,7 @@ export async function getCookieBannerTranslations(
       locale,
       error: e instanceof Error ? e.message : String(e),
     });
-    return [];
+    return null;
   }
 }
 

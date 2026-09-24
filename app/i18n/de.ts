@@ -4489,7 +4489,7 @@ export const de = {
         "Ein Handle ist die Adresse einer Seite, nicht ihr Text — deshalb eine eigene Entscheidung und standardmässig aus. Mit dieser Option übersetzt die KI auch den Handle neu, sobald sich der Handle in der Hauptsprache ändert, und legt für die alte fremdsprachige Adresse eine Weiterleitung auf die neue an.",
       tips: [
         "Auslöser ist der Handle selbst — eine reine Textänderung genügt nicht",
-        "Auch Sprachen ohne eigenen Handle bekommen einen übersetzten, wenn du den Handle hier in der App änderst — alte Links funktionieren weiter. Bei einer Änderung im Shopify-Admin werden nur bereits übersetzte Handles aufgefrischt",
+        "Auch Sprachen ohne eigenen Handle bekommen einen übersetzten — egal ob du den Handle hier in der App oder im Shopify-Admin änderst. Alte Links funktionieren weiter",
         "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — die Neuübersetzung löscht ihn nie",
       ],
       details:

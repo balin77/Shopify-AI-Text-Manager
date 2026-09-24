@@ -157,6 +157,56 @@ describe('BackgroundSyncService.syncSingleThemeGroup() — refresh only', () => 
   });
 });
 
+describe('BackgroundSyncService.syncSingleThemeGroup() — a failed locale read is not a removal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbm.transaction.mockResolvedValue([]);
+  });
+
+  it("keeps the failed locale's rows and still stale-deletes in the locale that was read", async () => {
+    const { fetchShopLocales } = await import('~/services/sync-utils');
+    vi.mocked(fetchShopLocales).mockResolvedValueOnce([
+      { locale: 'de', primary: true, published: true },
+      { locale: 'en', primary: false, published: true },
+      { locale: 'fr', primary: false, published: true },
+    ] as never);
+    const svc = makeService();
+    const resourceId = 'gid://shopify/OnlineStoreThemeLocaleContent/1';
+    (svc as unknown as { gateway: { graphql: ReturnType<typeof vi.fn> } }).gateway.graphql = vi.fn(
+      async (query: string, opts?: { variables?: { locale?: string } }) => {
+        if (query.includes('getThemeTranslatableResource')) {
+          return { json: async () => ({ data: { translatableResource: { resourceId, translatableContent: [
+            { key: 'general.a', value: 'A', digest: 'd', locale: 'de' },
+            { key: 'general.b', value: 'B', digest: 'd', locale: 'de' },
+          ] } } }) };
+        }
+        if (opts?.variables?.locale === 'fr') return { json: async () => ({ errors: [{ message: 'Throttled' }] }) };
+        return { json: async () => ({ data: { translatableResource: { translations: [
+          { key: 'general.a', value: 'A en', locale: 'en', outdated: false },
+        ] } } }) };
+      },
+    );
+
+    const existing = [{ resourceId, groupId: 'general', domain: 'theme' }];
+    dbm.themeContentFindMany.mockResolvedValueOnce(existing).mockResolvedValueOnce(existing);
+    dbm.themeTranslationFindMany
+      .mockResolvedValueOnce([
+        { id: 'en-a', resourceId, key: 'general.a', locale: 'en', value: 'A en', outdated: false, domain: 'theme', marketId: '' },
+        { id: 'en-b', resourceId, key: 'general.b', locale: 'en', value: 'gone', outdated: false, domain: 'theme', marketId: '' },
+        { id: 'fr-a', resourceId, key: 'general.a', locale: 'fr', value: 'A fr', outdated: false, domain: 'theme', marketId: '' },
+        { id: 'fr-b', resourceId, key: 'general.b', locale: 'fr', value: 'B fr', outdated: false, domain: 'theme', marketId: '' },
+      ])
+      .mockResolvedValueOnce([]);
+
+    await svc.syncSingleThemeGroup('general');
+
+    // en was read and no longer carries general.b → deleted; fr could not be
+    // read → both of its rows survive.
+    expect(dbm.themeTranslationDeleteMany).toHaveBeenCalledTimes(1);
+    expect(dbm.themeTranslationDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ['en-b'] } } });
+  });
+});
+
 // ── Coalescing guard: concurrent full theme syncs must not run twice ──────────
 describe('BackgroundSyncService.syncAllThemes() — per-shop coalescing', () => {
   beforeEach(() => {

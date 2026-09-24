@@ -457,6 +457,30 @@ describe("auto-translation path (Max)", () => {
     expect(shopify.removeCalls).toEqual([]);
   });
 
+  it("does NOT fill a locale the sync could not READ — unread is not empty", async () => {
+    // A throttled read of `fr` left it absent from `translations`; filling it
+    // would overwrite whatever it holds. Its kept rows prove the move next time.
+    policy.autoTranslateExternalChanges = true;
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) =>
+      Object.fromEntries(
+        locales.map((locale) => [locale, Object.fromEntries(Object.keys(fields).map((k) => [k, `${locale}-${k}`]))]),
+      ),
+    );
+
+    await reconcileStaleTranslations(
+      baseParams({
+        translations: [{ key: "title", value: "Titel", locale: "de", marketId: "", outdated: true }],
+        primaryContent: { title: { value: "Box", digest: NEW } },
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
+        foreignLocales: ["de", "fr", "it"],
+        unreadLocales: ["fr"],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual(["de:title", "it:title"]);
+  });
+
   it("fills nothing when this sync proved no key moved", async () => {
     // The fill widens a proven key to more locales; it is never itself the
     // evidence. Without the gate one price edit — `products/update` fires for
@@ -1853,6 +1877,45 @@ describe("handle re-translation", () => {
     expect(final[0].data.status).toBe("completed");
   });
 
+  it("FILLS the handle of an UNTRANSLATED locale on a change event too, not only on an in-app save", async () => {
+    // The owner's decision (2026-09): with the opt-in, a primary handle changed
+    // in the Shopify admin gives every language a translated handle — the
+    // webhook path passes `translateHandles` into its detection now.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async (_fields: Record<string, string>, locales: string[]) =>
+      Object.fromEntries(locales.map((locale) => [locale, { handle: `Kumiko ${locale}` }])),
+    );
+
+    await reconcileStaleTranslations(
+      handleParams({
+        foreignLocales: ["de", "fr"],
+        handleRedirect: async (_ref: unknown, locale: string) =>
+          locale === "fr" ? { ...(await resolver()), previousTranslatedHandle: "", skipRedirect: true } : resolver(),
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.value}`).sort()).toEqual([
+      "de:kumiko-de",
+      "fr:kumiko-fr",
+    ]);
+    // Only the REFRESHED German address owes a redirect.
+    expect(shopify.redirectCalls).toEqual([{ from: "kiste-alt", to: "kumiko-de" }]);
+  });
+
+  it("without the opt-in a change event fills NO handle", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = false;
+    policy.purgeOnPrimaryChange = false;
+    ai.translate = vi.fn(async () => ({}));
+
+    await reconcileStaleTranslations(handleParams({ foreignLocales: ["de", "fr"], handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+  });
+
   it("DISCARDS a slug whose path is already redirected — the redirect would shadow the page", async () => {
     // Likeliest case: the AI translates the title back to the OLD primary
     // slug, whose path this very save just redirected to the new primary.
@@ -2185,6 +2248,47 @@ describe("the PRIMARY digest baseline — a resource nobody has translated yet",
 
     expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`)).toEqual(["fr:title"]);
     expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("a HANDLE-only move proven by the baseline fills the handle — with the opt-in", async () => {
+    policy.autoTranslateHandles = true;
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { handle: OLD } });
+
+    const result = await reconcileStaleTranslations(
+      untranslated({
+        primaryContent: { handle: { value: "kumiko-box", digest: NEW } },
+        foreignLocales: ["de"],
+        handleRedirect: async () => ({
+          resource: "product" as const,
+          previousTranslatedHandle: "",
+          primaryHandle: "kumiko-box",
+          otherLocaleHandles: [],
+          previousHandleTakenElsewhere: false,
+          previouslyLive: true,
+          blogHandle: null,
+          blogHandleTranslatedInLocale: false,
+          skipRedirect: true,
+        }),
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(1);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}:${c.value}`)).toEqual(["de:handle:de-handle"]);
+    expect(shopify.redirectCalls).toEqual([]);
+  });
+
+  it("a HANDLE-only move fills nothing without the opt-in", async () => {
+    policy.autoTranslateHandles = false;
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { handle: OLD } });
+
+    const result = await reconcileStaleTranslations(
+      untranslated({ primaryContent: { handle: { value: "kumiko-box", digest: NEW } }, foreignLocales: ["de"] }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(ai.translate).not.toHaveBeenCalled();
   });
 
   it("does nothing — and writes nothing — when the digest did not move", async () => {

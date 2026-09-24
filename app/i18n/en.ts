@@ -4464,7 +4464,7 @@ export const en: Translation = {
         "A handle is a page's address, not its text — which is why this is a decision of its own and off by default. With it on, the AI also re-translates the handle as soon as the handle changes in the primary language, and redirects the old foreign URL to the new one.",
       tips: [
         "The trigger is the handle itself — a text change alone is not enough",
-        "Languages without a handle of their own get a translated one too when you change the handle here in the app — old links keep working. After a change in the Shopify admin only handles that are already translated are refreshed",
+        "Languages without a handle of their own get a translated one too — whether you change the handle here in the app or in the Shopify admin. Old links keep working",
         "Where no redirect can be created the old handle stays — the re-translation never deletes it",
       ],
       details:

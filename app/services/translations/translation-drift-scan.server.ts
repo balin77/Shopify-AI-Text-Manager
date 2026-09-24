@@ -152,6 +152,13 @@ export async function scanTranslationDrift(params: {
    */
   baselineOnly?: boolean;
   /**
+   * The merchant's handle opt-in, as the pre-check must know it: without it a
+   * page whose only move is its primary HANDLE is never handed over, and the
+   * reconciliation (which would fill the untranslated languages' handles) never
+   * sees it. Omitted, the sweep reads the policy itself — once per sweep.
+   */
+  translateHandles?: boolean;
+  /**
    * The MARKET layer is deliberately not read here. `collectTranslations`
    * reports global rows only, so a locale that holds an override and no global
    * translation is absent from the market purge's scope downstream — the
@@ -170,6 +177,17 @@ export async function scanTranslationDrift(params: {
   const { digestBaselineKey, findStaleTranslations, nextPrimaryDigestBaseline } = await import(
     "./stale-translations.shared"
   );
+  // One policy read per sweep, and only where a handover is possible at all.
+  // A failed read answers false, which can only cost a handle-only move its
+  // handover tonight — never a URL written that nobody asked for.
+  const translateHandles =
+    params.translateHandles ??
+    (params.baselineOnly
+      ? false
+      : await import("./translation-change-policy.server")
+          .then(({ loadTranslationChangePolicy }) => loadTranslationChangePolicy(shop))
+          .then((policy) => policy.autoTranslateHandles)
+          .catch(() => false));
 
   // A budget PER TYPE, not one shared pool walked in a fixed order: with one
   // pool a shop whose pages always fill it means its articles, blogs and
@@ -337,6 +355,9 @@ export async function scanTranslationDrift(params: {
           findStaleTranslations(translations, primaryContent, previousDigests, {
             fillLocales: foreignLocales,
             previousPrimaryDigests: previousPrimary,
+            // The same option the reconciliation passes, or a handle-only move
+            // is refused here and never reaches the fill that exists for it.
+            translateHandles,
           }).length > 0;
         if (!stale) {
           // Nothing to repair: record what we saw, so the NEXT move of this
