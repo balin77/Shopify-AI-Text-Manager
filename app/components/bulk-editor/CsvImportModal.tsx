@@ -7,8 +7,11 @@
  */
 
 import { Modal, BlockStack, Text, Banner } from "@shopify/polaris";
-import type { CsvImportPreview } from "../../services/bulk-editor/csv-import.server";
-import type { CsvRowError } from "../../services/bulk-editor/csv.shared";
+import type {
+  CsvImportDamagedCell,
+  CsvImportPreview,
+} from "../../services/bulk-editor/csv-import.server";
+import type { CsvFileEncoding, CsvRowError } from "../../services/bulk-editor/csv.shared";
 
 /** Cell values in the preview list are clipped — a 5.000-character body diff
  * must not blow up the dialog. */
@@ -32,6 +35,14 @@ export interface CsvImportModalStrings {
   rowErrorUnknownId: string; // {line} {value}
   rowErrorUnknownHandle: string; // {line} {value}
   rowErrorAmbiguousHandle: string; // {line} {value}
+  rowErrorDuplicateRow: string; // {line} {value}
+  target: string; // {target}
+  encodingNotice: string;
+  damagedTitle: string; // {count}
+  damagedHint: string;
+  damagedScientificNotation: string;
+  damagedLeadingZerosLost: string;
+  damagedCellLimitTruncated: string;
   moreRowErrors: string; // {count}
   changesHeading: string; // {count}
   moreChanges: string; // {count}
@@ -47,6 +58,11 @@ interface CsvImportModalProps {
   preview: CsvImportPreview | null;
   /** Localized column heading (same resolver the grid uses). */
   columnLabel: (columnId: string) => string;
+  /** The language/market layer the import writes into — the file itself
+   * cannot be trusted to say, so the dialog does. */
+  targetLabel: string;
+  /** How the file was decoded; anything but UTF-8 is named. */
+  encoding: CsvFileEncoding;
   /** True when the diff would blow the Shopify-call budget (Plan §10.1) —
    * the confirm button is disabled and the reason shown. */
   overBudget: boolean;
@@ -70,14 +86,26 @@ function rowErrorText(error: CsvRowError, s: CsvImportModalStrings): string {
         ? s.rowErrorUnknownId
         : error.kind === "unknownHandle"
           ? s.rowErrorUnknownHandle
-          : s.rowErrorAmbiguousHandle;
+          : error.kind === "ambiguousHandle"
+            ? s.rowErrorAmbiguousHandle
+            : s.rowErrorDuplicateRow;
   return template.replace("{line}", String(error.line)).replace("{value}", error.value);
+}
+
+function damageText(cell: CsvImportDamagedCell, s: CsvImportModalStrings): string {
+  return cell.kind === "scientificNotation"
+    ? s.damagedScientificNotation
+    : cell.kind === "leadingZerosLost"
+      ? s.damagedLeadingZerosLost
+      : s.damagedCellLimitTruncated;
 }
 
 export function CsvImportModal({
   open,
   preview,
   columnLabel,
+  targetLabel,
+  encoding,
   overBudget,
   maxCalls,
   overCellLimit,
@@ -92,6 +120,8 @@ export function CsvImportModal({
   const shownErrors = preview.rowErrors.slice(0, ROW_ERRORS_SHOWN);
   const hiddenErrorCount = preview.rowErrors.length - shownErrors.length;
   const hiddenChangeCount = preview.cellsChanged - preview.changes.length;
+  const shownDamaged = preview.damagedCells.slice(0, ROW_ERRORS_SHOWN);
+  const hiddenDamagedCount = preview.damagedCells.length - shownDamaged.length;
 
   const display = (value: string): string => (value === "" ? s.emptyValue : clip(value));
 
@@ -110,6 +140,10 @@ export function CsvImportModal({
     >
       <Modal.Section>
         <BlockStack gap="300">
+          <Text as="p" variant="bodyMd">
+            {s.target.replace("{target}", targetLabel)}
+          </Text>
+          {encoding !== "utf8" && <Banner tone="warning">{s.encodingNotice}</Banner>}
           {hasChanges ? (
             <Text as="p" variant="bodyMd" fontWeight="semibold">
               {s.summary
@@ -163,6 +197,30 @@ export function CsvImportModal({
                 {hiddenErrorCount > 0 && (
                   <Text as="p" variant="bodySm" tone="subdued">
                     {s.moreRowErrors.replace("{count}", String(hiddenErrorCount))}
+                  </Text>
+                )}
+              </BlockStack>
+            </Banner>
+          )}
+
+          {preview.damagedCells.length > 0 && (
+            <Banner
+              tone="warning"
+              title={s.damagedTitle.replace("{count}", String(preview.damagedCells.length))}
+            >
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm">
+                  {s.damagedHint}
+                </Text>
+                {shownDamaged.map((cell, i) => (
+                  <Text as="p" variant="bodySm" key={`${cell.rowId}-${cell.columnId}-${i}`}>
+                    <strong>{clip(cell.rowLabel)}</strong> · {columnLabel(cell.columnId)}:{" "}
+                    {display(cell.oldValue)} → {display(cell.newValue)} ({damageText(cell, s)})
+                  </Text>
+                ))}
+                {hiddenDamagedCount > 0 && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {s.moreRowErrors.replace("{count}", String(hiddenDamagedCount))}
                   </Text>
                 )}
               </BlockStack>

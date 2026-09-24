@@ -62,6 +62,39 @@ export interface CsvImportChange {
   newValue: string;
 }
 
+export type CsvImportDamageKind = "scientificNotation" | "leadingZerosLost" | "cellLimitTruncated";
+
+export interface CsvImportDamagedCell extends CsvImportChange {
+  kind: CsvImportDamageKind;
+}
+
+/** Excel's hard per-cell character limit — a longer text is cut to exactly
+ * this length when the file is opened and saved again. */
+const EXCEL_CELL_MAX_CHARS = 32_767;
+const SCIENTIFIC_NOTATION_RE = /^[+-]?\d+(?:[.,]\d+)?E[+-]?\d+$/i;
+const LEADING_ZERO_NUMBER_RE = /^0+\d+$/;
+
+/**
+ * What a spreadsheet does to a value it believes is a NUMBER, recognised by
+ * comparing against the stored value: `4006381333931` → `4.00638E+12`,
+ * `000123` → `123`, and a 40 000-character description cut to 32 767. All
+ * three are free-text columns (barcode, SKU, HS code, bodies), so nothing
+ * downstream would refuse them — the write would succeed and the damage would
+ * be live. Money and select columns are normalised and validated elsewhere.
+ */
+export function spreadsheetDamage(oldValue: string, newValue: string): CsvImportDamageKind | null {
+  if (SCIENTIFIC_NOTATION_RE.test(newValue) && !SCIENTIFIC_NOTATION_RE.test(oldValue) && oldValue !== "") {
+    return "scientificNotation";
+  }
+  if (LEADING_ZERO_NUMBER_RE.test(oldValue) && newValue === oldValue.replace(/^0+/, "")) {
+    return "leadingZerosLost";
+  }
+  if (newValue.length === EXCEL_CELL_MAX_CHARS && oldValue.length > EXCEL_CELL_MAX_CHARS) {
+    return "cellLimitTruncated";
+  }
+  return null;
+}
+
 export interface CsvImportPreview {
   ok: true;
   /** Data rows that resolved to an existing row. */
@@ -78,6 +111,10 @@ export interface CsvImportPreview {
   rowErrors: CsvRowError[];
   /** First CSV_IMPORT_PREVIEW_CHANGES changes, old → new in clear text. */
   changes: CsvImportChange[];
+  /** Cells a spreadsheet program visibly DAMAGED on the way (a barcode in
+   * scientific notation, a SKU that lost its leading zeros, a text cut at
+   * Excel's cell limit) — taken OUT of the diff and listed, never written. */
+  damagedCells: CsvImportDamagedCell[];
   /** The full diff — the client submits it unchanged through the normal save
    * pipeline after confirmation. */
   diff: BulkDiffEntry[];
@@ -88,7 +125,17 @@ export interface CsvImportPreview {
 
 export type CsvImportPreviewResult =
   | CsvImportPreview
-  | { ok: false; error: "empty" | "tooManyRows" | "noIdColumn" };
+  | { ok: false; error: "empty" | "tooManyRows" | "noIdColumn" | "badEncoding" }
+  /** The file's id header names another language/market layer than the one
+   * the import would write into (csvIdHeaderFor) — refused outright, because
+   * the preview would show a perfectly plausible diff that writes, say,
+   * German texts into the primary fields. */
+  | { ok: false; error: "scopeMismatch"; fileLocale: string; fileMarketId: string };
+
+/** U+FFFD — what a UTF-8 decoder leaves where a byte sequence was not UTF-8.
+ * Excel's default "CSV (Trennzeichen-getrennt)" writes Windows-1252, so every
+ * umlaut of such a file arrives as this character. */
+const REPLACEMENT_CHAR = "\uFFFD";
 
 export interface CsvImportArgs {
   type: BulkRowType;
@@ -190,6 +237,17 @@ export async function buildCsvImportPreview(
   const foreign = args.locale !== "";
   const marketId = foreign ? args.marketId : "";
   const mapping = mapCsvHeader(header, args.columns, { foreign });
+  if (
+    mapping.fileScope &&
+    (mapping.fileScope.locale !== args.locale || mapping.fileScope.marketId !== marketId)
+  ) {
+    return {
+      ok: false,
+      error: "scopeMismatch",
+      fileLocale: mapping.fileScope.locale,
+      fileMarketId: mapping.fileScope.marketId,
+    };
+  }
 
   // Handle fallback uses the handle COLUMN of the file (the second export
   // column). In a foreign view that column carries the translated handle, but
@@ -221,6 +279,7 @@ export async function buildCsvImportPreview(
 
   const rowErrors: CsvRowError[] = [];
   const resolved: { rowId: string; cells: string[] }[] = [];
+  const seenRowIds = new Set<string>();
   for (const ref of refs) {
     // A fully empty record (Excel loves appending those) is skipped silently.
     if (ref.cells.every((c) => c.trim() === "")) continue;
@@ -229,6 +288,14 @@ export async function buildCsvImportPreview(
       rowErrors.push(result.error);
       continue;
     }
+    // Two lines for ONE row: the edit map holds one value per cell, so the
+    // later line used to win silently. Which of the two the merchant meant is
+    // not ours to guess — the first stays, every repeat is reported.
+    if (seenRowIds.has(result.rowId)) {
+      rowErrors.push({ line: ref.line, kind: "duplicateRow", value: ref.id || ref.handle });
+      continue;
+    }
+    seenRowIds.add(result.rowId);
     resolved.push({ rowId: result.rowId, cells: ref.cells });
   }
 
@@ -237,7 +304,50 @@ export async function buildCsvImportPreview(
   // that one shared pipeline.
   const edits = editsFromCsvRecords(resolved, mapping, args.locale, marketId);
   const rows = [...rowsById.values()];
-  const diff = computeDiff(rows, args.columns, edits);
+  const fullDiff = computeDiff(rows, args.columns, edits);
+
+  // A file that was not UTF-8 (the client decodes Windows-1252 itself, so
+  // this is the backstop for any other encoding): every non-ASCII letter
+  // arrives as U+FFFD, lands in the diff because it differs from the DB, and
+  // would be WRITTEN to Shopify as "Gr\uFFFDner Tee". Refused as a whole —
+  // a content value that legitimately carried the character already carries
+  // it in its baseline and does not count.
+  const columnById = new Map(args.columns.map((c) => [c.id, c] as const));
+  const baselineOf = (entry: BulkDiffEntry): string => {
+    const row = rowsById.get(entry.rowId);
+    const column = columnById.get(entry.columnId);
+    if (!row || !column) return "";
+    return entry.locale === "" && entry.marketId === ""
+      ? resolveCellValue(row, column).value
+      : row.foreignValues?.[`${entry.locale}|${entry.marketId}|${entry.columnId}`] ?? "";
+  };
+  if (fullDiff.some((e) => e.value.includes(REPLACEMENT_CHAR) && !baselineOf(e).includes(REPLACEMENT_CHAR))) {
+    return { ok: false, error: "badEncoding" };
+  }
+
+  const diff: BulkDiffEntry[] = [];
+  const damagedCells: CsvImportDamagedCell[] = [];
+  for (const entry of fullDiff) {
+    const column = columnById.get(entry.columnId);
+    const oldValue = baselineOf(entry);
+    const kind =
+      column && column.inputType !== "money" && column.inputType !== "select"
+        ? spreadsheetDamage(oldValue.trim(), entry.value)
+        : null;
+    if (kind === null) {
+      diff.push(entry);
+      continue;
+    }
+    const row = rowsById.get(entry.rowId);
+    damagedCells.push({
+      kind,
+      rowId: entry.rowId,
+      rowLabel: row ? rowLabel(row) : entry.rowId,
+      columnId: entry.columnId,
+      oldValue,
+      newValue: entry.value,
+    });
+  }
 
   const variantProductIdByRowId: Record<string, string> = {};
   if (args.type === "variant") {
@@ -249,16 +359,9 @@ export async function buildCsvImportPreview(
     args.type === "variant" ? { variantProductIdByRowId } : undefined,
   );
 
-  const columnById = new Map(args.columns.map((c) => [c.id, c] as const));
   const changes: CsvImportChange[] = diff.slice(0, CSV_IMPORT_PREVIEW_CHANGES).map((entry) => {
     const row = rowsById.get(entry.rowId);
-    const column = columnById.get(entry.columnId);
-    const oldValue =
-      row && column
-        ? entry.locale === "" && entry.marketId === ""
-          ? resolveCellValue(row, column).value
-          : row.foreignValues?.[`${entry.locale}|${entry.marketId}|${entry.columnId}`] ?? ""
-        : "";
+    const oldValue = baselineOf(entry);
     return {
       rowId: entry.rowId,
       rowLabel: row ? rowLabel(row) : entry.rowId,
@@ -274,6 +377,7 @@ export async function buildCsvImportPreview(
     dataRows: dataRows.length,
     matched: resolved.length,
     cells: diff.length,
+    damagedCells: damagedCells.length,
     rowErrors: rowErrors.length,
     unknownColumns: mapping.unknown.length,
   });
@@ -287,6 +391,7 @@ export async function buildCsvImportPreview(
     ignoredColumns: mapping.ignored,
     rowErrors,
     changes,
+    damagedCells,
     diff,
     estimatedCalls,
   };

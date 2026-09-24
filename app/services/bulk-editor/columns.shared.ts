@@ -2010,6 +2010,11 @@ export interface BulkApplyResult {
  * baseline accumulation and become diffable once the row loads) and surfaces
  * their count in a banner instead of silently losing them (Finding 1).
  */
+/** CRLF and lone CR → LF (see computeDiff). */
+function normalizeLineEndings(value: string): string {
+  return value.includes("\r") ? value.replace(/\r\n?/g, "\n") : value;
+}
+
 export function computeDiff(
   rows: BulkRow[],
   columns: ColumnDescriptor[],
@@ -2035,17 +2040,35 @@ export function computeDiff(
     // Per-ROW editability (Phase 2): a linked option, a legacy values format
     // or a missing mediaId make an otherwise-editable column read-only for
     // this row — edits that sneak into the map are dropped, same as
-    // column-level read-only.
+    // column-level read-only. In EVERY locale: the grid locks these cells in
+    // a foreign view too (BulkGrid resolves per cell regardless of locale),
+    // and the CSV import — which has no grid in front of it — must not reach
+    // what the grid refuses (a translation of a list metafield whose entries
+    // contain "|" would shatter on the split when saving).
     const resolved = resolveCellValue(row, column);
-    if (locale === "" && !resolved.editable) continue;
+    if (!resolved.editable) continue;
 
     const baseline =
       locale === "" && marketId === ""
         ? resolved.value
         : row.foreignValues?.[`${locale}|${marketId}|${columnId}`] ?? "";
 
-    const original = baseline.trim();
-    let next = (edits[key] ?? "").trim();
+    // Line endings are compared as "\n": a spreadsheet or an editor on the
+    // way through a CSV round trip rewrites them freely, and a CRLF that only
+    // differs in its line breaks is not a change — nor should it be written
+    // back as one.
+    const original = normalizeLineEndings(baseline).trim();
+    let next = normalizeLineEndings(edits[key] ?? "").trim();
+    // Select columns (closed vocabularies): Excel, LibreOffice and Sheets all
+    // save `true`/`false` as `TRUE`/`FALSE`, so an untouched file came back
+    // with one "change" per boolean cell — each one counted against the call
+    // budget. The canonical option is what the save path writes anyway
+    // (canonicalSelectValue in applyBulkDiff); an UNKNOWN value passes
+    // through verbatim and stays dirty, so it is refused and reported there.
+    if (column.inputType === "select") {
+      const canonical = canonicalSelectValue(column, next);
+      if (canonical !== null) next = canonical;
+    }
     // Money columns (Plan §5.5): the merchant may have typed a localized form
     // ("1.299,90") or a bulk action may have written a formatted value —
     // normalize BEFORE comparing, so re-typing the same amount in another
