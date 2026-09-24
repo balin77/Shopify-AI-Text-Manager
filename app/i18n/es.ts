@@ -777,6 +777,7 @@ export const es: Translation = {
       activateNotConfirmed: "Shopify no confirmó la ubicación, así que no se activó.",
       activateFailed: "La ubicación no se pudo activar.",
       stockNoBaseline: "Una ubicación no tenía una cantidad actual con la que comparar, así que no se escribió. Recarga e inténtalo de nuevo.",
+      stockCompareUnsupported: "El inventario no se escribió: la versión de la API de Shopify que usa esta app no ofrece forma de comparar con la cantidad que tenías delante, y sin ella una escritura sobrescribiría lo que haya cambiado mientras tanto. Los detalles están en el registro del servidor.",
       itemFieldsInvalid: "Un coste, un peso o un código de país no tenía un formato que Shopify acepte, así que esos ajustes no se escribieron.",
       itemFieldsNotConfirmed: "Shopify no confirmó los ajustes del artículo, así que tampoco se guardaron localmente.",
       itemFieldsFailed: "No se pudieron guardar los ajustes del artículo.",
