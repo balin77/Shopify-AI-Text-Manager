@@ -1078,7 +1078,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             return json(
               {
                 success: false,
-                error: "The nightly SEO audit is available on the Max plan.",
+                error: "The daily SEO audit is available on the Max plan.",
                 actionType,
               },
               { status: 403 },
