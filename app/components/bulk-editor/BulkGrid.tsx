@@ -31,7 +31,7 @@
  * page.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Button, Text, Tooltip } from "@shopify/polaris";
 import { EditIcon, SearchIcon } from "@shopify/polaris-icons";
 import {
@@ -166,12 +166,14 @@ export function BulkGrid({
   onPasteRect,
 }: BulkGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  /** The proxy horizontal scrollbar pinned to the bottom of the viewport (see
-   * the .cp-bulk-hscroll rules below). Null until the grid actually overflows. */
+  /** The horizontal scrollbar pinned to the bottom of the viewport (see the
+   * .cp-bulk-hscroll rules below) and its thumb. Null until the grid actually
+   * overflows. */
   const hScrollRef = useRef<HTMLDivElement>(null);
-  /** Content vs. viewport width of the horizontal scroller. `content` is what
-   * the proxy's spacer is sized to; the bar only renders while it exceeds the
-   * viewport, so a grid that fits grows no second scrollbar. */
+  const thumbRef = useRef<HTMLDivElement>(null);
+  /** Content vs. viewport width of the horizontal scroller. The thumb's size
+   * and travel derive from it; the bar only renders while `content` exceeds
+   * the viewport, so a grid that fits grows no second scrollbar. */
   const [scrollMetrics, setScrollMetrics] = useState({ content: 0, viewport: 0 });
 
   /** Keyboard navigation (§8.4). Every editable TEXT cell stamps its
@@ -263,52 +265,79 @@ export function BulkGrid({
     return () => observer.disconnect();
   }, [gridTemplateColumns, rows.length]);
 
-  /** Two scrollers showing one position — and the ECHO of our own write must
-   * never be synced back.
-   *
-   * A scroll event is delivered asynchronously (next frame), so the event the
-   * proxy fires for OUR assignment arrives after a trackpad or momentum
-   * scroll has already moved the grid further. Syncing that echo back wrote
-   * the proxy's OLDER position into the grid: it jumped back a few pixels and,
-   * because a programmatic scroll cancels the running smooth/momentum scroll,
-   * the gesture stalled until the next input event restarted it — the stutter
-   * merchants saw when scrolling sideways with a touchpad. (The old
-   * "assigning an equal value fires no event" reasoning only holds while the
-   * source stands still.)
-   *
-   * So every write records the value the target really took (read back: the
-   * browser clamps and rounds), and a scroll event on that target reporting
-   * exactly that value is our echo and is dropped. Anything else is the
-   * merchant moving that scroller and is synced across. */
-  const echoRef = useRef(new WeakMap<HTMLDivElement, number>());
-  const syncScroll = (from: HTMLDivElement | null, to: HTMLDivElement | null) => {
-    if (!from || !to) return;
-    // Kept (not consumed) on a match: a write can surface as more than one
-    // event, and a second echo read as "the merchant moved it" is the same
-    // jump back. Any other value clears it.
-    if (echoRef.current.get(from) === from.scrollLeft) return;
-    echoRef.current.delete(from);
-    const before = to.scrollLeft;
-    if (before === from.scrollLeft) return;
-    to.scrollLeft = from.scrollLeft;
-    const after = to.scrollLeft;
-    // A clamped no-op fires no event, so there is no echo to wait for.
-    if (after !== before) echoRef.current.set(to, after);
+  const overflowing = scrollMetrics.content > scrollMetrics.viewport + 1;
+  const thumb = hScrollThumbGeometry(scrollMetrics.content, scrollMetrics.viewport);
+
+  /** Where the thumb sits for the grid's current scroll position — used only
+   * where the browser cannot move it by itself (no scroll-driven animations,
+   * i.e. Firefox today). Everywhere else the CSS scroll timeline below moves
+   * it on the compositor, in the same frame as the content. */
+  const placeThumbFallback = () => {
+    const el = containerRef.current;
+    const thumbEl = thumbRef.current;
+    if (!el || !thumbEl || supportsScrollTimeline()) return;
+    const range = el.scrollWidth - el.clientWidth;
+    const ratio = range > 0 ? Math.min(1, Math.max(0, el.scrollLeft / range)) : 0;
+    thumbEl.style.transform = `translateX(${ratio * thumb.travel}px)`;
   };
 
-  const overflowing = scrollMetrics.content > scrollMetrics.viewport + 1;
-
-  /** The bar is only ever moved BY a scroll event, so the render that first
-   * mounts it (or that resized its spacer) leaves it at 0 while the grid may
-   * be scrolled halfway — and the merchant's next drag would then jerk the
-   * grid back to where the bar happened to sit. Align it once per change
-   * instead. A column change can also clamp the grid's own scrollLeft, which
-   * is another moment the two would silently disagree. */
+  /** Mounting the bar, or resizing its thumb, must not leave the fallback
+   * thumb at 0 while the grid is scrolled halfway. */
   useEffect(() => {
-    syncScroll(containerRef.current, hScrollRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- syncScroll reads
-    // both refs at call time; re-running on its identity would fire every render.
-  }, [overflowing, scrollMetrics.content]);
+    placeThumbFallback();
+    // placeThumbFallback reads the refs at call time; only these two change its answer.
+  }, [overflowing, thumb.travel]);
+
+  /** A wheel or touchpad over the bar scrolls the grid, as it did while the
+   * bar was a native scroller (a vertical wheel over a horizontal bar scrolls
+   * sideways there too). Native and non-passive, because React's onWheel is
+   * passive and could not stop the PAGE from scrolling underneath. */
+  useEffect(() => {
+    const bar = hScrollRef.current;
+    if (!bar) return;
+    const onWheel = (event: WheelEvent) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const raw = Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (!raw) return;
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? el.clientWidth : 1;
+      el.scrollLeft += raw * unit;
+    };
+    bar.addEventListener("wheel", onWheel, { passive: false });
+    return () => bar.removeEventListener("wheel", onWheel);
+  }, [overflowing]);
+
+  /** Dragging the thumb, or pressing the track beside it (one page, like a
+   * native bar). Pointer capture keeps the drag alive when the pointer leaves
+   * the 12px bar, which it always does. */
+  const dragRef = useRef<{ pointerId: number; startX: number; startScroll: number } | null>(null);
+  const onBarPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const el = containerRef.current;
+    if (!el || event.button !== 0) return;
+    event.preventDefault();
+    if (event.target === thumbRef.current) {
+      dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startScroll: el.scrollLeft };
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      return;
+    }
+    const thumbBox = thumbRef.current?.getBoundingClientRect();
+    if (!thumbBox) return;
+    const page = el.clientWidth * 0.9;
+    el.scrollLeft += event.clientX < thumbBox.left ? -page : page;
+  };
+  const onBarPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    const el = containerRef.current;
+    if (!drag || !el || drag.pointerId !== event.pointerId || thumb.travel <= 0) return;
+    const range = el.scrollWidth - el.clientWidth;
+    el.scrollLeft = drag.startScroll + ((event.clientX - drag.startX) * range) / thumb.travel;
+  };
+  const onBarPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
 
   const stickyClass = (index: number): string => {
     if (index === 0) return " cp-bulk-sticky cp-bulk-sticky-0";
@@ -332,7 +361,7 @@ export function BulkGrid({
          hears this scroller, so an open cell menu stays put while its
          activator scrolls away underneath it. */
       data-polaris-scrollable="true"
-      onScroll={() => syncScroll(containerRef.current, hScrollRef.current)}
+      onScroll={placeThumbFallback}
     >
       <style>{`
         /* The horizontal scroller. Its own scrollbar is HIDDEN: it sits at the
@@ -346,6 +375,8 @@ export function BulkGrid({
           overflow-x: auto;
           width: 100%;
           scrollbar-width: none;
+          /* Drives the pinned bar's thumb (see .cp-bulk-hscroll-thumb). */
+          scroll-timeline: --cp-bulk-x x;
         }
         .cp-bulk-scroll::-webkit-scrollbar { display: none; }
         /* No overflow of its own — a scroll container here would become the
@@ -353,44 +384,59 @@ export function BulkGrid({
            which is the bug this is about. */
         .cp-bulk-scroll-wrap {
           width: 100%;
+          /* The thumb is a SIBLING of the scroller (see the bar's comment in
+             the markup), so the scroller's named timeline has to be hoisted
+             to their common parent to reach it. */
+          timeline-scope: --cp-bulk-x;
         }
+        /* The pinned bar is NOT a scroller of its own. It used to be one — a
+           second overflow-x box mirroring the grid through scroll events —
+           and that is exactly what made it judder on a touchpad: the grid
+           scrolls on the compositor, smoothly, while a scroll event reaches
+           the main thread a frame later, so the mirror was written late and
+           unevenly (and its own scroll event had to be told apart from the
+           merchant's). Now it is a track with a thumb, and the thumb is moved
+           by a scroll-driven animation bound to the grid's own scroll
+           position: the browser moves it in the same frame as the content,
+           with no script in between. Where that is unsupported, the scroll
+           handler places it instead (placeThumbFallback). */
         .cp-bulk-hscroll {
           position: sticky;
           bottom: 0;
           /* Above the sticky data columns (2) and their headers (4): the bar
              belongs to the whole grid, not to a column. */
           z-index: 5;
-          overflow-x: scroll;
-          overflow-y: hidden;
+          height: 12px;
           background: var(--p-color-bg-surface, #fff);
           border-top: 1px solid var(--p-color-border, #e1e3e5);
-          /* A floor under the bar, because a scrollbar is not guaranteed to
-             take any space: where the platform draws OVERLAY scrollbars the
-             element would collapse to the spacer's 1px and the merchant would
-             be looking for a bar that is one pixel tall. With a real scrollbar
-             (12px + spacer) the floor is already cleared and does nothing. */
-          min-height: 12px;
+          touch-action: none;
+          user-select: none;
         }
-        /* Deliberately NO scrollbar-width/scrollbar-color here: Chrome ignores
-           every ::-webkit-scrollbar rule on an element that sets one, which
-           would hand the bar back to the platform — including its overlay
-           behaviour, i.e. a bar that is invisible until it is already being
-           dragged. The WebKit pseudo-elements draw a classic, always-visible
-           one instead. Firefox falls back to its own default bar, which is
-           always visible on Windows and Linux. */
-        .cp-bulk-hscroll::-webkit-scrollbar { height: 12px; }
-        .cp-bulk-hscroll::-webkit-scrollbar-track { background: transparent; }
-        .cp-bulk-hscroll::-webkit-scrollbar-thumb {
+        .cp-bulk-hscroll-thumb {
+          position: absolute;
+          top: 3px;
+          left: 0;
+          height: 6px;
+          border-radius: 3px;
           background: var(--p-color-border, #c9cccf);
-          border: 3px solid var(--p-color-bg-surface, #fff);
-          border-radius: 6px;
+          will-change: transform;
         }
-        .cp-bulk-hscroll::-webkit-scrollbar-thumb:hover {
+        .cp-bulk-hscroll:hover .cp-bulk-hscroll-thumb {
           background: var(--p-color-border-emphasis, #8a8a8a);
         }
-        /* 1px, not 0: a zero-height child makes some engines treat the
-           scroller as empty and drop the bar. */
-        .cp-bulk-hscroll-spacer { height: 1px; }
+        @keyframes cp-bulk-hscroll-thumb {
+          from { transform: translateX(0); }
+          to { transform: translateX(var(--cp-bulk-thumb-travel, 0px)); }
+        }
+        @supports (animation-timeline: scroll()) and (timeline-scope: --a) {
+          .cp-bulk-hscroll-thumb {
+            animation-name: cp-bulk-hscroll-thumb;
+            animation-timing-function: linear;
+            animation-fill-mode: both;
+            animation-duration: auto;
+            animation-timeline: --cp-bulk-x;
+          }
+        }
         .cp-bulk-grid {
           display: grid;
           /* DEFINITE width (not max-content): under width:max-content the
@@ -903,27 +949,38 @@ export function BulkGrid({
         })}
       </div>
     </div>
-      {/* The proxy horizontal scrollbar. It is a SIBLING of the scroller, not
-          a child: a child of an overflow-x:auto box sticks to THAT box's own
-          scrollport (overflow-x:auto computes overflow-y to auto, so the
+      {/* The pinned horizontal scrollbar. It is a SIBLING of the scroller,
+          not a child: a child of an overflow-x:auto box sticks to THAT box's
+          own scrollport (overflow-x:auto computes overflow-y to auto, so the
           scroller is a scroll container on both axes), i.e. to exactly the
           bottom edge the merchant cannot see. Out here the nearest scrollport
           is the page's <main>, so the bar pins to the bottom of the window for
           as long as the grid is on screen.
 
-          Rendered only while the grid really overflows, and aria-hidden +
-          tabIndex -1 because it carries no content: it is a second view of one
-          scroll position, and keyboard cell navigation scrolls the real
-          container by itself. */}
+          Rendered only while the grid really overflows, and aria-hidden
+          because it carries no content: it is a second view of one scroll
+          position, and keyboard cell navigation scrolls the real container by
+          itself. */}
       {overflowing && (
         <div
           ref={hScrollRef}
           className="cp-bulk-hscroll"
           aria-hidden="true"
-          tabIndex={-1}
-          onScroll={() => syncScroll(hScrollRef.current, containerRef.current)}
+          onPointerDown={onBarPointerDown}
+          onPointerMove={onBarPointerMove}
+          onPointerUp={onBarPointerEnd}
+          onPointerCancel={onBarPointerEnd}
         >
-          <div className="cp-bulk-hscroll-spacer" style={{ width: scrollMetrics.content }} />
+          <div
+            ref={thumbRef}
+            className="cp-bulk-hscroll-thumb"
+            style={
+              {
+                width: thumb.width,
+                "--cp-bulk-thumb-travel": `${thumb.travel}px`,
+              } as CSSProperties
+            }
+          />
         </div>
       )}
     </div>
@@ -960,4 +1017,29 @@ function BulkImageCell({ row, onOpen, openLabel }: BulkImageCellProps) {
       </button>
     </Tooltip>
   );
+}
+
+/** Smallest thumb that is still comfortably grabbable. */
+const MIN_THUMB_WIDTH = 40;
+
+/** Thumb width and how far it travels, from the grid's content and viewport
+ * widths — the proportions of a native scrollbar. */
+export function hScrollThumbGeometry(content: number, viewport: number): { width: number; travel: number } {
+  if (content <= 0 || viewport <= 0 || content <= viewport) return { width: viewport, travel: 0 };
+  const width = Math.min(viewport, Math.max(MIN_THUMB_WIDTH, Math.round((viewport * viewport) / content)));
+  return { width, travel: Math.max(0, viewport - width) };
+}
+
+let scrollTimelineSupport: boolean | undefined;
+/** Whether the CSS scroll timeline moves the thumb (mirrors the @supports
+ * condition in the stylesheet, so script and CSS never both move it). */
+function supportsScrollTimeline(): boolean {
+  if (scrollTimelineSupport === undefined) {
+    scrollTimelineSupport =
+      typeof CSS !== "undefined" &&
+      typeof CSS.supports === "function" &&
+      CSS.supports("animation-timeline: scroll()") &&
+      CSS.supports("timeline-scope: --a");
+  }
+  return scrollTimelineSupport;
 }
