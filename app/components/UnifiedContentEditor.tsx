@@ -2585,7 +2585,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 containerStyle={{ marginBottom: 4 }}
               />
             )}
-            <div style={{ flex: 1, overflowY: "auto" }}>
+            {/* `scrollbar-gutter: stable` — the tabs inside (score,
+                attributes, …) differ in height, so without a reserved gutter
+                the scrollbar appears and disappears while clicking through
+                them and the whole panel shifts sideways by its width. Same
+                rule as the page scroll containers in responsive.css. */}
+            <div style={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable" }}>
               {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
                 sidebarRenderer(selectedItem, state.editableValues)
               )}
