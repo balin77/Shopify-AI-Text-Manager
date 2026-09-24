@@ -214,6 +214,13 @@ describe("parseDecimal", () => {
     expect(parseDecimal("4.5")).toBe("4.5");
   });
 
+  it("completes a missing digit on either side of the separator", () => {
+    expect(parseDecimal(".1")).toBe("0.1");
+    expect(parseDecimal(",25")).toBe("0.25");
+    expect(parseDecimal("2.")).toBe("2");
+    expect(parseDecimal(".")).toBeNull();
+  });
+
   it("refuses anything that is not a non-negative number", () => {
     expect(parseDecimal("-1")).toBeNull();
     expect(parseDecimal("4.5.1")).toBeNull();

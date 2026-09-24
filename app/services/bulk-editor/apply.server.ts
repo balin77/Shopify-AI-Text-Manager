@@ -4054,6 +4054,15 @@ function inventoryItemWarningMessage(warning: CommerceWarning, field?: keyof Inv
       if (field === "harmonizedSystemCode") {
         return "A customs tariff (HS) code is 6 to 13 digits, e.g. 442090 or 4420900000 — dots and spaces are removed automatically.";
       }
+      if (field === "weight") {
+        return "The weight is not a number Shopify accepts — use digits with one decimal separator, e.g. 0.25 or 1,5.";
+      }
+      if (field === "cost") {
+        return "The cost is not an amount Shopify accepts — use digits with one decimal separator, e.g. 4.50.";
+      }
+      if (field === "countryCodeOfOrigin") {
+        return "The country of origin needs a two-letter ISO code, e.g. DE or CH.";
+      }
       return "Shopify would refuse this value — check the amount, the weight unit or the two-letter country code.";
     case "itemFieldsNotConfirmed":
       return "Shopify did not confirm the change, so nothing was saved locally either.";

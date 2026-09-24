@@ -969,12 +969,19 @@ const WEIGHT_UNITS = new Set<string>(SHOPIFY_WEIGHT_UNITS);
  * Money and weight are the two places in this module where a comma is as
  * likely as a dot — the merchant types what their keyboard and locale give
  * them, and this app already learned that lesson on the price field.
+ *
+ * A missing digit on either side of the separator is what people type too —
+ * ".1" for a tenth of a kilo, "2." — and neither is ambiguous, so both are
+ * completed ("0.1", "2") rather than refused. Refusing ".1" cost the whole
+ * InventoryItem write, because `inventoryItemUpdate` applies as a unit.
  */
 export function parseDecimal(value: string): string | null {
   const trimmed = value.trim().replace(",", ".");
-  if (!trimmed) return null;
-  if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
-  return trimmed;
+  const match = /^(\d*)(?:\.(\d*))?$/.exec(trimmed);
+  if (!match) return null;
+  const [, whole, fraction = ""] = match;
+  if (whole === "" && fraction === "") return null;
+  return fraction === "" ? whole : `${whole || "0"}.${fraction}`;
 }
 
 /**
