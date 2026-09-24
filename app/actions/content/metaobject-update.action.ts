@@ -574,7 +574,7 @@ export async function handleMetaobjectUpdate(
     const shopLocales = data.data?.shopLocales ?? [];
     primaryLocaleCache = shopLocales.find((l) => l.primary)?.locale ?? "";
     foreignLocalesCache = shopLocales
-      .filter((l) => !l.primary && l.published)
+      .filter((l) => !l.primary)
       .map((l) => l.locale);
     return foreignLocalesCache;
   }

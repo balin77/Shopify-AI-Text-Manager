@@ -194,7 +194,7 @@ export class TranslationDriftAutoRunService {
           continue;
         }
         const foreignLocales = locales
-          .filter((l: { published: boolean; primary: boolean }) => l.published && !l.primary)
+          .filter((l: { published: boolean; primary: boolean }) => !l.primary)
           .map((l: { locale: string }) => l.locale);
 
         // A shop whose last sweep is long past (or missing) was not being

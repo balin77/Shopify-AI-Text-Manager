@@ -1676,7 +1676,7 @@ export class ShopifyContentService {
         try {
           const { shopLocales } = await this.loadShopLocales();
           foreignLocales = shopLocales
-            .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+            .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary)
             .map((l: { locale: string }) => l.locale);
         } catch (localeError: unknown) {
           loggers.translation('warn', '[updateContent] Could not load shop locales — translations left untouched', {
@@ -1994,7 +1994,7 @@ export class ShopifyContentService {
       ({ shopLocales } = await this.loadShopLocales());
     }
     const targetLocales: string[] = customTargetLocales ?? shopLocales
-      .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+      .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary)
       .map((l: { locale: string }) => l.locale);
     // 'en' remains the last resort for a lookup that SUCCEEDED and reported no
     // primary locale at all, which is not a shop this app can be installed on.

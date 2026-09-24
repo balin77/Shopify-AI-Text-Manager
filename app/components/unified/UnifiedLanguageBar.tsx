@@ -86,6 +86,8 @@ interface UnifiedLanguageBarProps {
   /** Translation strings */
   t?: {
     primaryLocaleSuffix?: string;
+    /** Marks a locale that is not published yet (still being prepared). */
+    unpublishedLocaleSuffix?: string;
     translateAll?: string;
     translating?: string;
     allMarketsGlobal?: string;
@@ -176,6 +178,7 @@ export function UnifiedLanguageBar({
           appLocale={appLocale}
           tooltipI18n={tooltipI18n}
           primaryLocaleSuffix={t.primaryLocaleSuffix}
+          unpublishedLocaleSuffix={t.unpublishedLocaleSuffix}
         />
       ))}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -264,6 +267,7 @@ interface LocaleButtonProps {
     fieldLabels: Record<string, string>;
   };
   primaryLocaleSuffix?: string;
+  unpublishedLocaleSuffix?: string;
 }
 
 function LocaleButton({
@@ -282,6 +286,7 @@ function LocaleButton({
   appLocale,
   tooltipI18n,
   primaryLocaleSuffix,
+  unpublishedLocaleSuffix,
 }: LocaleButtonProps) {
   const buttonStyle = useLocaleButtonStyle(
     locale,
@@ -335,10 +340,14 @@ function LocaleButton({
     tone: (!isEnabled && !isPrimary ? ("critical" as const) : undefined),
   };
 
+  // An unpublished locale is a language being PREPARED: translated like any
+  // other, only marked — the merchant must see which one the storefront does
+  // not show yet.
+  const unpublished = !locale.primary && locale.published === false;
   const fullLabel = `${getLocalizedLanguageName(locale.locale, appLocale, locale.name)}${
     locale.primary ? ` (${primaryLocaleSuffix || "Primary"})` : ""
-  }`;
-  const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
+  }${unpublished ? ` (${unpublishedLocaleSuffix || "not published"})` : ""}`;
+  const shortLabel = `${locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1)}${unpublished ? "°" : ""}`;
 
   const tooltip = getLocaleButtonTooltip(
     locale,

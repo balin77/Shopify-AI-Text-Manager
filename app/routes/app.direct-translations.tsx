@@ -98,11 +98,10 @@ export const loader = createContentLoader({
       dt.getSettings(ctx.db, ctx.session.shop),
       dt.countNewCandidates(ctx.db, ctx.session.shop),
     ]);
-    // All published locales (incl. primary) are valid translation targets:
+    // All shop locales (incl. primary, published or not) are valid targets:
     // the source text is auto-detected per item, so an EN string on a
     // DE-primary store needs a DE translation for the German storefront.
     const targetLocales: TargetLocale[] = (ctx.shopLocales as Array<{ locale: string; name?: string; primary: boolean; published?: boolean }>)
-      .filter((l) => l.published !== false)
       .map((l) => ({ locale: l.locale, name: l.name }));
     return {
       collect: settings.collect,

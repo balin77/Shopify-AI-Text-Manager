@@ -576,7 +576,7 @@ export async function handleTranslateSubResourceToAllLocales(
   const localesData = await localesResponse.json() as any;
   const shopLocales = localesData.data?.shopLocales || [];
   const targetLocales = shopLocales
-    .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+    .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary)
     .map((l: { locale: string }) => l.locale);
 
   if (targetLocales.length === 0) {
@@ -1069,7 +1069,7 @@ export async function handleSavePrimarySubResources(
         const localesData = await localesResponse.json() as any;
         const shopLocales = localesData.data?.shopLocales || [];
         foreignLocales = shopLocales
-          .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+          .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary)
           .map((l: { locale: string }) => l.locale);
         shopPrimaryLocale =
           shopLocales.find((l: { primary: boolean }) => l.primary)?.locale || "";

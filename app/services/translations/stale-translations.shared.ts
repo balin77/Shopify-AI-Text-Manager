@@ -97,16 +97,20 @@
  */
 
 /**
- * The locales the FILL translates into: published, and not the primary one — a
- * primary locale never holds a translation row, and an unpublished locale is on
- * no storefront. Written once because every sync derives it from the same
- * `shopLocales` shape and a call site that filtered only on `primary` would
- * translate into a language the shop does not serve.
+ * The locales translations are KEPT and MADE for: every shop locale but the
+ * primary one — published or not. An UNPUBLISHED locale is a language the
+ * merchant is preparing before launching it (Shopify lets it be translated in
+ * the meantime, and its translations go live the moment it is published), so
+ * the syncs keep its rows, the fill translates into it and the editors write it
+ * exactly like an active one (owner's decision, 2026-09). Only the STOREFRONT
+ * questions — hreflang, search performance, what a crawler sees — stay on the
+ * published set, and they filter on `published` themselves. The primary locale
+ * never holds a translation row.
  */
-export function publishedForeignLocales(
+export function translationForeignLocales(
   locales: ReadonlyArray<{ locale: string; primary?: boolean; published?: boolean }>,
 ): string[] {
-  return locales.filter((l) => l.published && !l.primary).map((l) => l.locale);
+  return locales.filter((l) => !l.primary).map((l) => l.locale);
 }
 
 /** One `translatableContent` entry: the primary value plus its digest. */

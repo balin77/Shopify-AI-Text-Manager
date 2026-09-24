@@ -188,7 +188,9 @@ export async function fetchAllTranslations(
   const allTranslationsMap = new Map<string, ResolvedTranslation>();
 
   for (const locale of locales) {
-    if (!locale.published) continue;
+    // Unpublished locales are read too: a language the merchant is preparing
+    // before launch holds real translations, and a sync that skipped it then
+    // DELETED them locally (the delete scopes carry no locale filter).
 
     for (const marketId of marketLayersForLocale(markets, locale.locale)) {
       try {

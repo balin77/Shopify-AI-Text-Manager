@@ -335,12 +335,20 @@ describe('fetchAllTranslations', () => {
     expect(result[0].locale).toBe('de');
   });
 
-  it('skips non-published locales', async () => {
-    const fn = makeGraphQLFn({ data: { translatableResource: null } });
+  it('reads UNPUBLISHED locales too — a language being prepared holds real translations', async () => {
+    // Skipping them made every delete-then-recreate sync wipe their rows.
+    const fn = makeGraphQLFn({
+      data: {
+        translatableResource: {
+          translatableContent: [],
+          translations: [{ key: 'title', value: 'Titel', locale: 'de' }],
+        },
+      },
+    });
     const locales = [{ locale: 'de', name: 'German', primary: false, published: false }];
     const result = await fetchAllTranslations(fn, 'gid://shopify/Product/1', locales, 'Product');
-    expect(fn).not.toHaveBeenCalled();
-    expect(result).toHaveLength(0);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result.map((r) => r.locale)).toEqual(['de']);
   });
 
   it('skips locale when GraphQL returns errors', async () => {

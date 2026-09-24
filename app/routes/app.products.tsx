@@ -1099,6 +1099,7 @@ export default function ProductsPage() {
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
+              onSaveResponse={editor.helpers.trackRetranslationTasks}
               productImages={
                 productImagesOverride.get(editor.selectedItem.id) ??
                 (editor.selectedItem.images ?? []).map((img: any) => ({

@@ -76,6 +76,7 @@ export const es: Translation = {
     metaDescription: "Meta descripción",
     primaryLanguage: "Idioma principal",
     primaryLanguageSuffix: "Idioma principal",
+    unpublishedLanguageSuffix: "no publicado",
     characters: "caracteres",
     recommended: "recomendado",
     preview: "Vista previa",
@@ -315,6 +316,7 @@ export const es: Translation = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Idioma principal",
+    unpublishedLanguageSuffix: "no publicado",
     // Una traducción que la app inició por su cuenta (hoy: el tipo de producto
     // derivado de la categoría). Advertencia, no error — el guardado funcionó.
     backgroundRetranslationRunning: "Las traducciones se están actualizando en segundo plano: los campos se recargan en cuanto terminen.",
@@ -1196,6 +1198,25 @@ export const es: Translation = {
     plan: "Plan",
     feedback: "Feedback",
     otherSettings: "Otros",
+    shopLanguages: {
+      title: "Idiomas de la tienda",
+      intro:
+        "Aquí haces visibles o invisibles los idiomas de tu tienda en la tienda online. Un idioma no publicado es uno que preparas con calma: la app lo sincroniza, lo edita y lo traduce automáticamente igual que un idioma activo; solo que aún no aparece en la tienda online. Publicarlo es el lanzamiento.",
+      primaryBadge: "Idioma principal",
+      publishedLabel: "Publicado en la tienda online",
+      unpublishedHint: "No publicado – en preparación",
+      primaryHint: "El idioma principal siempre está publicado.",
+      marketsNote:
+        "Si un idioma publicado se muestra en un mercado concreto se configura en Shopify, en Configuración → Mercados.",
+      addLanguageNote: "Los idiomas nuevos se añaden en Shopify, en Configuración → Idiomas; después aparecen aquí.",
+      failedTitle: "Shopify no aplicó estos cambios",
+      errorPrimaryLocale: "El idioma principal no se puede despublicar.",
+      errorUnknownLocale: "Este idioma ya no existe en la tienda: recarga la página.",
+      errorNotConfirmed: "Shopify no confirmó el cambio.",
+      scopeHint:
+        "Si Shopify indica «Access denied»: la app necesita un permiso nuevo para esto. Vuelve a abrir la app y acepta la solicitud de permisos.",
+      noForeign: "Por ahora tu tienda solo tiene su idioma principal.",
+    },
     // Feedback Tab
     feedbackTitle: "Enviar comentarios",
     feedbackDescription: "¡Agradecemos tus comentarios! Haz clic en el botón de abajo para enviarnos un correo electrónico con tus sugerencias, solicitudes de funciones o informes de errores.",

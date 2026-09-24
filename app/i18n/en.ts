@@ -80,6 +80,7 @@ export const en: Translation = {
     metaDescription: "Meta description",
     primaryLanguage: "Primary language",
     primaryLanguageSuffix: "Primary language",
+    unpublishedLanguageSuffix: "not published",
     characters: "characters",
     recommended: "recommended",
     preview: "Preview",
@@ -322,6 +323,7 @@ export const en: Translation = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Primary language",
+    unpublishedLanguageSuffix: "not published",
     // A translation the app started by itself (today: the product type derived
     // from the category). A warning, not an error — the save worked, only the
     // extra step did not.
@@ -1213,6 +1215,25 @@ export const en: Translation = {
     plan: "Plan",
     feedback: "Feedback",
     otherSettings: "More",
+    shopLanguages: {
+      title: "Shop languages",
+      intro:
+        "Here you make your shop's languages visible or invisible in the online store. An unpublished language is one you prepare at your own pace: the app syncs, edits and auto-translates it exactly like an active language – it just does not appear in the online store yet. Publishing it is the launch.",
+      primaryBadge: "Primary language",
+      publishedLabel: "Published in the online store",
+      unpublishedHint: "Not published – being prepared",
+      primaryHint: "The primary language is always published.",
+      marketsNote:
+        "Whether a published language is shown in a particular market is set in Shopify under Settings → Markets.",
+      addLanguageNote: "Add new languages in Shopify under Settings → Languages; they then appear here.",
+      failedTitle: "Shopify did not apply these changes",
+      errorPrimaryLocale: "The primary language cannot be unpublished.",
+      errorUnknownLocale: "This language no longer exists in the shop – reload the page.",
+      errorNotConfirmed: "Shopify did not confirm the change.",
+      scopeHint:
+        "If Shopify reports “Access denied”: the app needs a new permission for this. Open the app again and accept the permission request.",
+      noForeign: "Your shop only has its primary language so far.",
+    },
     // Feedback Tab
     feedbackTitle: "Send Feedback",
     feedbackDescription: "We appreciate your feedback! Click the button below to send us an email with your suggestions, feature requests, or bug reports.",

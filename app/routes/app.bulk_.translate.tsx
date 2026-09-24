@@ -158,7 +158,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // non-401 errors (CLAUDE.md), which is "lookup failed", not "one language".
   const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
   const foreign = shopLocales
-    .filter((l) => l.published && !l.primary)
+    // Published or not — preparing a language before launch is filling it.
+    .filter((l) => !l.primary)
     .map((l) => ({ locale: l.locale, name: l.name || l.locale }));
 
   // Metaobject rows are only schema-homogeneous per definition type (Plan §7) —

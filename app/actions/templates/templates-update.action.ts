@@ -1109,7 +1109,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
         const localesData = await localesResponse.json();
         themeForeignLocales = (localesData.data?.shopLocales || [])
-          .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+          .filter((l: { primary: boolean; published: boolean }) => !l.primary)
           .map((l: { locale: string }) => l.locale);
       } catch (localeError) {
         // Non-fatal: the primary push has already succeeded.
@@ -1147,7 +1147,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
       const localesData = await localesResponse.json();
       const foreignLocales = (localesData.data?.shopLocales || [])
-        .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+        .filter((l: { primary: boolean; published: boolean }) => !l.primary)
         .map((l: { locale: string }) => l.locale);
 
       if (foreignLocales.length > 0) {

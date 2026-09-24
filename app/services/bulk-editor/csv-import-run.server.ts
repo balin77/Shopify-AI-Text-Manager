@@ -251,7 +251,7 @@ export async function runCsvImport(taskId: string, args: RunArgs): Promise<void>
     // auto-translation's value prompts. Once per import, not per batch.
     const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
     const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
-    const foreignLocales = shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale);
+    const foreignLocales = shopLocales.filter((l) => !l.primary).map((l) => l.locale);
     const primaryLocale = shopLocales.find((l) => l.primary)?.locale;
 
     // ONE auto-translation budget for the whole file, not one per batch: every

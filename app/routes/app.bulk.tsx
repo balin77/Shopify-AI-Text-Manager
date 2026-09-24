@@ -138,7 +138,7 @@ import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
 import type { DataResponse } from "~/types/data-response";
-import { publishedForeignLocales } from "~/services/translations/stale-translations.shared";
+import { translationForeignLocales } from "~/services/translations/stale-translations.shared";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -322,7 +322,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     new ShopifyContentService(admin as never).loadMarkets().catch(() => ({ markets: [] })),
   ]);
   const locales = shopLocales
-    .filter((l) => l.published || l.primary)
+    // Unpublished locales are editable too: a language being prepared before
+    // launch is exactly where a grid of missing translations is needed.
     .sort((a, b) => Number(b.primary) - Number(a.primary))
     .map((l) => ({ locale: l.locale, name: l.name || l.locale, primary: l.primary }));
   const markets = marketsResult.markets.map((m) => ({ id: m.id, name: m.name }));
@@ -388,7 +389,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       moType,
       // Primary-view "missing translation" (blue) colour needs the published
       // foreign locales (already loaded above).
-      foreignLocales: publishedForeignLocales(shopLocales),
+      foreignLocales: translationForeignLocales(shopLocales),
       // The category column shows its names in the shop's language — the
       // language the picker's list is in, too.
       categoryLocale: shopLocales.find((l) => l.primary)?.locale ?? "",
@@ -492,7 +493,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   // primary-save stale-translation invalidation (cached read).
   const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
   const shopLocalesForSave = await getCachedShopLocales(admin, shop).catch(() => []);
-  const foreignLocales = publishedForeignLocales(shopLocalesForSave);
+  const foreignLocales = translationForeignLocales(shopLocalesForSave);
   // The source language of the auto-translation's value prompts (option names,
   // metafield values, alt texts). A failed lookup answers [] — never a wrong
   // locale — and those surfaces then follow the stored deletion answer.

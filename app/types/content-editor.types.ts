@@ -19,6 +19,9 @@ export interface ShopLocale {
   locale: string;
   primary: boolean;
   name?: string;
+  /** `false` for a language the merchant is preparing before launch — it is
+   *  translated like any other and only MARKED in the language bar. */
+  published?: boolean;
 }
 
 export interface Translation {

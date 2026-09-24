@@ -18,6 +18,7 @@ import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
 import { SettingsProbesTab } from "../components/SettingsProbesTab";
+import { SettingsShopLanguagesTab } from "../components/SettingsShopLanguagesTab";
 import type { ProbeSubTab } from "../components/SettingsProbesTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
@@ -986,6 +987,53 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "saveShopLocalePublication") {
+      // Settings → Shop-Sprachen. The submitted list is replayed over the
+      // shop's CURRENT locales, read fresh here: the client's copy may be a
+      // minute old, and an unknown or primary locale is refused rather than
+      // sent (shop-locale-publish.server.ts).
+      let requested: Array<{ locale: string; published: boolean }> = [];
+      try {
+        const parsed = JSON.parse(String(formData.get("changes") || "[]"));
+        if (Array.isArray(parsed)) {
+          requested = parsed
+            .filter((c) => c && typeof c.locale === "string" && typeof c.published === "boolean")
+            .map((c) => ({ locale: c.locale as string, published: c.published as boolean }));
+        }
+      } catch {
+        return json({ success: false, error: "Invalid changes", actionType }, { status: 400 });
+      }
+      const localesResponse = await admin.graphql(`#graphql
+        query settingsShopLocalesForPublish {
+          shopLocales {
+            locale
+            primary
+            published
+          }
+        }`);
+      const localesJson = (await localesResponse.json()) as {
+        data?: { shopLocales?: Array<{ locale: string; primary: boolean; published: boolean }> };
+      };
+      const current = localesJson.data?.shopLocales ?? [];
+      if (current.length === 0) {
+        // A failed lookup is not "no languages": refuse rather than guess.
+        return json({ success: false, error: "Could not read the shop's languages", actionType }, { status: 502 });
+      }
+      const { planLocalePublication, setShopLocalesPublished } = await import(
+        "../services/shop-locale-publish.server"
+      );
+      const plan = planLocalePublication(current, requested);
+      const outcome = await setShopLocalesPublished(admin, session.shop, plan.changes);
+      const failed = [...plan.refused, ...outcome.failed];
+      return json({
+        success: failed.length === 0,
+        actionType,
+        confirmed: outcome.confirmed,
+        // No `error` key on a partial failure: the page's generic info box
+        // would print the raw codes. The tab renders `failed` itself, in the
+        // merchant's language.
+        failed,
+      });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       // Nightly audit switch. Only written when the field is present, so a
@@ -1475,7 +1523,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "probes";
+  type Section = "setup" | "languages" | "ai" | "instructions" | "other" | "seo" | "plan" | "probes";
 
   // The three dev-only probes share ONE tab with a sub-tab strip. Their gates
   // stay per probe (unchanged), so the tab itself exists iff any of them is on.
@@ -1515,7 +1563,7 @@ export default function SettingsPage() {
     if (tabParam === "publicationprobe") return showPublicationProbeTab ? "probes" : "setup";
     if (tabParam === "taxonomyprobe") return showTaxonomyProbeTab ? "probes" : "setup";
     if (tabParam === "probes") return showProbesTab ? "probes" : "setup";
-    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
+    if (tabParam && ["setup", "languages", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
@@ -1556,8 +1604,9 @@ export default function SettingsPage() {
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
   const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
   const [hasGlossaryChanges, setHasGlossaryChanges] = useState(false);
+  const [hasShopLanguageChanges, setHasShopLanguageChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges || hasShopLanguageChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
@@ -1610,6 +1659,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const sections = [
       { id: "setup", title: t.settings.appSetup },
+      { id: "languages", title: t.settings.shopLanguages?.title || "Shop languages" },
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
@@ -1673,6 +1723,25 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "setup" ? "semibold" : "regular"}>
                   {t.settings.appSetup}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("languages")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "languages" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "languages" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "languages" ? "semibold" : "regular"}>
+                  {t.settings.shopLanguages?.title || "Shop languages"}
                 </Text>
               </button>
               <button
@@ -1859,6 +1928,17 @@ export default function SettingsPage() {
                     aiImagesPerRequest={settings.aiImagesPerRequest}
                   />
                 </>
+              )}
+
+              {/* Shop languages — publish / unpublish; an unpublished one is
+                  prepared here like any other (translationForeignLocales). */}
+              {selectedSection === "languages" && (
+                <SettingsShopLanguagesTab
+                  shopLocales={shopLocales}
+                  fetcher={fetcher}
+                  t={t}
+                  onHasChangesChange={setHasShopLanguageChanges}
+                />
               )}
 
               {/* SEO Settings */}

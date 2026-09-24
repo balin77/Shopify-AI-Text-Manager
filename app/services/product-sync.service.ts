@@ -26,7 +26,7 @@ import {
   type ShopifyProductCollections,
 } from './attribute-sync.shared';
 import { subResourceLockId, altTextLockId, marketLayerLockId } from "./translations/translation-locks.shared";
-import { publishedForeignLocales } from "./translations/stale-translations.shared";
+import { translationForeignLocales } from "./translations/stale-translations.shared";
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -567,7 +567,9 @@ export class ProductSyncService {
         onProgress?.({ overallPercent: 60, message: 'Fetching product translations...' });
 
         const shopLocales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
-        const nonPrimaryLocales = shopLocales.filter((l) => !l.primary && l.published);
+        // Every foreign locale, published or not — an unpublished one is a
+        // language being prepared, and its translations are real.
+        const nonPrimaryLocales = shopLocales.filter((l) => !l.primary);
         // Market-aware read-back: [] when scope/markets missing → global-only.
         const markets = await this.getMarkets();
 
@@ -1053,7 +1055,7 @@ export class ProductSyncService {
       const allTranslations = translationResult.translations;
 
       // CRITICAL: Check if translation fetch was successful
-      const publishedLocales = foreignLocales.filter((l) => l.published);
+      const publishedLocales = foreignLocales;
       const expectedTranslations = publishedLocales.length > 0;
 
       if (expectedTranslations && allTranslations.length === 0) {
@@ -1086,7 +1088,7 @@ export class ProductSyncService {
       const altFailedGlobalLocales = new Set<string>();
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
         productData,
-        locales.filter((l) => !l.primary && l.published),
+        locales.filter((l) => !l.primary),
         markets,
         altFailedMarketIds,
         altFailedGlobalLocales
@@ -1098,7 +1100,7 @@ export class ProductSyncService {
       const subResFailedGlobalLocales = new Set<string>();
       const subResourceTranslations = await this.fetchSubResourceTranslations(
         productData,
-        locales.filter((l) => !l.primary && l.published),
+        locales.filter((l) => !l.primary),
         markets,
         subResFailedMarketIds,
         subResFailedGlobalLocales
@@ -1160,7 +1162,7 @@ export class ProductSyncService {
           // published language, not only into the ones that already carried a
           // translation (stale-translations.shared.ts). A locale whose read
           // FAILED is not an empty one — see unreadLocales.
-          foreignLocales: publishedForeignLocales(locales),
+          foreignLocales: translationForeignLocales(locales),
           unreadLocales: [...translationResult.failedGlobalLocales],
         });
       }
@@ -1615,11 +1617,9 @@ export class ProductSyncService {
     logger.debug(`[ProductSync] Starting translation fetch for ${locales.length} locales, ${markets.length} market(s)`);
 
     for (const locale of locales) {
-      if (!locale.published) {
-        logger.debug(`[ProductSync] Skipping unpublished locale: ${locale.locale}`);
-        skipped.push(locale.locale);
-        continue;
-      }
+      // Unpublished locales are read like published ones (a language being
+      // prepared before launch) — skipping them made the save below delete
+      // their rows.
 
       for (const marketId of marketLayersForLocale(markets, locale.locale)) {
         logger.debug(`[ProductSync] Fetching translations for locale: ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);

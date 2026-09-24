@@ -142,6 +142,9 @@ interface VariantImageManagerProps {
   productTitle?: string;
   enabledLanguages?: string[];
   onDirtyChange?: (isDirty: boolean) => void;
+  /** Every alt-text save response, so the editor can watch the background
+   *  re-translation a primary alt change starts (it carries its task ids). */
+  onSaveResponse?: (response: unknown) => void;
   onMissingMainImageChange?: (hasMissing: boolean) => void;
   onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
   onGallerySelectionGidsChange?: (gids: string[]) => void;
@@ -198,6 +201,7 @@ export function VariantImageManager({
   productTitle,
   enabledLanguages = [],
   onDirtyChange,
+  onSaveResponse,
   onMissingMainImageChange,
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
@@ -297,6 +301,12 @@ export function VariantImageManager({
   const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
   const altTextFetcher = useFetcher<any>();          // generate / translate (returns text)
   const saveAltTextFetcher = useFetcher<any>();      // save (writes to Shopify)
+  // A primary alt save may start a detached re-translation; hand its task ids
+  // to the editor's one watcher, or the foreign views never refresh.
+  useEffect(() => {
+    if (saveAltTextFetcher.state !== "idle" || !saveAltTextFetcher.data) return;
+    onSaveResponse?.(saveAltTextFetcher.data);
+  }, [saveAltTextFetcher.state, saveAltTextFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const translationsFetcher = useFetcher<any>();     // load foreign locale alt texts from DB
   const prevAltFetcherData = useRef<any>(null);
   const productGalleryBlurSkipRef = useRef(false);

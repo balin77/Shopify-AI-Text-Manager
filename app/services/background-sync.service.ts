@@ -11,7 +11,7 @@ import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTran
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale, translationWriteScope } from './sync-utils';
 import { extractThemeIdFromResourceId } from '~/utils/theme-id';
-import { publishedForeignLocales } from '~/services/translations/stale-translations.shared';
+import { translationForeignLocales } from '~/services/translations/stale-translations.shared';
 import { db } from '../db.server';
 import { getSyncScope, canAccessContentType, type Plan } from '../utils/planUtils';
 import { ContentSyncService } from './content-sync.service';
@@ -683,7 +683,7 @@ export class BackgroundSyncService {
         // published language, not only into the ones that already carried a
         // translation (stale-translations.shared.ts).
         // A locale whose read FAILED is not an empty one — see unreadLocales.
-        foreignLocales: publishedForeignLocales(nonPrimaryLocales),
+        foreignLocales: translationForeignLocales(nonPrimaryLocales),
         unreadLocales: [...failedGlobalLocales],
       });
     }
@@ -1045,7 +1045,7 @@ export class BackgroundSyncService {
         // published language, not only into the ones that already carried a
         // translation (stale-translations.shared.ts).
         // A locale whose read FAILED is not an empty one — see unreadLocales.
-        foreignLocales: publishedForeignLocales(nonPrimaryLocales),
+        foreignLocales: translationForeignLocales(nonPrimaryLocales),
         unreadLocales: [...failedGlobalLocales],
       });
     }

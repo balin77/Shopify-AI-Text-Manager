@@ -269,9 +269,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // primary locale) and the nav reads it as multi-language, so a lookup
     // hiccup can never grey out a section the merchant can actually use.
     const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-    const localeCount = (await getCachedShopLocales(admin, session.shop)).filter(
-      (l) => l.published !== false,
-    ).length;
+    // Every shop locale counts, published or not: an unpublished language is
+    // one being prepared, and its translate buttons must work.
+    const localeCount = (await getCachedShopLocales(admin, session.shop)).length;
 
     // Whether the Max auto-translation is IN FORCE — the stored switch ANDed
     // with the plan, the same reading the server makes on every write (the

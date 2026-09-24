@@ -11,7 +11,7 @@ import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import { featuredAltLockId, marketLayerLockId } from '~/services/translations/translation-locks.shared';
-import { publishedForeignLocales } from '~/services/translations/stale-translations.shared';
+import { translationForeignLocales } from '~/services/translations/stale-translations.shared';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, translationWriteScope } from './sync-utils';
@@ -255,7 +255,7 @@ export class ContentSyncService {
           // published language, not only into the ones that already carried a
           // translation (stale-translations.shared.ts).
           // A locale whose read FAILED is not an empty one — see unreadLocales.
-          foreignLocales: publishedForeignLocales(locales),
+          foreignLocales: translationForeignLocales(locales),
           unreadLocales: [...failedGlobalLocales],
         });
       }
@@ -410,7 +410,7 @@ export class ContentSyncService {
           // published language, not only into the ones that already carried a
           // translation (stale-translations.shared.ts).
           // A locale whose read FAILED is not an empty one — see unreadLocales.
-          foreignLocales: publishedForeignLocales(locales),
+          foreignLocales: translationForeignLocales(locales),
           unreadLocales: [...failedGlobalLocales],
         });
       }
@@ -1241,7 +1241,7 @@ export class ContentSyncService {
       primaryContent,
       previousDigests,
       // A locale nobody could read is not an empty one (see syncCollection).
-      foreignLocales: publishedForeignLocales(locales),
+      foreignLocales: translationForeignLocales(locales),
       unreadLocales: [...failedGlobalLocales],
     });
 

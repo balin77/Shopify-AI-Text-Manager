@@ -75,6 +75,7 @@ export const de = {
     metaDescription: "Meta-Beschreibung",
     primaryLanguage: "Hauptsprache",
     primaryLanguageSuffix: "Hauptsprache",
+    unpublishedLanguageSuffix: "nicht veröffentlicht",
     characters: "Zeichen",
     recommended: "empfohlen",
     preview: "Vorschau",
@@ -314,6 +315,7 @@ export const de = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Hauptsprache",
+    unpublishedLanguageSuffix: "nicht veröffentlicht",
     // Eine Uebersetzung, die die App selbst angestossen hat (heute: der aus der
     // Kategorie abgeleitete Produkttyp). Warnung statt Fehler — das Speichern
     // hat geklappt, nur der Zusatzschritt nicht.
@@ -1217,6 +1219,25 @@ export const de = {
     plan: "Plan",
     feedback: "Feedback",
     otherSettings: "Weiteres",
+    shopLanguages: {
+      title: "Shop-Sprachen",
+      intro:
+        "Hier schaltest du die Sprachen deines Shops im Onlineshop sichtbar oder unsichtbar. Eine unveröffentlichte Sprache bereitest du in Ruhe vor: Die App synchronisiert, bearbeitet und übersetzt sie automatisch genau wie eine aktive Sprache – sie erscheint nur noch nicht im Onlineshop. Mit „Veröffentlichen“ gehst du live.",
+      primaryBadge: "Hauptsprache",
+      publishedLabel: "Im Onlineshop veröffentlicht",
+      unpublishedHint: "Nicht veröffentlicht – wird vorbereitet",
+      primaryHint: "Die Hauptsprache ist immer veröffentlicht.",
+      marketsNote:
+        "Ob eine veröffentlichte Sprache in einem bestimmten Markt angezeigt wird, legst du in Shopify unter Einstellungen → Märkte fest.",
+      addLanguageNote: "Neue Sprachen fügst du in Shopify unter Einstellungen → Sprachen hinzu; danach erscheinen sie hier.",
+      failedTitle: "Diese Änderungen hat Shopify nicht übernommen",
+      errorPrimaryLocale: "Die Hauptsprache kann nicht unveröffentlicht werden.",
+      errorUnknownLocale: "Diese Sprache gibt es im Shop nicht mehr – lade die Seite neu.",
+      errorNotConfirmed: "Shopify hat die Änderung nicht bestätigt.",
+      scopeHint:
+        "Falls Shopify „Access denied“ meldet: Die App braucht dafür eine neue Berechtigung. Öffne die App einmal neu und bestätige die Berechtigungsanfrage.",
+      noForeign: "Dein Shop hat bisher nur die Hauptsprache.",
+    },
     // Feedback Tab
     feedbackTitle: "Feedback senden",
     feedbackDescription: "Wir freuen uns über Ihr Feedback! Klicken Sie auf den Button unten, um uns eine E-Mail mit Ihren Anregungen, Wünschen oder Fehlermeldungen zu senden.",

@@ -108,8 +108,17 @@ export async function saveImageAltTextPrimary(opts: {
   shop: string;
   mediaId: string;
   altText: string;
-}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string }> {
+}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string; retranslationTaskId?: string }> {
   const { admin, db, shop, mediaId, altText } = opts;
+  // The alt as it stood BEFORE this write — read first, because the cache write
+  // below replaces it. An unchanged alt is no change event: pressing save on
+  // the same text must neither re-translate nor delete anything.
+  const before = await db.productImage
+    .findFirst({
+      where: { mediaId, product: { shop } },
+      select: { id: true, productId: true, altText: true, product: { select: { title: true } } },
+    })
+    .catch(() => null);
   try {
     const r = await admin.graphql(
       `#graphql
@@ -135,7 +144,48 @@ export async function saveImageAltTextPrimary(opts: {
     logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
   });
 
-  return { saved: true, userErrors: [] };
+  // The foreign translations of the alt that just changed: re-translated with
+  // auto-translate on, otherwise the merchant's stored deletion answer. This
+  // path used to do neither — the product editor's save did, this one (the
+  // image manager's per-image save, and the SEO performance page's generator)
+  // did not, so an alt edited here was never translated anywhere.
+  let retranslationTaskId: string | undefined;
+  if (before && (before.altText ?? "").trim() !== altText.trim()) {
+    try {
+      const [{ loadTranslationChangePolicy }, { fetchShopLocales }, { repairChangedProductAlts }, { translationForeignLocales }] =
+        await Promise.all([
+          import("../../services/translations/translation-change-policy.server"),
+          import("../../services/sync-utils"),
+          import("../../services/translations/product-alt-repair.server"),
+          import("../../services/translations/stale-translations.shared"),
+        ]);
+      const policy = await loadTranslationChangePolicy(shop, db);
+      if (policy.autoTranslateExternalChanges || policy.purgeUnreconciledSurfaces) {
+        const gateway = new ShopifyApiGateway(admin as never, shop);
+        const locales = await fetchShopLocales(gateway.graphql.bind(gateway));
+        const outcome = await repairChangedProductAlts({
+          gateway,
+          db,
+          shop,
+          productId: before.productId,
+          productTitle: before.product?.title ?? before.productId,
+          changes: [{ imageId: before.id, mediaId, alt: altText }],
+          policy,
+          foreignLocales: translationForeignLocales(locales),
+          primaryLocale: locales.find((l) => l.primary)?.locale ?? "",
+        });
+        retranslationTaskId = outcome.taskId;
+      }
+    } catch (repairError: unknown) {
+      // Non-fatal: the primary alt is saved.
+      logger.warn("[saveImageAltText] alt translation repair skipped", {
+        mediaId,
+        error: repairError instanceof Error ? repairError.message : String(repairError),
+      });
+    }
+  }
+
+  return { saved: true, userErrors: [], ...(retranslationTaskId ? { retranslationTaskId } : {}) };
 }
 
 // ============================================================================
@@ -807,6 +857,7 @@ export async function handleSaveImageAltText(
   }
 
   let shopifySaved = false;
+  let retranslationTaskIds: string[] = [];
 
   if (!locale || locale === primaryLocale) {
     // Primary locale: fileUpdate + shop-scoped cache write (shared helper).
@@ -815,6 +866,7 @@ export async function handleSaveImageAltText(
       return json({ success: false, error: "Shopify API error" }, { status: 500 });
     }
     shopifySaved = result.saved;
+    retranslationTaskIds = result.retranslationTaskId ? [result.retranslationTaskId] : [];
   } else {
     // Foreign locale: use translationsRegister (needs digest from Shopify)
     let altDigest: string | undefined;
@@ -891,7 +943,11 @@ export async function handleSaveImageAltText(
     }
   }
 
-  return json({ actionType: "saveImageAltText", success: shopifySaved });
+  return json({
+    actionType: "saveImageAltText",
+    success: shopifySaved,
+    ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+  });
 }
 
 // ============================================================================

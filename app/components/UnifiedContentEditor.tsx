@@ -1832,6 +1832,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   }}
                   t={{
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                    unpublishedLocaleSuffix: t.content?.unpublishedLanguageSuffix || "not published",
                     translateAll: t.content?.translateAll || "🌍 Translate All",
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
@@ -1878,6 +1879,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     validationVersion={helpers.validationVersion}
                     t={{
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                      unpublishedLocaleSuffix: t.content?.unpublishedLanguageSuffix || "not published",
                       translateAll: t.content?.translateAll || "🌍 Translate All",
                       translating: t.content?.translating || "Translating...",
                       allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",

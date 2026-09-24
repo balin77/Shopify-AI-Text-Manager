@@ -44,7 +44,7 @@ export async function resolvePrimaryAndTargets(admin: AdminApiContext) {
   const locales = await new ContentService(admin).getShopLocales().catch(() => []);
   const primary = (locales as Array<{ locale: string; primary: boolean }>).find((l) => l.primary)?.locale || "en";
   const targets = (locales as Array<{ locale: string; primary: boolean; published: boolean }>)
-    .filter((l) => l.published)
+    // Published or not — an unpublished locale is a language being prepared.
     .map((l) => l.locale);
   return { primary, targets };
 }
