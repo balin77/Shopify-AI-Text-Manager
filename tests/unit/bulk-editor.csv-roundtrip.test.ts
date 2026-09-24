@@ -143,6 +143,12 @@ describe("language/market marker in the id header", () => {
 });
 
 describe("an untouched file saved by a spreadsheet re-imports as NO change", () => {
+  it("a non-canonical stored enum is not permanently dirty", () => {
+    const row: BulkRow = { ...variantRow, taxable: "TRUE" };
+    const edits = { [makeEditKey(row.id, "", "", VAR_TAXABLE_COLUMN_ID)]: "true" };
+    expect(computeDiff([row], variantColumns, edits)).toEqual([]);
+  });
+
   it("TRUE/FALSE compare equal to the canonical true/false", () => {
     const edits = { [makeEditKey(variantRow.id, "", "", VAR_TAXABLE_COLUMN_ID)]: "TRUE" };
     expect(computeDiff([variantRow], variantColumns, edits)).toEqual([]);
@@ -173,6 +179,11 @@ describe("spreadsheet damage is taken out of the diff and reported", () => {
     expect(spreadsheetDamage("4006381333931", "4,00638E+12")).toBe("scientificNotation");
     expect(spreadsheetDamage("000123", "123")).toBe("leadingZerosLost");
     expect(spreadsheetDamage("x".repeat(40_000), "x".repeat(32_767))).toBe("cellLimitTruncated");
+    // Trimmed and CRLF→LF on the way: the cut no longer measures 32 767.
+    const long = `${"x".repeat(78)}\r\n`.repeat(500);
+    const cut = long.slice(0, 32_767).replace(/\r\n/g, "\n").trim();
+    expect(spreadsheetDamage(long, cut)).toBe("cellLimitTruncated");
+    expect(spreadsheetDamage("x".repeat(40_000), "x".repeat(100))).toBeNull(); // a real shortening
     expect(spreadsheetDamage("000123", "000124")).toBeNull();
     expect(spreadsheetDamage("4006381333931", "4006381333948")).toBeNull();
     expect(spreadsheetDamage("", "1E+5")).toBeNull(); // nothing to have damaged
@@ -212,6 +223,8 @@ describe("encoding", () => {
     expect(decodeCsvBytes(ansi)).toEqual({ text: "Grüner", encoding: "windows1252" });
     const utf16 = new Uint8Array([0xff, 0xfe, 0x47, 0x00, 0xfc, 0x00]);
     expect(decodeCsvBytes(utf16)).toEqual({ text: "Gü", encoding: "utf16" });
+    const utf16NoBom = new Uint8Array([0x69, 0x00, 0x64, 0x00]);
+    expect(decodeCsvBytes(utf16NoBom)).toEqual({ text: "id", encoding: "utf16" });
   });
 
   it("a file that still carries U+FFFD is refused instead of written", async () => {

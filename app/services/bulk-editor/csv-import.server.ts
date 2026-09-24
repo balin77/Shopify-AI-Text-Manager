@@ -89,7 +89,17 @@ export function spreadsheetDamage(oldValue: string, newValue: string): CsvImport
   if (LEADING_ZERO_NUMBER_RE.test(oldValue) && newValue === oldValue.replace(/^0+/, "")) {
     return "leadingZerosLost";
   }
-  if (newValue.length === EXCEL_CELL_MAX_CHARS && oldValue.length > EXCEL_CELL_MAX_CHARS) {
+  // The cut value reaches us trimmed and with LF line endings, so its length
+  // is not reliably 32 767 — recognise it as a PREFIX of the stored text.
+  if (
+    oldValue.length > EXCEL_CELL_MAX_CHARS &&
+    newValue.length <= EXCEL_CELL_MAX_CHARS &&
+    // A deliberate shortening of a long text to a short prefix is not this:
+    // only the neighbourhood of the limit counts (a cut loses at most the
+    // trimmed tail and one character per converted line break).
+    newValue.length >= EXCEL_CELL_MAX_CHARS * 0.9 &&
+    oldValue.replace(/\r\n?/g, "\n").startsWith(newValue)
+  ) {
     return "cellLimitTruncated";
   }
   return null;

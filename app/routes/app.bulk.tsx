@@ -1556,18 +1556,25 @@ export default function BulkEditor() {
     // against the DB, a successful save prunes every submitted key (dropping
     // a pending grid edit of the same cell in favour of the file, silently)
     // and clears the undo stack of edits that were never saved.
-    if (dirty.length > 0) {
+    if (dirty.length > 0 || offPageEditCount > 0) {
       setImportError(b.csv.unsavedEdits);
       return;
     }
-    // UX pre-check only — the server re-enforces the byte cap (§8.2).
-    if (file.size > CSV_IMPORT_MAX_BYTES) {
+    // Decoded HERE, not with file.text() (always UTF-8): Excel's default CSV
+    // format is Windows-1252, see decodeCsvBytes. The raw-size check only
+    // stops an absurd file before it is read; the real cap is measured on
+    // the DECODED text in UTF-8 — what the server measures — or a
+    // Windows-1252 file full of umlauts passes here and fails there, and a
+    // UTF-16 file (two bytes per letter) is refused for nothing.
+    if (file.size > CSV_IMPORT_MAX_BYTES * 2) {
       setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
       return;
     }
-    // Decoded HERE, not with file.text() (always UTF-8): Excel's default CSV
-    // format is Windows-1252, see decodeCsvBytes.
     const { text, encoding } = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
+    if (new TextEncoder().encode(text).length > CSV_IMPORT_MAX_BYTES) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
+      return;
+    }
     setImportEncoding(encoding);
     importFetcher.submit(
       {

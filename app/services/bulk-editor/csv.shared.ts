@@ -127,6 +127,12 @@ export function decodeCsvBytes(bytes: Uint8Array): { text: string; encoding: Csv
   if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
     return { text: new TextDecoder("utf-16be").decode(bytes.subarray(2)), encoding: "utf16" };
   }
+  // UTF-16 LE WITHOUT a BOM: our header starts with ASCII ("id…"), which
+  // that encoding writes as <letter> 0x00 — a pattern valid UTF-8 would carry
+  // as a NUL character, which no CSV of ours contains.
+  if (bytes.length >= 2 && bytes[0] !== 0 && bytes[1] === 0) {
+    return { text: new TextDecoder("utf-16le").decode(bytes), encoding: "utf16" };
+  }
   try {
     return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), encoding: "utf8" };
   } catch {

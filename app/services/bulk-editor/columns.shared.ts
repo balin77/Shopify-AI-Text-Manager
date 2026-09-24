@@ -2115,7 +2115,7 @@ export function computeDiff(
     // way through a CSV round trip rewrites them freely, and a CRLF that only
     // differs in its line breaks is not a change — nor should it be written
     // back as one.
-    const original = normalizeLineEndings(baseline).trim();
+    let original = normalizeLineEndings(baseline).trim();
     let next = normalizeLineEndings(edits[key] ?? "").trim();
     // Select columns (closed vocabularies): Excel, LibreOffice and Sheets all
     // save `true`/`false` as `TRUE`/`FALSE`, so an untouched file came back
@@ -2126,6 +2126,8 @@ export function computeDiff(
     if (column.inputType === "select") {
       const canonical = canonicalSelectValue(column, next);
       if (canonical !== null) next = canonical;
+      const canonicalBaseline = canonicalSelectValue(column, original);
+      if (canonicalBaseline !== null) original = canonicalBaseline;
     }
     // Money columns (Plan §5.5): the merchant may have typed a localized form
     // ("1.299,90") or a bulk action may have written a formatted value —
