@@ -665,6 +665,7 @@ export const en: Translation = {
       chooseThis: "choose this category",
       noChildren: "This category has no subcategories.",
       levelTruncated: "This level has more subcategories than were loaded — use the search above.",
+      remove: "Remove category",
     },
     // PLAN §Phase 3.1 — the membership picker.
     collectionsField: {
@@ -678,6 +679,7 @@ export const en: Translation = {
       truncated: "This product is in more collections than were loaded. Manage the rest in the Shopify admin.",
       unknown: "Not loaded yet — reload this product to see its collections.",
       none: "This shop has no collections yet.",
+      noneSelected: "None",
     },
     themeTemplate: {
       defaultTemplate: "Default",
@@ -788,7 +790,8 @@ export const en: Translation = {
       activateNotConfirmed: "Shopify did not confirm the location, so it was not activated.",
       activateFailed: "The location could not be activated.",
       stockNoBaseline: "One location had no current quantity to compare against, so it was not written. Reload and try again.",
-      itemFieldsInvalid: "A cost, weight or country code was not in a form Shopify accepts, so those settings were not written.",
+      stockCompareUnsupported: "Stock was not written: the Shopify API version this app talks to offers no way to compare against the quantity you were looking at, and without it a write would overwrite whatever changed in the meantime. The details are in the server log.",
+      itemFieldsInvalid: "A cost, weight, country code or customs tariff code (6 to 13 digits) was not in a form Shopify accepts, so those settings were not written.",
       itemFieldsNotConfirmed: "Shopify did not confirm the item settings, so they were not saved locally either.",
       itemFieldsFailed: "The item settings could not be saved.",
       stockChangedMeanwhile: "The stock changed while you were editing, so nothing was written. Reload to see the current number.",
@@ -4087,9 +4090,9 @@ export const en: Translation = {
       requiresShipping: "Requires shipping",
       countryCodeOfOrigin: "Country of origin (ISO)",
       harmonizedSystemCode: "HS code",
-      // Read-only context: set through a picker in the single editor.
-      productCategory: "Product category",
-      productCollections: "Collections",
+      // Picker cells: the same picker the single editor uses.
+      category: "Product category",
+      collections: "Collections",
     },
     chooseColumns: "Choose columns",
     columnPicker: {
@@ -4116,8 +4119,7 @@ export const en: Translation = {
       missingInventoryItem: "This variant has no Shopify inventory item, which is where cost, weight and customs data live — resync the product first.",
       multipleVariants: "This product has several variants, which can differ in price — edit them under \"Product variants\".",
       variantsNotSynced: "This product's variants are not in the cache yet — resync the products, then edit this.",
-      needsPicker: "This field is set through a picker — open the product in the single editor to change it.",
-      collectionsTruncated: "This product is in more collections than the sync fetched — the list here is incomplete.",
+      priceNotSynced: "This variant's price is not in the cache yet — open the product once in the product editor and it will appear here.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",
@@ -4127,6 +4129,14 @@ export const en: Translation = {
       wrongMetaobjectType: "This column belongs to another metaobject type.",
       listSeparatorInValue: "A list value contains the \"|\" separator — edit it in the single-item editor.",
       altTextInImages: "The alt text of every product image — including translations — is edited under \"Images\".",
+    },
+    // What an EMPTY read-only cell shows instead of its value. Without text
+    // there is nothing to hover — the tooltip's explanation was there and
+    // unreachable.
+    readOnlyPlaceholders: {
+      multipleVariants: "Several variants",
+      variantsNotSynced: "Not loaded",
+      priceNotSynced: "Price not loaded",
     },
     metaobjectTypeLabel: "Metaobject type",
     searchLabel: "Search",
@@ -4142,7 +4152,30 @@ export const en: Translation = {
       missingPrice: "Without price",
       compareAtNotAbovePrice: "Compare-at price ≤ price",
       missingAltText: "Alt text missing",
+      statusActive: "Active",
+      statusDraft: "Draft",
+      statusUnlisted: "Unlisted",
+      statusArchived: "Archived",
+      published: "Visible",
+      hidden: "Hidden",
+      smartCollection: "Automated (rules)",
+      manualCollection: "Manual",
+      missingDescription: "Description / content missing",
+      missingImage: "No image",
+      missingVendor: "No vendor",
+      missingProductType: "No product type",
+      missingCategory: "No category",
+      missingTags: "No tags",
+      missingSummary: "Excerpt missing",
     },
+    filterSections: {
+      status: "Status",
+      visibility: "Visibility",
+      collectionKind: "Collection type",
+      general: "More filters",
+    },
+    filterAttributeHint: "Filters on visibility, collection type, vendor, category and tags only match items whose attributes have already been synced.",
+    filterClearAll: "Clear all filters",
     filterApproximateBanner: "Very large catalog: the \"Missing translation\" filter is approximate and may show some already-translated entries.",
     moreVariantsBanner: "Some products have more than 100 variants — the remainder is not shown here and can be edited in the Shopify admin.",
     priceActions: {

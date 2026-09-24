@@ -662,6 +662,7 @@ export const de = {
       chooseThis: "diese Kategorie wählen",
       noChildren: "Diese Kategorie hat keine Unterkategorien.",
       levelTruncated: "Diese Ebene hat mehr Unterkategorien, als geladen wurden — nutze die Suche oben.",
+      remove: "Kategorie entfernen",
     },
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {
@@ -675,6 +676,7 @@ export const de = {
       truncated: "Dieses Produkt ist in mehr Kollektionen, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kollektionen zu sehen.",
       none: "Dieser Shop hat noch keine Kollektionen.",
+      noneSelected: "Keine",
     },
     // Das Theme-Vorlagen-Feld. Eine Auswahlliste der Vorlagendateien des
     // veroeffentlichten Themes — ein selbst getippter Suffix rendert die
@@ -793,7 +795,10 @@ export const de = {
       activateNotConfirmed: "Shopify hat den Standort nicht bestätigt, er wurde deshalb nicht aktiviert.",
       activateFailed: "Der Standort konnte nicht aktiviert werden.",
       stockNoBaseline: "Für einen Lagerort gab es keine aktuelle Vergleichsmenge, deshalb wurde er nicht geschrieben. Lade neu und versuch es nochmal.",
-      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
+      // Die Shopify-Version, mit der die App spricht, kennt kein Feld für den
+      // Abgleich. Ohne den wird nicht geschrieben — siehe commerce-write.server.ts.
+      stockCompareUnsupported: "Der Bestand wurde nicht geschrieben: die Shopify-API-Version dieser App bietet keinen Abgleich mit der Menge, die du gesehen hast — und ohne den würde ein Schreibvorgang überschreiben, was sich zwischenzeitlich geändert hat. Die Einzelheiten stehen im Server-Log.",
+      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht, ein Ländercode oder eine Zolltarifnummer (6 bis 13 Ziffern) war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
       itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
       itemFieldsFailed: "Die Artikelangaben konnten nicht gespeichert werden.",
       stockChangedMeanwhile: "Der Bestand hat sich während deiner Bearbeitung geändert, deshalb wurde nichts geschrieben. Lade neu, um die aktuelle Zahl zu sehen.",
@@ -4102,9 +4107,9 @@ export const de = {
       requiresShipping: "Versand nötig",
       countryCodeOfOrigin: "Herkunftsland (ISO)",
       harmonizedSystemCode: "Zolltarifnummer",
-      // Nur-Lese-Kontext: per Auswahldialog im Einzeleditor gesetzt.
-      productCategory: "Produktkategorie",
-      productCollections: "Kollektionen",
+      // Auswahl-Zellen: derselbe Picker wie im Einzeleditor.
+      category: "Produktkategorie",
+      collections: "Kollektionen",
     },
     chooseColumns: "Spalten wählen",
     columnPicker: {
@@ -4137,11 +4142,7 @@ export const de = {
       // Resync, keine Einschränkung.
       multipleVariants: "Dieses Produkt hat mehrere Varianten, die unterschiedliche Preise haben können — bearbeite sie unter \"Produktvarianten\".",
       variantsNotSynced: "Die Varianten dieses Produkts sind noch nicht im Cache — lade die Produkte neu und bearbeite das dann.",
-      // Kategorie und Kollektionen: mit Auswahldialog gesetzt, hier nur zum
-      // Überblick. Ein Name ist kein schreibbarer Wert, und eine Zugehörigkeit
-      // ist ein Join/Leave-Diff — beides gehört in den Einzeleditor.
-      needsPicker: "Dieses Feld wird über einen Auswahldialog gesetzt — öffne das Produkt im Einzeleditor, um es zu ändern.",
-      collectionsTruncated: "Dieses Produkt ist in mehr Kollektionen, als der Sync geladen hat — die Liste hier ist unvollständig.",
+      priceNotSynced: "Der Preis dieser Variante ist noch nicht im Cache — öffne das Produkt einmal im Produkt-Editor, dann erscheint er hier.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",
@@ -4151,6 +4152,14 @@ export const de = {
       wrongMetaobjectType: "Diese Spalte gehört zu einem anderen Metaobjekt-Typ.",
       listSeparatorInValue: "Ein Listenwert enthält das Trennzeichen \"|\" — bitte im Einzeleditor bearbeiten.",
       altTextInImages: "Der Alt-Text aller Produktbilder — inklusive Übersetzungen — wird unter \"Bilder\" bearbeitet.",
+    },
+    // Was eine LEERE Nur-Lese-Zelle anstelle ihres Werts zeigt. Ohne Text
+    // gibt es nichts, worüber man hovern kann — die Erklärung im Tooltip war
+    // da und unerreichbar.
+    readOnlyPlaceholders: {
+      multipleVariants: "Mehrere Varianten",
+      variantsNotSynced: "Nicht geladen",
+      priceNotSynced: "Preis nicht geladen",
     },
     metaobjectTypeLabel: "Metaobjekt-Typ",
     searchLabel: "Suche",
@@ -4166,7 +4175,30 @@ export const de = {
       missingPrice: "Ohne Preis",
       compareAtNotAbovePrice: "Vergleichspreis ≤ Preis",
       missingAltText: "Alt-Text fehlt",
+      statusActive: "Aktiv",
+      statusDraft: "Entwurf",
+      statusUnlisted: "Nicht gelistet",
+      statusArchived: "Archiviert",
+      published: "Sichtbar",
+      hidden: "Ausgeblendet",
+      smartCollection: "Automatisiert (Regeln)",
+      manualCollection: "Manuell",
+      missingDescription: "Beschreibung / Inhalt fehlt",
+      missingImage: "Ohne Bild",
+      missingVendor: "Ohne Hersteller",
+      missingProductType: "Ohne Produkttyp",
+      missingCategory: "Ohne Kategorie",
+      missingTags: "Ohne Tags",
+      missingSummary: "Auszug fehlt",
     },
+    filterSections: {
+      status: "Status",
+      visibility: "Sichtbarkeit",
+      collectionKind: "Kollektionsart",
+      general: "Weitere Filter",
+    },
+    filterAttributeHint: "Filter auf Sichtbarkeit, Kollektionsart, Hersteller, Kategorie und Tags berücksichtigen nur Einträge, deren Attribute bereits synchronisiert sind.",
+    filterClearAll: "Alle Filter zurücksetzen",
     filterApproximateBanner: "Sehr großer Katalog: Der Filter \"Übersetzung fehlt\" ist angenähert und kann einzelne bereits übersetzte Einträge anzeigen.",
     moreVariantsBanner: "Einige Produkte haben mehr als 100 Varianten — die Restmenge wird hier nicht angezeigt und kann im Shopify-Admin bearbeitet werden.",
     priceActions: {

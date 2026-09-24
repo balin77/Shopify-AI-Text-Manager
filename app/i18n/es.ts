@@ -654,6 +654,7 @@ export const es: Translation = {
       chooseThis: "elegir esta categoría",
       noChildren: "Esta categoría no tiene subcategorías.",
       levelTruncated: "Este nivel tiene más subcategorías de las que se cargaron — usa la búsqueda de arriba.",
+      remove: "Quitar categoría",
     },
     // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
     collectionsField: {
@@ -667,6 +668,7 @@ export const es: Translation = {
       truncated: "Este producto está en más colecciones de las que se cargaron. Gestiona el resto en el admin de Shopify.",
       unknown: "Aún no se ha cargado: recarga este producto para ver sus colecciones.",
       none: "Esta tienda todavía no tiene colecciones.",
+      noneSelected: "Ninguna",
     },
     themeTemplate: {
       defaultTemplate: "Predeterminada",
@@ -777,7 +779,8 @@ export const es: Translation = {
       activateNotConfirmed: "Shopify no confirmó la ubicación, así que no se activó.",
       activateFailed: "La ubicación no se pudo activar.",
       stockNoBaseline: "Una ubicación no tenía una cantidad actual con la que comparar, así que no se escribió. Recarga e inténtalo de nuevo.",
-      itemFieldsInvalid: "Un coste, un peso o un código de país no tenía un formato que Shopify acepte, así que esos ajustes no se escribieron.",
+      stockCompareUnsupported: "El inventario no se escribió: la versión de la API de Shopify que usa esta app no ofrece forma de comparar con la cantidad que tenías delante, y sin ella una escritura sobrescribiría lo que haya cambiado mientras tanto. Los detalles están en el registro del servidor.",
+      itemFieldsInvalid: "Un coste, un peso, un código de país o un código arancelario (de 6 a 13 dígitos) no tenía un formato que Shopify acepte, así que esos ajustes no se escribieron.",
       itemFieldsNotConfirmed: "Shopify no confirmó los ajustes del artículo, así que tampoco se guardaron localmente.",
       itemFieldsFailed: "No se pudieron guardar los ajustes del artículo.",
       stockChangedMeanwhile: "El inventario cambió mientras editabas, así que no se escribió nada. Recarga para ver la cifra actual.",
@@ -4075,9 +4078,9 @@ export const es: Translation = {
       requiresShipping: "Requiere envío",
       countryCodeOfOrigin: "País de origen (ISO)",
       harmonizedSystemCode: "Código arancelario",
-      // Contexto de solo lectura: se establece con un selector en el editor.
-      productCategory: "Categoría de producto",
-      productCollections: "Colecciones",
+      // Celdas de selección: el mismo selector que el editor individual.
+      category: "Categoría de producto",
+      collections: "Colecciones",
     },
     chooseColumns: "Elegir columnas",
     columnPicker: {
@@ -4104,8 +4107,7 @@ export const es: Translation = {
       missingInventoryItem: "Esta variante no tiene artículo de inventario de Shopify, donde viven el coste, el peso y los datos aduaneros — vuelve a sincronizar el producto.",
       multipleVariants: "Este producto tiene varias variantes, que pueden diferir en precio — edítalas en \"Variantes de producto\".",
       variantsNotSynced: "Las variantes de este producto aún no están en la caché — vuelve a sincronizar los productos y edítalo después.",
-      needsPicker: "Este campo se establece con un selector — abre el producto en el editor individual para cambiarlo.",
-      collectionsTruncated: "Este producto está en más colecciones de las que cargó la sincronización — la lista aquí está incompleta.",
+      priceNotSynced: "El precio de esta variante aún no está en la caché — abre el producto una vez en el editor de productos y aparecerá aquí.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",
@@ -4115,6 +4117,13 @@ export const es: Translation = {
       wrongMetaobjectType: "Esta columna pertenece a otro tipo de metaobjeto.",
       listSeparatorInValue: "Un valor de la lista contiene el separador \"|\" — edítalo en el editor individual.",
       altTextInImages: "El texto alternativo de todas las imágenes del producto — traducciones incluidas — se edita en \"Imágenes\".",
+    },
+    // Lo que muestra una celda de solo lectura VACÍA en lugar de su valor.
+    // Sin texto no hay nada sobre lo que pasar el ratón.
+    readOnlyPlaceholders: {
+      multipleVariants: "Varias variantes",
+      variantsNotSynced: "No cargado",
+      priceNotSynced: "Precio no cargado",
     },
     metaobjectTypeLabel: "Tipo de metaobjeto",
     searchLabel: "Buscar",
@@ -4130,7 +4139,30 @@ export const es: Translation = {
       missingPrice: "Sin precio",
       compareAtNotAbovePrice: "Precio de comparación ≤ precio",
       missingAltText: "Falta el texto alternativo",
+      statusActive: "Activo",
+      statusDraft: "Borrador",
+      statusUnlisted: "No listado",
+      statusArchived: "Archivado",
+      published: "Visible",
+      hidden: "Oculto",
+      smartCollection: "Automatizada (reglas)",
+      manualCollection: "Manual",
+      missingDescription: "Falta descripción / contenido",
+      missingImage: "Sin imagen",
+      missingVendor: "Sin proveedor",
+      missingProductType: "Sin tipo de producto",
+      missingCategory: "Sin categoría",
+      missingTags: "Sin etiquetas",
+      missingSummary: "Falta el extracto",
     },
+    filterSections: {
+      status: "Estado",
+      visibility: "Visibilidad",
+      collectionKind: "Tipo de colección",
+      general: "Más filtros",
+    },
+    filterAttributeHint: "Los filtros de visibilidad, tipo de colección, proveedor, categoría y etiquetas solo incluyen elementos cuyos atributos ya se han sincronizado.",
+    filterClearAll: "Borrar todos los filtros",
     filterApproximateBanner: "Catálogo muy grande: el filtro \"Falta la traducción\" es aproximado y puede mostrar algunas entradas ya traducidas.",
     moreVariantsBanner: "Algunos productos tienen más de 100 variantes — el resto no se muestra aquí y puede editarse en el admin de Shopify.",
     priceActions: {

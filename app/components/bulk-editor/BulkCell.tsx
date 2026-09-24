@@ -19,8 +19,15 @@ import {
   type ReactNode,
 } from "react";
 import { ActionList, Button, Icon, InlineStack, Popover, Select, Spinner, Text, Tooltip } from "@shopify/polaris";
-import { MenuVerticalIcon } from "@shopify/polaris-icons";
-import type { ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
+import { InfoIcon, MenuVerticalIcon } from "@shopify/polaris-icons";
+import {
+  isPickerColumn,
+  pickerDisplayValue,
+  type BulkRow,
+  type ColumnDescriptor,
+} from "../../services/bulk-editor/columns.shared";
+import { TaxonomyField, type TaxonomyFieldProps } from "../unified/TaxonomyField";
+import { BulkCollectionsCell, type BulkCollectionsCellTexts } from "./BulkCollectionsCell";
 
 /** Keyboard navigation directions (Plan §8.4): Tab/Shift-Tab walk the
  * editable cells, Enter goes one row down in the same column. */
@@ -95,6 +102,23 @@ interface BulkCellProps {
   /** Suffixes offered by the published theme for this row type, or undefined
    *  while the lookup is pending or after it failed. */
   templateSuffixes?: string[];
+  /**
+   * What an EMPTY read-only cell says in place of its value.
+   *
+   * The tooltip that explains a read-only cell is anchored to what the cell
+   * SHOWS — and a cell showing "" gives the pointer nothing to rest on, so the
+   * explanation was there and unreachable. The price of a product with several
+   * variants was exactly that: a blank cell nobody could ask about. The grid
+   * sets this per reason; a cell without one keeps rendering nothing.
+   */
+  readOnlyPlaceholder?: string;
+  /** The row the cell belongs to — the picker cells need more of it than one
+   *  value (the category's path, the memberships with their rule flags). */
+  row?: BulkRow;
+  /** Texts for the category picker (the single editor's `t.content.taxonomy`). */
+  categoryTexts?: TaxonomyFieldProps["t"];
+  /** Texts for the collections picker (`t.content.collectionsField`). */
+  collectionsTexts?: BulkCollectionsCellTexts;
   onChange: (value: string) => void;
   /** Grid coordinate "row:col" — stamped as data-cp-cell on the focusable
    * element so BulkGrid can move focus for Tab/Enter navigation (§8.4). Text
@@ -160,6 +184,10 @@ export function BulkCell({
   ghost,
   enumLabels,
   templateSuffixes,
+  readOnlyPlaceholder,
+  row,
+  categoryTexts,
+  collectionsTexts,
   onChange,
   cellCoord,
   onNavigate,
@@ -171,12 +199,27 @@ export function BulkCell({
   // grey text + tooltip explaining why; rich-text cells additionally offer
   // the "open in editor" jump.
   if (readOnly) {
+    // An empty value with a placeholder shows the placeholder and an info icon
+    // — the icon is what tells a merchant this blank has a reason worth
+    // hovering for, rather than being simply empty.
+    const placeholder = value === "" ? readOnlyPlaceholder : undefined;
+    // A picker cell's value is GIDs; read-only it shows the names instead.
+    const shown = row && isPickerColumn(column) ? pickerDisplayValue(row, column, value) : value;
     return (
       <Tooltip content={readOnlyTooltip}>
         <InlineStack gap="100" blockAlign="center" wrap={false}>
-          <Text as="span" variant="bodySm" tone="subdued" truncate>
-            {value}
-          </Text>
+          {placeholder ? (
+            <InlineStack gap="050" blockAlign="center" wrap={false}>
+              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                {placeholder}
+              </Text>
+              <Icon source={InfoIcon} tone="subdued" />
+            </InlineStack>
+          ) : (
+            <Text as="span" variant="bodySm" tone="subdued" truncate>
+              {shown}
+            </Text>
+          )}
           {showOpenInEditor && onOpenInEditor && (
             <Button variant="plain" size="micro" onClick={onOpenInEditor}>
               {openInEditorLabel ?? ""}
@@ -184,6 +227,49 @@ export function BulkCell({
           )}
         </InlineStack>
       </Tooltip>
+    );
+  }
+
+  // ── Picker cells (COL_CATEGORY / COL_COLLECTIONS) ────────────────────────
+  // The value is a GID no merchant types, so the cell is the same picker the
+  // single editor uses — never a text box. Paste skips these cells for the
+  // same reason (see the grid's paste handler).
+  if (column.inputType === "category") {
+    return (
+      <span
+        className={`cp-bulk-select${isDirty ? " cp-bulk-cell-dirty" : ""}${error ? " cp-bulk-cell-error" : ""}`}
+      >
+        <TaxonomyField
+          compact
+          value={value}
+          onChange={onChange}
+          // The cached path names the CACHED category only. A dirty value must
+          // not borrow it — that is how a cell showed the old category while
+          // its save wrote the new one.
+          currentLabel={value === row?.category ? row?.categoryName ?? "" : ""}
+          label=""
+          t={categoryTexts ?? {}}
+        />
+        {error && errorId && (
+          <span id={errorId} className="cp-bulk-visually-hidden">
+            {error}
+          </span>
+        )}
+      </span>
+    );
+  }
+  if (column.inputType === "collections") {
+    return (
+      <BulkCollectionsCell
+        value={value}
+        onChange={onChange}
+        memberships={row?.collectionMemberships ?? []}
+        truncated={row?.hasMoreCollections === true}
+        isDirty={isDirty}
+        error={error}
+        errorId={errorId}
+        texts={collectionsTexts ?? {}}
+      />
     );
   }
 

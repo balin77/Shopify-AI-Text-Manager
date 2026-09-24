@@ -119,7 +119,11 @@ export interface ColumnDescriptor {
   editable: boolean;
   /** Whether the column is editable in a foreign locale (locale !== ""). */
   translatable: boolean;
-  inputType: "text" | "textarea" | "select" | "money" | "number" | "boolean";
+  /** "category" and "collections" are PICKER cells: the value is a GID (or a
+   *  canonical list of them) that no merchant types, so the cell renders the
+   *  same picker the single editor uses instead of a text box — see
+   *  `isPickerColumn`. */
+  inputType: "text" | "textarea" | "select" | "money" | "number" | "boolean" | "category" | "collections";
   minWidth: number;
   /** Upper bound for the column's grid track. Without it a column grows to an
    * equal 1fr share, which wastes the row's width on columns whose content is
@@ -128,12 +132,6 @@ export interface ColumnDescriptor {
   /** DB column backing a server-side sort — absent means the column is NOT
    * sortable and the header must not render a sort affordance (Plan §3.3). */
   sortKey?: string;
-  /** Why a read-only column is read-only, where "it just is" is not the useful
-   *  answer — a category and a collection membership are set through a PICKER,
-   *  and the tooltip should say so rather than leaving a merchant to wonder
-   *  whether the grid is broken. Per-ROW reasons still win: `resolveCellValue`
-   *  returns its own for a cell whose row is the problem. */
-  readOnlyReason?: CellReadOnlyReason;
   /** inputType "select": the enum values this column accepts, in offer order.
    *
    * The VALUE vocabulary, never the labels — those are i18n and live in
@@ -240,7 +238,12 @@ export function isListShapedColumn(column: ColumnDescriptor): boolean {
  */
 export function columnCanHaveCellActions(column: ColumnDescriptor): boolean {
   if (!column.editable) return false;
-  if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
+  if (
+    column.inputType === "select" ||
+    column.inputType === "money" ||
+    column.inputType === "number" ||
+    isPickerColumn(column)
+  ) {
     return false;
   }
   return column.kind === "field" || column.translatable;
@@ -301,53 +304,81 @@ export function isFeaturedImageAltColumn(column: ColumnDescriptor): boolean {
 }
 
 /**
- * The product's taxonomy category and its collection memberships.
+ * The product's taxonomy category and its collection memberships — edited in
+ * the grid through the SAME pickers the single editor uses.
  *
- * READ-ONLY, and that is a decision rather than a shortcut. Both are set
- * through a PICKER in the single editor and neither survives a text cell:
+ * Neither survives a text cell, which is why they were read-only first and why
+ * they are PICKER cells now rather than text:
  *
- *  - A category is a `TaxonomyCategory` GID chosen from Shopify's tree. Its
- *    NAME is what a merchant reads and what this column shows, and a name is
- *    not a value that can be written back — the tree has repeated names under
- *    different parents.
+ *  - A category is a `TaxonomyCategory` GID chosen from Shopify's tree. Its NAME
+ *    is what a merchant reads, and a name is not a value that can be written
+ *    back — the tree repeats names under different parents. So the cell VALUE is
+ *    the GID (the single editor's representation), and the picker shows the
+ *    name.
  *  - A membership is a JOIN/LEAVE DIFF (`collectionsToJoin`/`ToLeave`), never a
  *    list: a product can belong to collections whose rows this shop never
- *    cached, so a full-list write would silently drop them. Collection titles
- *    are not unique either, and a RULE-BASED collection must be refused in both
- *    directions — Shopify rejects a manual join on one, and because
- *    `productUpdate` is atomic that refusal takes the merchant's text edits
- *    down with it.
+ *    cached, collection titles are not unique, and a RULE-BASED collection must
+ *    be refused in both directions — Shopify rejects a manual join on one, and
+ *    because `productUpdate` is atomic that refusal takes the merchant's text
+ *    edits with it. So the cell value is the membership as canonical GIDs
+ *    (`canonicalCollectionIds`), the picker LOCKS what the server would refuse
+ *    (`collectionPickerRows`, shared with the editor), and the save diffs
+ *    against the CACHE with `diffCollectionMembership` exactly as the editor's
+ *    save does.
  *
- * What they ARE good for is scanning: "which products have no category", "which
- * ones are in Sale". That is what a grid is for, and it is why these are
- * columns at all rather than nothing.
+ * The value being a GID is also why a rectangular PASTE must not reach these
+ * cells, and why the server refuses a cell carrying anything but GIDs: the
+ * editor's lenient `parseCollectionIds` drops what it cannot read, so a pasted
+ * "Sale, Winter" would parse to NO collections and be saved as "leave every
+ * manual collection".
  */
-export const PRODUCT_CATEGORY_COLUMN_ID = "productCategory";
-export const PRODUCT_COLLECTIONS_COLUMN_ID = "productCollections";
+export const CATEGORY_COLUMN_ID = "field.category";
+export const COLLECTIONS_COLUMN_ID = "field.collections";
 
-const PRODUCT_CATEGORY_COLUMN: ColumnDescriptor = {
-  id: PRODUCT_CATEGORY_COLUMN_ID,
-  kind: "readonly",
-  label: "productCategory",
-  group: "base",
-  editable: false,
+const COL_CATEGORY = fieldColumn("category", {
   translatable: false,
-  inputType: "text",
+  inputType: "category",
   minWidth: 220,
-  readOnlyReason: "needsPicker",
-};
+});
 
-const PRODUCT_COLLECTIONS_COLUMN: ColumnDescriptor = {
-  id: PRODUCT_COLLECTIONS_COLUMN_ID,
-  kind: "readonly",
-  label: "productCollections",
-  group: "base",
-  editable: false,
+const COL_COLLECTIONS = fieldColumn("collections", {
   translatable: false,
-  inputType: "text",
+  inputType: "collections",
   minWidth: 240,
-  readOnlyReason: "needsPicker",
-};
+});
+
+/** A cell whose value only a picker can produce (see COL_CATEGORY). */
+export function isPickerColumn(column: ColumnDescriptor): boolean {
+  return column.inputType === "category" || column.inputType === "collections";
+}
+
+/**
+ * What a picker cell SHOWS where no picker is rendered — a read-only cell (the
+ * foreign-language tabs, an unsynced row), which otherwise prints its value.
+ *
+ * The value is GIDs, and a merchant reading "gid://shopify/Collection/123" in a
+ * column where the names used to be has learned nothing. The category shows the
+ * cached PATH while the value is still the cached one; memberships show their
+ * titles from the row. An id this row cannot name stays the id — an honest
+ * "we do not know its name" rather than a blank that reads as "none".
+ */
+export function pickerDisplayValue(row: BulkRow, column: ColumnDescriptor, value: string): string {
+  if (column.inputType === "category") {
+    return value && value === row.category ? row.categoryName || value : value;
+  }
+  if (column.inputType === "collections") {
+    const titles = new Map(
+      (row.collectionMemberships ?? []).map((m) => [m.collectionId, m.collectionTitle] as const),
+    );
+    return value
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => titles.get(id) || id)
+      .join(", ");
+  }
+  return value;
+}
 
 const BLOG_TITLE_COLUMN: ColumnDescriptor = {
   id: "blogTitle",
@@ -796,9 +827,9 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_VENDOR,
     COL_TAGS,
     COL_TEMPLATE_SUFFIX,
-    // Read-only context — see PRODUCT_CATEGORY_COLUMN_ID for why.
-    PRODUCT_CATEGORY_COLUMN,
-    PRODUCT_COLLECTIONS_COLUMN,
+    // Picker cells — see COL_CATEGORY for why a picker and not text.
+    COL_CATEGORY,
+    COL_COLLECTIONS,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
@@ -1279,7 +1310,12 @@ export function parseDecimalInput(input: string): ParseMoneyResult {
     normalized = stripped.replace(/,/g, "");
     if ((normalized.match(/\./g) ?? []).length > 1) return { ok: false, error: "invalid" };
   }
-  if (!/^(\d+(\.\d+)?|\.\d+)$/.test(normalized)) return { ok: false, error: "invalid" };
+  // A missing digit on either side of the separator is what people type
+  // (".5", "2.") and is unambiguous, so it is completed, not refused. The
+  // comma form ("2,") already arrives here as "2" — a trailing comma is not a
+  // decimal separator under rule 2.
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(normalized)) return { ok: false, error: "invalid" };
+  if (normalized.endsWith(".")) normalized = normalized.slice(0, -1);
 
   const num = Number(normalized);
   if (!Number.isFinite(num)) return { ok: false, error: "invalid" };
@@ -1498,13 +1534,24 @@ export interface BulkRow {
    *  the shop's data (`ProductVariant.commerceSyncedAt`) — the variant twin of
    *  `attributesKnown`. The grid shows them as unknown, never as empty. */
   commerceKnown?: boolean;
-  /** PRODUCT rows, read-only context: the taxonomy category's NAME and the
-   *  collection memberships as a comma-joined list of titles. Both are set
-   *  through a picker in the single editor (see PRODUCT_CATEGORY_COLUMN_ID). */
-  productCategory?: string;
-  productCollections?: string;
+  /** PRODUCT rows: the taxonomy category's GID ("" = none) — the cell VALUE —
+   *  and its full path, which is what the picker shows (see COL_CATEGORY). */
+  category?: string;
+  categoryName?: string;
+  /** PRODUCT rows: the memberships as canonical collection GIDs (the cell
+   *  VALUE, `canonicalCollectionIds`), and the rows behind them with their
+   *  titles and rule-based flags, which the picker needs to name and LOCK
+   *  them. */
+  collections?: string;
+  collectionMemberships?: {
+    collectionId: string;
+    collectionTitle: string;
+    automated: boolean | null;
+  }[];
   /** PRODUCT rows: the membership list above is INCOMPLETE — the product
-   *  belongs to more collections than the sync's window fetched. */
+   *  belongs to more collections than the sync's window fetched. The picker
+   *  says so; editing stays safe, because the save diffs against the cache and
+   *  a membership the cache never held can never be "left". */
   hasMoreCollections?: boolean;
   /** PRODUCT rows: the product's ONE variant, when it has exactly one — the
    *  price, compare-at price and SKU cells then edit it directly. Absent means
@@ -1596,8 +1643,7 @@ export type CellReadOnlyReason =
   | "missingInventoryItem" // the variant has no InventoryItem GID to write to
   | "multipleVariants" // a product row's price cell: which of several? (see below)
   | "variantsNotSynced" // the product's variants were never cached
-  | "needsPicker" // set through a picker in the single editor, not as text
-  | "collectionsTruncated"; // the sync window cut the membership list short
+  | "priceNotSynced"; // the variant row is cached, its price is not (see priceCell)
 
 /** The columns fed by the Phase-0 attribute block, whose emptiness only means
  *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
@@ -1616,11 +1662,11 @@ export const ATTRIBUTE_BLOCK_COLUMNS = new Set([
   "field.isPublished",
   "field.sortOrder",
   "field.author",
-  // Read-only, and still in here: an empty category cell on a row an older sync
-  // wrote is "not fetched", not "no category", and the grid's ghost text is
-  // what says so.
-  PRODUCT_CATEGORY_COLUMN_ID,
-  PRODUCT_COLLECTIONS_COLUMN_ID,
+  // An empty category on a row an older sync wrote is "not fetched", not "no
+  // category" — and an empty membership list there would be saved as "leave
+  // every collection", which is the expensive direction of the same trap.
+  CATEGORY_COLUMN_ID,
+  COLLECTIONS_COLUMN_ID,
 ]);
 
 export interface ResolvedCell {
@@ -1645,15 +1691,29 @@ function resolveProductVariantCell(row: BulkRow, column: ColumnDescriptor): Reso
   // is the cache lacking them rather than a product without any — the same
   // "empty is not evidence" rule as `attributesSyncedAt`.
   if (!row.variantCount) {
-    return { value: "", editable: false, readOnlyReason: "variantsNotSynced" };
+    // …but the OPTIONS are cached by every product sync, including the list
+    // reload that does not fetch variants at all. An option offering two or
+    // more values proves "several" without a single variant row, and "several"
+    // is read-only however many a reload would bring in — so a resync hint
+    // there would send the merchant on an errand that changes nothing. Only a
+    // product whose options leave "exactly one" possible keeps the hint: there
+    // a reload really does make the cell editable. Both answers are read-only,
+    // so an orphaned option value (one without a variant) can at worst pick
+    // the wrong explanation, never unlock a cell.
+    const provesSeveral = (row.options ?? []).some((o) => o.values.length > 1);
+    return {
+      value: "",
+      editable: false,
+      readOnlyReason: provesSeveral ? "multipleVariants" : "variantsNotSynced",
+    };
   }
   const variant = row.singleVariant;
   if (!variant) return { value: "", editable: false, readOnlyReason: "multipleVariants" };
   switch (column.id) {
     case VAR_PRICE_COLUMN_ID:
-      return { value: variant.price, editable: true };
+      return priceCell(variant.price, variant.price);
     case VAR_COMPARE_AT_COLUMN_ID:
-      return { value: variant.compareAtPrice, editable: true };
+      return priceCell(variant.price, variant.compareAtPrice);
     case VAR_SKU_COLUMN_ID:
       return { value: variant.sku, editable: true };
     default:
@@ -1661,6 +1721,22 @@ function resolveProductVariantCell(row: BulkRow, column: ColumnDescriptor): Reso
       // PRODUCT_VARIANT_COLUMN_IDS.
       return { value: "", editable: false, readOnlyReason: "column" };
   }
+}
+
+/**
+ * A price or compare-at cell, given the variant's cached PRICE.
+ *
+ * Shopify has no variant without a price, so an empty one is the cache lacking
+ * it — a row the image manager created before it learned to store prices —
+ * and not a product that costs nothing. Shown as an editable blank it read as
+ * "this product has no price", and the compare-at beside it is unknown for the
+ * same reason (its own emptiness is a real answer only once the price proves
+ * the row was price-synced). Opening the product once, or any product sync,
+ * fills it in.
+ */
+function priceCell(price: string, value: string): ResolvedCell {
+  if (price === "") return { value: "", editable: false, readOnlyReason: "priceNotSynced" };
+  return { value, editable: true };
 }
 
 /** The commerce block's value for one column. Flat properties on the row, so
@@ -1777,9 +1853,9 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
         case VAR_SKU_COLUMN_ID:
           return { value: row.sku ?? "", editable: true };
         case VAR_PRICE_COLUMN_ID:
-          return { value: row.price ?? "", editable: true };
+          return priceCell(row.price ?? "", row.price ?? "");
         case VAR_COMPARE_AT_COLUMN_ID:
-          return { value: row.compareAtPrice ?? "", editable: true };
+          return priceCell(row.price ?? "", row.compareAtPrice ?? "");
         case VAR_BARCODE_COLUMN_ID:
           return { value: row.barcode ?? "", editable: true };
         default:
@@ -1827,24 +1903,6 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       return { value: raw, editable: true };
     }
     case "readonly": {
-      if (column.id === PRODUCT_CATEGORY_COLUMN_ID || column.id === PRODUCT_COLLECTIONS_COLUMN_ID) {
-        const value =
-          column.id === PRODUCT_CATEGORY_COLUMN_ID
-            ? row.productCategory ?? ""
-            : row.productCollections ?? "";
-        // Empty is not evidence here either: the block may never have been
-        // fetched, and the grid shows the "unknown" ghost for exactly these ids.
-        if (row.attributesKnown === false) {
-          return { value, editable: false, readOnlyReason: "attributesNotSynced" };
-        }
-        // A truncated membership list is a DIFFERENT statement from a complete
-        // one, and it is per ROW — which is why the descriptor's own reason can
-        // be overridden here.
-        if (column.id === PRODUCT_COLLECTIONS_COLUMN_ID && row.hasMoreCollections) {
-          return { value, editable: false, readOnlyReason: "collectionsTruncated" };
-        }
-        return { value, editable: false, readOnlyReason: "needsPicker" };
-      }
       let value = "";
       if (column.id === "blogTitle") value = row.blogTitle ?? "";
       else if (column.id === "productTitle") value = row.productTitle ?? "";
@@ -1853,7 +1911,7 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       else if (column.id === "policyTitle" || column.id === "moDisplayName") value = row.title;
       else if (column.id === "moHandle") value = row.handle;
       else if (column.id === "imageUsage") value = row.imageUsage ?? row.productTitle ?? "";
-      return { value, editable: false, readOnlyReason: column.readOnlyReason ?? "column" };
+      return { value, editable: false, readOnlyReason: "column" };
     }
     default:
       return { value: "", editable: false, readOnlyReason: "column" };
@@ -2358,7 +2416,27 @@ export type BulkFilterId =
   | "missingPrice"
   | "compareAtNotAbovePrice" // compareAtPrice ≤ price — the classic data error
   // Image-row filter (one row = one product medium):
-  | "missingAltText";
+  | "missingAltText"
+  // Product status (products, and variants via their product). OR-combined
+  // with each other — see BULK_FILTER_OR_GROUPS:
+  | "statusActive"
+  | "statusDraft"
+  | "statusUnlisted"
+  | "statusArchived"
+  // Page/article visibility (OR group):
+  | "published"
+  | "hidden"
+  // Collection kind (OR group):
+  | "smartCollection"
+  | "manualCollection"
+  // Content gaps (AND-combined like every other flag):
+  | "missingDescription"
+  | "missingImage"
+  | "missingVendor"
+  | "missingProductType"
+  | "missingCategory"
+  | "missingTags"
+  | "missingSummary";
 
 export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingSeoTitle",
@@ -2368,6 +2446,67 @@ export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingPrice",
   "compareAtNotAbovePrice",
   "missingAltText",
+  "statusActive",
+  "statusDraft",
+  "statusUnlisted",
+  "statusArchived",
+  "published",
+  "hidden",
+  "smartCollection",
+  "manualCollection",
+  "missingDescription",
+  "missingImage",
+  "missingVendor",
+  "missingProductType",
+  "missingCategory",
+  "missingTags",
+  "missingSummary",
+];
+
+/** Shopify `ProductStatus` value behind each status filter id. */
+export const STATUS_FILTER_VALUES: Partial<Record<BulkFilterId, string>> = {
+  statusActive: "ACTIVE",
+  statusDraft: "DRAFT",
+  statusUnlisted: "UNLISTED",
+  statusArchived: "ARCHIVED",
+};
+
+export const STATUS_FILTER_IDS: BulkFilterId[] = ["statusActive", "statusDraft", "statusUnlisted", "statusArchived"];
+export const VISIBILITY_FILTER_IDS: BulkFilterId[] = ["published", "hidden"];
+export const COLLECTION_KIND_FILTER_IDS: BulkFilterId[] = ["smartCollection", "manualCollection"];
+
+/**
+ * Filter ids that answer ONE question with several values ("which status?").
+ * Inside a group they are OR-combined — AND over "active" and "draft" would
+ * always be empty — and every group is AND-combined with the rest. All other
+ * ids are independent flags and AND-combine as before.
+ */
+export const BULK_FILTER_OR_GROUPS: BulkFilterId[][] = [
+  STATUS_FILTER_IDS,
+  VISIBILITY_FILTER_IDS,
+  COLLECTION_KIND_FILTER_IDS,
+];
+
+/** The selected members of one OR group, in group order. */
+export function selectedInGroup(filters: readonly BulkFilterId[], group: readonly BulkFilterId[]): BulkFilterId[] {
+  return group.filter((id) => filters.includes(id));
+}
+
+/**
+ * Filters that read a merchandising attribute (`vendor`, `tags`, `category`,
+ * `isPublished`, `isSmart`). On a row an older sync wrote those columns hold
+ * the migration DEFAULTS, indistinguishable from real values
+ * (`attributesSyncedAt` is the discriminator — CLAUDE.md), so these filters
+ * only ever match attribute-synced rows. Undercounting is the chosen failure:
+ * an unsynced page must not be reported as "visible", nor an unsynced product
+ * as "no vendor".
+ */
+export const ATTRIBUTE_GATED_FILTER_IDS: BulkFilterId[] = [
+  ...VISIBILITY_FILTER_IDS,
+  ...COLLECTION_KIND_FILTER_IDS,
+  "missingVendor",
+  "missingCategory",
+  "missingTags",
 ];
 
 /** Filters that apply to variant rows — the FilterBar shows exactly these for
@@ -2398,6 +2537,37 @@ export const FILTER_IDS_BY_SET: Record<BulkFilterSet, BulkFilterId[]> = {
   translationOnly: ["missingTranslation"],
   image: ["missingAltText", "missingTranslation"],
 };
+
+/**
+ * Type-specific filters on top of the set's shared vocabulary — the columns
+ * behind them exist only on that type (blogs, for instance, share the
+ * "content" set but have no status, description or image in the cache).
+ */
+const TYPE_FILTER_IDS: Partial<Record<BulkRowType, BulkFilterId[]>> = {
+  product: [
+    ...STATUS_FILTER_IDS,
+    "missingDescription",
+    "missingImage",
+    "missingProductType",
+    "missingVendor",
+    "missingCategory",
+    "missingTags",
+  ],
+  variant: STATUS_FILTER_IDS,
+  collection: [...COLLECTION_KIND_FILTER_IDS, "missingDescription", "missingImage"],
+  article: [...VISIBILITY_FILTER_IDS, "missingDescription", "missingSummary", "missingImage", "missingTags"],
+  page: [...VISIBILITY_FILTER_IDS, "missingDescription"],
+};
+
+/**
+ * THE per-TYPE filter-id source: what the FilterBar offers, what a type switch
+ * prunes the URL against, and what the loader accepts (a hand-crafted URL
+ * param outside it is dropped there rather than reaching a column the type
+ * does not have).
+ */
+export function filterIdsForType(type: BulkRowType): BulkFilterId[] {
+  return [...FILTER_IDS_BY_SET[filterSetForType(type)], ...(TYPE_FILTER_IDS[type] ?? [])];
+}
 
 export type SortDirection = "asc" | "desc";
 

@@ -54,6 +54,7 @@ import {
   parseSortParam,
   serializeSortParam,
   resolveCellValue,
+  isPickerColumn,
   buildColumnsForType,
   isValidBulkDiffEntry,
   parseMoney,
@@ -61,7 +62,6 @@ import {
   applyPriceAction,
   BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
   BULK_COLUMNS_BY_TYPE,
-  BULK_FILTER_IDS,
   canonicalFieldNameForColumn,
   aiFieldKey,
   isListShapedColumn,
@@ -73,8 +73,7 @@ import {
   isFeaturedImageAltColumn,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
-  FILTER_IDS_BY_SET,
-  filterSetForType,
+  filterIdsForType,
   MAX_SYNC_SAVE,
   MAX_TASK_CALLS,
   MAX_BULK_TASK_ITEMS,
@@ -304,7 +303,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const search = url.searchParams.get("q") || "";
   const filters = (url.searchParams.get("f") || "")
     .split(",")
-    .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
+    .filter((f): f is BulkFilterId => (filterIdsForType(type) as string[]).includes(f));
   const sort = parseSortParam(type, url.searchParams.get("sort"));
   // Image rows only: show just the pictures of ONE object. Validated as a GID
   // so a hand-crafted param can only ever narrow the result, never reshape the
@@ -390,6 +389,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Primary-view "missing translation" (blue) colour needs the published
       // foreign locales (already loaded above).
       foreignLocales: publishedForeignLocales(shopLocales),
+      // The category column shows its names in the shop's language — the
+      // language the picker's list is in, too.
+      categoryLocale: shopLocales.find((l) => l.primary)?.locale ?? "",
     }),
     // Currency suffix for the money columns (Plan §5.2) — variant view only;
     // process-cached, so this is one query per shop per boot.
@@ -1134,11 +1136,8 @@ export default function BulkEditor() {
     // restriction.
     multipleVariants: b.readOnlyReasons.multipleVariants,
     variantsNotSynced: b.readOnlyReasons.variantsNotSynced,
-    // A category and a collection membership are set through a PICKER: a name
-    // is not a writable value and a membership is a join/leave DIFF, so the
-    // tooltip names the single editor instead of leaving the cell mute.
-    needsPicker: b.readOnlyReasons.needsPicker,
-    collectionsTruncated: b.readOnlyReasons.collectionsTruncated,
+    priceNotSynced: b.readOnlyReasons.priceNotSynced,
+
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,
@@ -1258,9 +1257,9 @@ export default function BulkEditor() {
 
   const handleTypeChange = (value: string) => {
     // Finding 13: prune the carried-over filter ids to the ones the NEW type
-    // actually speaks (same FILTER_IDS_BY_SET source the FilterBar renders
+    // actually speaks (same filterIdsForType source the FilterBar renders
     // from) — otherwise e.g. `missingSku` silently rides into a product view.
-    const validIds = FILTER_IDS_BY_SET[filterSetForType(value as BulkRowType)];
+    const validIds = filterIdsForType(value as BulkRowType);
     navigateGrid({
       type: value,
       page: "1",
@@ -1428,6 +1427,11 @@ export default function BulkEditor() {
     const editable = visibleRows.map((row) =>
       displayColumns.map((col) => {
         const resolved = resolveCellValue(row, col);
+        // A PICKER cell's value is a GID no clipboard carries — a pasted
+        // category name or collection title would only be refused by the save
+        // (or, for memberships, read as "leave everything" by a lenient
+        // parser). Treated like a read-only cell, so the rectangle flows past it.
+        if (isPickerColumn(col)) return false;
         return resolved.editable && (!isForeign || col.translatable);
       }),
     );
@@ -1645,6 +1649,9 @@ export default function BulkEditor() {
     const next = { ...edits };
     for (const row of visibleRows) {
       if (row.type !== "variant") continue;
+      // A price the cache never received renders read-only ("price not
+      // loaded"); an action must not fill a cell the merchant cannot touch.
+      if (!row.price) continue;
       const current = currentPriceOf(row);
       if (action.id === "compareAtFromPrice") {
         if (current === null) continue;
@@ -1929,9 +1936,10 @@ export default function BulkEditor() {
    */
   const cellActionsFor = (row: BulkRow, column: ColumnDescriptor): BulkCellActions | undefined => {
     if (!resolveCellValue(row, column).editable) return undefined;
-    if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
-      return undefined;
-    }
+    // THE predicate, not a second list of input types: the grid reserves its
+    // action gutter on `columnCanHaveCellActions`, and a copy here had already
+    // drifted — it would have offered "Improve with AI" on a GID picker cell.
+    if (!columnCanHaveCellActions(column)) return undefined;
     // Improve is FIELD columns only — a metafield or option key would produce
     // a generic, weak prompt. The image row's alt cell is the exception: it
     // has its own image-aware generator (see handleCellImprove).
@@ -2530,7 +2538,7 @@ export default function BulkEditor() {
                   filters={filters}
                   onFiltersChange={handleFiltersChange}
                   showTranslationFilter={locale !== ""}
-                  filterSet={filterSetForType(type)}
+                  filterIds={filterIdsForType(type)}
                   pageSize={pageSize}
                   onPageSizeChange={handlePageSizeChange}
                   onlyChanged={onlyChanged}
@@ -2544,13 +2552,10 @@ export default function BulkEditor() {
                           : b.searchPlaceholder,
                     searchLabel: b.searchLabel,
                     filtersLabel: b.filtersLabel,
-                    filterMissingSeoTitle: b.filters.missingSeoTitle,
-                    filterMissingSeoDescription: b.filters.missingSeoDescription,
-                    filterMissingTranslation: b.filters.missingTranslation,
-                    filterMissingSku: b.filters.missingSku,
-                    filterMissingPrice: b.filters.missingPrice,
-                    filterCompareAtNotAbovePrice: b.filters.compareAtNotAbovePrice,
-                    filterMissingAltText: b.filters.missingAltText,
+                    filterLabels: b.filters,
+                    sectionTitles: b.filterSections,
+                    attributeFilterHint: b.filterAttributeHint,
+                    clearAll: b.filterClearAll,
                     pageSizeLabel: b.pageSizeLabel,
                     onlyChangedLabel: b.onlyChanged,
                   }}
@@ -2603,6 +2608,12 @@ export default function BulkEditor() {
                       columnHeading={columnHeading}
                       enumLabels={enumLabels}
                       templateSuffixes={templateSuffixes}
+                      // An empty price cell on a multi-variant product carried
+                      // a tooltip nobody could reach: the pointer had nothing
+                      // to rest on. The placeholder is that something.
+                      readOnlyPlaceholders={b.readOnlyPlaceholders}
+                      categoryTexts={(t.content?.taxonomy ?? {}) as Record<string, string>}
+                      collectionsTexts={(t.content?.collectionsField ?? {}) as Record<string, string>}
                       handleWarning={b.handleWarning}
                       readOnlyTooltips={readOnlyTooltips}
                       sortButtonLabel={b.sortButtonLabel}
