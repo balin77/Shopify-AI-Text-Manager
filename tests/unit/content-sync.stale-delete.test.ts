@@ -33,6 +33,7 @@ const dbm = vi.hoisted(() => ({
   articleFindMany: vi.fn().mockResolvedValue([]),
   articleDeleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   ctDeleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+  pdbDeleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   transaction: vi.fn(),
 }));
 
@@ -40,6 +41,7 @@ vi.mock('~/db.server', () => {
   const db = {
     article: { count: dbm.articleCount, findMany: dbm.articleFindMany, deleteMany: dbm.articleDeleteMany },
     contentTranslation: { deleteMany: dbm.ctDeleteMany },
+    primaryDigestBaseline: { deleteMany: dbm.pdbDeleteMany },
     $transaction: dbm.transaction,
   };
   (dbm.transaction as any).mockImplementation((cb: (tx: unknown) => unknown) => cb(db));
@@ -101,6 +103,10 @@ describe('syncAllArticles — R3 stale-delete', () => {
     });
     expect(dbm.ctDeleteMany).toHaveBeenCalledWith({
       where: { shop, resourceType: 'Article', resourceId: { in: ['gid://shopify/Article/STALE'] } },
+    });
+    // …and its primary digest baseline, FK-less like the translations.
+    expect(dbm.pdbDeleteMany).toHaveBeenCalledWith({
+      where: { shop, resourceId: { in: ['gid://shopify/Article/STALE'] } },
     });
     // What the run ACHIEVED, not what it attempted: a run in which every
     // article failed used to return the item count and read as a success.

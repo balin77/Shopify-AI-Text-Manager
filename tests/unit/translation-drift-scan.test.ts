@@ -168,6 +168,30 @@ describe("scanTranslationDrift", () => {
     expect(written).toEqual([]);
   });
 
+  it("in BASELINE-ONLY mode re-records a moved baseline and hands nothing over", async () => {
+    // A shop nobody was sweeping: the same move the test above hands over is
+    // months old here, and replaying it would translate an edit nobody asked
+    // this app to look at. Recorded, so the NEXT move is proven against today.
+    db.primaryDigestBaseline.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? [{ resourceId: PAGE, digests: { title: OLD, body_html: OLD } }] : [],
+    );
+    const { gateway } = fakeGateway({ PAGE: [{ resourceId: PAGE, digest: NEW, translated: {} }] });
+    const reconcile = vi.fn(async (_params: ReconcileParams) => ({ removed: 0, retranslating: 2 }));
+
+    const result = await scanTranslationDrift({
+      gateway,
+      shop: SHOP,
+      foreignLocales: ["de"],
+      reconcile,
+      baselineOnly: true,
+    });
+
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(result.handed).toBe(0);
+    const updated = (db.primaryDigestBaseline.updateMany.mock.calls as any[]).map((call) => call[0].data);
+    expect(updated).toEqual([{ digests: { title: NEW, body_html: NEW } }]);
+  });
+
   it("writes nothing for a page whose primary baseline still matches", async () => {
     // A quiet night must cost reads and no writes.
     db.primaryDigestBaseline.findMany.mockImplementation(async (args: any) =>

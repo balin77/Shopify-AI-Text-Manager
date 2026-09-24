@@ -141,6 +141,17 @@ export async function scanTranslationDrift(params: {
   /** Test seam — the reconciliation is otherwise resolved at call time. */
   reconcile?: typeof import("./stale-translation-sync.server").reconcileStaleTranslations;
   /**
+   * Record the PRIMARY baselines and hand nothing over. For a shop this sweep
+   * has not been looking at (the switch was off, the plan was below Max, or it
+   * never ran): a page edited in the Shopify admin while nobody was sweeping
+   * has a baseline from the last look, and comparing against it now would
+   * replay months-old edits as fresh evidence and translate them — "a change
+   * seen while the switch was off must not be replayed" had no way to hold for
+   * the four types without a webhook. One quiet sweep resets the reference
+   * point; from the next one on, moves are proven against what is there today.
+   */
+  baselineOnly?: boolean;
+  /**
    * The MARKET layer is deliberately not read here. `collectTranslations`
    * reports global rows only, so a locale that holds an override and no global
    * translation is absent from the market purge's scope downstream — the
@@ -299,6 +310,14 @@ export async function scanTranslationDrift(params: {
         // cleared" (CLAUDE.md), so it is skipped rather than acted on — and no
         // baseline is written from it either.
         if (Object.keys(primaryContent).length === 0) continue;
+
+        if (params.baselineOnly) {
+          const next = nextPrimaryDigestBaseline(previousPrimary, primaryContent);
+          if (next) {
+            pendingBaselines.push({ resourceId: node.resourceId, digests: next, exists: primaryBaselines.has(node.resourceId) });
+          }
+          continue;
+        }
 
         const translations = collectTranslations(node);
 

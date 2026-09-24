@@ -53,14 +53,20 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       upsert: vi.fn(async (_args?: unknown) => ({})),
       // The compare-and-swap claim. Default: won.
       updateMany: vi.fn(async (_args?: unknown): Promise<{ count: number }> => ({ count: 1 })),
+      // The full product sync's CREATE-ONLY seed.
+      createMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
     },
     // The brake: `used` is what the conditional increment compares against.
     autoTranslateFillBudget: {
       createMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
       updateMany: vi.fn(async (_args?: unknown): Promise<{ count: number }> => ({ count: 1 })),
-      findUnique: vi.fn(async (_args?: unknown): Promise<{ refusedIds: string[] } | null> => ({ refusedIds: [] })),
-      update: vi.fn(async (_args?: unknown) => ({ refusedIds: ["x"] })),
+      // Only the cheap "already spent?" pre-check reads it; `used` is what it
+      // compares. Default: no row — nothing spent.
+      findUnique: vi.fn(async (_args?: unknown): Promise<{ used: number } | null> => null),
     },
+    // The refusal count: ONE conditional-append statement returning the number
+    // of distinct refused resources, so the array never travels.
+    $queryRaw: vi.fn(async (..._args: unknown[]): Promise<Array<{ refused: number }>> => [{ refused: 1 }]),
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
     task: {
@@ -282,9 +288,9 @@ beforeEach(() => {
   db.autoTranslateFillBudget.updateMany.mockReset();
   db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 1 });
   db.autoTranslateFillBudget.findUnique.mockReset();
-  db.autoTranslateFillBudget.findUnique.mockResolvedValue({ refusedIds: [] });
-  db.autoTranslateFillBudget.update.mockReset();
-  db.autoTranslateFillBudget.update.mockResolvedValue({ refusedIds: ["x"] });
+  db.autoTranslateFillBudget.findUnique.mockResolvedValue(null);
+  db.$queryRaw.mockReset();
+  db.$queryRaw.mockResolvedValue([{ refused: 1 }]);
   db.contentTranslation.upsert.mockImplementation(async () => ({}));
   ai.translate = vi.fn(async () => ({}));
   ai.translateValues = vi.fn(async (values: string[]) => values.map((v) => `xx-${v}`));
@@ -845,6 +851,29 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       "fr:body_html",
       "fr:title",
     ]);
+  });
+
+  it("ADVANCES the primary baseline to the text it just read back", async () => {
+    // The webhook of this same save bails on our claim, so nothing else writes
+    // it: left at the pre-save digest, any change event after the claim
+    // expires proves the same move again and queues a SECOND run.
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    const call = (db.primaryDigestBaseline.upsert.mock.calls[0] as unknown as [any])[0];
+    expect(call.where.shop_resourceId).toEqual({ shop: SHOP, resourceId: PAGE });
+    expect(call.update.digests).toEqual({ title: NEW, body_html: NEW });
+  });
+
+  it("leaves the primary baseline alone when it could not be READ", async () => {
+    db.primaryDigestBaseline.findUnique.mockRejectedValue(new Error("db down"));
+
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
   });
 
   it("asks NOBODY which locales are translated when every entry will be translated", async () => {
@@ -2070,8 +2099,7 @@ describe("the PRIMARY digest baseline — a resource nobody has translated yet",
     db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
     db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 0 }); // cap reached
     // Two OTHER resources were refused earlier today; this one is the third.
-    db.autoTranslateFillBudget.findUnique.mockResolvedValue({ refusedIds: ["a", "b"] });
-    db.autoTranslateFillBudget.update.mockResolvedValue({ refusedIds: ["a", "b", "c"] });
+    db.$queryRaw.mockResolvedValue([{ refused: 3 }]);
 
     const result = await reconcileStaleTranslations(untranslated());
     await awaitDetachedRetranslations();
@@ -2096,13 +2124,51 @@ describe("the PRIMARY digest baseline — a resource nobody has translated yet",
     db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
     db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 0 });
     const params = untranslated();
-    db.autoTranslateFillBudget.findUnique.mockResolvedValue({ refusedIds: ["a", params.resourceId as string] });
+    // The statement appends only an ABSENT id and returns the distinct count;
+    // a repeat refusal therefore reports the same number it did before.
+    db.$queryRaw.mockResolvedValue([{ refused: 2 }]);
 
     await reconcileStaleTranslations(params);
 
-    expect(db.autoTranslateFillBudget.update).not.toHaveBeenCalled();
+    const [sql, ...values] = db.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+    expect(sql.join("?")).toMatch(/= ANY\(/);
+    expect(values).toContain(params.resourceId);
     const task = (db.task.upsert.mock.calls[0] as any[])[0];
     expect(task.create.error).toMatch(/^auto_translate_daily_limit:2:\d+$/);
+  });
+
+  it("a SPENT budget is refused before anything costs a Shopify call", async () => {
+    // During the mass edit the brake exists for, every further webhook used to
+    // pay the existence query, the claim and its revert first.
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.autoTranslateFillBudget.findUnique.mockResolvedValue({ used: 10_000 });
+    const client = shopifyHolding({});
+    const graphql = (client as unknown as { graphql: ReturnType<typeof vi.fn> }).graphql;
+
+    const result = await reconcileStaleTranslations(untranslated({ client }));
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(graphql).not.toHaveBeenCalled();
+    // No claim, and the row is left exactly as it is — never written with held
+    // keys over what another webhook may have claimed.
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    expect(db.task.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("a budget that could not be RESERVED is not reported as the daily limit", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.autoTranslateFillBudget.updateMany.mockRejectedValue(new Error("db down"));
+
+    const result = await reconcileStaleTranslations(untranslated({ client: shopifyHolding({}) }));
+    await awaitDetachedRetranslations();
+
+    // Fails closed…
+    expect(result.retranslating).toBe(0);
+    expect(ai.translate).not.toHaveBeenCalled();
+    // …but "100 reached" would be a false statement about the shop.
+    expect(db.task.upsert).not.toHaveBeenCalled();
   });
 
   it("the brake leaves the FIRST entrance's work alone — that work existed before it", async () => {
@@ -2111,6 +2177,11 @@ describe("the PRIMARY digest baseline — a resource nobody has translated yet",
 
     const result = await reconcileStaleTranslations(
       baseParams({
+        // Shopify confirms the fill target is empty, so the run really reaches
+        // the claim and the (refusing) budget — with a bare mock the existence
+        // check threw, the fill was held there, and this test passed without
+        // the brake ever running.
+        client: shopifyHolding({ de: ["title"] }),
         // title is translated in de and proven by ITS row; body_html is not
         // translated anywhere and rests on the primary baseline alone.
         translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
@@ -2125,6 +2196,8 @@ describe("the PRIMARY digest baseline — a resource nobody has translated yet",
     // body_html's baseline is held back; title's advances.
     const written = (db.primaryDigestBaseline.upsert.mock.calls[0] as any[])[0].update.digests;
     expect(written).toEqual({ title: NEW, body_html: OLD });
+    // …and it WAS the brake that refused, not the existence check.
+    expect(db.autoTranslateFillBudget.updateMany).toHaveBeenCalled();
   });
 
   it("asks SHOPIFY before filling: a locale the sync failed to read is not taken as empty", async () => {
@@ -2192,5 +2265,38 @@ describe("the PRIMARY digest baseline — a resource nobody has translated yet",
 
     expect(db.autoTranslateFillBudget.updateMany).not.toHaveBeenCalled();
     expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("seedPrimaryDigestBaselines", () => {
+  it("only ever CREATES — a full sync never advances an existing baseline", async () => {
+    // The full sync does not reconcile, so advancing a row here would swallow
+    // every admin edit since the last change event: the move could no longer
+    // be proven by anything. `skipDuplicates` is the whole rule.
+    const { seedPrimaryDigestBaselines } = await import(
+      "../../app/services/translations/stale-translation-sync.server"
+    );
+    db.primaryDigestBaseline.createMany.mockClear();
+
+    await seedPrimaryDigestBaselines(SHOP, "Product", [
+      {
+        resourceId: "gid://shopify/Product/1",
+        content: [
+          { key: "title", digest: NEW },
+          // Not a key this app manages: never part of a baseline.
+          { key: "vendor", digest: "x" },
+        ],
+      },
+      // Nothing managed with a digest: no row at all.
+      { resourceId: "gid://shopify/Product/2", content: [{ key: "title", digest: null }] },
+    ]);
+
+    const call = (db.primaryDigestBaseline.createMany.mock.calls[0] as unknown as [any])[0];
+    expect(call.skipDuplicates).toBe(true);
+    expect(call.data).toEqual([
+      { shop: SHOP, resourceId: "gid://shopify/Product/1", resourceType: "Product", digests: { title: NEW } },
+    ]);
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
   });
 });

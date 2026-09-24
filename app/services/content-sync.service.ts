@@ -906,6 +906,10 @@ export class ContentSyncService {
           await tx.contentTranslation.deleteMany({
             where: { shop: this.shop, resourceType: "Article", resourceId: { in: staleIds } },
           });
+          // FK-less like the translations (CLAUDE.md, PrimaryDigestBaseline).
+          await tx.primaryDigestBaseline.deleteMany({
+            where: { shop: this.shop, resourceId: { in: staleIds } },
+          });
         }
         return { deleted: del.count };
       });

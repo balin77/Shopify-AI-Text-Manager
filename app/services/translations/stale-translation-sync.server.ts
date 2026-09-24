@@ -1001,6 +1001,41 @@ export async function loadPrimaryDigestBaseline(
   }
 }
 
+/**
+ * Overlay the text a SAVE just read back onto the resource's primary baseline
+ * (see the call in `reconcileAfterPrimarySave`). Best-effort, and it never
+ * creates evidence from nothing in the dangerous direction: it records what is
+ * there now, which can only make a later look prove LESS.
+ */
+async function advancePrimaryBaselineAfterSave(
+  shop: string,
+  resourceId: string,
+  resourceType: string,
+  content: Readonly<Record<string, PrimaryContentEntry>>,
+): Promise<void> {
+  const previous = await loadPrimaryDigestBaseline(shop, resourceId);
+  // A failed read: writing over a row we could not see would discard held
+  // keys — leave it, the next look costs at most one repeated proof.
+  if (previous === null) return;
+  const next = nextPrimaryDigestBaseline(previous, content);
+  if (!next) return;
+  try {
+    const { db } = await import("../../db.server");
+    await db.primaryDigestBaseline.upsert({
+      where: { shop_resourceId: { shop, resourceId } },
+      create: { shop, resourceId, resourceType, digests: next },
+      update: { digests: next },
+    });
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not advance the primary baseline after a save", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /** The stored JSON as a key → digest map; anything that is not a string entry
  *  is dropped (it can only be a digest we did not write). */
 export function primaryDigestMap(value: unknown): Record<string, string> {
@@ -1227,7 +1262,7 @@ async function reserveFirstFillBudget(
   shop: string,
   resourceId: string,
   dbClient: typeof import("../../db.server").db | null,
-): Promise<boolean> {
+): Promise<"granted" | "spent" | "error"> {
   try {
     const db = dbClient ?? (await import("../../db.server")).db;
     const day = utcDay();
@@ -1239,14 +1274,41 @@ async function reserveFirstFillBudget(
       where: { shop, day, used: { lt: AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP } },
       data: { used: { increment: 1 } },
     });
-    return count === 1;
+    return count === 1 ? "granted" : "spent";
   } catch (error: unknown) {
+    // Fails CLOSED — but it is not the daily limit, and must not be reported
+    // as one: telling the merchant "100 reached" over a DB blink is a false
+    // statement about their shop. The keys are held either way.
     logger.warn("[StaleTranslations] Could not reserve the daily first-translation budget — refusing", {
       context: "StaleTranslations",
       shop,
       resourceId,
       error: error instanceof Error ? error.message : String(error),
     });
+    return "error";
+  }
+}
+
+/**
+ * Is today's budget already SPENT? A cheap read asked before anything costs a
+ * Shopify call: during exactly the mass edit the brake exists for, every
+ * further webhook would otherwise still pay the existence query, the claim and
+ * its revert before learning it is refused — burning the shop's API bucket on
+ * work that cannot happen. `false` on any doubt (no row, a failed read): the
+ * reservation afterwards is the authority and fails closed on its own.
+ */
+async function firstFillBudgetSpent(
+  shop: string,
+  dbClient: typeof import("../../db.server").db | null,
+): Promise<boolean> {
+  try {
+    const db = dbClient ?? (await import("../../db.server")).db;
+    const row = await db.autoTranslateFillBudget.findUnique({
+      where: { shop_day: { shop, day: utcDay() } },
+      select: { used: true },
+    });
+    return (row?.used ?? 0) >= AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP;
+  } catch {
     return false;
   }
 }
@@ -1278,20 +1340,21 @@ async function reportFirstFillRefused(
     // webhook that day (a price edit is enough) and a held page on every
     // sweep, so counting calls would overstate what is waiting. `push` is an
     // atomic array append; a duplicate from a race is removed by the Set.
-    const current = await db.autoTranslateFillBudget.findUnique({
-      where: { shop_day: { shop, day } },
-      select: { refusedIds: true },
-    });
-    const known = new Set(current?.refusedIds ?? []);
-    if (!known.has(resourceId)) {
-      const updated = await db.autoTranslateFillBudget.update({
-        where: { shop_day: { shop, day } },
-        data: { refusedIds: { push: resourceId } },
-        select: { refusedIds: true },
-      });
-      for (const id of updated.refusedIds) known.add(id);
-    }
-    const refused = known.size;
+    //
+    // ONE statement, and the array never travels: reading it back to check
+    // membership made a 5000-product import cost O(N²) bytes on one hot row.
+    // The append is conditional on the id being absent, and only the COUNT is
+    // returned. COALESCE because the column is nullable on a table created by
+    // the first cut of this migration.
+    const rows = await db.$queryRaw<Array<{ refused: number }>>`
+      UPDATE "AutoTranslateFillBudget"
+      SET "refusedIds" = CASE
+        WHEN ${resourceId} = ANY(COALESCE("refusedIds", ARRAY[]::TEXT[])) THEN "refusedIds"
+        ELSE array_append(COALESCE("refusedIds", ARRAY[]::TEXT[]), ${resourceId})
+      END
+      WHERE "shop" = ${shop} AND "day" = ${day}
+      RETURNING cardinality("refusedIds")::int AS "refused"`;
+    const refused = Math.max(1, Number(rows[0]?.refused ?? 1));
     const error = `auto_translate_daily_limit:${refused}:${AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP}`;
     const now = new Date();
     await db.task.upsert({
@@ -1476,6 +1539,17 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
     //    the same move, spend a budget unit and queue a duplicate run that
     //    translates every locale twice. The loser drops its fill and leaves the
     //    baseline to the winner.
+    if (stale.some((entry) => entry.baselineFill) && (await firstFillBudgetSpent(shop, baseline.db))) {
+      // Spent before we even asked: refuse, report, and pay no Shopify call.
+      // The row is left exactly as it is rather than written with HELD keys:
+      // this event never claimed anything, and a write here (holding the fill
+      // keys, advancing the rest) could land over another webhook's won claim
+      // and revert it — that one then being proven again. Untouched, the move
+      // stays provable all the same.
+      baseline.skipWrite = true;
+      stale = stale.filter((entry) => !entry.baselineFill);
+      await reportFirstFillRefused(shop, resourceId, baseline.db);
+    }
     if (stale.some((entry) => entry.baselineFill)) {
       const fills = stale.filter((entry) => entry.baselineFill);
       const present = await translatedOnShopify(
@@ -1498,12 +1572,12 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
         stale = stale.filter((entry) => !entry.baselineFill);
       } else {
         const granted = await reserveFirstFillBudget(shop, resourceId, baseline.db);
-        if (!granted) {
+        if (granted !== "granted") {
           // The claim already advanced the row; the final write puts the held
           // keys back to their ORIGINAL digests.
           for (const entry of stale) if (entry.baselineFill) held.add(entry.key);
           stale = stale.filter((entry) => !entry.baselineFill);
-          await reportFirstFillRefused(shop, resourceId, baseline.db);
+          if (granted === "spent") await reportFirstFillRefused(shop, resourceId, baseline.db);
         }
       }
     }
@@ -2097,6 +2171,20 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
           stale.push(candidate);
         }
       }
+    }
+
+    // This save IS the change event, so it advances the resource's PRIMARY
+    // baseline itself — from the text it just read back. Without it the row
+    // kept the digest from before the save (the webhook of that same save
+    // bails on our claim and writes nothing), so any change event after the
+    // 30-second claim — a price edit, a delayed webhook, the nightly sweep —
+    // proved the SAME move again, found locales this run had not registered
+    // yet, won the claim and queued a second run: those locales translated and
+    // registered twice. A content surface only; the value surfaces' keys are
+    // not the resource's managed fields.
+    if (!params.translateAs) {
+      const ownContent = primaryByResource.get(resourceId);
+      if (ownContent) await advancePrimaryBaselineAfterSave(shop, resourceId, resourceType, ownContent);
     }
 
     if (unreadableResources > 0 || declinedByReadBack > 0) {
