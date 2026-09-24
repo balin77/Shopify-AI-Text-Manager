@@ -26,6 +26,7 @@ import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleRow } from "./ToggleRow";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DeleteItemModal } from "./create/DeleteItemModal";
+import { HelpTooltip } from "./HelpTooltip";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 
 interface ShopLanguage {
@@ -190,9 +191,15 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
     <Card>
       <BlockStack gap="500">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
-          <Text as="h2" variant="headingLg">
-            {s.title || "Shop languages"}
-          </Text>
+          {/* The explanations live in the question marks (t.help.shopLanguages*),
+              like everywhere else in the app — on screen stay only the short
+              hints that change with a row's state. */}
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="h2" variant="headingLg">
+              {s.title || "Shop languages"}
+            </Text>
+            <HelpTooltip helpKey="shopLanguages" position="below" />
+          </InlineStack>
           <SaveDiscardButtons
             hasChanges={hasChanges}
             onSave={handleSave}
@@ -203,10 +210,6 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
             isSavingCurrentItem={saving}
           />
         </InlineStack>
-
-        <Text as="p" variant="bodyMd" tone="subdued">
-          {s.intro}
-        </Text>
 
         {saveFailed.length > 0 && (
           <Banner tone="critical" title={s.failedTitle}>
@@ -296,47 +299,41 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
         </BlockStack>
 
         <BlockStack gap="200">
-          <Text as="h3" variant="headingSm">
-            {s.addTitle}
-          </Text>
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="h3" variant="headingSm">
+              {s.addTitle}
+            </Text>
+            <HelpTooltip helpKey="shopLanguagesAdd" position="below" />
+          </InlineStack>
           {availableLocales === null ? (
             <Text as="p" variant="bodySm" tone="subdued">
               {s.addUnavailable}
             </Text>
           ) : (
-            <>
-              <InlineStack gap="200" blockAlign="end" wrap={false}>
-                <div style={{ flex: 1, maxWidth: 360 }}>
-                  <Select
-                    label={s.addTitle}
-                    labelHidden
-                    options={[{ label: s.addPlaceholder || "…", value: "" }, ...addOptions]}
-                    value={pick}
-                    onChange={setPick}
-                  />
-                </div>
-                <Button
-                  disabled={!pick}
-                  onClick={() => {
-                    const chosen = availableLocales.find((l) => l.isoCode === pick);
-                    if (!chosen) return;
-                    setAdds((prev) => [...prev, { locale: chosen.isoCode, name: chosen.name, published: false }]);
-                    setPick("");
-                  }}
-                >
-                  {s.addButton || "Add"}
-                </Button>
-              </InlineStack>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {s.addHint}
-              </Text>
-            </>
+            <InlineStack gap="200" blockAlign="end" wrap={false}>
+              <div style={{ flex: 1, maxWidth: 360 }}>
+                <Select
+                  label={s.addTitle}
+                  labelHidden
+                  options={[{ label: s.addPlaceholder || "…", value: "" }, ...addOptions]}
+                  value={pick}
+                  onChange={setPick}
+                />
+              </div>
+              <Button
+                disabled={!pick}
+                onClick={() => {
+                  const chosen = availableLocales.find((l) => l.isoCode === pick);
+                  if (!chosen) return;
+                  setAdds((prev) => [...prev, { locale: chosen.isoCode, name: chosen.name, published: false }]);
+                  setPick("");
+                }}
+              >
+                {s.addButton || "Add"}
+              </Button>
+            </InlineStack>
           )}
         </BlockStack>
-
-        <Text as="p" variant="bodySm" tone="subdued">
-          {s.marketsNote}
-        </Text>
       </BlockStack>
 
       {removing && (

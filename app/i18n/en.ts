@@ -1217,14 +1217,10 @@ export const en: Translation = {
     otherSettings: "More",
     shopLanguages: {
       title: "Shop languages",
-      intro:
-        "Here you make your shop's languages visible or invisible in the online store. An unpublished language is one you prepare at your own pace: the app syncs, edits and auto-translates it exactly like an active language – it just does not appear in the online store yet. Publishing it is the launch.",
       primaryBadge: "Primary language",
       publishedLabel: "Published in the online store",
       unpublishedHint: "Not published – being prepared",
       primaryHint: "The primary language is always published.",
-      marketsNote:
-        "Whether a published language is shown in a particular market is set in Shopify under Settings → Markets.",
       failedTitle: "Shopify did not apply these changes",
       errorPrimaryLocale: "The primary language cannot be unpublished.",
       errorUnknownLocale: "This language no longer exists in the shop – reload the page.",
@@ -1235,8 +1231,6 @@ export const en: Translation = {
       addTitle: "Add a language",
       addPlaceholder: "Choose a language …",
       addButton: "Add",
-      addHint:
-        "A new language is created unpublished – translate it at your own pace (e.g. with “Add missing translations” in the bulk editor) and publish it later. It is created in Shopify only when you press Save. Whether a language published straight away appears in your markets is worth checking afterwards in Shopify under Markets.",
       addUnavailable: "The available languages could not be loaded. Reload the page to add languages.",
       newBadge: "New – created on save",
       undoAdd: "Don't add",
@@ -4502,6 +4496,30 @@ export const en: Translation = {
       ],
       details:
         "The limit counts items (a product, a page …), not languages or fields, and resets every day at midnight UTC. Refreshing existing translations and changes you save in the app do not count. The retry list is worked through in the nightly check: an item gets at most two more attempts; being postponed only because of the limit does not count as an attempt. What is still missing after two attempts stays visible here as \"failed for good\" until the text changes again. The list covers products, collections, pages, articles, blogs and policies; metafields, options, alt texts, theme content and menus keep their previous behaviour.",
+    },
+    shopLanguages: {
+      title: "Shop languages",
+      summary:
+        "Add languages here, publish them in the online store or take them out again. An unpublished language is one you prepare at your own pace: the app treats it exactly like an active one – it just does not appear in the online store yet.",
+      tips: [
+        "Unpublished languages are synced, edited and auto-translated like active ones",
+        "The “Published in the online store” switch is the launch – it takes effect when you press Save",
+        "The primary language is always published and cannot be removed",
+        "“Remove” is permanent and asks you to confirm by typing the language's name",
+      ],
+      details:
+        "Whether a published language is shown in a particular market is set in Shopify under Settings → Markets. According to Shopify's documentation, removing a language deletes every translation into it from your store; the app then removes its local copy as well. Your own data about that language – glossary, direct translations, alt-text templates – is kept. While you have unsaved changes, “Remove” is locked.",
+    },
+    shopLanguagesAdd: {
+      title: "Add a language",
+      summary:
+        "A new language is created unpublished, so you can translate it at your own pace and publish it later. It is created in Shopify only when you press Save.",
+      tips: [
+        "Fill in missing translations e.g. with “Add missing translations” in the bulk editor",
+        "Turn its switch on before saving to publish it straight away",
+      ],
+      details:
+        "Whether a language published straight away appears in your markets is worth checking afterwards in Shopify under Settings → Markets. Only languages Shopify allows for your shop are offered.",
     },
     autoTranslateHandles: {
       title: "Translate URL handles too",

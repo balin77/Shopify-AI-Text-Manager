@@ -1200,14 +1200,10 @@ export const es: Translation = {
     otherSettings: "Otros",
     shopLanguages: {
       title: "Idiomas de la tienda",
-      intro:
-        "Aquí haces visibles o invisibles los idiomas de tu tienda en la tienda online. Un idioma no publicado es uno que preparas con calma: la app lo sincroniza, lo edita y lo traduce automáticamente igual que un idioma activo; solo que aún no aparece en la tienda online. Publicarlo es el lanzamiento.",
       primaryBadge: "Idioma principal",
       publishedLabel: "Publicado en la tienda online",
       unpublishedHint: "No publicado – en preparación",
       primaryHint: "El idioma principal siempre está publicado.",
-      marketsNote:
-        "Si un idioma publicado se muestra en un mercado concreto se configura en Shopify, en Configuración → Mercados.",
       failedTitle: "Shopify no aplicó estos cambios",
       errorPrimaryLocale: "El idioma principal no se puede despublicar.",
       errorUnknownLocale: "Este idioma ya no existe en la tienda: recarga la página.",
@@ -1218,8 +1214,6 @@ export const es: Translation = {
       addTitle: "Añadir un idioma",
       addPlaceholder: "Elige un idioma …",
       addButton: "Añadir",
-      addHint:
-        "Un idioma nuevo se crea sin publicar: tradúcelo con calma (p. ej. con «Completar traducciones que faltan» en el editor masivo) y publícalo después. Se crea en Shopify solo al pulsar Guardar. Si un idioma publicado de inmediato aparece en tus mercados, compruébalo después en Shopify, en Mercados.",
       addUnavailable: "No se pudieron cargar los idiomas disponibles. Recarga la página para añadir idiomas.",
       newBadge: "Nuevo – se crea al guardar",
       undoAdd: "No añadir",
@@ -4490,6 +4484,30 @@ export const es: Translation = {
       ],
       details:
         "El límite cuenta elementos (un producto, una página…), no idiomas ni campos, y se reinicia cada día a medianoche UTC. Actualizar traducciones existentes y los cambios que guardas en la app no cuentan. La lista de reintentos se procesa en la revisión nocturna: un elemento recibe como máximo dos intentos más; si solo se pospone por el límite, no cuenta como intento. Lo que sigue faltando tras dos intentos queda visible aquí como «fallido definitivamente» hasta que el texto vuelva a cambiar. La lista cubre productos, colecciones, páginas, artículos, blogs y políticas; los metacampos, opciones, textos alternativos, contenido del tema y menús mantienen su comportamiento anterior.",
+    },
+    shopLanguages: {
+      title: "Idiomas de la tienda",
+      summary:
+        "Aquí añades idiomas, los publicas en la tienda online o los vuelves a quitar. Un idioma no publicado es uno que preparas con calma: la app lo trata exactamente igual que uno activo; solo que aún no aparece en la tienda online.",
+      tips: [
+        "Los idiomas no publicados se sincronizan, se editan y se traducen automáticamente como los activos",
+        "El interruptor «Publicado en la tienda online» es el lanzamiento; se aplica al pulsar Guardar",
+        "El idioma principal siempre está publicado y no se puede eliminar",
+        "«Eliminar» es definitivo y pide confirmarlo escribiendo el nombre del idioma",
+      ],
+      details:
+        "Si un idioma publicado se muestra en un mercado concreto se configura en Shopify, en Configuración → Mercados. Según la documentación de Shopify, al eliminar un idioma se borran de tu tienda todas las traducciones a ese idioma; después la app también elimina su copia local. Tus propios datos sobre ese idioma (glosario, traducciones directas, plantillas de texto alternativo) se conservan. Mientras tengas cambios sin guardar, «Eliminar» está bloqueado.",
+    },
+    shopLanguagesAdd: {
+      title: "Añadir un idioma",
+      summary:
+        "Un idioma nuevo se crea sin publicar, para que puedas traducirlo con calma y publicarlo después. Se crea en Shopify solo al pulsar Guardar.",
+      tips: [
+        "Completa las traducciones que faltan, p. ej. con «Completar traducciones que faltan» en el editor masivo",
+        "Activa su interruptor antes de guardar para publicarlo de inmediato",
+      ],
+      details:
+        "Si un idioma publicado de inmediato aparece en tus mercados, compruébalo después en Shopify, en Configuración → Mercados. Solo se ofrecen los idiomas que Shopify permite para tu tienda.",
     },
     autoTranslateHandles: {
       title: "Traducir también los handles de URL",

@@ -1221,14 +1221,10 @@ export const de = {
     otherSettings: "Weiteres",
     shopLanguages: {
       title: "Shop-Sprachen",
-      intro:
-        "Hier schaltest du die Sprachen deines Shops im Onlineshop sichtbar oder unsichtbar. Eine unveröffentlichte Sprache bereitest du in Ruhe vor: Die App synchronisiert, bearbeitet und übersetzt sie automatisch genau wie eine aktive Sprache – sie erscheint nur noch nicht im Onlineshop. Mit „Veröffentlichen“ gehst du live.",
       primaryBadge: "Hauptsprache",
       publishedLabel: "Im Onlineshop veröffentlicht",
       unpublishedHint: "Nicht veröffentlicht – wird vorbereitet",
       primaryHint: "Die Hauptsprache ist immer veröffentlicht.",
-      marketsNote:
-        "Ob eine veröffentlichte Sprache in einem bestimmten Markt angezeigt wird, legst du in Shopify unter Einstellungen → Märkte fest.",
       failedTitle: "Diese Änderungen hat Shopify nicht übernommen",
       errorPrimaryLocale: "Die Hauptsprache kann nicht unveröffentlicht werden.",
       errorUnknownLocale: "Diese Sprache gibt es im Shop nicht mehr – lade die Seite neu.",
@@ -1239,8 +1235,6 @@ export const de = {
       addTitle: "Sprache hinzufügen",
       addPlaceholder: "Sprache wählen …",
       addButton: "Hinzufügen",
-      addHint:
-        "Eine neue Sprache wird zunächst unveröffentlicht angelegt – du kannst sie in Ruhe übersetzen (z. B. im Bulk-Editor mit „Fehlende Übersetzungen ergänzen“) und später veröffentlichen. Sie wird erst mit „Speichern“ in Shopify angelegt. Ob eine direkt veröffentlichte Sprache in deinen Märkten erscheint, prüfst du danach in Shopify unter Märkte.",
       addUnavailable: "Die verfügbaren Sprachen konnten nicht geladen werden. Lade die Seite neu, um Sprachen hinzuzufügen.",
       newBadge: "Neu – wird beim Speichern angelegt",
       undoAdd: "Nicht hinzufügen",
@@ -4527,6 +4521,30 @@ export const de = {
       ],
       details:
         "Das Limit zählt Einträge (ein Produkt, eine Seite …), nicht Sprachen oder Felder, und setzt sich täglich um Mitternacht UTC zurück. Das Auffrischen bestehender Übersetzungen und Änderungen, die du in der App speicherst, zählt nicht mit. Die Wiederholungsliste wird im nächtlichen Abgleich abgearbeitet: Ein Eintrag bekommt höchstens zwei weitere Versuche; wird er nur wegen des Limits verschoben, zählt das nicht als Versuch. Was nach zwei Versuchen noch fehlt, bleibt als „endgültig fehlgeschlagen“ hier sichtbar, bis sich der Text erneut ändert. Die Liste gilt für Produkte, Kollektionen, Seiten, Artikel, Blogs und Richtlinien; Metafelder, Optionen, Alt-Texte, Theme-Inhalte und Menüs behalten ihr bisheriges Verhalten.",
+    },
+    shopLanguages: {
+      title: "Shop-Sprachen",
+      summary:
+        "Hier fügst du Sprachen hinzu, veröffentlichst sie im Onlineshop oder nimmst sie wieder heraus. Eine unveröffentlichte Sprache bereitest du in Ruhe vor: Die App behandelt sie genau wie eine aktive – sie erscheint nur noch nicht im Onlineshop.",
+      tips: [
+        "Unveröffentlichte Sprachen werden synchronisiert, bearbeitet und automatisch übersetzt wie aktive",
+        "Mit dem Schalter „Im Onlineshop veröffentlicht“ gehst du live – wirksam erst mit „Speichern“",
+        "Die Hauptsprache ist immer veröffentlicht und kann nicht entfernt werden",
+        "„Entfernen“ ist endgültig und verlangt eine Bestätigung mit dem Namen der Sprache",
+      ],
+      details:
+        "Ob eine veröffentlichte Sprache in einem bestimmten Markt angezeigt wird, legst du in Shopify unter Einstellungen → Märkte fest. Beim Entfernen löscht Shopify laut eigener Dokumentation alle Übersetzungen in diese Sprache aus deinem Shop; die App entfernt danach auch ihre lokale Kopie. Deine eigenen Daten zu dieser Sprache – Glossar, direkte Übersetzungen, Alt-Text-Vorlagen – bleiben erhalten. Solange du ungespeicherte Änderungen hast, ist „Entfernen“ gesperrt.",
+    },
+    shopLanguagesAdd: {
+      title: "Sprache hinzufügen",
+      summary:
+        "Eine neue Sprache wird zunächst unveröffentlicht angelegt, damit du sie in Ruhe übersetzen und später veröffentlichen kannst. In Shopify angelegt wird sie erst mit „Speichern“.",
+      tips: [
+        "Fehlende Übersetzungen füllst du z. B. im Bulk-Editor mit „Fehlende Übersetzungen ergänzen“",
+        "Schaltest du den Schalter vor dem Speichern ein, wird die Sprache gleich veröffentlicht",
+      ],
+      details:
+        "Ob eine direkt veröffentlichte Sprache in deinen Märkten erscheint, prüfst du danach in Shopify unter Einstellungen → Märkte. Angeboten werden nur Sprachen, die Shopify für deinen Shop zulässt.",
     },
     autoTranslateHandles: {
       title: "URL-Handles mitübersetzen",
