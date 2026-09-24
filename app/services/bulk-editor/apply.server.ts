@@ -4024,7 +4024,7 @@ async function persistVariantInventoryItems(
     // The named cell still gets Shopify's own words (or this app's specific
     // refusal); the rest get the atomicity explanation, exactly as the variant
     // bulk update already reports for a refused sibling.
-    const message = result.message ?? inventoryItemWarningMessage(result.warning);
+    const message = result.message ?? inventoryItemWarningMessage(result.warning, result.field);
     const named = result.field ? COLUMN_BY_INVENTORY_ITEM_FIELD[result.field] : undefined;
     for (const columnId of columnIds) {
       if (weightFailed && (columnId === VAR_WEIGHT_COLUMN_ID || columnId === VAR_WEIGHT_UNIT_COLUMN_ID)) {
@@ -4048,9 +4048,12 @@ async function persistVariantInventoryItems(
 /** A warning code the bulk grid has to say out loud. The single editor renders
  *  these from `t.content.commerceWarnings`; a per-cell failure carries its own
  *  sentence, like every other message in this file. */
-function inventoryItemWarningMessage(warning: CommerceWarning): string {
+function inventoryItemWarningMessage(warning: CommerceWarning, field?: keyof InventoryItemFields): string {
   switch (warning) {
     case "itemFieldsInvalid":
+      if (field === "harmonizedSystemCode") {
+        return "A customs tariff (HS) code is 6 to 13 digits, e.g. 442090 or 4420900000 — dots and spaces are removed automatically.";
+      }
       return "Shopify would refuse this value — check the amount, the weight unit or the two-letter country code.";
     case "itemFieldsNotConfirmed":
       return "Shopify did not confirm the change, so nothing was saved locally either.";

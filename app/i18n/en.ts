@@ -791,7 +791,7 @@ export const en: Translation = {
       activateFailed: "The location could not be activated.",
       stockNoBaseline: "One location had no current quantity to compare against, so it was not written. Reload and try again.",
       stockCompareUnsupported: "Stock was not written: the Shopify API version this app talks to offers no way to compare against the quantity you were looking at, and without it a write would overwrite whatever changed in the meantime. The details are in the server log.",
-      itemFieldsInvalid: "A cost, weight or country code was not in a form Shopify accepts, so those settings were not written.",
+      itemFieldsInvalid: "A cost, weight, country code or customs tariff code (6 to 13 digits) was not in a form Shopify accepts, so those settings were not written.",
       itemFieldsNotConfirmed: "Shopify did not confirm the item settings, so they were not saved locally either.",
       itemFieldsFailed: "The item settings could not be saved.",
       stockChangedMeanwhile: "The stock changed while you were editing, so nothing was written. Reload to see the current number.",

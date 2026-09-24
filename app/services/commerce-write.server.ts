@@ -977,6 +977,23 @@ export function parseDecimal(value: string): string | null {
   return trimmed;
 }
 
+/**
+ * A customs tariff (HS) code as Shopify stores it: 6 to 13 DIGITS and nothing
+ * else ("Harmonized system code must be a number between six and thirteen
+ * digits"). Merchants copy them out of tariff tables, where they are printed
+ * grouped — "4420.90.00", "6109 10 00", "8471-30" — so the separators are
+ * removed rather than refused; the digits are the code. Returns "" for an
+ * empty value (= clear it) and null for anything that is still not a code
+ * afterwards, which is refused BEFORE the mutation: `inventoryItemUpdate`
+ * applies as a unit, so Shopify's refusal would take every other item field
+ * of that variant with it.
+ */
+export function parseHsCode(value: string): string | null {
+  const digits = value.replace(/[\s.\-]/g, "");
+  if (digits === "") return "";
+  return /^\d{6,13}$/.test(digits) ? digits : null;
+}
+
 /** A two-letter ISO country code, uppercased, or null. */
 export function parseCountryCode(value: string): string | null {
   const trimmed = value.trim().toUpperCase();
@@ -1074,7 +1091,10 @@ export async function writeInventoryItemFields(
     mirror.weightUnit = unit;
   }
   if (params.fields.harmonizedSystemCode !== undefined) {
-    const code = params.fields.harmonizedSystemCode.trim();
+    const code = parseHsCode(params.fields.harmonizedSystemCode);
+    if (code === null) {
+      return { ok: false, warning: "itemFieldsInvalid", field: "harmonizedSystemCode" };
+    }
     input.harmonizedSystemCode = code || null;
     mirror.harmonizedSystemCode = code || null;
   }

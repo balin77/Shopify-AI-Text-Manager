@@ -798,7 +798,7 @@ export const de = {
       // Die Shopify-Version, mit der die App spricht, kennt kein Feld für den
       // Abgleich. Ohne den wird nicht geschrieben — siehe commerce-write.server.ts.
       stockCompareUnsupported: "Der Bestand wurde nicht geschrieben: die Shopify-API-Version dieser App bietet keinen Abgleich mit der Menge, die du gesehen hast — und ohne den würde ein Schreibvorgang überschreiben, was sich zwischenzeitlich geändert hat. Die Einzelheiten stehen im Server-Log.",
-      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
+      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht, ein Ländercode oder eine Zolltarifnummer (6 bis 13 Ziffern) war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
       itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
       itemFieldsFailed: "Die Artikelangaben konnten nicht gespeichert werden.",
       stockChangedMeanwhile: "Der Bestand hat sich während deiner Bearbeitung geändert, deshalb wurde nichts geschrieben. Lade neu, um die aktuelle Zahl zu sehen.",

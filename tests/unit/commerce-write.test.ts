@@ -13,6 +13,7 @@ import {
   applyStockChanges,
   parseCountryCode,
   parseDecimal,
+  parseHsCode,
   parseQuantity,
   applyVariantPrices,
   resetInventoryInputShapeProbe,
@@ -218,6 +219,18 @@ describe("parseDecimal", () => {
     expect(parseDecimal("4.5.1")).toBeNull();
     expect(parseDecimal("free")).toBeNull();
     expect(parseDecimal("")).toBeNull();
+  });
+});
+
+describe("parseHsCode", () => {
+  it("strips the separators tariff tables print, and keeps 6 to 13 digits", () => {
+    expect(parseHsCode("4420.90.00")).toBe("44209000");
+    expect(parseHsCode(" 6109 10 00 ")).toBe("61091000");
+    expect(parseHsCode("8471-30")).toBe("847130");
+    expect(parseHsCode("")).toBe("");
+    expect(parseHsCode("4420")).toBeNull();
+    expect(parseHsCode("12345678901234")).toBeNull();
+    expect(parseHsCode("4420.9x")).toBeNull();
   });
 });
 
@@ -611,6 +624,30 @@ describe("applyInventoryItemFields", () => {
     });
     expect(warning).toBeUndefined();
     expect(updates[0].data).toMatchObject({ cost: null });
+  });
+
+  it("sends an HS code as bare digits, and refuses one Shopify would reject", async () => {
+    // Shopify: "must be a number between six and thirteen digits" — and the
+    // refusal would take every other item field of the variant with it.
+    const admin = adminWith(itemEcho({ harmonizedSystemCode: "4420900000" }));
+    const { db } = variantRecorder();
+    await applyInventoryItemFields(admin, db, "s", {
+      variantId: "42",
+      inventoryItemId: ITEM_ID,
+      fields: { harmonizedSystemCode: "4420.90.00 00" },
+    });
+    const graphql = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql;
+    expect(graphql.mock.calls[0][1].variables.input.harmonizedSystemCode).toBe("4420900000");
+
+    const refused = adminWith(itemEcho());
+    expect(
+      await applyInventoryItemFields(refused, variantRecorder().db, "s", {
+        variantId: "42",
+        inventoryItemId: ITEM_ID,
+        fields: { harmonizedSystemCode: "4420" },
+      }),
+    ).toBe("itemFieldsInvalid");
+    expect((refused as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
   });
 
   it("REFUSES an invalid enum rather than forwarding it", async () => {
