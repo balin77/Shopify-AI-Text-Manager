@@ -125,9 +125,18 @@ export interface CsvImportPreview {
    * scientific notation, a SKU that lost its leading zeros, a text cut at
    * Excel's cell limit) — taken OUT of the diff and listed, never written. */
   damagedCells: CsvImportDamagedCell[];
-  /** The full diff — the client submits it unchanged through the normal save
-   * pipeline after confirmation. */
+  /** The full diff. The ROUTE sends it to the client only for a small import
+   * (≤ MAX_SYNC_SAVE cells, saved through the grid's own pipeline); a larger
+   * one is applied by csv-import-run.server.ts, which recomputes it from the
+   * file, and the client gets `applyInBackground` instead. */
   diff: BulkDiffEntry[];
+  /** Set by the route: the import is applied as a background Task. */
+  applyInBackground?: boolean;
+  /** Set by the route: how many save-sized batches that Task will run. */
+  batches?: number;
+  /** Variant rows only: row id → product id, for the call estimate's
+   * per-product batching. Server-internal (the route strips it). */
+  variantProductIdByRowId?: Record<string, string>;
   /** Shopify-call estimate (Plan §10.1) so the dialog can refuse over-budget
    * imports BEFORE submitting. */
   estimatedCalls: number;
@@ -404,5 +413,6 @@ export async function buildCsvImportPreview(
     damagedCells,
     diff,
     estimatedCalls,
+    ...(args.type === "variant" ? { variantProductIdByRowId } : {}),
   };
 }

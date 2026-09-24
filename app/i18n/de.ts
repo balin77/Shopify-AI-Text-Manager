@@ -4343,6 +4343,8 @@ export const de = {
       unsavedEdits: "Es gibt ungespeicherte Änderungen im Raster. Bitte zuerst speichern oder verwerfen, dann die Datei importieren.",
       badEncoding: "Die Datei ist nicht als UTF-8 gespeichert — Umlaute und Sonderzeichen würden beschädigt. Bitte in Excel als „CSV UTF-8 (durch Trennzeichen getrennt)“ speichern und erneut importieren.",
       scopeMismatch: "Die Datei wurde für „{file}“ exportiert, das Raster zeigt aber „{view}“. Bitte im Raster dieselbe Sprache und denselben Markt wählen wie beim Export — sonst würden die Texte in die falsche Sprache geschrieben.",
+      importStarted: "CSV-Import gestartet: {rows} Zeilen, {cells} Zellen werden im Hintergrund gespeichert — Fortschritt im Tab „Aufgaben“. Das Raster lädt neu, sobald der Import fertig ist.",
+      alreadyRunning: "Es läuft bereits ein Massen-Speichern für diesen Shop. Bitte warten, bis es im Tab „Aufgaben“ abgeschlossen ist, und dann erneut importieren.",
       preview: {
         title: "CSV-Import — Vorschau",
         summary: "{rows} Zeilen, {cells} Zellen ändern sich.",
@@ -4363,8 +4365,7 @@ export const de = {
         damagedScientificNotation: "in wissenschaftliche Schreibweise umgewandelt",
         damagedLeadingZerosLost: "führende Nullen entfernt",
         damagedCellLimitTruncated: "bei 32.767 Zeichen abgeschnitten",
-        overBudget: "Dieser Import braucht ca. {calls} Shopify-Aufrufe (Limit {max}). Bitte die Datei in mehrere kleinere Dateien aufteilen und nacheinander importieren.",
-        overCellLimit: "{cells} geänderte Zellen — Maximum {max} pro Import. Bitte die Datei in mehrere kleinere Dateien aufteilen und nacheinander importieren.",
+        background: "Der Import wird im Hintergrund in {batches} Paket(en) gespeichert. Du kannst die Seite verlassen; der Fortschritt steht im Tab „Aufgaben“. Bricht der Import ab (z. B. durch ein App-Update), dieselbe Datei einfach erneut importieren — bereits gespeicherte Zeilen werden übersprungen.",
         moreRowErrors: "… und {count} weitere.",
         changesHeading: "Die ersten {count} Änderungen:",
         moreChanges: "… und {count} weitere Änderungen.",

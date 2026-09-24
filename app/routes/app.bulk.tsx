@@ -130,7 +130,7 @@ import { CsvImportModal } from "../components/bulk-editor/CsvImportModal";
 // Type-only imports from the resource routes / server service — erased at
 // compile time, so nothing server-only reaches the client bundle.
 import type { BulkCsvExportPayload } from "./app.bulk.export";
-import type { CsvImportActionResult } from "./app.bulk.import";
+import type { CsvImportActionResult, CsvImportApplyActionResult } from "./app.bulk.import";
 import type { CsvImportPreview } from "../services/bulk-editor/csv-import.server";
 import { BulkLanguageBar, shouldRenderBulkLanguageBar } from "../components/bulk-editor/BulkLanguageBar";
 import { BulkCellMenu, type BulkCellActions } from "../components/bulk-editor/BulkCell";
@@ -686,6 +686,12 @@ export default function BulkEditor() {
   // shows the preview and, after confirmation, submits the returned diff
   // through the NORMAL save pipeline (submitDiff below).
   const importFetcher = useFetcher<CsvImportActionResult>();
+  /** A confirmed LARGE import (more than MAX_SYNC_SAVE cells): the file goes
+   * back to the server, which applies it as a background Task in batches. */
+  const importApplyFetcher = useFetcher<CsvImportApplyActionResult>();
+  /** The file text and the layer the open preview was built for — what a
+   * large import posts back on confirm, never the grid's CURRENT selection. */
+  const importRequestRef = useRef<{ csv: string; type: string; locale: string; market: string } | null>(null);
   /** Manual trigger for the media-library cache — the image view is empty
    * beyond product media until it has run once. */
   const syncMediaLibraryFetcher = useFetcher();
@@ -740,6 +746,8 @@ export default function BulkEditor() {
   /** How the file under preview was decoded — a non-UTF-8 file is named in
    * the dialog so the merchant checks its umlauts before saving. */
   const [importEncoding, setImportEncoding] = useState<CsvFileEncoding>("utf8");
+  /** "Import started: N rows" — the large-import twin of queuedBanner. */
+  const [importStartedBanner, setImportStartedBanner] = useState<{ rows: number; cells: number } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   /** "12 × 3 cells pasted" feedback (§8.3) with its undo action. */
   const [pasteBanner, setPasteBanner] = useState<{
@@ -974,7 +982,8 @@ export default function BulkEditor() {
     return combos.size;
   }, [dirty, locale, marketId]);
 
-  const saving = saveFetcher.state !== "idle" || bulkFetcher.state !== "idle";
+  const saving =
+    saveFetcher.state !== "idle" || bulkFetcher.state !== "idle" || importApplyFetcher.state !== "idle";
 
   useEffect(() => {
     if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
@@ -1576,14 +1585,10 @@ export default function BulkEditor() {
       return;
     }
     setImportEncoding(encoding);
+    const request = { csv: text, type, locale, market: isForeign ? marketId : "" };
+    importRequestRef.current = request;
     importFetcher.submit(
-      {
-        actionType: "csvImportPreview",
-        type,
-        locale,
-        market: isForeign ? marketId : "",
-        csv: text,
-      },
+      { actionType: "csvImportPreview", ...request },
       { method: "post", action: "/app/bulk/import" },
     );
   };
@@ -1617,18 +1622,56 @@ export default function BulkEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importFetcher.state, importFetcher.data]);
 
-  const importOverBudget = (importPreview?.estimatedCalls ?? 0) > MAX_TASK_CALLS;
-  // Finding 2: >MAX_SYNC_SAVE cells route to the task path, which caps one
-  // save at MAX_BULK_TASK_ITEMS cells — block the confirm (with the reason
-  // shown in the modal) instead of 400ing after a confirmed preview.
-  const importOverCellLimit = (importPreview?.cellsChanged ?? 0) > MAX_BULK_TASK_ITEMS;
-
+  // A small import goes through the grid's own save (≤ MAX_SYNC_SAVE cells,
+  // never near a cap); a larger one is applied server-side in batches, so
+  // neither the cell cap nor the call budget of ONE save applies to it.
   const handleImportConfirm = () => {
-    if (!importPreview || importOverBudget || importOverCellLimit) return;
-    const diff = importPreview.diff;
+    if (!importPreview || saving) return;
+    const preview = importPreview;
     setImportPreview(null);
-    submitDiff(diff);
+    if (!preview.applyInBackground) {
+      submitDiff(preview.diff);
+      return;
+    }
+    const request = importRequestRef.current;
+    if (!request) return;
+    importApplyFetcher.submit(
+      { actionType: "csvImportApply", ...request },
+      { method: "post", action: "/app/bulk/import" },
+    );
   };
+
+  useEffect(() => {
+    if (importApplyFetcher.state !== "idle" || !importApplyFetcher.data) return;
+    const result = importApplyFetcher.data;
+    if (result.ok) {
+      importRequestRef.current = null;
+      setImportError(null);
+      setImportStartedBanner({ rows: result.rows, cells: result.cells });
+      // Same watch as a large grid save: the grid reloads when the import (and
+      // every auto-translation run it starts) has finished.
+      setWatchedTaskIds((prev) => [...new Set([...prev, result.taskId])]);
+      return;
+    }
+    setImportError(
+      result.error === "alreadyRunning"
+        ? b.csv.alreadyRunning
+        : result.error === "noChanges"
+          ? b.csv.preview.noChanges
+          : result.error === "invalidLocale"
+            ? result.message
+            : result.error === "badEncoding"
+              ? b.csv.badEncoding
+              : result.error === "scopeMismatch"
+                ? b.csv.scopeMismatch
+                    .replace("{file}", importScopeLabel(result.fileLocale, result.fileMarketId))
+                    .replace("{view}", importScopeLabel(locale, isForeign ? marketId : ""))
+                : result.error === "gated"
+                  ? b.csv.importProTooltip
+                  : b.csv.importFailed,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importApplyFetcher.state, importApplyFetcher.data]);
 
   // ── Price bulk actions (Plan §5.6) ───────────────────────────────────────
   // Applied to the CURRENT (filtered, loaded) selection — i.e. the rows the
@@ -2290,6 +2333,13 @@ export default function BulkEditor() {
                 </div>
 
                 {queuedBanner && <Banner tone="success">{b.queuedBanner}</Banner>}
+                {importStartedBanner && (
+                  <Banner tone="success" onDismiss={() => setImportStartedBanner(null)}>
+                    {b.csv.importStarted
+                      .replace("{rows}", String(importStartedBanner.rows))
+                      .replace("{cells}", String(importStartedBanner.cells))}
+                  </Banner>
+                )}
                 {bulkError && <Banner tone="critical">{bulkError}</Banner>}
                 {saveError && <Banner tone="critical">{saveError}</Banner>}
                 {overBudgetBanner && (
@@ -2752,10 +2802,6 @@ export default function BulkEditor() {
               }}
               targetLabel={importScopeLabel(locale, isForeign ? marketId : "")}
               encoding={importEncoding}
-              overBudget={importOverBudget}
-              maxCalls={MAX_TASK_CALLS}
-              overCellLimit={importOverCellLimit}
-              maxCells={MAX_BULK_TASK_ITEMS}
               busy={saving}
               onConfirm={handleImportConfirm}
               onCancel={() => setImportPreview(null)}
@@ -2783,8 +2829,7 @@ export default function BulkEditor() {
                 changesHeading: b.csv.preview.changesHeading,
                 moreChanges: b.csv.preview.moreChanges,
                 emptyValue: b.csv.preview.emptyValue,
-                overBudget: b.csv.preview.overBudget,
-                overCellLimit: b.csv.preview.overCellLimit,
+                background: b.csv.preview.background,
                 apply: b.csv.preview.apply,
                 cancel: b.csv.preview.cancel,
               }}

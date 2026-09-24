@@ -2,8 +2,9 @@
  * Bulk editor — CSV import preview dialog (docs/plans/PLAN_BULK_EDITOR.md
  * §8.2 step 3): "X rows, Y cells change" plus the first 50 changes in clear
  * text (old → new), the reported unknown/ignored columns, the row-resolution
- * errors — and only the confirm button hands the diff to the normal save
- * pipeline. Nothing is written while this dialog is open.
+ * errors — and only the confirm button starts the write (the grid's own save
+ * for a small import, a background Task in batches for a large one). Nothing
+ * is written while this dialog is open.
  */
 
 import { Modal, BlockStack, Text, Banner } from "@shopify/polaris";
@@ -47,8 +48,7 @@ export interface CsvImportModalStrings {
   changesHeading: string; // {count}
   moreChanges: string; // {count}
   emptyValue: string;
-  overBudget: string; // {calls} {max}
-  overCellLimit: string; // {cells} {max}
+  background: string; // {batches}
   apply: string;
   cancel: string;
 }
@@ -63,15 +63,6 @@ interface CsvImportModalProps {
   targetLabel: string;
   /** How the file was decoded; anything but UTF-8 is named. */
   encoding: CsvFileEncoding;
-  /** True when the diff would blow the Shopify-call budget (Plan §10.1) —
-   * the confirm button is disabled and the reason shown. */
-  overBudget: boolean;
-  maxCalls: number;
-  /** True when the diff exceeds the per-save cell cap of the task path
-   * (MAX_BULK_TASK_ITEMS, Finding 2) — same disable+reason treatment as the
-   * call budget, BEFORE the server would 400 the confirmed import. */
-  overCellLimit: boolean;
-  maxCells: number;
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -106,10 +97,6 @@ export function CsvImportModal({
   columnLabel,
   targetLabel,
   encoding,
-  overBudget,
-  maxCalls,
-  overCellLimit,
-  maxCells,
   busy,
   onConfirm,
   onCancel,
@@ -133,7 +120,7 @@ export function CsvImportModal({
       primaryAction={{
         content: s.apply,
         onAction: onConfirm,
-        disabled: !hasChanges || overBudget || overCellLimit || busy,
+        disabled: !hasChanges || busy,
         loading: busy,
       }}
       secondaryActions={[{ content: s.cancel, onAction: onCancel, disabled: busy }]}
@@ -161,19 +148,8 @@ export function CsvImportModal({
             </Text>
           )}
 
-          {overBudget && (
-            <Banner tone="critical">
-              {s.overBudget
-                .replace("{calls}", String(preview.estimatedCalls))
-                .replace("{max}", String(maxCalls))}
-            </Banner>
-          )}
-          {overCellLimit && (
-            <Banner tone="critical">
-              {s.overCellLimit
-                .replace("{cells}", String(preview.cellsChanged))
-                .replace("{max}", String(maxCells))}
-            </Banner>
+          {hasChanges && preview.applyInBackground && (
+            <Banner tone="info">{s.background.replace("{batches}", String(preview.batches ?? 1))}</Banner>
           )}
 
           {preview.unknownColumns.length > 0 && (

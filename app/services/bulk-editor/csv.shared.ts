@@ -42,14 +42,15 @@ export const CSV_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 export const CSV_IMPORT_MAX_ROWS = 10_000;
 
 /**
- * Synchronous export ceiling. The plan (§8.1) foresees a Task with a download
- * link beyond 5.000 rows — but the Task infrastructure has NO result-file
- * delivery mechanism (Task.result is a DB text column; there is no file
- * storage or download endpoint). Building half of one would be worse than
- * being honest: exports above this cap are refused with a clear "narrow your
- * filter" message instead. Documented deviation from §8.1.
+ * Synchronous export ceiling — the SAME number as the import's row cap, so any
+ * file the import accepts can also be produced by the export (a lower export
+ * cap made a full round trip of a 6 000-product catalogue impossible). The
+ * plan (§8.1) foresaw a Task with a download link beyond 5 000 rows, but the
+ * Task infrastructure has NO result-file delivery (Task.result is a DB text
+ * column); beyond this cap the export is refused with a "narrow your filter"
+ * message instead.
  */
-export const CSV_EXPORT_MAX_ROWS = 5_000;
+export const CSV_EXPORT_MAX_ROWS = CSV_IMPORT_MAX_ROWS;
 
 /** UTF-8 byte-order mark — prepended to every export (§8.1). */
 export const CSV_BOM = "\uFEFF";

@@ -112,7 +112,10 @@ describe("language/market marker in the id header", () => {
       columns: productColumns,
       delimiter: ";",
     });
-    expect(result.ok && result.csv.split("\r\n")[0]).toBe("﻿id@fr;field.handle;field.title");
+    const header = result.ok ? result.csv.split("\r\n")[0] : "";
+    expect(header.startsWith("\uFEFFid@fr;field.handle;field.title;")).toBe(true);
+    // Every column of the type, not just the visible one.
+    expect(header.split(";")).toContain("field.descriptionHtml");
   });
 
   it("refuses a French file imported into the primary view", async () => {

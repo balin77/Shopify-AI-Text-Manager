@@ -370,13 +370,23 @@ describe("import diff = grid diff (§12)", () => {
 });
 
 describe("buildExportColumns (§8.1 layout)", () => {
-  it("content types lead with the handle column, dedupe it from the visible set and drop the image column", () => {
+  it("leads with the handle, then the visible order, then EVERY other column — never the image", () => {
     const columns = buildExportColumns(
       "product",
-      ["image", "field.title", "field.handle", "field.seoTitle"],
+      ["image", "field.seoTitle", "field.handle", "field.title"],
       productColumns,
     );
-    expect(columns.map((c) => c.id)).toEqual(["field.handle", "field.title", "field.seoTitle"]);
+    const ids = columns.map((c) => c.id);
+    expect(ids.slice(0, 3)).toEqual(["field.handle", "field.seoTitle", "field.title"]);
+    expect(ids).not.toContain("image");
+    const everyColumn = productColumns.filter((c) => c.id !== "image").map((c) => c.id);
+    expect([...ids].sort()).toEqual([...everyColumn].sort());
+  });
+
+  it("exports hidden columns too (an empty selection still yields the full set)", () => {
+    const ids = buildExportColumns("product", [], productColumns).map((c) => c.id);
+    expect(ids).toContain("field.descriptionHtml");
+    expect(ids).toContain("field.seoDescription");
   });
 
   it("variant rows lead with product/variant title + SKU (id-only re-import, documented)", () => {
@@ -385,11 +395,11 @@ describe("buildExportColumns (§8.1 layout)", () => {
       ["image", "var.price", "var.sku"],
       BULK_COLUMNS_BY_TYPE.variant,
     );
-    expect(columns.map((c) => c.id)).toEqual(["productTitle", "variantTitle", "var.sku", "var.price"]);
+    expect(columns.map((c) => c.id).slice(0, 4)).toEqual(["productTitle", "variantTitle", "var.sku", "var.price"]);
   });
 
   it("drops visible column ids that are not in the server universe", () => {
     const columns = buildExportColumns("product", ["field.title", "mf.fake.column"], productColumns);
-    expect(columns.map((c) => c.id)).toEqual(["field.handle", "field.title"]);
+    expect(columns.map((c) => c.id)).not.toContain("mf.fake.column");
   });
 });

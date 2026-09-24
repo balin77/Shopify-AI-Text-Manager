@@ -4318,6 +4318,8 @@ export const en: Translation = {
       unsavedEdits: "The grid has unsaved changes. Please save or discard them first, then import the file.",
       badEncoding: "The file is not saved as UTF-8 — accented and special characters would be corrupted. Please save it in Excel as \"CSV UTF-8 (Comma delimited)\" and import it again.",
       scopeMismatch: "The file was exported for \"{file}\", but the grid shows \"{view}\". Please select the same language and market in the grid as when exporting — otherwise the texts would be written into the wrong language.",
+      importStarted: "CSV import started: {rows} rows, {cells} cells are being saved in the background — track progress in the \"Tasks\" tab. The grid reloads once the import has finished.",
+      alreadyRunning: "A bulk save is already running for this store. Please wait until it has finished in the \"Tasks\" tab, then import again.",
       preview: {
         title: "CSV import — preview",
         summary: "{rows} rows, {cells} cells will change.",
@@ -4338,8 +4340,7 @@ export const en: Translation = {
         damagedScientificNotation: "converted to scientific notation",
         damagedLeadingZerosLost: "leading zeros removed",
         damagedCellLimitTruncated: "cut off at 32,767 characters",
-        overBudget: "This import needs about {calls} Shopify calls (limit {max}). Please split the file into several smaller files and import them one after another.",
-        overCellLimit: "{cells} changed cells — maximum {max} per import. Please split the file into several smaller files and import them one after another.",
+        background: "The import is saved in the background in {batches} batch(es). You can leave the page; progress is shown in the \"Tasks\" tab. If the import is interrupted (e.g. by an app update), simply import the same file again — rows already saved are skipped.",
         moreRowErrors: "… and {count} more.",
         changesHeading: "First {count} changes:",
         moreChanges: "… and {count} more changes.",

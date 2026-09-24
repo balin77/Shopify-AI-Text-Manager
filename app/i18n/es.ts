@@ -4306,6 +4306,8 @@ export const es: Translation = {
       unsavedEdits: "La cuadrícula tiene cambios sin guardar. Guárdalos o descártalos primero y luego importa el archivo.",
       badEncoding: "El archivo no está guardado como UTF-8: los acentos y caracteres especiales se dañarían. Guárdalo en Excel como \"CSV UTF-8 (delimitado por comas)\" e impórtalo de nuevo.",
       scopeMismatch: "El archivo se exportó para \"{file}\", pero la cuadrícula muestra \"{view}\". Selecciona en la cuadrícula el mismo idioma y mercado que al exportar; de lo contrario, los textos se escribirían en el idioma equivocado.",
+      importStarted: "Importación CSV iniciada: se están guardando {rows} filas y {cells} celdas en segundo plano; sigue el progreso en la pestaña \"Tareas\". La cuadrícula se recarga cuando termina la importación.",
+      alreadyRunning: "Ya hay un guardado masivo en curso para esta tienda. Espera a que termine en la pestaña \"Tareas\" y vuelve a importar.",
       preview: {
         title: "Importación CSV — vista previa",
         summary: "{rows} filas, {cells} celdas cambiarán.",
@@ -4326,8 +4328,7 @@ export const es: Translation = {
         damagedScientificNotation: "convertido a notación científica",
         damagedLeadingZerosLost: "ceros iniciales eliminados",
         damagedCellLimitTruncated: "cortado a 32.767 caracteres",
-        overBudget: "Esta importación necesita unas {calls} llamadas a Shopify (límite {max}). Divide el archivo en varios más pequeños e impórtalos uno tras otro.",
-        overCellLimit: "{cells} celdas modificadas — máximo {max} por importación. Divide el archivo en varios más pequeños e impórtalos uno tras otro.",
+        background: "La importación se guarda en segundo plano en {batches} lote(s). Puedes salir de la página; el progreso aparece en la pestaña \"Tareas\". Si la importación se interrumpe (p. ej. por una actualización de la app), vuelve a importar el mismo archivo: las filas ya guardadas se omiten.",
         moreRowErrors: "… y {count} más.",
         changesHeading: "Primeros {count} cambios:",
         moreChanges: "… y {count} cambios más.",
