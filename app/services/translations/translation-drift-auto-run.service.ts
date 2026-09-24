@@ -222,6 +222,9 @@ export class TranslationDriftAutoRunService {
             shop: settings.shop,
             client: admin as never,
             foreignLocales,
+            dailyLimit: (
+              await (await import("./translation-change-policy.server")).loadTranslationChangePolicy(settings.shop)
+            ).autoTranslateDailyLimit,
           });
           stats.retried += retries.started;
         } catch (err) {

@@ -75,6 +75,8 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       delete: vi.fn(async (_args?: unknown) => ({})),
     },
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
+    // The retry settle is one interactive transaction; the fake runs it on itself.
+    $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>): Promise<unknown> => cb(db)),
     aIInstructions: { findUnique: vi.fn(async () => null) },
     task: {
       // Echoes the id the caller minted: the repair hands that id back before
@@ -2443,11 +2445,14 @@ describe("retryAutoTranslation — one row of the retry list", () => {
       ),
     );
     // The row the run settles when it ends.
-    db.autoTranslateRetry.findUnique.mockResolvedValue({ attempts: 1 });
+    db.autoTranslateRetry.findUnique.mockResolvedValue({
+      attempts: 1,
+      pairs: ["de", "fr", "it"].map((locale) => ({ key: "title", locale })),
+    });
   });
 
-  /** Shopify NOW: locale -> key -> { value, outdated }. */
-  function shopifyNow(state: Record<string, Record<string, { value: string; outdated: boolean }>>) {
+  /** Shopify NOW: locale -> key -> value. */
+  function shopifyNow(state: Record<string, Record<string, string>>) {
     return {
       graphql: vi.fn(async (_query: string, opts?: { variables?: Record<string, unknown> }) => {
         const vars = opts?.variables ?? {};
@@ -2456,9 +2461,9 @@ describe("retryAutoTranslation — one row of the retry list", () => {
         };
         for (const [name, locale] of Object.entries(vars)) {
           if (!name.startsWith("loc")) continue;
-          resource[`l${name.slice(3)}`] = Object.entries(state[String(locale)] ?? {}).map(([key, row]) => ({
+          resource[`l${name.slice(3)}`] = Object.entries(state[String(locale)] ?? {}).map(([key, value]) => ({
             key,
-            ...row,
+            value,
           }));
         }
         return { json: async () => ({ data: { translatableResource: resource } }) };
@@ -2466,7 +2471,11 @@ describe("retryAutoTranslation — one row of the retry list", () => {
     } as never;
   }
 
-  const retryParams = (client: never, pairs = ["de", "fr", "it"].map((locale) => ({ key: "title", locale }))) => ({
+  const retryParams = (
+    client: never,
+    pairs = ["de", "fr", "it"].map((locale) => ({ key: "title", locale })),
+    reason: "limit" | "failed" = "failed",
+  ) => ({
     client,
     shop: SHOP,
     retryId: "retry-1",
@@ -2474,36 +2483,35 @@ describe("retryAutoTranslation — one row of the retry list", () => {
     resourceType: "Product",
     contentKind: "product" as const,
     pairs,
+    reason,
   });
 
-  it("fills what is EMPTY, refreshes what is OUTDATED, and leaves a CURRENT translation alone", async () => {
-    const client = shopifyNow({
-      fr: { title: { value: "Boîte", outdated: false } }, // translated meanwhile — wins
-      it: { title: { value: "Scatola vecchia", outdated: true } }, // stale — refreshed
-    });
+  it("FILLS only what is empty — a value anybody wrote meanwhile wins, outdated or not", async () => {
+    const client = shopifyNow({ fr: { title: "Boîte" }, it: { title: "Scatola vecchia" } });
 
     const outcome = await retryAutoTranslation(retryParams(client));
     await awaitDetachedRetranslations();
 
     expect(outcome).toBe("started");
-    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual(["de:title", "it:title"]);
-    // Everything delivered ⇒ the row goes.
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`)).toEqual(["de:title"]);
+    // Everything handed and nothing new on the row ⇒ the row goes.
     expect(db.autoTranslateRetry.delete).toHaveBeenCalledWith({ where: { id: "retry-1" } });
   });
 
   it("settles without a run when nothing is owed any more", async () => {
-    const client = shopifyNow({ de: { title: { value: "Kiste", outdated: false } } });
+    db.autoTranslateRetry.findUnique.mockResolvedValue({ attempts: 1, pairs: [{ key: "title", locale: "de" }] });
+    const client = shopifyNow({ de: { title: "Kiste" } });
     const outcome = await retryAutoTranslation(retryParams(client, [{ key: "title", locale: "de" }]));
     expect(outcome).toBe("settled");
     expect(ai.translate).not.toHaveBeenCalled();
     expect(db.autoTranslateRetry.delete).toHaveBeenCalled();
   });
 
-  it("the daily LIMIT still applies to a retry — and postpones it without counting the attempt", async () => {
+  it("a LIMIT row still obeys the daily limit — postponed without counting the attempt", async () => {
     policy.autoTranslateDailyLimit = 5;
     db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 0 });
 
-    const outcome = await retryAutoTranslation(retryParams(shopifyNow({})));
+    const outcome = await retryAutoTranslation(retryParams(shopifyNow({}), undefined, "limit"));
     await awaitDetachedRetranslations();
 
     expect(outcome).toBe("postponed");
@@ -2512,11 +2520,86 @@ describe("retryAutoTranslation — one row of the retry list", () => {
     expect(update.data).toMatchObject({ attempts: 0, status: "pending", reason: "limit" });
   });
 
-  it("does nothing while the auto-translation is switched off — postponed, not failed", async () => {
+  it("a FAILED row does not spend the limit again — its unit was spent when it first ran", async () => {
+    policy.autoTranslateDailyLimit = 5;
+    db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 0 });
+
+    const outcome = await retryAutoTranslation(retryParams(shopifyNow({}), undefined, "failed"));
+    await awaitDetachedRetranslations();
+
+    expect(outcome).toBe("started");
+    expect(db.autoTranslateFillBudget.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does nothing while the auto-translation is switched off — postponed, reason untouched", async () => {
     policy.autoTranslateExternalChanges = false;
     const outcome = await retryAutoTranslation(retryParams(shopifyNow({})));
     expect(outcome).toBe("postponed");
     expect(ai.translate).not.toHaveBeenCalled();
+    const update = (db.autoTranslateRetry.update.mock.calls[0] as any[])[0];
+    expect(update.data.reason).toBeUndefined();
+  });
+
+  it("stands down while the merchant has just saved translations of the resource", async () => {
+    const params = retryParams(shopifyNow({}));
+    markTranslationSaved(params.resourceId);
+    expect(await retryAutoTranslation(params)).toBe("postponed");
+    expect(ai.translate).not.toHaveBeenCalled();
+  });
+
+  it("stands down while a run for the SAME resource is in flight — no double translation", async () => {
+    // A webhook (or the sweep) is filling this resource right now; a retry that
+    // read Shopify before that run lands would translate every locale again.
+    policy.autoTranslateDailyLimit = null;
+    let release!: () => void;
+    ai.translate = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ de: { title: "x" } });
+        }),
+    );
+    const resourceId = freshProduct();
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD } });
+    await reconcileStaleTranslations(
+      baseParams({
+        resourceId,
+        client: { graphql: vi.fn(async () => ({ json: async () => ({ data: { translatableResource: { l0: [] } } }) })) },
+        translations: [],
+        previousDigests: {},
+        primaryContent: { title: { value: "Box", digest: NEW } },
+        foreignLocales: ["de"],
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const outcome = await retryAutoTranslation({ ...retryParams(shopifyNow({})), resourceId });
+    expect(outcome).toBe("postponed");
+
+    release?.();
+    await awaitDetachedRetranslations();
+  });
+
+  it("ADVANCES the held primary baseline, so the next change event does not prove the move again", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+
+    await retryAutoTranslation(retryParams(shopifyNow({})));
+    await awaitDetachedRetranslations();
+
+    const write = (db.primaryDigestBaseline.upsert.mock.calls[0] as any[])[0];
+    // Only the RETRIED key moves; the other keeps its digest.
+    expect(write.update.digests).toEqual({ title: NEW, body_html: OLD });
+  });
+
+  it("never purges MARKET overrides — that belongs to the moment the text changed", async () => {
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [] : [{ resourceId: "x", key: "title", locale: "de", marketId: "gid://shopify/Market/5" }],
+    );
+
+    await retryAutoTranslation(retryParams(shopifyNow({})));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.removeMarkets).toEqual([]);
+    db.contentTranslation.findMany.mockImplementation(async () => []);
   });
 
   it("a retry run that FAILS again settles its row with what is still owed — never a second row", async () => {
@@ -2531,5 +2614,6 @@ describe("retryAutoTranslation — one row of the retry list", () => {
     const update = (db.autoTranslateRetry.update.mock.calls[0] as any[])[0];
     expect(update.where).toEqual({ id: "retry-1" });
     expect((update.data.pairs as unknown[]).length).toBe(3);
+    expect(update.data.lastError).toMatch(/^(not_delivered|could_not_start|run_failed)$/);
   });
 });

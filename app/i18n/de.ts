@@ -1136,6 +1136,12 @@ export const de = {
     autoTranslateDailyLimitPlaceholder: "Keine Grenze",
     autoTranslateDailyLimitInvalid: "Eine ganze Zahl ab 1 — oder leer für keine Grenze.",
     autoTranslateRetrySummary: "Wiederholungsliste: {pending} wartend, {exhausted} endgültig fehlgeschlagen.",
+    autoTranslateRetryErrors: {
+      not_delivered: "Die KI-Übersetzung kam nicht zustande.",
+      could_not_start: "Der Übersetzungslauf konnte nicht starten.",
+      unreadable: "Der Eintrag konnte bei Shopify nicht gelesen werden.",
+      run_failed: "Der Übersetzungslauf ist fehlgeschlagen.",
+    },
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
     translationsProductType: "Produkttyp",
     translationsSearchLabel: "Suchen",

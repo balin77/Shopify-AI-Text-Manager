@@ -412,7 +412,7 @@ export function AIInstructionsTabs({
   const dailyLimitChanged = autoTranslateActive && localDailyLimit.trim() !== storedDailyLimit;
   // "" (no limit) or a whole number of at least 1 — the server refuses the
   // rest, and the field says so before the merchant presses Save.
-  const dailyLimitInvalid = localDailyLimit.trim() !== "" && !/^[1-9]\d{0,6}$/.test(localDailyLimit.trim());
+  const dailyLimitInvalid = localDailyLimit.trim() !== "" && !(/^\d{1,7}$/.test(localDailyLimit.trim()) && Number(localDailyLimit.trim()) >= 1);
   const instructionsChanged =
     changedInstructionKeys.length > 0 ||
     localTranslationMode !== translationMode ||
@@ -830,7 +830,13 @@ export function AIInstructionsTabs({
                             {autoTranslateRetrySummary.exhaustedItems.map((item) => (
                               <Text key={item.resourceId} as="p" variant="bodySm" tone="critical">
                                 {item.resourceTitle || item.resourceId}
-                                {item.lastError ? ` — ${item.lastError}` : ''}
+                                {item.lastError
+                                  ? ` — ${
+                                      (t.settings.autoTranslateRetryErrors as Record<string, string> | undefined)?.[item.lastError] ||
+                                      t.settings.autoTranslateRetryErrors?.run_failed ||
+                                      'Übersetzung fehlgeschlagen'
+                                    }`
+                                  : ''}
                               </Text>
                             ))}
                           </BlockStack>

@@ -19,6 +19,8 @@ import {
   settleTranslationRetry,
   processTranslationRetries,
   mergeRetryPairs,
+  removeDeliveredRetryPairs,
+  retriesPerSweep,
   MAX_RETRY_ATTEMPTS,
 } from "../../app/services/translations/translation-retry.server";
 
@@ -70,7 +72,9 @@ function fakeDb() {
     }),
     findMany: vi.fn(async () => rows.filter((r) => r.status === "pending")),
   };
-  return { db: { autoTranslateRetry: table } as never, rows, table };
+  const db: any = { autoTranslateRetry: table };
+  db.$transaction = async (cb: (tx: unknown) => Promise<unknown>) => cb(db);
+  return { db: db as never, rows, table };
 }
 
 const pair = (locale: string, key = "title") => ({ locale, key });
@@ -123,7 +127,7 @@ describe("enqueue and settle", () => {
 
   it("settles a retry that delivered everything by deleting the row", async () => {
     await enqueue();
-    await settleTranslationRetry(fake.rows[0].id, { remaining: [] }, fake.db);
+    await settleTranslationRetry(fake.rows[0].id, { handed: [pair("de")], remaining: [] }, fake.db);
     expect(fake.rows).toHaveLength(0);
   });
 
@@ -131,18 +135,63 @@ describe("enqueue and settle", () => {
     await enqueue();
     const id = fake.rows[0].id;
     fake.rows[0].attempts = 1;
-    await settleTranslationRetry(id, { remaining: [pair("de")], error: "provider down" }, fake.db);
+    await settleTranslationRetry(id, { handed: [pair("de")], remaining: [pair("de")], error: "not_delivered" }, fake.db);
     expect(fake.rows[0].status).toBe("pending");
     fake.rows[0].attempts = 2;
-    await settleTranslationRetry(id, { remaining: [pair("de")], error: "provider down" }, fake.db);
-    expect(fake.rows[0]).toMatchObject({ status: "exhausted", lastError: "provider down" });
+    await settleTranslationRetry(id, { handed: [pair("de")], remaining: [pair("de")], error: "not_delivered" }, fake.db);
+    expect(fake.rows[0]).toMatchObject({ status: "exhausted", lastError: "not_delivered" });
   });
 
   it("a POSTPONEMENT by the daily limit gives the attempt back", async () => {
     await enqueue();
     fake.rows[0].attempts = 2; // the processor counted this one before it ran
-    await settleTranslationRetry(fake.rows[0].id, { remaining: [pair("de")], postponed: true }, fake.db);
+    await settleTranslationRetry(
+      fake.rows[0].id,
+      { handed: [pair("de")], remaining: [pair("de")], postponed: true, postponedBy: "limit" },
+      fake.db,
+    );
     expect(fake.rows[0]).toMatchObject({ status: "pending", attempts: 1, reason: "limit" });
+  });
+
+  it("NEW WORK added while a retry runs survives that retry's settle — with its own count", async () => {
+    // Review finding: the retry used to overwrite the row with its own
+    // leftovers, or delete it because IT had delivered everything.
+    await enqueue([pair("de")]);
+    fake.rows[0].status = "running";
+    fake.rows[0].attempts = 1;
+    await enqueue([pair("fr")]); // a normal run failed meanwhile
+    expect(fake.rows[0]).toMatchObject({ status: "running", attempts: 1 });
+
+    await settleTranslationRetry(fake.rows[0].id, { handed: [pair("de")], remaining: [] }, fake.db);
+
+    expect(fake.rows).toHaveLength(1);
+    expect(fake.rows[0].pairs).toEqual([pair("fr")]);
+    expect(fake.rows[0]).toMatchObject({ status: "pending", attempts: 0 });
+  });
+
+  it("a LIMIT refusal does not reset the count of a row that keeps failing", async () => {
+    await enqueue([pair("de")], "failed");
+    fake.rows[0].attempts = 1;
+    await enqueue([pair("de")], "limit");
+    expect(fake.rows[0]).toMatchObject({ attempts: 1, reason: "failed" });
+  });
+
+  it("a later successful run CLEARS the pairs it delivered — an exhausted row included", async () => {
+    await enqueue([pair("de"), pair("fr")]);
+    fake.rows[0].status = "exhausted";
+    await removeDeliveredRetryPairs(SHOP, PRODUCT, [pair("de")], fake.db);
+    expect(fake.rows[0].pairs).toEqual([pair("fr")]);
+    await removeDeliveredRetryPairs(SHOP, PRODUCT, [pair("fr")], fake.db);
+    expect(fake.rows).toHaveLength(0);
+  });
+});
+
+describe("retriesPerSweep", () => {
+  it("paces the backlog at the merchant's own limit, within bounds", () => {
+    expect(retriesPerSweep(null)).toBe(25);
+    expect(retriesPerSweep(5)).toBe(25);
+    expect(retriesPerSweep(80)).toBe(80);
+    expect(retriesPerSweep(10_000)).toBe(200);
   });
 });
 
@@ -162,6 +211,7 @@ describe("processTranslationRetries", () => {
 
     expect(stats.started).toBe(1);
     expect(fake.rows[0]).toMatchObject({ status: "running", attempts: 1 });
+    expect(fake.rows[0]).toHaveProperty("startedAt");
     // A locale the shop no longer publishes is owed nothing.
     expect((retry.mock.calls[0] as any[])[0].pairs).toEqual([pair("de")]);
   });
@@ -188,6 +238,7 @@ describe("processTranslationRetries", () => {
       throw new Error("Throttled");
     });
     await processTranslationRetries({ shop: SHOP, client: {} as never, foreignLocales: ["de"], retry }, fake.db);
-    expect(fake.rows[0]).toMatchObject({ status: "pending", attempts: 1, lastError: "Throttled" });
+    // A CODE, never the raw provider message — the settings card renders it.
+    expect(fake.rows[0]).toMatchObject({ status: "pending", attempts: 1, lastError: "unreadable" });
   });
 });

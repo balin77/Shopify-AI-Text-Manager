@@ -1247,7 +1247,10 @@ model AutoTranslateRetry {
   reason        String // "limit" | "failed"
   attempts      Int      @default(0)
   status        String   @default("pending") // "pending" | "running" | "exhausted"
-  lastError     String?
+  lastError     String? // a CODE (not_delivered | could_not_start | unreadable | run_failed), rendered in settings
+  // When the current attempt started — the stale-"running" check reads this,
+  // never updatedAt, which every enqueue bumps.
+  startedAt     DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

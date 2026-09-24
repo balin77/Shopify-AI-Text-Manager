@@ -1115,6 +1115,12 @@ export const es: Translation = {
     autoTranslateDailyLimitPlaceholder: "Sin límite",
     autoTranslateDailyLimitInvalid: "Un número entero a partir de 1, o vacío para no tener límite.",
     autoTranslateRetrySummary: "Lista de reintentos: {pending} en espera, {exhausted} fallidos definitivamente.",
+    autoTranslateRetryErrors: {
+      not_delivered: "La traducción por IA no se completó.",
+      could_not_start: "No se pudo iniciar la traducción.",
+      unreadable: "No se pudo leer el elemento en Shopify.",
+      run_failed: "La traducción falló.",
+    },
     translationsDescription: "Gestiona las traducciones de los campos de agrupación (p. ej. tipo de producto). Todos los productos que comparten un mismo valor de origen deben compartir exactamente una traducción por idioma de destino; de lo contrario, una sola categoría se divide en varias en Google Merchant Center.",
     translationsProductType: "Tipo de producto",
     translationsSearchLabel: "Buscar",

@@ -1132,6 +1132,12 @@ export const en: Translation = {
     autoTranslateDailyLimitPlaceholder: "No limit",
     autoTranslateDailyLimitInvalid: "A whole number of at least 1 — or empty for no limit.",
     autoTranslateRetrySummary: "Retry list: {pending} waiting, {exhausted} failed for good.",
+    autoTranslateRetryErrors: {
+      not_delivered: "The AI translation did not come through.",
+      could_not_start: "The translation run could not start.",
+      unreadable: "The item could not be read from Shopify.",
+      run_failed: "The translation run failed.",
+    },
     translationsDescription: "Manage translations for grouping fields (e.g. product type). All products that share a source value must share exactly one translation per target language — otherwise a single category fragments into several in Google Merchant Center.",
     translationsProductType: "Product Type",
     translationsSearchLabel: "Search",
