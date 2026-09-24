@@ -62,6 +62,12 @@ const CELL_ACTIONS_ICON = 20;
 const CELL_ACTIONS_GUTTER = CELL_ACTIONS_ICON + 4;
 
 const IMAGE_COLUMN_WIDTH = 72;
+/** The variant view pins TWO context columns — the product and the variant —
+ * and a sticky box needs a known `left`. The second one sits where the first
+ * ends, so the first one cannot be a `1fr` track there: it gets this fixed
+ * width instead, and its cells clip (`cp-bulk-sticky-fixed`) so a long
+ * product name cannot spill under the pinned variant column. */
+const PINNED_PRODUCT_TITLE_WIDTH = 200;
 
 /** Field-colour state, mirroring the single editor: "untranslated" (yellow —
  * empty in the selected language) or "missingTranslation" (blue — primary set
@@ -221,8 +227,17 @@ export function BulkGrid({
   // column) at left:72px — but only when title actually renders directly
   // after the image, otherwise a gap column would scroll underneath it.
   // Variant rows (Plan §5.3) pin the product-title CONTEXT column instead.
+  //
+  // The variant view pins the VARIANT title as well, right after the product,
+  // so scrolling to the price columns never loses which variant a row is. That
+  // needs the product column at a fixed width (see PINNED_PRODUCT_TITLE_WIDTH);
+  // with the product column hidden, the variant title takes the first slot.
   const titleSticky =
-    displayColumns[0]?.id === "field.title" || displayColumns[0]?.id === "productTitle";
+    displayColumns[0]?.id === "field.title" ||
+    displayColumns[0]?.id === "productTitle" ||
+    displayColumns[0]?.id === "variantTitle";
+  const variantSticky =
+    displayColumns[0]?.id === "productTitle" && displayColumns[1]?.id === "variantTitle";
 
   // A column whose cells carry the action menu gives up CELL_ACTIONS_GUTTER of
   // its content width to it — so its minimum has to GROW by exactly that,
@@ -243,6 +258,7 @@ export function BulkGrid({
     // Columns without a maxWidth share the remaining width equally (1fr);
     // a capped one stays at its own size instead of stretching.
     ...displayColumns.map((c, index) => {
+      if (variantSticky && index === 0) return `${PINNED_PRODUCT_TITLE_WIDTH}px`;
       const min = c.minWidth + columnGutter[index];
       return `minmax(${min}px, ${c.maxWidth ? `${c.maxWidth + columnGutter[index]}px` : "1fr"})`;
     }),
@@ -352,7 +368,12 @@ export function BulkGrid({
 
   const stickyClass = (index: number): string => {
     if (index === 0) return " cp-bulk-sticky cp-bulk-sticky-0";
-    if (index === 1 && titleSticky) return " cp-bulk-sticky cp-bulk-sticky-1";
+    // The divider line belongs to the LAST pinned column, where the scrolling
+    // columns pass underneath.
+    if (index === 1 && titleSticky) {
+      return ` cp-bulk-sticky cp-bulk-sticky-1${variantSticky ? " cp-bulk-sticky-fixed" : " cp-bulk-sticky-edge"}`;
+    }
+    if (index === 2 && variantSticky) return " cp-bulk-sticky cp-bulk-sticky-2 cp-bulk-sticky-edge";
     return "";
   };
 
@@ -529,7 +550,10 @@ export function BulkGrid({
           z-index: 2;
         }
         .cp-bulk-sticky-0 { left: 0; }
-        .cp-bulk-sticky-1 { left: ${IMAGE_COLUMN_WIDTH}px; box-shadow: 1px 0 0 var(--p-color-border, #e1e3e5); }
+        .cp-bulk-sticky-1 { left: ${IMAGE_COLUMN_WIDTH}px; }
+        .cp-bulk-sticky-2 { left: ${IMAGE_COLUMN_WIDTH + PINNED_PRODUCT_TITLE_WIDTH}px; }
+        .cp-bulk-sticky-edge { box-shadow: 1px 0 0 var(--p-color-border, #e1e3e5); }
+        .cp-bulk-sticky-fixed { overflow: hidden; }
         .cp-bulk-th.cp-bulk-sticky { z-index: 4; }
         /* Per-cell action menu: present in the DOM (so keyboard users can tab
            to it) but invisible until the cell is hovered or holds focus —
@@ -611,7 +635,7 @@ export function BulkGrid({
            through — so below 700px nothing pins and the grid scrolls whole. */
         @media (max-width: 700px) {
           .cp-bulk-sticky { position: static; }
-          .cp-bulk-sticky-1 { box-shadow: none; }
+          .cp-bulk-sticky-edge { box-shadow: none; }
         }
         /* Headers must consume the same gutter their cells reserve, or a
            heading wraps at a different width than the values below it. */
