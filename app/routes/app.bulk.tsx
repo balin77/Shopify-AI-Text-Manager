@@ -54,6 +54,7 @@ import {
   parseSortParam,
   serializeSortParam,
   resolveCellValue,
+  isPickerColumn,
   buildColumnsForType,
   isValidBulkDiffEntry,
   parseMoney,
@@ -1126,11 +1127,7 @@ export default function BulkEditor() {
     // restriction.
     multipleVariants: b.readOnlyReasons.multipleVariants,
     variantsNotSynced: b.readOnlyReasons.variantsNotSynced,
-    // A category and a collection membership are set through a PICKER: a name
-    // is not a writable value and a membership is a join/leave DIFF, so the
-    // tooltip names the single editor instead of leaving the cell mute.
-    needsPicker: b.readOnlyReasons.needsPicker,
-    collectionsTruncated: b.readOnlyReasons.collectionsTruncated,
+
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,
@@ -1417,6 +1414,11 @@ export default function BulkEditor() {
     const editable = visibleRows.map((row) =>
       displayColumns.map((col) => {
         const resolved = resolveCellValue(row, col);
+        // A PICKER cell's value is a GID no clipboard carries — a pasted
+        // category name or collection title would only be refused by the save
+        // (or, for memberships, read as "leave everything" by a lenient
+        // parser). Treated like a read-only cell, so the rectangle flows past it.
+        if (isPickerColumn(col)) return false;
         return resolved.editable && (!isForeign || col.translatable);
       }),
     );
@@ -1881,9 +1883,10 @@ export default function BulkEditor() {
    */
   const cellActionsFor = (row: BulkRow, column: ColumnDescriptor): BulkCellActions | undefined => {
     if (!resolveCellValue(row, column).editable) return undefined;
-    if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
-      return undefined;
-    }
+    // THE predicate, not a second list of input types: the grid reserves its
+    // action gutter on `columnCanHaveCellActions`, and a copy here had already
+    // drifted — it would have offered "Improve with AI" on a GID picker cell.
+    if (!columnCanHaveCellActions(column)) return undefined;
     // Improve is FIELD columns only — a metafield or option key would produce
     // a generic, weak prompt. The image row's alt cell is the exception: it
     // has its own image-aware generator (see handleCellImprove).
@@ -2552,6 +2555,12 @@ export default function BulkEditor() {
                       columnHeading={columnHeading}
                       enumLabels={enumLabels}
                       templateSuffixes={templateSuffixes}
+                      // An empty price cell on a multi-variant product carried
+                      // a tooltip nobody could reach: the pointer had nothing
+                      // to rest on. The placeholder is that something.
+                      readOnlyPlaceholders={b.readOnlyPlaceholders}
+                      categoryTexts={(t.content?.taxonomy ?? {}) as Record<string, string>}
+                      collectionsTexts={(t.content?.collectionsField ?? {}) as Record<string, string>}
                       handleWarning={b.handleWarning}
                       readOnlyTooltips={readOnlyTooltips}
                       sortButtonLabel={b.sortButtonLabel}

@@ -45,19 +45,41 @@
  * fields are wrong, so the entry type is still `InventoryQuantityInput`: this
  * is a RENAME, not a new model.
  *
- * So the document is chosen by the PINNED VERSION (`isApiVersionAtLeast`), and
- * both spellings keep the compare-and-swap — `changeFromQuantity` is the same
- * value under the new name, and dropping the safety property to make a write
- * go through is the one repair this module may never make. The name itself is
- * the repo's own recorded research (the note quoted above), while the REMOVAL
- * is measured; if that name is wrong the server says so in the same shape and
- * the next line of this comment is a fact rather than a guess.
+ * So the document is ASKED FOR rather than assumed: `readInventoryInputShape`
+ * introspects both input types once per process and the write is built from
+ * the field the schema really has, with the PINNED VERSION
+ * (`isApiVersionAtLeast`) as the fallback for a lookup that could not answer.
+ * The first cut pinned the version alone and logged the schema only AFTER a
+ * rejection — which is right about where the answer lives and wrong about
+ * when: the name in that pin is the repo's own recorded research, the removal
+ * is what was measured, and a wrong name would have cost the merchant another
+ * round of the same silence. Asking first costs one query per process.
  *
- * Still UNMEASURED and deliberately not acted on: Shopify's `@idempotent`
- * directive on inventory mutations, announced for the same version. The
- * validation above would have named a missing required directive and did not,
- * so it is not required today; adding a directive a version does not know is
- * itself a schema error, which is the trap this whole comment is about.
+ * Both spellings keep the compare-and-swap, and a version that answers with
+ * NEITHER is refused (`stockCompareUnsupported`) rather than written blind:
+ * dropping the safety property to make a save go through is the one repair
+ * this module may never make, and the entry type's real field names are in the
+ * log beside the refusal.
+ *
+ * `@idempotent` is the OTHER half of that rework, and the sentence that used
+ * to stand here — "the validation above would have named a missing required
+ * directive and did not, so it is not required today" — was wrong about why it
+ * was silent. It was silent because the request never got that far: variable
+ * coercion refused the input and nothing else was ever reached. Once the input
+ * was right, production answered immediately and on BOTH inventory mutations:
+ *
+ *   The @idempotent directive is required for this mutation but was not
+ *   provided.
+ *
+ * So it is required from 2026-04, and it is read from the schema like
+ * everything else here — `readIdempotentDirective` takes its LOCATION (a
+ * directive on the operation is a different place in the document from one on
+ * the field) and whether it takes a `key`. A directive spelled by hand is
+ * refused exactly like a missing one, which is the loop this module has been
+ * round twice already. The one lookup answers the two halves SEPARATELY: the
+ * compare field has the version pin behind it, the directive has nothing, and
+ * `inventoryActivate` needs the directive while using neither input type — so
+ * a rename of those types must not take the directive's answer down with it.
  *
  * ── Never fails the save ────────────────────────────────────────────────────
  * Like the collection-rules and price paths: the content update has already
@@ -79,6 +101,7 @@ import {
   isEmptyMeasurement,
   type UnitPriceFieldValues,
 } from "./unit-price.shared";
+import { randomUUID } from "node:crypto";
 import { logger } from "~/utils/logger.server";
 import { isApiVersionAtLeast } from "~/utils/api-version";
 
@@ -93,6 +116,7 @@ export type CommerceWarning =
   | "stockUntracked"
   | "stockNoInventoryItem"
   | "stockNoBaseline"
+  | "stockCompareUnsupported"
   | "channelsNotConfirmed"
   | "channelsFailed"
   | "priceInvalid"
@@ -155,46 +179,257 @@ export function parseQuantity(value: string): number | null {
  * Diagnostic only. It never throws, never changes what is returned, and never
  * runs on a healthy write.
  */
-let inventoryInputShapeAsked = false;
+/**
+ * What this API version's inventory input types actually carry, as read from
+ * the schema. Held for the life of the process: it is a property of the
+ * version, not of the shop.
+ */
+interface InventoryInputShape {
+  /**
+   * The two INPUT types, or `null` where they could not be read.
+   *
+   * Separate from the directive below because they are separate questions with
+   * separate consequences: the compare field has the version pin to fall back
+   * on, the directive has nothing — and `inventoryActivate` needs the
+   * directive while using neither of these types, so a rename of them must not
+   * take its answer down with it.
+   */
+  inputs: {
+    /** The entry field that carries the baseline, or `null` if there is none. */
+    compareField: "compareQuantity" | "changeFromQuantity" | null;
+    /** Whether the top-level input still has the opt-out switch. */
+    sendIgnoreCompareQuantity: boolean;
+    /** Every field of the entry input, for the log and for the refusal. */
+    entryFields: string[];
+  } | null;
+  /**
+   * `@idempotent`, as this version defines it. `null` inside a directive list
+   * that DID answer means the schema has no such directive; the surrounding
+   * `null` means the list itself could not be read.
+   *
+   * Shopify made it REQUIRED on the inventory mutations in the same 2026-04
+   * rework, and a call without it is refused before it runs: "The @idempotent
+   * directive is required for this mutation but was not provided." Where it
+   * SITS and what it TAKES are read from the schema rather than assumed —
+   * a directive spelled wrong is refused exactly like a missing one, which is
+   * the loop this module has already been round twice.
+   */
+  directives: { idempotent: IdempotentDirective | null } | null;
+}
+
+interface IdempotentDirective {
+  /** True ⇒ it belongs on the operation, false ⇒ on the field. */
+  onMutation: boolean;
+  takesKey: boolean;
+}
+
+let inventoryInputShape: InventoryInputShape | null = null;
 
 /**
- * The test seam for the ONCE-per-process rule above.
+ * The `@idempotent` definition this version carries, read from the schema.
  *
- * That rule is the production behaviour and stays: the answer is a property of
- * the API version this process talks, so asking again per save would repeat one
- * log line for every refused write of every shop. A test that wants to observe
- * the ask therefore has to clear the mark, rather than the module having to
- * pretend the mark is not there.
+ * Two things are read rather than assumed, because getting either wrong is
+ * refused exactly like sending nothing: WHERE it may sit (GraphQL directives
+ * declare their locations, and `MUTATION` — the operation — is a different
+ * place in the document from `FIELD`), and whether it takes a `key`.
+ */
+function readIdempotentDirective(
+  directives: Array<{ name?: string; locations?: string[] | null; args?: Array<{ name?: string }> | null }>,
+): IdempotentDirective | null {
+  const found = directives.find((directive) => directive?.name === "idempotent");
+  if (!found) return null;
+  const locations = found.locations ?? [];
+  // An EXECUTABLE location or nothing. A directive declared only where a
+  // schema is defined (`FIELD_DEFINITION` and its siblings) cannot be written
+  // into a query at all: doing it anyway fails document validation — `data:
+  // null`, no `userErrors`, every stock write refused — which is the silence
+  // this module exists to end, re-created by the lookup meant to end it.
+  if (!locations.includes("MUTATION") && !locations.includes("FIELD")) return null;
+  return {
+    onMutation: locations.includes("MUTATION"),
+    takesKey: (found.args ?? []).some((arg) => arg?.name === "key"),
+  };
+}
+
+/**
+ * Where the directive goes in the document, and with what. PURE.
+ *
+ * The KEY is per DOCUMENT and travels inside the query string, so a transport
+ * that re-sends the same string sends the same key — which is what the
+ * directive is for. Two separate saves are two operations and get two keys.
+ *
+ * `null` — absent, or a list that could not be read — puts nothing in either
+ * slot: a directive spelled on a hunch is refused exactly like a missing one,
+ * so the mutation goes as it did before and the log above says why.
+ */
+function idempotentSlots(directive: IdempotentDirective | null): { operation: string; field: string } {
+  if (!directive) return { operation: "", field: "" };
+  const text = directive.takesKey ? ` @idempotent(key: "${randomUUID()}")` : " @idempotent";
+  return directive.onMutation ? { operation: text, field: "" } : { operation: "", field: text };
+}
+
+/**
+ * The directive slots for a caller that has no shape in hand of its own.
+ *
+ * `inventoryActivate` is the one: it needs `@idempotent` and uses NEITHER
+ * inventory input type, so it asks here rather than reading a shape it has no
+ * other use for. A caller that already holds the shape (the stock write below)
+ * passes its own `directives` to `idempotentSlots` instead, or one save pays
+ * for two lookups and logs the failure twice.
+ */
+export async function inventoryIdempotency(
+  admin: AdminApiContext,
+  shop: string,
+): Promise<{ operation: string; field: string }> {
+  return idempotentSlots((await readInventoryInputShape(admin, shop))?.directives?.idempotent ?? null);
+}
+
+/**
+ * Forgets the memoised answer. For tests, and for nothing else.
+ *
+ * Production memoises only a DEFINITE answer, for an hour's worth of saves or
+ * for the life of the process: the shape is a property of the API version, not
+ * of the shop. A lookup that FAILED is never memoised — the same rule
+ * `taxonomy-values.server.ts` follows, because one throttled minute must not
+ * become a process-lifetime "we do not know".
  */
 export function resetInventoryInputShapeProbe(): void {
-  inventoryInputShapeAsked = false;
+  inventoryInputShape = null;
 }
-async function logInventoryInputShape(admin: AdminApiContext, shop: string): Promise<void> {
-  if (inventoryInputShapeAsked) return;
-  inventoryInputShapeAsked = true;
+
+/**
+ * Asks the SCHEMA which spelling of the comparison this version has.
+ *
+ * The version pin below encodes what Shopify changed in 2026-04, and it is
+ * only as good as the NAME in it — which is recorded research rather than
+ * something that could be verified from where the fix was written. Asking the
+ * server removes that last guess: the answer is in the schema, the schema is
+ * one query away, and the alternative is another silent no-op that the
+ * merchant discovers instead of us.
+ *
+ * It is the DECISION, not a diagnostic: it runs before the write rather than
+ * after a rejection, once per process, and its result picks the document. An
+ * unanswered lookup is not a verdict — the version pin then decides, which is
+ * exactly the behaviour this replaces.
+ */
+async function readInventoryInputShape(
+  admin: AdminApiContext,
+  shop: string,
+): Promise<InventoryInputShape | null> {
+  if (inventoryInputShape) return inventoryInputShape;
   try {
     const response = await admin.graphql(
       `#graphql
         query commerceInventoryInputShape {
           setInput: __type(name: "InventorySetQuantitiesInput") { inputFields { name } }
           entryInput: __type(name: "InventoryQuantityInput") { inputFields { name } }
+          schema: __schema { directives { name locations args { name } } }
         }`,
     );
     const body = (await response.json()) as {
-      data?: Record<string, { inputFields?: Array<{ name?: string }> | null } | null>;
+      data?: {
+        setInput?: { inputFields?: Array<{ name?: string }> | null } | null;
+        entryInput?: { inputFields?: Array<{ name?: string }> | null } | null;
+        schema?: {
+          directives?: Array<{
+            name?: string;
+            locations?: string[] | null;
+            args?: Array<{ name?: string }> | null;
+          }> | null;
+        } | null;
+      };
     };
-    const names = (key: string) =>
-      (body.data?.[key]?.inputFields ?? []).map((field) => field?.name).filter(Boolean).join(", ") || "none";
-    logger.warn("[Commerce] Inventory input shape on this API version", {
+    const names = (input: { inputFields?: Array<{ name?: string }> | null } | null | undefined): string[] =>
+      (input?.inputFields ?? [])
+        .map((field) => field?.name)
+        .filter((name): name is string => typeof name === "string" && name.length > 0);
+
+    const setFields = names(body.data?.setInput);
+    const entryFields = names(body.data?.entryInput);
+
+    // The DIRECTIVE half is decided first and on its own evidence. It has no
+    // version pin to fall back on — a mutation that needs `@idempotent` and is
+    // sent without it is refused before it runs — and `inventoryActivate`
+    // needs it while using neither input type below, so letting a rename of
+    // those types discard this answer would take a write down that has nothing
+    // to do with them. A directive LIST that came back empty is "we could not
+    // read it" (introspection off, throttled, a schema-level error) and stays
+    // `null`; a list that answered without `idempotent` in it is a definite
+    // "this version has none".
+    const directiveList = body.data?.schema?.directives ?? null;
+    const directives = directiveList && directiveList.length > 0
+      ? { idempotent: readIdempotentDirective(directiveList) }
+      : null;
+
+    // BOTH input lists, or that half is not an answer. `__type` returns null
+    // rather than an error for a name this version does not have, and
+    // introspection can be switched off or throttled — so an empty list is "we
+    // could not read it", never "the field is gone". Requiring both is the
+    // half that is easy to miss and expensive to get wrong: with only the
+    // entry type answering, `ignoreCompareQuantity` would read as REMOVED and
+    // be omitted while the old `compareQuantity` is sent — and on a version
+    // that still has the switch, omitting it is precisely the silent overwrite
+    // this whole module is built to refuse. Falling back to the pin sends the
+    // pair that belongs together.
+    const inputsAnswered = entryFields.length > 0 && setFields.length > 0;
+    if (!inputsAnswered) {
+      logger.warn("[Commerce] Inventory input shape not answered", {
+        context: "Commerce",
+        shop,
+        InventorySetQuantitiesInput: setFields.join(", ") || "none",
+        InventoryQuantityInput: entryFields.join(", ") || "none",
+        // Named rather than dropped: "introspection is off" and "the query was
+        // throttled" are different problems and look identical without it.
+        error: (body as { errors?: Array<{ message?: string }> }).errors?.[0]?.message,
+      });
+    }
+
+    const shape: InventoryInputShape = {
+      inputs: inputsAnswered
+        ? {
+            // Order matters only in that BOTH are checked: a version carrying
+            // the old name keeps it, and the new one is used where the old is
+            // gone.
+            compareField: entryFields.includes("compareQuantity")
+              ? "compareQuantity"
+              : entryFields.includes("changeFromQuantity")
+                ? "changeFromQuantity"
+                : null,
+            sendIgnoreCompareQuantity: setFields.includes("ignoreCompareQuantity"),
+            entryFields,
+          }
+        : null,
+      directives,
+    };
+    // Logged ONCE, at info: this is the fact that was missing while every
+    // stock save failed, and it belongs in the deploy log whether or not
+    // anything is wrong with it.
+    logger.info("[Commerce] Inventory input shape", {
       context: "Commerce",
       shop,
-      InventorySetQuantitiesInput: names("setInput"),
-      InventoryQuantityInput: names("entryInput"),
+      compareField: shape.inputs?.compareField ?? "none",
+      ignoreCompareQuantity: shape.inputs?.sendIgnoreCompareQuantity ?? "unknown",
+      idempotent: directives
+        ? directives.idempotent
+          ? `${directives.idempotent.onMutation ? "on mutation" : "on field"}${directives.idempotent.takesKey ? ", takes key" : ""}`
+          : "absent"
+        : "unknown",
+      InventorySetQuantitiesInput: setFields.join(", ") || "none",
+      InventoryQuantityInput: entryFields.join(", ") || "none",
     });
+    // Memoised only where BOTH halves are definite: a comparison field was
+    // found AND the directive list answered. A `null` compareField refuses
+    // every stock save of this process without asking again, and a missing
+    // directive answer refuses every inventory mutation of it — so one odd
+    // answer would become a standing outage. The shop it would really apply to
+    // writes nothing either way, which makes re-asking the cheap direction.
+    if (shape.inputs?.compareField && shape.directives) inventoryInputShape = shape;
+    return shape;
   } catch (error) {
     logger.warn("[Commerce] Inventory input shape could not be read", {
       context: "Commerce", shop, error: error instanceof Error ? error.message : String(error),
     });
+    return null;
   }
 }
 
@@ -252,16 +487,46 @@ export async function applyStockChanges(
   // The prose stays out here on purpose: a `#` comment inside the document
   // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
   /**
-   * Which spelling of the compare-and-swap this version has. See the module
-   * header: the FIELDS changed in 2026-04, the meaning did not.
+   * Which spelling of the compare-and-swap this version has — ASKED, with the
+   * version pin as the fallback for a lookup that could not answer.
    */
-  const usesChangeFromQuantity = isApiVersionAtLeast(INVENTORY_COMPARE_RENAMED_IN);
+  const measured = await readInventoryInputShape(admin, shop);
+  const inputs = measured?.inputs ?? null;
+  const pinnedUsesChangeFrom = isApiVersionAtLeast(INVENTORY_COMPARE_RENAMED_IN);
+  const compareField: "compareQuantity" | "changeFromQuantity" | null = inputs
+    ? inputs.compareField
+    : pinnedUsesChangeFrom
+      ? "changeFromQuantity"
+      : "compareQuantity";
+  const sendIgnoreCompareQuantity = inputs
+    ? inputs.sendIgnoreCompareQuantity
+    : !pinnedUsesChangeFrom;
+
+  // No baseline field at all, on a version that answered. Refusing is the only
+  // move left: a quantity written with nothing to compare against overwrites
+  // whatever happened between the page load and the click, which is the one
+  // failure this module exists to prevent and the one it may never trade away
+  // to make a save go through. The entry type's real fields are in the log
+  // above, so a name nobody here has seen is a one-line fix rather than
+  // another round of guessing.
+  if (!compareField) {
+    logger.warn("[Commerce] Inventory input has no comparison field", {
+      context: "Commerce", shop, InventoryQuantityInput: inputs?.entryFields.join(", ") || "unknown",
+    });
+    return "stockCompareUnsupported";
+  }
+
+  // Required from 2026-04, and refused before execution without it. Read from
+  // the schema, not spelled by hand — and taken from the shape ALREADY in
+  // hand, because asking again is a second round trip and a second warn line
+  // for one save.
+  const idempotent = idempotentSlots(measured?.directives?.idempotent ?? null);
 
   try {
     const response = await admin.graphql(
       `#graphql
-        mutation setOnHandQuantities($input: InventorySetQuantitiesInput!) {
-          inventorySetQuantities(input: $input) {
+        mutation setOnHandQuantities($input: InventorySetQuantitiesInput!)${idempotent.operation} {
+          inventorySetQuantities(input: $input)${idempotent.field} {
             inventoryAdjustmentGroup {
               changes(quantityNames: ["on_hand"]) {
                 name
@@ -284,18 +549,15 @@ export async function applyStockChanges(
             // stock edit in the admin records too.
             reason: params.reason || "correction",
             // The safety property, under whichever name this version has it.
-            // From 2026-04 the presence of `changeFromQuantity` IS the request
-            // to compare, so there is nothing to switch off beside it; before
-            // that the switch had to be sent explicitly, because its default
-            // is the silent overwrite.
-            ...(usesChangeFromQuantity ? {} : { ignoreCompareQuantity: false }),
+            // Where the opt-out switch still exists it is sent explicitly,
+            // because its default is the silent overwrite; where it is gone,
+            // sending the baseline IS the request to compare.
+            ...(sendIgnoreCompareQuantity ? { ignoreCompareQuantity: false } : {}),
             quantities: params.changes.map((change) => ({
               inventoryItemId: change.inventoryItemId,
               locationId: change.locationId,
               quantity: change.quantity,
-              ...(usesChangeFromQuantity
-                ? { changeFromQuantity: change.compareQuantity }
-                : { compareQuantity: change.compareQuantity }),
+              [compareField]: change.compareQuantity,
             })),
           },
         },
@@ -323,11 +585,9 @@ export async function applyStockChanges(
       logger.warn("[Commerce] Stock schema-level error", {
         context: "Commerce", shop, error: body.errors[0]?.message,
       });
-      // The document this version WANTS, beside the one it refused. Awaited
-      // rather than fired off: this path already ends in a warning the
-      // merchant sees, and one more read before it costs a moment on a save
-      // that has failed anyway.
-      await logInventoryInputShape(admin, shop);
+      // The shape this version wanted was already read BEFORE the write and
+      // logged there, so a rejection here is no longer a question about the
+      // schema — it names something else.
       return "stockFailed";
     }
 

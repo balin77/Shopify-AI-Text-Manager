@@ -94,15 +94,15 @@ describe("the sticky horizontal scrollbar", () => {
     expect(css).toMatch(/\.cp-bulk-scroll::-webkit-scrollbar\s*\{\s*display:\s*none;?\s*\}/);
   });
 
-  it("pins to the bottom and carries a floor under an overlay scrollbar", () => {
+  it("pins to the bottom with a fixed height, and draws its own thumb", () => {
     const bar = rule(".cp-bulk-hscroll");
     expect(bar).toMatch(/position:\s*sticky/);
     expect(bar).toMatch(/bottom:\s*0/);
-    expect(bar).toMatch(/min-height:\s*\d+px/);
-    // Chrome ignores every ::-webkit-scrollbar rule on an element that sets
-    // scrollbar-width or scrollbar-color — which would hand the bar back to
-    // the platform, overlay behaviour included.
-    expect(bar).not.toMatch(/scrollbar-width|scrollbar-color/);
-    expect(css).toMatch(/\.cp-bulk-hscroll::-webkit-scrollbar\s*\{\s*height:\s*\d+px/);
+    // Not a native scroller any more: a platform overlay scrollbar could
+    // collapse it or hide it until dragged, and a second scroller has to be
+    // kept in step with the grid (the touchpad judder).
+    expect(bar).toMatch(/height:\s*\d+px/);
+    expect(bar).not.toMatch(/overflow/);
+    expect(rule(".cp-bulk-hscroll-thumb")).toMatch(/position:\s*absolute/);
   });
 });

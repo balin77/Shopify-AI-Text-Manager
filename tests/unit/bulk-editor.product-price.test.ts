@@ -208,6 +208,34 @@ describe("resolveCellValue — a price cell on a product row", () => {
     );
     expect(cell.readOnlyReason).toBe("variantsNotSynced");
   });
+
+  it("reads SEVERAL off the cached options when the variants are not cached", () => {
+    // The list reload caches options but no variants. An option with two
+    // values proves several variants, and "reload to edit" would be an errand
+    // that leaves the cell read-only anyway.
+    const cell = resolveCellValue(
+      productRow({
+        variantCount: 0,
+        singleVariant: undefined,
+        options: [
+          {
+            id: "gid://shopify/ProductOption/1",
+            position: 1,
+            name: "Size",
+            values: [
+              { id: "gid://shopify/ProductOptionValue/1", name: "S" },
+              { id: "gid://shopify/ProductOptionValue/2", name: "M" },
+            ],
+            hasValueIds: true,
+            linked: false,
+          },
+        ],
+      }),
+      productColumn(VAR_PRICE_COLUMN_ID),
+    );
+    expect(cell.editable).toBe(false);
+    expect(cell.readOnlyReason).toBe("multipleVariants");
+  });
 });
 
 // ─── The call estimate ─────────────────────────────────────────────────────
