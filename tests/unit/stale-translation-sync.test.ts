@@ -200,6 +200,7 @@ vi.mock("../../src/services/translation.service", () => ({
 }));
 
 import {
+  setReadBackRetryDelaysForTests,
   productImageAltMirror,
   featuredImageAltMirror,
   reconcileStaleTranslations,
@@ -787,6 +788,8 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   }
 
   beforeEach(() => {
+    // The expected-value tests below would otherwise sleep through every retry.
+    setReadBackRetryDelaysForTests([0, 0, 0]);
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
     // Reset explicitly: several tests below flip it, and leaving it to test
@@ -1171,6 +1174,44 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     await awaitDetachedRetranslations();
 
     expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
+  });
+
+  it("WAITS for a read-back that has not caught up with the write — an alt that was empty before", async () => {
+    // An empty value has no `translatableContent` entry, so a lagging
+    // read-back of a FIRST alt text reads as "cleared": the new alt was
+    // classified as a removal of nothing and never translated.
+    setReadBackRetryDelaysForTests([0, 0, 0]);
+    const client = saveClient();
+    const inner = client.graphql;
+    let reads = 0;
+    client.graphql = vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => {
+      if (query.includes("stalePrimaryContent")) {
+        reads++;
+        // First look: Shopify has not indexed the new title yet.
+        if (reads === 1) {
+          return { ok: true, json: async () => ({ data: { translatableResourcesByIds: { edges: [{ node: { resourceId: PAGE, translatableContent: [] } }] } } }) };
+        }
+      }
+      return inner(query, opts);
+    }) as never;
+
+    const result = await reconcileAfterPrimarySave(
+      saveParams({ client: client as never, changed: [{ key: "title", expectedValue: "About us" }] }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(reads).toBe(2);
+    expect(result.retranslating).toBe(2);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual(["de:title", "fr:title"]);
+  });
+
+  it("does not count surrounding whitespace as a lagging read-back", async () => {
+    setReadBackRetryDelaysForTests([0, 0, 0]);
+    const result = await reconcileAfterPrimarySave(
+      saveParams({ changed: [{ key: "title", expectedValue: "  About us " }] }),
+    );
+    await awaitDetachedRetranslations();
+    expect(result.retranslating).toBe(2);
   });
 
   it("never TRANSLATES a key whose read-back does not match what the caller wrote", async () => {

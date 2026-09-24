@@ -1760,12 +1760,19 @@ async function updatePrimaryProduct(
         // at all, so there is nothing on the storefront to repair — a product
         // resync fills the id in (CLAUDE.md).
         const imageIdByMedia = new Map<string, string>();
+        /** What this save wrote per medium — the read-back is checked against
+         *  it (and briefly waited for), because an alt that was EMPTY before
+         *  has no translatable entry until Shopify has indexed the new one. */
+        const altByMedia = new Map<string, string>();
         const unaddressableImageIds: string[] = [];
         for (const index of changedAltTextIndices) {
           const image = dbProduct?.images?.[index];
           if (!image) continue;
-          if (image.mediaId) imageIdByMedia.set(image.mediaId, image.id);
-          else unaddressableImageIds.push(image.id);
+          if (image.mediaId) {
+            imageIdByMedia.set(image.mediaId, image.id);
+            const written = params.imageAltTexts?.[index];
+            if (typeof written === "string") altByMedia.set(image.mediaId, written);
+          } else unaddressableImageIds.push(image.id);
         }
 
         // An image the cache cannot address on Shopify cannot be refreshed —
@@ -1805,6 +1812,7 @@ async function updatePrimaryProduct(
               resourceId: mediaId,
               resourceType: "MediaImage",
               key: "alt",
+              ...(altByMedia.has(mediaId) ? { expectedValue: altByMedia.get(mediaId) } : {}),
             })),
             foreignLocales,
             policy: changePolicy!,

@@ -1829,6 +1829,25 @@ async function foreignTranslationTriples(
  * A resource that IS in the result but has no entry for a key is the real
  * cleared field: Shopify omits a key with no value at all.
  */
+/** Pauses before re-reading a primary value that does not yet show what the
+ *  caller wrote (see `reconcileAfterPrimarySave`) — about four seconds in all. */
+let READ_BACK_RETRY_DELAYS_MS: readonly number[] = [800, 1500, 2000];
+
+/** Test seam: the pauses above, so a test of the lag case does not sleep. */
+export function setReadBackRetryDelaysForTests(delays: readonly number[]): void {
+  READ_BACK_RETRY_DELAYS_MS = delays;
+}
+
+/** Does the read-back show what the caller wrote? Surrounding whitespace is
+ *  not a difference: a write path may trim (the menu save does), and reading a
+ *  trimmed echo as "not caught up yet" would decline a translation that is
+ *  exactly right. */
+function sameWrittenValue(readBack: string, written: string): boolean {
+  return readBack.trim() === written.trim();
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 async function currentPrimaryContent(
   gateway: ShopifyApiGateway,
   resourceIds: readonly string[],
@@ -2010,6 +2029,28 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // the one of the text that is there NOW, and the caller's own write is what
     // invalidated the last digest it saw.
     const primaryByResource = await currentPrimaryContent(gateway, resourceIds);
+    // The read-back can lag the write the caller just made — Shopify indexes
+    // translatable content asynchronously for some surfaces, and an alt text
+    // that was EMPTY before is the sharp case: an empty value has no
+    // `translatableContent` entry at all, so a lagging read-back says "cleared"
+    // and the new alt was classified as a removal of nothing — no translation,
+    // no trace. Where the caller named what it wrote, a mismatch is re-read a
+    // few times, briefly, before it is treated as the decline below. Bounded,
+    // because this sits behind a primary write that has already succeeded.
+    if (expected.size > 0) {
+      for (const delay of READ_BACK_RETRY_DELAYS_MS) {
+        const lagging = resourceIds.filter((id) =>
+          [...(wantedKeys.get(id) ?? [])].some((key) => {
+            const want = expected.get(`${id}${PAIR_SEP}${key}`);
+            return want !== undefined && !sameWrittenValue(primaryByResource.get(id)?.[key]?.value ?? "", want);
+          }),
+        );
+        if (lagging.length === 0) break;
+        await sleep(delay);
+        const again = await currentPrimaryContent(gateway, lagging);
+        for (const [id, content] of again) primaryByResource.set(id, content);
+      }
+    }
 
     const untouchable = new Set(
       (params.alreadyWritten ?? []).map((item) =>
@@ -2058,7 +2099,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         // whether the stale translation goes. Skipping it outright would leave
         // a foreign value live on a surface nothing else ever revisits.
         const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
-        const staleReadBack = expectedValue !== undefined && expectedValue !== primaryValue;
+        const staleReadBack = expectedValue !== undefined && !sameWrittenValue(primaryValue, expectedValue);
         // Counted per (resource, KEY), never per locale: this number is read
         // when diagnosing a theme write that Shopify had not re-indexed yet,
         // and multiplying it by the locale count says nothing about how many
