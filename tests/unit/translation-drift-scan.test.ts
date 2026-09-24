@@ -20,6 +20,11 @@ const { db } = vi.hoisted(() => ({
           [],
       ),
     },
+    primaryDigestBaseline: {
+      findMany: vi.fn(async (_args?: unknown): Promise<Array<{ resourceId: string; digests: unknown }>> => []),
+      createMany: vi.fn(async (_args?: unknown) => ({ count: 0 })),
+      updateMany: vi.fn(async (_args?: unknown) => ({ count: 0 })),
+    },
   },
 }));
 
@@ -102,6 +107,10 @@ function baselineRows(resourceId: string, locale: string, keys: string[], digest
 beforeEach(() => {
   db.contentTranslation.findMany.mockReset();
   db.contentTranslation.findMany.mockResolvedValue([]);
+  db.primaryDigestBaseline.findMany.mockReset();
+  db.primaryDigestBaseline.findMany.mockResolvedValue([]);
+  db.primaryDigestBaseline.createMany.mockClear();
+  db.primaryDigestBaseline.updateMany.mockClear();
 });
 
 describe("scanTranslationDrift", () => {
@@ -116,17 +125,138 @@ describe("scanTranslationDrift", () => {
     expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
   });
 
-  it("asks Shopify NOTHING for a type the shop never translated", async () => {
-    // The baseline query answers empty, so there is no resource whose staleness
-    // could be established — paying a round trip to learn that is the cost this
-    // short-circuit exists to avoid.
+  it("a FIRST sweep only writes primary baselines — it hands nothing over (rule one)", async () => {
+    // The shop never translated a page: no mirror row, no primary baseline.
+    // The old shortcut skipped the type without asking Shopify; that shortcut
+    // is gone on purpose (a never-translated page is exactly what the primary
+    // baseline exists for), but what replaces it must be HARMLESS: no stored
+    // digest is no evidence, so the sweep records what it saw and nothing else.
     const { gateway, queries } = fakeGateway({ PAGE: [{ resourceId: PAGE, digest: NEW, translated: {} }] });
+    const reconcile = vi.fn(async () => ({ removed: 0, retranslating: 0 }));
+
+    const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    expect(queries.map((q) => q.type)).toContain("PAGE");
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(result.changed).toBe(0);
+    const created = (db.primaryDigestBaseline.createMany.mock.calls as any[]).flatMap((call) => call[0].data);
+    expect(created).toEqual([
+      { shop: SHOP, resourceId: PAGE, resourceType: "Page", digests: { title: NEW, body_html: NEW } },
+    ]);
+  });
+
+  it("hands over an UNTRANSLATED page whose primary digest moved against its baseline", async () => {
+    // The merchant's report, on the webhook-less side: no translation anywhere,
+    // text edited in the Shopify admin. Only the primary baseline can prove it.
+    db.primaryDigestBaseline.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? [{ resourceId: PAGE, digests: { title: OLD, body_html: OLD } }] : [],
+    );
+    const { gateway } = fakeGateway({ PAGE: [{ resourceId: PAGE, digest: NEW, translated: {} }] });
+    const reconcile = vi.fn(async (_params: ReconcileParams) => ({ removed: 0, retranslating: 2 }));
+
+    const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    expect(result.handed).toBe(1);
+    const params = reconcile.mock.calls[0][0] as unknown as Record<string, any>;
+    expect(params.previousPrimaryDigests).toEqual({ title: OLD, body_html: OLD });
+    // The reconciliation writes this resource's next baseline itself, after it
+    // decided (or holds it back under the daily brake) — never the sweep.
+    const written = [
+      ...(db.primaryDigestBaseline.createMany.mock.calls as any[]).flatMap((call) => call[0].data),
+      ...(db.primaryDigestBaseline.updateMany.mock.calls as any[]),
+    ];
+    expect(written).toEqual([]);
+  });
+
+  it("in BASELINE-ONLY mode re-records a moved baseline and hands nothing over", async () => {
+    // A shop nobody was sweeping: the same move the test above hands over is
+    // months old here, and replaying it would translate an edit nobody asked
+    // this app to look at. Recorded, so the NEXT move is proven against today.
+    db.primaryDigestBaseline.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? [{ resourceId: PAGE, digests: { title: OLD, body_html: OLD } }] : [],
+    );
+    const { gateway } = fakeGateway({ PAGE: [{ resourceId: PAGE, digest: NEW, translated: {} }] });
+    const reconcile = vi.fn(async (_params: ReconcileParams) => ({ removed: 0, retranslating: 2 }));
+
+    const result = await scanTranslationDrift({
+      gateway,
+      shop: SHOP,
+      foreignLocales: ["de"],
+      reconcile,
+      baselineOnly: true,
+    });
+
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(result.handed).toBe(0);
+    const updated = (db.primaryDigestBaseline.updateMany.mock.calls as any[]).map((call) => call[0].data);
+    expect(updated).toEqual([{ digests: { title: NEW, body_html: NEW } }]);
+  });
+
+  it("writes nothing for a page whose primary baseline still matches", async () => {
+    // A quiet night must cost reads and no writes.
+    db.primaryDigestBaseline.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? [{ resourceId: PAGE, digests: { title: NEW, body_html: NEW } }] : [],
+    );
+    const { gateway } = fakeGateway({ PAGE: [{ resourceId: PAGE, digest: NEW, translated: {} }] });
     const reconcile = vi.fn(async () => ({ removed: 0, retranslating: 0 }));
 
     await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
 
-    expect(queries).toEqual([]);
     expect(reconcile).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.createMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not hand over a moved page whose every locale already holds a value", async () => {
+    // The second entrance only ever FILLS. A locale that holds a translation is
+    // the first entrance's business — here `outdated: false`, i.e. already
+    // translated against the new text — so there is nothing for it to do, and
+    // the baseline simply advances.
+    db.primaryDigestBaseline.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? [{ resourceId: PAGE, digests: { title: OLD, body_html: OLD } }] : [],
+    );
+    const { gateway } = fakeGateway({
+      PAGE: [{ resourceId: PAGE, digest: NEW, translated: { de: ["title", "body_html"] }, outdated: false }],
+    });
+    const reconcile = vi.fn(async () => ({ removed: 0, retranslating: 0 }));
+
+    await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.updateMany).toHaveBeenCalledWith({
+      where: { shop: SHOP, resourceId: PAGE },
+      data: { digests: { title: NEW, body_html: NEW } },
+    });
+  });
+
+  it("fails the TYPE when its primary baseline cannot be read, rather than overwriting it blind", async () => {
+    db.primaryDigestBaseline.findMany.mockRejectedValue(new Error("db down"));
+    const { gateway, queries } = fakeGateway({ PAGE: [{ resourceId: PAGE, digest: NEW, translated: {} }] });
+    const reconcile = vi.fn(async () => ({ removed: 0, retranslating: 0 }));
+
+    const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    expect(result.failedTypes).toContain("PAGE");
+    expect(queries).toEqual([]);
+    expect(db.primaryDigestBaseline.createMany).not.toHaveBeenCalled();
+  });
+
+  it("never hands over `{}` for a primary baseline it did not LOAD — the reconciliation reads it", async () => {
+    // A truncated type (or an id another writer spelled differently): the row
+    // may exist. `{}` would tell the reconciliation "no row", and it would
+    // overwrite the real map — held keys and the recorded move with it.
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? baselineRows(PAGE, "de", ["title", "body_html"], OLD) : [],
+    );
+    const { gateway } = fakeGateway({
+      PAGE: [{ resourceId: PAGE, digest: NEW, translated: { de: ["title", "body_html"] } }],
+    });
+    const reconcile = vi.fn(async (_params: ReconcileParams) => ({ removed: 0, retranslating: 2 }));
+
+    await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    const params = reconcile.mock.calls[0][0] as unknown as Record<string, any>;
+    expect("previousPrimaryDigests" in params).toBe(false);
   });
 
   it("reconciles a resource whose digest MOVED, with the mirror's own baseline", async () => {
@@ -284,7 +414,9 @@ describe("scanTranslationDrift", () => {
 
     const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
 
-    expect(result.failedTypes).toEqual(["PAGE"]);
+    // Every type is queried now (the primary baseline has something to learn
+    // about each), so every one of them reports its own failure.
+    expect(result.failedTypes).toEqual(["PAGE", "ARTICLE", "BLOG", "SHOP_POLICY"]);
     expect(result.changed).toBe(0);
     expect(reconcile).not.toHaveBeenCalled();
   });

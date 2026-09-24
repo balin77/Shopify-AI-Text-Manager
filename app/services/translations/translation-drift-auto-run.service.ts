@@ -60,6 +60,14 @@ const DUE_AFTER_MS = parseInt(
  * few resources that really moved, a reconciliation that may start a detached
  * AI run — so this is a concurrency limit on those runs, not a batch size.
  */
+/**
+ * Past this since the last sweep, the shop's baselines are treated as the text
+ * of a time nobody was watching and the sweep only re-records them (see
+ * `baselineOnly` in the scan). Three missed days rather than one, so a restart
+ * or a slow night never costs a shop its repairs.
+ */
+const STALE_SWEEP_AFTER_MS = DUE_AFTER_MS * 3;
+
 const MAX_SHOPS_PER_TICK = Math.max(
   1,
   parseInt(process.env.TRANSLATION_DRIFT_SCAN_BATCH_SIZE || "5", 10),
@@ -187,10 +195,17 @@ export class TranslationDriftAutoRunService {
           .filter((l: { published: boolean; primary: boolean }) => l.published && !l.primary)
           .map((l: { locale: string }) => l.locale);
 
+        // A shop whose last sweep is long past (or missing) was not being
+        // looked at — switch off, plan below Max — so its baselines describe
+        // the text as it was then. This sweep only re-records them.
+        const baselineOnly =
+          !settings.lastTranslationScanAt ||
+          now.getTime() - settings.lastTranslationScanAt.getTime() > STALE_SWEEP_AFTER_MS;
         const result = await scanTranslationDrift({
           gateway: new ShopifyApiGateway(admin as never, settings.shop),
           shop: settings.shop,
           foreignLocales,
+          baselineOnly,
         });
         stats.handed += result.handed;
         if (result.failedTypes.length > 0 || result.truncatedTypes.length > 0) {

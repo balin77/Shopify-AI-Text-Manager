@@ -276,6 +276,20 @@ describe('redactShopData()', () => {
     ).toEqual([]);
   });
 
+  it('purges the primary digest baselines and the first-translation budget by shop', async () => {
+    // Named explicitly on top of the schema guard: both tables are FK-less
+    // (the baseline is polymorphic like ContentTranslation), so this delete is
+    // the ONLY thing that ever removes a redacted shop's rows.
+    const { tx, calls } = makeTxRecorder();
+    mockTransaction.mockImplementation(async (cb: (t: unknown) => Promise<void>) => cb(tx));
+
+    await redactShopData({ shop_id: 1, shop_domain: SHOP_A });
+
+    for (const model of ['primaryDigestBaseline', 'autoTranslateFillBudget']) {
+      expect(calls.find((c) => c.model === model)?.where).toEqual({ shop: SHOP_A });
+    }
+  });
+
   it('does NOT delete the deliberately retained GdprAuditLog', async () => {
     const { tx, calls } = makeTxRecorder();
     mockTransaction.mockImplementation(async (cb: (t: unknown) => Promise<void>) => cb(tx));

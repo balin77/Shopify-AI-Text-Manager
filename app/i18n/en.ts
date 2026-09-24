@@ -325,6 +325,7 @@ export const en: Translation = {
     // A translation the app started by itself (today: the product type derived
     // from the category). A warning, not an error — the save worked, only the
     // extra step did not.
+    backgroundRetranslationRunning: "Translations are being updated in the background — the fields reload as soon as they are done.",
     autoTranslateFailed: "{field} could not be translated automatically. Use the translate button on the field to do it now.",
     noSourceText: "No text available in the primary language to translate",
     saveChanges: "Save",
@@ -665,6 +666,7 @@ export const en: Translation = {
       chooseThis: "choose this category",
       noChildren: "This category has no subcategories.",
       levelTruncated: "This level has more subcategories than were loaded — use the search above.",
+      remove: "Remove category",
     },
     // PLAN §Phase 3.1 — the membership picker.
     collectionsField: {
@@ -678,6 +680,7 @@ export const en: Translation = {
       truncated: "This product is in more collections than were loaded. Manage the rest in the Shopify admin.",
       unknown: "Not loaded yet — reload this product to see its collections.",
       none: "This shop has no collections yet.",
+      noneSelected: "None",
     },
     themeTemplate: {
       defaultTemplate: "Default",
@@ -788,7 +791,8 @@ export const en: Translation = {
       activateNotConfirmed: "Shopify did not confirm the location, so it was not activated.",
       activateFailed: "The location could not be activated.",
       stockNoBaseline: "One location had no current quantity to compare against, so it was not written. Reload and try again.",
-      itemFieldsInvalid: "A cost, weight or country code was not in a form Shopify accepts, so those settings were not written.",
+      stockCompareUnsupported: "Stock was not written: the Shopify API version this app talks to offers no way to compare against the quantity you were looking at, and without it a write would overwrite whatever changed in the meantime. The details are in the server log.",
+      itemFieldsInvalid: "A cost, weight, country code or customs tariff code (6 to 13 digits) was not in a form Shopify accepts, so those settings were not written.",
       itemFieldsNotConfirmed: "Shopify did not confirm the item settings, so they were not saved locally either.",
       itemFieldsFailed: "The item settings could not be saved.",
       stockChangedMeanwhile: "The stock changed while you were editing, so nothing was written. Reload to see the current number.",
@@ -2043,8 +2047,12 @@ export const en: Translation = {
       slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
       invalidApiKey: "(the AI API key was rejected)",
       someFailed: "Some entries could not be processed — open the task for details.",
+      handleRedirectsMissing:
+        "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
       translationsNotMirrored:
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
+      autoTranslateDailyLimit:
+        "Automatic first translations paused for today: the daily limit of {cap} items was reached, and {count} further change(s) were not translated. Nothing was lost — each one is translated at its next change (pages, articles, blogs and policies: in the nightly check).",
       translationsNoneUsable: "The automatic re-translation produced no usable translation.",
     },
     translationCompleted: "Translation completed for \"{title}\"",
@@ -4087,9 +4095,9 @@ export const en: Translation = {
       requiresShipping: "Requires shipping",
       countryCodeOfOrigin: "Country of origin (ISO)",
       harmonizedSystemCode: "HS code",
-      // Read-only context: set through a picker in the single editor.
-      productCategory: "Product category",
-      productCollections: "Collections",
+      // Picker cells: the same picker the single editor uses.
+      category: "Product category",
+      collections: "Collections",
     },
     chooseColumns: "Choose columns",
     columnPicker: {
@@ -4116,8 +4124,7 @@ export const en: Translation = {
       missingInventoryItem: "This variant has no Shopify inventory item, which is where cost, weight and customs data live — resync the product first.",
       multipleVariants: "This product has several variants, which can differ in price — edit them under \"Product variants\".",
       variantsNotSynced: "This product's variants are not in the cache yet — resync the products, then edit this.",
-      needsPicker: "This field is set through a picker — open the product in the single editor to change it.",
-      collectionsTruncated: "This product is in more collections than the sync fetched — the list here is incomplete.",
+      priceNotSynced: "This variant's price is not in the cache yet — open the product once in the product editor and it will appear here.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",
@@ -4127,6 +4134,14 @@ export const en: Translation = {
       wrongMetaobjectType: "This column belongs to another metaobject type.",
       listSeparatorInValue: "A list value contains the \"|\" separator — edit it in the single-item editor.",
       altTextInImages: "The alt text of every product image — including translations — is edited under \"Images\".",
+    },
+    // What an EMPTY read-only cell shows instead of its value. Without text
+    // there is nothing to hover — the tooltip's explanation was there and
+    // unreachable.
+    readOnlyPlaceholders: {
+      multipleVariants: "Several variants",
+      variantsNotSynced: "Not loaded",
+      priceNotSynced: "Price not loaded",
     },
     metaobjectTypeLabel: "Metaobject type",
     searchLabel: "Search",
@@ -4142,7 +4157,30 @@ export const en: Translation = {
       missingPrice: "Without price",
       compareAtNotAbovePrice: "Compare-at price ≤ price",
       missingAltText: "Alt text missing",
+      statusActive: "Active",
+      statusDraft: "Draft",
+      statusUnlisted: "Unlisted",
+      statusArchived: "Archived",
+      published: "Visible",
+      hidden: "Hidden",
+      smartCollection: "Automated (rules)",
+      manualCollection: "Manual",
+      missingDescription: "Description / content missing",
+      missingImage: "No image",
+      missingVendor: "No vendor",
+      missingProductType: "No product type",
+      missingCategory: "No category",
+      missingTags: "No tags",
+      missingSummary: "Excerpt missing",
     },
+    filterSections: {
+      status: "Status",
+      visibility: "Visibility",
+      collectionKind: "Collection type",
+      general: "More filters",
+    },
+    filterAttributeHint: "Filters on visibility, collection type, vendor, category and tags only match items whose attributes have already been synced.",
+    filterClearAll: "Clear all filters",
     filterApproximateBanner: "Very large catalog: the \"Missing translation\" filter is approximate and may show some already-translated entries.",
     moreVariantsBanner: "Some products have more than 100 variants — the remainder is not shown here and can be edited in the Shopify admin.",
     priceActions: {
@@ -4277,16 +4315,22 @@ export const en: Translation = {
       importProTooltip: "CSV import is available from the Pro plan.",
       exportTooLarge: "The export spans {total} rows (maximum {max}). Please narrow the filter and export again.",
       exportFailed: "CSV export failed. Please try again.",
+      exportExceedsImport: "The exported file is larger than {max} MB and therefore cannot be imported back in one piece. To re-import it, narrow the filter and export in several files.",
       fileTooLarge: "The file is larger than {max} MB.",
       tooManyRows: "The file has more than {max} data rows.",
       emptyFile: "The file contains no data rows.",
       noIdColumn: "The file is missing the \"id\" column (or \"field.handle\" as fallback) — please use a CSV export as the template.",
       importFailed: "CSV import failed. Please try again.",
+      unsavedEdits: "The grid has unsaved changes. Please save or discard them first, then import the file.",
+      badEncoding: "The file is not saved as UTF-8 — accented and special characters would be corrupted. Please save it in Excel as \"CSV UTF-8 (Comma delimited)\" and import it again.",
+      scopeMismatch: "The file was exported for \"{file}\", but the grid shows \"{view}\". Please select the same language and market in the grid as when exporting — otherwise the texts would be written into the wrong language.",
+      importStarted: "CSV import started: {rows} rows, {cells} cells are being saved in the background — track progress in the \"Tasks\" tab. The grid reloads once the import has finished.",
+      alreadyRunning: "A bulk save is already running for this store. Please wait until it has finished in the \"Tasks\" tab, then import again.",
       preview: {
         title: "CSV import — preview",
         summary: "{rows} rows, {cells} cells will change.",
         noChanges: "No changes — the file matches the current state.",
-        clearHint: "Note: empty cells in the file clear the existing value.",
+        clearHint: "Note: empty cells in the file clear the existing value. Columns missing from the file stay unchanged.",
         unknownColumns: "Unknown columns (ignored):",
         ignoredColumns: "Columns not editable here (ignored):",
         rowErrorsTitle: "{count} row(s) could not be matched:",
@@ -4294,6 +4338,15 @@ export const en: Translation = {
         rowErrorUnknownId: "Line {line}: unknown id \"{value}\".",
         rowErrorUnknownHandle: "Line {line}: unknown handle \"{value}\".",
         rowErrorAmbiguousHandle: "Line {line}: ambiguous handle \"{value}\" — please match via the id.",
+        rowErrorDuplicateRow: "Line {line}: \"{value}\" appears more than once in the file — only the first occurrence is used.",
+        target: "Target: {target}",
+        encodingNotice: "The file was not saved as UTF-8 and was read with the Windows character set (ANSI). Please check accented characters in the changes below.",
+        damagedTitle: "{count} cell(s) were altered by the spreadsheet program and will NOT be saved:",
+        damagedHint: "Excel and similar programs treat such values as numbers. Format the column as \"Text\" in the spreadsheet and re-enter the values — or edit these cells in the grid.",
+        damagedScientificNotation: "converted to scientific notation",
+        damagedLeadingZerosLost: "leading zeros removed",
+        damagedCellLimitTruncated: "cut off at 32,767 characters",
+        background: "The import is saved in the background in {batches} batch(es). You can leave the page; progress is shown in the \"Tasks\" tab. If the import is interrupted (e.g. by an app update), simply import the same file again — rows already saved are skipped.",
         moreRowErrors: "… and {count} more.",
         changesHeading: "First {count} changes:",
         moreChanges: "… and {count} more changes.",
@@ -4381,7 +4434,7 @@ export const en: Translation = {
         "Supersedes the delete option above, as far as the re-translation reaches",
       ],
       details:
-        "For products and collections this happens automatically on the next sync. For everything else — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles — it happens when you save, in the editor and in the bulk editor alike; if the text was changed elsewhere, on the next reload of that item. The bulk editor limits how many runs one save starts; anything beyond that is deleted as before. Market-specific translations are never translated automatically — they are deleted as soon as the primary-language text changes. URL handles only come along if you switch that on explicitly below.",
+        "For products and collections this happens automatically on the next sync. For everything else — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles — it happens when you save, in the editor and in the bulk editor alike; if the text was changed elsewhere, on the next reload of that item. The bulk editor limits how many runs one save starts; anything beyond that is deleted as before. Market-specific translations are never translated automatically — they are deleted as soon as the primary-language text changes. Without the option below, URL handles are still deleted as soon as the handle changes in the primary language — the foreign address then falls back to the primary-language handle with no redirect. With the option below they are re-translated instead.",
     },
     autoTranslateHandles: {
       title: "Translate URL handles too",
@@ -4390,10 +4443,10 @@ export const en: Translation = {
       tips: [
         "The trigger is the handle itself — a text change alone is not enough",
         "Refresh only, never create: languages without a handle of their own keep the primary-language one",
-        "Where no redirect can be created the old handle stays — it is never deleted",
+        "Where no redirect can be created the old handle stays — the re-translation never deletes it",
       ],
       details:
-        "The translated value is normalised into a valid slug; anything that cannot be normalised is discarded rather than written. A language that had no handle of its own is still served under the primary-language handle — that address stays valid, and giving it a URL of its own unasked would be a change nobody requested. The handle also stays as it is when the old address still belongs to another language or another item, for market-specific translations, for blogs (their articles' URLs could not come along), for articles under a blog with a translated handle of its own, when the \"Redirect when a handle changes\" setting is switched off, or when the translation does not come through. The old translated handle is not deleted in those cases — an outdated address works, a deleted one does not.",
+        "The translated value is normalised into a valid slug; anything that cannot be normalised is discarded rather than written. A language that had no handle of its own is still served under the primary-language handle — that address stays valid, and giving it a URL of its own unasked would be a change nobody requested. The handle also stays as it is when the old address still belongs to another language or another item, for market-specific translations, for blogs (their articles' URLs could not come along), for articles under a blog with a translated handle of its own, when the \"Redirect when a handle changes\" setting is switched off, or when the translation does not come through. The old translated handle is not deleted in those cases — an outdated address works, a deleted one does not. The same holds in the bulk editor when a save would need more runs than allowed: the other fields then fall back to the delete option, the handle stays.",
     },
     menuActionBar: {
       title: "This action bar",

@@ -1,9 +1,10 @@
 /**
  * Bulk editor — CSV export, server half (docs/plans/PLAN_BULK_EDITOR.md §8.1).
  *
- * Exports THE CURRENT VIEW: type, language, market, search/filters/sort and
- * the merchant's visible column selection — but over ALL matches of the
- * filter, not just the visible page, collected server-side through
+ * Exports THE CURRENT VIEW's ROWS: type, language, market, search/filters/sort
+ * — over ALL matches of the filter, not just the visible page — with EVERY
+ * column of the type (the visible selection only decides the order, see
+ * buildExportColumns), collected server-side through
  * loadBulkRows pagination. Beyond CSV_EXPORT_MAX_ROWS the export is refused
  * with the total, and the UI tells the merchant to narrow the filter (see the
  * documented §8.1 deviation in csv.shared.ts — the Task infrastructure has no
@@ -18,8 +19,15 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { loadBulkRows, type BulkAdminClient } from "./load.server";
-import { buildCsv, CSV_EXPORT_MAX_ROWS, CSV_ID_HEADER, type CsvDelimiter } from "./csv.shared";
 import {
+  buildCsv,
+  csvIdHeaderFor,
+  CSV_EXPORT_MAX_ROWS,
+  CSV_IMPORT_MAX_BYTES,
+  type CsvDelimiter,
+} from "./csv.shared";
+import {
+  columnAllowedForType,
   resolveCellValue,
   type BulkFilterId,
   type BulkRow,
@@ -53,8 +61,9 @@ export interface BulkCsvExportOptions {
   search: string;
   filters: BulkFilterId[];
   sort: BulkSort | null;
-  /** The merchant's visible column ids — unknown ids are dropped against the
-   * server-built universe, never trusted. */
+  /** The merchant's visible column ids — an ORDERING hint only: every column
+   * of the type is exported, the visible ones first. Unknown ids are dropped
+   * against the server-built universe, never trusted. */
   visibleColumnIds: string[];
   /** Server-built column universe for `type` (buildColumnsForType with the
    * shop's metafield specs + plan caps). */
@@ -69,7 +78,10 @@ export interface BulkCsvExportOptions {
 }
 
 export type BulkCsvExportResult =
-  | { ok: true; csv: string; rowCount: number }
+  /** `exceedsImportLimit`: the file is larger than CSV_IMPORT_MAX_BYTES, so it
+   *  cannot be imported back as a whole — said at export time, not discovered
+   *  after an afternoon of editing it. */
+  | { ok: true; csv: string; rowCount: number; exceedsImportLimit: boolean }
   | { ok: false; error: "tooLarge"; total: number };
 
 /** The cell text that lands in the CSV: in a foreign view, translatable
@@ -84,28 +96,43 @@ function exportCellValue(row: BulkRow, column: ColumnDescriptor, locale: string,
   return resolveCellValue(row, column).value;
 }
 
-/** The export column list: recognition lead columns first, then the visible
- * selection (image column excluded — it has no text value; duplicates of the
- * lead columns deduped). */
+/**
+ * The export column list: recognition lead columns first, then the merchant's
+ * visible selection in its on-screen order, then EVERY other column of the
+ * type. A file that only carried the visible selection (at most
+ * MAX_VISIBLE_COLUMNS) silently left out whatever was hidden — a merchant
+ * exporting "the products" to work on them in a spreadsheet got a third of the
+ * fields and no sign that the rest existed. The visible order still leads, so
+ * the file opens looking like the grid did.
+ *
+ * Excluded: the `image` thumbnail column (no text value) and, for metaobjects,
+ * the field columns of every OTHER definition type (`moType`) — those rows
+ * never carry them, so they would be empty columns by construction.
+ */
 export function buildExportColumns(
   type: BulkRowType,
   visibleColumnIds: string[],
   columns: ColumnDescriptor[],
+  moType = "",
 ): ColumnDescriptor[] {
-  const byId = new Map(columns.map((c) => [c.id, c] as const));
+  const exportable = (c: ColumnDescriptor): boolean =>
+    c.id !== "image" &&
+    columnAllowedForType(type, c) &&
+    !(c.kind === "mofield" && moType !== "" && c.moType !== moType);
+  const byId = new Map(columns.filter(exportable).map((c) => [c.id, c] as const));
   const leadIds = LEAD_COLUMN_IDS_BY_TYPE[type] ?? ["field.handle"];
-  const lead = leadIds
-    .map((id) => byId.get(id))
-    .filter((c): c is ColumnDescriptor => !!c);
-  const seen = new Set(lead.map((c) => c.id));
-  const visible: ColumnDescriptor[] = [];
-  for (const id of visibleColumnIds) {
+  const ordered: ColumnDescriptor[] = [];
+  const seen = new Set<string>();
+  const take = (id: string) => {
     const column = byId.get(id);
-    if (!column || column.id === "image" || seen.has(column.id)) continue;
-    seen.add(column.id);
-    visible.push(column);
-  }
-  return [...lead, ...visible];
+    if (!column || seen.has(id)) return;
+    seen.add(id);
+    ordered.push(column);
+  };
+  leadIds.forEach(take);
+  visibleColumnIds.forEach(take);
+  for (const column of byId.values()) take(column.id);
+  return ordered;
 }
 
 export async function buildBulkCsvExport(
@@ -113,7 +140,7 @@ export async function buildBulkCsvExport(
   shop: string,
   opts: BulkCsvExportOptions,
 ): Promise<BulkCsvExportResult> {
-  const exportColumns = buildExportColumns(opts.type, opts.visibleColumnIds, opts.columns);
+  const exportColumns = buildExportColumns(opts.type, opts.visibleColumnIds, opts.columns, opts.moType);
 
   // Sweep ALL matches of the filter through the same loader the grid uses —
   // same where/sort/foreign-value attachment, so the file mirrors the view.
@@ -142,10 +169,18 @@ export async function buildBulkCsvExport(
     if (skip + EXPORT_PAGE_SIZE >= page.total) break;
   }
 
-  const header = [CSV_ID_HEADER, ...exportColumns.map((c) => c.id)];
+  // The id header names the language/market layer (`id@de`), so the import
+  // can refuse the file when the grid is on a different one (csv.shared.ts).
+  const header = [csvIdHeaderFor(opts.locale, opts.locale === "" ? "" : opts.marketId), ...exportColumns.map((c) => c.id)];
   const body = rows.map((row) => [
     row.id,
     ...exportColumns.map((column) => exportCellValue(row, column, opts.locale, opts.marketId)),
   ]);
-  return { ok: true, csv: buildCsv(header, body, opts.delimiter), rowCount: rows.length };
+  const csv = buildCsv(header, body, opts.delimiter);
+  return {
+    ok: true,
+    csv,
+    rowCount: rows.length,
+    exceedsImportLimit: Buffer.byteLength(csv, "utf8") > CSV_IMPORT_MAX_BYTES,
+  };
 }

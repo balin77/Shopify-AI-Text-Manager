@@ -1180,6 +1180,50 @@ model ContentTranslation {
   @@index([shop, resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
 }
 
+// The PRIMARY text's digest per resource — the stale-translation gate's second
+// baseline, independent of translation rows (CLAUDE.md: "A sync repairs
+// translations whose primary text changed where no editor of ours saw it").
+//
+// The first baseline lives ON ContentTranslation rows, so a resource nobody has
+// translated yet carried none, and an edit made in the Shopify admin could never
+// be proven for it. This row is what Shopify reported in `translatableContent`
+// the last time a change-event sync (or the nightly drift sweep) looked:
+// `digests` is a JSON map key -> digest over MANAGED_TRANSLATION_KEYS only.
+//
+// No row, or no entry for a key, is NO EVIDENCE — the first sync after the
+// deploy only writes baselines and translates nothing.
+//
+// Polymorphic like ContentTranslation (Product/Collection/Page/Article/Blog/
+// ShopPolicy), so there is no FK: redactShopData() deletes by `shop`, and
+// purgeContentFromCache() deletes by (shop, resourceId).
+model PrimaryDigestBaseline {
+  id           String   @id @default(cuid())
+  shop         String
+  resourceId   String
+  resourceType String
+  digests      Json
+  updatedAt    DateTime @updatedAt
+
+  @@unique([shop, resourceId])
+  @@index([shop, resourceType])
+}
+
+// The brake on first translations proven only by PrimaryDigestBaseline: one row
+// per (shop, UTC day) counting the resources whose auto-translation rested on
+// that evidence alone. Past AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP the rest are
+// REFUSED — reported in a Task row, their baseline NOT advanced, so the work is
+// deferred rather than swallowed. Shop-scoped: redactShopData() deletes it.
+model AutoTranslateFillBudget {
+  shop    String
+  day     String // "YYYY-MM-DD", UTC
+  used       Int      @default(0)
+  // Resources refused today — DISTINCT ids, not events: a held resource is
+  // refused again on every later change event that day.
+  refusedIds String[] @default([])
+
+  @@id([shop, day])
+}
+
 // ============================================
 // THEME CONTENT MODELS (Background Sync)
 // ============================================

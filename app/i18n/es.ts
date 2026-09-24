@@ -317,6 +317,7 @@ export const es: Translation = {
     primaryLanguageSuffix: "Idioma principal",
     // Una traducción que la app inició por su cuenta (hoy: el tipo de producto
     // derivado de la categoría). Advertencia, no error — el guardado funcionó.
+    backgroundRetranslationRunning: "Las traducciones se están actualizando en segundo plano: los campos se recargan en cuanto terminen.",
     autoTranslateFailed: "{field} no se pudo traducir automáticamente. Usa el botón de traducir del campo para hacerlo ahora.",
     noSourceText: "No hay texto en el idioma principal para traducir",
     saveChanges: "Guardar",
@@ -654,6 +655,7 @@ export const es: Translation = {
       chooseThis: "elegir esta categoría",
       noChildren: "Esta categoría no tiene subcategorías.",
       levelTruncated: "Este nivel tiene más subcategorías de las que se cargaron — usa la búsqueda de arriba.",
+      remove: "Quitar categoría",
     },
     // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
     collectionsField: {
@@ -667,6 +669,7 @@ export const es: Translation = {
       truncated: "Este producto está en más colecciones de las que se cargaron. Gestiona el resto en el admin de Shopify.",
       unknown: "Aún no se ha cargado: recarga este producto para ver sus colecciones.",
       none: "Esta tienda todavía no tiene colecciones.",
+      noneSelected: "Ninguna",
     },
     themeTemplate: {
       defaultTemplate: "Predeterminada",
@@ -777,7 +780,8 @@ export const es: Translation = {
       activateNotConfirmed: "Shopify no confirmó la ubicación, así que no se activó.",
       activateFailed: "La ubicación no se pudo activar.",
       stockNoBaseline: "Una ubicación no tenía una cantidad actual con la que comparar, así que no se escribió. Recarga e inténtalo de nuevo.",
-      itemFieldsInvalid: "Un coste, un peso o un código de país no tenía un formato que Shopify acepte, así que esos ajustes no se escribieron.",
+      stockCompareUnsupported: "El inventario no se escribió: la versión de la API de Shopify que usa esta app no ofrece forma de comparar con la cantidad que tenías delante, y sin ella una escritura sobrescribiría lo que haya cambiado mientras tanto. Los detalles están en el registro del servidor.",
+      itemFieldsInvalid: "Un coste, un peso, un código de país o un código arancelario (de 6 a 13 dígitos) no tenía un formato que Shopify acepte, así que esos ajustes no se escribieron.",
       itemFieldsNotConfirmed: "Shopify no confirmó los ajustes del artículo, así que tampoco se guardaron localmente.",
       itemFieldsFailed: "No se pudieron guardar los ajustes del artículo.",
       stockChangedMeanwhile: "El inventario cambió mientras editabas, así que no se escribió nada. Recarga para ver la cifra actual.",
@@ -2027,8 +2031,12 @@ export const es: Translation = {
       slugEmpty: "El slug de URL traducido para {language} quedó vacío y no se guardó.",
       invalidApiKey: "(la clave de API de IA fue rechazada)",
       someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",
+      handleRedirectsMissing:
+        "Se volvieron a traducir {count} handle(s) de URL, pero no se pudo crear una redirección para la dirección anterior — añádela en Redirecciones de URL o los enlaces antiguos no llevarán a ninguna parte.",
       translationsNotMirrored:
         "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
+      autoTranslateDailyLimit:
+        "Traducciones automáticas iniciales en pausa por hoy: se alcanzó el límite diario de {cap} elementos y {count} cambio(s) más no se tradujeron. No se pierde nada: cada uno se traduce en su próximo cambio (páginas, artículos, blogs y políticas: en la revisión nocturna).",
       translationsNoneUsable:
         "La retraducción automática no produjo ninguna traducción utilizable.",
     },
@@ -4075,9 +4083,9 @@ export const es: Translation = {
       requiresShipping: "Requiere envío",
       countryCodeOfOrigin: "País de origen (ISO)",
       harmonizedSystemCode: "Código arancelario",
-      // Contexto de solo lectura: se establece con un selector en el editor.
-      productCategory: "Categoría de producto",
-      productCollections: "Colecciones",
+      // Celdas de selección: el mismo selector que el editor individual.
+      category: "Categoría de producto",
+      collections: "Colecciones",
     },
     chooseColumns: "Elegir columnas",
     columnPicker: {
@@ -4104,8 +4112,7 @@ export const es: Translation = {
       missingInventoryItem: "Esta variante no tiene artículo de inventario de Shopify, donde viven el coste, el peso y los datos aduaneros — vuelve a sincronizar el producto.",
       multipleVariants: "Este producto tiene varias variantes, que pueden diferir en precio — edítalas en \"Variantes de producto\".",
       variantsNotSynced: "Las variantes de este producto aún no están en la caché — vuelve a sincronizar los productos y edítalo después.",
-      needsPicker: "Este campo se establece con un selector — abre el producto en el editor individual para cambiarlo.",
-      collectionsTruncated: "Este producto está en más colecciones de las que cargó la sincronización — la lista aquí está incompleta.",
+      priceNotSynced: "El precio de esta variante aún no está en la caché — abre el producto una vez en el editor de productos y aparecerá aquí.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",
@@ -4115,6 +4122,13 @@ export const es: Translation = {
       wrongMetaobjectType: "Esta columna pertenece a otro tipo de metaobjeto.",
       listSeparatorInValue: "Un valor de la lista contiene el separador \"|\" — edítalo en el editor individual.",
       altTextInImages: "El texto alternativo de todas las imágenes del producto — traducciones incluidas — se edita en \"Imágenes\".",
+    },
+    // Lo que muestra una celda de solo lectura VACÍA en lugar de su valor.
+    // Sin texto no hay nada sobre lo que pasar el ratón.
+    readOnlyPlaceholders: {
+      multipleVariants: "Varias variantes",
+      variantsNotSynced: "No cargado",
+      priceNotSynced: "Precio no cargado",
     },
     metaobjectTypeLabel: "Tipo de metaobjeto",
     searchLabel: "Buscar",
@@ -4130,7 +4144,30 @@ export const es: Translation = {
       missingPrice: "Sin precio",
       compareAtNotAbovePrice: "Precio de comparación ≤ precio",
       missingAltText: "Falta el texto alternativo",
+      statusActive: "Activo",
+      statusDraft: "Borrador",
+      statusUnlisted: "No listado",
+      statusArchived: "Archivado",
+      published: "Visible",
+      hidden: "Oculto",
+      smartCollection: "Automatizada (reglas)",
+      manualCollection: "Manual",
+      missingDescription: "Falta descripción / contenido",
+      missingImage: "Sin imagen",
+      missingVendor: "Sin proveedor",
+      missingProductType: "Sin tipo de producto",
+      missingCategory: "Sin categoría",
+      missingTags: "Sin etiquetas",
+      missingSummary: "Falta el extracto",
     },
+    filterSections: {
+      status: "Estado",
+      visibility: "Visibilidad",
+      collectionKind: "Tipo de colección",
+      general: "Más filtros",
+    },
+    filterAttributeHint: "Los filtros de visibilidad, tipo de colección, proveedor, categoría y etiquetas solo incluyen elementos cuyos atributos ya se han sincronizado.",
+    filterClearAll: "Borrar todos los filtros",
     filterApproximateBanner: "Catálogo muy grande: el filtro \"Falta la traducción\" es aproximado y puede mostrar algunas entradas ya traducidas.",
     moreVariantsBanner: "Algunos productos tienen más de 100 variantes — el resto no se muestra aquí y puede editarse en el admin de Shopify.",
     priceActions: {
@@ -4266,16 +4303,22 @@ export const es: Translation = {
       importProTooltip: "La importación CSV está disponible a partir del plan Pro.",
       exportTooLarge: "La exportación abarca {total} filas (máximo {max}). Ajusta el filtro e inténtalo de nuevo.",
       exportFailed: "La exportación CSV falló. Inténtalo de nuevo.",
+      exportExceedsImport: "El archivo exportado supera los {max} MB y por eso no se puede volver a importar de una sola vez. Para reimportarlo, acota el filtro y exporta en varios archivos.",
       fileTooLarge: "El archivo supera los {max} MB.",
       tooManyRows: "El archivo tiene más de {max} filas de datos.",
       emptyFile: "El archivo no contiene filas de datos.",
       noIdColumn: "Al archivo le falta la columna \"id\" (o \"field.handle\" como alternativa) — usa una exportación CSV como plantilla.",
       importFailed: "La importación CSV falló. Inténtalo de nuevo.",
+      unsavedEdits: "La cuadrícula tiene cambios sin guardar. Guárdalos o descártalos primero y luego importa el archivo.",
+      badEncoding: "El archivo no está guardado como UTF-8: los acentos y caracteres especiales se dañarían. Guárdalo en Excel como \"CSV UTF-8 (delimitado por comas)\" e impórtalo de nuevo.",
+      scopeMismatch: "El archivo se exportó para \"{file}\", pero la cuadrícula muestra \"{view}\". Selecciona en la cuadrícula el mismo idioma y mercado que al exportar; de lo contrario, los textos se escribirían en el idioma equivocado.",
+      importStarted: "Importación CSV iniciada: se están guardando {rows} filas y {cells} celdas en segundo plano; sigue el progreso en la pestaña \"Tareas\". La cuadrícula se recarga cuando termina la importación.",
+      alreadyRunning: "Ya hay un guardado masivo en curso para esta tienda. Espera a que termine en la pestaña \"Tareas\" y vuelve a importar.",
       preview: {
         title: "Importación CSV — vista previa",
         summary: "{rows} filas, {cells} celdas cambiarán.",
         noChanges: "Sin cambios — el archivo coincide con el estado actual.",
-        clearHint: "Nota: las celdas vacías del archivo borran el valor existente.",
+        clearHint: "Nota: las celdas vacías del archivo borran el valor existente. Las columnas que faltan en el archivo no se modifican.",
         unknownColumns: "Columnas desconocidas (se ignoran):",
         ignoredColumns: "Columnas no editables aquí (se ignoran):",
         rowErrorsTitle: "{count} fila(s) no se pudieron asignar:",
@@ -4283,6 +4326,15 @@ export const es: Translation = {
         rowErrorUnknownId: "Línea {line}: id desconocido \"{value}\".",
         rowErrorUnknownHandle: "Línea {line}: handle desconocido \"{value}\".",
         rowErrorAmbiguousHandle: "Línea {line}: handle ambiguo \"{value}\" — asigna mediante el id.",
+        rowErrorDuplicateRow: "Línea {line}: \"{value}\" aparece varias veces en el archivo; solo se usa la primera.",
+        target: "Destino: {target}",
+        encodingNotice: "El archivo no estaba guardado como UTF-8 y se leyó con el juego de caracteres de Windows (ANSI). Revisa los acentos en los cambios de abajo.",
+        damagedTitle: "{count} celda(s) fueron alteradas por la hoja de cálculo y NO se guardarán:",
+        damagedHint: "Excel y programas similares tratan estos valores como números. Da formato de \"Texto\" a la columna en la hoja de cálculo y vuelve a introducir los valores, o edita estas celdas en la cuadrícula.",
+        damagedScientificNotation: "convertido a notación científica",
+        damagedLeadingZerosLost: "ceros iniciales eliminados",
+        damagedCellLimitTruncated: "cortado a 32.767 caracteres",
+        background: "La importación se guarda en segundo plano en {batches} lote(s). Puedes salir de la página; el progreso aparece en la pestaña \"Tareas\". Si la importación se interrumpe (p. ej. por una actualización de la app), vuelve a importar el mismo archivo: las filas ya guardadas se omiten.",
         moreRowErrors: "… y {count} más.",
         changesHeading: "Primeros {count} cambios:",
         moreChanges: "… y {count} cambios más.",
@@ -4370,7 +4422,7 @@ export const es: Translation = {
         "Sustituye a la opción de eliminar de arriba mientras la retraducción llegue",
       ],
       details:
-        "En productos y colecciones ocurre automáticamente en la siguiente sincronización. En todo lo demás — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú — ocurre al guardar, tanto en el editor como en el editor masivo; si el texto se cambió fuera, en la siguiente recarga del elemento. El editor masivo limita cuántas ejecuciones inicia un guardado; lo que exceda se elimina como hasta ahora. Las traducciones específicas de un mercado nunca se traducen automáticamente: se eliminan en cuanto cambia el texto del idioma principal. Los handles de URL solo se incluyen si lo activas expresamente más abajo.",
+        "En productos y colecciones ocurre automáticamente en la siguiente sincronización. En todo lo demás — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú — ocurre al guardar, tanto en el editor como en el editor masivo; si el texto se cambió fuera, en la siguiente recarga del elemento. El editor masivo limita cuántas ejecuciones inicia un guardado; lo que exceda se elimina como hasta ahora. Las traducciones específicas de un mercado nunca se traducen automáticamente: se eliminan en cuanto cambia el texto del idioma principal. Sin la opción de abajo, los handles de URL se siguen eliminando en cuanto cambia el handle del idioma principal: la dirección en el otro idioma vuelve entonces al handle del idioma principal sin redirección. Con la opción de abajo, en cambio, se vuelven a traducir.",
     },
     autoTranslateHandles: {
       title: "Traducir también los handles de URL",
@@ -4379,10 +4431,10 @@ export const es: Translation = {
       tips: [
         "El desencadenante es el propio handle: un cambio de texto por sí solo no basta",
         "Solo actualizar, nunca crear: los idiomas sin handle propio siguen con el del idioma principal",
-        "Donde no se puede crear una redirección, el handle antiguo se queda: nunca se elimina",
+        "Donde no se puede crear una redirección, el handle antiguo se queda: la retraducción nunca lo elimina",
       ],
       details:
-        "El valor traducido se normaliza a un slug válido; lo que no se puede normalizar se descarta en lugar de escribirse. Un idioma que no tenía handle propio se sigue sirviendo bajo el handle del idioma principal: esa dirección sigue siendo válida, y darle una URL propia sin pedirlo sería un cambio que nadie solicitó. El handle también se queda como está cuando la dirección antigua pertenece todavía a otro idioma o a otro elemento, en traducciones específicas de un mercado, en blogs (las URL de sus artículos no podrían acompañarlo), en artículos bajo un blog con handle traducido propio, cuando la opción «Redirección al cambiar el identificador» está desactivada, o cuando la traducción no llega. En esos casos el handle traducido antiguo no se elimina: una dirección desactualizada funciona, una eliminada no.",
+        "El valor traducido se normaliza a un slug válido; lo que no se puede normalizar se descarta en lugar de escribirse. Un idioma que no tenía handle propio se sigue sirviendo bajo el handle del idioma principal: esa dirección sigue siendo válida, y darle una URL propia sin pedirlo sería un cambio que nadie solicitó. El handle también se queda como está cuando la dirección antigua pertenece todavía a otro idioma o a otro elemento, en traducciones específicas de un mercado, en blogs (las URL de sus artículos no podrían acompañarlo), en artículos bajo un blog con handle traducido propio, cuando la opción «Redirección al cambiar el identificador» está desactivada, o cuando la traducción no llega. En esos casos el handle traducido antiguo no se elimina: una dirección desactualizada funciona, una eliminada no. Lo mismo vale en el editor masivo cuando un guardado necesitaría más ejecuciones de las permitidas: los demás campos vuelven a la opción de eliminar, el handle se queda.",
     },
     menuActionBar: {
       title: "Esta barra de acciones",

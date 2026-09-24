@@ -54,6 +54,7 @@ import {
   parseSortParam,
   serializeSortParam,
   resolveCellValue,
+  isPickerColumn,
   buildColumnsForType,
   isValidBulkDiffEntry,
   parseMoney,
@@ -61,7 +62,6 @@ import {
   applyPriceAction,
   BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
   BULK_COLUMNS_BY_TYPE,
-  BULK_FILTER_IDS,
   canonicalFieldNameForColumn,
   aiFieldKey,
   isListShapedColumn,
@@ -73,8 +73,7 @@ import {
   isFeaturedImageAltColumn,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
-  FILTER_IDS_BY_SET,
-  filterSetForType,
+  filterIdsForType,
   MAX_SYNC_SAVE,
   MAX_TASK_CALLS,
   MAX_BULK_TASK_ITEMS,
@@ -98,7 +97,10 @@ import {
 import {
   CSV_EXPORT_MAX_ROWS,
   CSV_IMPORT_MAX_BYTES,
+  CSV_IMPORT_MAX_ROWS,
+  decodeCsvBytes,
   delimiterForAppLanguage,
+  type CsvFileEncoding,
 } from "../services/bulk-editor/csv.shared";
 // Excel-paste rectangle + undo stack (§8.3/§8.4) — client-safe pure pieces.
 import {
@@ -128,7 +130,7 @@ import { CsvImportModal } from "../components/bulk-editor/CsvImportModal";
 // Type-only imports from the resource routes / server service — erased at
 // compile time, so nothing server-only reaches the client bundle.
 import type { BulkCsvExportPayload } from "./app.bulk.export";
-import type { CsvImportActionResult } from "./app.bulk.import";
+import type { CsvImportActionResult, CsvImportApplyActionResult } from "./app.bulk.import";
 import type { CsvImportPreview } from "../services/bulk-editor/csv-import.server";
 import { BulkLanguageBar, shouldRenderBulkLanguageBar } from "../components/bulk-editor/BulkLanguageBar";
 import { BulkCellMenu, type BulkCellActions } from "../components/bulk-editor/BulkCell";
@@ -301,7 +303,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const search = url.searchParams.get("q") || "";
   const filters = (url.searchParams.get("f") || "")
     .split(",")
-    .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
+    .filter((f): f is BulkFilterId => (filterIdsForType(type) as string[]).includes(f));
   const sort = parseSortParam(type, url.searchParams.get("sort"));
   // Image rows only: show just the pictures of ONE object. Validated as a GID
   // so a hand-crafted param can only ever narrow the result, never reshape the
@@ -387,6 +389,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Primary-view "missing translation" (blue) colour needs the published
       // foreign locales (already loaded above).
       foreignLocales: publishedForeignLocales(shopLocales),
+      // The category column shows its names in the shop's language — the
+      // language the picker's list is in, too.
+      categoryLocale: shopLocales.find((l) => l.primary)?.locale ?? "",
     }),
     // Currency suffix for the money columns (Plan §5.2) — variant view only;
     // process-cached, so this is one query per shop per boot.
@@ -681,6 +686,14 @@ export default function BulkEditor() {
   // shows the preview and, after confirmation, submits the returned diff
   // through the NORMAL save pipeline (submitDiff below).
   const importFetcher = useFetcher<CsvImportActionResult>();
+  /** A confirmed LARGE import (more than MAX_SYNC_SAVE cells): the file goes
+   * back to the server, which applies it as a background Task in batches. */
+  const importApplyFetcher = useFetcher<CsvImportApplyActionResult>();
+  /** The file text and the layer the open preview was built for — what a
+   * large import posts back on confirm, never the grid's CURRENT selection. */
+  const importRequestRef = useRef<{ csv: string; type: string; locale: string; market: string } | null>(null);
+  /** The request the in-flight `csvImportApply` was posted with. */
+  const postedImportRequestRef = useRef<{ csv: string; type: string; locale: string; market: string } | null>(null);
   /** Manual trigger for the media-library cache — the image view is empty
    * beyond product media until it has run once. */
   const syncMediaLibraryFetcher = useFetcher();
@@ -727,11 +740,17 @@ export default function BulkEditor() {
   const [priceActionBanner, setPriceActionBanner] = useState<number | null>(null);
   // ── CSV export/import + paste/undo state (Phase 6) ───────────────────────
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportWarning, setExportWarning] = useState<string | null>(null);
   /** One-download guard: the effect below fires on every render while the
    * fetcher holds data — remember what was already downloaded. */
   const downloadedExportKeyRef = useRef<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importPreview, setImportPreview] = useState<CsvImportPreview | null>(null);
+  /** How the file under preview was decoded — a non-UTF-8 file is named in
+   * the dialog so the merchant checks its umlauts before saving. */
+  const [importEncoding, setImportEncoding] = useState<CsvFileEncoding>("utf8");
+  /** "Import started: N rows" — the large-import twin of queuedBanner. */
+  const [importStartedBanner, setImportStartedBanner] = useState<{ rows: number; cells: number } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   /** "12 × 3 cells pasted" feedback (§8.3) with its undo action. */
   const [pasteBanner, setPasteBanner] = useState<{
@@ -966,7 +985,8 @@ export default function BulkEditor() {
     return combos.size;
   }, [dirty, locale, marketId]);
 
-  const saving = saveFetcher.state !== "idle" || bulkFetcher.state !== "idle";
+  const saving =
+    saveFetcher.state !== "idle" || bulkFetcher.state !== "idle" || importApplyFetcher.state !== "idle";
 
   useEffect(() => {
     if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
@@ -1128,11 +1148,8 @@ export default function BulkEditor() {
     // restriction.
     multipleVariants: b.readOnlyReasons.multipleVariants,
     variantsNotSynced: b.readOnlyReasons.variantsNotSynced,
-    // A category and a collection membership are set through a PICKER: a name
-    // is not a writable value and a membership is a join/leave DIFF, so the
-    // tooltip names the single editor instead of leaving the cell mute.
-    needsPicker: b.readOnlyReasons.needsPicker,
-    collectionsTruncated: b.readOnlyReasons.collectionsTruncated,
+    priceNotSynced: b.readOnlyReasons.priceNotSynced,
+
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,
@@ -1252,9 +1269,9 @@ export default function BulkEditor() {
 
   const handleTypeChange = (value: string) => {
     // Finding 13: prune the carried-over filter ids to the ones the NEW type
-    // actually speaks (same FILTER_IDS_BY_SET source the FilterBar renders
+    // actually speaks (same filterIdsForType source the FilterBar renders
     // from) — otherwise e.g. `missingSku` silently rides into a product view.
-    const validIds = FILTER_IDS_BY_SET[filterSetForType(value as BulkRowType)];
+    const validIds = filterIdsForType(value as BulkRowType);
     navigateGrid({
       type: value,
       page: "1",
@@ -1326,7 +1343,10 @@ export default function BulkEditor() {
       bulkFetcher.submit(
         {
           action: "seoBulkMeta",
-          contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[type],
+          // The diff's OWN row type, never the toolbar's: a confirmed CSV
+          // import whose preview was requested before a type switch still
+          // carries the rows it was built for.
+          contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[diffToSave[0].rowType],
           diff: JSON.stringify(diffToSave),
         },
         { method: "post", action: "/api/ai" },
@@ -1419,6 +1439,11 @@ export default function BulkEditor() {
     const editable = visibleRows.map((row) =>
       displayColumns.map((col) => {
         const resolved = resolveCellValue(row, col);
+        // A PICKER cell's value is a GID no clipboard carries — a pasted
+        // category name or collection title would only be refused by the save
+        // (or, for memberships, read as "leave everything" by a lenient
+        // parser). Treated like a read-only cell, so the rectangle flows past it.
+        if (isPickerColumn(col)) return false;
         return resolved.editable && (!isForeign || col.translatable);
       }),
     );
@@ -1473,6 +1498,7 @@ export default function BulkEditor() {
 
   const handleExport = () => {
     setExportError(null);
+    setExportWarning(null);
     const params = new URLSearchParams({
       type,
       locale,
@@ -1504,6 +1530,16 @@ export default function BulkEditor() {
       return;
     }
     if (!payload.csv || !payload.filename) return;
+    // Not an error — the file is delivered — but said NOW: a file too large to
+    // import back is otherwise discovered after the editing is done.
+    setExportWarning(
+      payload.exceedsImportLimit
+        ? b.csv.exportExceedsImport.replace(
+            "{max}",
+            String(Math.round(CSV_IMPORT_MAX_BYTES / (1024 * 1024))),
+          )
+        : null,
+    );
     const key = `${payload.filename}:${payload.generatedAt ?? 0}`;
     if (downloadedExportKeyRef.current === key) return;
     downloadedExportKeyRef.current = key;
@@ -1512,29 +1548,101 @@ export default function BulkEditor() {
     const a = document.createElement("a");
     a.href = url;
     a.download = payload.filename;
+    // Attached and revoked a tick later: Firefox and older Safari cancel a
+    // download whose object URL is revoked in the same task as the click.
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportFetcher.state, exportFetcher.data]);
 
   // ── CSV import (§8.2 — Pro; preview first, save through submitDiff) ──────
 
+  const importMaxMb = String(Math.round(CSV_IMPORT_MAX_BYTES / (1024 * 1024)));
+
+  /** The merchant-facing sentence for a refused preview OR a refused apply.
+   *  `request` is the layer that was POSTED — the scope-mismatch message names
+   *  it, not whatever the grid shows by the time the answer arrives. */
+  const importErrorText = (
+    result: Exclude<CsvImportActionResult | CsvImportApplyActionResult, { ok: true } | CsvImportPreview>,
+    request: { locale: string; market: string } | null,
+  ): string => {
+    switch (result.error) {
+      case "tooLarge":
+        return b.csv.fileTooLarge.replace("{max}", importMaxMb);
+      case "tooManyRows":
+        return b.csv.tooManyRows.replace("{max}", String(CSV_IMPORT_MAX_ROWS));
+      case "empty":
+        return b.csv.emptyFile;
+      case "noIdColumn":
+        return b.csv.noIdColumn;
+      case "badEncoding":
+        return b.csv.badEncoding;
+      case "scopeMismatch":
+        return b.csv.scopeMismatch
+          .replace("{file}", importScopeLabel(result.fileLocale, result.fileMarketId))
+          .replace(
+            "{view}",
+            request
+              ? importScopeLabel(request.locale, request.market)
+              : importScopeLabel(locale, isForeign ? marketId : ""),
+          );
+      case "gated":
+        return b.csv.importProTooltip;
+      case "alreadyRunning":
+        return b.csv.alreadyRunning;
+      case "noChanges":
+        return b.csv.preview.noChanges;
+      case "invalidLocale":
+        return result.message;
+      default:
+        return b.csv.importFailed;
+    }
+  };
+
+  /** "Deutsch (Primär)" / "Français" / "Français · Schweiz" — the layer a CSV
+   * import writes into, named in the preview and in a scope-mismatch refusal.
+   * An unknown code or market (a file from another shop) shows as-is. */
+  const importScopeLabel = (scopeLocale: string, scopeMarketId: string): string => {
+    const code = scopeLocale || data.locales.find((l) => l.primary)?.locale || "";
+    const language = localeNameByCode.get(code) ?? code;
+    const base = scopeLocale === "" ? `${language} ${b.primaryLocaleSuffix}` : language;
+    if (scopeMarketId === "") return base;
+    const market = data.markets.find((m) => m.id === scopeMarketId)?.name ?? scopeMarketId;
+    return `${base} · ${market}`;
+  };
+
   const handleImportFile = async (file: File) => {
     setImportError(null);
-    // UX pre-check only — the server re-enforces the byte cap (§8.2).
-    if (file.size > CSV_IMPORT_MAX_BYTES) {
-      setImportError(b.csv.fileTooLarge.replace("{max}", "5"));
+    // Unsaved grid edits and an import do not mix: the import diff is built
+    // against the DB, a successful save prunes every submitted key (dropping
+    // a pending grid edit of the same cell in favour of the file, silently)
+    // and clears the undo stack of edits that were never saved.
+    if (dirty.length > 0 || offPageEditCount > 0) {
+      setImportError(b.csv.unsavedEdits);
       return;
     }
-    const text = await file.text();
+    // Decoded HERE, not with file.text() (always UTF-8): Excel's default CSV
+    // format is Windows-1252, see decodeCsvBytes. The raw-size check only
+    // stops an absurd file before it is read; the real cap is measured on
+    // the DECODED text in UTF-8 — what the server measures — or a
+    // Windows-1252 file full of umlauts passes here and fails there, and a
+    // UTF-16 file (two bytes per letter) is refused for nothing.
+    if (file.size > CSV_IMPORT_MAX_BYTES * 2) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
+      return;
+    }
+    const { text, encoding } = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
+    if (new TextEncoder().encode(text).length > CSV_IMPORT_MAX_BYTES) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
+      return;
+    }
+    setImportEncoding(encoding);
+    const request = { csv: text, type, locale, market: isForeign ? marketId : "" };
+    importRequestRef.current = request;
     importFetcher.submit(
-      {
-        actionType: "csvImportPreview",
-        type,
-        locale,
-        market: isForeign ? marketId : "",
-        csv: text,
-      },
+      { actionType: "csvImportPreview", ...request },
       { method: "post", action: "/app/bulk/import" },
     );
   };
@@ -1545,33 +1653,49 @@ export default function BulkEditor() {
     if (result.ok) {
       setImportPreview(result);
     } else {
-      setImportError(
-        result.error === "tooLarge"
-          ? b.csv.fileTooLarge.replace("{max}", "5")
-          : result.error === "tooManyRows"
-            ? b.csv.tooManyRows.replace("{max}", "10000")
-            : result.error === "empty"
-              ? b.csv.emptyFile
-              : result.error === "noIdColumn"
-                ? b.csv.noIdColumn
-                : b.csv.importFailed,
-      );
+      setImportError(importErrorText(result, importRequestRef.current));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importFetcher.state, importFetcher.data]);
 
-  const importOverBudget = (importPreview?.estimatedCalls ?? 0) > MAX_TASK_CALLS;
-  // Finding 2: >MAX_SYNC_SAVE cells route to the task path, which caps one
-  // save at MAX_BULK_TASK_ITEMS cells — block the confirm (with the reason
-  // shown in the modal) instead of 400ing after a confirmed preview.
-  const importOverCellLimit = (importPreview?.cellsChanged ?? 0) > MAX_BULK_TASK_ITEMS;
-
+  // A small import goes through the grid's own save (≤ MAX_SYNC_SAVE cells,
+  // never near a cap); a larger one is applied server-side in batches, so
+  // neither the cell cap nor the call budget of ONE save applies to it.
   const handleImportConfirm = () => {
-    if (!importPreview || importOverBudget || importOverCellLimit) return;
-    const diff = importPreview.diff;
+    if (!importPreview || saving) return;
+    const preview = importPreview;
     setImportPreview(null);
-    submitDiff(diff);
+    if (!preview.applyInBackground) {
+      submitDiff(preview.diff);
+      return;
+    }
+    const request = importRequestRef.current;
+    if (!request) return;
+    postedImportRequestRef.current = request;
+    importApplyFetcher.submit(
+      { actionType: "csvImportApply", ...request },
+      { method: "post", action: "/app/bulk/import" },
+    );
   };
+
+  useEffect(() => {
+    if (importApplyFetcher.state !== "idle" || !importApplyFetcher.data) return;
+    const result = importApplyFetcher.data;
+    const posted = postedImportRequestRef.current;
+    if (result.ok) {
+      // Only the request THIS answer belongs to: a second file previewed while
+      // the first import was starting must keep its own.
+      if (importRequestRef.current === posted) importRequestRef.current = null;
+      setImportError(null);
+      setImportStartedBanner({ rows: result.rows, cells: result.cells });
+      // Same watch as a large grid save: the grid reloads when the import (and
+      // every auto-translation run it starts) has finished.
+      setWatchedTaskIds((prev) => [...new Set([...prev, result.taskId])]);
+      return;
+    }
+    setImportError(importErrorText(result, posted));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importApplyFetcher.state, importApplyFetcher.data]);
 
   // ── Price bulk actions (Plan §5.6) ───────────────────────────────────────
   // Applied to the CURRENT (filtered, loaded) selection — i.e. the rows the
@@ -1599,6 +1723,9 @@ export default function BulkEditor() {
     const next = { ...edits };
     for (const row of visibleRows) {
       if (row.type !== "variant") continue;
+      // A price the cache never received renders read-only ("price not
+      // loaded"); an action must not fill a cell the merchant cannot touch.
+      if (!row.price) continue;
       const current = currentPriceOf(row);
       if (action.id === "compareAtFromPrice") {
         if (current === null) continue;
@@ -1883,9 +2010,10 @@ export default function BulkEditor() {
    */
   const cellActionsFor = (row: BulkRow, column: ColumnDescriptor): BulkCellActions | undefined => {
     if (!resolveCellValue(row, column).editable) return undefined;
-    if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
-      return undefined;
-    }
+    // THE predicate, not a second list of input types: the grid reserves its
+    // action gutter on `columnCanHaveCellActions`, and a copy here had already
+    // drifted — it would have offered "Improve with AI" on a GID picker cell.
+    if (!columnCanHaveCellActions(column)) return undefined;
     // Improve is FIELD columns only — a metafield or option key would produce
     // a generic, weak prompt. The image row's alt cell is the exception: it
     // has its own image-aware generator (see handleCellImprove).
@@ -2229,6 +2357,13 @@ export default function BulkEditor() {
                 </div>
 
                 {queuedBanner && <Banner tone="success">{b.queuedBanner}</Banner>}
+                {importStartedBanner && (
+                  <Banner tone="success" onDismiss={() => setImportStartedBanner(null)}>
+                    {b.csv.importStarted
+                      .replace("{rows}", String(importStartedBanner.rows))
+                      .replace("{cells}", String(importStartedBanner.cells))}
+                  </Banner>
+                )}
                 {bulkError && <Banner tone="critical">{bulkError}</Banner>}
                 {saveError && <Banner tone="critical">{saveError}</Banner>}
                 {overBudgetBanner && (
@@ -2258,6 +2393,11 @@ export default function BulkEditor() {
                 {exportError && (
                   <Banner tone="critical" onDismiss={() => setExportError(null)}>
                     {exportError}
+                  </Banner>
+                )}
+                {exportWarning && (
+                  <Banner tone="warning" onDismiss={() => setExportWarning(null)}>
+                    {exportWarning}
                   </Banner>
                 )}
                 {importError && (
@@ -2451,6 +2591,7 @@ export default function BulkEditor() {
                       <Button
                         onClick={() => importFileRef.current?.click()}
                         loading={importFetcher.state !== "idle"}
+                        disabled={saving}
                       >
                         {b.csv.importButton}
                       </Button>
@@ -2484,7 +2625,7 @@ export default function BulkEditor() {
                   filters={filters}
                   onFiltersChange={handleFiltersChange}
                   showTranslationFilter={locale !== ""}
-                  filterSet={filterSetForType(type)}
+                  filterIds={filterIdsForType(type)}
                   pageSize={pageSize}
                   onPageSizeChange={handlePageSizeChange}
                   onlyChanged={onlyChanged}
@@ -2498,13 +2639,10 @@ export default function BulkEditor() {
                           : b.searchPlaceholder,
                     searchLabel: b.searchLabel,
                     filtersLabel: b.filtersLabel,
-                    filterMissingSeoTitle: b.filters.missingSeoTitle,
-                    filterMissingSeoDescription: b.filters.missingSeoDescription,
-                    filterMissingTranslation: b.filters.missingTranslation,
-                    filterMissingSku: b.filters.missingSku,
-                    filterMissingPrice: b.filters.missingPrice,
-                    filterCompareAtNotAbovePrice: b.filters.compareAtNotAbovePrice,
-                    filterMissingAltText: b.filters.missingAltText,
+                    filterLabels: b.filters,
+                    sectionTitles: b.filterSections,
+                    attributeFilterHint: b.filterAttributeHint,
+                    clearAll: b.filterClearAll,
                     pageSizeLabel: b.pageSizeLabel,
                     onlyChangedLabel: b.onlyChanged,
                   }}
@@ -2557,6 +2695,12 @@ export default function BulkEditor() {
                       columnHeading={columnHeading}
                       enumLabels={enumLabels}
                       templateSuffixes={templateSuffixes}
+                      // An empty price cell on a multi-variant product carried
+                      // a tooltip nobody could reach: the pointer had nothing
+                      // to rest on. The placeholder is that something.
+                      readOnlyPlaceholders={b.readOnlyPlaceholders}
+                      categoryTexts={(t.content?.taxonomy ?? {}) as Record<string, string>}
+                      collectionsTexts={(t.content?.collectionsField ?? {}) as Record<string, string>}
                       handleWarning={b.handleWarning}
                       readOnlyTooltips={readOnlyTooltips}
                       sortButtonLabel={b.sortButtonLabel}
@@ -2686,10 +2830,8 @@ export default function BulkEditor() {
                 const column = allColumns.find((c) => c.id === columnId);
                 return column ? columnHeading(column) : columnId;
               }}
-              overBudget={importOverBudget}
-              maxCalls={MAX_TASK_CALLS}
-              overCellLimit={importOverCellLimit}
-              maxCells={MAX_BULK_TASK_ITEMS}
+              targetLabel={importScopeLabel(locale, isForeign ? marketId : "")}
+              encoding={importEncoding}
               busy={saving}
               onConfirm={handleImportConfirm}
               onCancel={() => setImportPreview(null)}
@@ -2705,12 +2847,19 @@ export default function BulkEditor() {
                 rowErrorUnknownId: b.csv.preview.rowErrorUnknownId,
                 rowErrorUnknownHandle: b.csv.preview.rowErrorUnknownHandle,
                 rowErrorAmbiguousHandle: b.csv.preview.rowErrorAmbiguousHandle,
+                rowErrorDuplicateRow: b.csv.preview.rowErrorDuplicateRow,
+                target: b.csv.preview.target,
+                encodingNotice: b.csv.preview.encodingNotice,
+                damagedTitle: b.csv.preview.damagedTitle,
+                damagedHint: b.csv.preview.damagedHint,
+                damagedScientificNotation: b.csv.preview.damagedScientificNotation,
+                damagedLeadingZerosLost: b.csv.preview.damagedLeadingZerosLost,
+                damagedCellLimitTruncated: b.csv.preview.damagedCellLimitTruncated,
                 moreRowErrors: b.csv.preview.moreRowErrors,
                 changesHeading: b.csv.preview.changesHeading,
                 moreChanges: b.csv.preview.moreChanges,
                 emptyValue: b.csv.preview.emptyValue,
-                overBudget: b.budgetExceeded,
-                overCellLimit: b.cellLimitExceeded,
+                background: b.csv.preview.background,
                 apply: b.csv.preview.apply,
                 cancel: b.csv.preview.cancel,
               }}

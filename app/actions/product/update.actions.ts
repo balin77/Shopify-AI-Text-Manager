@@ -20,6 +20,7 @@ import {
 } from "~/services/attribute-sync.shared";
 import {
   diffCollectionMembership,
+  collectionAutomation,
   isValidProductStatus,
   parseCategoryId,
   parseCollectionIds,
@@ -64,6 +65,10 @@ interface UpdateProductParams {
    *  (see `diffCollectionMembership`). */
   collections?: string;
   imageAltTexts?: Record<number, string>;
+  /** Filled by the primary alt write: the alt Shopify ECHOED per index. The
+   *  repair checks its read-back against what Shopify STORED, never against
+   *  what was submitted (the rule the handle redirect follows too). */
+  confirmedAltTexts?: Record<number, string>;
   productId: string;
   /** Market scope ("" = global). Only applies to foreign-locale text saves. */
   marketId?: string;
@@ -357,6 +362,9 @@ async function updateImageAltTexts(
         const updateMediaData = await updateMediaResponse.json() as any;
         const mediaUserErrors = updateMediaData.data?.productUpdateMedia?.mediaUserErrors || [];
         const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
+        if (typeof returnedAlt === "string") {
+          params.confirmedAltTexts = { ...(params.confirmedAltTexts ?? {}), [index]: returnedAlt };
+        }
         logger.debug(`[ProductUpdate] [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
 
         if (mediaUserErrors.length > 0) {
@@ -1118,7 +1126,7 @@ async function updatePrimaryProduct(
           where: { shop },
           select: { id: true, isSmart: true, attributesSyncedAt: true },
         })
-      ).map((c) => [c.id, c.attributesSyncedAt ? c.isSmart === true : null] as const),
+      ).map((c) => [c.id, collectionAutomation(c)] as const),
     );
     const diff = diffCollectionMembership(
       cached,
@@ -1759,12 +1767,19 @@ async function updatePrimaryProduct(
         // at all, so there is nothing on the storefront to repair — a product
         // resync fills the id in (CLAUDE.md).
         const imageIdByMedia = new Map<string, string>();
+        /** What this save wrote per medium — the read-back is checked against
+         *  it (and briefly waited for), because an alt that was EMPTY before
+         *  has no translatable entry until Shopify has indexed the new one. */
+        const altByMedia = new Map<string, string>();
         const unaddressableImageIds: string[] = [];
         for (const index of changedAltTextIndices) {
           const image = dbProduct?.images?.[index];
           if (!image) continue;
-          if (image.mediaId) imageIdByMedia.set(image.mediaId, image.id);
-          else unaddressableImageIds.push(image.id);
+          if (image.mediaId) {
+            imageIdByMedia.set(image.mediaId, image.id);
+            const written = params.confirmedAltTexts?.[index] ?? params.imageAltTexts?.[index];
+            if (typeof written === "string") altByMedia.set(image.mediaId, written);
+          } else unaddressableImageIds.push(image.id);
         }
 
         // An image the cache cannot address on Shopify cannot be refreshed —
@@ -1804,6 +1819,7 @@ async function updatePrimaryProduct(
               resourceId: mediaId,
               resourceType: "MediaImage",
               key: "alt",
+              ...(altByMedia.has(mediaId) ? { expectedValue: altByMedia.get(mediaId) } : {}),
             })),
             foreignLocales,
             policy: changePolicy!,

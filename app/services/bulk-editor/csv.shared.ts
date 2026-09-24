@@ -25,29 +25,37 @@
  *   form back anyway (parseMoney).
  * - Formula-injection guard: cell values starting with = + - @ are prefixed
  *   with a leading apostrophe on export (the file opens in Excel!); the
- *   import strips exactly that prefix again so a round trip is lossless.
+ *   import strips exactly that prefix again so a round trip is lossless (a
+ *   value that already starts with `'=` gets a second apostrophe for the
+ *   same reason).
  */
 
 import type { ColumnDescriptor } from "./columns.shared";
 
 // ─── Limits (§8.2 hard caps, §8.1 export ceiling) ──────────────────────────
 
-/** Import file hard cap (5 MB) — checked client-side before reading AND
- * server-side on the posted text length. */
-export const CSV_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+/** Import file hard cap, in UTF-8 bytes of the decoded text — checked
+ * client-side after decoding AND server-side on the posted text. 50 MB, not
+ * the original 5: the export carries every column, bodies included, and at
+ * 2–3 KB of HTML per product a 5 MB cap refused the re-import of any catalogue
+ * past ~2 000 products — the very round trip the large import exists for. The
+ * export still reports a file that outgrows even this (`exceedsImportLimit`). */
+export const CSV_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 
 /** Import row hard cap (data rows, header excluded). */
 export const CSV_IMPORT_MAX_ROWS = 10_000;
 
 /**
- * Synchronous export ceiling. The plan (§8.1) foresees a Task with a download
- * link beyond 5.000 rows — but the Task infrastructure has NO result-file
- * delivery mechanism (Task.result is a DB text column; there is no file
- * storage or download endpoint). Building half of one would be worse than
- * being honest: exports above this cap are refused with a clear "narrow your
- * filter" message instead. Documented deviation from §8.1.
+ * Synchronous export ceiling — the SAME number as the import's row cap, so a
+ * full export can be re-imported by row count (a lower export cap made a full
+ * round trip of a 6 000-product catalogue impossible); the BYTE cap is checked
+ * on the finished file and reported, see `exceedsImportLimit`. The
+ * plan (§8.1) foresaw a Task with a download link beyond 5 000 rows, but the
+ * Task infrastructure has NO result-file delivery (Task.result is a DB text
+ * column); beyond this cap the export is refused with a "narrow your filter"
+ * message instead.
  */
-export const CSV_EXPORT_MAX_ROWS = 5_000;
+export const CSV_EXPORT_MAX_ROWS = CSV_IMPORT_MAX_ROWS;
 
 /** UTF-8 byte-order mark — prepended to every export (§8.1). */
 export const CSV_BOM = "\uFEFF";
@@ -67,6 +75,10 @@ export function delimiterForAppLanguage(language: string): CsvDelimiter {
  * strips leading whitespace before evaluating, so `\t=cmd` is just as live as
  * `=cmd` (OWASP CSV-injection guidance). */
 const FORMULA_PREFIX_RE = /^[=+\-@\t\r]/;
+/** A value that ALREADY starts with apostrophes in front of a formula starter
+ * (`'=abc` is real content). It gets the export prefix too, or the import —
+ * which strips exactly one apostrophe — would turn it into `=abc`. */
+const PREFIXED_FORMULA_RE = /^'+[=+\-@\t\r]/;
 
 /**
  * Encodes one cell for CSV output: apostrophe-prefixes formula starters, then
@@ -75,20 +87,18 @@ const FORMULA_PREFIX_RE = /^[=+\-@\t\r]/;
  */
 export function encodeCsvCell(value: string, delimiter: CsvDelimiter): string {
   let v = value;
-  if (FORMULA_PREFIX_RE.test(v)) v = `'${v}`;
+  if (FORMULA_PREFIX_RE.test(v) || PREFIXED_FORMULA_RE.test(v)) v = `'${v}`;
   if (v.includes(delimiter) || v.includes('"') || v.includes("\n") || v.includes("\r")) {
     v = `"${v.replace(/"/g, '""')}"`;
   }
   return v;
 }
 
-/** Reverses the formula-injection prefix on import: a leading `'` directly
- * followed by = + - @ is OUR export artifact and is stripped; any other
- * apostrophe is real content and stays. */
+/** Reverses the formula-injection prefix on import: ONE leading `'` in front
+ * of (further apostrophes and) = + - @ is OUR export artifact and is
+ * stripped; any other apostrophe is real content and stays. */
 export function decodeCsvCell(value: string): string {
-  return value.length >= 2 && value[0] === "'" && FORMULA_PREFIX_RE.test(value[1])
-    ? value.slice(1)
-    : value;
+  return PREFIXED_FORMULA_RE.test(value) ? value.slice(1) : value;
 }
 
 /** Builds the complete CSV text: BOM + header + rows, CRLF-joined. */
@@ -100,6 +110,41 @@ export function buildCsv(header: string[], rows: string[][], delimiter: CsvDelim
 }
 
 // ─── Parsing (import, §8.2 step 1) ─────────────────────────────────────────
+
+/** Which text encoding an import file was READ as — anything but "utf8" is
+ * named in the preview, so the merchant checks the umlauts before saving. */
+export type CsvFileEncoding = "utf8" | "utf16" | "windows1252";
+
+/**
+ * Decodes an import file's bytes. A plain `file.text()` always decodes UTF-8,
+ * and Excel's DEFAULT "CSV (Trennzeichen-getrennt)" writes Windows-1252: every
+ * ü/ß/é of such a file became U+FFFD, differed from the DB, and was written to
+ * Shopify as "Gr\uFFFDner Tee". Order: a UTF-16 BOM (Excel's "Unicode text")
+ * decides first; then STRICT UTF-8, which cannot accidentally succeed on
+ * Windows-1252 umlauts (a lone 0xFC is not valid UTF-8); only a file that is
+ * not valid UTF-8 falls back to Windows-1252 — the encoding every Excel on a
+ * Western-European install writes, and the one Shopify merchants in this
+ * app's three languages actually produce.
+ */
+export function decodeCsvBytes(bytes: Uint8Array): { text: string; encoding: CsvFileEncoding } {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return { text: new TextDecoder("utf-16le").decode(bytes.subarray(2)), encoding: "utf16" };
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return { text: new TextDecoder("utf-16be").decode(bytes.subarray(2)), encoding: "utf16" };
+  }
+  // UTF-16 LE WITHOUT a BOM: our header starts with ASCII ("id…"), which
+  // that encoding writes as <letter> 0x00 — a pattern valid UTF-8 would carry
+  // as a NUL character, which no CSV of ours contains.
+  if (bytes.length >= 2 && bytes[0] !== 0 && bytes[1] === 0) {
+    return { text: new TextDecoder("utf-16le").decode(bytes), encoding: "utf16" };
+  }
+  try {
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), encoding: "utf8" };
+  } catch {
+    return { text: new TextDecoder("windows-1252").decode(bytes), encoding: "windows1252" };
+  }
+}
 
 export function stripBom(text: string): string {
   return text.startsWith(CSV_BOM) ? text.slice(1) : text;
@@ -210,9 +255,56 @@ export function parseCsv(text: string, delimiter?: CsvDelimiter): string[][] {
 /** Header of the id column — always the FIRST exported column. */
 export const CSV_ID_HEADER = "id";
 
+/** Separator of the id header's scope marker (`id@de@gid://shopify/Market/1`).
+ * "@" occurs in no locale code and no GID, so a plain split is exact. */
+const CSV_SCOPE_SEPARATOR = "@";
+/** Scope marker of a PRIMARY-language export — a locale code can never be
+ * this word, so it cannot collide with a real foreign locale. */
+const CSV_PRIMARY_SCOPE = "primary";
+
+/**
+ * The id header an export writes: `id@primary`, `id@de` or
+ * `id@de@<Market GID>`. A file carries no other trace of the language it was
+ * exported in — only the filename, which says nothing about the market and is
+ * gone the moment a merchant renames it — and the import always writes into
+ * the language the GRID is on. Without the marker, a German export edited in
+ * Excel and imported while the grid shows the primary language overwrote the
+ * primary texts with German ones, and the preview had no way to notice.
+ */
+export function csvIdHeaderFor(locale: string, marketId: string): string {
+  if (locale === "") return `${CSV_ID_HEADER}${CSV_SCOPE_SEPARATOR}${CSV_PRIMARY_SCOPE}`;
+  return marketId === ""
+    ? `${CSV_ID_HEADER}${CSV_SCOPE_SEPARATOR}${locale}`
+    : `${CSV_ID_HEADER}${CSV_SCOPE_SEPARATOR}${locale}${CSV_SCOPE_SEPARATOR}${marketId}`;
+}
+
+/** The language/market layer a file was exported from — `null` for an
+ * UNMARKED `id` header (a hand-built file, or one exported before the marker
+ * existed), which the import accepts as-is. */
+export interface CsvFileScope {
+  /** "" = primary. */
+  locale: string;
+  /** "" = global. */
+  marketId: string;
+}
+
+/** Recognises an id header (marked or not). `undefined` = not an id header at
+ * all; `null` = the plain, unmarked `id`. */
+export function parseCsvIdHeader(name: string): CsvFileScope | null | undefined {
+  if (name === CSV_ID_HEADER) return null;
+  const prefix = `${CSV_ID_HEADER}${CSV_SCOPE_SEPARATOR}`;
+  if (!name.startsWith(prefix)) return undefined;
+  const [locale, ...market] = name.slice(prefix.length).split(CSV_SCOPE_SEPARATOR);
+  if (!locale) return undefined;
+  if (locale === CSV_PRIMARY_SCOPE) return { locale: "", marketId: "" };
+  return { locale, marketId: market.join(CSV_SCOPE_SEPARATOR) };
+}
+
 export interface CsvHeaderMapping {
   /** Index of the `id` column, -1 when absent. */
   idIndex: number;
+  /** The layer the id header names (`id@de`), `null` when unmarked. */
+  fileScope: CsvFileScope | null;
   /** column-index → editable column descriptor, for every mapped column. */
   columns: { index: number; column: ColumnDescriptor }[];
   /** Headers that match NO column of the current type — REPORTED in the
@@ -237,12 +329,16 @@ export function mapCsvHeader(
   opts: { foreign: boolean },
 ): CsvHeaderMapping {
   const byId = new Map(columns.map((c) => [c.id, c] as const));
-  const mapping: CsvHeaderMapping = { idIndex: -1, columns: [], unknown: [], ignored: [] };
+  const mapping: CsvHeaderMapping = { idIndex: -1, fileScope: null, columns: [], unknown: [], ignored: [] };
   header.forEach((rawName, index) => {
     const name = rawName.trim();
     if (name === "") return; // trailing empty header cells (Excel artifacts)
-    if (name === CSV_ID_HEADER) {
-      if (mapping.idIndex === -1) mapping.idIndex = index;
+    const scope = parseCsvIdHeader(name);
+    if (scope !== undefined) {
+      if (mapping.idIndex === -1) {
+        mapping.idIndex = index;
+        mapping.fileScope = scope;
+      }
       return;
     }
     const column = byId.get(name);
@@ -261,7 +357,13 @@ export function mapCsvHeader(
 
 // ─── Row resolution (§8.2 step 2 — pure part) ──────────────────────────────
 
-export type CsvRowErrorKind = "missingId" | "unknownId" | "unknownHandle" | "ambiguousHandle";
+export type CsvRowErrorKind =
+  | "missingId"
+  | "unknownId"
+  | "unknownHandle"
+  | "ambiguousHandle"
+  /** A second line resolving to a row an earlier line already named. */
+  | "duplicateRow";
 
 export interface CsvRowError {
   /** 1-based CSV line (header = line 1, first data row = 2). */

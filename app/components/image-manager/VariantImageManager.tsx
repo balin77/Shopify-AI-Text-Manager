@@ -2744,10 +2744,13 @@ export function VariantImageManager({
                 style={{
                   flex: "1 1 200px",
                   minWidth: 180,
-                  padding: "5px 8px",
+                  // As tall as the buttons beside it (responsive.css token).
+                  height: "var(--app-control-height)",
+                  boxSizing: "border-box",
+                  padding: "0 8px",
                   fontSize: 13,
                   border: "1px solid var(--app-field-border-color)",
-                  borderRadius: 4,
+                  borderRadius: "var(--app-field-border-radius)",
                   outline: "none",
                   background: !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white",
                 }}

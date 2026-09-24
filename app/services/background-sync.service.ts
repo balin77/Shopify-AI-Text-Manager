@@ -390,6 +390,11 @@ export class BackgroundSyncService {
               }
             });
             translationsCount = deletedTranslations.count;
+            // FK-less like the translations: the primary digest baseline of a
+            // resource Shopify no longer has is removed with it.
+            await tx.primaryDigestBaseline.deleteMany({
+              where: { shop: this.shop, resourceId: { in: stalePageIds } }
+            });
           }
 
           return {
@@ -750,6 +755,11 @@ export class BackgroundSyncService {
               }
             });
             translationsCount = deletedTranslations.count;
+            // FK-less like the translations: the primary digest baseline of a
+            // resource Shopify no longer has is removed with it.
+            await tx.primaryDigestBaseline.deleteMany({
+              where: { shop: this.shop, resourceId: { in: stalePolicyIds } }
+            });
           }
 
           return {

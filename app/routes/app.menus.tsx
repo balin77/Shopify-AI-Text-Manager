@@ -975,7 +975,15 @@ export default function MenusPage() {
     // wiping it because a background run finished would take the one record of
     // the save away mid-read.
     backgroundRevalidationRef.current = true;
-    revalidator.revalidate();
+    try {
+      revalidator.revalidate();
+    } catch {
+      // An AbortError from the admin interfering: no revalidation is running,
+      // so the flag would otherwise stay up and swallow the next Reload's
+      // retirement of the tree report. Put the debt back instead.
+      backgroundRevalidationRef.current = false;
+      refreshOwedRef.current = true;
+    }
     // `canRefresh` is what re-runs this once the merchant is done editing; the
     // attempt counter is what re-runs it when a second batch settles while the
     // page was already clean.

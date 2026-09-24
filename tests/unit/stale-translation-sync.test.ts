@@ -20,6 +20,9 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     contentTranslation: {
       deleteMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(async () => ({})),
+      // Only the kept-handle acknowledgement uses it: a digest advance with the
+      // value untouched.
+      updateMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
       // Takes the query: the market-override purge asks this same table for
       // `marketId: { not: "" }`, so a fake that ignores `where` would answer the
       // detection's rows to both and issue removals nobody asked for.
@@ -43,6 +46,27 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
         async (_args?: unknown): Promise<Array<{ id: string; mediaId: string | null }>> => [],
       ),
     },
+    // The gate's second baseline, one row per resource. Default: no row — the
+    // state of every resource right after the deploy.
+    primaryDigestBaseline: {
+      findUnique: vi.fn(async (_args?: unknown): Promise<{ digests: unknown } | null> => null),
+      upsert: vi.fn(async (_args?: unknown) => ({})),
+      // The compare-and-swap claim. Default: won.
+      updateMany: vi.fn(async (_args?: unknown): Promise<{ count: number }> => ({ count: 1 })),
+      // The full product sync's CREATE-ONLY seed.
+      createMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
+    },
+    // The brake: `used` is what the conditional increment compares against.
+    autoTranslateFillBudget: {
+      createMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
+      updateMany: vi.fn(async (_args?: unknown): Promise<{ count: number }> => ({ count: 1 })),
+      // Only the cheap "already spent?" pre-check reads it; `used` is what it
+      // compares. Default: no row — nothing spent.
+      findUnique: vi.fn(async (_args?: unknown): Promise<{ used: number } | null> => null),
+    },
+    // The refusal count: ONE conditional-append statement returning the number
+    // of distinct refused resources, so the array never travels.
+    $queryRaw: vi.fn(async (..._args: unknown[]): Promise<Array<{ refused: number }>> => [{ refused: 1 }]),
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
     task: {
@@ -50,6 +74,7 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       // the detached run exists, so the row has to carry it.
       create: vi.fn(async (args?: { data?: { id?: string } }) => ({ id: args?.data?.id ?? "task-1" })),
       update: vi.fn(async () => ({})),
+      upsert: vi.fn(async (_args?: unknown) => ({})),
     },
   };
   const shopify = {
@@ -143,6 +168,21 @@ vi.mock("../../app/services/seo/handle-redirect.server", () => ({
   handleTakenByOtherResource: vi.fn(async () => false),
 }));
 
+// The PRODUCTION resolver factory, so the wiring that attaches it
+// (`withHandleResolver`) is exercised by a test that passes no resolver of its
+// own. `factory.resolver` is what the built resolver answers; null = no
+// redirect possible.
+const factory = vi.hoisted(() => ({
+  built: 0,
+  resolver: null as null | ((...args: unknown[]) => Promise<unknown>),
+}));
+vi.mock("../../app/services/translations/handle-retranslation.server", () => ({
+  makeHandleRedirectResolver: vi.fn(() => {
+    factory.built++;
+    return async (...args: unknown[]) => (factory.resolver ? factory.resolver(...args) : null);
+  }),
+}));
+
 vi.mock("../../app/services/translations/translation-change-policy.server", () => ({
   loadTranslationChangePolicy: vi.fn(async () => policy),
   isPurgeOnPrimaryChangeEnabled: vi.fn(async () => policy.purgeOnPrimaryChange),
@@ -160,6 +200,7 @@ vi.mock("../../src/services/translation.service", () => ({
 }));
 
 import {
+  setReadBackRetryDelaysForTests,
   productImageAltMirror,
   featuredImageAltMirror,
   reconcileStaleTranslations,
@@ -226,6 +267,7 @@ beforeEach(() => {
   shopify.redirectCalls = [];
   db.contentTranslation.deleteMany.mockClear();
   db.contentTranslation.upsert.mockClear();
+  db.contentTranslation.updateMany.mockClear();
   db.productImage.findMany.mockClear();
   db.productImage.findMany.mockResolvedValue([]);
   db.productImageAltTranslation.upsert.mockClear();
@@ -237,6 +279,19 @@ beforeEach(() => {
     id: args?.data?.id ?? "task-1",
   }));
   db.task.update.mockClear();
+  db.task.upsert.mockClear();
+  db.primaryDigestBaseline.findUnique.mockReset();
+  db.primaryDigestBaseline.findUnique.mockResolvedValue(null);
+  db.primaryDigestBaseline.upsert.mockClear();
+  db.primaryDigestBaseline.updateMany.mockReset();
+  db.primaryDigestBaseline.updateMany.mockResolvedValue({ count: 1 });
+  db.autoTranslateFillBudget.createMany.mockClear();
+  db.autoTranslateFillBudget.updateMany.mockReset();
+  db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 1 });
+  db.autoTranslateFillBudget.findUnique.mockReset();
+  db.autoTranslateFillBudget.findUnique.mockResolvedValue(null);
+  db.$queryRaw.mockReset();
+  db.$queryRaw.mockResolvedValue([{ refused: 1 }]);
   db.contentTranslation.upsert.mockImplementation(async () => ({}));
   ai.translate = vi.fn(async () => ({}));
   ai.translateValues = vi.fn(async (values: string[]) => values.map((v) => `xx-${v}`));
@@ -733,6 +788,8 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   }
 
   beforeEach(() => {
+    // The expected-value tests below would otherwise sleep through every retry.
+    setReadBackRetryDelaysForTests([0, 0, 0]);
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
     // Reset explicitly: several tests below flip it, and leaving it to test
@@ -797,6 +854,29 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       "fr:body_html",
       "fr:title",
     ]);
+  });
+
+  it("ADVANCES the primary baseline to the text it just read back", async () => {
+    // The webhook of this same save bails on our claim, so nothing else writes
+    // it: left at the pre-save digest, any change event after the claim
+    // expires proves the same move again and queues a SECOND run.
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    const call = (db.primaryDigestBaseline.upsert.mock.calls[0] as unknown as [any])[0];
+    expect(call.where.shop_resourceId).toEqual({ shop: SHOP, resourceId: PAGE });
+    expect(call.update.digests).toEqual({ title: NEW, body_html: NEW });
+  });
+
+  it("leaves the primary baseline alone when it could not be READ", async () => {
+    db.primaryDigestBaseline.findUnique.mockRejectedValue(new Error("db down"));
+
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
   });
 
   it("asks NOBODY which locales are translated when every entry will be translated", async () => {
@@ -1094,6 +1174,65 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     await awaitDetachedRetranslations();
 
     expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
+  });
+
+  it("WAITS for a read-back that has not caught up with the write — an alt that was empty before", async () => {
+    // An empty value has no `translatableContent` entry, so a lagging
+    // read-back of a FIRST alt text reads as "cleared": the new alt was
+    // classified as a removal of nothing and never translated.
+    setReadBackRetryDelaysForTests([0, 0, 0]);
+    const client = saveClient();
+    const inner = client.graphql;
+    let reads = 0;
+    client.graphql = vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => {
+      if (query.includes("stalePrimaryContent")) {
+        reads++;
+        // First look: Shopify has not indexed the new title yet.
+        if (reads === 1) {
+          return { ok: true, json: async () => ({ data: { translatableResourcesByIds: { edges: [{ node: { resourceId: PAGE, translatableContent: [] } }] } } }) };
+        }
+      }
+      return inner(query, opts);
+    }) as never;
+
+    const result = await reconcileAfterPrimarySave(
+      saveParams({ client: client as never, changed: [{ key: "title", expectedValue: "About us" }] }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(reads).toBe(2);
+    expect(result.retranslating).toBe(2);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual(["de:title", "fr:title"]);
+  });
+
+  it("does NOT re-read a resource whose read FAILED — only one that answered and disagrees", async () => {
+    // A failed read is absent from the map; re-asking it put every gateway
+    // retry inline in the save, for an outcome that stays "skipped".
+    setReadBackRetryDelaysForTests([0, 0, 0]);
+    const client = saveClient();
+    const inner = client.graphql;
+    let reads = 0;
+    client.graphql = vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => {
+      if (query.includes("stalePrimaryContent")) {
+        reads++;
+        return { ok: true, json: async () => ({ data: { translatableResourcesByIds: { edges: [] } } }) };
+      }
+      return inner(query, opts);
+    }) as never;
+
+    await reconcileAfterPrimarySave(
+      saveParams({ client: client as never, changed: [{ key: "title", expectedValue: "About us" }] }),
+    );
+    expect(reads).toBe(1);
+  });
+
+  it("does not count surrounding whitespace as a lagging read-back", async () => {
+    setReadBackRetryDelaysForTests([0, 0, 0]);
+    const result = await reconcileAfterPrimarySave(
+      saveParams({ changed: [{ key: "title", expectedValue: "  About us " }] }),
+    );
+    await awaitDetachedRetranslations();
+    expect(result.retranslating).toBe(2);
   });
 
   it("never TRANSLATES a key whose read-back does not match what the caller wrote", async () => {
@@ -1663,6 +1802,96 @@ describe("handle re-translation", () => {
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
+  it("RECORDS a refused redirect, so the next look does not prove the same move again", async () => {
+    // Keeping writes nothing, so without this the mirror digest stays old,
+    // Shopify's row stays `outdated`, and the drift sweep hands the same page
+    // over every night forever — one of its per-type slots each time.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: async () => null }));
+    await awaitDetachedRetranslations();
+
+    expect(db.contentTranslation.updateMany).toHaveBeenCalledTimes(1);
+    const call = (db.contentTranslation.updateMany.mock.calls[0] as unknown as [any])[0];
+    expect(call.where).toMatchObject({ key: "handle", locale: "de", marketId: "" });
+    // The digest moves; the VALUE is not in the write at all.
+    expect(call.data).toEqual({ digest: NEW });
+  });
+
+  it("a DELIBERATELY discarded answer is recorded and does not fail the task", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => ({ de: { handle: "組子箱" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(db.contentTranslation.updateMany).toHaveBeenCalledTimes(1);
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    // Leaving the working URL alone is the designed outcome, not a failure.
+    expect(final[0].data.status).toBe("completed");
+    expect(final[0].data.error).toBeUndefined();
+  });
+
+  it("a TRANSIENT keep is not recorded — the next change event tries again", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => {
+      throw new Error("provider down");
+    });
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(db.contentTranslation.updateMany).not.toHaveBeenCalled();
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    expect(final[0].data.status).toBe("failed");
+  });
+
+  it("ATTACHES the production resolver when the caller passes none", async () => {
+    // Every other test here injects its own `handleRedirect`, so without this
+    // one `withHandleResolver` could become a no-op and nothing would notice —
+    // every handle on every sync path would then be declined for good.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    factory.built = 0;
+    factory.resolver = resolver;
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+
+    await reconcileStaleTranslations(handleParams());
+    await awaitDetachedRetranslations();
+    factory.resolver = null;
+
+    expect(factory.built).toBe(1);
+    expect(shopify.registerCalls).toEqual([
+      { key: "handle", locale: "de", value: "kumiko-schatulle", translatableContentDigest: NEW },
+    ]);
+    expect(shopify.redirectCalls).toEqual([{ from: "kiste-alt", to: "kumiko-schatulle" }]);
+  });
+
+  it("REPORTS a redirect that could not be written after the handle was", async () => {
+    // Unattended, and the mirror has advanced to the new slug — nothing will
+    // ever rebuild that redirect, so the Task row is the only place the
+    // merchant can learn the old foreign URL is dead.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+    const redirect = await import("../../app/services/seo/handle-redirect.server");
+    vi.mocked(redirect.applyTranslatedHandleRedirect).mockImplementationOnce(async () => {
+      throw new Error("redirect API down");
+    });
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toHaveLength(1);
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    expect(final[0].data.status).toBe("completed_with_errors");
+    expect(final[0].data.error).toBe("handle_redirects_missing:1");
+    expect(JSON.parse(final[0].data.result)).toMatchObject({ redirectsMissing: 1 });
+  });
+
   it("purges the handle when the opt-in is off — unchanged behaviour", async () => {
     policy.autoTranslateExternalChanges = true;
     policy.autoTranslateHandles = false;
@@ -1770,5 +1999,366 @@ describe("handle re-translation", () => {
 
     expect(shopify.registerCalls.map((c) => c.key)).toEqual(["title"]);
     expect(shopify.removeCalls).toEqual([]);
+  });
+});
+
+describe("the PRIMARY digest baseline — a resource nobody has translated yet", () => {
+  // The merchant report: auto-translate on, a title edited in the Shopify admin
+  // on a product with NO translation. The first entrance cannot see it (no
+  // translation row, no digest on one); only the per-resource baseline can.
+  beforeEach(() => {
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) =>
+      Object.fromEntries(
+        locales.map((locale) => [
+          locale,
+          Object.fromEntries(Object.keys(fields).map((k) => [k, `${locale}-${k}`])),
+        ]),
+      ),
+    );
+  });
+
+  /**
+   * The presence check the second entrance asks SHOPIFY before filling: locale
+   * → keys that really hold a value there. `null` = the query fails.
+   */
+  function shopifyHolding(present: Record<string, string[]> | null) {
+    return {
+      graphql: vi.fn(async (_query: string, opts?: { variables?: Record<string, unknown> }) => {
+        if (present === null) throw new Error("Throttled");
+        const vars = opts?.variables ?? {};
+        const resource: Record<string, unknown> = {};
+        for (const [name, locale] of Object.entries(vars)) {
+          if (!name.startsWith("loc")) continue;
+          resource[`l${name.slice(3)}`] = (present[String(locale)] ?? []).map((key) => ({ key, value: "v" }));
+        }
+        return { json: async () => ({ data: { translatableResource: resource } }) };
+      }),
+    } as never;
+  }
+
+  /** An untranslated product whose text is now NEW. */
+  function untranslated(over: Record<string, unknown> = {}) {
+    return baseParams({
+      client: shopifyHolding({}),
+      translations: [],
+      previousDigests: {},
+      foreignLocales: ["de", "fr"],
+      ...over,
+    });
+  }
+
+  it("RULE ONE: an EMPTY baseline table + a changed text ⇒ ZERO translations, only a baseline", async () => {
+    // The first sync after the deploy. This is the expensive direction the whole
+    // design is arranged around: without it, the first webhook per product would
+    // translate the catalogue into every language on the merchant's key.
+    const params = untranslated();
+    const result = await reconcileStaleTranslations(params);
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(ai.translate).not.toHaveBeenCalled();
+    expect(shopify.registerCalls).toEqual([]);
+    expect(db.task.create).not.toHaveBeenCalled();
+    // …and what it saw is recorded, so the NEXT edit is provable.
+    expect(db.primaryDigestBaseline.upsert).toHaveBeenCalledTimes(1);
+    expect((db.primaryDigestBaseline.upsert.mock.calls[0] as any[])[0]).toMatchObject({
+      where: { shop_resourceId: { shop: SHOP, resourceId: params.resourceId } },
+      create: { resourceType: "Product", digests: { title: NEW, body_html: NEW } },
+    });
+  });
+
+  it("translates EVERY published locale once the digest moved against a stored baseline", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+
+    const result = await reconcileStaleTranslations(untranslated());
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(4);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual([
+      "de:body_html",
+      "de:title",
+      "fr:body_html",
+      "fr:title",
+    ]);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("leaves a locale whose translation Shopify reports `outdated: false` untouched", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD } });
+
+    await reconcileStaleTranslations(
+      baseParams({
+        client: shopifyHolding({ de: ["title"] }),
+        translations: [{ key: "title", value: "Titel", locale: "de", marketId: "", outdated: false }],
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
+        primaryContent: { title: { value: "Box", digest: NEW } },
+        foreignLocales: ["de", "fr"],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`)).toEqual(["fr:title"]);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("does nothing — and writes nothing — when the digest did not move", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: NEW, body_html: NEW } });
+
+    const result = await reconcileStaleTranslations(untranslated());
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(ai.translate).not.toHaveBeenCalled();
+    // A sync with no text change must not cost a database write.
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+  });
+
+  it("reads the baseline BEFORE it writes the next one", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+
+    await reconcileStaleTranslations(untranslated());
+    await awaitDetachedRetranslations();
+
+    // The write here is the CLAIM — a compare-and-swap against exactly what
+    // was read, so it cannot land before that read by construction.
+    const readAt = db.primaryDigestBaseline.findUnique.mock.invocationCallOrder[0];
+    const writeAt = db.primaryDigestBaseline.updateMany.mock.invocationCallOrder[0];
+    expect(readAt).toBeLessThan(writeAt);
+    expect((db.primaryDigestBaseline.updateMany.mock.calls[0] as any[])[0]).toMatchObject({
+      where: { digests: { equals: { title: OLD, body_html: OLD } } },
+      data: { digests: { title: NEW, body_html: NEW } },
+    });
+    // Already stored by the claim ⇒ no second write.
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still advances the baseline with auto-translate OFF — a change seen then is not replayed later", async () => {
+    policy.autoTranslateExternalChanges = false;
+    policy.purgeOnPrimaryChange = true;
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+
+    const result = await reconcileStaleTranslations(untranslated());
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(shopify.registerCalls).toEqual([]);
+    expect(db.primaryDigestBaseline.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes NO baseline when the read failed — it would erase evidence it never compared", async () => {
+    db.primaryDigestBaseline.findUnique.mockRejectedValue(new Error("db down"));
+
+    const result = await reconcileStaleTranslations(untranslated());
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+  });
+
+  it("THE BRAKE: past the daily cap the fill is refused, REPORTED, and its baseline HELD", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 0 }); // cap reached
+    // Two OTHER resources were refused earlier today; this one is the third.
+    db.$queryRaw.mockResolvedValue([{ refused: 3 }]);
+
+    const result = await reconcileStaleTranslations(untranslated());
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(ai.translate).not.toHaveBeenCalled();
+    // Held, not swallowed: the claim had advanced the row, so the final write
+    // puts both keys back to OLD — the next change event can still prove it.
+    expect((db.primaryDigestBaseline.upsert.mock.calls[0] as any[])[0].update.digests).toEqual({
+      title: OLD,
+      body_html: OLD,
+    });
+    // Visible: one Task row per shop and day, carrying a renderable code that
+    // counts RESOURCES.
+    expect(db.task.upsert).toHaveBeenCalledTimes(1);
+    const task = (db.task.upsert.mock.calls[0] as any[])[0];
+    expect(task.create.error).toMatch(/^auto_translate_daily_limit:3:\d+$/);
+    expect(task.update.error).toBe(task.create.error);
+  });
+
+  it("counts a resource refused TWICE today once — resources, not events", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 0 });
+    const params = untranslated();
+    // The statement appends only an ABSENT id and returns the distinct count;
+    // a repeat refusal therefore reports the same number it did before.
+    db.$queryRaw.mockResolvedValue([{ refused: 2 }]);
+
+    await reconcileStaleTranslations(params);
+
+    const [sql, ...values] = db.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+    expect(sql.join("?")).toMatch(/= ANY\(/);
+    expect(values).toContain(params.resourceId);
+    const task = (db.task.upsert.mock.calls[0] as any[])[0];
+    expect(task.create.error).toMatch(/^auto_translate_daily_limit:2:\d+$/);
+  });
+
+  it("a SPENT budget is refused before anything costs a Shopify call", async () => {
+    // During the mass edit the brake exists for, every further webhook used to
+    // pay the existence query, the claim and its revert first.
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.autoTranslateFillBudget.findUnique.mockResolvedValue({ used: 10_000 });
+    const client = shopifyHolding({});
+    const graphql = (client as unknown as { graphql: ReturnType<typeof vi.fn> }).graphql;
+
+    const result = await reconcileStaleTranslations(untranslated({ client }));
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(graphql).not.toHaveBeenCalled();
+    // No claim, and the row is left exactly as it is — never written with held
+    // keys over what another webhook may have claimed.
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    expect(db.task.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("a budget that could not be RESERVED is not reported as the daily limit", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.autoTranslateFillBudget.updateMany.mockRejectedValue(new Error("db down"));
+
+    const result = await reconcileStaleTranslations(untranslated({ client: shopifyHolding({}) }));
+    await awaitDetachedRetranslations();
+
+    // Fails closed…
+    expect(result.retranslating).toBe(0);
+    expect(ai.translate).not.toHaveBeenCalled();
+    // …but "100 reached" would be a false statement about the shop.
+    expect(db.task.upsert).not.toHaveBeenCalled();
+  });
+
+  it("the brake leaves the FIRST entrance's work alone — that work existed before it", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.autoTranslateFillBudget.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await reconcileStaleTranslations(
+      baseParams({
+        // Shopify confirms the fill target is empty, so the run really reaches
+        // the claim and the (refusing) budget — with a bare mock the existence
+        // check threw, the fill was held there, and this test passed without
+        // the brake ever running.
+        client: shopifyHolding({ de: ["title"] }),
+        // title is translated in de and proven by ITS row; body_html is not
+        // translated anywhere and rests on the primary baseline alone.
+        translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
+        foreignLocales: ["de"],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(1);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`)).toEqual(["de:title"]);
+    // body_html's baseline is held back; title's advances.
+    const written = (db.primaryDigestBaseline.upsert.mock.calls[0] as any[])[0].update.digests;
+    expect(written).toEqual({ title: NEW, body_html: OLD });
+    // …and it WAS the brake that refused, not the existence check.
+    expect(db.autoTranslateFillBudget.updateMany).toHaveBeenCalled();
+  });
+
+  it("asks SHOPIFY before filling: a locale the sync failed to read is not taken as empty", async () => {
+    // The sync's read of `fr` failed, so the rows handed in say nothing about
+    // it — but Shopify holds a (hand-written) French title. Filling it would
+    // overwrite that translation.
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD } });
+
+    const result = await reconcileStaleTranslations(
+      untranslated({
+        client: shopifyHolding({ fr: ["title"] }),
+        primaryContent: { title: { value: "Box", digest: NEW } },
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(1);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`)).toEqual(["de:title"]);
+  });
+
+  it("fills NOTHING and HOLDS the baseline when Shopify cannot answer that question", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+
+    const result = await reconcileStaleTranslations(untranslated({ client: shopifyHolding(null) }));
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(ai.translate).not.toHaveBeenCalled();
+    expect(db.autoTranslateFillBudget.updateMany).not.toHaveBeenCalled();
+    // Held: no evidence either way ⇒ the move stays provable.
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("the CLAIM: a second webhook for the same move loses the swap and starts nothing", async () => {
+    // One admin save fires several `products/update`; both read OLD. Only the
+    // compare-and-swap winner may translate, or every locale is done twice.
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    db.primaryDigestBaseline.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await reconcileStaleTranslations(untranslated());
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(ai.translate).not.toHaveBeenCalled();
+    expect(db.autoTranslateFillBudget.updateMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+  });
+
+  it("does not advance the baseline while a save of OURS is in flight for the resource", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    const params = untranslated();
+    markTranslationSaved(params.resourceId as string);
+
+    await reconcileStaleTranslations(params);
+
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a price edit (no text digest moved) costs no policy read, no budget and no write", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: NEW, body_html: NEW } });
+
+    await reconcileStaleTranslations(untranslated());
+
+    expect(db.autoTranslateFillBudget.updateMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("seedPrimaryDigestBaselines", () => {
+  it("only ever CREATES — a full sync never advances an existing baseline", async () => {
+    // The full sync does not reconcile, so advancing a row here would swallow
+    // every admin edit since the last change event: the move could no longer
+    // be proven by anything. `skipDuplicates` is the whole rule.
+    const { seedPrimaryDigestBaselines } = await import(
+      "../../app/services/translations/stale-translation-sync.server"
+    );
+    db.primaryDigestBaseline.createMany.mockClear();
+
+    await seedPrimaryDigestBaselines(SHOP, "Product", [
+      {
+        resourceId: "gid://shopify/Product/1",
+        content: [
+          { key: "title", digest: NEW },
+          // Not a key this app manages: never part of a baseline.
+          { key: "vendor", digest: "x" },
+        ],
+      },
+      // Nothing managed with a digest: no row at all.
+      { resourceId: "gid://shopify/Product/2", content: [{ key: "title", digest: null }] },
+    ]);
+
+    const call = (db.primaryDigestBaseline.createMany.mock.calls[0] as unknown as [any])[0];
+    expect(call.skipDuplicates).toBe(true);
+    expect(call.data).toEqual([
+      { shop: SHOP, resourceId: "gid://shopify/Product/1", resourceType: "Product", digests: { title: NEW } },
+    ]);
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
   });
 });

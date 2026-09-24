@@ -221,7 +221,16 @@ export async function handleMetaobjectUpdate(
   if (errors.length > 0) {
     logger.error("[UnifiedContent] Metaobject update errors", { context: "Metaobjects", errors });
     return json(
-      { success: false, error: `Some updates failed: ${errors.join("; ")}`, actionType: "updateContent" },
+      {
+        success: false,
+        error: `Some updates failed: ${errors.join("; ")}`,
+        actionType: "updateContent",
+        // The fields that DID save still started their repair (`repairForeign`
+        // runs for every confirmed field), and a partial failure is exactly
+        // the save after which the merchant stays on the page — without the
+        // id nothing reloads it once those translations land.
+        retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+      },
       { status: 500 },
     );
   }

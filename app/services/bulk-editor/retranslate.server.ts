@@ -142,10 +142,15 @@ export interface BulkRepairPlan {
    * on that layer nothing ever recreates it.
    */
   marketWrites: Set<string>;
+  /** How many groups THIS save may open. MAX_REPAIR_GROUPS for a grid save; a
+   *  batched CSV import passes what is LEFT of one budget for the whole file,
+   *  or twenty batches would each open their own 25 unattended AI runs. */
+  maxGroups: number;
 }
 
-export function newBulkRepairPlan(): BulkRepairPlan {
+export function newBulkRepairPlan(maxGroups: number = MAX_REPAIR_GROUPS): BulkRepairPlan {
   return {
+    maxGroups: Math.max(0, maxGroups),
     groups: new Map(),
     overflow: new Set(),
     overflowRows: new Set(),
@@ -236,7 +241,7 @@ export function collectBulkRepair(
   if (!group) {
     // The cap counts GROUPS and is checked before a new one is opened: adding
     // entries to a group that already exists costs no extra run.
-    if (pool.size >= MAX_REPAIR_GROUPS) {
+    if (pool.size >= plan.maxGroups) {
       // …but not every refusal costs the same, and the pool fills in the order
       // the row's cells are persisted — base fields FIRST, sub-resources and
       // alt texts after. A refused product/collection CONTENT group loses

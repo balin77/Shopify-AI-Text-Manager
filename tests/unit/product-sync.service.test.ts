@@ -18,6 +18,10 @@ const mockDb = {
     deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     findUnique: vi.fn().mockResolvedValue(null),
   },
+  primaryDigestBaseline: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
   contentTranslation: {
     // No pre-existing rows → digest-skip (R3-H4) can't prove "unchanged",
     // so syncProduct falls through to the delete+recreate path the
@@ -300,6 +304,11 @@ describe('ProductSyncService', () => {
       });
       expect(mockDb.product.deleteMany).toHaveBeenCalledWith({
         where: { shop: testShop, id: productId },
+      });
+      // The stale-translation gate's primary baseline is polymorphic and
+      // FK-less too, so the same delete has to take it.
+      expect(mockDb.primaryDigestBaseline.deleteMany).toHaveBeenCalledWith({
+        where: { shop: testShop, resourceId: productId },
       });
     });
   });

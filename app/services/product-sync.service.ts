@@ -581,6 +581,9 @@ export class ProductSyncService {
 
           // 3a. Product translations (60-80%)
           let localeIndex = 0;
+          /** The stale-translation gate's PRIMARY baselines, seeded create-only
+           *  from the first global pass (seedPrimaryDigestBaselines). */
+          let baselinesSeeded = false;
           for (const locale of nonPrimaryLocales) {
             localeIndex++;
             checkAborted();
@@ -635,6 +638,16 @@ export class ProductSyncService {
                   }
 
                   const resources = data.data?.translatableResourcesByIds?.edges ?? [];
+                  if (!baselinesSeeded && marketId === "") {
+                    await (await import("./translations/stale-translation-sync.server")).seedPrimaryDigestBaselines(
+                      this.shop,
+                      "Product",
+                      resources.map((edge) => ({
+                        resourceId: edge.node.resourceId,
+                        content: edge.node.translatableContent ?? [],
+                      })),
+                    );
+                  }
                   for (const edge of resources) {
                     const node = edge.node;
                     const digestMap = new Map<string, string>();
@@ -661,6 +674,9 @@ export class ProductSyncService {
                   logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
+              // Every batch of the global layer has now been offered to the
+              // seed once; the other locales carry the same primary digests.
+              if (marketId === "") baselinesSeeded = true;
             }
 
             if (allTranslations.length > 0) {
@@ -2183,6 +2199,10 @@ export class ProductSyncService {
     // successful no-op and still clears any pre-existing orphaned rows.
     await db.$transaction([
       db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: productId },
+      }),
+      // The stale-translation gate's primary baseline — polymorphic, no FK.
+      db.primaryDigestBaseline.deleteMany({
         where: { shop: this.shop, resourceId: productId },
       }),
       db.product.deleteMany({

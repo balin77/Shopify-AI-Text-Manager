@@ -70,6 +70,21 @@ describe("saveInstructions — the translation switches", () => {
     expect(settingsWrite()).toEqual({ autoTranslateHandles: true });
   });
 
+  it("writes NO instruction text when the payload carries none — a switch-only save", async () => {
+    // The card's copy of the texts is seeded at mount and never re-synced, so
+    // it now sends only what changed; writing every absent field as NULL here
+    // would erase every instruction the merchant did not touch.
+    await run({ autoTranslateHandles: "true" });
+    expect(aIInstructions.upsert).not.toHaveBeenCalled();
+  });
+
+  it("writes ONLY the instruction texts the payload carries", async () => {
+    await run({ writingStyleInstructions: "Kurz und sachlich.", productTitleFormat: "" });
+    const call = (aIInstructions.upsert.mock.calls[0] as unknown as [any])[0];
+    // A cleared field is sent as "" and stored as NULL; nothing else is named.
+    expect(call.update).toEqual({ writingStyleInstructions: "Kurz und sachlich.", productTitleFormat: null });
+  });
+
   it("touches AISettings not at all when the payload carries no setting", async () => {
     await run({ writingStyleInstructions: "Kurz und sachlich." });
     expect(aISettings.upsert).not.toHaveBeenCalled();

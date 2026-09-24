@@ -269,6 +269,10 @@ export class ContentSyncService {
       db.contentTranslation.deleteMany({
         where: { shop: this.shop, resourceId: collectionId },
       }),
+      // The stale-translation gate's primary baseline — polymorphic, no FK.
+      db.primaryDigestBaseline.deleteMany({
+        where: { shop: this.shop, resourceId: collectionId },
+      }),
       db.collection.deleteMany({
         where: { shop: this.shop, id: collectionId },
       }),
@@ -403,6 +407,10 @@ export class ContentSyncService {
     // resourceId is polymorphic). Atomic + idempotent: see deleteProduct.
     await db.$transaction([
       db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: articleId },
+      }),
+      // The stale-translation gate's primary baseline — polymorphic, no FK.
+      db.primaryDigestBaseline.deleteMany({
         where: { shop: this.shop, resourceId: articleId },
       }),
       db.article.deleteMany({
@@ -897,6 +905,10 @@ export class ContentSyncService {
         if (staleIds.length > 0) {
           await tx.contentTranslation.deleteMany({
             where: { shop: this.shop, resourceType: "Article", resourceId: { in: staleIds } },
+          });
+          // FK-less like the translations (CLAUDE.md, PrimaryDigestBaseline).
+          await tx.primaryDigestBaseline.deleteMany({
+            where: { shop: this.shop, resourceId: { in: staleIds } },
           });
         }
         return { deleted: del.count };

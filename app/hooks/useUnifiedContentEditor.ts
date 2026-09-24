@@ -601,6 +601,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const safeSubmitRef = useRef<(data: Record<string, any>, opts?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void>(() => {});
   const submitAIActionRef = useRef<(data: Record<string, string>, fieldKey: string, onSuccess?: (r: Record<string, unknown>) => void, onError?: (e: string) => void, options?: { suppressErrorBox?: boolean }) => void>(async () => {});
 
+  /**
+   * Bumped once per completed background refresh, for the parts of a page the
+   * field resolver does not reach: the alt texts below (their own effect, keyed
+   * on language/market/item) and the product page's options and metafields
+   * (`useProductSubResources`, keyed on `itemId::locale::market`). None of those
+   * keys moves on a revalidation, so without this the refreshed translations
+   * would be fetched and never shown. Declared above the alt-text hook because
+   * that hook reads it.
+   */
+  const [backgroundRefreshVersion, setBackgroundRefreshVersion] = useState(0);
+  /**
+   * Unsaved work this hook cannot see — the product page's option/metafield
+   * edits and pending image-manager changes live in their own hooks, and
+   * `hasChanges` below knows nothing of them. The page reports it here so the
+   * background refresh waits for those too: a revalidation re-runs the loaders
+   * those cards render from, and re-reading under an unsaved edit is exactly
+   * the automation eating merchant input.
+   */
+  const [externalUnsavedChanges, setExternalUnsavedChanges] = useState(false);
+
   // ============================================================================
   // SUB-HOOK: useEditorAltText
   // ============================================================================
@@ -633,6 +653,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     enabledLanguages,
     editableValues,
     editableValuesRef,
+    backgroundRefreshVersion,
     buildFieldsForSave: (v, l) => buildFieldsForSaveRef.current(v, l),
     safeSubmit: (data, opts) => safeSubmitRef.current(data, opts),
     savedLocaleRef,
@@ -687,14 +708,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  press bumps to a different one and keeps its own, wider semantics. */
   const backgroundRefreshTriggerRef = useRef<number | null>(null);
   /**
-   * Bumped once per completed background refresh, for the parts of a page this
-   * hook does not resolve. The product page's options and metafields are the
-   * case: they are loaded by `useProductSubResources`, whose load effect
-   * short-circuits on `itemId::locale::market` — unchanged by a revalidation —
-   * so the refreshed sub-resource translations would never be rendered.
-   */
-  const [backgroundRefreshVersion, setBackgroundRefreshVersion] = useState(0);
-  /**
    * The runs this SESSION started that have not been seen finished — a union
    * across saves, exactly like the grid's. A merchant saves again while the
    * first run is still working, and the second save may start none at all; a
@@ -712,7 +725,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const ids = readRetranslationTaskIds(response);
     if (ids.length === 0) return;
     setWatchedTaskIds((prev) => [...new Set([...prev, ...ids])]);
-  }, []);
+    // The shop-wide task badge polls on its own clock; a short run (one field
+    // into a couple of languages) can start and finish between two polls and
+    // never show as running at all. Ask now.
+    refreshTaskCount();
+  }, [refreshTaskCount]);
 
   // EVERY response this editor's fetcher sees is offered to the watcher — one
   // call rather than one per action type, because a response carrying no task
@@ -760,6 +777,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // most likely to be asked for.
   const canBackgroundRefresh =
     !hasChanges &&
+    !externalUnsavedChanges &&
     !isLoadingData &&
     fetcher.state === "idle" &&
     revalidator.state === "idle";
@@ -1012,7 +1030,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Captured BEFORE onDataLoaded overwrites it — it is the baseline the
     // merchant's current input is dirty against, and comparing against the one
     // this very call installs would find every field clean.
-    const previousBaseline = isBackgroundRefresh ? { ...baselineValuesRef.current } : null;
+    // Only a pass that re-reads the SAME item/locale/market may carry input
+    // over. A pass caused by a switch landing inside the refresh window is a
+    // different set of fields: the merchant already answered the leave dialog
+    // for what they typed, and merging it here would copy the old locale's (or
+    // item's) text into the new one's fields as an unsaved edit the next save
+    // writes.
+    const switchedDuringRefresh = itemIdChanged || languageChanged || marketChanged;
+    const previousBaseline =
+      isBackgroundRefresh && !switchedDuringRefresh ? { ...baselineValuesRef.current } : null;
     dataLoader.onDataLoaded(newValues);
 
     if (isBackgroundRefresh && previousBaseline) {
@@ -2796,6 +2822,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       /** Bumped once per completed background refresh — for a card this hook
        *  does not resolve and that has to re-read on its own. */
       backgroundRefreshVersion,
+      /** Report unsaved work held OUTSIDE this hook (see `externalUnsavedChanges`). */
+      setExternalUnsavedChanges,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

@@ -75,7 +75,11 @@ import {
   classifyStaleTranslation,
   digestBaselineKey,
   findStaleTranslations,
+  MANAGED_TRANSLATION_KEYS as MANAGED_KEYS_FOR_BASELINE,
+  nextPrimaryDigestBaseline,
+  primaryDigestBaselineTarget,
   partitionStaleTranslations,
+  primaryBaselineMovedKeys,
   type PrimaryContentEntry,
   type StaleTranslation,
   type SyncedTranslation,
@@ -859,6 +863,16 @@ export interface ReconcileParams extends RepairTarget {
    * hold — those are exactly the locales the fill is supposed to look past.
    */
   foreignLocales?: readonly string[];
+  /**
+   * The PRIMARY digest baseline of this resource (`PrimaryDigestBaseline`), for
+   * the gate's second entrance. Omitted ⇒ read here, BEFORE anything is
+   * written; the drift sweep passes the map it already loaded for the whole
+   * type in one query. `{}` means "no row" (no evidence), and is what makes the
+   * first look harmless. Either way this function writes the NEXT baseline
+   * after it has decided — never before, or it would compare against its own
+   * write.
+   */
+  previousPrimaryDigests?: Readonly<Record<string, string>>;
 }
 
 export interface ReconcileResult {
@@ -953,6 +967,428 @@ export async function loadPreviousTranslationDigests(
 }
 
 /**
+ * The PRIMARY digest baseline of one resource — key → the digest
+ * `translatableContent` reported the last time a change-event sync or the drift
+ * sweep looked (`PrimaryDigestBaseline`). The gate's second entrance compares
+ * against it, and unlike `loadPreviousTranslationDigests` it exists for a
+ * resource with no translation at all.
+ *
+ * `{}` = no row = no evidence (rule one). `null` = the read FAILED, which is
+ * different: the caller then neither acts on the second entrance nor writes a
+ * new baseline, because overwriting an unknown baseline would erase the evidence
+ * of a move it never compared against.
+ */
+export async function loadPrimaryDigestBaseline(
+  shop: string,
+  resourceId: string,
+  dbClient?: typeof import("../../db.server").db,
+): Promise<Record<string, string> | null> {
+  try {
+    const db = dbClient ?? (await import("../../db.server")).db;
+    const row = await db.primaryDigestBaseline.findUnique({
+      where: { shop_resourceId: { shop, resourceId } },
+      select: { digests: true },
+    });
+    return primaryDigestMap(row?.digests);
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not read the primary digest baseline", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Overlay the text a SAVE just read back onto the resource's primary baseline
+ * (see the call in `reconcileAfterPrimarySave`). Best-effort, and it never
+ * creates evidence from nothing in the dangerous direction: it records what is
+ * there now, which can only make a later look prove LESS.
+ */
+async function advancePrimaryBaselineAfterSave(
+  shop: string,
+  resourceId: string,
+  resourceType: string,
+  content: Readonly<Record<string, PrimaryContentEntry>>,
+): Promise<void> {
+  const previous = await loadPrimaryDigestBaseline(shop, resourceId);
+  // A failed read: writing over a row we could not see would discard held
+  // keys — leave it, the next look costs at most one repeated proof.
+  if (previous === null) return;
+  const next = nextPrimaryDigestBaseline(previous, content);
+  if (!next) return;
+  try {
+    const { db } = await import("../../db.server");
+    await db.primaryDigestBaseline.upsert({
+      where: { shop_resourceId: { shop, resourceId } },
+      create: { shop, resourceId, resourceType, digests: next },
+      update: { digests: next },
+    });
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not advance the primary baseline after a save", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/** The stored JSON as a key → digest map; anything that is not a string entry
+ *  is dropped (it can only be a digest we did not write). */
+export function primaryDigestMap(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  for (const [key, digest] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof digest === "string" && digest) out[key] = digest;
+  }
+  return out;
+}
+
+/**
+ * Write the NEXT primary baseline — only when it differs from `previous`
+ * (`nextPrimaryDigestBaseline` answers `null` otherwise), so a sync where no
+ * text moved costs no write. Best-effort: a failed write leaves the old
+ * baseline, which at worst proves the same move once more on the next look —
+ * the direction that costs a translation, never one that loses a change.
+ */
+async function persistPrimaryDigestBaseline(
+  shop: string,
+  resourceId: string,
+  resourceType: string,
+  baseline: BaselineState,
+  primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
+): Promise<boolean> {
+  if (baseline.original === null) return false;
+  // The target is built from the ORIGINAL (so a held key reverts to the digest
+  // it had before a claim advanced it) and compared with what the row holds
+  // NOW — only a difference costs a write.
+  const target = primaryDigestBaselineTarget(baseline.original, primaryContent, baseline.held);
+  if (!target || sameDigestMap(target, baseline.stored ?? {})) return false;
+  try {
+    const db = baseline.db ?? (await import("../../db.server")).db;
+    await db.primaryDigestBaseline.upsert({
+      where: { shop_resourceId: { shop, resourceId } },
+      create: { shop, resourceId, resourceType, digests: target },
+      // `resourceType` is set on create only: the writers do not all spell it
+      // the same way, and a baseline row is found by its resource id.
+      update: { digests: target },
+    });
+    return true;
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not write the primary digest baseline", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+function sameDigestMap(a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+/**
+ * The compare-and-swap that makes a second-entrance move ONE run's work: the
+ * row is advanced to the digests this reconciliation saw ONLY if it still holds
+ * exactly what this reconciliation read. `false` = someone else got there
+ * first (or the write failed) — the caller then drops its fill, because the
+ * winner's run is translating the same keys. A row must exist for the entrance
+ * to have fired at all (rule one), so `count: 0` is never "no row yet".
+ */
+async function claimPrimaryBaseline(
+  shop: string,
+  resourceId: string,
+  primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
+  baseline: BaselineState,
+): Promise<boolean> {
+  if (baseline.original === null) return false;
+  const claimed = primaryDigestBaselineTarget(baseline.original, primaryContent);
+  if (!claimed) return false;
+  try {
+    const db = baseline.db ?? (await import("../../db.server")).db;
+    const { count } = await db.primaryDigestBaseline.updateMany({
+      where: { shop, resourceId, digests: { equals: baseline.original } },
+      data: { digests: claimed },
+    });
+    if (count !== 1) {
+      // Lost: the winner owns this move and its baseline write.
+      baseline.skipWrite = true;
+      return false;
+    }
+    baseline.stored = claimed;
+    return true;
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not claim the primary baseline — not filling", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // Nothing was claimed and nothing is proven lost: keep the evidence.
+    baseline.skipWrite = true;
+    return false;
+  }
+}
+
+/**
+ * Which of these locales hold a VALUE for any key on Shopify right now, as
+ * `${locale}${IN_FLIGHT_SEP}${key}` — one query, one alias per locale. `null`
+ * when the answer is not conclusive (a thrown call, `errors`, a missing
+ * resource): the caller must then act on nothing, never on "empty".
+ */
+async function translatedOnShopify(
+  gateway: ShopifyApiGateway,
+  resourceId: string,
+  locales: readonly string[],
+): Promise<Set<string> | null> {
+  if (locales.length === 0) return new Set();
+  try {
+    const variableDefs = locales.map((_, i) => `$loc${i}: String!`).join(", ");
+    const selections = locales.map((_, i) => `l${i}: translations(locale: $loc${i}) { key value }`).join("\n");
+    const variables: Record<string, unknown> = { id: resourceId };
+    locales.forEach((locale, i) => {
+      variables[`loc${i}`] = locale;
+    });
+    const response = await gateway.graphql(
+      `#graphql
+        query fillTargetsPresent($id: ID!, ${variableDefs}) {
+          translatableResource(resourceId: $id) {
+            ${selections}
+          }
+        }`,
+      { variables },
+    );
+    const payload = (await response.json()) as {
+      data?: { translatableResource?: Record<string, Array<{ key: string; value: string | null }> | null> | null };
+      errors?: Array<{ message?: string }>;
+    };
+    if (payload.errors?.length) throw new Error(payload.errors[0]?.message || "GraphQL error");
+    const resource = payload.data?.translatableResource;
+    if (!resource) return null;
+    const present = new Set<string>();
+    for (let i = 0; i < locales.length; i++) {
+      const rows = resource[`l${i}`];
+      // A null list is not "nothing translated" — it is no answer.
+      if (!Array.isArray(rows)) return null;
+      for (const row of rows) {
+        if (row.value && row.value.trim()) present.add(`${locales[i]}${IN_FLIGHT_SEP}${row.key}`);
+      }
+    }
+    return present;
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not confirm the fill targets are empty — not filling", {
+      context: "StaleTranslations",
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * SEED baselines from a full sync — CREATE-ONLY, never an update.
+ *
+ * A full sync does not reconcile, so it must never ADVANCE a baseline: that
+ * would compare nothing and swallow a move the next change event could still
+ * have proven (the same reason `syncAll*` does not opt into the reconciliation).
+ * What it may do is give a resource its FIRST baseline, which is pure gain: a
+ * product whose first change event would otherwise only establish one — the
+ * merchant's first admin edit after the deploy doing nothing — is provable from
+ * that first edit on. `skipDuplicates` is the create-only rule, enforced by the
+ * unique key rather than by a read.
+ *
+ * `translatableContent` only lists keys that HAVE a primary value, so a digest
+ * here is a filled field. Best-effort: a failed seed is a later first baseline.
+ */
+export async function seedPrimaryDigestBaselines(
+  shop: string,
+  resourceType: string,
+  resources: ReadonlyArray<{ resourceId: string; content: ReadonlyArray<{ key: string; digest?: string | null }> }>,
+): Promise<number> {
+  const data = resources.flatMap((resource) => {
+    const digests: Record<string, string> = {};
+    for (const entry of resource.content) {
+      if (MANAGED_KEYS_FOR_BASELINE.has(entry.key) && entry.digest) digests[entry.key] = entry.digest;
+    }
+    return Object.keys(digests).length > 0
+      ? [{ shop, resourceId: resource.resourceId, resourceType, digests }]
+      : [];
+  });
+  if (data.length === 0) return 0;
+  try {
+    const { db } = await import("../../db.server");
+    const { count } = await db.primaryDigestBaseline.createMany({ data, skipDuplicates: true });
+    return count;
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not seed primary digest baselines", {
+      context: "StaleTranslations",
+      shop,
+      resourceType,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
+}
+
+/**
+ * Resources per shop and UTC day whose auto-translation may rest on the PRIMARY
+ * baseline alone — the brake on the gate's second entrance (see the call site).
+ *
+ * Sized so no realistic day of editing reaches it (a merchant rewriting a
+ * hundred items in the Shopify admin in one day is already an import), while an
+ * import rewriting a 5000-product catalogue is stopped at 2% of it. Resources,
+ * not entries: one resource is one detached run with one AI request per locale,
+ * which is the unit the merchant's key pays for.
+ */
+export const AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP = 100;
+
+function utcDay(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+/**
+ * Take one unit of today's budget. ATOMIC — a conditional increment, so a
+ * burst of webhooks from one import cannot all read "99 used" and pass.
+ * FAILS CLOSED: a database error answers "no", because refusing costs a
+ * deferred translation and granting blindly is the expensive direction.
+ */
+async function reserveFirstFillBudget(
+  shop: string,
+  resourceId: string,
+  dbClient: typeof import("../../db.server").db | null,
+): Promise<"granted" | "spent" | "error"> {
+  try {
+    const db = dbClient ?? (await import("../../db.server")).db;
+    const day = utcDay();
+    // INSERT … ON CONFLICT DO NOTHING: the first webhooks of a day arrive
+    // together, and an upsert racing its own create would throw a unique
+    // violation — which this function answers with a refusal.
+    await db.autoTranslateFillBudget.createMany({ data: [{ shop, day }], skipDuplicates: true });
+    const { count } = await db.autoTranslateFillBudget.updateMany({
+      where: { shop, day, used: { lt: AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP } },
+      data: { used: { increment: 1 } },
+    });
+    return count === 1 ? "granted" : "spent";
+  } catch (error: unknown) {
+    // Fails CLOSED — but it is not the daily limit, and must not be reported
+    // as one: telling the merchant "100 reached" over a DB blink is a false
+    // statement about their shop. The keys are held either way.
+    logger.warn("[StaleTranslations] Could not reserve the daily first-translation budget — refusing", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "error";
+  }
+}
+
+/**
+ * Is today's budget already SPENT? A cheap read asked before anything costs a
+ * Shopify call: during exactly the mass edit the brake exists for, every
+ * further webhook would otherwise still pay the existence query, the claim and
+ * its revert before learning it is refused — burning the shop's API bucket on
+ * work that cannot happen. `false` on any doubt (no row, a failed read): the
+ * reservation afterwards is the authority and fails closed on its own.
+ */
+async function firstFillBudgetSpent(
+  shop: string,
+  dbClient: typeof import("../../db.server").db | null,
+): Promise<boolean> {
+  try {
+    const db = dbClient ?? (await import("../../db.server")).db;
+    const row = await db.autoTranslateFillBudget.findUnique({
+      where: { shop_day: { shop, day: utcDay() } },
+      select: { used: true },
+    });
+    return (row?.used ?? 0) >= AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Make a refusal VISIBLE. One Task row per shop and day (a deterministic id, so
+ * a burst of refusals updates it instead of flooding the Tasks tab), whose error
+ * is a CODE (`auto_translate_daily_limit:<refused>:<cap>`) that `taskErrorText`
+ * renders in the merchant's language — the refusal happens in a webhook with no
+ * locale. A brake a merchant cannot see is work swallowed; this one says how
+ * much, why, and that it is deferred.
+ */
+async function reportFirstFillRefused(
+  shop: string,
+  resourceId: string,
+  dbClient: typeof import("../../db.server").db | null,
+): Promise<void> {
+  logger.warn("[StaleTranslations] Daily first-translation budget spent — this resource is deferred", {
+    context: "StaleTranslations",
+    shop,
+    resourceId,
+    cap: AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP,
+  });
+  try {
+    const db = dbClient ?? (await import("../../db.server")).db;
+    const { getTaskExpirationDate } = await import("../../config/constants");
+    const day = utcDay();
+    // RESOURCES, not events: a held product is refused again on every later
+    // webhook that day (a price edit is enough) and a held page on every
+    // sweep, so counting calls would overstate what is waiting. `push` is an
+    // atomic array append; a duplicate from a race is removed by the Set.
+    //
+    // ONE statement, and the array never travels: reading it back to check
+    // membership made a 5000-product import cost O(N²) bytes on one hot row.
+    // The append is conditional on the id being absent, and only the COUNT is
+    // returned. COALESCE because the column is nullable on a table created by
+    // the first cut of this migration.
+    const rows = await db.$queryRaw<Array<{ refused: number }>>`
+      UPDATE "AutoTranslateFillBudget"
+      SET "refusedIds" = CASE
+        WHEN ${resourceId} = ANY(COALESCE("refusedIds", ARRAY[]::TEXT[])) THEN "refusedIds"
+        ELSE array_append(COALESCE("refusedIds", ARRAY[]::TEXT[]), ${resourceId})
+      END
+      WHERE "shop" = ${shop} AND "day" = ${day}
+      RETURNING cardinality("refusedIds")::int AS "refused"`;
+    const refused = Math.max(1, Number(rows[0]?.refused ?? 1));
+    const error = `auto_translate_daily_limit:${refused}:${AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP}`;
+    const now = new Date();
+    await db.task.upsert({
+      where: { id: firstFillLimitTaskId(shop, day) },
+      create: {
+        id: firstFillLimitTaskId(shop, day),
+        shop,
+        type: "translation",
+        status: "completed_with_errors",
+        fieldType: "autoTranslateExternalChange",
+        progress: 100,
+        total: refused,
+        processed: 0,
+        error,
+        completedAt: now,
+        expiresAt: getTaskExpirationDate(),
+      },
+      update: { error, total: refused, completedAt: now },
+    });
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not record the first-translation refusal", {
+      context: "StaleTranslations",
+      shop,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/** The one Task row per shop and day that reports refused first translations. */
+export function firstFillLimitTaskId(shop: string, day: string = utcDay()): string {
+  return `autofill-limit-${day}-${shop}`;
+}
+
+/**
  * Detect and repair stale foreign translations for ONE resource.
  *
  * BEST-EFFORT by contract: the sync it hangs off has already written the
@@ -961,22 +1397,106 @@ export async function loadPreviousTranslationDigests(
  * webhook into a retry loop.
  */
 export async function reconcileStaleTranslations(params: ReconcileParams): Promise<ReconcileResult> {
-  const { shop, resourceId, resourceType, translations, primaryContent, previousDigests } = params;
+  const { shop, resourceId, primaryContent } = params;
+  // The PRIMARY baseline is read FIRST — before this function decides anything
+  // and before it writes the next one — the same order that
+  // `loadPreviousTranslationDigests` exists for. Only a content surface keeps
+  // one: a value surface (`translateAs`) names keys the baseline never records.
+  //
+  // The client is resolved ONCE, before the detached run is spawned, and used
+  // for the read, the claim and the write: a dynamic import racing that run's
+  // own imports is not a place to find out which client answered.
+  const baselineDb = params.translateAs
+    ? null
+    : await import("../../db.server").then((module) => module.db).catch(() => null);
+  const primaryBaseline: Record<string, string> | null = params.translateAs
+    ? null
+    : (params.previousPrimaryDigests ??
+      (await loadPrimaryDigestBaseline(shop, resourceId, baselineDb ?? undefined)));
+  const baseline: BaselineState = {
+    original: primaryBaseline,
+    stored: primaryBaseline,
+    held: new Set<string>(),
+    skipWrite: false,
+    db: baselineDb,
+  };
 
+  let outcome: ReconcileResult;
   try {
+    outcome = await reconcileDetected(params, baseline);
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Reconciliation failed — stale rows kept", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // The baseline is NOT advanced on this path (beyond a claim that already
+    // won, see `claimPrimaryBaseline`): whatever failed (the policy read, the
+    // repair itself) may have been the only chance to act on this move, and
+    // keeping the old digest keeps the evidence for the next look.
+    return NOTHING;
+  }
+
+  // AFTER the decision, on every path that reached one — including "nothing
+  // stale" and "the switch is off": the baseline records what we SAW, and a
+  // change seen while the switch was off must not be replayed as fresh
+  // evidence the day it is switched on (a price edit would then translate a
+  // text edited months ago). Skipped where the decision said so (the
+  // merchant's own save is in flight; another run claimed this move), and a
+  // failed read (`null`) writes nothing, for the same reason as the catch.
+  if (baseline.original !== null && !baseline.skipWrite) {
+    await persistPrimaryDigestBaseline(params.shop, params.resourceId, params.resourceType, baseline, primaryContent);
+  }
+  return outcome;
+}
+
+/**
+ * What one reconciliation knows about its resource's PRIMARY baseline:
+ * `original` as read before anything happened, `stored` as the row holds it
+ * NOW (it moves when `claimPrimaryBaseline` wins), the keys the brake HELD,
+ * and whether the final write must stand down.
+ */
+interface BaselineState {
+  original: Record<string, string> | null;
+  stored: Record<string, string> | null;
+  held: Set<string>;
+  skipWrite: boolean;
+  db: typeof import("../../db.server").db | null;
+}
+
+async function reconcileDetected(params: ReconcileParams, baseline: BaselineState): Promise<ReconcileResult> {
+  const { shop, resourceId, resourceType, translations, primaryContent, previousDigests } = params;
+  const primaryBaseline = baseline.original;
+  const held = baseline.held;
+  {
     // Same guard the sync's own translation rewrite uses: right after this app
     // wrote translations for the resource, Shopify's read-back is not reliably
     // consistent yet, and acting on it could delete what the merchant just
     // saved. A genuinely stale row is caught by the next change event.
-    if (isTranslationRecentlySaved(resourceId)) return NOTHING;
+    if (isTranslationRecentlySaved(resourceId)) {
+      // …and the primary baseline stays where it was. A save of ours for this
+      // resource is in flight; advancing the baseline here would swallow an
+      // admin edit made in the same window for good, while leaving it costs at
+      // most one look that finds the locales already filled by that save.
+      baseline.skipWrite = true;
+      return NOTHING;
+    }
 
     // Detection runs FIRST and without the fill, because it is pure and the
     // policy read is a database round trip: a resource where nothing moved —
-    // which is nearly every webhook — must not pay for one. The fill can only
-    // ADD locales to keys this pass already proved, so an empty answer here is
-    // an empty answer with it too.
+    // which is nearly every webhook, a price edit included (a price moves no
+    // text digest) — must not pay for one. The fill can only ADD locales to
+    // keys one of the two entrances proved, so if neither found anything there
+    // is nothing to do with it either.
     let stale = findStaleTranslations(translations, primaryContent, previousDigests);
-    if (stale.length === 0) return NOTHING;
+    // `handle` is left out: the second entrance only FILLS, and a handle is
+    // refreshed, never filled — so a handle-only move could never do anything
+    // and must not cost a policy read.
+    const movedByBaseline = primaryBaseline
+      ? primaryBaselineMovedKeys(primaryContent, primaryBaseline).filter((key) => key !== "handle")
+      : [];
+    if (stale.length === 0 && movedByBaseline.length === 0) return NOTHING;
 
     const policy = await loadTranslationChangePolicy(shop);
     if (!policy.purgeOnPrimaryChange && !policy.autoTranslateExternalChanges) return NOTHING;
@@ -984,12 +1504,84 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
     // Now that the switch is known: translate the proven keys into the locales
     // that hold nothing yet as well. Same input, same gate — the second call is
     // pure and in-memory, and re-running it is what keeps the cheap exit above.
+    // The PRIMARY baseline rides along here and only here: all its entrance can
+    // produce is a fill, and a fill only exists under auto-translate.
     if (policy.autoTranslateExternalChanges && params.foreignLocales?.length) {
       stale = findStaleTranslations(translations, primaryContent, previousDigests, {
         fillLocales: params.foreignLocales,
         anyKey: !!params.translateAs,
+        ...(primaryBaseline ? { previousPrimaryDigests: primaryBaseline } : {}),
       });
     }
+
+    // THE BRAKE. The second entrance can reach resources that never had a
+    // translation, so ONE external mass edit (an import rewriting every title)
+    // could translate a whole catalogue into every language on the merchant's
+    // key — before it, that was bounded by what was already translated. A
+    // resource whose repair rests on that entrance spends one unit of a per-shop
+    // daily budget; past it, those entries are dropped, their keys' baseline is
+    // HELD (so the move is still provable next time) and the refusal is written
+    // to a Task row the merchant can read. Everything the first entrance found
+    // is untouched by it: that work existed before this entrance did.
+    //
+    // Two checks run BEFORE the budget, so it is never spent on nothing:
+    //
+    //  - SHOPIFY is asked whether those locales really hold nothing. The rows
+    //    the caller handed in are not proof of absence: a sync whose read of
+    //    one locale failed (a throttle, a GraphQL error) logs it and carries on
+    //    with that locale simply MISSING, and filling it would overwrite a
+    //    translation that exists — a hand-written one included. A read that
+    //    fails here drops the entries and HOLDS their keys (no evidence either
+    //    way ⇒ no action, and the move stays provable).
+    //  - The move is CLAIMED on the baseline row with a compare-and-swap. One
+    //    admin save fires several `products/update` webhooks within a second;
+    //    each reads the old baseline, and without the claim each would prove
+    //    the same move, spend a budget unit and queue a duplicate run that
+    //    translates every locale twice. The loser drops its fill and leaves the
+    //    baseline to the winner.
+    if (stale.some((entry) => entry.baselineFill) && (await firstFillBudgetSpent(shop, baseline.db))) {
+      // Spent before we even asked: refuse, report, and pay no Shopify call.
+      // The row is left exactly as it is rather than written with HELD keys:
+      // this event never claimed anything, and a write here (holding the fill
+      // keys, advancing the rest) could land over another webhook's won claim
+      // and revert it — that one then being proven again. Untouched, the move
+      // stays provable all the same.
+      baseline.skipWrite = true;
+      stale = stale.filter((entry) => !entry.baselineFill);
+      await reportFirstFillRefused(shop, resourceId, baseline.db);
+    }
+    if (stale.some((entry) => entry.baselineFill)) {
+      const fills = stale.filter((entry) => entry.baselineFill);
+      const present = await translatedOnShopify(
+        gatewayFor(params.client, shop),
+        resourceId,
+        [...new Set(fills.map((entry) => entry.locale))],
+      );
+      if (present === null) {
+        for (const entry of fills) held.add(entry.key);
+        stale = stale.filter((entry) => !entry.baselineFill);
+      } else {
+        stale = stale.filter(
+          (entry) => !entry.baselineFill || !present.has(`${entry.locale}${IN_FLIGHT_SEP}${entry.key}`),
+        );
+      }
+    }
+    if (stale.some((entry) => entry.baselineFill)) {
+      const won = await claimPrimaryBaseline(shop, resourceId, primaryContent, baseline);
+      if (!won) {
+        stale = stale.filter((entry) => !entry.baselineFill);
+      } else {
+        const granted = await reserveFirstFillBudget(shop, resourceId, baseline.db);
+        if (granted !== "granted") {
+          // The claim already advanced the row; the final write puts the held
+          // keys back to their ORIGINAL digests.
+          for (const entry of stale) if (entry.baselineFill) held.add(entry.key);
+          stale = stale.filter((entry) => !entry.baselineFill);
+          if (granted === "spent") await reportFirstFillRefused(shop, resourceId, baseline.db);
+        }
+      }
+    }
+    if (stale.length === 0) return NOTHING;
 
     logger.info("[StaleTranslations] Primary text changed outside the editor — reconciling", {
       context: "StaleTranslations",
@@ -1022,14 +1614,6 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
           .map((row) => marketOverrideKey(resourceId, row.marketId ?? "", row.locale, row.key)),
       ),
     });
-  } catch (error: unknown) {
-    logger.warn("[StaleTranslations] Reconciliation failed — stale rows kept", {
-      context: "StaleTranslations",
-      shop,
-      resourceId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return NOTHING;
   }
 }
 
@@ -1223,6 +1807,25 @@ async function foreignTranslationTriples(
   }
   return triples;
 }
+
+/** Pauses before re-reading a primary value that does not yet show what the
+ *  caller wrote (see `reconcileAfterPrimarySave`) — about four seconds in all. */
+let READ_BACK_RETRY_DELAYS_MS: readonly number[] = [800, 1500, 2000];
+
+/** Test seam: the pauses above, so a test of the lag case does not sleep. */
+export function setReadBackRetryDelaysForTests(delays: readonly number[]): void {
+  READ_BACK_RETRY_DELAYS_MS = delays;
+}
+
+/** Does the read-back show what the caller wrote? Surrounding whitespace is
+ *  not a difference: a write path may trim (the menu save does), and reading a
+ *  trimmed echo as "not caught up yet" would decline a translation that is
+ *  exactly right. */
+function sameWrittenValue(readBack: string, written: string): boolean {
+  return readBack.trim() === written.trim();
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * The CURRENT primary value and digest of every (resource, key) the caller
@@ -1426,6 +2029,32 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // the one of the text that is there NOW, and the caller's own write is what
     // invalidated the last digest it saw.
     const primaryByResource = await currentPrimaryContent(gateway, resourceIds);
+    // The read-back can lag the write the caller just made — Shopify indexes
+    // translatable content asynchronously for some surfaces, and an alt text
+    // that was EMPTY before is the sharp case: an empty value has no
+    // `translatableContent` entry at all, so a lagging read-back says "cleared"
+    // and the new alt was classified as a removal of nothing — no translation,
+    // no trace. Where the caller named what it wrote, a mismatch is re-read a
+    // few times, briefly, before it is treated as the decline below. Bounded,
+    // because this sits behind a primary write that has already succeeded.
+    if (expected.size > 0) {
+      for (const delay of READ_BACK_RETRY_DELAYS_MS) {
+        // Only a resource that WAS read and disagrees. One whose read failed
+        // outright is absent from the map — re-asking it would put every
+        // gateway retry (seconds each under throttling) inline in the save,
+        // for an outcome that stays "skipped" either way.
+        const lagging = resourceIds.filter((id) => primaryByResource.has(id) &&
+          [...(wantedKeys.get(id) ?? [])].some((key) => {
+            const want = expected.get(`${id}${PAIR_SEP}${key}`);
+            return want !== undefined && !sameWrittenValue(primaryByResource.get(id)?.[key]?.value ?? "", want);
+          }),
+        );
+        if (lagging.length === 0) break;
+        await sleep(delay);
+        const again = await currentPrimaryContent(gateway, lagging);
+        for (const [id, content] of again) primaryByResource.set(id, content);
+      }
+    }
 
     const untouchable = new Set(
       (params.alreadyWritten ?? []).map((item) =>
@@ -1474,7 +2103,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         // whether the stale translation goes. Skipping it outright would leave
         // a foreign value live on a surface nothing else ever revisits.
         const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
-        const staleReadBack = expectedValue !== undefined && expectedValue !== primaryValue;
+        const staleReadBack = expectedValue !== undefined && !sameWrittenValue(primaryValue, expectedValue);
         // Counted per (resource, KEY), never per locale: this number is read
         // when diagnosing a theme write that Shopify had not re-indexed yet,
         // and multiplying it by the locale count says nothing about how many
@@ -1587,6 +2216,20 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
           stale.push(candidate);
         }
       }
+    }
+
+    // This save IS the change event, so it advances the resource's PRIMARY
+    // baseline itself — from the text it just read back. Without it the row
+    // kept the digest from before the save (the webhook of that same save
+    // bails on our claim and writes nothing), so any change event after the
+    // 30-second claim — a price edit, a delayed webhook, the nightly sweep —
+    // proved the SAME move again, found locales this run had not registered
+    // yet, won the claim and queued a second run: those locales translated and
+    // registered twice. A content surface only; the value surfaces' keys are
+    // not the resource's managed fields.
+    if (!params.translateAs) {
+      const ownContent = primaryByResource.get(resourceId);
+      if (ownContent) await advancePrimaryBaselineAfterSave(shop, resourceId, resourceType, ownContent);
     }
 
     if (unreadableResources > 0 || declinedByReadBack > 0) {
@@ -1707,8 +2350,10 @@ async function withHandleResolver<T extends RepairTarget>(
  * because Shopify serves a redirect in preference to a page — the resource
  * unreachable at its own address. The first is the recoverable half, and it is
  * the residual every redirect call site in this app already carries: a redirect
- * never fails the write it accompanies, so a failure here is a log line and
- * nothing else.
+ * never fails the write it accompanies. It is REPORTED, though: this runs
+ * unattended, the mirror has already advanced to the new slug (so no later run
+ * will ever rebuild this redirect), and a log line is invisible to the
+ * merchant — the answer is `false`, which the run counts into its Task row.
  *
  * `nextHandle` is what Shopify STORED, not what was submitted.
  */
@@ -1717,10 +2362,10 @@ async function createHandleRedirect(
   target: RepairTarget,
   context: TranslatedHandleContext | undefined,
   nextHandle: string,
-): Promise<void> {
+): Promise<boolean> {
   // Reserved before the AI ran; an entry without a context never reached the
   // write. Belt and braces, because the alternative is a moved URL with no row.
-  if (!context) return;
+  if (!context) return false;
   try {
     const { applyTranslatedHandleRedirect } = await import("../seo/handle-redirect.server");
     const result = await applyTranslatedHandleRedirect(gateway as never, target.shop, {
@@ -1738,12 +2383,11 @@ async function createHandleRedirect(
       blogHandle: context.blogHandle,
       blogHandleTranslatedInLocale: context.blogHandleTranslatedInLocale,
     });
-    if (result.created) return;
+    if (result.created) return true;
     // "unchanged" is the AI answering with the slug that was already there —
     // routine, and the reason nothing had to be written. Anything else means
-    // the old URL is NOT covered, which is worth a line even though it cannot
-    // be acted on from here.
-    if (result.skippedReason === "unchanged") return;
+    // the old URL is NOT covered.
+    if (result.skippedReason === "unchanged") return true;
     logger.warn("[StaleTranslations] Handle re-translated but the old URL was not redirected", {
       context: "StaleTranslations",
       shop: target.shop,
@@ -1751,8 +2395,63 @@ async function createHandleRedirect(
       reason: result.skippedReason,
       noteCode: result.noteCode,
     });
+    return false;
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Handle redirect failed", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Record that a `handle` this repair deliberately LEFT ALONE was looked at
+ * against the CURRENT primary slug — by advancing its mirror digest, and
+ * nothing else (the value stays exactly as it is, on Shopify and here).
+ *
+ * Without this a kept handle is a loop. The digest gate proves staleness by
+ * comparing that mirror digest against the primary one; keeping writes
+ * nothing, so the digest stays old, Shopify's row stays `outdated`, and the
+ * same resource is proven stale again at the next look — every night, on the
+ * drift sweep, taking one of its per-type handover slots each time and (for an
+ * answer we discard) one AI request on the merchant's key. Removal ended that
+ * loop before the opt-in existed; the opt-in removed the removal.
+ *
+ * Only for DETERMINISTIC keeps — a redirect that cannot be written, an answer
+ * the slug rules throw away. A transient one (a provider error, an unechoed
+ * write) stays unacknowledged, so the next change event tries again. The next
+ * real move of the primary handle is still provable: it changes the digest
+ * again. GLOBAL layer only, like every write this repair makes.
+ */
+async function acknowledgeKeptHandles(
+  target: RepairTarget,
+  entries: readonly StaleTranslation[],
+): Promise<void> {
+  if (target.translateAs) return;
+  const handles = entries.filter((entry) => entry.key === "handle" && entry.digest);
+  if (handles.length === 0) return;
+  try {
+    const { db } = await import("../../db.server");
+    for (const entry of handles) {
+      await db.contentTranslation.updateMany({
+        where: {
+          shop: target.shop,
+          resourceId: refOf(target, entry).resourceId,
+          locale: entry.locale,
+          key: "handle",
+          marketId: "",
+          NOT: { digest: entry.digest },
+        },
+        data: { digest: entry.digest },
+      });
+    }
+  } catch (error: unknown) {
+    // Bookkeeping after a decision that already stands: the cost of failing
+    // here is one more look at the next sweep, never a wrong write.
+    logger.warn("[StaleTranslations] Could not record kept handles", {
       context: "StaleTranslations",
       shop: target.shop,
       resourceId: target.resourceId,
@@ -1882,6 +2581,9 @@ async function repairStaleTranslations(
   // own slug, which the automation was never asked to remove.
   const { retranslate, declined, keptHandles, handleContexts } =
     await reserveHandleRedirects(target, partitioned.retranslate, partitioned.declined);
+  // A refused redirect is a property of the resource, not of this moment —
+  // recorded, or the same refusal is re-proven at every later look.
+  await acknowledgeKeptHandles(target, keptHandles);
 
   // May a stale translation be REMOVED here? Not the same question as the
   // merchant's purge switch, which auto-translate forces off (the two are
@@ -2346,6 +3048,13 @@ async function runRetranslation(
     if (isHandleEntry(entry)) keptHandles.push(entry);
     else failed.push(entry);
   };
+  /** Kept handles whose answer the slug rules threw away — a DECISION about
+   *  this primary slug, recorded at the end of the run (`acknowledgeKeptHandles`)
+   *  so it is not paid for again at every later look. */
+  const discardedHandles: StaleTranslation[] = [];
+  /** Handles written whose OLD foreign URL got no redirect — reported on the
+   *  Task row, because nothing will ever rebuild it (see createHandleRedirect). */
+  let redirectsMissing = 0;
 
   // Only the content-field path needs the key→field map; the generic value path
   // has no field semantics to look up (see RepairTarget.translateAs).
@@ -2691,6 +3400,7 @@ async function runRetranslation(
               handleContexts.get(tripleKey(refOf(params, entry).resourceId, locale, entry.key))
                 ?.primaryHandle ?? "";
             if (primaryHandle && value === sanitizeSlug(primaryHandle)) value = "";
+            if (!value && entry.digest) discardedHandles.push(entry);
           }
           if (!value || !value.trim() || !entry.digest) {
             undelivered(entry);
@@ -2766,12 +3476,13 @@ async function runRetranslation(
               // write path silently skips a handle translation equal to the
               // primary handle, so a submitted value can describe an edit that
               // never happened (CLAUDE.md).
-              await createHandleRedirect(
+              const covered = await createHandleRedirect(
                 gateway,
                 params,
                 handleContexts.get(tripleKey(ref.resourceId, locale, input.key)),
                 stored,
               );
+              if (!covered) redirectsMissing++;
             }
             try {
               await mirror.write(
@@ -2845,12 +3556,22 @@ async function runRetranslation(
       failed.length === 0 &&
       keptHandles.length === 0 &&
       supersededByMerchant();
-    const succeeded = registered.length > 0 || stoodDown;
+    // A run whose only undelivered entries are handles the slug rules threw
+    // away ON PURPOSE did what it should: leaving the working old URL alone is
+    // the designed outcome, and a red task for it is a defect report about
+    // nothing. A handle kept for a TRANSIENT reason still counts as a failure.
+    const onlyDeliberateDiscards =
+      registered.length === 0 &&
+      failed.length === 0 &&
+      keptHandles.length > 0 &&
+      keptHandles.every((entry) => discardedHandles.includes(entry));
+    await acknowledgeKeptHandles(params, discardedHandles);
+    const succeeded = registered.length > 0 || stoodDown || onlyDeliberateDiscards;
     // A run that registered on Shopify but could not write some of those rows
     // locally is NOT a clean success: every editor in this app reads the
     // mirror, so those translations are live and invisible.
     const status = succeeded
-      ? notMirrored.length > 0
+      ? notMirrored.length > 0 || redirectsMissing > 0
         ? "completed_with_errors"
         : "completed"
       : "failed";
@@ -2861,12 +3582,16 @@ async function runRetranslation(
         progress: 100,
         processed: entries.length,
         completedAt: new Date(),
-        ...(registered.length === 0 && !stoodDown
+        ...(registered.length === 0 && !stoodDown && !onlyDeliberateDiscards
           ? // A CODE, like its sibling below: this runs detached from the
             // request that started it and has no merchant locale, so an
             // English sentence stored here reaches a German merchant in
             // English. `taskErrorText` renders it.
             { error: "translations_none_usable" }
+          : redirectsMissing > 0
+            ? // Before the mirror code: a dead link on the storefront outranks
+              // a field this app shows empty until the next reload.
+              { error: `handle_redirects_missing:${redirectsMissing}` }
           : notMirrored.length > 0
             ? // A machine CODE, not a sentence: this runs detached from the
               // request that started it and has no merchant locale, and the
@@ -2881,6 +3606,7 @@ async function runRetranslation(
           // of a purge — a handle translation deliberately left standing.
           ...(keptHandles.length > 0 ? { handlesKept: keptHandles.length } : {}),
           ...(notMirrored.length > 0 ? { notMirrored: notMirrored.length } : {}),
+          ...(redirectsMissing > 0 ? { redirectsMissing } : {}),
         }),
       },
     });

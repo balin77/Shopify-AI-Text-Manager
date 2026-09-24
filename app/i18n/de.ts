@@ -317,6 +317,7 @@ export const de = {
     // Eine Uebersetzung, die die App selbst angestossen hat (heute: der aus der
     // Kategorie abgeleitete Produkttyp). Warnung statt Fehler — das Speichern
     // hat geklappt, nur der Zusatzschritt nicht.
+    backgroundRetranslationRunning: "Übersetzungen werden im Hintergrund aktualisiert — die Felder laden sich neu, sobald sie fertig sind.",
     autoTranslateFailed: "{field} konnte nicht automatisch übersetzt werden. Hol es mit dem Übersetzen-Button am Feld nach.",
     noSourceText: "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
     saveChanges: "Speichern",
@@ -662,6 +663,7 @@ export const de = {
       chooseThis: "diese Kategorie wählen",
       noChildren: "Diese Kategorie hat keine Unterkategorien.",
       levelTruncated: "Diese Ebene hat mehr Unterkategorien, als geladen wurden — nutze die Suche oben.",
+      remove: "Kategorie entfernen",
     },
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {
@@ -675,6 +677,7 @@ export const de = {
       truncated: "Dieses Produkt ist in mehr Kollektionen, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kollektionen zu sehen.",
       none: "Dieser Shop hat noch keine Kollektionen.",
+      noneSelected: "Keine",
     },
     // Das Theme-Vorlagen-Feld. Eine Auswahlliste der Vorlagendateien des
     // veroeffentlichten Themes — ein selbst getippter Suffix rendert die
@@ -793,7 +796,10 @@ export const de = {
       activateNotConfirmed: "Shopify hat den Standort nicht bestätigt, er wurde deshalb nicht aktiviert.",
       activateFailed: "Der Standort konnte nicht aktiviert werden.",
       stockNoBaseline: "Für einen Lagerort gab es keine aktuelle Vergleichsmenge, deshalb wurde er nicht geschrieben. Lade neu und versuch es nochmal.",
-      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
+      // Die Shopify-Version, mit der die App spricht, kennt kein Feld für den
+      // Abgleich. Ohne den wird nicht geschrieben — siehe commerce-write.server.ts.
+      stockCompareUnsupported: "Der Bestand wurde nicht geschrieben: die Shopify-API-Version dieser App bietet keinen Abgleich mit der Menge, die du gesehen hast — und ohne den würde ein Schreibvorgang überschreiben, was sich zwischenzeitlich geändert hat. Die Einzelheiten stehen im Server-Log.",
+      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht, ein Ländercode oder eine Zolltarifnummer (6 bis 13 Ziffern) war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
       itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
       itemFieldsFailed: "Die Artikelangaben konnten nicht gespeichert werden.",
       stockChangedMeanwhile: "Der Bestand hat sich während deiner Bearbeitung geändert, deshalb wurde nichts geschrieben. Lade neu, um die aktuelle Zahl zu sehen.",
@@ -2046,8 +2052,12 @@ export const de = {
       slugEmpty: "Der übersetzte URL-Slug für {language} war leer und wurde nicht gespeichert.",
       invalidApiKey: "(der KI-API-Schlüssel wurde abgelehnt)",
       someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
+      handleRedirectsMissing:
+        "{count} URL-Handle(s) wurden neu übersetzt, aber für die bisherige Adresse konnte keine Weiterleitung angelegt werden — lege sie unter URL-Weiterleitungen an, sonst führen alte Links ins Leere.",
       translationsNotMirrored:
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
+      autoTranslateDailyLimit:
+        "Automatische Erstübersetzungen für heute pausiert: Das Tageslimit von {cap} Einträgen ist erreicht, {count} weitere Änderung(en) wurden nicht übersetzt. Nichts geht verloren — jede wird bei ihrer nächsten Änderung übersetzt (Seiten, Artikel, Blogs und Richtlinien: beim nächtlichen Abgleich).",
       translationsNoneUsable:
         "Die automatische Neuübersetzung hat keine verwendbare Übersetzung geliefert.",
     },
@@ -4102,9 +4112,9 @@ export const de = {
       requiresShipping: "Versand nötig",
       countryCodeOfOrigin: "Herkunftsland (ISO)",
       harmonizedSystemCode: "Zolltarifnummer",
-      // Nur-Lese-Kontext: per Auswahldialog im Einzeleditor gesetzt.
-      productCategory: "Produktkategorie",
-      productCollections: "Kollektionen",
+      // Auswahl-Zellen: derselbe Picker wie im Einzeleditor.
+      category: "Produktkategorie",
+      collections: "Kollektionen",
     },
     chooseColumns: "Spalten wählen",
     columnPicker: {
@@ -4137,11 +4147,7 @@ export const de = {
       // Resync, keine Einschränkung.
       multipleVariants: "Dieses Produkt hat mehrere Varianten, die unterschiedliche Preise haben können — bearbeite sie unter \"Produktvarianten\".",
       variantsNotSynced: "Die Varianten dieses Produkts sind noch nicht im Cache — lade die Produkte neu und bearbeite das dann.",
-      // Kategorie und Kollektionen: mit Auswahldialog gesetzt, hier nur zum
-      // Überblick. Ein Name ist kein schreibbarer Wert, und eine Zugehörigkeit
-      // ist ein Join/Leave-Diff — beides gehört in den Einzeleditor.
-      needsPicker: "Dieses Feld wird über einen Auswahldialog gesetzt — öffne das Produkt im Einzeleditor, um es zu ändern.",
-      collectionsTruncated: "Dieses Produkt ist in mehr Kollektionen, als der Sync geladen hat — die Liste hier ist unvollständig.",
+      priceNotSynced: "Der Preis dieser Variante ist noch nicht im Cache — öffne das Produkt einmal im Produkt-Editor, dann erscheint er hier.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",
@@ -4151,6 +4157,14 @@ export const de = {
       wrongMetaobjectType: "Diese Spalte gehört zu einem anderen Metaobjekt-Typ.",
       listSeparatorInValue: "Ein Listenwert enthält das Trennzeichen \"|\" — bitte im Einzeleditor bearbeiten.",
       altTextInImages: "Der Alt-Text aller Produktbilder — inklusive Übersetzungen — wird unter \"Bilder\" bearbeitet.",
+    },
+    // Was eine LEERE Nur-Lese-Zelle anstelle ihres Werts zeigt. Ohne Text
+    // gibt es nichts, worüber man hovern kann — die Erklärung im Tooltip war
+    // da und unerreichbar.
+    readOnlyPlaceholders: {
+      multipleVariants: "Mehrere Varianten",
+      variantsNotSynced: "Nicht geladen",
+      priceNotSynced: "Preis nicht geladen",
     },
     metaobjectTypeLabel: "Metaobjekt-Typ",
     searchLabel: "Suche",
@@ -4166,7 +4180,30 @@ export const de = {
       missingPrice: "Ohne Preis",
       compareAtNotAbovePrice: "Vergleichspreis ≤ Preis",
       missingAltText: "Alt-Text fehlt",
+      statusActive: "Aktiv",
+      statusDraft: "Entwurf",
+      statusUnlisted: "Nicht gelistet",
+      statusArchived: "Archiviert",
+      published: "Sichtbar",
+      hidden: "Ausgeblendet",
+      smartCollection: "Automatisiert (Regeln)",
+      manualCollection: "Manuell",
+      missingDescription: "Beschreibung / Inhalt fehlt",
+      missingImage: "Ohne Bild",
+      missingVendor: "Ohne Hersteller",
+      missingProductType: "Ohne Produkttyp",
+      missingCategory: "Ohne Kategorie",
+      missingTags: "Ohne Tags",
+      missingSummary: "Auszug fehlt",
     },
+    filterSections: {
+      status: "Status",
+      visibility: "Sichtbarkeit",
+      collectionKind: "Kollektionsart",
+      general: "Weitere Filter",
+    },
+    filterAttributeHint: "Filter auf Sichtbarkeit, Kollektionsart, Hersteller, Kategorie und Tags berücksichtigen nur Einträge, deren Attribute bereits synchronisiert sind.",
+    filterClearAll: "Alle Filter zurücksetzen",
     filterApproximateBanner: "Sehr großer Katalog: Der Filter \"Übersetzung fehlt\" ist angenähert und kann einzelne bereits übersetzte Einträge anzeigen.",
     moreVariantsBanner: "Einige Produkte haben mehr als 100 Varianten — die Restmenge wird hier nicht angezeigt und kann im Shopify-Admin bearbeitet werden.",
     priceActions: {
@@ -4303,16 +4340,22 @@ export const de = {
       importProTooltip: "CSV-Import ist ab dem Pro-Plan verfügbar.",
       exportTooLarge: "Der Export umfasst {total} Zeilen (Maximum {max}). Bitte den Filter enger ziehen und erneut exportieren.",
       exportFailed: "CSV-Export fehlgeschlagen. Bitte erneut versuchen.",
+      exportExceedsImport: "Die exportierte Datei ist größer als {max} MB und kann deshalb nicht in einem Stück wieder importiert werden. Für den Re-Import den Filter enger ziehen und in mehreren Dateien exportieren.",
       fileTooLarge: "Die Datei ist größer als {max} MB.",
       tooManyRows: "Die Datei hat mehr als {max} Datenzeilen.",
       emptyFile: "Die Datei enthält keine Datenzeilen.",
       noIdColumn: "Der Datei fehlt die Spalte \"id\" (oder \"field.handle\" als Ersatz) — bitte einen CSV-Export als Vorlage verwenden.",
       importFailed: "CSV-Import fehlgeschlagen. Bitte erneut versuchen.",
+      unsavedEdits: "Es gibt ungespeicherte Änderungen im Raster. Bitte zuerst speichern oder verwerfen, dann die Datei importieren.",
+      badEncoding: "Die Datei ist nicht als UTF-8 gespeichert — Umlaute und Sonderzeichen würden beschädigt. Bitte in Excel als „CSV UTF-8 (durch Trennzeichen getrennt)“ speichern und erneut importieren.",
+      scopeMismatch: "Die Datei wurde für „{file}“ exportiert, das Raster zeigt aber „{view}“. Bitte im Raster dieselbe Sprache und denselben Markt wählen wie beim Export — sonst würden die Texte in die falsche Sprache geschrieben.",
+      importStarted: "CSV-Import gestartet: {rows} Zeilen, {cells} Zellen werden im Hintergrund gespeichert — Fortschritt im Tab „Aufgaben“. Das Raster lädt neu, sobald der Import fertig ist.",
+      alreadyRunning: "Es läuft bereits ein Massen-Speichern für diesen Shop. Bitte warten, bis es im Tab „Aufgaben“ abgeschlossen ist, und dann erneut importieren.",
       preview: {
         title: "CSV-Import — Vorschau",
         summary: "{rows} Zeilen, {cells} Zellen ändern sich.",
         noChanges: "Keine Änderungen — die Datei entspricht dem aktuellen Stand.",
-        clearHint: "Hinweis: Leere Zellen in der Datei löschen den bestehenden Wert.",
+        clearHint: "Hinweis: Leere Zellen in der Datei löschen den bestehenden Wert. Spalten, die in der Datei fehlen, bleiben unverändert.",
         unknownColumns: "Unbekannte Spalten (werden ignoriert):",
         ignoredColumns: "Hier nicht bearbeitbare Spalten (werden ignoriert):",
         rowErrorsTitle: "{count} Zeile(n) konnten nicht zugeordnet werden:",
@@ -4320,6 +4363,15 @@ export const de = {
         rowErrorUnknownId: "Zeile {line}: unbekannte ID \"{value}\".",
         rowErrorUnknownHandle: "Zeile {line}: unbekanntes Handle \"{value}\".",
         rowErrorAmbiguousHandle: "Zeile {line}: mehrdeutiges Handle \"{value}\" — bitte über die ID zuordnen.",
+        rowErrorDuplicateRow: "Zeile {line}: \"{value}\" steht mehrfach in der Datei — nur das erste Vorkommen wird übernommen.",
+        target: "Ziel: {target}",
+        encodingNotice: "Die Datei war nicht als UTF-8 gespeichert und wurde als Windows-Zeichensatz (ANSI) gelesen. Bitte die Umlaute in den Änderungen unten prüfen.",
+        damagedTitle: "{count} Zelle(n) wurden von der Tabellenkalkulation verändert und werden NICHT gespeichert:",
+        damagedHint: "Excel & Co. behandeln solche Werte als Zahlen. Die Spalte in der Tabellenkalkulation als „Text“ formatieren und die Werte neu eintragen — oder diese Zellen im Raster bearbeiten.",
+        damagedScientificNotation: "in wissenschaftliche Schreibweise umgewandelt",
+        damagedLeadingZerosLost: "führende Nullen entfernt",
+        damagedCellLimitTruncated: "bei 32.767 Zeichen abgeschnitten",
+        background: "Der Import wird im Hintergrund in {batches} Paket(en) gespeichert. Du kannst die Seite verlassen; der Fortschritt steht im Tab „Aufgaben“. Bricht der Import ab (z. B. durch ein App-Update), dieselbe Datei einfach erneut importieren — bereits gespeicherte Zeilen werden übersprungen.",
         moreRowErrors: "… und {count} weitere.",
         changesHeading: "Die ersten {count} Änderungen:",
         moreChanges: "… und {count} weitere Änderungen.",
@@ -4407,7 +4459,7 @@ export const de = {
         "Ersetzt die Löschoption darüber, solange die Neuübersetzung greift",
       ],
       details:
-        "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles kommen nur mit, wenn du das darunter ausdrücklich einschaltest.",
+        "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles werden ohne die Option darunter weiterhin gelöscht, sobald sich der Handle in der Hauptsprache ändert — die fremdsprachige Adresse fällt dann ohne Weiterleitung auf den Handle der Hauptsprache zurück. Mit der Option darunter werden sie stattdessen neu übersetzt.",
     },
     autoTranslateHandles: {
       title: "URL-Handles mitübersetzen",
@@ -4416,10 +4468,10 @@ export const de = {
       tips: [
         "Auslöser ist der Handle selbst — eine reine Textänderung genügt nicht",
         "Nur auffrischen, nie neu anlegen: Sprachen ohne eigenen Handle bleiben beim Handle der Hauptsprache",
-        "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — gelöscht wird er nie",
+        "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — die Neuübersetzung löscht ihn nie",
       ],
       details:
-        "Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Eine Sprache, die bisher keinen eigenen Handle hatte, wird weiter unter dem Handle der Hauptsprache ausgeliefert — diese Adresse bleibt gültig, und ihr ungefragt eine eigene URL zu geben wäre eine Änderung, die niemand verlangt hat. Unverändert bleibt der Handle ausserdem, wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn die Einstellung „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht.",
+        "Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Eine Sprache, die bisher keinen eigenen Handle hatte, wird weiter unter dem Handle der Hauptsprache ausgeliefert — diese Adresse bleibt gültig, und ihr ungefragt eine eigene URL zu geben wäre eine Änderung, die niemand verlangt hat. Unverändert bleibt der Handle ausserdem, wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn die Einstellung „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht. Das gilt auch im Bulk-Editor, wenn ein Speichern mehr Läufe bräuchte als erlaubt: die übrigen Felder fallen dann auf die Löschoption zurück, der Handle bleibt stehen.",
     },
     menuActionBar: {
       title: "Diese Aktionsleiste",
