@@ -103,3 +103,40 @@ describe("loadBulkRows — type filters", () => {
     expect(whereOf(findMany).product).toEqual({ shop: SHOP, status: { in: ["ARCHIVED"] } });
   });
 });
+
+describe("loadBulkRows — category names in the shop's language", () => {
+  function productDb(categoryId: string | null, categoryName: string | null, localized: { gid: string; fullName: string; name: string }[]) {
+    const nameLookup = vi.fn(async (_args: unknown) => localized);
+    const db = {
+      product: {
+        findMany: vi.fn(async () => [{ id: "p1", title: "Vase", handle: "vase", categoryId, categoryName }]),
+        count: vi.fn(async () => 1),
+      },
+      taxonomyCategoryName: { findMany: nameLookup },
+    };
+    return { db, nameLookup };
+  }
+
+  it("replaces the cached English path with the localized one", async () => {
+    const gid = "gid://shopify/TaxonomyCategory/hg-3-69";
+    const { db, nameLookup } = productDb(gid, "Home & Garden > Decor > Vases", [
+      { gid, fullName: "Heim & Garten > Dekoration > Vasen", name: "Vasen" },
+    ]);
+    const { rows } = await loadBulkRows(db as never, SHOP, { ...baseOpts("product", []), categoryLocale: "de" });
+    expect(nameLookup).toHaveBeenCalledTimes(1);
+    expect(rows[0].categoryName).toBe("Heim & Garten > Dekoration > Vasen");
+  });
+
+  it("keeps the cached name without a locale, or with no localized row", async () => {
+    const gid = "gid://shopify/TaxonomyCategory/hg-3-69";
+    const without = productDb(gid, "Home & Garden > Decor > Vases", []);
+    const r1 = await loadBulkRows(without.db as never, SHOP, baseOpts("product", []));
+    expect(without.nameLookup).not.toHaveBeenCalled();
+    expect(r1.rows[0].categoryName).toBe("Home & Garden > Decor > Vases");
+
+    const english = productDb(gid, "Home & Garden > Decor > Vases", []);
+    const r2 = await loadBulkRows(english.db as never, SHOP, { ...baseOpts("product", []), categoryLocale: "en" });
+    expect(english.nameLookup).not.toHaveBeenCalled();
+    expect(r2.rows[0].categoryName).toBe("Home & Garden > Decor > Vases");
+  });
+});

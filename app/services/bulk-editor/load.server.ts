@@ -9,6 +9,7 @@
  * apply.server.ts.
  */
 
+import { lookupLocalizedNames, scheduleTaxonomyImport } from "../taxonomy-localization.server";
 import type { PrismaClient, Prisma } from "@prisma/client";
 import { canonicalCollectionIds } from "../collection-picker.shared";
 import { isDefaultTitleOption } from "../../utils/shopify-product.utils";
@@ -99,6 +100,13 @@ export interface LoadBulkRowsOptions {
    * Passed by the caller (which already has the locales); absent ⇒ the flag is
    * skipped (no extra query), which the grid simply renders as no blue. */
   foreignLocales?: string[];
+  /** Product rows only: the shop's PRIMARY locale, to show the category name
+   * in it. The cached `categoryName` comes from the Admin API, which only
+   * speaks English, so without this the grid's category cells were the one
+   * English spot next to a picker whose list is localized. Absent ⇒ the
+   * cached name as it is (the CSV paths, which compare values and must not
+   * depend on an import having run). */
+  categoryLocale?: string;
 }
 
 export interface LoadBulkRowsResult {
@@ -130,6 +138,27 @@ const RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   metaobject: "Metaobject", // unused — metaobjects read MetaobjectTranslation instead
   image: "MediaImage", // unused — image rows read ProductImageAltTranslation instead
 };
+
+// ─── Category names in the shop's language ─────────────────────────────────
+
+/**
+ * Replaces each product row's cached (English) category path with the
+ * localized one, in ONE query for the page — the same source and the same
+ * fallback the picker's own route uses: no localized row (an English shop, no
+ * import yet, a category newer than the pinned release) keeps the cached
+ * name, and a failed lookup answers EMPTY rather than throwing. A locale whose
+ * import has not run yet is scheduled, like the route does.
+ */
+async function localizeCategoryNames(db: PrismaClient, locale: string, rows: BulkRow[]): Promise<void> {
+  const gids = [...new Set(rows.map((r) => r.category).filter((g): g is string => !!g))];
+  if (gids.length === 0) return;
+  const { byGid, missing, localized } = await lookupLocalizedNames(db, locale, gids);
+  if (localized && missing.length > 0) scheduleTaxonomyImport(db, locale);
+  for (const row of rows) {
+    const name = row.category ? byGid.get(row.category) : undefined;
+    if (name?.fullName) row.categoryName = name.fullName;
+  }
+}
 
 // ─── Shop currency (Phase 3 — Plan §5.2) ───────────────────────────────────
 
@@ -358,6 +387,9 @@ export async function loadBulkRows(
   const allowed = filterIdsForType(opts.type);
   opts = { ...opts, filters: opts.filters.filter((f) => allowed.includes(f)) };
   const result = await loadBulkRowsInner(db, shop, opts);
+  if (opts.type === "product" && opts.categoryLocale) {
+    await localizeCategoryNames(db, opts.categoryLocale, result.rows);
+  }
   if (opts.locale !== "") {
     await attachForeignValues(db, shop, opts, result.rows);
   } else {

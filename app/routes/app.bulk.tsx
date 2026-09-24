@@ -386,6 +386,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Primary-view "missing translation" (blue) colour needs the published
       // foreign locales (already loaded above).
       foreignLocales: publishedForeignLocales(shopLocales),
+      // The category column shows its names in the shop's language — the
+      // language the picker's list is in, too.
+      categoryLocale: shopLocales.find((l) => l.primary)?.locale ?? "",
     }),
     // Currency suffix for the money columns (Plan §5.2) — variant view only;
     // process-cached, so this is one query per shop per boot.
