@@ -310,7 +310,7 @@ export function BulkGrid({
 
   /** Dragging the thumb, or pressing the track beside it (one page, like a
    * native bar). Pointer capture keeps the drag alive when the pointer leaves
-   * the 12px bar, which it always does. */
+   * the thin bar, which it always does. */
   const dragRef = useRef<{ pointerId: number; startX: number; startScroll: number } | null>(null);
   const onBarPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const el = containerRef.current;
@@ -406,7 +406,8 @@ export function BulkGrid({
           /* Above the sticky data columns (2) and their headers (4): the bar
              belongs to the whole grid, not to a column. */
           z-index: 5;
-          height: 12px;
+          /* Tall enough to grab comfortably with a mouse. */
+          height: 18px;
           background: var(--p-color-bg-surface, #fff);
           border-top: 1px solid var(--p-color-border, #e1e3e5);
           touch-action: none;
@@ -414,10 +415,10 @@ export function BulkGrid({
         }
         .cp-bulk-hscroll-thumb {
           position: absolute;
-          top: 3px;
+          top: 4px;
           left: 0;
-          height: 6px;
-          border-radius: 3px;
+          height: 10px;
+          border-radius: 5px;
           background: var(--p-color-border, #c9cccf);
           will-change: transform;
         }
