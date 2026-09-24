@@ -465,18 +465,16 @@ export function ItemSidebar({
   const getScoreLabel = (scoreValue: number): string =>
     t.seo.scoreLabels[scoreLabelKey(scoreValue)];
 
-  // Sub-tabs (Score / Keywords / JSON-LD). Hide a tab entirely when its data
+  // Sub-tabs (Score / Keywords / Attributes / JSON-LD). Hide a tab entirely when its data
   // isn't applicable to this caller (theme content has no JSON-LD, foreign
   // locales have no keyword tracking) — otherwise merchants would land on an
   // empty pane. With only "score" available, the tab bar is omitted.
   type SidebarTab = "attributes" | "score" | "keywords" | "jsonld";
-  // Attributes go FIRST when present (§2.1): it is the tab that answers "is
-  // this item actually finished", which is the question a merchant arrives
-  // with — the score answers "is it optimised", which comes after.
-  const availableTabs: SidebarTab[] = [];
-  if (attributes) availableTabs.push("attributes");
-  availableTabs.push("score");
+  // Order: Score, Keywords, Attributes, JSON-LD — the owner's decision. The
+  // score is the default tab, so it leads; keywords feed straight into it.
+  const availableTabs: SidebarTab[] = ["score"];
   if (keywordTrackingEnabled) availableTabs.push("keywords");
+  if (attributes) availableTabs.push("attributes");
   if (structuredData) availableTabs.push("jsonld");
   const [activeTab, setActiveTab] = useState<SidebarTab>("score");
   const currentTab = availableTabs.includes(activeTab) ? activeTab : availableTabs[0];
@@ -500,7 +498,7 @@ export function ItemSidebar({
   return (
     <Card>
       <BlockStack gap="400">
-        {/* Sub-tab bar (Score / Keywords / JSON-LD) + the current tab's help —
+        {/* Sub-tab bar (Score / Keywords / Attributes / JSON-LD) + the current tab's help —
             the same component the image-processing section uses one level
             over, so the two halves of the sidebar read as one thing. */}
         <SidebarTabBar

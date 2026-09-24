@@ -117,7 +117,7 @@
                               horizontal scroll for the narrow screens where
                               even that is not enough. */
   --app-list-column-width: 330px;
-  --app-editor-sidebar-width: 320px;
+  --app-editor-sidebar-width: 360px;
   --app-editor-sidebar-min-width: 200px;
   --app-editor-sidebar-max-width: 600px;
   --app-short-field-width: 380px;
