@@ -52,6 +52,7 @@ import {
   applyInventoryItemFields,
   applyPublicationChanges,
   applyStockChanges,
+  inventoryIdempotency,
   parseQuantity,
   type CommerceWarning,
   type InventoryItemFields,
@@ -848,10 +849,15 @@ export async function action({ request }: ActionFunctionArgs) {
       // so the value travels differently too — sending the string under an
       // `Int` variable would only move the refusal one step later.
       const onHandIsInt = isApiVersionAtLeast(INVENTORY_ONHAND_IS_INT_FROM);
+      // The same 2026-04 rework made `@idempotent` required on the inventory
+      // mutations, and this one is refused without it just as the stock write
+      // is. Read from the schema by the module that owns that lookup, so the
+      // two calls cannot disagree about the spelling.
+      const idempotent = await inventoryIdempotency(admin, session.shop);
       const response = await admin.graphql(
         `#graphql
-          mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!, $onHand: ${onHandIsInt ? "Int" : "Decimal"}) {
-            inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, onHand: $onHand) {
+          mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!, $onHand: ${onHandIsInt ? "Int" : "Decimal"})${idempotent.operation} {
+            inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, onHand: $onHand)${idempotent.field} {
               inventoryLevel { id location { id } }
               userErrors { field message }
             }

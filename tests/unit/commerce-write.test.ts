@@ -975,8 +975,17 @@ describe("the write is built from the shape the schema really has", () => {
 
   /** An admin that answers the introspection with `entry`, then the mutation.
    *  `set` defaults to a version that no longer has the opt-out switch — an
-   *  EMPTY list means "this type did not answer" and is its own case below. */
-  const adminWithShape = (entry: string[], set: string[] = ["name", "reason", "quantities"]) => {
+   *  EMPTY list means "this type did not answer" and is its own case below.
+   *  `directives` answers the directive half; the default is a real list that
+   *  simply has no `idempotent` in it, which is a definite "this version has
+   *  none" and puts nothing in the document. */
+  const adminWithShape = (
+    entry: string[],
+    set: string[] = ["name", "reason", "quantities"],
+    directives: Array<{ name: string; locations?: string[]; args?: Array<{ name: string }> }> | null = [
+      { name: "deprecated", locations: ["FIELD_DEFINITION"] },
+    ],
+  ) => {
     const graphql = vi.fn(async (query: string) =>
       String(query).includes("__type")
         ? {
@@ -984,6 +993,7 @@ describe("the write is built from the shape the schema really has", () => {
               data: {
                 setInput: { inputFields: set.map((name) => ({ name })) },
                 entryInput: { inputFields: entry.map((name) => ({ name })) },
+                schema: directives ? { directives } : undefined,
               },
             }),
           }
@@ -1125,5 +1135,173 @@ describe("a refused write", () => {
     });
     expect(stale).toBe("stockChangedMeanwhile");
     expect(required).toBe("stockFailed");
+  });
+});
+
+/**
+ * `@idempotent`, the other half of the 2026-04 inventory rework.
+ *
+ * Once the input shape was right, production refused both inventory mutations
+ * for the directive — before execution, so no `userErrors` and nothing
+ * written, the same shape of silence as the field rename. Where it sits and
+ * what it takes are read from the schema: a directive spelled by hand is
+ * refused exactly like a missing one.
+ */
+describe("the idempotency directive is read from the schema, not spelled", () => {
+  beforeEach(() => resetInventoryInputShapeProbe());
+
+  const adminWithDirective = (
+    directives: Array<{ name: string; locations?: string[]; args?: Array<{ name: string }> }>,
+  ) => {
+    const graphql = vi.fn(async (query: string) =>
+      String(query).includes("__type")
+        ? {
+            json: async () => ({
+              data: {
+                setInput: { inputFields: [{ name: "name" }, { name: "quantities" }] },
+                entryInput: {
+                  inputFields: [
+                    { name: "inventoryItemId" },
+                    { name: "locationId" },
+                    { name: "quantity" },
+                    { name: "changeFromQuantity" },
+                  ],
+                },
+                schema: { directives },
+              },
+            }),
+          }
+        : { json: async () => echo([{ locationId: LOC_A, after: 12 }]) },
+    );
+    return { graphql } as never;
+  };
+
+  const send = async (admin: unknown) => {
+    await applyStockChanges(admin as never, dbRecorder().db, "s", {
+      variantId: "42",
+      changes: [change(LOC_A, 12, 9)],
+    });
+    return stockCall(admin).query;
+  };
+
+  it("puts it on the OPERATION with a key where the schema says so", async () => {
+    const query = await send(
+      adminWithDirective([{ name: "idempotent", locations: ["MUTATION"], args: [{ name: "key" }] }]),
+    );
+    expect(query).toMatch(/mutation setOnHandQuantities\([^)]*\) @idempotent\(key: "[0-9a-f-]{36}"\)/);
+    // Not on the field as well — one directive, one place.
+    expect(query).not.toMatch(/inventorySetQuantities\(input: \$input\) @idempotent/);
+  });
+
+  it("puts it on the FIELD where that is the declared location", async () => {
+    const query = await send(
+      adminWithDirective([{ name: "idempotent", locations: ["FIELD"], args: [{ name: "key" }] }]),
+    );
+    expect(query).toMatch(/inventorySetQuantities\(input: \$input\) @idempotent\(key: "/);
+    expect(query).not.toMatch(/mutation setOnHandQuantities\([^)]*\) @idempotent/);
+  });
+
+  it("sends it bare where it takes no key", async () => {
+    const query = await send(adminWithDirective([{ name: "idempotent", locations: ["MUTATION"], args: [] }]));
+    expect(query).toContain("@idempotent {");
+    expect(query).not.toContain("key:");
+  });
+
+  it("sends NOTHING where the schema has no such directive", async () => {
+    // A directive a version does not know is itself a schema-level refusal, so
+    // an absent one is left absent rather than added on the strength of the pin.
+    const query = await send(adminWithDirective([{ name: "deprecated", locations: ["FIELD_DEFINITION"] }]));
+    expect(query).not.toContain("@idempotent");
+  });
+
+  it("gives each document its OWN key", async () => {
+    const admin = adminWithDirective([
+      { name: "idempotent", locations: ["MUTATION"], args: [{ name: "key" }] },
+    ]);
+    await send(admin);
+    await send(admin);
+    // Read off ALL the mutation calls: `stockCall` answers with the first, and
+    // the question here is what the SECOND one carried.
+    const keys = (admin as unknown as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls
+      .map(([query]) => String(query).match(/key: "([0-9a-f-]{36})"/)?.[1])
+      .filter(Boolean);
+    expect(keys).toHaveLength(2);
+    // Two separate saves are two operations, not one retried — sharing a key
+    // would make the second a no-op on a platform that honours it.
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("keeps the directive when the INPUT types did not answer", async () => {
+    // The two halves are separate questions with separate consequences. The
+    // compare field has the version pin behind it; the directive has nothing,
+    // and a mutation that needs it is refused before it runs. Discarding the
+    // directive because a type got renamed would answer a rename with an
+    // outage.
+    const graphql = vi.fn(async (query: string) =>
+      String(query).includes("__type")
+        ? {
+            json: async () => ({
+              data: {
+                setInput: null,
+                entryInput: null,
+                schema: { directives: [{ name: "idempotent", locations: ["MUTATION"], args: [{ name: "key" }] }] },
+              },
+            }),
+          }
+        : { json: async () => echo([{ locationId: LOC_A, after: 12 }]) },
+    );
+    const admin = { graphql } as never;
+    await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+    expect(stockCall(admin).query).toContain("@idempotent(key:");
+  });
+
+  it("does not memoise an unread directive list", async () => {
+    // Same rule as the refused comparison: an answer that is missing half its
+    // evidence must not become this process's standing verdict, or one
+    // throttled introspection refuses every inventory mutation until a deploy.
+    let directives: Array<{ name: string; locations?: string[]; args?: Array<{ name: string }> }> | null = null;
+    const graphql = vi.fn(async (query: string) =>
+      String(query).includes("__type")
+        ? {
+            json: async () => ({
+              data: {
+                setInput: { inputFields: [{ name: "name" }, { name: "quantities" }] },
+                entryInput: {
+                  inputFields: [
+                    { name: "inventoryItemId" },
+                    { name: "locationId" },
+                    { name: "quantity" },
+                    { name: "changeFromQuantity" },
+                  ],
+                },
+                schema: directives ? { directives } : undefined,
+              },
+            }),
+          }
+        : { json: async () => echo([{ locationId: LOC_A, after: 12 }]) },
+    );
+    const admin = { graphql } as never;
+    await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+
+    directives = [{ name: "idempotent", locations: ["MUTATION"], args: [{ name: "key" }] }];
+    await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_B, 5, 4)] });
+    const mutations = graphql.mock.calls.filter(([query]) =>
+      String(query).includes("inventorySetQuantities"),
+    );
+    expect(String(mutations[1][0])).toContain("@idempotent(key:");
+  });
+
+  it("asks the schema ONCE for both halves of one save", async () => {
+    // The stock write needs the compare field AND the directive. Reading the
+    // shape twice is a second round trip per save and a second warn line for
+    // one failure.
+    const admin = adminWithDirective([
+      { name: "idempotent", locations: ["MUTATION"], args: [{ name: "key" }] },
+    ]);
+    await send(admin);
+    const lookups = (admin as unknown as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls.filter(
+      ([query]) => String(query).includes("__type"),
+    );
+    expect(lookups).toHaveLength(1);
   });
 });
