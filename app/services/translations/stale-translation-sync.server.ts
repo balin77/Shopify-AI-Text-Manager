@@ -1522,9 +1522,10 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
     // keys one of the two entrances proved, so if neither found anything there
     // is nothing to do with it either.
     let stale = findStaleTranslations(translations, primaryContent, previousDigests);
-    // `handle` is left out: the second entrance only FILLS, and a handle is
-    // refreshed, never filled — so a handle-only move could never do anything
-    // and must not cost a policy read.
+    // `handle` is left out: the second entrance only FILLS, and on the sync
+    // side a handle is only ever REFRESHED (the fill of handles is an in-app
+    // save's, where the merchant is present — CLAUDE.md) — so a handle-only
+    // move here could never do anything and must not cost a policy read.
     const movedByBaseline = primaryBaseline
       ? primaryBaselineMovedKeys(primaryContent, primaryBaseline).filter((key) => key !== "handle")
       : [];
@@ -2464,6 +2465,20 @@ async function createHandleRedirect(
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
+  }
+}
+
+/** Does a URL redirect already sit on this storefront path? `null` when the
+ *  lookup did not answer. The query is a search, so the answer is re-filtered
+ *  by exact path. */
+async function pathHasRedirect(gateway: ShopifyApiGateway, path: string): Promise<boolean | null> {
+  try {
+    const { listRedirects } = await import("../seo/redirects.service");
+    const { redirects } = await listRedirects(gateway as never, { first: 10, query: `path:${path}` });
+    const norm = (value: string) => value.trim().replace(/\/+$/, "").toLowerCase();
+    return redirects.some((redirect) => norm(redirect.path ?? "") === norm(path));
+  } catch {
+    return null;
   }
 }
 
@@ -3715,10 +3730,29 @@ async function runRetranslation(
             // conflicts across locales. The AI answering with the primary slug
             // is the likeliest way one gets written unattended — and the entry
             // then falls to the kept list, so the working old handle stays.
-            const primaryHandle =
-              handleContexts.get(tripleKey(refOf(params, entry).resourceId, locale, entry.key))
-                ?.primaryHandle ?? "";
+            const handleContext = handleContexts.get(
+              tripleKey(refOf(params, entry).resourceId, locale, entry.key),
+            );
+            const primaryHandle = handleContext?.primaryHandle ?? "";
             if (primaryHandle && value === sanitizeSlug(primaryHandle)) value = "";
+            // A redirect already sitting ON the new slug's path would shadow
+            // the page under every locale prefix (Shopify serves a redirect in
+            // preference to a live page). The likeliest one is this very save's
+            // own primary redirect — the AI translating the title back to the
+            // OLD primary slug — so it must not be deleted either: the slug is
+            // DISCARDED, and the old handle (or the primary one) stays.
+            if (value && handleContext) {
+              const { storefrontPathFor } = await import("../seo/handle-redirect.shared");
+              const path = storefrontPathFor(handleContext.resource, value, handleContext.blogHandle);
+              const shadowed = path ? await pathHasRedirect(gateway, path) : false;
+              if (shadowed === null) {
+                // Could not tell: not a decision about this slug, so it is
+                // not recorded as one — the next change event tries again.
+                undelivered(entry);
+                continue;
+              }
+              if (shadowed) value = "";
+            }
             if (!value && entry.digest) discardedHandles.push(entry);
           }
           if (!value || !value.trim() || !entry.digest) {

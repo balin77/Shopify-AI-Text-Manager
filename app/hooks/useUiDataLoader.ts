@@ -71,6 +71,8 @@ export function buildDeletedKey(translationKey: string, marketId: string): strin
  *  merchant has switched to another locale meanwhile. */
 export interface PartialSave {
   locale: string;
+  /** The market the save was scoped to ("" = global). */
+  marketId: string;
   values: Record<string, string>;
 }
 
@@ -161,7 +163,8 @@ export interface UseUiDataLoaderReturn {
      *  storing market overlays so a single-field market save doesn't drop the
      *  inherited styling on the rest. Ignored in the global context. */
     inheritedFieldKeys?: Set<string>,
-    onlyKeys?: ReadonlySet<string> | null
+    onlyKeys?: ReadonlySet<string> | null,
+    savedMarketId?: string
   ) => TransitionResult;
 
   /** After translateFieldToAllLocales callback (Accept & Translate) */
@@ -858,7 +861,11 @@ export function useUiDataLoader(
       /** The fields the save actually CARRIED, when it was a partial one (a
        *  single-field translate). Absent = every field. Overlaying the others
        *  would stage the merchant's unsaved input as if it had been saved. */
-      onlyKeys?: ReadonlySet<string> | null
+      onlyKeys?: ReadonlySet<string> | null,
+      /** The market the save was SUBMITTED under (savedMarketIdRef). The live
+       *  selection may have moved while it was in flight, and an overlay keyed
+       *  on it lands in the wrong market's view. */
+      savedMarketId?: string
     ): TransitionResult => {
       debugLog.transition(`onSaveComplete: locale=${savedLocale}`);
 
@@ -896,7 +903,7 @@ export function useUiDataLoader(
 
         // Market-fold the overlay locale key so the saved overlay is scoped to the
         // market it was saved under (matching the market-aware DB write).
-        const marketId = selectedMarketIdRef.current;
+        const marketId = savedMarketId ?? selectedMarketIdRef.current;
         const localeKey = buildLocaleKey(savedLocale, marketId);
 
         for (const fieldDef of fieldDefinitions) {

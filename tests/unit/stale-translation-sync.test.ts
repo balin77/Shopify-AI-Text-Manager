@@ -167,6 +167,15 @@ vi.mock("../../app/services/bulk-editor/translations.server", () => ({
   ),
 }));
 
+// The shop's redirect table as the slug guard sees it: `null` = the lookup fails.
+const redirectTable = vi.hoisted(() => ({ rows: [] as Array<{ path: string; target: string }> | null }));
+vi.mock("../../app/services/seo/redirects.service", () => ({
+  listRedirects: vi.fn(async () => {
+    if (redirectTable.rows === null) throw new Error("Throttled");
+    return { redirects: redirectTable.rows, hasNextPage: false, endCursor: null };
+  }),
+}));
+
 vi.mock("../../app/services/seo/handle-redirect.server", () => ({
   applyTranslatedHandleRedirect: vi.fn(async (_admin: unknown, _shop: string, request: any) => {
     shopify.redirectCalls.push({
@@ -282,6 +291,7 @@ beforeEach(() => {
   db.autoTranslateRetry.update.mockClear();
   db.autoTranslateRetry.delete.mockClear();
   shopify.redirectCalls = [];
+  redirectTable.rows = [];
   db.contentTranslation.deleteMany.mockClear();
   db.contentTranslation.upsert.mockClear();
   db.contentTranslation.updateMany.mockClear();
@@ -1841,6 +1851,36 @@ describe("handle re-translation", () => {
     const final = db.task.update.mock.calls.at(-1) as unknown as [any];
     // Not reported as a missing redirect: there was nothing to redirect.
     expect(final[0].data.status).toBe("completed");
+  });
+
+  it("DISCARDS a slug whose path is already redirected — the redirect would shadow the page", async () => {
+    // Likeliest case: the AI translates the title back to the OLD primary
+    // slug, whose path this very save just redirected to the new primary.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    redirectTable.rows = [{ path: "/products/kumiko-schatulle", target: "/products/kumiko-box" }];
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.redirectCalls).toEqual([]);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("leaves the handle for the next event when the redirect table cannot be read", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    redirectTable.rows = null;
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+    // Transient: not recorded as a decision about this slug.
+    expect(db.contentTranslation.updateMany).not.toHaveBeenCalled();
   });
 
   it("RECORDS a refused redirect, so the next look does not prove the same move again", async () => {

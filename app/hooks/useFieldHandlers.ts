@@ -100,6 +100,7 @@ export interface FieldHandlerProps {
   /** The locale on screen NOW — an AI callback lands after the merchant may
    *  have switched away from the locale it was asked for. */
   currentLanguageRef: { current: string };
+  selectedMarketIdRef: { current: string };
   /** Tracks the fieldKey of a copy save so the response handler can clear the loading state. */
   pendingCopyFieldKeyRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
@@ -247,6 +248,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     isSaveFromTranslateRef,
     partialSaveRef,
     currentLanguageRef,
+    selectedMarketIdRef,
     pendingCopyFieldKeyRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
@@ -706,7 +708,8 @@ const handleTranslateField = (fieldKey: string) => {
       // The merchant may have switched language while the AI worked. The
       // translation still belongs to `targetLocale` and is still saved there,
       // but nothing of it may land in the locale now on screen.
-      const viewing = currentLanguageRef.current === targetLocale;
+      const viewing =
+        currentLanguageRef.current === targetLocale && selectedMarketIdRef.current === selectedMarketId;
       if (field.translationKey) {
         // Delegate ref mutations to transition method
         const transResult = dataLoader.onTranslateFieldComplete(
@@ -715,7 +718,8 @@ const handleTranslateField = (fieldKey: string) => {
           translatedValue,
           targetLocale,
           editableValuesRef.current,
-          undefined,
+          // The market the save below persists under — the one at click time.
+          selectedMarketId,
           viewing
         );
 
@@ -757,7 +761,7 @@ const handleTranslateField = (fieldKey: string) => {
         if (translatedValue && translatedValue.trim()) {
           formDataObj[fieldKey] = translatedValue;
         }
-        partialSaveRef.current = { locale: targetLocale, values: { [fieldKey]: translatedValue } };
+        partialSaveRef.current = { locale: targetLocale, marketId: selectedMarketId, values: { [fieldKey]: translatedValue } };
 
         savedLocaleRef.current = targetLocale;
         savedMarketIdRef.current = selectedMarketId;
@@ -789,7 +793,7 @@ const handleTranslateField = (fieldKey: string) => {
       );
 
       // For templates: Update original values so templateHasFieldChanges becomes false
-      if (isThemeContentType(config.contentType)) {
+      if (isThemeContentType(config.contentType) && viewing) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
           [fieldKey]: translatedValue,
@@ -1268,7 +1272,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // ONLY the accepted field: other fields may hold unsaved input, which
     // stays dirty for its own Save rather than riding along here.
     foreignForm[fieldKey] = suggestion;
-    partialSaveRef.current = { locale: L, values: { [fieldKey]: suggestion } };
+    partialSaveRef.current = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
     savedLocaleRef.current = L;
     savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
@@ -1361,6 +1365,11 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           savedItemIdRef.current = requestItemId;
           isSavePendingRef.current = true;
           isSaveFromTranslateRef.current = true;
+          // PARTIAL, carrying no foreign value at all: this writes the PRIMARY
+          // field, so nothing of the L view is saved by it — handled as a full
+          // save it overlaid every field on screen as an L translation and
+          // marked unsaved input clean.
+          partialSaveRef.current = { locale: L, marketId: selectedMarketId, values: {} };
           safeSubmit(primaryForm, { method: "POST" });
         }
 

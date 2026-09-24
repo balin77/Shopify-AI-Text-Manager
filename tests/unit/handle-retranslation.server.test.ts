@@ -156,10 +156,13 @@ describe("makeHandleRedirectResolver", () => {
     expect(await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "de")).toBeNull();
   });
 
-  it("moves a DRAFT product's handle without a redirect — its URL was never reachable", async () => {
+  it("refreshes a DRAFT product's handle WITH a redirect — it may have been live before", async () => {
+    // The status read here is the one after the save: an archived or
+    // temporarily drafted product can have live foreign links pointing at it.
     fx.product = { handle: "kumiko-box", status: "DRAFT" };
     const context = await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "de");
-    expect(context).toMatchObject({ previousTranslatedHandle: "kiste-alt", skipRedirect: true });
+    expect(context).toMatchObject({ previousTranslatedHandle: "kiste-alt", previouslyLive: true });
+    expect(context?.skipRedirect).toBeUndefined();
   });
 
   it("refuses a BLOG handle: its articles' URLs cannot come along", async () => {

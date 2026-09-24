@@ -185,13 +185,13 @@ export function makeHandleRedirectResolver(deps: ResolverDeps): HandleRedirectRe
       if (!resolved?.handle) return null;
       const previouslyLive = wasEverLive(resource, resolved.state);
 
-      // A FILL, or a resource that was never live: no old translated address
-      // exists that a link could point at, so no redirect is owed (see
-      // `skipRedirect`). The merchant opted into translated handles, so a
-      // locale without one gets one. An ARTICLE under a blog whose own handle
-      // is translated in this locale still refuses: which spelling the
-      // storefront serves for the outer segment is unmeasured either way.
-      if (!previousTranslatedHandle || previouslyLive === false) {
+      // A FILL: this locale had no translated address of its own, so no
+      // redirect is owed (see `skipRedirect`). The merchant opted into
+      // translated handles, so a locale without one gets one. An ARTICLE under
+      // a blog whose own handle is translated in this locale still refuses:
+      // which spelling the storefront serves for the outer segment is
+      // unmeasured either way.
+      if (!previousTranslatedHandle) {
         if (resource === "article" && resolved.blogId) {
           const blogRows = await rowsFor(resolved.blogId);
           if (blogRows.get(locale)?.trim()) return null;
@@ -249,7 +249,12 @@ export function makeHandleRedirectResolver(deps: ResolverDeps): HandleRedirectRe
           .filter(([rowLocale]) => rowLocale !== locale)
           .map(([, value]) => value),
         previousHandleTakenElsewhere,
-        previouslyLive,
+        // A REFRESH of a product that is not live NOW (draft, archived) may
+        // well have been live before — the status read here is the one after
+        // this save — so its old translated URL still gets a redirect. An
+        // unused redirect costs nothing; a missing one is a dead link the day
+        // the product comes back. Only "unknown" keeps its refusal.
+        previouslyLive: previouslyLive === false ? true : previouslyLive,
         blogHandle,
         blogHandleTranslatedInLocale,
       };

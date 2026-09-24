@@ -4452,7 +4452,7 @@ export const es: Translation = {
         "Un handle es la dirección de una página, no su texto: por eso es una decisión aparte y está desactivada por defecto. Con ella activada, la IA vuelve a traducir también el handle en cuanto cambia el handle del idioma principal, y redirige la dirección antigua en el otro idioma a la nueva.",
       tips: [
         "El desencadenante es el propio handle: un cambio de texto por sí solo no basta",
-        "Los idiomas sin handle propio también reciben uno traducido: los enlaces antiguos al handle del idioma principal siguen funcionando",
+        "Los idiomas sin handle propio también reciben uno traducido cuando cambias el handle aquí en la app: los enlaces antiguos siguen funcionando. Tras un cambio en el admin de Shopify solo se actualizan los handles ya traducidos",
         "Donde no se puede crear una redirección, el handle antiguo se queda: la retraducción nunca lo elimina",
       ],
       details:
