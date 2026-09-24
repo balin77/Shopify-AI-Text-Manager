@@ -1310,7 +1310,12 @@ export function parseDecimalInput(input: string): ParseMoneyResult {
     normalized = stripped.replace(/,/g, "");
     if ((normalized.match(/\./g) ?? []).length > 1) return { ok: false, error: "invalid" };
   }
-  if (!/^(\d+(\.\d+)?|\.\d+)$/.test(normalized)) return { ok: false, error: "invalid" };
+  // A missing digit on either side of the separator is what people type
+  // (".5", "2.") and is unambiguous, so it is completed, not refused. The
+  // comma form ("2,") already arrives here as "2" — a trailing comma is not a
+  // decimal separator under rule 2.
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(normalized)) return { ok: false, error: "invalid" };
+  if (normalized.endsWith(".")) normalized = normalized.slice(0, -1);
 
   const num = Number(normalized);
   if (!Number.isFinite(num)) return { ok: false, error: "invalid" };
