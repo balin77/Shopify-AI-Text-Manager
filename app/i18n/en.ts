@@ -2046,6 +2046,8 @@ export const en: Translation = {
       slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
       invalidApiKey: "(the AI API key was rejected)",
       someFailed: "Some entries could not be processed — open the task for details.",
+      handleRedirectsMissing:
+        "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
       translationsNotMirrored:
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
       autoTranslateDailyLimit:
@@ -4431,7 +4433,7 @@ export const en: Translation = {
         "Supersedes the delete option above, as far as the re-translation reaches",
       ],
       details:
-        "For products and collections this happens automatically on the next sync. For everything else — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles — it happens when you save, in the editor and in the bulk editor alike; if the text was changed elsewhere, on the next reload of that item. The bulk editor limits how many runs one save starts; anything beyond that is deleted as before. Market-specific translations are never translated automatically — they are deleted as soon as the primary-language text changes. URL handles only come along if you switch that on explicitly below.",
+        "For products and collections this happens automatically on the next sync. For everything else — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles — it happens when you save, in the editor and in the bulk editor alike; if the text was changed elsewhere, on the next reload of that item. The bulk editor limits how many runs one save starts; anything beyond that is deleted as before. Market-specific translations are never translated automatically — they are deleted as soon as the primary-language text changes. Without the option below, URL handles are still deleted as soon as the handle changes in the primary language — the foreign address then falls back to the primary-language handle with no redirect. With the option below they are re-translated instead.",
     },
     autoTranslateHandles: {
       title: "Translate URL handles too",
@@ -4440,10 +4442,10 @@ export const en: Translation = {
       tips: [
         "The trigger is the handle itself — a text change alone is not enough",
         "Refresh only, never create: languages without a handle of their own keep the primary-language one",
-        "Where no redirect can be created the old handle stays — it is never deleted",
+        "Where no redirect can be created the old handle stays — the re-translation never deletes it",
       ],
       details:
-        "The translated value is normalised into a valid slug; anything that cannot be normalised is discarded rather than written. A language that had no handle of its own is still served under the primary-language handle — that address stays valid, and giving it a URL of its own unasked would be a change nobody requested. The handle also stays as it is when the old address still belongs to another language or another item, for market-specific translations, for blogs (their articles' URLs could not come along), for articles under a blog with a translated handle of its own, when the \"Redirect when a handle changes\" setting is switched off, or when the translation does not come through. The old translated handle is not deleted in those cases — an outdated address works, a deleted one does not.",
+        "The translated value is normalised into a valid slug; anything that cannot be normalised is discarded rather than written. A language that had no handle of its own is still served under the primary-language handle — that address stays valid, and giving it a URL of its own unasked would be a change nobody requested. The handle also stays as it is when the old address still belongs to another language or another item, for market-specific translations, for blogs (their articles' URLs could not come along), for articles under a blog with a translated handle of its own, when the \"Redirect when a handle changes\" setting is switched off, or when the translation does not come through. The old translated handle is not deleted in those cases — an outdated address works, a deleted one does not. The same holds in the bulk editor when a save would need more runs than allowed: the other fields then fall back to the delete option, the handle stays.",
     },
     menuActionBar: {
       title: "This action bar",

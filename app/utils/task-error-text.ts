@@ -66,6 +66,8 @@ const FALLBACK: Record<string, string> = {
   translationsNotMirrored:
     "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
   translationsNoneUsable: "The automatic re-translation produced no usable translation.",
+  handleRedirectsMissing:
+    "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
   autoTranslateDailyLimit:
     "Automatic first translations paused for today: the daily limit of {cap} items was reached, and {count} further change(s) were not translated. Nothing was lost — each one is translated at its next change (pages, articles, blogs and policies: in the nightly check).",
 };
@@ -166,6 +168,13 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
       const cap = count(parts[2]);
       if (refused === null || cap === null) return neutral();
       return fill(phrase(t, "autoTranslateDailyLimit"), { count: refused, cap });
+    }
+    // A handle was re-translated but its OLD foreign URL got no redirect —
+    // unattended, so the Task row is the only place the merchant learns it.
+    case "handle_redirects_missing": {
+      const missed = count(parts[1]);
+      if (missed === null) return neutral();
+      return fill(phrase(t, "handleRedirectsMissing"), { count: missed });
     }
     case "translations_not_mirrored": {
       const missed = count(parts[1]);

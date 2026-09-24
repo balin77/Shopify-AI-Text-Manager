@@ -20,6 +20,9 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     contentTranslation: {
       deleteMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(async () => ({})),
+      // Only the kept-handle acknowledgement uses it: a digest advance with the
+      // value untouched.
+      updateMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
       // Takes the query: the market-override purge asks this same table for
       // `marketId: { not: "" }`, so a fake that ignores `where` would answer the
       // detection's rows to both and issue removals nobody asked for.
@@ -159,6 +162,21 @@ vi.mock("../../app/services/seo/handle-redirect.server", () => ({
   handleTakenByOtherResource: vi.fn(async () => false),
 }));
 
+// The PRODUCTION resolver factory, so the wiring that attaches it
+// (`withHandleResolver`) is exercised by a test that passes no resolver of its
+// own. `factory.resolver` is what the built resolver answers; null = no
+// redirect possible.
+const factory = vi.hoisted(() => ({
+  built: 0,
+  resolver: null as null | ((...args: unknown[]) => Promise<unknown>),
+}));
+vi.mock("../../app/services/translations/handle-retranslation.server", () => ({
+  makeHandleRedirectResolver: vi.fn(() => {
+    factory.built++;
+    return async (...args: unknown[]) => (factory.resolver ? factory.resolver(...args) : null);
+  }),
+}));
+
 vi.mock("../../app/services/translations/translation-change-policy.server", () => ({
   loadTranslationChangePolicy: vi.fn(async () => policy),
   isPurgeOnPrimaryChangeEnabled: vi.fn(async () => policy.purgeOnPrimaryChange),
@@ -242,6 +260,7 @@ beforeEach(() => {
   shopify.redirectCalls = [];
   db.contentTranslation.deleteMany.mockClear();
   db.contentTranslation.upsert.mockClear();
+  db.contentTranslation.updateMany.mockClear();
   db.productImage.findMany.mockClear();
   db.productImage.findMany.mockResolvedValue([]);
   db.productImageAltTranslation.upsert.mockClear();
@@ -1690,6 +1709,96 @@ describe("handle re-translation", () => {
     expect(shopify.removeCalls).toEqual([]);
     expect(result.removed).toBe(0);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("RECORDS a refused redirect, so the next look does not prove the same move again", async () => {
+    // Keeping writes nothing, so without this the mirror digest stays old,
+    // Shopify's row stays `outdated`, and the drift sweep hands the same page
+    // over every night forever — one of its per-type slots each time.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: async () => null }));
+    await awaitDetachedRetranslations();
+
+    expect(db.contentTranslation.updateMany).toHaveBeenCalledTimes(1);
+    const call = (db.contentTranslation.updateMany.mock.calls[0] as unknown as [any])[0];
+    expect(call.where).toMatchObject({ key: "handle", locale: "de", marketId: "" });
+    // The digest moves; the VALUE is not in the write at all.
+    expect(call.data).toEqual({ digest: NEW });
+  });
+
+  it("a DELIBERATELY discarded answer is recorded and does not fail the task", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => ({ de: { handle: "組子箱" } }));
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(db.contentTranslation.updateMany).toHaveBeenCalledTimes(1);
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    // Leaving the working URL alone is the designed outcome, not a failure.
+    expect(final[0].data.status).toBe("completed");
+    expect(final[0].data.error).toBeUndefined();
+  });
+
+  it("a TRANSIENT keep is not recorded — the next change event tries again", async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => {
+      throw new Error("provider down");
+    });
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(db.contentTranslation.updateMany).not.toHaveBeenCalled();
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    expect(final[0].data.status).toBe("failed");
+  });
+
+  it("ATTACHES the production resolver when the caller passes none", async () => {
+    // Every other test here injects its own `handleRedirect`, so without this
+    // one `withHandleResolver` could become a no-op and nothing would notice —
+    // every handle on every sync path would then be declined for good.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    factory.built = 0;
+    factory.resolver = resolver;
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+
+    await reconcileStaleTranslations(handleParams());
+    await awaitDetachedRetranslations();
+    factory.resolver = null;
+
+    expect(factory.built).toBe(1);
+    expect(shopify.registerCalls).toEqual([
+      { key: "handle", locale: "de", value: "kumiko-schatulle", translatableContentDigest: NEW },
+    ]);
+    expect(shopify.redirectCalls).toEqual([{ from: "kiste-alt", to: "kumiko-schatulle" }]);
+  });
+
+  it("REPORTS a redirect that could not be written after the handle was", async () => {
+    // Unattended, and the mirror has advanced to the new slug — nothing will
+    // ever rebuild that redirect, so the Task row is the only place the
+    // merchant can learn the old foreign URL is dead.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+    const redirect = await import("../../app/services/seo/handle-redirect.server");
+    vi.mocked(redirect.applyTranslatedHandleRedirect).mockImplementationOnce(async () => {
+      throw new Error("redirect API down");
+    });
+
+    await reconcileStaleTranslations(handleParams({ handleRedirect: resolver }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toHaveLength(1);
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    expect(final[0].data.status).toBe("completed_with_errors");
+    expect(final[0].data.error).toBe("handle_redirects_missing:1");
+    expect(JSON.parse(final[0].data.result)).toMatchObject({ redirectsMissing: 1 });
   });
 
   it("purges the handle when the opt-in is off — unchanged behaviour", async () => {

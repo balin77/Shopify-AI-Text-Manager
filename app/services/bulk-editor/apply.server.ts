@@ -536,7 +536,7 @@ async function invalidateStaleForeignTranslations(
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
   const { resourceTypeOverride } = opts;
-  const keys = [...new Set(translationKeys.filter(Boolean))];
+  let keys = [...new Set(translationKeys.filter(Boolean))];
   // FIRST, and before every gate: the prefetched digest describes the text as
   // it was a moment ago, and a foreign cell of this same save would register
   // against it and be refused.
@@ -562,6 +562,17 @@ async function invalidateStaleForeignTranslations(
   // exactly what this surface did before.
   if (deps.policy.autoTranslateExternalChanges) {
     if (collectRepairForKeys(deps, rowType, resourceId, keys, opts)) return;
+    // Refused (the group cap). Everything else falls back to the deletion,
+    // but a `handle` the merchant opted into re-translating does NOT: it is
+    // the one key whose stale translation is still a WORKING URL, and the
+    // repair itself leaves every handle it cannot deliver alone rather than
+    // purging it. Deleting it here would move the foreign address to the
+    // primary slug with no redirect — the breakage the opt-in exists to avoid,
+    // reached only because this save happened to be large.
+    if (deps.policy.autoTranslateHandles && !resourceTypeOverride && rowType !== "metaobject") {
+      keys = keys.filter((key) => key !== "handle");
+      if (keys.length === 0) return;
+    }
   }
   // Image rows keep their translations in ProductImageAltTranslation — one key
   // ("alt") on one resource, so the generic key/locale bookkeeping below would

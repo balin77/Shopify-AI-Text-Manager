@@ -2030,6 +2030,8 @@ export const es: Translation = {
       slugEmpty: "El slug de URL traducido para {language} quedó vacío y no se guardó.",
       invalidApiKey: "(la clave de API de IA fue rechazada)",
       someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",
+      handleRedirectsMissing:
+        "Se volvieron a traducir {count} handle(s) de URL, pero no se pudo crear una redirección para la dirección anterior — añádela en Redirecciones de URL o los enlaces antiguos no llevarán a ninguna parte.",
       translationsNotMirrored:
         "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
       autoTranslateDailyLimit:
@@ -4419,7 +4421,7 @@ export const es: Translation = {
         "Sustituye a la opción de eliminar de arriba mientras la retraducción llegue",
       ],
       details:
-        "En productos y colecciones ocurre automáticamente en la siguiente sincronización. En todo lo demás — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú — ocurre al guardar, tanto en el editor como en el editor masivo; si el texto se cambió fuera, en la siguiente recarga del elemento. El editor masivo limita cuántas ejecuciones inicia un guardado; lo que exceda se elimina como hasta ahora. Las traducciones específicas de un mercado nunca se traducen automáticamente: se eliminan en cuanto cambia el texto del idioma principal. Los handles de URL solo se incluyen si lo activas expresamente más abajo.",
+        "En productos y colecciones ocurre automáticamente en la siguiente sincronización. En todo lo demás — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú — ocurre al guardar, tanto en el editor como en el editor masivo; si el texto se cambió fuera, en la siguiente recarga del elemento. El editor masivo limita cuántas ejecuciones inicia un guardado; lo que exceda se elimina como hasta ahora. Las traducciones específicas de un mercado nunca se traducen automáticamente: se eliminan en cuanto cambia el texto del idioma principal. Sin la opción de abajo, los handles de URL se siguen eliminando en cuanto cambia el handle del idioma principal: la dirección en el otro idioma vuelve entonces al handle del idioma principal sin redirección. Con la opción de abajo, en cambio, se vuelven a traducir.",
     },
     autoTranslateHandles: {
       title: "Traducir también los handles de URL",
@@ -4428,10 +4430,10 @@ export const es: Translation = {
       tips: [
         "El desencadenante es el propio handle: un cambio de texto por sí solo no basta",
         "Solo actualizar, nunca crear: los idiomas sin handle propio siguen con el del idioma principal",
-        "Donde no se puede crear una redirección, el handle antiguo se queda: nunca se elimina",
+        "Donde no se puede crear una redirección, el handle antiguo se queda: la retraducción nunca lo elimina",
       ],
       details:
-        "El valor traducido se normaliza a un slug válido; lo que no se puede normalizar se descarta en lugar de escribirse. Un idioma que no tenía handle propio se sigue sirviendo bajo el handle del idioma principal: esa dirección sigue siendo válida, y darle una URL propia sin pedirlo sería un cambio que nadie solicitó. El handle también se queda como está cuando la dirección antigua pertenece todavía a otro idioma o a otro elemento, en traducciones específicas de un mercado, en blogs (las URL de sus artículos no podrían acompañarlo), en artículos bajo un blog con handle traducido propio, cuando la opción «Redirección al cambiar el identificador» está desactivada, o cuando la traducción no llega. En esos casos el handle traducido antiguo no se elimina: una dirección desactualizada funciona, una eliminada no.",
+        "El valor traducido se normaliza a un slug válido; lo que no se puede normalizar se descarta en lugar de escribirse. Un idioma que no tenía handle propio se sigue sirviendo bajo el handle del idioma principal: esa dirección sigue siendo válida, y darle una URL propia sin pedirlo sería un cambio que nadie solicitó. El handle también se queda como está cuando la dirección antigua pertenece todavía a otro idioma o a otro elemento, en traducciones específicas de un mercado, en blogs (las URL de sus artículos no podrían acompañarlo), en artículos bajo un blog con handle traducido propio, cuando la opción «Redirección al cambiar el identificador» está desactivada, o cuando la traducción no llega. En esos casos el handle traducido antiguo no se elimina: una dirección desactualizada funciona, una eliminada no. Lo mismo vale en el editor masivo cuando un guardado necesitaría más ejecuciones de las permitidas: los demás campos vuelven a la opción de eliminar, el handle se queda.",
     },
     menuActionBar: {
       title: "Esta barra de acciones",

@@ -2217,8 +2217,10 @@ async function withHandleResolver<T extends RepairTarget>(
  * because Shopify serves a redirect in preference to a page — the resource
  * unreachable at its own address. The first is the recoverable half, and it is
  * the residual every redirect call site in this app already carries: a redirect
- * never fails the write it accompanies, so a failure here is a log line and
- * nothing else.
+ * never fails the write it accompanies. It is REPORTED, though: this runs
+ * unattended, the mirror has already advanced to the new slug (so no later run
+ * will ever rebuild this redirect), and a log line is invisible to the
+ * merchant — the answer is `false`, which the run counts into its Task row.
  *
  * `nextHandle` is what Shopify STORED, not what was submitted.
  */
@@ -2227,10 +2229,10 @@ async function createHandleRedirect(
   target: RepairTarget,
   context: TranslatedHandleContext | undefined,
   nextHandle: string,
-): Promise<void> {
+): Promise<boolean> {
   // Reserved before the AI ran; an entry without a context never reached the
   // write. Belt and braces, because the alternative is a moved URL with no row.
-  if (!context) return;
+  if (!context) return false;
   try {
     const { applyTranslatedHandleRedirect } = await import("../seo/handle-redirect.server");
     const result = await applyTranslatedHandleRedirect(gateway as never, target.shop, {
@@ -2248,12 +2250,11 @@ async function createHandleRedirect(
       blogHandle: context.blogHandle,
       blogHandleTranslatedInLocale: context.blogHandleTranslatedInLocale,
     });
-    if (result.created) return;
+    if (result.created) return true;
     // "unchanged" is the AI answering with the slug that was already there —
     // routine, and the reason nothing had to be written. Anything else means
-    // the old URL is NOT covered, which is worth a line even though it cannot
-    // be acted on from here.
-    if (result.skippedReason === "unchanged") return;
+    // the old URL is NOT covered.
+    if (result.skippedReason === "unchanged") return true;
     logger.warn("[StaleTranslations] Handle re-translated but the old URL was not redirected", {
       context: "StaleTranslations",
       shop: target.shop,
@@ -2261,8 +2262,63 @@ async function createHandleRedirect(
       reason: result.skippedReason,
       noteCode: result.noteCode,
     });
+    return false;
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Handle redirect failed", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Record that a `handle` this repair deliberately LEFT ALONE was looked at
+ * against the CURRENT primary slug — by advancing its mirror digest, and
+ * nothing else (the value stays exactly as it is, on Shopify and here).
+ *
+ * Without this a kept handle is a loop. The digest gate proves staleness by
+ * comparing that mirror digest against the primary one; keeping writes
+ * nothing, so the digest stays old, Shopify's row stays `outdated`, and the
+ * same resource is proven stale again at the next look — every night, on the
+ * drift sweep, taking one of its per-type handover slots each time and (for an
+ * answer we discard) one AI request on the merchant's key. Removal ended that
+ * loop before the opt-in existed; the opt-in removed the removal.
+ *
+ * Only for DETERMINISTIC keeps — a redirect that cannot be written, an answer
+ * the slug rules throw away. A transient one (a provider error, an unechoed
+ * write) stays unacknowledged, so the next change event tries again. The next
+ * real move of the primary handle is still provable: it changes the digest
+ * again. GLOBAL layer only, like every write this repair makes.
+ */
+async function acknowledgeKeptHandles(
+  target: RepairTarget,
+  entries: readonly StaleTranslation[],
+): Promise<void> {
+  if (target.translateAs) return;
+  const handles = entries.filter((entry) => entry.key === "handle" && entry.digest);
+  if (handles.length === 0) return;
+  try {
+    const { db } = await import("../../db.server");
+    for (const entry of handles) {
+      await db.contentTranslation.updateMany({
+        where: {
+          shop: target.shop,
+          resourceId: refOf(target, entry).resourceId,
+          locale: entry.locale,
+          key: "handle",
+          marketId: "",
+          NOT: { digest: entry.digest },
+        },
+        data: { digest: entry.digest },
+      });
+    }
+  } catch (error: unknown) {
+    // Bookkeeping after a decision that already stands: the cost of failing
+    // here is one more look at the next sweep, never a wrong write.
+    logger.warn("[StaleTranslations] Could not record kept handles", {
       context: "StaleTranslations",
       shop: target.shop,
       resourceId: target.resourceId,
@@ -2392,6 +2448,9 @@ async function repairStaleTranslations(
   // own slug, which the automation was never asked to remove.
   const { retranslate, declined, keptHandles, handleContexts } =
     await reserveHandleRedirects(target, partitioned.retranslate, partitioned.declined);
+  // A refused redirect is a property of the resource, not of this moment —
+  // recorded, or the same refusal is re-proven at every later look.
+  await acknowledgeKeptHandles(target, keptHandles);
 
   // May a stale translation be REMOVED here? Not the same question as the
   // merchant's purge switch, which auto-translate forces off (the two are
@@ -2856,6 +2915,13 @@ async function runRetranslation(
     if (isHandleEntry(entry)) keptHandles.push(entry);
     else failed.push(entry);
   };
+  /** Kept handles whose answer the slug rules threw away — a DECISION about
+   *  this primary slug, recorded at the end of the run (`acknowledgeKeptHandles`)
+   *  so it is not paid for again at every later look. */
+  const discardedHandles: StaleTranslation[] = [];
+  /** Handles written whose OLD foreign URL got no redirect — reported on the
+   *  Task row, because nothing will ever rebuild it (see createHandleRedirect). */
+  let redirectsMissing = 0;
 
   // Only the content-field path needs the key→field map; the generic value path
   // has no field semantics to look up (see RepairTarget.translateAs).
@@ -3201,6 +3267,7 @@ async function runRetranslation(
               handleContexts.get(tripleKey(refOf(params, entry).resourceId, locale, entry.key))
                 ?.primaryHandle ?? "";
             if (primaryHandle && value === sanitizeSlug(primaryHandle)) value = "";
+            if (!value && entry.digest) discardedHandles.push(entry);
           }
           if (!value || !value.trim() || !entry.digest) {
             undelivered(entry);
@@ -3276,12 +3343,13 @@ async function runRetranslation(
               // write path silently skips a handle translation equal to the
               // primary handle, so a submitted value can describe an edit that
               // never happened (CLAUDE.md).
-              await createHandleRedirect(
+              const covered = await createHandleRedirect(
                 gateway,
                 params,
                 handleContexts.get(tripleKey(ref.resourceId, locale, input.key)),
                 stored,
               );
+              if (!covered) redirectsMissing++;
             }
             try {
               await mirror.write(
@@ -3355,12 +3423,22 @@ async function runRetranslation(
       failed.length === 0 &&
       keptHandles.length === 0 &&
       supersededByMerchant();
-    const succeeded = registered.length > 0 || stoodDown;
+    // A run whose only undelivered entries are handles the slug rules threw
+    // away ON PURPOSE did what it should: leaving the working old URL alone is
+    // the designed outcome, and a red task for it is a defect report about
+    // nothing. A handle kept for a TRANSIENT reason still counts as a failure.
+    const onlyDeliberateDiscards =
+      registered.length === 0 &&
+      failed.length === 0 &&
+      keptHandles.length > 0 &&
+      keptHandles.every((entry) => discardedHandles.includes(entry));
+    await acknowledgeKeptHandles(params, discardedHandles);
+    const succeeded = registered.length > 0 || stoodDown || onlyDeliberateDiscards;
     // A run that registered on Shopify but could not write some of those rows
     // locally is NOT a clean success: every editor in this app reads the
     // mirror, so those translations are live and invisible.
     const status = succeeded
-      ? notMirrored.length > 0
+      ? notMirrored.length > 0 || redirectsMissing > 0
         ? "completed_with_errors"
         : "completed"
       : "failed";
@@ -3371,12 +3449,16 @@ async function runRetranslation(
         progress: 100,
         processed: entries.length,
         completedAt: new Date(),
-        ...(registered.length === 0 && !stoodDown
+        ...(registered.length === 0 && !stoodDown && !onlyDeliberateDiscards
           ? // A CODE, like its sibling below: this runs detached from the
             // request that started it and has no merchant locale, so an
             // English sentence stored here reaches a German merchant in
             // English. `taskErrorText` renders it.
             { error: "translations_none_usable" }
+          : redirectsMissing > 0
+            ? // Before the mirror code: a dead link on the storefront outranks
+              // a field this app shows empty until the next reload.
+              { error: `handle_redirects_missing:${redirectsMissing}` }
           : notMirrored.length > 0
             ? // A machine CODE, not a sentence: this runs detached from the
               // request that started it and has no merchant locale, and the
@@ -3391,6 +3473,7 @@ async function runRetranslation(
           // of a purge — a handle translation deliberately left standing.
           ...(keptHandles.length > 0 ? { handlesKept: keptHandles.length } : {}),
           ...(notMirrored.length > 0 ? { notMirrored: notMirrored.length } : {}),
+          ...(redirectsMissing > 0 ? { redirectsMissing } : {}),
         }),
       },
     });

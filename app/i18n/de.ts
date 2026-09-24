@@ -2051,6 +2051,8 @@ export const de = {
       slugEmpty: "Der übersetzte URL-Slug für {language} war leer und wurde nicht gespeichert.",
       invalidApiKey: "(der KI-API-Schlüssel wurde abgelehnt)",
       someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
+      handleRedirectsMissing:
+        "{count} URL-Handle(s) wurden neu übersetzt, aber für die bisherige Adresse konnte keine Weiterleitung angelegt werden — lege sie unter URL-Weiterleitungen an, sonst führen alte Links ins Leere.",
       translationsNotMirrored:
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
       autoTranslateDailyLimit:
@@ -4456,7 +4458,7 @@ export const de = {
         "Ersetzt die Löschoption darüber, solange die Neuübersetzung greift",
       ],
       details:
-        "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles kommen nur mit, wenn du das darunter ausdrücklich einschaltest.",
+        "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles werden ohne die Option darunter weiterhin gelöscht, sobald sich der Handle in der Hauptsprache ändert — die fremdsprachige Adresse fällt dann ohne Weiterleitung auf den Handle der Hauptsprache zurück. Mit der Option darunter werden sie stattdessen neu übersetzt.",
     },
     autoTranslateHandles: {
       title: "URL-Handles mitübersetzen",
@@ -4465,10 +4467,10 @@ export const de = {
       tips: [
         "Auslöser ist der Handle selbst — eine reine Textänderung genügt nicht",
         "Nur auffrischen, nie neu anlegen: Sprachen ohne eigenen Handle bleiben beim Handle der Hauptsprache",
-        "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — gelöscht wird er nie",
+        "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — die Neuübersetzung löscht ihn nie",
       ],
       details:
-        "Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Eine Sprache, die bisher keinen eigenen Handle hatte, wird weiter unter dem Handle der Hauptsprache ausgeliefert — diese Adresse bleibt gültig, und ihr ungefragt eine eigene URL zu geben wäre eine Änderung, die niemand verlangt hat. Unverändert bleibt der Handle ausserdem, wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn die Einstellung „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht.",
+        "Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Eine Sprache, die bisher keinen eigenen Handle hatte, wird weiter unter dem Handle der Hauptsprache ausgeliefert — diese Adresse bleibt gültig, und ihr ungefragt eine eigene URL zu geben wäre eine Änderung, die niemand verlangt hat. Unverändert bleibt der Handle ausserdem, wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn die Einstellung „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht. Das gilt auch im Bulk-Editor, wenn ein Speichern mehr Läufe bräuchte als erlaubt: die übrigen Felder fallen dann auf die Löschoption zurück, der Handle bleibt stehen.",
     },
     menuActionBar: {
       title: "Diese Aktionsleiste",

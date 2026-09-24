@@ -818,14 +818,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         policyDescriptionInstructions: data.policyDescriptionInstructions || null,
       };
 
-      await db.aIInstructions.upsert({
-        where: { shop: session.shop },
-        update: sanitizedData,
-        create: {
-          shop: session.shop,
-          ...sanitizedData,
-        },
-      });
+      // Only the fields this request CARRIES. The card sends what changed
+      // (its copy is seeded at mount and never re-synced), and writing the
+      // absent ones as NULL would erase every instruction a merchant did not
+      // touch in this save — the same absent-means-unchanged rule the switches
+      // below follow.
+      const sentInstructions = Object.fromEntries(
+        Object.entries(sanitizedData).filter(([key]) => formData.has(key)),
+      ) as Partial<typeof sanitizedData>;
+      if (Object.keys(sentInstructions).length > 0) {
+        await db.aIInstructions.upsert({
+          where: { shop: session.shop },
+          update: sentInstructions,
+          create: {
+            shop: session.shop,
+            ...sentInstructions,
+          },
+        });
+      }
 
       // Translation mode ("exact" | "seo_optimized") is stored on AISettings
       // and piggybacks on the same submit so the Translations sub-section has
