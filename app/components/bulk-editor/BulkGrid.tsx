@@ -263,13 +263,37 @@ export function BulkGrid({
     return () => observer.disconnect();
   }, [gridTemplateColumns, rows.length]);
 
-  /** Two scrollers showing one position. Assigning an EQUAL scrollLeft fires
-   * no scroll event, so the echo (grid → proxy → grid) dies after one hop on
-   * its own — no lock flag, which a scroll event's async delivery would not
-   * have honoured anyway. */
+  /** Two scrollers showing one position — and the ECHO of our own write must
+   * never be synced back.
+   *
+   * A scroll event is delivered asynchronously (next frame), so the event the
+   * proxy fires for OUR assignment arrives after a trackpad or momentum
+   * scroll has already moved the grid further. Syncing that echo back wrote
+   * the proxy's OLDER position into the grid: it jumped back a few pixels and,
+   * because a programmatic scroll cancels the running smooth/momentum scroll,
+   * the gesture stalled until the next input event restarted it — the stutter
+   * merchants saw when scrolling sideways with a touchpad. (The old
+   * "assigning an equal value fires no event" reasoning only holds while the
+   * source stands still.)
+   *
+   * So every write records the value the target really took (read back: the
+   * browser clamps and rounds), and a scroll event on that target reporting
+   * exactly that value is our echo and is dropped. Anything else is the
+   * merchant moving that scroller and is synced across. */
+  const echoRef = useRef(new WeakMap<HTMLDivElement, number>());
   const syncScroll = (from: HTMLDivElement | null, to: HTMLDivElement | null) => {
     if (!from || !to) return;
-    if (to.scrollLeft !== from.scrollLeft) to.scrollLeft = from.scrollLeft;
+    // Kept (not consumed) on a match: a write can surface as more than one
+    // event, and a second echo read as "the merchant moved it" is the same
+    // jump back. Any other value clears it.
+    if (echoRef.current.get(from) === from.scrollLeft) return;
+    echoRef.current.delete(from);
+    const before = to.scrollLeft;
+    if (before === from.scrollLeft) return;
+    to.scrollLeft = from.scrollLeft;
+    const after = to.scrollLeft;
+    // A clamped no-op fires no event, so there is no echo to wait for.
+    if (after !== before) echoRef.current.set(to, after);
   };
 
   const overflowing = scrollMetrics.content > scrollMetrics.viewport + 1;

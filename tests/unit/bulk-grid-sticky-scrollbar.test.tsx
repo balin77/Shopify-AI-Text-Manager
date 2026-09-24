@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, fireEvent } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { BulkGrid } from "~/components/bulk-editor/BulkGrid";
@@ -167,5 +167,41 @@ describe("the bulk grid's sticky horizontal scrollbar", () => {
     stubWidths(1200, 1200);
     const { container } = render(grid());
     expect(container.querySelector(".cp-bulk-hscroll")).toBeNull();
+  });
+
+  /* The touchpad stutter: scroll events arrive a frame late, so the proxy's
+     event for OUR write lands after a momentum scroll has moved the grid on.
+     Syncing that echo back yanked the grid to the older position and
+     cancelled the running scroll. */
+  it("does not sync its own echo back into the grid", () => {
+    stubWidths(2400, 1200);
+    const { container } = render(grid());
+    const scroller = container.querySelector<HTMLDivElement>(".cp-bulk-scroll")!;
+    const bar = container.querySelector<HTMLDivElement>(".cp-bulk-hscroll")!;
+
+    scroller.scrollLeft = 100;
+    fireEvent.scroll(scroller);
+    expect(bar.scrollLeft).toBe(100);
+
+    // The gesture carries on before the bar's (echo) event is delivered.
+    scroller.scrollLeft = 150;
+    fireEvent.scroll(bar);
+    expect(scroller.scrollLeft, "the echo dragged the grid back").toBe(150);
+
+    fireEvent.scroll(scroller);
+    expect(bar.scrollLeft).toBe(150);
+  });
+
+  it("still drives the grid when the merchant drags the bar", () => {
+    stubWidths(2400, 1200);
+    const { container } = render(grid());
+    const scroller = container.querySelector<HTMLDivElement>(".cp-bulk-scroll")!;
+    const bar = container.querySelector<HTMLDivElement>(".cp-bulk-hscroll")!;
+
+    scroller.scrollLeft = 100;
+    fireEvent.scroll(scroller);
+    bar.scrollLeft = 400;
+    fireEvent.scroll(bar);
+    expect(scroller.scrollLeft).toBe(400);
   });
 });
