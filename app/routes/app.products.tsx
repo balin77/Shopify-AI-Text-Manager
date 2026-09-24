@@ -924,11 +924,25 @@ export default function ProductsPage() {
   // metafields card has to re-read too. Its own load effect short-circuits on
   // `itemId::locale::market`, none of which a revalidation changes, so without
   // this the refreshed sub-resource translations are fetched and never shown.
+  //
+  // `refreshTranslations`, NOT `resetForReload`: the reset only empties the
+  // load key, and the bump lands one commit AFTER the fresh item — the load
+  // effect has already run and returned, so nothing was re-read, while the
+  // empty key made the NEXT revalidation run the load effect's full reset and
+  // throw away unsaved option edits.
   useEffect(() => {
     if (editor.helpers.backgroundRefreshVersion === 0) return;
-    subResources.handlers.resetForReload();
+    subResources.handlers.refreshTranslations();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone
   }, [editor.helpers.backgroundRefreshVersion]);
+
+  // The editor's own `hasChanges` does not see this card or the image
+  // manager, and a background refresh re-runs the loader both render from —
+  // so their unsaved work has to hold it back too.
+  const setExternalUnsavedChanges = editor.helpers.setExternalUnsavedChanges;
+  useEffect(() => {
+    setExternalUnsavedChanges(wrappedSubResourceState.hasChanges);
+  }, [wrappedSubResourceState.hasChanges, setExternalUnsavedChanges]);
 
   // Check for sync parameter and trigger background sync
   useEffect(() => {

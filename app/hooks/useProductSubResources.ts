@@ -120,6 +120,15 @@ export interface SubResourceHandlers {
   saveSubResources: () => void;
   resetChanges: () => void;
   resetForReload: () => void;
+  /**
+   * Re-read the translations of the CURRENT item/locale/market from the item
+   * the loader just delivered — for a background re-translation that finished.
+   * Unlike `resetForReload` it resets nothing: a pending option, a reorder or
+   * a typed translation is the merchant's, so with anything unsaved it does
+   * nothing at all, and the page's refresh is held back anyway until those
+   * changes are saved or discarded.
+   */
+  refreshTranslations: () => void;
 }
 
 // Only MESSAGE strings — the box has no title (see InfoBoxContext), so the
@@ -322,6 +331,57 @@ export function useProductSubResources({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
 
+  /**
+   * Phase 1 + Phase 2 of the load, for the current item/locale/market. Shared
+   * by the load effect and the background refresh so the two cannot come to
+   * resolve a translation differently.
+   */
+  const readTranslationsFromItem = (fetchMissing = true) => {
+    if (!itemId) return;
+    // Phase 1: DB pre-load — read from item.subResourceTranslations (instant,
+    // synchronous), resolving market → global and flagging inherited resources.
+    const { map: dbMap, fallbackResourceIds: dbFallback } =
+      dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage, selectedMarketId);
+
+    // Merge overlay (from copy operations) on top of DB data. Overlay is
+    // market-folded so a market override doesn't leak into the global view.
+    const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
+    const overlayForLocale = localSubResourceOverlayRef.current[overlayKey] || {};
+    const mergedMap = { ...dbMap };
+    const fallbackIds = new Set(dbFallback);
+    for (const [resourceId, fields] of Object.entries(overlayForLocale)) {
+      mergedMap[resourceId] = { ...(mergedMap[resourceId] || {}), ...fields };
+      // An overlay entry is a market-specific staged value → no longer inherited.
+      fallbackIds.delete(resourceId);
+    }
+
+    const { optionTranslations: dbOpts, metafieldTranslations: dbMfs } =
+      buildFromTranslationsMap(selectedItem, mergedMap);
+
+    setOptionTranslations(dbOpts);
+    setMetafieldTranslations(dbMfs);
+    setFallbackResourceIds(fallbackIds);
+
+    // Phase 2: Fetch from Shopify for any sub-resources missing from DB.
+    // This catches translations made via Translate & Adapt or partial syncs.
+    const missingFromDb = subResourceIds.filter(id => !dbMap[id]);
+
+    if (missingFromDb.length > 0 && fetchMissing) {
+      setIsLoading(true);
+      fetcher.submit(
+        {
+          action: "loadSubResourceTranslations",
+          locale: currentLanguage,
+          resourceIds: JSON.stringify(missingFromDb),
+          itemId,
+        },
+        { method: "POST", action: "/app/products" }
+      );
+    } else {
+      setIsLoading(false);
+    }
+  };
+
   // ============================================================================
   // LOAD — Two-phase: DB pre-load (instant) + Shopify fetch (supplement)
   // ============================================================================
@@ -366,50 +426,34 @@ export function useProductSubResources({
       return;
     }
 
-    // Phase 1: DB pre-load — read from item.subResourceTranslations (instant,
-    // synchronous), resolving market → global and flagging inherited resources.
-    const { map: dbMap, fallbackResourceIds: dbFallback } =
-      dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage, selectedMarketId);
-
-    // Merge overlay (from copy operations) on top of DB data. Overlay is
-    // market-folded so a market override doesn't leak into the global view.
-    const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
-    const overlayForLocale = localSubResourceOverlayRef.current[overlayKey] || {};
-    const mergedMap = { ...dbMap };
-    const fallbackIds = new Set(dbFallback);
-    for (const [resourceId, fields] of Object.entries(overlayForLocale)) {
-      mergedMap[resourceId] = { ...(mergedMap[resourceId] || {}), ...fields };
-      // An overlay entry is a market-specific staged value → no longer inherited.
-      fallbackIds.delete(resourceId);
-    }
-
-    const { optionTranslations: dbOpts, metafieldTranslations: dbMfs } =
-      buildFromTranslationsMap(selectedItem, mergedMap);
-
-    setOptionTranslations(dbOpts);
-    setMetafieldTranslations(dbMfs);
-    setFallbackResourceIds(fallbackIds);
-
-    // Phase 2: Fetch from Shopify for any sub-resources missing from DB.
-    // This catches translations made via Translate & Adapt or partial syncs.
-    const missingFromDb = subResourceIds.filter(id => !dbMap[id]);
-
-    if (missingFromDb.length > 0) {
-      setIsLoading(true);
-      fetcher.submit(
-        {
-          action: "loadSubResourceTranslations",
-          locale: currentLanguage,
-          resourceIds: JSON.stringify(missingFromDb),
-          itemId,
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    } else {
-      setIsLoading(false);
-    }
+    readTranslationsFromItem();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fetcher is hook-internal and stable
   }, [itemId, currentLanguage, selectedMarketId, isPrimaryLocale, subResourceIds, selectedItem]);
+
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  useEffect(() => {
+    if (refreshVersion === 0) return;
+    // Unsaved input wins, always. The page does not start a background refresh
+    // while this card is dirty, but an edit can land between that decision and
+    // this pass.
+    if (hasChanges) return;
+    // A different item/locale/market is the load effect's job, with its full
+    // reset; this pass only re-reads what is already on screen.
+    if (loadedForRef.current !== `${itemId}::${currentLanguage}::${selectedMarketId}`) return;
+    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) return;
+    // The server has just rewritten these languages; a staged copy would
+    // otherwise keep winning over the fresh loader value. The overlay only ever
+    // holds values that were already saved, which the fresh item carries too.
+    localSubResourceOverlayRef.current = {};
+    // Phase 2 goes through the SAME fetcher as a save; submitting while it is
+    // busy would abort that request, so the Shopify supplement is skipped then.
+    readTranslationsFromItem(fetcher.state === "idle");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone; reads the render it runs in
+  }, [refreshVersion]);
+
+  const refreshTranslations = useCallback(() => {
+    setRefreshVersion((v) => v + 1);
+  }, []);
 
   // ============================================================================
   // Handle fetcher responses (load + translate + save)
@@ -1713,6 +1757,7 @@ export function useProductSubResources({
       saveSubResources,
       resetChanges,
       resetForReload,
+      refreshTranslations,
     },
   };
 }

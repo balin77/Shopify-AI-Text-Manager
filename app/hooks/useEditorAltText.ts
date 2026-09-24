@@ -47,6 +47,15 @@ interface UseEditorAltTextProps {
   enabledLanguages: string[];
   editableValues: Record<string, string>;
   editableValuesRef: React.MutableRefObject<Record<string, string>>;
+  /**
+   * Bumped by the editor once a finished background re-translation has been
+   * reloaded. The foreign alt texts are resolved by an effect of their own,
+   * keyed on language/market/item, and a revalidation moves none of those —
+   * so without this the AI's new alt texts reach the loader and never the
+   * screen. Optional: a caller that never refreshes in the background simply
+   * leaves it at 0.
+   */
+  backgroundRefreshVersion?: number;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
   savedLocaleRef: React.MutableRefObject<string | null>;
@@ -122,6 +131,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     enabledLanguages,
     editableValues,
     editableValuesRef,
+    backgroundRefreshVersion = 0,
     buildFieldsForSave,
     safeSubmit,
     savedLocaleRef,
@@ -946,9 +956,29 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     localAltTextOverlayRef.current = {};
   }, [selectedItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load translated alt-texts when language changes
+  // Load translated alt-texts when language changes — and once more after a
+  // background re-translation was reloaded (`backgroundRefreshVersion`).
+  const lastAltRefreshVersionRef = useRef(backgroundRefreshVersion);
   useEffect(() => {
     const item = selectedItemRef.current;
+    const isBackgroundRefresh = lastAltRefreshVersionRef.current !== backgroundRefreshVersion;
+    lastAltRefreshVersionRef.current = backgroundRefreshVersion;
+    // What the merchant typed and has not saved, captured BEFORE the reset
+    // below: the refresh only starts on a clean editor, but a keystroke can
+    // land between that decision and this pass, and it must survive.
+    const unsavedAltEdits: Record<number, string> = {};
+    if (isBackgroundRefresh) {
+      const current = imageAltTextsRef.current;
+      const original = originalAltTextsRef.current;
+      for (const [index, value] of Object.entries(current)) {
+        if (value !== (original[Number(index)] ?? "")) unsavedAltEdits[Number(index)] = value;
+      }
+      // The server has just rewritten these languages; a staged overlay entry
+      // would otherwise keep winning over the fresh loader value. The overlay
+      // only ever holds values that were already saved (the refresh waits for
+      // an idle fetcher), so the loader data carries them too.
+      localAltTextOverlayRef.current = {};
+    }
     if (!item) return;
 
     const allImages: ContentImage[] = item.images?.length > 0
@@ -957,6 +987,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (allImages.length === 0) return;
 
     if (currentLanguage === primaryLocale) {
+      // A background refresh re-translated FOREIGN languages only; the primary
+      // view resolves from the item itself and its state holds nothing but the
+      // merchant's own edits, which a reset here would throw away.
+      if (isBackgroundRefresh) return;
       // Reset to primary locale alt-texts - fallback will use images[i].altText
       setImageAltTexts({});
       setOriginalAltTexts({});
@@ -1004,11 +1038,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           if (selectedMarketId && globalVal.trim() !== "") fallbackIndices.add(index);
         }
       });
-      setImageAltTexts(translatedAltTexts);
+      // The BASELINE is the server value; a preserved edit stays dirty against
+      // it, so it can still be saved.
       setOriginalAltTexts({ ...translatedAltTexts });
+      setImageAltTexts({ ...translatedAltTexts, ...unsavedAltEdits });
       setFallbackAltTextIndices(fallbackIndices);
     }
-  }, [currentLanguage, selectedMarketId, selectedItemId, primaryLocale]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, selectedMarketId, selectedItemId, primaryLocale, backgroundRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     // State

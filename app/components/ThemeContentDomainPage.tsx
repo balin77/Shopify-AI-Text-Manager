@@ -874,6 +874,80 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   }, [fetcher.data, selectedGroupId]);
 
   // ============================================================================
+  // BACKGROUND RE-TRANSLATION: re-fetch this group's foreign translations
+  // A primary save strips the changed keys from `loadedTranslations` and hands
+  // them to a detached AI run. The editor reloads the route when that run
+  // finishes — but theme translations are not in the route loader at all, they
+  // live in this component's cache, and every loader of it skips a locale it
+  // already holds. So without this the changed keys stayed empty in every
+  // language until the merchant pressed Reload.
+  // It ONLY READS, and unsaved input wins: the fetch lands asynchronously, and
+  // if the merchant typed meanwhile nothing is applied — the fresh values are
+  // one Reload (or one later refresh) away, a lost keystroke is not.
+  // ============================================================================
+  const editorHasChangesRef = useRef(editor.state.hasChanges);
+  editorHasChangesRef.current = editor.state.hasChanges;
+  const loadedThemesRef = useRef(loadedThemes);
+  loadedThemesRef.current = loadedThemes;
+  const backgroundRefreshVersion = editor.helpers.backgroundRefreshVersion;
+  useEffect(() => {
+    if (backgroundRefreshVersion === 0) return;
+    const groupId = selectedGroupIdRef.current;
+    if (!groupId) return;
+    const foreignLocales = loaderShopLocales
+      .filter((l): l is NonNullable<typeof l> => l != null && !l.primary)
+      .map((l) => l.locale);
+    if (foreignLocales.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.allSettled(
+        foreignLocales.map(async (locale) => {
+          const formData = new FormData();
+          formData.append("action", "loadTranslations");
+          formData.append("locale", locale);
+          appendResourceTypes(formData);
+          const response = await fetch(`${apiBasePath}/${groupId}`, { method: "POST", body: formData });
+          // A failed load says nothing about the translations; the cached ones
+          // stay rather than being replaced by an empty list.
+          if (!response.ok) throw new Error(`loadTranslations failed (${response.status})`);
+          const data = await response.json();
+          return { locale, translations: (data.translations || []) as ThemeTranslationRecord[] };
+        }),
+      );
+      if (cancelled || editorHasChangesRef.current) return;
+      const fresh: Record<string, ThemeTranslationRecord[]> = {};
+      for (const result of results) {
+        if (result.status === "fulfilled") fresh[result.value.locale] = result.value.translations;
+      }
+      if (Object.keys(fresh).length === 0) return;
+      const merged = { ...(loadedTranslationsRef.current[groupId] || {}), ...fresh };
+      loadedTranslationsRef.current = { ...loadedTranslationsRef.current, [groupId]: merged };
+      setLoadedTranslations((prev) => ({ ...prev, [groupId]: { ...(prev[groupId] || {}), ...fresh } }));
+
+      // The locale on screen is applied directly, as every other loader here
+      // does: theme fields are the page's to set, and a translation of the
+      // same length would not even move the editor's change signal.
+      const currentLanguage = editorLanguageRef.current;
+      const onScreen = fresh[currentLanguage];
+      const themeData = loadedThemesRef.current[groupId];
+      if (!onScreen || currentLanguage === primaryLocale || selectedGroupIdRef.current !== groupId) return;
+      if (!themeData?.translatableContent) return;
+      const newValues: Record<string, string> = {};
+      themeData.translatableContent.forEach((item: TranslatableField) => {
+        newValues[item.key] = onScreen.find((tr) => tr.key === item.key)?.value || "";
+      });
+      Object.entries(newValues).forEach(([key, value]) => {
+        editorHelpersRef.current.setEditableValue(key, value);
+      });
+      editorHelpersRef.current.setOriginalTemplateValues(newValues);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone; reads refs
+  }, [backgroundRefreshVersion]);
+
+  // ============================================================================
   // RELOAD: Invalidate caches and re-fetch fresh data after revalidation completes
   // After the ReloadButton syncs from Shopify to DB, we need to re-fetch theme
   // data and translations from the API (which reads from the now-updated DB).
