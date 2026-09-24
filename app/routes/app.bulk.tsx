@@ -97,7 +97,10 @@ import {
 import {
   CSV_EXPORT_MAX_ROWS,
   CSV_IMPORT_MAX_BYTES,
+  CSV_IMPORT_MAX_ROWS,
+  decodeCsvBytes,
   delimiterForAppLanguage,
+  type CsvFileEncoding,
 } from "../services/bulk-editor/csv.shared";
 // Excel-paste rectangle + undo stack (§8.3/§8.4) — client-safe pure pieces.
 import {
@@ -734,6 +737,9 @@ export default function BulkEditor() {
   const downloadedExportKeyRef = useRef<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importPreview, setImportPreview] = useState<CsvImportPreview | null>(null);
+  /** How the file under preview was decoded — a non-UTF-8 file is named in
+   * the dialog so the merchant checks its umlauts before saving. */
+  const [importEncoding, setImportEncoding] = useState<CsvFileEncoding>("utf8");
   const importFileRef = useRef<HTMLInputElement>(null);
   /** "12 × 3 cells pasted" feedback (§8.3) with its undo action. */
   const [pasteBanner, setPasteBanner] = useState<{
@@ -1325,7 +1331,10 @@ export default function BulkEditor() {
       bulkFetcher.submit(
         {
           action: "seoBulkMeta",
-          contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[type],
+          // The diff's OWN row type, never the toolbar's: a confirmed CSV
+          // import whose preview was requested before a type switch still
+          // carries the rows it was built for.
+          contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[diffToSave[0].rowType],
           diff: JSON.stringify(diffToSave),
         },
         { method: "post", action: "/api/ai" },
@@ -1516,21 +1525,57 @@ export default function BulkEditor() {
     const a = document.createElement("a");
     a.href = url;
     a.download = payload.filename;
+    // Attached and revoked a tick later: Firefox and older Safari cancel a
+    // download whose object URL is revoked in the same task as the click.
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportFetcher.state, exportFetcher.data]);
 
   // ── CSV import (§8.2 — Pro; preview first, save through submitDiff) ──────
 
+  const importMaxMb = String(Math.round(CSV_IMPORT_MAX_BYTES / (1024 * 1024)));
+
+  /** "Deutsch (Primär)" / "Français" / "Français · Schweiz" — the layer a CSV
+   * import writes into, named in the preview and in a scope-mismatch refusal.
+   * An unknown code or market (a file from another shop) shows as-is. */
+  const importScopeLabel = (scopeLocale: string, scopeMarketId: string): string => {
+    const code = scopeLocale || data.locales.find((l) => l.primary)?.locale || "";
+    const language = localeNameByCode.get(code) ?? code;
+    const base = scopeLocale === "" ? `${language} ${b.primaryLocaleSuffix}` : language;
+    if (scopeMarketId === "") return base;
+    const market = data.markets.find((m) => m.id === scopeMarketId)?.name ?? scopeMarketId;
+    return `${base} · ${market}`;
+  };
+
   const handleImportFile = async (file: File) => {
     setImportError(null);
-    // UX pre-check only — the server re-enforces the byte cap (§8.2).
-    if (file.size > CSV_IMPORT_MAX_BYTES) {
-      setImportError(b.csv.fileTooLarge.replace("{max}", "5"));
+    // Unsaved grid edits and an import do not mix: the import diff is built
+    // against the DB, a successful save prunes every submitted key (dropping
+    // a pending grid edit of the same cell in favour of the file, silently)
+    // and clears the undo stack of edits that were never saved.
+    if (dirty.length > 0 || offPageEditCount > 0) {
+      setImportError(b.csv.unsavedEdits);
       return;
     }
-    const text = await file.text();
+    // Decoded HERE, not with file.text() (always UTF-8): Excel's default CSV
+    // format is Windows-1252, see decodeCsvBytes. The raw-size check only
+    // stops an absurd file before it is read; the real cap is measured on
+    // the DECODED text in UTF-8 — what the server measures — or a
+    // Windows-1252 file full of umlauts passes here and fails there, and a
+    // UTF-16 file (two bytes per letter) is refused for nothing.
+    if (file.size > CSV_IMPORT_MAX_BYTES * 2) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
+      return;
+    }
+    const { text, encoding } = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
+    if (new TextEncoder().encode(text).length > CSV_IMPORT_MAX_BYTES) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
+      return;
+    }
+    setImportEncoding(encoding);
     importFetcher.submit(
       {
         actionType: "csvImportPreview",
@@ -1551,14 +1596,22 @@ export default function BulkEditor() {
     } else {
       setImportError(
         result.error === "tooLarge"
-          ? b.csv.fileTooLarge.replace("{max}", "5")
+          ? b.csv.fileTooLarge.replace("{max}", importMaxMb)
           : result.error === "tooManyRows"
-            ? b.csv.tooManyRows.replace("{max}", "10000")
+            ? b.csv.tooManyRows.replace("{max}", String(CSV_IMPORT_MAX_ROWS))
             : result.error === "empty"
               ? b.csv.emptyFile
               : result.error === "noIdColumn"
                 ? b.csv.noIdColumn
-                : b.csv.importFailed,
+                : result.error === "badEncoding"
+                  ? b.csv.badEncoding
+                  : result.error === "scopeMismatch"
+                    ? b.csv.scopeMismatch
+                        .replace("{file}", importScopeLabel(result.fileLocale, result.fileMarketId))
+                        .replace("{view}", importScopeLabel(locale, isForeign ? marketId : ""))
+                    : result.error === "gated"
+                      ? b.csv.importProTooltip
+                      : b.csv.importFailed,
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2697,6 +2750,8 @@ export default function BulkEditor() {
                 const column = allColumns.find((c) => c.id === columnId);
                 return column ? columnHeading(column) : columnId;
               }}
+              targetLabel={importScopeLabel(locale, isForeign ? marketId : "")}
+              encoding={importEncoding}
               overBudget={importOverBudget}
               maxCalls={MAX_TASK_CALLS}
               overCellLimit={importOverCellLimit}
@@ -2716,12 +2771,20 @@ export default function BulkEditor() {
                 rowErrorUnknownId: b.csv.preview.rowErrorUnknownId,
                 rowErrorUnknownHandle: b.csv.preview.rowErrorUnknownHandle,
                 rowErrorAmbiguousHandle: b.csv.preview.rowErrorAmbiguousHandle,
+                rowErrorDuplicateRow: b.csv.preview.rowErrorDuplicateRow,
+                target: b.csv.preview.target,
+                encodingNotice: b.csv.preview.encodingNotice,
+                damagedTitle: b.csv.preview.damagedTitle,
+                damagedHint: b.csv.preview.damagedHint,
+                damagedScientificNotation: b.csv.preview.damagedScientificNotation,
+                damagedLeadingZerosLost: b.csv.preview.damagedLeadingZerosLost,
+                damagedCellLimitTruncated: b.csv.preview.damagedCellLimitTruncated,
                 moreRowErrors: b.csv.preview.moreRowErrors,
                 changesHeading: b.csv.preview.changesHeading,
                 moreChanges: b.csv.preview.moreChanges,
                 emptyValue: b.csv.preview.emptyValue,
-                overBudget: b.budgetExceeded,
-                overCellLimit: b.cellLimitExceeded,
+                overBudget: b.csv.preview.overBudget,
+                overCellLimit: b.csv.preview.overCellLimit,
                 apply: b.csv.preview.apply,
                 cancel: b.csv.preview.cancel,
               }}
