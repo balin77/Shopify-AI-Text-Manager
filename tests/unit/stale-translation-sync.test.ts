@@ -1819,6 +1819,30 @@ describe("handle re-translation", () => {
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
+  it("FILLS a locale's handle and writes NO redirect — none is owed", async () => {
+    // The merchant's decision: the opt-in means every language gets a
+    // translated handle. The locale had none, so its address was the primary
+    // slug behind its prefix, which the primary redirect already covers.
+    policy.autoTranslateExternalChanges = true;
+    policy.autoTranslateHandles = true;
+    ai.translate = vi.fn(async () => ({ de: { handle: "Kumiko Schatulle" } }));
+
+    await reconcileStaleTranslations(
+      handleParams({
+        handleRedirect: async () => ({ ...(await resolver()), previousTranslatedHandle: "", skipRedirect: true }),
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([
+      { key: "handle", locale: "de", value: "kumiko-schatulle", translatableContentDigest: NEW },
+    ]);
+    expect(shopify.redirectCalls).toEqual([]);
+    const final = db.task.update.mock.calls.at(-1) as unknown as [any];
+    // Not reported as a missing redirect: there was nothing to redirect.
+    expect(final[0].data.status).toBe("completed");
+  });
+
   it("RECORDS a refused redirect, so the next look does not prove the same move again", async () => {
     // Keeping writes nothing, so without this the mirror digest stays old,
     // Shopify's row stays `outdated`, and the drift sweep hands the same page

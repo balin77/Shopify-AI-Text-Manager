@@ -2423,6 +2423,9 @@ async function createHandleRedirect(
   // Reserved before the AI ran; an entry without a context never reached the
   // write. Belt and braces, because the alternative is a moved URL with no row.
   if (!context) return false;
+  // A fill, or a URL that was never live: no old address a link could point
+  // at, so there is nothing to cover (see `skipRedirect`).
+  if (context.skipRedirect) return true;
   try {
     const { applyTranslatedHandleRedirect } = await import("../seo/handle-redirect.server");
     const result = await applyTranslatedHandleRedirect(gateway as never, target.shop, {

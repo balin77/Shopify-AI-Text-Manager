@@ -7,8 +7,9 @@
  *
  *   - **No context ⇒ no handle.** Every reason to refuse must come back as
  *     `null`, because the repair reads `null` as "leave this handle alone".
- *   - **REFRESH, never CREATE.** A locale with no handle translation is served
- *     under the primary slug and must stay there.
+ *   - **A redirect wherever a live URL moves, and none where none existed.**
+ *     A locale with no handle of its own (a FILL, the merchant's 2026-09
+ *     decision) or a draft owes no redirect; a refreshed live handle does.
  *
  * The pure decision it delegates to lives in handle-redirect.shared.ts and has
  * its own tests; what is checked here is that this module asks it with the
@@ -35,6 +36,8 @@ interface Fixture {
   product: { handle: string | null; status: string } | null;
   article: { handle: string; isPublished: boolean; attributesSyncedAt: Date | null; blogId: string | null } | null;
   blogHandle: string | null;
+  /** What Shopify reports per locale for key `handle`; `null` = the read fails. */
+  shopifyHandles: Record<string, string> | null;
 }
 
 let fx: Fixture;
@@ -59,8 +62,17 @@ function makeDb() {
 }
 
 const client = {
-  graphql: vi.fn(async () => ({
-    json: async () => ({ data: { blog: { handle: fx.blogHandle } } }),
+  graphql: vi.fn(async (query: string, opts?: { variables?: { locale?: string } }) => ({
+    json: async () => {
+      if (query.includes("repairHandleTranslation")) {
+        if (fx.shopifyHandles === null) return { errors: [{ message: "Throttled" }] };
+        const value = fx.shopifyHandles[opts?.variables?.locale ?? ""];
+        return {
+          data: { translatableResource: { translations: value === undefined ? [] : [{ key: "handle", value }] } },
+        };
+      }
+      return { data: { blog: { handle: fx.blogHandle } } };
+    },
   })),
 } as never;
 
@@ -77,6 +89,7 @@ beforeEach(() => {
     product: { handle: "kumiko-box", status: "ACTIVE" },
     article: null,
     blogHandle: "news",
+    shopifyHandles: {},
   };
 });
 
@@ -91,10 +104,30 @@ describe("makeHandleRedirectResolver", () => {
     });
   });
 
-  it("REFRESHES only: a locale with no handle translation gets none", async () => {
-    // `fr` is served under the primary handle today, and that address stays
-    // live — inventing a French URL would be a change nobody asked for, in
-    // every published language at once.
+  it("FILLS a locale with no handle translation — and owes it no redirect", async () => {
+    // `fr` was served under the primary slug behind its prefix; the primary
+    // handle's own redirect covers that address, so nothing is left to cover.
+    const context = await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "fr");
+    expect(context).toMatchObject({ previousTranslatedHandle: "", skipRedirect: true, primaryHandle: "kumiko-box" });
+  });
+
+  it("a FILL does not need the shop's redirect switch — it writes no redirect", async () => {
+    fx.seoAutoHandleRedirect = false;
+    const context = await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "fr");
+    expect(context?.skipRedirect).toBe(true);
+  });
+
+  it("asks SHOPIFY when the mirror has no row — a handle translated elsewhere is a REFRESH", async () => {
+    // Treated as a fill, it would be written with no redirect and the old
+    // translated URL would die.
+    fx.shopifyHandles = { fr: "boite-alt" };
+    const context = await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "fr");
+    expect(context).toMatchObject({ previousTranslatedHandle: "boite-alt" });
+    expect(context?.skipRedirect).toBeUndefined();
+  });
+
+  it("leaves the handle alone when Shopify cannot say whether one exists", async () => {
+    fx.shopifyHandles = null;
     expect(await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "fr")).toBeNull();
   });
 
@@ -123,9 +156,10 @@ describe("makeHandleRedirectResolver", () => {
     expect(await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "de")).toBeNull();
   });
 
-  it("refuses for a draft product, whose URL was never reachable", async () => {
+  it("moves a DRAFT product's handle without a redirect — its URL was never reachable", async () => {
     fx.product = { handle: "kumiko-box", status: "DRAFT" };
-    expect(await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "de")).toBeNull();
+    const context = await resolver()({ resourceId: PRODUCT, resourceType: "Product" }, "de");
+    expect(context).toMatchObject({ previousTranslatedHandle: "kiste-alt", skipRedirect: true });
   });
 
   it("refuses a BLOG handle: its articles' URLs cannot come along", async () => {

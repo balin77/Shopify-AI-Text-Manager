@@ -68,6 +68,17 @@ export interface TranslatedHandleContext {
   previouslyLive: boolean | null;
   blogHandle: string | null;
   blogHandleTranslatedInLocale: boolean;
+  /**
+   * No redirect is owed, so none is written and none is refused for. Two
+   * cases:
+   *  - a FILL: the locale had no handle of its own, so its address was the
+   *    PRIMARY slug under the locale prefix. That address is covered by the
+   *    primary handle's own redirect (one unprefixed row serves every prefix,
+   *    measured by the redirect-locale probe), and Shopify answers the primary
+   *    slug behind a locale prefix and canonicalises it to the translated one.
+   *  - a resource that was NEVER LIVE (a draft): no link to it can exist.
+   */
+  skipRedirect?: boolean;
 }
 
 /**
@@ -115,6 +126,19 @@ export function makeHandleRedirectResolver(deps: ResolverDeps): HandleRedirectRe
     return cached;
   };
 
+  const shopifyHandles = new Map<string, Promise<string | undefined>>();
+  /** The GLOBAL handle translation Shopify holds for (resource, locale): the
+   *  value, "" for none, undefined when the read did not answer. */
+  const shopifyHandleFor = (resourceId: string, locale: string): Promise<string | undefined> => {
+    const key = resourceId + "|" + locale;
+    let cached = shopifyHandles.get(key);
+    if (!cached) {
+      cached = loadShopifyHandle(deps, resourceId, locale);
+      shopifyHandles.set(key, cached);
+    }
+    return cached;
+  };
+
   const blogHandleFor = (blogId: string): Promise<string | null> => {
     let cached = blogHandles.get(blogId);
     if (!cached) {
@@ -138,20 +162,19 @@ export function makeHandleRedirectResolver(deps: ResolverDeps): HandleRedirectRe
       // the blog in silence. The blog's handle is left to a deliberate edit.
       if (resource === "blog") return null;
 
-      // The shop's own "redirect when a handle changes" switch. Off means the
-      // merchant does not want redirect rows — and an UNATTENDED handle rewrite
-      // without one is exactly the silently broken link this module exists to
-      // prevent, so it takes the handle with it rather than writing without a
-      // redirect.
-      wanted ??= loadRedirectPreference(deps);
-      if (!(await wanted)) return null;
-
       const rows = await rowsFor(ref.resourceId);
-      const previousTranslatedHandle = (rows.get(locale) ?? "").trim();
-      // REFRESH, never CREATE — see the header. Bails before the remaining
-      // lookups, which is also what keeps a shop that translates no handles at
-      // all from paying for this at all.
-      if (!previousTranslatedHandle) return null;
+      let previousTranslatedHandle = (rows.get(locale) ?? "").trim();
+      // The mirror is not the whole truth: a handle translated in Shopify's own
+      // editor or by another app since the last product sync has no row here,
+      // and reading its absence as "no translation" would make this a FILL,
+      // written with no redirect, leaving the old translated URL dead. So an
+      // empty mirror asks SHOPIFY, and an unanswered question leaves the
+      // handle alone.
+      if (!previousTranslatedHandle) {
+        const live = await shopifyHandleFor(ref.resourceId, locale);
+        if (live === undefined) return null;
+        previousTranslatedHandle = live.trim();
+      }
 
       let state = stateByResource.get(ref.resourceId);
       if (!state) {
@@ -160,6 +183,41 @@ export function makeHandleRedirectResolver(deps: ResolverDeps): HandleRedirectRe
       }
       const resolved = await state;
       if (!resolved?.handle) return null;
+      const previouslyLive = wasEverLive(resource, resolved.state);
+
+      // A FILL, or a resource that was never live: no old translated address
+      // exists that a link could point at, so no redirect is owed (see
+      // `skipRedirect`). The merchant opted into translated handles, so a
+      // locale without one gets one. An ARTICLE under a blog whose own handle
+      // is translated in this locale still refuses: which spelling the
+      // storefront serves for the outer segment is unmeasured either way.
+      if (!previousTranslatedHandle || previouslyLive === false) {
+        if (resource === "article" && resolved.blogId) {
+          const blogRows = await rowsFor(resolved.blogId);
+          if (blogRows.get(locale)?.trim()) return null;
+        }
+        return {
+          resource,
+          previousTranslatedHandle,
+          primaryHandle: resolved.handle,
+          otherLocaleHandles: [...rows.entries()]
+            .filter(([rowLocale]) => rowLocale !== locale)
+            .map(([, value]) => value),
+          previousHandleTakenElsewhere: false,
+          previouslyLive,
+          blogHandle: resolved.blogHandle ?? null,
+          blogHandleTranslatedInLocale: false,
+          skipRedirect: true,
+        };
+      }
+
+      // A REFRESH moves a live foreign URL and owes it a redirect. The shop's
+      // own "redirect when a handle changes" switch: off means the merchant
+      // does not want redirect rows, and an UNATTENDED rewrite of a live URL
+      // without one is the silently broken link this module exists to
+      // prevent, so the handle is left alone.
+      wanted ??= loadRedirectPreference(deps);
+      if (!(await wanted)) return null;
 
       let blogHandle: string | null = null;
       let blogHandleTranslatedInLocale = false;
@@ -191,7 +249,7 @@ export function makeHandleRedirectResolver(deps: ResolverDeps): HandleRedirectRe
           .filter(([rowLocale]) => rowLocale !== locale)
           .map(([, value]) => value),
         previousHandleTakenElsewhere,
-        previouslyLive: wasEverLive(resource, resolved.state),
+        previouslyLive,
         blogHandle,
         blogHandleTranslatedInLocale,
       };
@@ -314,6 +372,36 @@ async function loadResourceState(
       // ARTICLES' URLs move with it and Shopify redirects have no wildcards.
       // Kept so the switch stays exhaustive over `RedirectableResource`.
       return null;
+  }
+}
+
+async function loadShopifyHandle(
+  deps: ResolverDeps,
+  resourceId: string,
+  locale: string,
+): Promise<string | undefined> {
+  try {
+    const response = await deps.client.graphql(
+      `#graphql
+        query repairHandleTranslation($id: ID!, $locale: String!) {
+          translatableResource(resourceId: $id) {
+            translations(locale: $locale) { key value }
+          }
+        }`,
+      { variables: { id: resourceId, locale } },
+    );
+    const body = (await response.json()) as {
+      data?: { translatableResource?: { translations?: Array<{ key: string; value: string | null }> | null } | null };
+      errors?: unknown[];
+    };
+    // An absent resource or list is not "no translation" (the
+    // translatableContent trap): inconclusive, so it confirms nothing.
+    if (body?.errors?.length) return undefined;
+    const list = body?.data?.translatableResource?.translations;
+    if (!Array.isArray(list)) return undefined;
+    return list.find((row) => row.key === "handle")?.value ?? "";
+  } catch {
+    return undefined;
   }
 }
 

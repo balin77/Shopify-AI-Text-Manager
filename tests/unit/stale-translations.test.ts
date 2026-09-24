@@ -409,16 +409,22 @@ describe("partitionStaleTranslations — the handle opt-in", () => {
     expect(purge).toEqual([cleared]);
   });
 
-  it("REFRESHES a handle but never FILLS one: a locale with no handle keeps the primary URL", () => {
+  it("FILLS a handle too under the opt-in: a locale without one gets one", () => {
+    // The merchant's decision (2026-09): the opt-in means translated handles
+    // in every language, not only a refresh of the ones that have one.
     const filled = { ...staleHandle, locale: "de", filled: true };
     const { retranslate, purge, declined } = partitionStaleTranslations([filled], true, {
       translateHandles: true,
     });
-    // Not translated (that would be a brand-new foreign URL), and not removed
-    // either — there is nothing there to remove.
-    expect(retranslate).toEqual([]);
+    expect(retranslate).toEqual([filled]);
     expect(purge).toEqual([]);
     expect(declined).toEqual([]);
+    // …and without the opt-in a filled handle is still nothing at all.
+    expect(partitionStaleTranslations([filled], true, { translateHandles: false })).toEqual({
+      retranslate: [],
+      purge: [],
+      declined: [],
+    });
   });
 
   it("leaves a metaobject field called `handle` alone — a value surface has no URLs", () => {
@@ -432,8 +438,8 @@ describe("partitionStaleTranslations — the handle opt-in", () => {
   });
 });
 
-describe("findStaleTranslations — the fill never creates a handle", () => {
-  it("fills title into an untranslated locale but not handle, even with the opt-in on", () => {
+describe("findStaleTranslations — the fill creates a handle only under the opt-in", () => {
+  it("fills title AND handle into an untranslated locale with the opt-in on", () => {
     const stale = findStaleTranslations(
       [translation({ locale: "fr" }), translation({ locale: "fr", key: "handle", value: "boite" })],
       primary({ title: "Box", handle: "kumiko-box" }),
@@ -441,7 +447,7 @@ describe("findStaleTranslations — the fill never creates a handle", () => {
       { fillLocales: ["fr", "de"], translateHandles: true },
     );
     const filled = stale.filter((entry) => entry.filled);
-    expect(filled.map((entry) => `${entry.locale}:${entry.key}`)).toEqual(["de:title"]);
+    expect(filled.map((entry) => `${entry.locale}:${entry.key}`).sort()).toEqual(["de:handle", "de:title"]);
     // The `fr` handle it PROVED stale is still there — refreshing is the point.
     expect(stale.some((entry) => entry.key === "handle" && entry.locale === "fr" && !entry.filled)).toBe(true);
   });
@@ -511,7 +517,7 @@ describe("findStaleTranslations — the second entrance (the PRIMARY digest base
     expect(findStaleTranslations([], content, {}, { previousPrimaryDigests: { title: OLD } })).toEqual([]);
   });
 
-  it("never fills a handle, and never a key this app does not manage", () => {
+  it("fills a handle only under the opt-in, and never a key this app does not manage", () => {
     const stale = findStaleTranslations(
       [],
       primary({ handle: "box", some_theme_key: "x", title: "Box" }),
@@ -522,7 +528,14 @@ describe("findStaleTranslations — the second entrance (the PRIMARY digest base
         previousPrimaryDigests: { handle: OLD, some_theme_key: OLD, title: OLD },
       },
     );
-    expect(stale.map((e) => e.key)).toEqual(["title"]);
+    expect(stale.map((e) => e.key).sort()).toEqual(["handle", "title"]);
+    const withoutOptIn = findStaleTranslations(
+      [],
+      primary({ handle: "box", title: "Box" }),
+      {},
+      { fillLocales: ["de"], translateHandles: false, previousPrimaryDigests: { handle: OLD, title: OLD } },
+    );
+    expect(withoutOptIn.map((e) => e.key)).toEqual(["title"]);
   });
 
   it("does not double-fill a key the FIRST entrance already proved", () => {

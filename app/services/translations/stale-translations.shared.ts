@@ -562,19 +562,13 @@ export type StaleVerdict = "retranslate" | "purge" | "declined";
  * ANDed with the parent switch and the plan in
  * translation-change-policy.server.ts). Off — the default, and the behaviour
  * that predates the option — a stale `handle` is a PURGE, exactly as before.
- * On, it becomes a re-translation, with two limits that are part of the rule
- * rather than of the caller:
+ * On, it becomes a re-translation, and a FILLED entry is one too: the
+ * merchant decided (2026-09) that the opt-in means "give every language a
+ * translated handle", not only "refresh the ones that have one". A locale
+ * without a handle of its own was served under the primary slug behind its
+ * prefix; that address is covered by the primary handle's own redirect and
+ * Shopify canonicalises it to the translated URL, so filling breaks nothing.
  *
- *  - a FILLED entry is never a handle. The fill exists so a locale that holds
- *    no translation gets one; for a handle that means a locale which has been
- *    served under the PRIMARY slug all along suddenly gets a URL of its own,
- *    unattended, for every published language at once. Nothing is broken by
- *    leaving it alone (the primary path stays live and Shopify canonicalises
- *    to it), and "refresh the slug I chose to translate" is what the merchant
- *    ticked. So handles are REFRESHED, never CREATED — and the `declined`
- *    verdict is what says so: we refuse to try, so their stored deletion
- *    answer stands, and `partitionStaleTranslations` drops a filled entry that
- *    is not a re-translation rather than turning it into a removal of nothing.
  *  - the WRITE side has a second rail this function cannot see: the repair
  *    refuses a handle it cannot put a redirect on
  *    (handle-retranslation.server.ts). A pure classifier cannot ask Shopify
@@ -605,10 +599,13 @@ export function classifyStaleTranslation(
   // above — see this function's note.
   if (entry.key === "handle") {
     if (!opts.translateHandles) return "purge";
-    // REFRESH, never CREATE. A locale with no handle translation is served
-    // under the primary slug, which is live and canonical; giving it one is a
-    // new URL nobody asked for.
-    return entry.filled ? "declined" : "retranslate";
+    // Refreshed AND filled: the merchant's opt-in asks for translated handles,
+    // and a locale that had none gets one (their decision, 2026-09). Filling
+    // breaks nothing: that locale's address was the primary slug behind its
+    // prefix, which the primary handle's own redirect covers and Shopify
+    // canonicalises to the translated URL. Whether THIS URL may move is still
+    // the resolver's question (handle-retranslation.server.ts).
+    return "retranslate";
   }
   // Everything else the allowlist does not name is a PURGE — a stale
   // translation the automation cannot re-translate must not keep describing
