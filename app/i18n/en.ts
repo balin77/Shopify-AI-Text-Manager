@@ -2045,6 +2045,8 @@ export const en: Translation = {
       someFailed: "Some entries could not be processed — open the task for details.",
       translationsNotMirrored:
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
+      autoTranslateDailyLimit:
+        "Automatic first translations paused for today: the daily limit of {cap} items was reached, and {count} further change(s) were not translated. Nothing was lost — each one is translated at its next change (pages, articles, blogs and policies: in the nightly check).",
       translationsNoneUsable: "The automatic re-translation produced no usable translation.",
     },
     translationCompleted: "Translation completed for \"{title}\"",

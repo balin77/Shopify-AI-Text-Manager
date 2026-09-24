@@ -2048,6 +2048,8 @@ export const de = {
       someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
       translationsNotMirrored:
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
+      autoTranslateDailyLimit:
+        "Automatische Erstübersetzungen für heute pausiert: Das Tageslimit von {cap} Einträgen ist erreicht, {count} weitere Änderung(en) wurden nicht übersetzt. Nichts geht verloren — jede wird bei ihrer nächsten Änderung übersetzt (Seiten, Artikel, Blogs und Richtlinien: beim nächtlichen Abgleich).",
       translationsNoneUsable:
         "Die automatische Neuübersetzung hat keine verwendbare Übersetzung geliefert.",
     },

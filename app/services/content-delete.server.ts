@@ -60,6 +60,11 @@ export async function purgeContentFromCache(
     counts.seoKeywordAssignment = (
       await tx.seoKeywordAssignment.deleteMany({ where: { shop, resourceId: gid } })
     ).count;
+    // The stale-translation gate's per-resource primary baseline — polymorphic
+    // and FK-less like ContentTranslation, so nothing else would remove it.
+    counts.primaryDigestBaseline = (
+      await tx.primaryDigestBaseline.deleteMany({ where: { shop, resourceId: gid } })
+    ).count;
 
     switch (resource) {
       case "product":
@@ -100,6 +105,9 @@ export async function purgeContentFromCache(
             ).count;
             counts.articleKeywords = (
               await tx.seoKeywordAssignment.deleteMany({ where: { shop, resourceId: { in: ids } } })
+            ).count;
+            counts.articleBaselines = (
+              await tx.primaryDigestBaseline.deleteMany({ where: { shop, resourceId: { in: ids } } })
             ).count;
           }
           counts.article = (await tx.article.deleteMany({ where: { shop, blogId: gid } })).count;

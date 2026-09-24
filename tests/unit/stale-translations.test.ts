@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   digestBaselineKey,
   findStaleTranslations,
+  nextPrimaryDigestBaseline,
   partitionStaleTranslations,
+  primaryBaselineMovedKeys,
   type PrimaryContentEntry,
   type SyncedTranslation,
 } from "../../app/services/translations/stale-translations.shared";
@@ -442,5 +444,135 @@ describe("findStaleTranslations — the fill never creates a handle", () => {
     expect(filled.map((entry) => `${entry.locale}:${entry.key}`)).toEqual(["de:title"]);
     // The `fr` handle it PROVED stale is still there — refreshing is the point.
     expect(stale.some((entry) => entry.key === "handle" && entry.locale === "fr" && !entry.filled)).toBe(true);
+  });
+});
+
+describe("findStaleTranslations — the second entrance (the PRIMARY digest baseline)", () => {
+  // A resource NOBODY has translated: no translation rows at all, so the first
+  // entrance can never prove anything. Only the per-resource primary baseline
+  // can — which is the merchant report this exists for.
+  const content = primary({ title: "Box", body_html: "<p>Box</p>" });
+
+  it("RULE ONE: no stored primary digest ⇒ no evidence ⇒ NOTHING, however the text looks", () => {
+    // The first sync after the deploy. Without this every edited resource of
+    // every shop would be translated into every language on the merchant's key.
+    expect(findStaleTranslations([], content, {}, { fillLocales: ["de", "fr"] })).toEqual([]);
+    expect(
+      findStaleTranslations([], content, {}, { fillLocales: ["de", "fr"], previousPrimaryDigests: {} }),
+    ).toEqual([]);
+    // A baseline for OTHER keys proves nothing about these.
+    expect(
+      findStaleTranslations([], content, {}, {
+        fillLocales: ["de", "fr"],
+        previousPrimaryDigests: { meta_title: OLD },
+      }),
+    ).toEqual([]);
+  });
+
+  it("fills EVERY published locale when the primary digest moved and nothing is translated", () => {
+    const stale = findStaleTranslations([], content, {}, {
+      fillLocales: ["de", "fr"],
+      previousPrimaryDigests: { title: OLD, body_html: OLD },
+    });
+    expect(stale.map((e) => `${e.locale}:${e.key}`).sort()).toEqual([
+      "de:body_html",
+      "de:title",
+      "fr:body_html",
+      "fr:title",
+    ]);
+    // Always a FILL (never a removal, in either direction) and marked as resting
+    // on this entrance alone — the brake and the held baseline key off it.
+    expect(stale.every((e) => e.filled && e.baselineFill)).toBe(true);
+    expect(partitionStaleTranslations(stale, false)).toEqual({ retranslate: [], purge: [], declined: [] });
+  });
+
+  it("leaves a locale that already holds a value to the FIRST entrance — `outdated: false` is untouched", () => {
+    // de was translated against the NEW text already (Shopify says so). The
+    // second entrance only ever adds locales that have nothing.
+    const stale = findStaleTranslations(
+      [translation({ key: "title", locale: "de", outdated: false })],
+      primary({ title: "Box" }),
+      {},
+      { fillLocales: ["de", "fr"], previousPrimaryDigests: { title: OLD } },
+    );
+    expect(stale.map((e) => `${e.locale}:${e.key}`)).toEqual(["fr:title"]);
+  });
+
+  it("does nothing when the primary digest did not move", () => {
+    expect(
+      findStaleTranslations([], content, {}, {
+        fillLocales: ["de"],
+        previousPrimaryDigests: { title: NEW, body_html: NEW },
+      }),
+    ).toEqual([]);
+  });
+
+  it("produces nothing without fill locales — all it can ever produce is a fill", () => {
+    expect(findStaleTranslations([], content, {}, { previousPrimaryDigests: { title: OLD } })).toEqual([]);
+  });
+
+  it("never fills a handle, and never a key this app does not manage", () => {
+    const stale = findStaleTranslations(
+      [],
+      primary({ handle: "box", some_theme_key: "x", title: "Box" }),
+      {},
+      {
+        fillLocales: ["de"],
+        translateHandles: true,
+        previousPrimaryDigests: { handle: OLD, some_theme_key: OLD, title: OLD },
+      },
+    );
+    expect(stale.map((e) => e.key)).toEqual(["title"]);
+  });
+
+  it("does not double-fill a key the FIRST entrance already proved", () => {
+    const stale = findStaleTranslations(
+      [translation({ key: "title", locale: "fr", outdated: true })],
+      primary({ title: "Box" }),
+      moved,
+      { fillLocales: ["de", "fr"], previousPrimaryDigests: { title: OLD } },
+    );
+    expect(stale.map((e) => `${e.locale}:${e.key}`).sort()).toEqual(["de:title", "fr:title"]);
+    // Proven by a translation row ⇒ the pre-existing fill, not this entrance.
+    expect(stale.some((e) => e.baselineFill)).toBe(false);
+  });
+});
+
+describe("primaryBaselineMovedKeys", () => {
+  it("needs a stored digest, a current value and a difference — each is rule one", () => {
+    expect(primaryBaselineMovedKeys(primary({ title: "Box" }), {})).toEqual([]);
+    expect(primaryBaselineMovedKeys(primary({ title: "Box" }), { title: NEW })).toEqual([]);
+    expect(primaryBaselineMovedKeys({ title: { value: "  ", digest: NEW } }, { title: OLD })).toEqual([]);
+    expect(primaryBaselineMovedKeys({ title: { value: "Box", digest: null } }, { title: OLD })).toEqual([]);
+    expect(primaryBaselineMovedKeys(primary({ title: "Box" }), { title: OLD })).toEqual(["title"]);
+  });
+});
+
+describe("nextPrimaryDigestBaseline", () => {
+  it("writes NOTHING when the map did not change — a quiet sync costs no write", () => {
+    expect(nextPrimaryDigestBaseline({ title: NEW }, primary({ title: "Box" }))).toBeNull();
+  });
+
+  it("records the managed keys' current digests, and only those", () => {
+    expect(nextPrimaryDigestBaseline({}, primary({ title: "Box", some_theme_key: "x" }))).toEqual({
+      title: NEW,
+    });
+  });
+
+  it("writes nothing from an EMPTY content map — a failed fetch, not 'every field cleared'", () => {
+    expect(nextPrimaryDigestBaseline({ title: OLD }, {})).toBeNull();
+  });
+
+  it("keeps a cleared field's last digest, so a NEW text written later is still a proven move", () => {
+    const next = nextPrimaryDigestBaseline({ title: OLD, body_html: OLD }, primary({ title: "Box" }));
+    expect(next).toEqual({ title: NEW, body_html: OLD });
+  });
+
+  it("HOLDS a refused key's previous digest — the work is deferred, not swallowed", () => {
+    expect(
+      nextPrimaryDigestBaseline({ title: OLD, body_html: OLD }, primary({ title: "Box", body_html: "b" }), new Set(["title"])),
+    ).toEqual({ title: OLD, body_html: NEW });
+    // Everything held ⇒ nothing changed ⇒ no write at all.
+    expect(nextPrimaryDigestBaseline({ title: OLD }, primary({ title: "Box" }), new Set(["title"]))).toBeNull();
   });
 });
