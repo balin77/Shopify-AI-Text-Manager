@@ -1240,7 +1240,7 @@ export const de = {
       addPlaceholder: "Sprache wählen …",
       addButton: "Hinzufügen",
       addHint:
-        "Eine neue Sprache wird zunächst unveröffentlicht angelegt – du kannst sie in Ruhe übersetzen (z. B. im Bulk-Editor mit „Fehlende Übersetzungen ergänzen“) und später veröffentlichen. Sie wird erst mit „Speichern“ in Shopify angelegt.",
+        "Eine neue Sprache wird zunächst unveröffentlicht angelegt – du kannst sie in Ruhe übersetzen (z. B. im Bulk-Editor mit „Fehlende Übersetzungen ergänzen“) und später veröffentlichen. Sie wird erst mit „Speichern“ in Shopify angelegt. Ob eine direkt veröffentlichte Sprache in deinen Märkten erscheint, prüfst du danach in Shopify unter Märkte.",
       addUnavailable: "Die verfügbaren Sprachen konnten nicht geladen werden. Lade die Seite neu, um Sprachen hinzuzufügen.",
       newBadge: "Neu – wird beim Speichern angelegt",
       undoAdd: "Nicht hinzufügen",
@@ -1250,8 +1250,11 @@ export const de = {
       errorAlreadyEnabled: "Diese Sprache ist im Shop bereits vorhanden.",
       errorNotAvailable: "Shopify bietet diese Sprache nicht an.",
       errorAvailableLookupFailed: "Die verfügbaren Sprachen konnten nicht gelesen werden – versuche es erneut.",
+      errorInvalidChanges: "Die Änderungen konnten nicht gelesen werden – lade die Seite neu.",
+      errorLocalesUnreadable: "Die Sprachen des Shops konnten gerade nicht gelesen werden – versuche es erneut.",
       removeModal: {
         step1Title: "Sprache „{name}“ entfernen?",
+        step2Title: "Entfernen bestätigen",
         intro: "Das entfernt die Sprache aus deinem Shopify-Shop, nicht nur aus dieser App.",
         consequenceShopLocale:
           "Laut Shopify werden dabei alle Übersetzungen in diese Sprache aus deinem Shop gelöscht; die App entfernt ihre lokale Kopie ebenfalls.",

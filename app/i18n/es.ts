@@ -1219,7 +1219,7 @@ export const es: Translation = {
       addPlaceholder: "Elige un idioma …",
       addButton: "Añadir",
       addHint:
-        "Un idioma nuevo se crea sin publicar: tradúcelo con calma (p. ej. con «Completar traducciones que faltan» en el editor masivo) y publícalo después. Se crea en Shopify solo al pulsar Guardar.",
+        "Un idioma nuevo se crea sin publicar: tradúcelo con calma (p. ej. con «Completar traducciones que faltan» en el editor masivo) y publícalo después. Se crea en Shopify solo al pulsar Guardar. Si un idioma publicado de inmediato aparece en tus mercados, compruébalo después en Shopify, en Mercados.",
       addUnavailable: "No se pudieron cargar los idiomas disponibles. Recarga la página para añadir idiomas.",
       newBadge: "Nuevo – se crea al guardar",
       undoAdd: "No añadir",
@@ -1229,8 +1229,11 @@ export const es: Translation = {
       errorAlreadyEnabled: "Este idioma ya existe en la tienda.",
       errorNotAvailable: "Shopify no ofrece este idioma.",
       errorAvailableLookupFailed: "No se pudieron leer los idiomas disponibles: inténtalo de nuevo.",
+      errorInvalidChanges: "No se pudieron leer los cambios: recarga la página.",
+      errorLocalesUnreadable: "Ahora mismo no se pudieron leer los idiomas de la tienda: inténtalo de nuevo.",
       removeModal: {
         step1Title: "¿Eliminar el idioma «{name}»?",
+        step2Title: "Confirmar eliminación",
         intro: "Esto elimina el idioma de tu tienda Shopify, no solo de esta app.",
         consequenceShopLocale:
           "Según Shopify, se eliminan de tu tienda todas las traducciones a este idioma; esta app también elimina su copia local.",

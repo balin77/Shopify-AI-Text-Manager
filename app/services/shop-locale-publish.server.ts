@@ -289,8 +289,30 @@ export function planLocaleChanges(
 
 type MinimalDb = Pick<
   PrismaClient,
-  "contentTranslation" | "themeTranslation" | "metaobjectTranslation" | "productImageAltTranslation"
+  "contentTranslation" | "themeTranslation" | "metaobjectTranslation" | "productImageAltTranslation" | "autoTranslateRetry"
 >;
+
+/**
+ * The retry list's owed pairs for the removed locales. A PENDING row sheds them
+ * by itself (the sweep filters to the shop's current locales), but an
+ * EXHAUSTED row is never looked at again and is cleared only by a delivery —
+ * which can no longer happen for a language that is gone, so it would stay
+ * listed in the auto-translate card for good.
+ */
+async function purgeRetryPairs(db: MinimalDb, shop: string, removed: readonly string[]): Promise<void> {
+  const { retryPairsOf } = await import("./translations/translation-retry.server");
+  const gone = new Set(removed.map((l) => l.toLowerCase()));
+  const rows = await db.autoTranslateRetry.findMany({ where: { shop }, select: { id: true, pairs: true } });
+  for (const row of rows) {
+    const pairs = retryPairsOf(row.pairs);
+    const kept = pairs.filter((p) => !gone.has(p.locale.toLowerCase()));
+    if (kept.length === pairs.length) continue;
+    if (kept.length === 0) await db.autoTranslateRetry.delete({ where: { id: row.id } });
+    else await db.autoTranslateRetry.update({ where: { id: row.id }, data: { pairs: kept as unknown as object } });
+  }
+}
+
+const sameLocale = (a: unknown, b: string) => typeof a === "string" && a.toLowerCase() === b.toLowerCase();
 
 async function runLocaleMutation(
   admin: GraphqlClient,
@@ -342,7 +364,7 @@ export async function applyLocaleChanges(
       admin,
       SHOP_LOCALE_ENABLE,
       entry.locale,
-      (payload) => (payload?.shopLocale as { locale?: string } | undefined)?.locale === entry.locale,
+      (payload) => sameLocale((payload?.shopLocale as { locale?: string } | undefined)?.locale, entry.locale),
       "shopLocaleEnable",
     );
     if (error) {
@@ -361,7 +383,7 @@ export async function applyLocaleChanges(
       admin,
       SHOP_LOCALE_DISABLE,
       locale,
-      (payload) => payload?.locale === locale,
+      (payload) => sameLocale(payload?.locale, locale),
       "shopLocaleDisable",
     );
     if (error) {
@@ -378,6 +400,14 @@ export async function applyLocaleChanges(
     // locale, and its delete scope has no locale filter).
     try {
       const where = { shop, locale: { in: removed } };
+      // Its own failure must not cost the mirror purge below.
+      await purgeRetryPairs(db, shop, removed).catch((error: unknown) =>
+        logger.warn("[ShopLocalePublish] Retry pairs of a removed locale could not be purged", {
+          context: "ShopLocalePublish",
+          shop,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
       await Promise.all([
         db.contentTranslation.deleteMany({ where }),
         db.themeTranslation.deleteMany({ where }),
@@ -394,6 +424,14 @@ export async function applyLocaleChanges(
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  if (failed.length > 0) {
+    logger.warn("[ShopLocalePublish] Some language changes were not confirmed", {
+      context: "ShopLocalePublish",
+      shop,
+      failed,
+    });
   }
 
   if (added.length > 0 || removed.length > 0) {

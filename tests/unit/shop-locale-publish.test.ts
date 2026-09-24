@@ -140,6 +140,15 @@ describe("applyLocaleChanges", () => {
       themeTranslation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
       metaobjectTranslation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
       productImageAltTranslation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      autoTranslateRetry: {
+        findMany: vi.fn(async () => [
+          { id: "r1", pairs: [{ key: "title", locale: "fr" }] },
+          { id: "r2", pairs: [{ key: "title", locale: "fr" }, { key: "title", locale: "en" }] },
+          { id: "r3", pairs: [{ key: "title", locale: "en" }] },
+        ]),
+        delete: vi.fn(async () => ({})),
+        update: vi.fn(async () => ({})),
+      },
     };
   }
 
@@ -175,6 +184,13 @@ describe("applyLocaleChanges", () => {
     expect(d.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
       where: { locale: { in: ["fr"] }, image: { product: { shop: "s" } } },
     });
+    // Retry rows owed only to the removed language go; mixed rows keep the rest.
+    expect(d.autoTranslateRetry.delete).toHaveBeenCalledWith({ where: { id: "r1" } });
+    expect(d.autoTranslateRetry.update).toHaveBeenCalledWith({
+      where: { id: "r2" },
+      data: { pairs: [{ key: "title", locale: "en" }] },
+    });
+    expect(d.autoTranslateRetry.update).toHaveBeenCalledTimes(1);
   });
 
   it("an unconfirmed removal deletes nothing locally", async () => {

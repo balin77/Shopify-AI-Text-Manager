@@ -77,6 +77,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       await checkAndSyncSubscription(admin, session.shop);
     }
 
+    // The languages Shopify lets this shop ADD (Settings → Shop-Sprachen) —
+    // its own query, started IN PARALLEL with the one below: a failure must not
+    // take the settings page down, and `null` tells the tab "could not load",
+    // never "nothing can be added".
+    const availableShopLocalesPromise = import("../services/shop-locale-publish.server").then(
+      ({ loadAvailableLocales }) => loadAvailableLocales(admin),
+    );
     // Fetch shop's locales (incl. name for the glossary locale bar) and display name
     const localesResponse = await admin.graphql(
       `#graphql
@@ -97,11 +104,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales: Array<{ locale: string; name?: string; primary: boolean; published: boolean }> =
       localesData.data.shopLocales || [];
     const primaryShopLocale = shopLocales.find((l) => l.primary)?.locale || "en";
-    // The languages Shopify lets this shop ADD (Settings → Shop-Sprachen).
-    // Its own query: a failure here must not take the settings page down, and
-    // `null` tells the tab "could not load", never "nothing can be added".
-    const { loadAvailableLocales } = await import("../services/shop-locale-publish.server");
-    const availableShopLocales = await loadAvailableLocales(admin);
+    const availableShopLocales = await availableShopLocalesPromise;
     const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
@@ -1019,7 +1022,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
       const removeLocale = actionType === "removeShopLocale" ? getFormString(formData, "locale") : null;
       if (publish === null || add === null || (actionType === "removeShopLocale" && !removeLocale)) {
-        return json({ success: false, error: "Invalid changes", actionType }, { status: 400 });
+        // A CODE, rendered by the tab — no `error` key, or the page's generic
+        // info box prints English text.
+        return json({ success: false, failed: [{ locale: "", error: "invalidChanges" }], actionType }, { status: 400 });
       }
       const localesResponse = await admin.graphql(`#graphql
         query settingsShopLocalesForPublish {
@@ -1035,7 +1040,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const current = localesJson.data?.shopLocales ?? [];
       if (current.length === 0) {
         // A failed lookup is not "no languages": refuse rather than guess.
-        return json({ success: false, error: "Could not read the shop's languages", actionType }, { status: 502 });
+        return json({ success: false, failed: [{ locale: "", error: "localesUnreadable" }], actionType }, { status: 502 });
       }
       const { planLocaleChanges, applyLocaleChanges, loadAvailableLocales } = await import(
         "../services/shop-locale-publish.server"

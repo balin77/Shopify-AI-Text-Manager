@@ -1236,7 +1236,7 @@ export const en: Translation = {
       addPlaceholder: "Choose a language …",
       addButton: "Add",
       addHint:
-        "A new language is created unpublished – translate it at your own pace (e.g. with “Add missing translations” in the bulk editor) and publish it later. It is created in Shopify only when you press Save.",
+        "A new language is created unpublished – translate it at your own pace (e.g. with “Add missing translations” in the bulk editor) and publish it later. It is created in Shopify only when you press Save. Whether a language published straight away appears in your markets is worth checking afterwards in Shopify under Markets.",
       addUnavailable: "The available languages could not be loaded. Reload the page to add languages.",
       newBadge: "New – created on save",
       undoAdd: "Don't add",
@@ -1246,8 +1246,11 @@ export const en: Translation = {
       errorAlreadyEnabled: "This language already exists in the shop.",
       errorNotAvailable: "Shopify does not offer this language.",
       errorAvailableLookupFailed: "The available languages could not be read – try again.",
+      errorInvalidChanges: "The changes could not be read – reload the page.",
+      errorLocalesUnreadable: "The shop's languages could not be read just now – try again.",
       removeModal: {
         step1Title: "Remove the language “{name}”?",
+        step2Title: "Confirm removal",
         intro: "This removes the language from your Shopify store, not just from this app.",
         consequenceShopLocale:
           "According to Shopify, every translation into this language is deleted from your store; this app removes its local copy as well.",

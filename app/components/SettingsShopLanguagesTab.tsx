@@ -20,7 +20,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { FetcherWithComponents } from "react-router";
-import { useFetcher, useRevalidator } from "react-router";
+import { useFetcher } from "react-router";
 import { Badge, Banner, BlockStack, Button, Card, InlineStack, List, Select, Text } from "@shopify/polaris";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleRow } from "./ToggleRow";
@@ -53,7 +53,6 @@ function stateOf(locales: readonly ShopLanguage[]): Record<string, boolean> {
 
 export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetcher, t, onHasChangesChange }: Props) {
   const s = t.settings?.shopLanguages ?? {};
-  const revalidator = useRevalidator();
   const { showInfoBox } = useInfoBox();
   const stored = useMemo(() => stateOf(shopLocales), [shopLocales]);
   // Re-seeded whenever the STORED state changes (after a save revalidated the
@@ -67,8 +66,10 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storedKey]);
 
+  // Only locales the shop STILL has: after a removal the draft holds the gone
+  // one for a render, and reading it as a change flashed the save bar.
   const changes = Object.entries(draft)
-    .filter(([locale, published]) => stored[locale] !== published)
+    .filter(([locale, published]) => locale in stored && stored[locale] !== published)
     .map(([locale, published]) => ({ locale, published }));
   const hasChanges = changes.length > 0 || adds.length > 0;
   useEffect(() => {
@@ -101,7 +102,8 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
         return next;
       });
     }
-    if ((response.confirmed?.length ?? 0) > 0 || (response.added?.length ?? 0) > 0) revalidator.revalidate();
+    // No explicit reload: React Router revalidates the loaders after every
+    // fetcher action by itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.state, response]);
 
@@ -117,15 +119,23 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
     if (removeResponse.success) {
       showInfoBox((s.removedMessage || "Removed “{name}”.").replace("{name}", removing.name), "success");
       setRemoving(null);
-      revalidator.revalidate();
+      setRemoveSubmittedFor(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [removeFetcher.state, removeResponse]);
-  const removeError: string | null =
+  const removeFailures: Array<{ error: string }> =
     removeResponse && !removeResponse.success && removing && removeSubmittedFor === removing.locale
-      ? (removeResponse.failed ?? []).map((f: { error: string }) => errorText(f.error)).join(" · ") ||
-        removeResponse.error ||
-        null
+      ? removeResponse.failed ?? []
+      : [];
+  const removeError: string | null =
+    removeFailures.length > 0
+      ? [
+          removeFailures.map((f) => errorText(f.error)).join(" · "),
+          // The re-consent hint belongs where the merchant meets the refusal.
+          removeFailures.some((f) => /access denied/i.test(f.error)) ? s.scopeHint : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
       : null;
 
   function errorText(code: string): string {
@@ -142,6 +152,10 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
         return s.errorNotAvailable;
       case "availableLookupFailed":
         return s.errorAvailableLookupFailed;
+      case "invalidChanges":
+        return s.errorInvalidChanges;
+      case "localesUnreadable":
+        return s.errorLocalesUnreadable;
       default:
         return code;
     }
@@ -198,8 +212,9 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
           <Banner tone="critical" title={s.failedTitle}>
             <List>
               {saveFailed.map((f) => (
-                <List.Item key={f.locale}>
-                  {nameOf(f.locale)}: {errorText(f.error)}
+                <List.Item key={f.locale || f.error}>
+                  {f.locale ? `${nameOf(f.locale)}: ` : ""}
+                  {errorText(f.error)}
                 </List.Item>
               ))}
             </List>
@@ -327,7 +342,10 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
       {removing && (
         <DeleteItemModal
           open={!!removing}
-          onClose={() => setRemoving(null)}
+          onClose={() => {
+            setRemoving(null);
+            setRemoveSubmittedFor(null);
+          }}
           item={{ id: removing.locale, title: removing.name, resource: "shopLocale" }}
           deleting={removeFetcher.state !== "idle"}
           error={removeError}
