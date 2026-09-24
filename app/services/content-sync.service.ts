@@ -273,6 +273,9 @@ export class ContentSyncService {
       db.primaryDigestBaseline.deleteMany({
         where: { shop: this.shop, resourceId: collectionId },
       }),
+      db.autoTranslateRetry.deleteMany({
+        where: { shop: this.shop, resourceId: collectionId },
+      }),
       db.collection.deleteMany({
         where: { shop: this.shop, id: collectionId },
       }),
@@ -411,6 +414,9 @@ export class ContentSyncService {
       }),
       // The stale-translation gate's primary baseline — polymorphic, no FK.
       db.primaryDigestBaseline.deleteMany({
+        where: { shop: this.shop, resourceId: articleId },
+      }),
+      db.autoTranslateRetry.deleteMany({
         where: { shop: this.shop, resourceId: articleId },
       }),
       db.article.deleteMany({
@@ -908,6 +914,9 @@ export class ContentSyncService {
           });
           // FK-less like the translations (CLAUDE.md, PrimaryDigestBaseline).
           await tx.primaryDigestBaseline.deleteMany({
+            where: { shop: this.shop, resourceId: { in: staleIds } },
+          });
+          await tx.autoTranslateRetry.deleteMany({
             where: { shop: this.shop, resourceId: { in: staleIds } },
           });
         }

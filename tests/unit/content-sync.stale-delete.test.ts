@@ -42,6 +42,7 @@ vi.mock('~/db.server', () => {
     article: { count: dbm.articleCount, findMany: dbm.articleFindMany, deleteMany: dbm.articleDeleteMany },
     contentTranslation: { deleteMany: dbm.ctDeleteMany },
     primaryDigestBaseline: { deleteMany: dbm.pdbDeleteMany },
+    autoTranslateRetry: { deleteMany: dbm.pdbDeleteMany },
     $transaction: dbm.transaction,
   };
   (dbm.transaction as any).mockImplementation((cb: (tx: unknown) => unknown) => cb(db));

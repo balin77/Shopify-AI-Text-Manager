@@ -1132,6 +1132,10 @@ export const de = {
     translationPurgeSupersededNote: "Nicht nötig, solange automatisch neu übersetzt wird.",
     autoTranslateHandles: "Auch URL-Handles übersetzen",
     autoTranslateHandlesRequiresParent: "Nur möglich, wenn automatisch neu übersetzt wird.",
+    autoTranslateDailyLimit: "Höchstens so viele Einträge pro Tag erstmals übersetzen",
+    autoTranslateDailyLimitPlaceholder: "Keine Grenze",
+    autoTranslateDailyLimitInvalid: "Eine ganze Zahl ab 1 — oder leer für keine Grenze.",
+    autoTranslateRetrySummary: "Wiederholungsliste: {pending} wartend, {exhausted} endgültig fehlgeschlagen.",
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
     translationsProductType: "Produkttyp",
     translationsSearchLabel: "Suchen",
@@ -2057,7 +2061,7 @@ export const de = {
       translationsNotMirrored:
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
       autoTranslateDailyLimit:
-        "Automatische Erstübersetzungen für heute pausiert: Das Tageslimit von {cap} Einträgen ist erreicht, {count} weitere Änderung(en) wurden nicht übersetzt. Nichts geht verloren — jede wird bei ihrer nächsten Änderung übersetzt (Seiten, Artikel, Blogs und Richtlinien: beim nächtlichen Abgleich).",
+        "Automatische Erstübersetzungen für heute pausiert: Dein Tageslimit von {cap} Einträgen ist erreicht, {count} weitere Einträge stehen auf der Wiederholungsliste und werden in der nächtlichen Wiederholung übersetzt, sobald das Limit es zulässt.",
       translationsNoneUsable:
         "Die automatische Neuübersetzung hat keine verwendbare Übersetzung geliefert.",
     },
@@ -4460,6 +4464,18 @@ export const de = {
       ],
       details:
         "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles werden ohne die Option darunter weiterhin gelöscht, sobald sich der Handle in der Hauptsprache ändert — die fremdsprachige Adresse fällt dann ohne Weiterleitung auf den Handle der Hauptsprache zurück. Mit der Option darunter werden sie stattdessen neu übersetzt.",
+    },
+    autoTranslateDailyLimit: {
+      title: "Tageslimit für Erstübersetzungen",
+      summary:
+        "Optional. Begrenzt, wie viele Einträge pro Tag zum ERSTEN Mal automatisch übersetzt werden — Einträge, die noch keine Übersetzung haben und deren Text ausserhalb der App geändert wurde. Leer lassen heisst: keine Grenze.",
+      tips: [
+        "Schützt deinen KI-Schlüssel, wenn ein Import oder eine andere App viele Texte auf einmal umschreibt",
+        "Was über dem Limit liegt, geht nicht verloren: es kommt auf die Wiederholungsliste und wird nachts nachgeholt",
+        "Fehlgeschlagene automatische Übersetzungen kommen ebenfalls auf die Liste — höchstens zwei weitere Versuche",
+      ],
+      details:
+        "Das Limit zählt Einträge (ein Produkt, eine Seite …), nicht Sprachen oder Felder, und setzt sich täglich um Mitternacht UTC zurück. Das Auffrischen bestehender Übersetzungen und Änderungen, die du in der App speicherst, zählt nicht mit. Die Wiederholungsliste wird im nächtlichen Abgleich abgearbeitet: Ein Eintrag bekommt höchstens zwei weitere Versuche; wird er nur wegen des Limits verschoben, zählt das nicht als Versuch. Was nach zwei Versuchen noch fehlt, bleibt als „endgültig fehlgeschlagen“ hier sichtbar, bis sich der Text erneut ändert. Die Liste gilt für Produkte, Kollektionen, Seiten, Artikel, Blogs und Richtlinien; Metafelder, Optionen, Alt-Texte, Theme-Inhalte und Menüs behalten ihr bisheriges Verhalten.",
     },
     autoTranslateHandles: {
       title: "URL-Handles mitübersetzen",

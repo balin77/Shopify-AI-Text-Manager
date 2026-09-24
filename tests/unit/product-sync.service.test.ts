@@ -18,6 +18,9 @@ const mockDb = {
     deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     findUnique: vi.fn().mockResolvedValue(null),
   },
+  autoTranslateRetry: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
   primaryDigestBaseline: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 0 }),

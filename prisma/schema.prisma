@@ -263,6 +263,11 @@ model AISettings {
   // parent switch AND the plan on every read — the stored value survives both
   // a downgrade and a merchant switching the parent off to try something.
   autoTranslateHandles Boolean @default(false)
+  // Optional daily limit on FIRST automatic translations (resources whose
+  // auto-translation rests on PrimaryDigestBaseline alone). NULL = no limit.
+  // Settings -> KI-Anweisungen -> Übersetzungen, under the handle switch.
+  // Plan-gated with autoTranslateExternalChanges; only read while that is on.
+  autoTranslateDailyLimit Int?
 
   // Translation length policy. "exact" (default) preserves source length —
   // legal/rechts pages must not shrink. "seo_optimized" appends per-field
@@ -1222,6 +1227,32 @@ model AutoTranslateFillBudget {
   refusedIds String[] @default([])
 
   @@id([shop, day])
+}
+
+// The retry list for automatic translations: resources whose run FAILED or
+// that the daily limit REFUSED. One row per (shop, resource); `pairs` is the
+// JSON list of {key, locale} still owed. The nightly drift sweep retries
+// pending rows; MAX two attempts (a limit postponement does not count), after
+// which the row stays as "exhausted" so the merchant can see it. Shop-scoped
+// and FK-less: redactShopData deletes by shop, purgeContentFromCache and the
+// sync delete helpers by (shop, resourceId).
+model AutoTranslateRetry {
+  id            String   @id @default(cuid())
+  shop          String
+  resourceId    String
+  resourceType  String // "Product" | "Collection" | "Page" | "Article" | "Blog" | "ShopPolicy"
+  contentKind   String // "product" | "collection" | "page" | "blog"
+  resourceTitle String?
+  pairs         Json
+  reason        String // "limit" | "failed"
+  attempts      Int      @default(0)
+  status        String   @default("pending") // "pending" | "running" | "exhausted"
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, resourceId])
+  @@index([shop, status])
 }
 
 // ============================================

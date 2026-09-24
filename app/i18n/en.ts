@@ -1128,6 +1128,10 @@ export const en: Translation = {
     translationPurgeSupersededNote: "Not needed while texts are re-translated automatically.",
     autoTranslateHandles: "Also translate URL handles",
     autoTranslateHandlesRequiresParent: "Only possible while texts are re-translated automatically.",
+    autoTranslateDailyLimit: "Translate at most this many items for the first time per day",
+    autoTranslateDailyLimitPlaceholder: "No limit",
+    autoTranslateDailyLimitInvalid: "A whole number of at least 1 — or empty for no limit.",
+    autoTranslateRetrySummary: "Retry list: {pending} waiting, {exhausted} failed for good.",
     translationsDescription: "Manage translations for grouping fields (e.g. product type). All products that share a source value must share exactly one translation per target language — otherwise a single category fragments into several in Google Merchant Center.",
     translationsProductType: "Product Type",
     translationsSearchLabel: "Search",
@@ -2052,7 +2056,7 @@ export const en: Translation = {
       translationsNotMirrored:
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
       autoTranslateDailyLimit:
-        "Automatic first translations paused for today: the daily limit of {cap} items was reached, and {count} further change(s) were not translated. Nothing was lost — each one is translated at its next change (pages, articles, blogs and policies: in the nightly check).",
+        "Automatic first translations paused for today: your daily limit of {cap} items was reached, and {count} further items are on the retry list. They are translated in the nightly retry as soon as the limit allows.",
       translationsNoneUsable: "The automatic re-translation produced no usable translation.",
     },
     translationCompleted: "Translation completed for \"{title}\"",
@@ -4435,6 +4439,18 @@ export const en: Translation = {
       ],
       details:
         "For products and collections this happens automatically on the next sync. For everything else — pages, blogs, articles, policies, options, metafields, metaobjects, theme texts, alt texts and menu titles — it happens when you save, in the editor and in the bulk editor alike; if the text was changed elsewhere, on the next reload of that item. The bulk editor limits how many runs one save starts; anything beyond that is deleted as before. Market-specific translations are never translated automatically — they are deleted as soon as the primary-language text changes. Without the option below, URL handles are still deleted as soon as the handle changes in the primary language — the foreign address then falls back to the primary-language handle with no redirect. With the option below they are re-translated instead.",
+    },
+    autoTranslateDailyLimit: {
+      title: "Daily limit for first translations",
+      summary:
+        "Optional. Limits how many items per day are translated automatically for the FIRST time — items that have no translation yet and whose text was changed outside the app. Leave it empty for no limit.",
+      tips: [
+        "Protects your AI key when an import or another app rewrites many texts at once",
+        "Nothing above the limit is lost: it goes on the retry list and is caught up at night",
+        "Failed automatic translations go on the list too — at most two more attempts",
+      ],
+      details:
+        "The limit counts items (a product, a page …), not languages or fields, and resets every day at midnight UTC. Refreshing existing translations and changes you save in the app do not count. The retry list is worked through in the nightly check: an item gets at most two more attempts; being postponed only because of the limit does not count as an attempt. What is still missing after two attempts stays visible here as \"failed for good\" until the text changes again. The list covers products, collections, pages, articles, blogs and policies; metafields, options, alt texts, theme content and menus keep their previous behaviour.",
     },
     autoTranslateHandles: {
       title: "Translate URL handles too",

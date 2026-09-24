@@ -1111,6 +1111,10 @@ export const es: Translation = {
     translationPurgeSupersededNote: "No hace falta mientras los textos se vuelven a traducir automáticamente.",
     autoTranslateHandles: "Traducir también los handles de URL",
     autoTranslateHandlesRequiresParent: "Solo es posible mientras los textos se vuelven a traducir automáticamente.",
+    autoTranslateDailyLimit: "Traducir por primera vez como máximo esta cantidad de elementos al día",
+    autoTranslateDailyLimitPlaceholder: "Sin límite",
+    autoTranslateDailyLimitInvalid: "Un número entero a partir de 1, o vacío para no tener límite.",
+    autoTranslateRetrySummary: "Lista de reintentos: {pending} en espera, {exhausted} fallidos definitivamente.",
     translationsDescription: "Gestiona las traducciones de los campos de agrupación (p. ej. tipo de producto). Todos los productos que comparten un mismo valor de origen deben compartir exactamente una traducción por idioma de destino; de lo contrario, una sola categoría se divide en varias en Google Merchant Center.",
     translationsProductType: "Tipo de producto",
     translationsSearchLabel: "Buscar",
@@ -2036,7 +2040,7 @@ export const es: Translation = {
       translationsNotMirrored:
         "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
       autoTranslateDailyLimit:
-        "Traducciones automáticas iniciales en pausa por hoy: se alcanzó el límite diario de {cap} elementos y {count} cambio(s) más no se tradujeron. No se pierde nada: cada uno se traduce en su próximo cambio (páginas, artículos, blogs y políticas: en la revisión nocturna).",
+        "Traducciones automáticas iniciales en pausa por hoy: se alcanzó tu límite diario de {cap} elementos y {count} elementos más están en la lista de reintentos. Se traducen en el reintento nocturno en cuanto el límite lo permita.",
       translationsNoneUsable:
         "La retraducción automática no produjo ninguna traducción utilizable.",
     },
@@ -4423,6 +4427,18 @@ export const es: Translation = {
       ],
       details:
         "En productos y colecciones ocurre automáticamente en la siguiente sincronización. En todo lo demás — páginas, blogs, artículos, políticas, opciones, metacampos, metaobjetos, textos del tema, textos alternativos y títulos de menú — ocurre al guardar, tanto en el editor como en el editor masivo; si el texto se cambió fuera, en la siguiente recarga del elemento. El editor masivo limita cuántas ejecuciones inicia un guardado; lo que exceda se elimina como hasta ahora. Las traducciones específicas de un mercado nunca se traducen automáticamente: se eliminan en cuanto cambia el texto del idioma principal. Sin la opción de abajo, los handles de URL se siguen eliminando en cuanto cambia el handle del idioma principal: la dirección en el otro idioma vuelve entonces al handle del idioma principal sin redirección. Con la opción de abajo, en cambio, se vuelven a traducir.",
+    },
+    autoTranslateDailyLimit: {
+      title: "Límite diario de primeras traducciones",
+      summary:
+        "Opcional. Limita cuántos elementos se traducen automáticamente por PRIMERA vez cada día: elementos que aún no tienen traducción y cuyo texto se cambió fuera de la app. Déjalo vacío para no tener límite.",
+      tips: [
+        "Protege tu clave de IA cuando una importación u otra app reescribe muchos textos a la vez",
+        "Lo que supera el límite no se pierde: va a la lista de reintentos y se recupera por la noche",
+        "Las traducciones automáticas fallidas también van a la lista: como máximo dos intentos más",
+      ],
+      details:
+        "El límite cuenta elementos (un producto, una página…), no idiomas ni campos, y se reinicia cada día a medianoche UTC. Actualizar traducciones existentes y los cambios que guardas en la app no cuentan. La lista de reintentos se procesa en la revisión nocturna: un elemento recibe como máximo dos intentos más; si solo se pospone por el límite, no cuenta como intento. Lo que sigue faltando tras dos intentos queda visible aquí como «fallido definitivamente» hasta que el texto vuelva a cambiar. La lista cubre productos, colecciones, páginas, artículos, blogs y políticas; los metacampos, opciones, textos alternativos, contenido del tema y menús mantienen su comportamiento anterior.",
     },
     autoTranslateHandles: {
       title: "Traducir también los handles de URL",

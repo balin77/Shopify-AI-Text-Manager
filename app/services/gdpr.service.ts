@@ -346,6 +346,7 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${primaryBaselinesDeleted.count} primary digest baselines`);
     await tx.autoTranslateFillBudget.deleteMany({ where: { shop: shop_domain } });
+    await tx.autoTranslateRetry.deleteMany({ where: { shop: shop_domain } });
 
     // 12. Delete theme content
     const themeContentDeleted = await tx.themeContent.deleteMany({

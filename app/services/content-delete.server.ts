@@ -65,6 +65,10 @@ export async function purgeContentFromCache(
     counts.primaryDigestBaseline = (
       await tx.primaryDigestBaseline.deleteMany({ where: { shop, resourceId: gid } })
     ).count;
+    // …and so is its row on the auto-translation retry list.
+    counts.autoTranslateRetry = (
+      await tx.autoTranslateRetry.deleteMany({ where: { shop, resourceId: gid } })
+    ).count;
 
     switch (resource) {
       case "product":
@@ -108,6 +112,9 @@ export async function purgeContentFromCache(
             ).count;
             counts.articleBaselines = (
               await tx.primaryDigestBaseline.deleteMany({ where: { shop, resourceId: { in: ids } } })
+            ).count;
+            counts.articleRetries = (
+              await tx.autoTranslateRetry.deleteMany({ where: { shop, resourceId: { in: ids } } })
             ).count;
           }
           counts.article = (await tx.article.deleteMany({ where: { shop, blogId: gid } })).count;

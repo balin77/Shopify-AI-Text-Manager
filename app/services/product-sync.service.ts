@@ -2205,6 +2205,9 @@ export class ProductSyncService {
       db.primaryDigestBaseline.deleteMany({
         where: { shop: this.shop, resourceId: productId },
       }),
+      db.autoTranslateRetry.deleteMany({
+        where: { shop: this.shop, resourceId: productId },
+      }),
       db.product.deleteMany({
         where: { shop: this.shop, id: productId },
       }),

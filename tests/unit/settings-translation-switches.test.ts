@@ -58,6 +58,7 @@ beforeEach(() => {
     subscriptionPlan: "max",
     autoTranslateExternalChanges: false,
     autoTranslateHandles: false,
+    autoTranslateDailyLimit: null,
   });
 });
 
@@ -131,5 +132,55 @@ describe("saveInstructions — the translation switches", () => {
     const { status } = await run({ autoTranslateHandles: "true" });
     expect(status).toBe(200);
     expect(settingsWrite()).toEqual({ autoTranslateHandles: true });
+  });
+});
+
+describe("saveInstructions — the optional daily limit", () => {
+  it("stores a whole number", async () => {
+    const { status } = await run({ autoTranslateDailyLimit: "50" });
+    expect(status).toBe(200);
+    expect(settingsWrite()).toEqual({ autoTranslateDailyLimit: 50 });
+  });
+
+  it("an EMPTY field clears the limit — no limit, not zero", async () => {
+    aISettings.findUnique.mockResolvedValue({
+      subscriptionPlan: "max",
+      autoTranslateExternalChanges: true,
+      autoTranslateHandles: false,
+      autoTranslateDailyLimit: 50,
+    });
+    await run({ autoTranslateDailyLimit: "" });
+    expect(settingsWrite()).toEqual({ autoTranslateDailyLimit: null });
+  });
+
+  it.each(["0", "-3", "2.5", "abc"])("refuses %s BEFORE anything is written", async (value) => {
+    const { status } = await run({ autoTranslateDailyLimit: value, writingStyleInstructions: "x" });
+    expect(status).toBe(400);
+    expect(aISettings.upsert).not.toHaveBeenCalled();
+    expect(aIInstructions.upsert).not.toHaveBeenCalled();
+  });
+
+  it("is plan-gated like the switch it belongs to", async () => {
+    aISettings.findUnique.mockResolvedValue({
+      subscriptionPlan: "pro",
+      autoTranslateExternalChanges: false,
+      autoTranslateHandles: false,
+      autoTranslateDailyLimit: null,
+    });
+    const { status } = await run({ autoTranslateDailyLimit: "10" });
+    expect(status).toBe(403);
+    expect(aISettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("re-sending the stored value is a no-op, not a 403", async () => {
+    aISettings.findUnique.mockResolvedValue({
+      subscriptionPlan: "pro",
+      autoTranslateExternalChanges: false,
+      autoTranslateHandles: false,
+      autoTranslateDailyLimit: 10,
+    });
+    const { status } = await run({ autoTranslateDailyLimit: "10" });
+    expect(status).toBe(200);
+    expect(settingsWrite()).toBeNull();
   });
 });

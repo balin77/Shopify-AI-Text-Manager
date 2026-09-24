@@ -87,6 +87,8 @@ export interface TranslationDriftTickStats {
    *  query, a truncated baseline or a paging ceiling. Carried out of the scan
    *  so "0 handed" is never read as "0 changed". */
   incomplete: number;
+  /** Retries from the retry list that started a run. */
+  retried: number;
 }
 
 export class TranslationDriftAutoRunService {
@@ -151,7 +153,7 @@ export class TranslationDriftAutoRunService {
 
   /** One sweep over the due shops. Public so tests can drive it directly. */
   async tick(now: Date = new Date()): Promise<TranslationDriftTickStats> {
-    const stats: TranslationDriftTickStats = { candidates: 0, handed: 0, errored: 0, incomplete: 0 };
+    const stats: TranslationDriftTickStats = { candidates: 0, handed: 0, errored: 0, incomplete: 0, retried: 0 };
 
     const shops = await this.findDueShops(now);
     stats.candidates = shops.length;
@@ -208,6 +210,26 @@ export class TranslationDriftAutoRunService {
           baselineOnly,
         });
         stats.handed += result.handed;
+
+        // THE RETRY LIST (translation-retry.server.ts): work the merchant's
+        // daily limit refused, and runs that failed. Here and not in a tick of
+        // its own, because this is already the one place that runs per shop,
+        // entitled and consenting, once a day — and a failure of it must not
+        // cost the sweep above, so it is caught on its own.
+        try {
+          const { processTranslationRetries } = await import("./translation-retry.server");
+          const retries = await processTranslationRetries({
+            shop: settings.shop,
+            client: admin as never,
+            foreignLocales,
+          });
+          stats.retried += retries.started;
+        } catch (err) {
+          logger.warn(`[TranslationDrift] Retry list failed for ${settings.shop}`, {
+            context: "TranslationDrift",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         if (result.failedTypes.length > 0 || result.truncatedTypes.length > 0) {
           stats.incomplete++;
           logger.warn(`[TranslationDrift] Sweep incomplete for ${settings.shop}`, {
@@ -228,7 +250,7 @@ export class TranslationDriftAutoRunService {
 
     logger.info(
       `[TranslationDrift] Tick done: ${stats.candidates} shop(s), ${stats.handed} resource(s) ` +
-        `reconciled, ${stats.incomplete} incomplete, ${stats.errored} errored`,
+        `reconciled, ${stats.retried} retried, ${stats.incomplete} incomplete, ${stats.errored} errored`,
     );
     return stats;
   }

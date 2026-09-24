@@ -9,6 +9,7 @@ import {
   clampImagesPerRequest,
 } from "../services/ai/vision-policy.shared";
 import { HelpTooltip } from "./HelpTooltip";
+import { FieldLabel } from "./unified/FieldChrome";
 import { SettingsGlossaryTab, type GlossaryEntryDto, type GlossaryShopLocale } from "./SettingsGlossaryTab";
 import {
   getDefaultInstructions,
@@ -127,6 +128,17 @@ interface AIInstructionsTabsProps {
    * server ANDs the two on every read.
    */
   autoTranslateHandles: boolean;
+  /**
+   * AISettings.autoTranslateDailyLimit (Max) — the merchant's OPTIONAL daily
+   * limit on first automatic translations. `null` = no limit.
+   */
+  autoTranslateDailyLimit: number | null;
+  /** The retry list, summarised (translation-retry.server.ts). */
+  autoTranslateRetrySummary?: {
+    pending: number;
+    exhausted: number;
+    exhaustedItems: Array<{ resourceType: string; resourceTitle: string | null; resourceId: string; lastError: string | null }>;
+  } | null;
   /** Drives the Max gate on the auto-translate switch. */
   subscriptionPlan: Plan;
   /**
@@ -154,6 +166,8 @@ export function AIInstructionsTabs({
   translationPurgeOnPrimaryChange,
   autoTranslateExternalChanges,
   autoTranslateHandles,
+  autoTranslateDailyLimit,
+  autoTranslateRetrySummary,
   subscriptionPlan,
   sendImagesToAI,
   aiImagesPerRequest,
@@ -171,6 +185,10 @@ export function AIInstructionsTabs({
   const [localAutoTranslateHandles, setLocalAutoTranslateHandles] = useState(
     autoTranslateHandles,
   );
+  /** The limit as the merchant TYPES it: "" = no limit. A draft like every
+   *  other setting here — saved only by the Save button. */
+  const storedDailyLimit = autoTranslateDailyLimit == null ? "" : String(autoTranslateDailyLimit);
+  const [localDailyLimit, setLocalDailyLimit] = useState(storedDailyLimit);
   // The auto-translate switch stays VISIBLE on every plan (hiding it would
   // read as "this app cannot do that") and is greyed out below Max, with the
   // required tier named underneath.
@@ -300,6 +318,8 @@ export function AIInstructionsTabs({
   };
 
   const handleSave = () => {
+    // A limit the server would refuse is not sent — the field already says why.
+    if (dailyLimitChanged && dailyLimitInvalid) return;
     /**
      * A vision-only change goes out NARROW, on every plan.
      *
@@ -360,6 +380,9 @@ export function AIInstructionsTabs({
     if (autoTranslateHandlesChanged) {
       formData.append("autoTranslateHandles", String(localAutoTranslateHandles));
     }
+    if (dailyLimitChanged) {
+      formData.append("autoTranslateDailyLimit", localDailyLimit.trim());
+    }
 
     fetcher.submit(formData, { method: "POST" });
   };
@@ -385,13 +408,19 @@ export function AIInstructionsTabs({
   // change the merchant cannot see (and would store blind).
   const autoTranslateHandlesChanged =
     autoTranslateActive && localAutoTranslateHandles !== autoTranslateHandles;
+  // Same rule as the handle switch: only while the parent is on in the draft.
+  const dailyLimitChanged = autoTranslateActive && localDailyLimit.trim() !== storedDailyLimit;
+  // "" (no limit) or a whole number of at least 1 — the server refuses the
+  // rest, and the field says so before the merchant presses Save.
+  const dailyLimitInvalid = localDailyLimit.trim() !== "" && !/^[1-9]\d{0,6}$/.test(localDailyLimit.trim());
   const instructionsChanged =
     changedInstructionKeys.length > 0 ||
     localTranslationMode !== translationMode ||
     localKeywordAware !== keywordAwareTranslation ||
     localPurgeOnChange !== translationPurgeOnPrimaryChange ||
     autoTranslateExternalChanged ||
-    autoTranslateHandlesChanged;
+    autoTranslateHandlesChanged ||
+    dailyLimitChanged;
   const hasChanges = instructionsChanged || visionChanged;
 
   // Propagate hasChanges to parent component
@@ -408,6 +437,7 @@ export function AIInstructionsTabs({
     setLocalPurgeOnChange(translationPurgeOnPrimaryChange);
     setLocalAutoTranslateExternal(autoTranslateExternalChanges);
     setLocalAutoTranslateHandles(autoTranslateHandles);
+    setLocalDailyLimit(storedDailyLimit);
     setLocalSendImages(sendImagesToAI);
     setLocalImagesPerRequest(clampImagesPerRequest(aiImagesPerRequest));
   };
@@ -761,6 +791,50 @@ export function AIInstructionsTabs({
                             'Nur möglich, wenn automatisch neu übersetzt wird.'}
                         </Text>
                       )}
+                    </div>
+                    {/* The OPTIONAL daily limit, directly under the handle
+                        switch and indented the same way: a sub-decision of
+                        the auto-translation. Empty = no limit. What it limits,
+                        and what happens to refused work (the retry list), is
+                        the ❓'s business. */}
+                    <div style={{ paddingInlineStart: "2.25rem", maxWidth: "28rem" }}>
+                      <TextField
+                        label={
+                          <FieldLabel
+                            label={t.settings.autoTranslateDailyLimit || 'Höchstens so viele Einträge pro Tag erstmals übersetzen'}
+                            helpKey="autoTranslateDailyLimit"
+                          />
+                        }
+                        type="number"
+                        min={1}
+                        autoComplete="off"
+                        value={autoTranslateActive ? localDailyLimit : storedDailyLimit}
+                        onChange={setLocalDailyLimit}
+                        placeholder={t.settings.autoTranslateDailyLimitPlaceholder || 'Keine Grenze'}
+                        disabled={readOnly || !canAutoTranslateExternal || !autoTranslateActive}
+                        error={
+                          autoTranslateActive && dailyLimitInvalid
+                            ? t.settings.autoTranslateDailyLimitInvalid || 'Eine ganze Zahl ab 1 — oder leer für keine Grenze.'
+                            : undefined
+                        }
+                      />
+                      {autoTranslateRetrySummary &&
+                        (autoTranslateRetrySummary.pending > 0 || autoTranslateRetrySummary.exhausted > 0) && (
+                          <BlockStack gap="100">
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {(t.settings.autoTranslateRetrySummary ||
+                                'Wiederholungsliste: {pending} wartend, {exhausted} endgültig fehlgeschlagen.')
+                                .replace('{pending}', String(autoTranslateRetrySummary.pending))
+                                .replace('{exhausted}', String(autoTranslateRetrySummary.exhausted))}
+                            </Text>
+                            {autoTranslateRetrySummary.exhaustedItems.map((item) => (
+                              <Text key={item.resourceId} as="p" variant="bodySm" tone="critical">
+                                {item.resourceTitle || item.resourceId}
+                                {item.lastError ? ` — ${item.lastError}` : ''}
+                              </Text>
+                            ))}
+                          </BlockStack>
+                        )}
                     </div>
                   </BlockStack>
                 </BlockStack>

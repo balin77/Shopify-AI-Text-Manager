@@ -45,6 +45,12 @@ describe("purgeContentFromCache — the primary digest baseline", () => {
       shop: SHOP,
       resourceId: "gid://shopify/Page/1",
     });
+    // …and its row on the auto-translation retry list, or the nightly retry
+    // would try to translate a resource that no longer exists.
+    expect(calls.find((c) => c.model === "autoTranslateRetry")?.where).toEqual({
+      shop: SHOP,
+      resourceId: "gid://shopify/Page/1",
+    });
     expect(calls.find((c) => c.model === "contentTranslation")?.where).toEqual({
       shop: SHOP,
       resourceId: "gid://shopify/Page/1",

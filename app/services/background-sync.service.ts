@@ -395,6 +395,9 @@ export class BackgroundSyncService {
             await tx.primaryDigestBaseline.deleteMany({
               where: { shop: this.shop, resourceId: { in: stalePageIds } }
             });
+            await tx.autoTranslateRetry.deleteMany({
+              where: { shop: this.shop, resourceId: { in: stalePageIds } }
+            });
           }
 
           return {
@@ -758,6 +761,9 @@ export class BackgroundSyncService {
             // FK-less like the translations: the primary digest baseline of a
             // resource Shopify no longer has is removed with it.
             await tx.primaryDigestBaseline.deleteMany({
+              where: { shop: this.shop, resourceId: { in: stalePolicyIds } }
+            });
+            await tx.autoTranslateRetry.deleteMany({
               where: { shop: this.shop, resourceId: { in: stalePolicyIds } }
             });
           }

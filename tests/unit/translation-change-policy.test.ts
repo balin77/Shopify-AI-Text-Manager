@@ -183,3 +183,27 @@ describe("loadTranslationChangePolicy", () => {
     expect(policy.autoTranslateHandles).toBe(false);
   });
 });
+
+describe("the optional daily limit", () => {
+  const on = { translationPurgeOnPrimaryChange: true, autoTranslateExternalChanges: true, subscriptionPlan: "max" };
+
+  it("is NO limit unless the merchant set one", async () => {
+    row.value = { ...on, autoTranslateDailyLimit: null };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBeNull();
+  });
+
+  it("carries a positive whole number through", async () => {
+    row.value = { ...on, autoTranslateDailyLimit: 25 };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBe(25);
+  });
+
+  it("reads a stored 0 or negative as NO limit — never as 'stop everything'", async () => {
+    row.value = { ...on, autoTranslateDailyLimit: 0 };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBeNull();
+  });
+
+  it("is null whenever the auto-translation itself is not in force", async () => {
+    row.value = { ...on, autoTranslateExternalChanges: false, autoTranslateDailyLimit: 25 };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBeNull();
+  });
+});

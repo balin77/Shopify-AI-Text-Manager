@@ -69,7 +69,7 @@ const FALLBACK: Record<string, string> = {
   handleRedirectsMissing:
     "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
   autoTranslateDailyLimit:
-    "Automatic first translations paused for today: the daily limit of {cap} items was reached, and {count} further change(s) were not translated. Nothing was lost — each one is translated at its next change (pages, articles, blogs and policies: in the nightly check).",
+    "Automatic first translations paused for today: your daily limit of {cap} items was reached, and {count} further items are on the retry list. They are translated in the nightly retry as soon as the limit allows.",
 };
 
 function phrase(t: any, key: string): string {

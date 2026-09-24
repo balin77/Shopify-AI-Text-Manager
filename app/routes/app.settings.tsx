@@ -476,6 +476,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       select: { metafieldsLastScanAt: true },
     });
 
+    // The auto-translation retry list, summarised for the Translations card.
+    const { loadRetrySummary } = await import("../services/translations/translation-retry.server");
+    const autoTranslateRetrySummary = await loadRetrySummary(session.shop, db);
+
     // Glossary tab: entries incl. per-locale fixed translations.
     const { listGlossaryEntries } = await import("../../src/services/glossary.service");
     const glossaryEntries = (await listGlossaryEntries(session.shop)).map((e) => ({
@@ -526,6 +530,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         key: d.key,
         patchedTranslatable: d.patchedTranslatable,
       })),
+      autoTranslateRetrySummary,
       metafieldsLastScanAt: metafieldScanState?.metafieldsLastScanAt
         ? metafieldScanState.metafieldsLastScanAt.toISOString()
         : null,
@@ -561,6 +566,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         translationPurgeOnPrimaryChange: settings.translationPurgeOnPrimaryChange ?? true,
         autoTranslateExternalChanges: settings.autoTranslateExternalChanges ?? false,
         autoTranslateHandles: settings.autoTranslateHandles ?? false,
+        // Optional daily limit on FIRST automatic translations — null = none.
+        autoTranslateDailyLimit: settings.autoTranslateDailyLimit ?? null,
 
         // Nightly SEO audit (Max) — merchant switch, see
         // services/seo/audit-auto-run.service.ts. Shown on every plan but only
@@ -671,6 +678,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+/**
+ * The daily-limit field of the Translations card: absent (not in the payload),
+ * `null` (the merchant emptied it — no limit), a positive integer, or invalid.
+ * Exported for the tests.
+ */
+export function parseAutoTranslateDailyLimit(
+  raw: FormDataEntryValue | null,
+): number | null | "absent" | "invalid" {
+  if (raw === null) return "absent";
+  const text = String(raw).trim();
+  if (text === "") return null;
+  if (!/^\d{1,7}$/.test(text)) return "invalid";
+  const value = Number(text);
+  return value >= 1 ? value : "invalid";
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -705,23 +728,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // merchant may tick it before, or leave it ticked after, switching the
       // automation off without losing the answer.
       const rawAutoTranslateHandles = formData.get("autoTranslateHandles");
+      // The optional daily limit rides on the same gate: "" clears it (no
+      // limit), a positive integer sets it, anything else is refused BEFORE
+      // anything is written — never guessed into a number, and never 0, which
+      // would silently stop every first translation.
+      const rawDailyLimit = formData.get("autoTranslateDailyLimit");
+      const dailyLimit = parseAutoTranslateDailyLimit(rawDailyLimit);
+      if (dailyLimit === "invalid") {
+        return json(
+          { success: false, error: "The daily limit must be a whole number of at least 1, or empty.", actionType },
+          { status: 400 },
+        );
+      }
       let autoTranslateUpdate: {
         autoTranslateExternalChanges?: boolean;
         autoTranslateHandles?: boolean;
+        autoTranslateDailyLimit?: number | null;
       } = {};
-      if (rawAutoTranslate !== null || rawAutoTranslateHandles !== null) {
+      if (rawAutoTranslate !== null || rawAutoTranslateHandles !== null || dailyLimit !== "absent") {
         const row = await db.aISettings.findUnique({
           where: { shop: session.shop },
           select: {
             subscriptionPlan: true,
             autoTranslateExternalChanges: true,
             autoTranslateHandles: true,
+            autoTranslateDailyLimit: true,
           },
         });
-        const changes: Array<[
-          "autoTranslateExternalChanges" | "autoTranslateHandles",
-          boolean,
-        ]> = [];
+        const changes: Array<
+          | ["autoTranslateExternalChanges" | "autoTranslateHandles", boolean]
+          | ["autoTranslateDailyLimit", number | null]
+        > = [];
         if (
           rawAutoTranslate !== null &&
           (row?.autoTranslateExternalChanges ?? false) !== (rawAutoTranslate === "true")
@@ -733,6 +770,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           (row?.autoTranslateHandles ?? false) !== (rawAutoTranslateHandles === "true")
         ) {
           changes.push(["autoTranslateHandles", rawAutoTranslateHandles === "true"]);
+        }
+        if (dailyLimit !== "absent" && (row?.autoTranslateDailyLimit ?? null) !== dailyLimit) {
+          changes.push(["autoTranslateDailyLimit", dailyLimit]);
         }
         if (changes.length > 0) {
           const { meetsPlan } = await import("../utils/planUtils");
@@ -1422,7 +1462,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, autoTranslateRetrySummary = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1812,6 +1852,8 @@ export default function SettingsPage() {
                     translationPurgeOnPrimaryChange={settings.translationPurgeOnPrimaryChange}
                     autoTranslateExternalChanges={settings.autoTranslateExternalChanges}
                     autoTranslateHandles={settings.autoTranslateHandles}
+                    autoTranslateDailyLimit={settings.autoTranslateDailyLimit}
+                    autoTranslateRetrySummary={autoTranslateRetrySummary}
                     subscriptionPlan={subscriptionPlan as Plan}
                     sendImagesToAI={settings.sendImagesToAI}
                     aiImagesPerRequest={settings.aiImagesPerRequest}

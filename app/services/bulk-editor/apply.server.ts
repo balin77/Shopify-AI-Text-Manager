@@ -4334,6 +4334,7 @@ export async function applyBulkDiff(
           purgeUnreconciledSurfaces: false,
           autoTranslateExternalChanges: false,
           autoTranslateHandles: false,
+          autoTranslateDailyLimit: null,
           plan: "free",
         };
   const purgeStaleTranslations = changePolicy.purgeOnPrimaryChange;

@@ -72,6 +72,12 @@ import {
   type TranslationChangePolicy,
 } from "./translation-change-policy.server";
 import {
+  enqueueTranslationRetry,
+  settleTranslationRetry,
+  RETRYABLE_RESOURCE_TYPES,
+  type RetryPair,
+} from "./translation-retry.server";
+import {
   classifyStaleTranslation,
   digestBaselineKey,
   findStaleTranslations,
@@ -139,6 +145,12 @@ export interface RepairTarget {
    * save on any of them still aborts the run.
    */
   lockId?: string;
+  /**
+   * Set when this repair IS a retry from the retry list
+   * (translation-retry.server.ts): the run then SETTLES that row with what it
+   * could not deliver, instead of putting it on the list a second time.
+   */
+  retryId?: string;
   /** Shown on the Task row when a re-translation runs. */
   resourceTitle?: string;
   /**
@@ -1246,7 +1258,14 @@ export async function seedPrimaryDigestBaselines(
  * not entries: one resource is one detached run with one AI request per locale,
  * which is the unit the merchant's key pays for.
  */
-export const AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP = 100;
+/**
+ * The cap is the MERCHANT's (`AISettings.autoTranslateDailyLimit`, read through
+ * `policy.autoTranslateDailyLimit`) and optional: with none set, first
+ * translations are not braked at all. It was a fixed 100 until the owner
+ * decided the number is not ours to impose. Refused work goes on the retry
+ * list (translation-retry.server.ts) rather than waiting for the resource's
+ * next change event.
+ */
 
 function utcDay(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10);
@@ -1258,10 +1277,11 @@ function utcDay(now: Date = new Date()): string {
  * FAILS CLOSED: a database error answers "no", because refusing costs a
  * deferred translation and granting blindly is the expensive direction.
  */
-async function reserveFirstFillBudget(
+export async function reserveFirstFillBudget(
   shop: string,
   resourceId: string,
   dbClient: typeof import("../../db.server").db | null,
+  cap: number,
 ): Promise<"granted" | "spent" | "error"> {
   try {
     const db = dbClient ?? (await import("../../db.server")).db;
@@ -1271,7 +1291,7 @@ async function reserveFirstFillBudget(
     // violation — which this function answers with a refusal.
     await db.autoTranslateFillBudget.createMany({ data: [{ shop, day }], skipDuplicates: true });
     const { count } = await db.autoTranslateFillBudget.updateMany({
-      where: { shop, day, used: { lt: AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP } },
+      where: { shop, day, used: { lt: cap } },
       data: { used: { increment: 1 } },
     });
     return count === 1 ? "granted" : "spent";
@@ -1300,6 +1320,7 @@ async function reserveFirstFillBudget(
 async function firstFillBudgetSpent(
   shop: string,
   dbClient: typeof import("../../db.server").db | null,
+  cap: number,
 ): Promise<boolean> {
   try {
     const db = dbClient ?? (await import("../../db.server")).db;
@@ -1307,7 +1328,7 @@ async function firstFillBudgetSpent(
       where: { shop_day: { shop, day: utcDay() } },
       select: { used: true },
     });
-    return (row?.used ?? 0) >= AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP;
+    return (row?.used ?? 0) >= cap;
   } catch {
     return false;
   }
@@ -1321,16 +1342,17 @@ async function firstFillBudgetSpent(
  * locale. A brake a merchant cannot see is work swallowed; this one says how
  * much, why, and that it is deferred.
  */
-async function reportFirstFillRefused(
+export async function reportFirstFillRefused(
   shop: string,
   resourceId: string,
   dbClient: typeof import("../../db.server").db | null,
+  cap: number,
 ): Promise<void> {
   logger.warn("[StaleTranslations] Daily first-translation budget spent — this resource is deferred", {
     context: "StaleTranslations",
     shop,
     resourceId,
-    cap: AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP,
+    cap,
   });
   try {
     const db = dbClient ?? (await import("../../db.server")).db;
@@ -1355,7 +1377,7 @@ async function reportFirstFillRefused(
       WHERE "shop" = ${shop} AND "day" = ${day}
       RETURNING cardinality("refusedIds")::int AS "refused"`;
     const refused = Math.max(1, Number(rows[0]?.refused ?? 1));
-    const error = `auto_translate_daily_limit:${refused}:${AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP}`;
+    const error = `auto_translate_daily_limit:${refused}:${cap}`;
     const now = new Date();
     await db.task.upsert({
       where: { id: firstFillLimitTaskId(shop, day) },
@@ -1539,7 +1561,27 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
     //    the same move, spend a budget unit and queue a duplicate run that
     //    translates every locale twice. The loser drops its fill and leaves the
     //    baseline to the winner.
-    if (stale.some((entry) => entry.baselineFill) && (await firstFillBudgetSpent(shop, baseline.db))) {
+    // No limit set ⇒ no brake at all: the number is the merchant's to choose.
+    const dailyLimit = policy.autoTranslateDailyLimit;
+    /** Refused fills go on the retry list — deferred, never swallowed. */
+    const deferToRetryList = (refused: readonly StaleTranslation[]) =>
+      enqueueTranslationRetry(
+        {
+          shop,
+          resourceId,
+          resourceType,
+          contentKind: params.contentKind,
+          ...(params.resourceTitle ? { resourceTitle: params.resourceTitle } : {}),
+          pairs: refused.map((entry) => ({ key: entry.key, locale: entry.locale })),
+          reason: "limit",
+        },
+        baseline.db,
+      );
+    if (
+      dailyLimit !== null &&
+      stale.some((entry) => entry.baselineFill) &&
+      (await firstFillBudgetSpent(shop, baseline.db, dailyLimit))
+    ) {
       // Spent before we even asked: refuse, report, and pay no Shopify call.
       // The row is left exactly as it is rather than written with HELD keys:
       // this event never claimed anything, and a write here (holding the fill
@@ -1547,8 +1589,9 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
       // and revert it — that one then being proven again. Untouched, the move
       // stays provable all the same.
       baseline.skipWrite = true;
+      await deferToRetryList(stale.filter((entry) => entry.baselineFill));
       stale = stale.filter((entry) => !entry.baselineFill);
-      await reportFirstFillRefused(shop, resourceId, baseline.db);
+      await reportFirstFillRefused(shop, resourceId, baseline.db, dailyLimit);
     }
     if (stale.some((entry) => entry.baselineFill)) {
       const fills = stale.filter((entry) => entry.baselineFill);
@@ -1571,13 +1614,17 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
       if (!won) {
         stale = stale.filter((entry) => !entry.baselineFill);
       } else {
-        const granted = await reserveFirstFillBudget(shop, resourceId, baseline.db);
+        const granted =
+          dailyLimit === null ? "granted" : await reserveFirstFillBudget(shop, resourceId, baseline.db, dailyLimit);
         if (granted !== "granted") {
           // The claim already advanced the row; the final write puts the held
           // keys back to their ORIGINAL digests.
           for (const entry of stale) if (entry.baselineFill) held.add(entry.key);
+          if (granted === "spent") await deferToRetryList(stale.filter((entry) => entry.baselineFill));
           stale = stale.filter((entry) => !entry.baselineFill);
-          if (granted === "spent") await reportFirstFillRefused(shop, resourceId, baseline.db);
+          if (granted === "spent" && dailyLimit !== null) {
+            await reportFirstFillRefused(shop, resourceId, baseline.db, dailyLimit);
+          }
         }
       }
     }
@@ -2762,6 +2809,14 @@ async function repairStaleTranslations(
           await purgeStaleEntries(gateway, target, mirror, outcome.failed);
         }
         if (outcome.registered.length > 0) markTranslationSaved(lockId);
+        // What this run could not deliver goes on the RETRY LIST (or settles
+        // the retry this run was). Not when the merchant wrote in between:
+        // their value is newer than anything decided here.
+        await recordUndelivered(
+          target,
+          supersededByMerchant() ? [] : outcome.startFailed ? retranslate : outcome.failed,
+          outcome.startFailed ? "could not start" : outcome.failed.length > 0 ? "not delivered" : undefined,
+        );
       } catch (error: unknown) {
         logger.warn("[StaleTranslations] Detached re-translation run failed", {
           context: "StaleTranslations",
@@ -2769,6 +2824,11 @@ async function repairStaleTranslations(
           resourceId,
           error: error instanceof Error ? error.message : String(error),
         });
+        await recordUndelivered(
+          target,
+          retranslate,
+          error instanceof Error ? error.message : String(error),
+        );
       }
     };
 
@@ -2805,6 +2865,208 @@ async function repairStaleTranslations(
     retranslating: startRetranslation ? retranslate.length : 0,
     ...(taskId ? { taskId } : {}),
   };
+}
+
+// ─── Retry list ───────────────────────────────────────────────────────────
+
+/**
+ * Is this repair one the retry list can reproduce on its own? The resource's
+ * OWN translatable fields on a content type — no private mirror, no value
+ * prompt, no entries on other resources. Everything else keeps its previous
+ * behaviour on failure (see translation-retry.server.ts).
+ */
+function retryableTarget(target: RepairTarget, entries: readonly StaleTranslation[]): boolean {
+  return (
+    RETRYABLE_RESOURCE_TYPES.has(target.resourceType) &&
+    !target.translateAs &&
+    !target.mirror &&
+    entries.every((entry) => !entry.resourceId || entry.resourceId === target.resourceId)
+  );
+}
+
+/**
+ * After a run: put what it could not deliver on the retry list, or — if the run
+ * WAS a retry — settle that row with it. Handles are never retried: a handle the
+ * run could not deliver is deliberately left standing (see `keptHandles`).
+ * Never throws.
+ */
+async function recordUndelivered(
+  target: RepairTarget,
+  undelivered: readonly StaleTranslation[],
+  error?: string,
+): Promise<void> {
+  try {
+    const pairs: RetryPair[] = undelivered
+      .filter((entry) => entry.key !== "handle")
+      .map((entry) => ({ key: entry.key, locale: entry.locale }));
+    if (target.retryId) {
+      await settleTranslationRetry(target.retryId, { remaining: pairs, ...(error ? { error } : {}) });
+      return;
+    }
+    if (pairs.length === 0 || !retryableTarget(target, undelivered)) return;
+    await enqueueTranslationRetry({
+      shop: target.shop,
+      resourceId: target.resourceId,
+      resourceType: target.resourceType,
+      contentKind: target.contentKind,
+      ...(target.resourceTitle ? { resourceTitle: target.resourceTitle } : {}),
+      pairs,
+      reason: "failed",
+      ...(error ? { error } : {}),
+    });
+  } catch (err: unknown) {
+    logger.warn("[StaleTranslations] Could not record undelivered translations", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * One retry from the retry list. Re-reads the resource from SHOPIFY — the row
+ * says what was owed, not what is true now — and builds, per stored (key,
+ * locale):
+ *
+ *  - nothing, when the locale holds a CURRENT translation (Shopify says it is
+ *    not outdated): someone translated it meanwhile, and that value wins;
+ *  - a REFRESH, when it holds an outdated one (a failed run whose fallback
+ *    purge did not run, e.g. with the deletion switched off);
+ *  - a FILL, when it holds nothing — the daily limit applies to these exactly
+ *    as on first sight, and a refusal POSTPONES the retry without counting it.
+ *
+ * The primary value must still exist with a digest, and the key must be one
+ * the automation may translate (`classifyStaleTranslation`); the rest is
+ * dropped. What remains goes to the SAME repair every other entrance uses,
+ * carrying `retryId` so the run settles this row when it ends.
+ *
+ * Returns what happened: "started" (a run is going and will settle the row),
+ * "postponed" (the limit said no today), or "settled" (nothing was left to do,
+ * the row is gone). Throws when Shopify cannot be read — the caller counts
+ * that as a failed attempt.
+ */
+export async function retryAutoTranslation(params: {
+  client: ShopifyGraphQLClient;
+  shop: string;
+  retryId: string;
+  resourceId: string;
+  resourceType: string;
+  contentKind: RepairTarget["contentKind"];
+  resourceTitle?: string;
+  pairs: readonly RetryPair[];
+}): Promise<"started" | "postponed" | "settled"> {
+  const { shop, resourceId, retryId } = params;
+  const locales = [...new Set(params.pairs.map((pair) => pair.locale))];
+  const gateway = gatewayFor(params.client, shop);
+  const variableDefs = locales.map((_, i) => `$loc${i}: String!`).join(", ");
+  const selections = locales
+    .map((_, i) => `l${i}: translations(locale: $loc${i}) { key value outdated }`)
+    .join("\n");
+  const variables: Record<string, unknown> = { id: resourceId };
+  locales.forEach((locale, i) => {
+    variables[`loc${i}`] = locale;
+  });
+  const response = await gateway.graphql(
+    `#graphql
+      query retryAutoTranslation($id: ID!, ${variableDefs}) {
+        translatableResource(resourceId: $id) {
+          translatableContent { key value digest }
+          ${selections}
+        }
+      }`,
+    { variables },
+  );
+  const payload = (await response.json()) as {
+    data?: {
+      translatableResource?:
+        | (Record<string, unknown> & {
+            translatableContent?: Array<{ key: string; value: string | null; digest: string | null }> | null;
+          })
+        | null;
+    };
+    errors?: Array<{ message?: string }>;
+  };
+  if (payload.errors?.length) throw new Error(payload.errors[0]?.message || "GraphQL error");
+  const resource = payload.data?.translatableResource;
+  if (!resource) throw new Error("resource not readable");
+
+  const content: Record<string, PrimaryContentEntry> = {};
+  for (const entry of resource.translatableContent ?? []) {
+    content[entry.key] = { value: entry.value ?? "", digest: entry.digest };
+  }
+  const current = new Map<string, { value: string | null; outdated?: boolean }>();
+  locales.forEach((locale, i) => {
+    const rows = resource[`l${i}`] as Array<{ key: string; value: string | null; outdated?: boolean }> | null;
+    for (const row of rows ?? []) current.set(`${locale}${IN_FLIGHT_SEP}${row.key}`, row);
+  });
+
+  const policy = await loadTranslationChangePolicy(shop);
+  if (!policy.autoTranslateExternalChanges) {
+    // The switch went off since: nothing may be translated unattended. The row
+    // stays for the day it is switched back on, without spending an attempt.
+    await settleTranslationRetry(retryId, { remaining: params.pairs, postponed: true });
+    return "postponed";
+  }
+
+  const entries: StaleTranslation[] = [];
+  for (const pair of params.pairs) {
+    const primary = content[pair.key];
+    if (!primary?.value.trim() || !primary.digest) continue;
+    const row = current.get(`${pair.locale}${IN_FLIGHT_SEP}${pair.key}`);
+    const has = !!row?.value && !!row.value.trim();
+    if (has && row?.outdated !== true) continue;
+    const entry: StaleTranslation = {
+      key: pair.key,
+      locale: pair.locale,
+      reason: "outdated",
+      primaryValue: primary.value,
+      digest: primary.digest,
+      ...(has ? {} : { filled: true, baselineFill: true }),
+    };
+    if (classifyStaleTranslation(entry, true) !== "retranslate") continue;
+    entries.push(entry);
+  }
+  if (entries.length === 0) {
+    await settleTranslationRetry(retryId, { remaining: [] });
+    return "settled";
+  }
+
+  // The daily limit applies to first translations here exactly as on first
+  // sight — a retry is not a way around the merchant's cap.
+  const dailyLimit = policy.autoTranslateDailyLimit;
+  if (dailyLimit !== null && entries.some((entry) => entry.filled)) {
+    const granted = await reserveFirstFillBudget(shop, resourceId, null, dailyLimit);
+    if (granted !== "granted") {
+      await settleTranslationRetry(retryId, { remaining: params.pairs, postponed: true });
+      return "postponed";
+    }
+  }
+
+  const result = await repairStaleTranslations(
+    await withHandleResolver(
+      {
+        client: params.client,
+        shop,
+        resourceId,
+        resourceType: params.resourceType,
+        contentKind: params.contentKind,
+        retryId,
+        ...(params.resourceTitle ? { resourceTitle: params.resourceTitle } : {}),
+      },
+      policy,
+    ),
+    entries,
+    policy,
+    { keys: [...new Set(entries.map((entry) => entry.key))], locales },
+  );
+  if (result.retranslating === 0) {
+    // The repair decided nothing is left to translate (e.g. every entry was
+    // declined). Nothing is owed any more.
+    await settleTranslationRetry(retryId, { remaining: [] });
+    return "settled";
+  }
+  return "started";
 }
 
 // ─── Purge ────────────────────────────────────────────────────────────────
