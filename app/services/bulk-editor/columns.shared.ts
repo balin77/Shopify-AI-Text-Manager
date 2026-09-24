@@ -1637,7 +1637,8 @@ export type CellReadOnlyReason =
   | "commerceNotSynced" // §Phase 4 — `commerceSyncedAt` unset: unknown, not empty
   | "missingInventoryItem" // the variant has no InventoryItem GID to write to
   | "multipleVariants" // a product row's price cell: which of several? (see below)
-  | "variantsNotSynced"; // the product's variants were never cached
+  | "variantsNotSynced" // the product's variants were never cached
+  | "priceNotSynced"; // the variant row is cached, its price is not (see priceCell)
 
 /** The columns fed by the Phase-0 attribute block, whose emptiness only means
  *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
@@ -1705,9 +1706,9 @@ function resolveProductVariantCell(row: BulkRow, column: ColumnDescriptor): Reso
   if (!variant) return { value: "", editable: false, readOnlyReason: "multipleVariants" };
   switch (column.id) {
     case VAR_PRICE_COLUMN_ID:
-      return { value: variant.price, editable: true };
+      return priceCell(variant.price, variant.price);
     case VAR_COMPARE_AT_COLUMN_ID:
-      return { value: variant.compareAtPrice, editable: true };
+      return priceCell(variant.price, variant.compareAtPrice);
     case VAR_SKU_COLUMN_ID:
       return { value: variant.sku, editable: true };
     default:
@@ -1715,6 +1716,22 @@ function resolveProductVariantCell(row: BulkRow, column: ColumnDescriptor): Reso
       // PRODUCT_VARIANT_COLUMN_IDS.
       return { value: "", editable: false, readOnlyReason: "column" };
   }
+}
+
+/**
+ * A price or compare-at cell, given the variant's cached PRICE.
+ *
+ * Shopify has no variant without a price, so an empty one is the cache lacking
+ * it — a row the image manager created before it learned to store prices —
+ * and not a product that costs nothing. Shown as an editable blank it read as
+ * "this product has no price", and the compare-at beside it is unknown for the
+ * same reason (its own emptiness is a real answer only once the price proves
+ * the row was price-synced). Opening the product once, or any product sync,
+ * fills it in.
+ */
+function priceCell(price: string, value: string): ResolvedCell {
+  if (price === "") return { value: "", editable: false, readOnlyReason: "priceNotSynced" };
+  return { value, editable: true };
 }
 
 /** The commerce block's value for one column. Flat properties on the row, so
@@ -1831,9 +1848,9 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
         case VAR_SKU_COLUMN_ID:
           return { value: row.sku ?? "", editable: true };
         case VAR_PRICE_COLUMN_ID:
-          return { value: row.price ?? "", editable: true };
+          return priceCell(row.price ?? "", row.price ?? "");
         case VAR_COMPARE_AT_COLUMN_ID:
-          return { value: row.compareAtPrice ?? "", editable: true };
+          return priceCell(row.price ?? "", row.compareAtPrice ?? "");
         case VAR_BARCODE_COLUMN_ID:
           return { value: row.barcode ?? "", editable: true };
         default:

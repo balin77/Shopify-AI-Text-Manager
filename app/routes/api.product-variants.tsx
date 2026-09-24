@@ -2,6 +2,7 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
+import { moneyToDecimalString } from "../services/product-variant-sync.server";
 
 // Bump this whenever the list of ensured metafield definitions below
 // changes (add / remove / rename / type-change). The cache below is keyed
@@ -144,6 +145,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               id
               title
               sku
+              price
+              compareAtPrice
               position
               image { url altText }
               selectedOptions { name value }
@@ -297,6 +300,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         productId,
         title: v.title,
         sku: v.sku ?? null,
+        // The bulk editor's price cells read these. A row created here used
+        // to carry NULL prices, which the grid could only show as an empty
+        // price on a product that has one — every product this route touched
+        // before a full sync did.
+        price: moneyToDecimalString(v.price),
+        compareAtPrice: moneyToDecimalString(v.compareAtPrice),
         imageKey: v.imageKeyMetafield?.value ?? null,
         position: v.position,
         galleryJson: v.metafield?.value ?? null,
@@ -304,6 +313,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       update: {
         title: v.title,
         sku: v.sku ?? null,
+        price: moneyToDecimalString(v.price),
+        compareAtPrice: moneyToDecimalString(v.compareAtPrice),
         imageKey: v.imageKeyMetafield?.value ?? null,
         position: v.position,
         galleryJson: v.metafield?.value ?? null,

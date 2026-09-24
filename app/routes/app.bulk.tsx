@@ -1129,6 +1129,7 @@ export default function BulkEditor() {
     // restriction.
     multipleVariants: b.readOnlyReasons.multipleVariants,
     variantsNotSynced: b.readOnlyReasons.variantsNotSynced,
+    priceNotSynced: b.readOnlyReasons.priceNotSynced,
 
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
@@ -1601,6 +1602,9 @@ export default function BulkEditor() {
     const next = { ...edits };
     for (const row of visibleRows) {
       if (row.type !== "variant") continue;
+      // A price the cache never received renders read-only ("price not
+      // loaded"); an action must not fill a cell the merchant cannot touch.
+      if (!row.price) continue;
       const current = currentPriceOf(row);
       if (action.id === "compareAtFromPrice") {
         if (current === null) continue;

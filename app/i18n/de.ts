@@ -4142,6 +4142,7 @@ export const de = {
       // Resync, keine Einschränkung.
       multipleVariants: "Dieses Produkt hat mehrere Varianten, die unterschiedliche Preise haben können — bearbeite sie unter \"Produktvarianten\".",
       variantsNotSynced: "Die Varianten dieses Produkts sind noch nicht im Cache — lade die Produkte neu und bearbeite das dann.",
+      priceNotSynced: "Der Preis dieser Variante ist noch nicht im Cache — öffne das Produkt einmal im Produkt-Editor, dann erscheint er hier.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",
@@ -4158,6 +4159,7 @@ export const de = {
     readOnlyPlaceholders: {
       multipleVariants: "Mehrere Varianten",
       variantsNotSynced: "Nicht geladen",
+      priceNotSynced: "Preis nicht geladen",
     },
     metaobjectTypeLabel: "Metaobjekt-Typ",
     searchLabel: "Suche",

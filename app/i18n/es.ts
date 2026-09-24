@@ -4107,6 +4107,7 @@ export const es: Translation = {
       missingInventoryItem: "Esta variante no tiene artículo de inventario de Shopify, donde viven el coste, el peso y los datos aduaneros — vuelve a sincronizar el producto.",
       multipleVariants: "Este producto tiene varias variantes, que pueden diferir en precio — edítalas en \"Variantes de producto\".",
       variantsNotSynced: "Las variantes de este producto aún no están en la caché — vuelve a sincronizar los productos y edítalo después.",
+      priceNotSynced: "El precio de esta variante aún no está en la caché — abre el producto una vez en el editor de productos y aparecerá aquí.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",
@@ -4122,6 +4123,7 @@ export const es: Translation = {
     readOnlyPlaceholders: {
       multipleVariants: "Varias variantes",
       variantsNotSynced: "No cargado",
+      priceNotSynced: "Precio no cargado",
     },
     metaobjectTypeLabel: "Tipo de metaobjeto",
     searchLabel: "Buscar",
