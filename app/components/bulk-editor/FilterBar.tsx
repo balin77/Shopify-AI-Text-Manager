@@ -115,6 +115,15 @@ export function FilterBar({
   const activeCount = filters.length + (onlyChanged ? 1 : 0);
   const filterButtonLabel =
     activeCount > 0 ? `${strings.filtersLabel} (${activeCount})` : strings.filtersLabel;
+  // The button must not change width when a count appears or grows — that
+  // shifted the page-size picker beside it on every click. A twin button
+  // carrying the widest label this type can ever show ("Filter (88)" at the
+  // most digits the count can reach) sits INVISIBLY in the same grid cell, so
+  // the cell is sized for it from the start and the real button fills it.
+  // (Polaris' Button takes text only, so the reservation cannot live inside
+  // it.) Tabular digits make every count of that length as wide as "88".
+  const maxCount = filterIds.length + 1; // every offered filter + "only changed"
+  const reservedLabel = `${strings.filtersLabel} (${"8".repeat(String(maxCount).length)})`;
 
   const commitServer = (nextServer: BulkFilterId[]) => {
     const serverChanged =
@@ -157,9 +166,19 @@ export function FilterBar({
         active={popoverActive}
         onClose={() => setPopoverActive(false)}
         activator={
-          <Button disclosure pressed={activeCount > 0} onClick={() => setPopoverActive((v) => !v)}>
-            {filterButtonLabel}
-          </Button>
+          <div style={{ display: "inline-grid", fontVariantNumeric: "tabular-nums" }}>
+            <div style={{ gridArea: "1 / 1", display: "grid" }}>
+              <Button disclosure fullWidth pressed={activeCount > 0} onClick={() => setPopoverActive((v) => !v)}>
+                {filterButtonLabel}
+              </Button>
+            </div>
+            {/* Width reservation only: never visible, never focusable
+                (visibility: hidden takes it out of the tab order and the
+                accessibility tree). */}
+            <div aria-hidden="true" style={{ gridArea: "1 / 1", visibility: "hidden" }}>
+              <Button disclosure>{reservedLabel}</Button>
+            </div>
+          </div>
         }
       >
         <div style={{ padding: "12px 16px", maxWidth: "340px" }}>
