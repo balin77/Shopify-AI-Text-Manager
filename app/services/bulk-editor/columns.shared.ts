@@ -1645,7 +1645,21 @@ function resolveProductVariantCell(row: BulkRow, column: ColumnDescriptor): Reso
   // is the cache lacking them rather than a product without any — the same
   // "empty is not evidence" rule as `attributesSyncedAt`.
   if (!row.variantCount) {
-    return { value: "", editable: false, readOnlyReason: "variantsNotSynced" };
+    // …but the OPTIONS are cached by every product sync, including the list
+    // reload that does not fetch variants at all. An option offering two or
+    // more values proves "several" without a single variant row, and "several"
+    // is read-only however many a reload would bring in — so a resync hint
+    // there would send the merchant on an errand that changes nothing. Only a
+    // product whose options leave "exactly one" possible keeps the hint: there
+    // a reload really does make the cell editable. Both answers are read-only,
+    // so an orphaned option value (one without a variant) can at worst pick
+    // the wrong explanation, never unlock a cell.
+    const provesSeveral = (row.options ?? []).some((o) => o.values.length > 1);
+    return {
+      value: "",
+      editable: false,
+      readOnlyReason: provesSeveral ? "multipleVariants" : "variantsNotSynced",
+    };
   }
   const variant = row.singleVariant;
   if (!variant) return { value: "", editable: false, readOnlyReason: "multipleVariants" };
