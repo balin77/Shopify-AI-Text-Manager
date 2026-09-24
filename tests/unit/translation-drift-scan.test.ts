@@ -217,6 +217,24 @@ describe("scanTranslationDrift", () => {
     expect(db.primaryDigestBaseline.createMany).not.toHaveBeenCalled();
   });
 
+  it("never hands over `{}` for a primary baseline it did not LOAD — the reconciliation reads it", async () => {
+    // A truncated type (or an id another writer spelled differently): the row
+    // may exist. `{}` would tell the reconciliation "no row", and it would
+    // overwrite the real map — held keys and the recorded move with it.
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? baselineRows(PAGE, "de", ["title", "body_html"], OLD) : [],
+    );
+    const { gateway } = fakeGateway({
+      PAGE: [{ resourceId: PAGE, digest: NEW, translated: { de: ["title", "body_html"] } }],
+    });
+    const reconcile = vi.fn(async (_params: ReconcileParams) => ({ removed: 0, retranslating: 2 }));
+
+    await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    const params = reconcile.mock.calls[0][0] as unknown as Record<string, any>;
+    expect("previousPrimaryDigests" in params).toBe(false);
+  });
+
   it("reconciles a resource whose digest MOVED, with the mirror's own baseline", async () => {
     db.contentTranslation.findMany.mockImplementation(async (args: any) =>
       args?.where?.resourceType === "Page"

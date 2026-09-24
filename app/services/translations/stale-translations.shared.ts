@@ -463,18 +463,33 @@ export function nextPrimaryDigestBaseline(
   primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
   held: ReadonlySet<string> = new Set(),
 ): Record<string, string> | null {
+  const next = primaryDigestBaselineTarget(previous, primaryContent, held);
+  if (!next) return null;
+  const keys = Object.keys(next);
+  const unchanged =
+    keys.length === Object.keys(previous).length && keys.every((key) => next[key] === previous[key]);
+  return unchanged ? null : next;
+}
+
+/**
+ * The map `nextPrimaryDigestBaseline` would store, WITHOUT the "did it change"
+ * question — for a caller whose row no longer holds `previous` (a claim
+ * already advanced it) and that compares against what it holds now. `null`
+ * only for an empty content map (a failed fetch).
+ */
+export function primaryDigestBaselineTarget(
+  previous: Readonly<Record<string, string>>,
+  primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
+  held: ReadonlySet<string> = new Set(),
+): Record<string, string> | null {
   if (Object.keys(primaryContent).length === 0) return null;
   const next: Record<string, string> = { ...previous };
-  let changed = false;
   for (const [key, entry] of Object.entries(primaryContent)) {
     if (!MANAGED_TRANSLATION_KEYS.has(key) || held.has(key)) continue;
     if (!entry.digest || !entry.value.trim()) continue;
-    if (next[key] !== entry.digest) {
-      next[key] = entry.digest;
-      changed = true;
-    }
+    next[key] = entry.digest;
   }
-  return changed ? next : null;
+  return next;
 }
 
 /**

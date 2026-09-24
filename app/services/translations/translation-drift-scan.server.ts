@@ -346,7 +346,13 @@ export async function scanTranslationDrift(params: {
           translations,
           primaryContent,
           previousDigests,
-          previousPrimaryDigests: previousPrimary,
+          // Only a baseline this sweep actually LOADED is handed over. A
+          // resource missing from the map (a truncated type, an id spelled
+          // differently by another writer) may well have a row, and `{}` would
+          // tell the reconciliation "no row" — it would then write a fresh map
+          // over the real one, discarding held keys and the move it records.
+          // Left undefined, the reconciliation reads the row itself.
+          ...(primaryBaselines.has(node.resourceId) ? { previousPrimaryDigests: previousPrimary } : {}),
           // The FILL: the sweep already knows the shop's published foreign
           // locales — it queries a `translations(locale:)` alias per locale —
           // so a key it proved moved is translated into all of them, not only

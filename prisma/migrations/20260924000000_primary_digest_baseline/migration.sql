@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS "AutoTranslateFillBudget" (
     "shop" TEXT NOT NULL,
     "day" TEXT NOT NULL,
     "used" INTEGER NOT NULL DEFAULT 0,
-    "refused" INTEGER NOT NULL DEFAULT 0,
+    "refusedIds" TEXT[] DEFAULT ARRAY[]::TEXT[],
 
     CONSTRAINT "AutoTranslateFillBudget_pkey" PRIMARY KEY ("shop", "day")
 );

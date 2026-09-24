@@ -1216,8 +1216,10 @@ model PrimaryDigestBaseline {
 model AutoTranslateFillBudget {
   shop    String
   day     String // "YYYY-MM-DD", UTC
-  used    Int    @default(0)
-  refused Int    @default(0)
+  used       Int      @default(0)
+  // Resources refused today — DISTINCT ids, not events: a held resource is
+  // refused again on every later change event that day.
+  refusedIds String[] @default([])
 
   @@id([shop, day])
 }
