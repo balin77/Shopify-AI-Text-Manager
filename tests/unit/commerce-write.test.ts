@@ -7,7 +7,7 @@
  * and neither is "the mutation returned an object".
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   applyInventoryItemFields,
   applyStockChanges,
@@ -26,6 +26,23 @@ const LOC_B = "gid://shopify/Location/2";
 function adminWith(body: unknown) {
   return { graphql: vi.fn().mockResolvedValue({ json: async () => body }) } as never;
 }
+
+/**
+ * The graphql call that carried the SET mutation.
+ *
+ * Not `calls[0]`: the shape lookup goes first now, and an index would pin the
+ * introspection instead of the write.
+ */
+function stockCall(admin: unknown) {
+  const calls = (admin as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls;
+  const call = calls.find(([query]) => String(query).includes("inventorySetQuantities"));
+  if (!call) throw new Error("the stock mutation was never sent");
+  return { query: String(call[0]), variables: call[1] as { variables: { input: Record<string, never> } } };
+}
+
+/** The shape is memoised per PROCESS, so one test's answer would otherwise
+ *  decide the next one's document. */
+beforeEach(() => resetInventoryInputShapeProbe());
 
 /** Records what the mirror wrote. */
 function dbRecorder() {
@@ -91,7 +108,7 @@ describe("applyStockChanges", () => {
     const { db } = dbRecorder();
     await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
 
-    const variables = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1];
+    const variables = stockCall(admin).variables;
     expect(variables.variables.input.ignoreCompareQuantity).toBe(false);
     expect(variables.variables.input.quantities[0]).toMatchObject({ compareQuantity: 9, quantity: 12 });
     // Only ever on_hand: `available` is derived from it minus open
@@ -686,8 +703,7 @@ describe("applyStockChanges — the ledger the echo belongs to", () => {
     const admin = adminWith(echo([{ locationId: LOC_A, after: 12 }]));
     const { db } = dbRecorder();
     await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
-    const query = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][0];
-    expect(query).toContain('changes(quantityNames: ["on_hand"])');
+    expect(stockCall(admin).query).toContain('changes(quantityNames: ["on_hand"])');
   });
 
   it("refuses to write stock for an UNTRACKED variant, and says which it is", async () => {
@@ -872,6 +888,11 @@ describe("the variant's own settings", () => {
  * document that is right for one of them is wrong for the other.
  */
 describe("the compare-and-swap is spelled the way the pinned version spells it", () => {
+  // These drive the FALLBACK: `adminWith` answers every call with the mutation
+  // echo, so the introspection gets no field list and the version pin decides.
+  // That is the production path on a shop whose schema cannot be read.
+  beforeEach(() => resetInventoryInputShapeProbe());
+
   const withVersion = async (version: string, run: () => Promise<void>) => {
     const previous = process.env.SHOPIFY_API_VERSION;
     process.env.SHOPIFY_API_VERSION = version;
@@ -884,9 +905,14 @@ describe("the compare-and-swap is spelled the way the pinned version spells it",
     }
   };
 
-  const inputOf = (admin: unknown) =>
-    (admin as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables.input as
-      Record<string, unknown>;
+  /** The SET mutation's input, wherever the call landed — the shape lookup now
+   *  goes first, so an index would pin the wrong call. */
+  const inputOf = (admin: unknown) => {
+    const calls = (admin as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls;
+    const call = calls.find(([query]) => String(query).includes("inventorySetQuantities"));
+    if (!call) throw new Error("the stock mutation was never sent");
+    return (call[1] as { variables: { input: Record<string, unknown> } }).variables.input;
+  };
 
   it("sends changeFromQuantity and NO ignoreCompareQuantity from 2026-04", async () => {
     await withVersion("2026-07", async () => {
@@ -936,42 +962,155 @@ describe("the compare-and-swap is spelled the way the pinned version spells it",
   });
 });
 
-describe("a refused write says what the version WANTS", () => {
-  it("reports the real input shape and still fails the write", async () => {
-    // The ask is once per PROCESS, and an earlier test in this file already
-    // drove a schema-level refusal — so the mark has to be cleared to observe
-    // it here at all.
-    resetInventoryInputShapeProbe();
-    // The self-measurement the review asked for: the new field name is the
-    // repo's recorded research, not a measurement, so a refusal has to answer
-    // the question it raises instead of leaving the same silence behind.
-    const graphql = vi
-      .fn()
-      .mockResolvedValueOnce({
-        json: async () => ({ errors: [{ message: "Field is not defined on InventoryQuantityInput" }], data: null }),
-      })
-      .mockResolvedValueOnce({
-        json: async () => ({
-          data: {
-            setInput: { inputFields: [{ name: "name" }, { name: "reason" }, { name: "quantities" }] },
-            entryInput: { inputFields: [{ name: "inventoryItemId" }, { name: "changeFromQuantity" }] },
-          },
-        }),
-      });
-    const { db, updates } = dbRecorder();
-    const warning = await applyStockChanges({ graphql } as never, db, "s", {
-      variantId: "42",
-      changes: [change(LOC_A, 12, 9)],
-    });
+/**
+ * The schema decides, not the pin.
+ *
+ * The pin encodes what Shopify changed in 2026-04, but the NAME in it was
+ * recorded research rather than something anyone could verify from where the
+ * fix was written — and a wrong name is the same silent no-op all over again,
+ * discovered by the merchant. So the shape is asked for before the write.
+ */
+describe("the write is built from the shape the schema really has", () => {
+  beforeEach(() => resetInventoryInputShapeProbe());
 
-    expect(warning).toBe("stockFailed");
-    // Nothing mirrored — a schema refusal wrote nothing on Shopify either.
-    expect(updates).toHaveLength(0);
-    const introspection = graphql.mock.calls[1][0] as string;
-    expect(introspection).toContain("InventorySetQuantitiesInput");
-    expect(introspection).toContain("InventoryQuantityInput");
+  /** An admin that answers the introspection with `entry`, then the mutation.
+   *  `set` defaults to a version that no longer has the opt-out switch — an
+   *  EMPTY list means "this type did not answer" and is its own case below. */
+  const adminWithShape = (entry: string[], set: string[] = ["name", "reason", "quantities"]) => {
+    const graphql = vi.fn(async (query: string) =>
+      String(query).includes("__type")
+        ? {
+            json: async () => ({
+              data: {
+                setInput: { inputFields: set.map((name) => ({ name })) },
+                entryInput: { inputFields: entry.map((name) => ({ name })) },
+              },
+            }),
+          }
+        : { json: async () => echo([{ locationId: LOC_A, after: 12 }]) },
+    );
+    return { graphql } as never;
+  };
+
+  const inputOf = (admin: unknown) => {
+    const calls = (admin as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls;
+    const call = calls.find(([query]) => String(query).includes("inventorySetQuantities"));
+    return call ? (call[1] as { variables: { input: Record<string, unknown> } }).variables.input : null;
+  };
+
+  it("uses the name the entry type carries, against the pin", async () => {
+    // The pin says `compareQuantity` on 2025-10. The schema says otherwise, and
+    // the schema is what the request is validated against.
+    const previous = process.env.SHOPIFY_API_VERSION;
+    process.env.SHOPIFY_API_VERSION = "2025-10";
+    try {
+      const admin = adminWithShape(["inventoryItemId", "locationId", "quantity", "changeFromQuantity"]);
+      await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+      const entry = (inputOf(admin)!.quantities as Array<Record<string, unknown>>)[0];
+      expect(entry.changeFromQuantity).toBe(9);
+      expect(entry.compareQuantity).toBeUndefined();
+      // The switch is sent only where the input still has it.
+      expect(inputOf(admin)!.ignoreCompareQuantity).toBeUndefined();
+    } finally {
+      process.env.SHOPIFY_API_VERSION = previous ?? "";
+    }
   });
 
+  it("sends the opt-out switch only where the input still has it", async () => {
+    const admin = adminWithShape(
+      ["inventoryItemId", "locationId", "quantity", "compareQuantity"],
+      ["name", "reason", "quantities", "ignoreCompareQuantity"],
+    );
+    await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+    expect(inputOf(admin)!.ignoreCompareQuantity).toBe(false);
+    expect((inputOf(admin)!.quantities as Array<Record<string, unknown>>)[0].compareQuantity).toBe(9);
+  });
+
+  it("REFUSES rather than writing blind when the version has no comparison", async () => {
+    // The one outcome this module may never trade away. A quantity written
+    // with no baseline overwrites whatever moved in between.
+    const admin = adminWithShape(["inventoryItemId", "locationId", "quantity"]);
+    const { db, updates } = dbRecorder();
+    const warning = await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+
+    expect(warning).toBe("stockCompareUnsupported");
+    expect(inputOf(admin)).toBeNull();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("falls back to the pin when the lookup answers nothing", async () => {
+    // Introspection switched off, a throttled read, a type named something
+    // this app has never seen: an empty answer is not a verdict, and refusing
+    // every stock write on it would be the worse error by far.
+    const previous = process.env.SHOPIFY_API_VERSION;
+    process.env.SHOPIFY_API_VERSION = "2026-07";
+    try {
+      const admin = adminWithShape([]);
+      await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+      const entry = (inputOf(admin)!.quantities as Array<Record<string, unknown>>)[0];
+      expect(entry.changeFromQuantity).toBe(9);
+    } finally {
+      process.env.SHOPIFY_API_VERSION = previous ?? "";
+    }
+  });
+
+  it("falls back to the pin when only ONE of the two types answered", async () => {
+    // The expensive half. `__type` answers null for a name this version does
+    // not have, so a renamed top-level input leaves `ignoreCompareQuantity`
+    // looking REMOVED while `compareQuantity` is still sent — and omitting the
+    // switch on a version that has it is the silent overwrite, reached through
+    // a lookup that was meant to prevent one.
+    const previous = process.env.SHOPIFY_API_VERSION;
+    process.env.SHOPIFY_API_VERSION = "2025-10";
+    try {
+      const admin = adminWithShape(["inventoryItemId", "locationId", "quantity", "compareQuantity"], []);
+      await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+      const input = inputOf(admin)!;
+      expect(input.ignoreCompareQuantity).toBe(false);
+      expect((input.quantities as Array<Record<string, unknown>>)[0].compareQuantity).toBe(9);
+    } finally {
+      process.env.SHOPIFY_API_VERSION = previous ?? "";
+    }
+  });
+
+  it("does not memoise a REFUSAL, so one odd answer is not a standing outage", async () => {
+    let entry = ["inventoryItemId", "locationId", "quantity"];
+    const graphql = vi.fn(async (query: string) =>
+      String(query).includes("__type")
+        ? {
+            json: async () => ({
+              data: {
+                setInput: { inputFields: [{ name: "name" }, { name: "quantities" }] },
+                entryInput: { inputFields: entry.map((name) => ({ name })) },
+              },
+            }),
+          }
+        : { json: async () => echo([{ locationId: LOC_A, after: 12 }]) },
+    );
+    const admin = { graphql } as never;
+    expect(
+      await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] }),
+    ).toBe("stockCompareUnsupported");
+
+    // The next save asks again rather than repeating the refusal from memory.
+    entry = [...entry, "compareQuantity"];
+    expect(
+      await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] }),
+    ).toBeUndefined();
+  });
+
+  it("asks ONCE per process, not once per save", async () => {
+    const admin = adminWithShape(["inventoryItemId", "locationId", "quantity", "compareQuantity"]);
+    await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+    await applyStockChanges(admin, dbRecorder().db, "s", { variantId: "42", changes: [change(LOC_B, 5, 4)] });
+    const lookups = (admin as unknown as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls.filter(
+      ([query]) => String(query).includes("__type"),
+    );
+    expect(lookups).toHaveLength(1);
+  });
+});
+
+describe("a refused write", () => {
   it("tells a stale comparison from a demand for one", async () => {
     // `COMPARE_QUANTITY_REQUIRED` reported as "someone else changed it" sends
     // the merchant into a reload loop over a request that can never succeed.

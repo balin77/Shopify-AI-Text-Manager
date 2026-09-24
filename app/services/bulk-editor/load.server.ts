@@ -10,6 +10,7 @@
  */
 
 import type { PrismaClient, Prisma } from "@prisma/client";
+import { canonicalCollectionIds } from "../collection-picker.shared";
 import { isDefaultTitleOption } from "../../utils/shopify-product.utils";
 import { debugLog } from "../../utils/debug";
 import {
@@ -657,16 +658,18 @@ async function loadBulkRowsInner(
         vendor: true,
         tags: true,
         templateSuffix: true,
-        // Read-only context columns. `categoryName` mirrors the taxonomy's
-        // `fullName`, and the memberships carry their collection TITLE
-        // denormalised — so neither needs a join beyond the relation.
-        // `hasMoreCollections` is what keeps a truncated list from reading as a
-        // complete one.
+        // The two picker cells. The category's GID is the VALUE and its
+        // `fullName` path is what the picker shows; a membership carries its
+        // collection TITLE denormalised (so a collection the cache never
+        // stored still has a name) and its rule-based flag, which the picker
+        // needs to LOCK the row the server would refuse. `hasMoreCollections`
+        // keeps a truncated list from reading as a complete one.
+        categoryId: true,
         categoryName: true,
         hasMoreCollections: true,
         collections: {
           orderBy: { collectionTitle: "asc" as const },
-          select: { collectionTitle: true },
+          select: { collectionId: true, collectionTitle: true, automated: true },
         },
         attributesSyncedAt: true,
         featuredImageUrl: true,
@@ -718,7 +721,7 @@ async function loadBulkRowsInner(
               metafields?: { id: string; namespace: string; key: string; value: string; type: string }[];
               options?: { id: string; name: string; position: number; values: string; linkedMetafieldKey: string | null }[];
               images?: { mediaId: string | null; altText: string | null }[];
-              collections?: { collectionTitle: string }[];
+              collections?: { collectionId: string; collectionTitle: string; automated: boolean }[];
               variants?: {
                 shopifyGid: string;
                 price: Prisma.Decimal | null;
@@ -754,8 +757,16 @@ async function loadBulkRowsInner(
             // REPLACES the product's tags rather than adding to them.
             tags: Array.isArray(i.tags) ? (i.tags as string[]).join(", ") : "",
             templateSuffix: (i.templateSuffix as string | null) ?? "",
-            productCategory: (i.categoryName as string | null) ?? "",
-            productCollections: (i.collections ?? []).map((c) => c.collectionTitle).join(", "),
+            category: (i.categoryId as string | null) ?? "",
+            categoryName: (i.categoryName as string | null) ?? "",
+            // Canonical — sorted and de-duplicated — because the grid decides
+            // "dirty" by comparing strings, and the picker emits the same form.
+            collections: canonicalCollectionIds((i.collections ?? []).map((c) => c.collectionId)),
+            collectionMemberships: (i.collections ?? []).map((c) => ({
+              collectionId: c.collectionId,
+              collectionTitle: c.collectionTitle,
+              automated: c.automated,
+            })),
             hasMoreCollections: !!i.hasMoreCollections,
             attributesKnown: !!i.attributesSyncedAt,
             imageUrl: (i.featuredImageUrl as string | null) ?? undefined,
