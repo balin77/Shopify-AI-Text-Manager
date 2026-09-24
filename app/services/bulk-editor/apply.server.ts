@@ -82,7 +82,16 @@ import {
 } from "../commerce-write.server";
 import { INVENTORY_POLICIES } from "../../config/shopify-enums.shared";
 import {
+  PRODUCT_COLLECTIONS_SELECTION,
+  productCollectionRows,
+  type ShopifyProductCollections,
+} from "../attribute-sync.shared";
+import { parseGridCollectionIds } from "../collection-picker.shared";
+import {
   parseTagList,
+  parseCategoryId,
+  diffCollectionMembership,
+  collectionAutomation,
   attributeInputFor,
   attributesForResource,
   type AttributeInput,
@@ -202,6 +211,13 @@ interface PersistDeps {
    * GID is cached nowhere and cannot be derived from the parent, so it is
    * resolved once per row instead of once per (row, locale, market) group. */
   featuredImageIds: Map<string, string | null>;
+  /** The shop's collections as membership screening needs them — the `known`
+   *  map `diffCollectionMembership` takes, plus titles for a refusal message.
+   *  The same for every row of one save, so it is read ONCE per run (a
+   *  200-row membership edit would otherwise issue 200 identical full-table
+   *  reads and rebuild the map 200 times). Lazily filled; see
+   *  `collectionScreenForRun`. */
+  collectionScreen?: Promise<CollectionScreen>;
   /** Published, non-primary shop locales — the target set for the primary-save
    * stale-foreign-translation invalidation (Plan §6.6 / Phase 4b). Loaded once
    * per run; empty when the lookup failed (invalidation then safely no-ops). */
@@ -762,6 +778,36 @@ function translatableKeysForColumnIds(
 
 // ─── Product row: stage 1 — base fields via productUpdate ──────────────────
 
+/** See `PersistDeps.collectionScreen`. */
+interface CollectionScreen {
+  known: Map<string, boolean | null>;
+  titles: Map<string, string>;
+}
+
+/**
+ * The shop's collections, read ONCE per save and turned into the screening map
+ * once. On the run's own `PersistDeps`, like every other per-run cache here, so
+ * it lives exactly as long as the save and a later save sees fresh rule flags.
+ * A failed read is dropped rather than memoised, so the next row asks again.
+ */
+function collectionScreenForRun(deps: PersistDeps): Promise<CollectionScreen> {
+  if (deps.collectionScreen) return deps.collectionScreen;
+  const request = deps.db.collection
+    .findMany({
+      where: { shop: deps.shop },
+      select: { id: true, title: true, isSmart: true, attributesSyncedAt: true },
+    })
+    .then((rows) => ({
+      known: new Map(rows.map((c) => [c.id, collectionAutomation(c)] as const)),
+      titles: new Map(rows.map((c) => [c.id, c.title] as const)),
+    }));
+  deps.collectionScreen = request;
+  request.catch(() => {
+    if (deps.collectionScreen === request) deps.collectionScreen = undefined;
+  });
+  return request;
+}
+
 async function persistProductBaseFields(
   group: BulkDiffRowGroup,
   cells: ProductCellGroups,
@@ -791,6 +837,91 @@ async function persistProductBaseFields(
       delete fields.status;
     } else {
       fields.status = s;
+    }
+  }
+
+  // ── The two picker cells (COL_CATEGORY / COL_COLLECTIONS) ────────────────
+  //
+  // A category is a TaxonomyCategory GID or "" (none). Anything else fails at
+  // the GraphQL SCHEMA level, where `userErrors` never sees it and the save
+  // reads as a success while nothing was written — so it is refused HERE, per
+  // cell, with `parseCategoryId`, the editor's own check.
+  if (fields.category !== undefined) {
+    const parsed = parseCategoryId(fields.category);
+    if (!parsed.valid) {
+      failures.push(
+        failureOf(group, `"${fields.category}" is not a product category — pick one from the list.`, "field.category"),
+      );
+      delete fields.category;
+    }
+  }
+
+  // Memberships are a JOIN/LEAVE DIFF against the CACHE, exactly as the
+  // editor's save does it (update.actions.ts) — never a list write: a product
+  // can belong to collections this shop never cached, and a list would drop
+  // them. The BEFORE side never comes from the client, so a cell cannot remove
+  // a membership the grid never showed.
+  //
+  // Two refusals ride on it. The cell's value must be GIDs and nothing else
+  // (`parseGridCollectionIds` — a pasted "Sale, Winter" read leniently would be
+  // saved as "leave everything"). And a RULE-BASED or never-measured
+  // collection is refused in both directions by `diffCollectionMembership`:
+  // Shopify rejects a manual join on one, and because `productUpdate` is
+  // atomic that refusal would take this row's title and SEO edits with it. The
+  // picker locks those rows; this is the server-side twin for the entrances
+  // that do not go through it. What is refused is reported on the cell, and
+  // whatever is left of the diff is still written.
+  let membershipDiff: { toJoin: string[]; toLeave: string[] } | null = null;
+  if (fields.collections !== undefined) {
+    const parsed = parseGridCollectionIds(fields.collections);
+    if (!parsed.ok) {
+      failures.push(
+        failureOf(
+          group,
+          `Only collections picked from the list can be saved here — "${parsed.bad[0]}" is not one. Nothing was changed.`,
+          "field.collections",
+        ),
+      );
+      delete fields.collections;
+    } else {
+      try {
+        const cached = await db.productCollection.findMany({
+          where: { shop, productId: id },
+          select: { collectionId: true, collectionTitle: true, automated: true },
+        });
+        const screen = await collectionScreenForRun(deps);
+        const diff = diffCollectionMembership(cached, parsed.ids, screen.known);
+        // (4) Two refusals, two sentences, and each title under its OWN
+        // reason. One sentence for both told a merchant their manual
+        // collection was rule-based and sent them looking for a rule that does
+        // not exist — MembershipDiff keeps the two apart for exactly that.
+        const titleOf = (ref: string) =>
+          cached.find((c) => c.collectionId === ref)?.collectionTitle || screen.titles.get(ref) || ref;
+        const quoted = (refs: string[]) => refs.map((ref) => `"${titleOf(ref)}"`).join(", ");
+        const reasons: string[] = [];
+        if (diff.refusedAutomated.length > 0) {
+          reasons.push(`Not changed: ${quoted(diff.refusedAutomated)} — a rule-based collection decides its own members.`);
+        }
+        if (diff.refusedUnknown.length > 0) {
+          reasons.push(
+            `Not changed: ${quoted(diff.refusedUnknown)} — not loaded from Shopify yet; resync the collections first.`,
+          );
+        }
+        if (reasons.length > 0) failures.push(failureOf(group, reasons.join(" "), "field.collections"));
+        if (diff.toJoin.length > 0 || diff.toLeave.length > 0) {
+          membershipDiff = { toJoin: diff.toJoin, toLeave: diff.toLeave };
+        } else {
+          // Nothing left to send — refused, or the cache already says so.
+          // Keeping the field would run `productUpdate` with only an id and
+          // report a save of nothing.
+          delete fields.collections;
+        }
+      } catch (err: unknown) {
+        failures.push(
+          failureOf(group, err instanceof Error ? err.message : String(err), "field.collections"),
+        );
+        delete fields.collections;
+      }
     }
   }
 
@@ -855,6 +986,12 @@ async function persistProductBaseFields(
     if (fields.templateSuffix !== undefined) {
       input.templateSuffix = fields.templateSuffix.trim() || null;
     }
+    // null is meaningful: it takes the product OUT of the taxonomy.
+    if (fields.category !== undefined) input.category = parseCategoryId(fields.category).id;
+    if (membershipDiff?.toJoin.length) input.collectionsToJoin = membershipDiff.toJoin;
+    if (membershipDiff?.toLeave.length) input.collectionsToLeave = membershipDiff.toLeave;
+    const wroteCategory = fields.category !== undefined;
+    const wroteMembership = membershipDiff !== null;
     if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
       input.seo = {
         title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.seoTitle ?? "",
@@ -876,7 +1013,14 @@ async function persistProductBaseFields(
       `#graphql
         mutation seoBulkMetaProductUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
-            product { id handle tags templateSuffix }
+            product {
+              id
+              handle
+              tags
+              templateSuffix
+              ${wroteCategory ? "category { id fullName name }" : ""}
+              ${wroteMembership ? PRODUCT_COLLECTIONS_SELECTION : ""}
+            }
             userErrors { field message }
           }
         }`,
@@ -885,7 +1029,14 @@ async function persistProductBaseFields(
     const data = (await response.json()) as {
       data?: {
         productUpdate?: {
-          product?: { id: string; handle?: string; tags?: string[]; templateSuffix?: string | null } | null;
+          product?: {
+            id: string;
+            handle?: string;
+            tags?: string[];
+            templateSuffix?: string | null;
+            category?: { id?: string; fullName?: string | null; name?: string | null } | null;
+            collections?: ShopifyProductCollections | null;
+          } | null;
           userErrors?: { field?: string[] | string; message: string }[];
         };
       };
@@ -911,7 +1062,51 @@ async function persistProductBaseFields(
     const echoedProduct = data.data.productUpdate.product ?? null;
 
     const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
-    for (const key of Object.keys(fields)) dbData[key] = fields[key];
+    // The two picker cells have no 1:1 Prisma column — `category` is split
+    // into `categoryId`/`categoryName` below and `collections` is a RELATION —
+    // so copying their strings across would fail the whole row.
+    for (const key of Object.keys(fields)) {
+      if (key === "category" || key === "collections") continue;
+      dbData[key] = fields[key];
+    }
+    // The taxonomy, from the ECHO: `fullName` is the whole path, which is what
+    // the picker labels the category with. Cleared ⇒ Shopify reports
+    // `category: null`, which mirrors as null.
+    //
+    // (5) The echo rule decides whether there IS anything to mirror. A payload
+    // that did not carry the `category` key at all (`product: null`, a
+    // throttled partial answer) confirms nothing — mirroring it as "no
+    // category" would wipe the cache over a write nobody confirmed, and the
+    // grid would show "Not set" for a product that still has one. The cell is
+    // reported instead, so the merchant's pick stays on screen to save again.
+    const categoryConfirmed = !!echoedProduct && "category" in echoedProduct;
+    if (wroteCategory && categoryConfirmed) {
+      dbData.categoryId = echoedProduct?.category?.id ?? null;
+      dbData.categoryName = echoedProduct?.category?.fullName ?? echoedProduct?.category?.name ?? null;
+    } else if (wroteCategory) {
+      failures.push(
+        failureOf(group, "Shopify did not confirm the category — nothing was changed locally. Save again.", "field.category"),
+      );
+    }
+    // Membership, rebuilt from the ECHO the way the editor's save and all three
+    // sync sites do it. `productCollectionRows` answers null for an echo that
+    // did not carry the block, which SKIPS the rebuild rather than wiping the
+    // memberships — "member of nothing" must never come from a missing field.
+    const membership = wroteMembership
+      ? productCollectionRows(shop, id, echoedProduct?.collections)
+      : null;
+    if (membership) dbData.hasMoreCollections = membership.hasMore;
+    // The same rule for the memberships: no echoed block, no rebuild — and a
+    // cell that says so rather than one that looks saved.
+    if (wroteMembership && !membership) {
+      failures.push(
+        failureOf(
+          group,
+          "Shopify did not confirm the collections — nothing was changed locally. Save again.",
+          "field.collections",
+        ),
+      );
+    }
     // The handle Shopify STORED, not the cell that was typed: Shopify
     // slugifies it, so mirroring the raw cell would leave the cache claiming a
     // handle the shop does not serve — and the grid reads that cache back.
@@ -934,7 +1129,22 @@ async function persistProductBaseFields(
           ? echoedProduct.templateSuffix ?? null
           : fields.templateSuffix.trim() || null;
     }
-    await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
+    // ONE transaction when the memberships are rebuilt, exactly as the editor
+    // does it: a connection blip between the delete and the createMany would
+    // otherwise leave the product cached as a member of NOTHING while the save
+    // reports success — and the picker would then render that as a confident
+    // "in no collections".
+    if (membership) {
+      await db.$transaction(async (tx) => {
+        await tx.product.update({ where: { shop_id: { shop, id } }, data: dbData });
+        await tx.productCollection.deleteMany({ where: { shop, productId: id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      });
+    } else {
+      await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
+    }
 
     // Phase 4b: the changed primary fields' foreign translations are now stale.
     await invalidateStaleForeignTranslations(deps, "product", id, translatableKeysForColumnIds(deps, "product", remainingColumnIds));
@@ -946,7 +1156,16 @@ async function persistProductBaseFields(
     const message = err instanceof Error ? err.message : String(err);
     // productUpdate is one atomic mutation over every base cell — attribute
     // the failure to each of them so the UI keeps their edits.
-    for (const columnId of remainingColumnIds) failures.push(failureOf(group, message, columnId));
+    //
+    // A cell that ALREADY carries a failure (the memberships' refusal note) is
+    // extended, never joined by a second entry: the grid keys failures by cell,
+    // so the later one would replace the earlier and the merchant would lose
+    // either why a collection was kept or why the save failed.
+    for (const columnId of remainingColumnIds) {
+      const existing = failures.find((f) => f.columnId === columnId && f.rowId === group.rowId);
+      if (existing) existing.message = `${existing.message} ${message}`;
+      else failures.push(failureOf(group, message, columnId));
+    }
   }
   return failures;
 }
@@ -3805,7 +4024,7 @@ async function persistVariantInventoryItems(
     // The named cell still gets Shopify's own words (or this app's specific
     // refusal); the rest get the atomicity explanation, exactly as the variant
     // bulk update already reports for a refused sibling.
-    const message = result.message ?? inventoryItemWarningMessage(result.warning);
+    const message = result.message ?? inventoryItemWarningMessage(result.warning, result.field);
     const named = result.field ? COLUMN_BY_INVENTORY_ITEM_FIELD[result.field] : undefined;
     for (const columnId of columnIds) {
       if (weightFailed && (columnId === VAR_WEIGHT_COLUMN_ID || columnId === VAR_WEIGHT_UNIT_COLUMN_ID)) {
@@ -3829,9 +4048,21 @@ async function persistVariantInventoryItems(
 /** A warning code the bulk grid has to say out loud. The single editor renders
  *  these from `t.content.commerceWarnings`; a per-cell failure carries its own
  *  sentence, like every other message in this file. */
-function inventoryItemWarningMessage(warning: CommerceWarning): string {
+function inventoryItemWarningMessage(warning: CommerceWarning, field?: keyof InventoryItemFields): string {
   switch (warning) {
     case "itemFieldsInvalid":
+      if (field === "harmonizedSystemCode") {
+        return "A customs tariff (HS) code is 6 to 13 digits, e.g. 442090 or 4420900000 — dots and spaces are removed automatically.";
+      }
+      if (field === "weight") {
+        return "The weight is not a number Shopify accepts — use digits with one decimal separator, e.g. 0.25 or 1,5.";
+      }
+      if (field === "cost") {
+        return "The cost is not an amount Shopify accepts — use digits with one decimal separator, e.g. 4.50.";
+      }
+      if (field === "countryCodeOfOrigin") {
+        return "The country of origin needs a two-letter ISO code, e.g. DE or CH.";
+      }
       return "Shopify would refuse this value — check the amount, the weight unit or the two-letter country code.";
     case "itemFieldsNotConfirmed":
       return "Shopify did not confirm the change, so nothing was saved locally either.";

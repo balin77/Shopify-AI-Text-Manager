@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, fireEvent } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { BulkGrid } from "~/components/bulk-editor/BulkGrid";
@@ -129,8 +129,7 @@ function grid() {
           missingInventoryItem: "no inventory item",
           multipleVariants: "several variants",
           variantsNotSynced: "variants not synced",
-          needsPicker: "use the single editor",
-          collectionsTruncated: "list incomplete",
+          priceNotSynced: "price not synced",
         }}
         sortButtonLabel="sort"
         caption="products"
@@ -155,17 +154,62 @@ describe("the bulk grid's sticky horizontal scrollbar", () => {
     expect(container.querySelector(".cp-bulk-scroll-wrap")!.contains(bar!)).toBe(true);
   });
 
-  it("sizes its spacer to the content, so its range matches the grid's", () => {
+  it("sizes its thumb like a native one: viewport share of the content", () => {
     stubWidths(2400, 1200);
     const { container } = render(grid());
-    const spacer = container.querySelector<HTMLElement>(".cp-bulk-hscroll-spacer");
-    expect(spacer).not.toBeNull();
-    expect(spacer!.style.width).toBe("2400px");
+    const thumb = container.querySelector<HTMLElement>(".cp-bulk-hscroll-thumb");
+    expect(thumb).not.toBeNull();
+    expect(thumb!.style.width).toBe("600px");
+    expect(thumb!.style.getPropertyValue("--cp-bulk-thumb-travel")).toBe("600px");
   });
 
   it("stays away while the columns fit", () => {
     stubWidths(1200, 1200);
     const { container } = render(grid());
     expect(container.querySelector(".cp-bulk-hscroll")).toBeNull();
+  });
+
+  /* The touchpad judder: the bar used to be a second native scroller kept in
+     step by scroll events, which reach the main thread a frame after the
+     compositor has moved the grid. It is now a plain track whose thumb the
+     browser moves from the grid's own scroll timeline — nothing to sync, so
+     no element here may be a scroller of its own. */
+  it("is not a second scroller that would have to be kept in step", () => {
+    stubWidths(2400, 1200);
+    const { container } = render(grid());
+    expect(container.querySelector(".cp-bulk-hscroll-spacer")).toBeNull();
+    const css = container.querySelector("style")!.textContent!;
+    expect(css).toMatch(/\.cp-bulk-scroll \{[^}]*scroll-timeline: --cp-bulk-x x;/);
+    expect(css).toMatch(/\.cp-bulk-scroll-wrap \{[^}]*timeline-scope: --cp-bulk-x;/);
+    expect(css).toMatch(/animation-timeline: --cp-bulk-x;/);
+    const barRule = css.match(/\.cp-bulk-hscroll \{[^}]*\}/)![0];
+    expect(barRule).not.toMatch(/overflow/);
+  });
+
+  it("drags the grid by the thumb, in content pixels", () => {
+    stubWidths(2400, 1200);
+    const { container } = render(grid());
+    const scroller = container.querySelector<HTMLDivElement>(".cp-bulk-scroll")!;
+    const bar = container.querySelector<HTMLDivElement>(".cp-bulk-hscroll")!;
+    const thumb = container.querySelector<HTMLDivElement>(".cp-bulk-hscroll-thumb")!;
+
+    // travel 600px covers a scroll range of 1200px ⇒ 1px of thumb = 2px of grid.
+    fireEvent.pointerDown(thumb, { pointerId: 1, button: 0, clientX: 100 });
+    fireEvent.pointerMove(bar, { pointerId: 1, clientX: 250 });
+    expect(scroller.scrollLeft).toBe(300);
+    fireEvent.pointerUp(bar, { pointerId: 1, clientX: 250 });
+    fireEvent.pointerMove(bar, { pointerId: 1, clientX: 400 });
+    expect(scroller.scrollLeft, "the drag outlived the pointer release").toBe(300);
+  });
+
+  it("scrolls the grid when the wheel turns over the bar", () => {
+    stubWidths(2400, 1200);
+    const { container } = render(grid());
+    const scroller = container.querySelector<HTMLDivElement>(".cp-bulk-scroll")!;
+    const bar = container.querySelector<HTMLDivElement>(".cp-bulk-hscroll")!;
+    const event = new WheelEvent("wheel", { deltaY: 80, cancelable: true, bubbles: true });
+    bar.dispatchEvent(event);
+    expect(scroller.scrollLeft).toBe(80);
+    expect(event.defaultPrevented, "the page scrolled underneath as well").toBe(true);
   });
 });

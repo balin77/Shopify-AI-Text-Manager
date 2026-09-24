@@ -18,7 +18,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { loadBulkRows, type BulkAdminClient } from "./load.server";
-import { buildCsv, CSV_EXPORT_MAX_ROWS, CSV_ID_HEADER, type CsvDelimiter } from "./csv.shared";
+import { buildCsv, csvIdHeaderFor, CSV_EXPORT_MAX_ROWS, type CsvDelimiter } from "./csv.shared";
 import {
   resolveCellValue,
   type BulkFilterId,
@@ -142,7 +142,9 @@ export async function buildBulkCsvExport(
     if (skip + EXPORT_PAGE_SIZE >= page.total) break;
   }
 
-  const header = [CSV_ID_HEADER, ...exportColumns.map((c) => c.id)];
+  // The id header names the language/market layer (`id@de`), so the import
+  // can refuse the file when the grid is on a different one (csv.shared.ts).
+  const header = [csvIdHeaderFor(opts.locale, opts.locale === "" ? "" : opts.marketId), ...exportColumns.map((c) => c.id)];
   const body = rows.map((row) => [
     row.id,
     ...exportColumns.map((column) => exportCellValue(row, column, opts.locale, opts.marketId)),
