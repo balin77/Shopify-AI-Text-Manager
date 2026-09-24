@@ -45,13 +45,21 @@
  * fields are wrong, so the entry type is still `InventoryQuantityInput`: this
  * is a RENAME, not a new model.
  *
- * So the document is chosen by the PINNED VERSION (`isApiVersionAtLeast`), and
- * both spellings keep the compare-and-swap — `changeFromQuantity` is the same
- * value under the new name, and dropping the safety property to make a write
- * go through is the one repair this module may never make. The name itself is
- * the repo's own recorded research (the note quoted above), while the REMOVAL
- * is measured; if that name is wrong the server says so in the same shape and
- * the next line of this comment is a fact rather than a guess.
+ * So the document is ASKED FOR rather than assumed: `readInventoryInputShape`
+ * introspects both input types once per process and the write is built from
+ * the field the schema really has, with the PINNED VERSION
+ * (`isApiVersionAtLeast`) as the fallback for a lookup that could not answer.
+ * The first cut pinned the version alone and logged the schema only AFTER a
+ * rejection — which is right about where the answer lives and wrong about
+ * when: the name in that pin is the repo's own recorded research, the removal
+ * is what was measured, and a wrong name would have cost the merchant another
+ * round of the same silence. Asking first costs one query per process.
+ *
+ * Both spellings keep the compare-and-swap, and a version that answers with
+ * NEITHER is refused (`stockCompareUnsupported`) rather than written blind:
+ * dropping the safety property to make a save go through is the one repair
+ * this module may never make, and the entry type's real field names are in the
+ * log beside the refusal.
  *
  * Still UNMEASURED and deliberately not acted on: Shopify's `@idempotent`
  * directive on inventory mutations, announced for the same version. The
@@ -93,6 +101,7 @@ export type CommerceWarning =
   | "stockUntracked"
   | "stockNoInventoryItem"
   | "stockNoBaseline"
+  | "stockCompareUnsupported"
   | "channelsNotConfirmed"
   | "channelsFailed"
   | "priceInvalid"
@@ -155,23 +164,55 @@ export function parseQuantity(value: string): number | null {
  * Diagnostic only. It never throws, never changes what is returned, and never
  * runs on a healthy write.
  */
-let inventoryInputShapeAsked = false;
+/**
+ * What this API version's inventory input types actually carry, as read from
+ * the schema. Held for the life of the process: it is a property of the
+ * version, not of the shop.
+ */
+interface InventoryInputShape {
+  /** The entry field that carries the baseline, or `null` if there is none. */
+  compareField: "compareQuantity" | "changeFromQuantity" | null;
+  /** Whether the top-level input still has the opt-out switch. */
+  sendIgnoreCompareQuantity: boolean;
+  /** Every field of the entry input, for the log and for the refusal. */
+  entryFields: string[];
+}
+
+let inventoryInputShape: InventoryInputShape | null = null;
 
 /**
- * The test seam for the ONCE-per-process rule above.
+ * Forgets the memoised answer. For tests, and for nothing else.
  *
- * That rule is the production behaviour and stays: the answer is a property of
- * the API version this process talks, so asking again per save would repeat one
- * log line for every refused write of every shop. A test that wants to observe
- * the ask therefore has to clear the mark, rather than the module having to
- * pretend the mark is not there.
+ * Production memoises only a DEFINITE answer, for an hour's worth of saves or
+ * for the life of the process: the shape is a property of the API version, not
+ * of the shop. A lookup that FAILED is never memoised — the same rule
+ * `taxonomy-values.server.ts` follows, because one throttled minute must not
+ * become a process-lifetime "we do not know".
  */
 export function resetInventoryInputShapeProbe(): void {
-  inventoryInputShapeAsked = false;
+  inventoryInputShape = null;
 }
-async function logInventoryInputShape(admin: AdminApiContext, shop: string): Promise<void> {
-  if (inventoryInputShapeAsked) return;
-  inventoryInputShapeAsked = true;
+
+/**
+ * Asks the SCHEMA which spelling of the comparison this version has.
+ *
+ * The version pin below encodes what Shopify changed in 2026-04, and it is
+ * only as good as the NAME in it — which is recorded research rather than
+ * something that could be verified from where the fix was written. Asking the
+ * server removes that last guess: the answer is in the schema, the schema is
+ * one query away, and the alternative is another silent no-op that the
+ * merchant discovers instead of us.
+ *
+ * It is the DECISION, not a diagnostic: it runs before the write rather than
+ * after a rejection, once per process, and its result picks the document. An
+ * unanswered lookup is not a verdict — the version pin then decides, which is
+ * exactly the behaviour this replaces.
+ */
+async function readInventoryInputShape(
+  admin: AdminApiContext,
+  shop: string,
+): Promise<InventoryInputShape | null> {
+  if (inventoryInputShape) return inventoryInputShape;
   try {
     const response = await admin.graphql(
       `#graphql
@@ -183,18 +224,70 @@ async function logInventoryInputShape(admin: AdminApiContext, shop: string): Pro
     const body = (await response.json()) as {
       data?: Record<string, { inputFields?: Array<{ name?: string }> | null } | null>;
     };
-    const names = (key: string) =>
-      (body.data?.[key]?.inputFields ?? []).map((field) => field?.name).filter(Boolean).join(", ") || "none";
-    logger.warn("[Commerce] Inventory input shape on this API version", {
+    const names = (key: string): string[] =>
+      (body.data?.[key]?.inputFields ?? [])
+        .map((field) => field?.name)
+        .filter((name): name is string => typeof name === "string" && name.length > 0);
+
+    const setFields = names("setInput");
+    const entryFields = names("entryInput");
+    // BOTH lists, or this is not an answer. `__type` returns null rather than
+    // an error for a name this version does not have, and introspection can be
+    // switched off or throttled — so an empty list is "we could not read it",
+    // never "the field is gone". Requiring both is the half that is easy to
+    // miss and expensive to get wrong: with only the entry type answering,
+    // `ignoreCompareQuantity` would read as REMOVED and be omitted while the
+    // old `compareQuantity` is sent — and on a version that still has the
+    // switch, omitting it is precisely the silent overwrite this whole module
+    // is built to refuse. Falling back to the pin sends the pair that belongs
+    // together.
+    if (entryFields.length === 0 || setFields.length === 0) {
+      logger.warn("[Commerce] Inventory input shape not answered", {
+        context: "Commerce",
+        shop,
+        InventorySetQuantitiesInput: setFields.join(", ") || "none",
+        InventoryQuantityInput: entryFields.join(", ") || "none",
+        // Named rather than dropped: "introspection is off" and "the query was
+        // throttled" are different problems and look identical without it.
+        error: (body as { errors?: Array<{ message?: string }> }).errors?.[0]?.message,
+      });
+      return null;
+    }
+
+    const shape: InventoryInputShape = {
+      // Order matters only in that BOTH are checked: a version carrying the
+      // old name keeps it, and the new one is used where the old is gone.
+      compareField: entryFields.includes("compareQuantity")
+        ? "compareQuantity"
+        : entryFields.includes("changeFromQuantity")
+          ? "changeFromQuantity"
+          : null,
+      sendIgnoreCompareQuantity: setFields.includes("ignoreCompareQuantity"),
+      entryFields,
+    };
+    // Logged ONCE, at info: this is the fact that was missing while every
+    // stock save failed, and it belongs in the deploy log whether or not
+    // anything is wrong with it.
+    logger.info("[Commerce] Inventory input shape", {
       context: "Commerce",
       shop,
-      InventorySetQuantitiesInput: names("setInput"),
-      InventoryQuantityInput: names("entryInput"),
+      compareField: shape.compareField ?? "none",
+      ignoreCompareQuantity: shape.sendIgnoreCompareQuantity,
+      InventorySetQuantitiesInput: setFields.join(", "),
+      InventoryQuantityInput: entryFields.join(", "),
     });
+    // Memoised only where a comparison was FOUND. A `null` compareField
+    // refuses every stock save of this process without asking again, so one
+    // odd answer would become a standing outage; the shop it would really
+    // apply to writes nothing either way, which makes re-asking the cheap
+    // direction.
+    if (shape.compareField) inventoryInputShape = shape;
+    return shape;
   } catch (error) {
     logger.warn("[Commerce] Inventory input shape could not be read", {
       context: "Commerce", shop, error: error instanceof Error ? error.message : String(error),
     });
+    return null;
   }
 }
 
@@ -252,10 +345,33 @@ export async function applyStockChanges(
   // The prose stays out here on purpose: a `#` comment inside the document
   // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
   /**
-   * Which spelling of the compare-and-swap this version has. See the module
-   * header: the FIELDS changed in 2026-04, the meaning did not.
+   * Which spelling of the compare-and-swap this version has — ASKED, with the
+   * version pin as the fallback for a lookup that could not answer.
    */
-  const usesChangeFromQuantity = isApiVersionAtLeast(INVENTORY_COMPARE_RENAMED_IN);
+  const measured = await readInventoryInputShape(admin, shop);
+  const pinnedUsesChangeFrom = isApiVersionAtLeast(INVENTORY_COMPARE_RENAMED_IN);
+  const compareField: "compareQuantity" | "changeFromQuantity" | null = measured
+    ? measured.compareField
+    : pinnedUsesChangeFrom
+      ? "changeFromQuantity"
+      : "compareQuantity";
+  const sendIgnoreCompareQuantity = measured
+    ? measured.sendIgnoreCompareQuantity
+    : !pinnedUsesChangeFrom;
+
+  // No baseline field at all, on a version that answered. Refusing is the only
+  // move left: a quantity written with nothing to compare against overwrites
+  // whatever happened between the page load and the click, which is the one
+  // failure this module exists to prevent and the one it may never trade away
+  // to make a save go through. The entry type's real fields are in the log
+  // above, so a name nobody here has seen is a one-line fix rather than
+  // another round of guessing.
+  if (!compareField) {
+    logger.warn("[Commerce] Inventory input has no comparison field", {
+      context: "Commerce", shop, InventoryQuantityInput: measured?.entryFields.join(", ") || "unknown",
+    });
+    return "stockCompareUnsupported";
+  }
 
   try {
     const response = await admin.graphql(
@@ -284,18 +400,15 @@ export async function applyStockChanges(
             // stock edit in the admin records too.
             reason: params.reason || "correction",
             // The safety property, under whichever name this version has it.
-            // From 2026-04 the presence of `changeFromQuantity` IS the request
-            // to compare, so there is nothing to switch off beside it; before
-            // that the switch had to be sent explicitly, because its default
-            // is the silent overwrite.
-            ...(usesChangeFromQuantity ? {} : { ignoreCompareQuantity: false }),
+            // Where the opt-out switch still exists it is sent explicitly,
+            // because its default is the silent overwrite; where it is gone,
+            // sending the baseline IS the request to compare.
+            ...(sendIgnoreCompareQuantity ? { ignoreCompareQuantity: false } : {}),
             quantities: params.changes.map((change) => ({
               inventoryItemId: change.inventoryItemId,
               locationId: change.locationId,
               quantity: change.quantity,
-              ...(usesChangeFromQuantity
-                ? { changeFromQuantity: change.compareQuantity }
-                : { compareQuantity: change.compareQuantity }),
+              [compareField]: change.compareQuantity,
             })),
           },
         },
@@ -323,11 +436,9 @@ export async function applyStockChanges(
       logger.warn("[Commerce] Stock schema-level error", {
         context: "Commerce", shop, error: body.errors[0]?.message,
       });
-      // The document this version WANTS, beside the one it refused. Awaited
-      // rather than fired off: this path already ends in a warning the
-      // merchant sees, and one more read before it costs a moment on a save
-      // that has failed anyway.
-      await logInventoryInputShape(admin, shop);
+      // The shape this version wanted was already read BEFORE the write and
+      // logged there, so a rejection here is no longer a question about the
+      // schema — it names something else.
       return "stockFailed";
     }
 
