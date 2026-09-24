@@ -13,7 +13,7 @@ import {
   parseListMetafieldInput,
   listValueContainsSeparator,
   filterSetForType,
-  FILTER_IDS_BY_SET,
+  filterIdsForType,
   metafieldColumnId,
   optionColumnId,
   richTextPreview,
@@ -747,12 +747,12 @@ describe("filter sets per row type (Finding 13)", () => {
 
   it("prunes foreign filter ids on a type switch (the route's handleTypeChange contract)", () => {
     const carried = ["missingSku", "missingTranslation", "missingSeoTitle"];
-    const productValid = FILTER_IDS_BY_SET[filterSetForType("product")];
+    const productValid = filterIdsForType("product");
     expect(carried.filter((f) => (productValid as string[]).includes(f))).toEqual([
       "missingTranslation",
       "missingSeoTitle",
     ]);
-    const variantValid = FILTER_IDS_BY_SET[filterSetForType("variant")];
+    const variantValid = filterIdsForType("variant");
     expect(carried.filter((f) => (variantValid as string[]).includes(f))).toEqual(["missingSku"]);
   });
 });

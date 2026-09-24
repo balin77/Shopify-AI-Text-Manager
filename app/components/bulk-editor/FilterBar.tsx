@@ -7,17 +7,29 @@
  */
 
 import { useEffect, useState } from "react";
-import { Button, ChoiceList, InlineStack, Popover, Select, TextField } from "@shopify/polaris";
+import { BlockStack, Button, ChoiceList, InlineStack, Popover, Select, Text, TextField } from "@shopify/polaris";
 import {
+  ATTRIBUTE_GATED_FILTER_IDS,
   BULK_PAGE_SIZES,
-  FILTER_IDS_BY_SET,
+  COLLECTION_KIND_FILTER_IDS,
+  STATUS_FILTER_IDS,
+  VISIBILITY_FILTER_IDS,
   type BulkFilterId,
-  type BulkFilterSet,
 } from "../../services/bulk-editor/columns.shared";
 
 /** Synthetic ChoiceList value for the client-side "only changed" toggle —
  * kept out of BulkFilterId (which is the server-filter vocabulary). */
 const CHANGED_FILTER_ID = "__changed";
+
+/** The popover's sections, in render order. `ids: null` = "every offered id
+ * no other section claims" (the independent flags). */
+type FilterSectionKey = "status" | "visibility" | "collectionKind" | "general";
+const GROUPED_SECTIONS: { key: Exclude<FilterSectionKey, "general">; ids: BulkFilterId[] }[] = [
+  { key: "status", ids: STATUS_FILTER_IDS },
+  { key: "visibility", ids: VISIBILITY_FILTER_IDS },
+  { key: "collectionKind", ids: COLLECTION_KIND_FILTER_IDS },
+];
+const GROUPED_IDS = new Set(GROUPED_SECTIONS.flatMap((g) => g.ids));
 
 interface FilterBarProps {
   search: string;
@@ -27,10 +39,10 @@ interface FilterBarProps {
   /** The missingTranslation filter needs a concrete locale — hidden until the
    * locale selector lands (Phase 4) unless the URL already carries one. */
   showTranslationFilter: boolean;
-  /** Which filter vocabulary the type speaks (Phase 3/5) — the id source is
-   * the shared FILTER_IDS_BY_SET (columns.shared.ts), which the route also
-   * uses to prune stale filter ids on a type switch (Finding 13). */
-  filterSet: BulkFilterSet;
+  /** The ids this row type speaks — `filterIdsForType` (columns.shared.ts),
+   * the same source the route prunes stale ids against on a type switch and
+   * the loader validates against. */
+  filterIds: BulkFilterId[];
   pageSize: number;
   onPageSizeChange: (size: number) => void;
   onlyChanged: boolean;
@@ -39,13 +51,11 @@ interface FilterBarProps {
     searchPlaceholder: string;
     searchLabel: string;
     filtersLabel: string;
-    filterMissingSeoTitle: string;
-    filterMissingSeoDescription: string;
-    filterMissingTranslation: string;
-    filterMissingSku: string;
-    filterMissingPrice: string;
-    filterCompareAtNotAbovePrice: string;
-    filterMissingAltText: string;
+    filterLabels: Record<BulkFilterId, string>;
+    sectionTitles: Record<FilterSectionKey, string>;
+    /** Shown under the list whenever an attribute-gated filter is offered. */
+    attributeFilterHint: string;
+    clearAll: string;
     pageSizeLabel: string;
     onlyChangedLabel: string;
   };
@@ -57,7 +67,7 @@ export function FilterBar({
   filters,
   onFiltersChange,
   showTranslationFilter,
-  filterSet,
+  filterIds,
   pageSize,
   onPageSizeChange,
   onlyChanged,
@@ -79,45 +89,54 @@ export function FilterBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
-  const filterLabels: Record<BulkFilterId, string> = {
-    missingSeoTitle: strings.filterMissingSeoTitle,
-    missingSeoDescription: strings.filterMissingSeoDescription,
-    missingTranslation: strings.filterMissingTranslation,
-    missingSku: strings.filterMissingSku,
-    missingPrice: strings.filterMissingPrice,
-    compareAtNotAbovePrice: strings.filterCompareAtNotAbovePrice,
-    missingAltText: strings.filterMissingAltText,
-  };
-  // ONE id source per set (FILTER_IDS_BY_SET, Finding 13); the translation
-  // filter additionally needs a selected foreign locale to mean anything.
-  const serverChoices = FILTER_IDS_BY_SET[filterSet]
-    .filter((id) => id !== "missingTranslation" || showTranslationFilter)
-    .map((id) => ({ label: filterLabels[id], value: id }));
+  // The translation filter additionally needs a selected foreign locale to
+  // mean anything.
+  const offered = filterIds.filter((id) => id !== "missingTranslation" || showTranslationFilter);
+  const choicesFor = (ids: BulkFilterId[]) =>
+    ids.filter((id) => offered.includes(id)).map((id) => ({ label: strings.filterLabels[id], value: id }));
+
   // "Nur geänderte" lives in the SAME popover as the server filters (one place
   // for every filter), but it stays a CLIENT toggle — it filters the loaded
   // page, never navigates. It is universally applicable, so the popover shows
   // even for types with no server filters (policy/metaobject primary).
-  const filterChoices = [
+  const generalChoices = [
     { label: strings.onlyChangedLabel, value: CHANGED_FILTER_ID },
-    ...serverChoices,
+    ...choicesFor(offered.filter((id) => !GROUPED_IDS.has(id))),
   ];
-  const selectedFilterValues = [...(onlyChanged ? [CHANGED_FILTER_ID] : []), ...filters];
-  const activeCount = filters.length + (onlyChanged ? 1 : 0);
+  const generalSelected = [
+    ...(onlyChanged ? [CHANGED_FILTER_ID] : []),
+    ...filters.filter((id) => !GROUPED_IDS.has(id)),
+  ];
+  const groupedSections = GROUPED_SECTIONS.map((g) => ({ ...g, choices: choicesFor(g.ids) })).filter(
+    (g) => g.choices.length > 0,
+  );
+  const showAttributeHint = offered.some((id) => ATTRIBUTE_GATED_FILTER_IDS.includes(id));
 
+  const activeCount = filters.length + (onlyChanged ? 1 : 0);
   const filterButtonLabel =
     activeCount > 0 ? `${strings.filtersLabel} (${activeCount})` : strings.filtersLabel;
-  const showFilterButton = true;
 
-  // Split one ChoiceList change back into its client + server halves, and only
-  // fire each handler when ITS half actually changed — toggling "nur geänderte"
-  // must not re-navigate/reset the page, and vice versa.
-  const handleChoiceChange = (selected: string[]) => {
-    const wantChanged = selected.includes(CHANGED_FILTER_ID);
-    if (wantChanged !== onlyChanged) onOnlyChangedChange(wantChanged);
-    const nextServer = selected.filter((id) => id !== CHANGED_FILTER_ID) as BulkFilterId[];
+  const commitServer = (nextServer: BulkFilterId[]) => {
     const serverChanged =
       nextServer.length !== filters.length || nextServer.some((id) => !filters.includes(id));
     if (serverChanged) onFiltersChange(nextServer);
+  };
+
+  // Split the general list back into its client + server halves, and only
+  // fire each handler when ITS half actually changed — toggling "nur geänderte"
+  // must not re-navigate/reset the page, and vice versa.
+  const handleGeneralChange = (selected: string[]) => {
+    const wantChanged = selected.includes(CHANGED_FILTER_ID);
+    if (wantChanged !== onlyChanged) onOnlyChangedChange(wantChanged);
+    const flags = selected.filter((id) => id !== CHANGED_FILTER_ID) as BulkFilterId[];
+    commitServer([...filters.filter((id) => GROUPED_IDS.has(id)), ...flags]);
+  };
+  const handleGroupChange = (groupIds: BulkFilterId[]) => (selected: string[]) => {
+    commitServer([...filters.filter((id) => !groupIds.includes(id)), ...(selected as BulkFilterId[])]);
+  };
+  const handleClearAll = () => {
+    if (onlyChanged) onOnlyChangedChange(false);
+    commitServer([]);
   };
 
   return (
@@ -134,28 +153,50 @@ export function FilterBar({
           autoComplete="off"
         />
       </div>
-      {showFilterButton && (
-        <Popover
-          active={popoverActive}
-          onClose={() => setPopoverActive(false)}
-          activator={
-            <Button disclosure pressed={activeCount > 0} onClick={() => setPopoverActive((v) => !v)}>
-              {filterButtonLabel}
-            </Button>
-          }
-        >
-          <div style={{ padding: "12px 16px" }}>
+      <Popover
+        active={popoverActive}
+        onClose={() => setPopoverActive(false)}
+        activator={
+          <Button disclosure pressed={activeCount > 0} onClick={() => setPopoverActive((v) => !v)}>
+            {filterButtonLabel}
+          </Button>
+        }
+      >
+        <div style={{ padding: "12px 16px", maxWidth: "340px" }}>
+          <BlockStack gap="400">
+            {groupedSections.map((g) => (
+              <ChoiceList
+                key={g.key}
+                allowMultiple
+                title={strings.sectionTitles[g.key]}
+                choices={g.choices}
+                selected={filters.filter((id) => g.ids.includes(id))}
+                onChange={handleGroupChange(g.ids)}
+              />
+            ))}
             <ChoiceList
               allowMultiple
-              title={strings.filtersLabel}
-              titleHidden
-              choices={filterChoices}
-              selected={selectedFilterValues}
-              onChange={handleChoiceChange}
+              title={strings.sectionTitles.general}
+              titleHidden={groupedSections.length === 0}
+              choices={generalChoices}
+              selected={generalSelected}
+              onChange={handleGeneralChange}
             />
-          </div>
-        </Popover>
-      )}
+            {showAttributeHint && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {strings.attributeFilterHint}
+              </Text>
+            )}
+            {activeCount > 0 && (
+              <InlineStack align="end">
+                <Button variant="plain" onClick={handleClearAll}>
+                  {strings.clearAll}
+                </Button>
+              </InlineStack>
+            )}
+          </BlockStack>
+        </div>
+      </Popover>
       <div style={{ width: "110px" }}>
         <Select
           label={strings.pageSizeLabel}

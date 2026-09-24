@@ -36,6 +36,13 @@ import {
   METAFIELD_TYPE_LIST_SINGLE_LINE,
   metafieldColumnId,
   metaobjectColumnId,
+  filterIdsForType,
+  selectedInGroup,
+  STATUS_FILTER_IDS,
+  STATUS_FILTER_VALUES,
+  VISIBILITY_FILTER_IDS,
+  COLLECTION_KIND_FILTER_IDS,
+  ATTRIBUTE_GATED_FILTER_IDS,
 } from "./columns.shared";
 
 /** Minimal admin-client surface the blog live-fetch needs — the same shape
@@ -233,6 +240,47 @@ async function buildWhere(
   return { and, translationFilterApproximate };
 }
 
+/** Shopify status values selected by the status filter group (OR). Empty =
+ * no status restriction. */
+function selectedStatuses(filters: readonly BulkFilterId[]): string[] {
+  return selectedInGroup(filters, STATUS_FILTER_IDS).map((id) => STATUS_FILTER_VALUES[id] as string);
+}
+
+/**
+ * The type-specific filters of the four DB-backed content types (status,
+ * visibility, collection kind, content gaps). `opts.filters` is already
+ * pruned to `filterIdsForType(type)` by loadBulkRows, so every column named
+ * here exists on the type's model.
+ */
+function typeFilterConditions(type: BulkRowType, filters: readonly BulkFilterId[]): Record<string, unknown>[] {
+  const and: Record<string, unknown>[] = [];
+  const has = (id: BulkFilterId) => filters.includes(id);
+
+  // Merchandising attributes hold migration DEFAULTS until the row was
+  // attribute-synced — never read them without the discriminator.
+  if (ATTRIBUTE_GATED_FILTER_IDS.some(has)) and.push({ attributesSyncedAt: { not: null } });
+
+  const statuses = selectedStatuses(filters);
+  if (statuses.length > 0) and.push({ status: { in: statuses } });
+
+  const visibility = selectedInGroup(filters, VISIBILITY_FILTER_IDS);
+  if (visibility.length === 1) and.push({ isPublished: visibility[0] === "published" });
+
+  const kind = selectedInGroup(filters, COLLECTION_KIND_FILTER_IDS);
+  if (kind.length === 1) and.push({ isSmart: kind[0] === "smartCollection" });
+
+  if (has("missingDescription")) {
+    and.push(missingField(type === "product" || type === "collection" ? "descriptionHtml" : "body"));
+  }
+  if (has("missingSummary")) and.push(missingField("summary"));
+  if (has("missingImage")) and.push(missingField(type === "product" ? "featuredImageUrl" : "imageUrl"));
+  if (has("missingProductType")) and.push(missingField("productType"));
+  if (has("missingVendor")) and.push(missingField("vendor"));
+  if (has("missingCategory")) and.push({ categoryId: null });
+  if (has("missingTags")) and.push({ tags: { isEmpty: true } });
+  return and;
+}
+
 /** orderBy for a validated BulkSort — parseSortParam already guaranteed the
  * column is sortable for the type, so this just maps to the DB column.
  * Default stays title asc (the pre-rework behaviour). */
@@ -303,6 +351,11 @@ export async function loadBulkRows(
   shop: string,
   opts: LoadBulkRowsOptions,
 ): Promise<LoadBulkRowsResult> {
+  // A filter id the type does not speak (a hand-crafted URL, a stale id
+  // carried across a type switch) is dropped here, before any branch could
+  // turn it into a query on a column the type does not have.
+  const allowed = filterIdsForType(opts.type);
+  opts = { ...opts, filters: opts.filters.filter((f) => allowed.includes(f)) };
   const result = await loadBulkRowsInner(db, shop, opts);
   if (opts.locale !== "") {
     await attachForeignValues(db, shop, opts, result.rows);
@@ -634,6 +687,7 @@ async function loadBulkRowsInner(
     return loadImageRows(db, shop, opts);
   }
   const { and, translationFilterApproximate } = await buildWhere(db, shop, opts);
+  and.push(...typeFilterConditions(type, opts.filters));
   const orderBy = buildOrderBy(type, opts.sort);
 
   switch (type) {
@@ -979,7 +1033,11 @@ async function loadVariantRows(
     });
   }
 
-  const where: Prisma.ProductVariantWhereInput = { product: { shop }, AND: and };
+  const statuses = selectedStatuses(opts.filters);
+  const where: Prisma.ProductVariantWhereInput = {
+    product: statuses.length > 0 ? { shop, status: { in: statuses } } : { shop },
+    AND: and,
+  };
 
   // DB-backed sorts only (§3.3): variant title/sku/price/compareAtPrice/
   // position plus the product title (nested). Default mirrors the Shopify

@@ -2335,7 +2335,27 @@ export type BulkFilterId =
   | "missingPrice"
   | "compareAtNotAbovePrice" // compareAtPrice ≤ price — the classic data error
   // Image-row filter (one row = one product medium):
-  | "missingAltText";
+  | "missingAltText"
+  // Product status (products, and variants via their product). OR-combined
+  // with each other — see BULK_FILTER_OR_GROUPS:
+  | "statusActive"
+  | "statusDraft"
+  | "statusUnlisted"
+  | "statusArchived"
+  // Page/article visibility (OR group):
+  | "published"
+  | "hidden"
+  // Collection kind (OR group):
+  | "smartCollection"
+  | "manualCollection"
+  // Content gaps (AND-combined like every other flag):
+  | "missingDescription"
+  | "missingImage"
+  | "missingVendor"
+  | "missingProductType"
+  | "missingCategory"
+  | "missingTags"
+  | "missingSummary";
 
 export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingSeoTitle",
@@ -2345,6 +2365,67 @@ export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingPrice",
   "compareAtNotAbovePrice",
   "missingAltText",
+  "statusActive",
+  "statusDraft",
+  "statusUnlisted",
+  "statusArchived",
+  "published",
+  "hidden",
+  "smartCollection",
+  "manualCollection",
+  "missingDescription",
+  "missingImage",
+  "missingVendor",
+  "missingProductType",
+  "missingCategory",
+  "missingTags",
+  "missingSummary",
+];
+
+/** Shopify `ProductStatus` value behind each status filter id. */
+export const STATUS_FILTER_VALUES: Partial<Record<BulkFilterId, string>> = {
+  statusActive: "ACTIVE",
+  statusDraft: "DRAFT",
+  statusUnlisted: "UNLISTED",
+  statusArchived: "ARCHIVED",
+};
+
+export const STATUS_FILTER_IDS: BulkFilterId[] = ["statusActive", "statusDraft", "statusUnlisted", "statusArchived"];
+export const VISIBILITY_FILTER_IDS: BulkFilterId[] = ["published", "hidden"];
+export const COLLECTION_KIND_FILTER_IDS: BulkFilterId[] = ["smartCollection", "manualCollection"];
+
+/**
+ * Filter ids that answer ONE question with several values ("which status?").
+ * Inside a group they are OR-combined — AND over "active" and "draft" would
+ * always be empty — and every group is AND-combined with the rest. All other
+ * ids are independent flags and AND-combine as before.
+ */
+export const BULK_FILTER_OR_GROUPS: BulkFilterId[][] = [
+  STATUS_FILTER_IDS,
+  VISIBILITY_FILTER_IDS,
+  COLLECTION_KIND_FILTER_IDS,
+];
+
+/** The selected members of one OR group, in group order. */
+export function selectedInGroup(filters: readonly BulkFilterId[], group: readonly BulkFilterId[]): BulkFilterId[] {
+  return group.filter((id) => filters.includes(id));
+}
+
+/**
+ * Filters that read a merchandising attribute (`vendor`, `tags`, `category`,
+ * `isPublished`, `isSmart`). On a row an older sync wrote those columns hold
+ * the migration DEFAULTS, indistinguishable from real values
+ * (`attributesSyncedAt` is the discriminator — CLAUDE.md), so these filters
+ * only ever match attribute-synced rows. Undercounting is the chosen failure:
+ * an unsynced page must not be reported as "visible", nor an unsynced product
+ * as "no vendor".
+ */
+export const ATTRIBUTE_GATED_FILTER_IDS: BulkFilterId[] = [
+  ...VISIBILITY_FILTER_IDS,
+  ...COLLECTION_KIND_FILTER_IDS,
+  "missingVendor",
+  "missingCategory",
+  "missingTags",
 ];
 
 /** Filters that apply to variant rows — the FilterBar shows exactly these for
@@ -2375,6 +2456,37 @@ export const FILTER_IDS_BY_SET: Record<BulkFilterSet, BulkFilterId[]> = {
   translationOnly: ["missingTranslation"],
   image: ["missingAltText", "missingTranslation"],
 };
+
+/**
+ * Type-specific filters on top of the set's shared vocabulary — the columns
+ * behind them exist only on that type (blogs, for instance, share the
+ * "content" set but have no status, description or image in the cache).
+ */
+const TYPE_FILTER_IDS: Partial<Record<BulkRowType, BulkFilterId[]>> = {
+  product: [
+    ...STATUS_FILTER_IDS,
+    "missingDescription",
+    "missingImage",
+    "missingProductType",
+    "missingVendor",
+    "missingCategory",
+    "missingTags",
+  ],
+  variant: STATUS_FILTER_IDS,
+  collection: [...COLLECTION_KIND_FILTER_IDS, "missingDescription", "missingImage"],
+  article: [...VISIBILITY_FILTER_IDS, "missingDescription", "missingSummary", "missingImage", "missingTags"],
+  page: [...VISIBILITY_FILTER_IDS, "missingDescription"],
+};
+
+/**
+ * THE per-TYPE filter-id source: what the FilterBar offers, what a type switch
+ * prunes the URL against, and what the loader accepts (a hand-crafted URL
+ * param outside it is dropped there rather than reaching a column the type
+ * does not have).
+ */
+export function filterIdsForType(type: BulkRowType): BulkFilterId[] {
+  return [...FILTER_IDS_BY_SET[filterSetForType(type)], ...(TYPE_FILTER_IDS[type] ?? [])];
+}
 
 export type SortDirection = "asc" | "desc";
 

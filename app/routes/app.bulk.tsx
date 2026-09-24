@@ -61,7 +61,6 @@ import {
   applyPriceAction,
   BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
   BULK_COLUMNS_BY_TYPE,
-  BULK_FILTER_IDS,
   canonicalFieldNameForColumn,
   aiFieldKey,
   isListShapedColumn,
@@ -73,8 +72,7 @@ import {
   isFeaturedImageAltColumn,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
-  FILTER_IDS_BY_SET,
-  filterSetForType,
+  filterIdsForType,
   MAX_SYNC_SAVE,
   MAX_TASK_CALLS,
   MAX_BULK_TASK_ITEMS,
@@ -301,7 +299,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const search = url.searchParams.get("q") || "";
   const filters = (url.searchParams.get("f") || "")
     .split(",")
-    .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
+    .filter((f): f is BulkFilterId => (filterIdsForType(type) as string[]).includes(f));
   const sort = parseSortParam(type, url.searchParams.get("sort"));
   // Image rows only: show just the pictures of ONE object. Validated as a GID
   // so a hand-crafted param can only ever narrow the result, never reshape the
@@ -1252,9 +1250,9 @@ export default function BulkEditor() {
 
   const handleTypeChange = (value: string) => {
     // Finding 13: prune the carried-over filter ids to the ones the NEW type
-    // actually speaks (same FILTER_IDS_BY_SET source the FilterBar renders
+    // actually speaks (same filterIdsForType source the FilterBar renders
     // from) — otherwise e.g. `missingSku` silently rides into a product view.
-    const validIds = FILTER_IDS_BY_SET[filterSetForType(value as BulkRowType)];
+    const validIds = filterIdsForType(value as BulkRowType);
     navigateGrid({
       type: value,
       page: "1",
@@ -2484,7 +2482,7 @@ export default function BulkEditor() {
                   filters={filters}
                   onFiltersChange={handleFiltersChange}
                   showTranslationFilter={locale !== ""}
-                  filterSet={filterSetForType(type)}
+                  filterIds={filterIdsForType(type)}
                   pageSize={pageSize}
                   onPageSizeChange={handlePageSizeChange}
                   onlyChanged={onlyChanged}
@@ -2498,13 +2496,10 @@ export default function BulkEditor() {
                           : b.searchPlaceholder,
                     searchLabel: b.searchLabel,
                     filtersLabel: b.filtersLabel,
-                    filterMissingSeoTitle: b.filters.missingSeoTitle,
-                    filterMissingSeoDescription: b.filters.missingSeoDescription,
-                    filterMissingTranslation: b.filters.missingTranslation,
-                    filterMissingSku: b.filters.missingSku,
-                    filterMissingPrice: b.filters.missingPrice,
-                    filterCompareAtNotAbovePrice: b.filters.compareAtNotAbovePrice,
-                    filterMissingAltText: b.filters.missingAltText,
+                    filterLabels: b.filters,
+                    sectionTitles: b.filterSections,
+                    attributeFilterHint: b.filterAttributeHint,
+                    clearAll: b.filterClearAll,
                     pageSizeLabel: b.pageSizeLabel,
                     onlyChangedLabel: b.onlyChanged,
                   }}
