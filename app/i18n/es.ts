@@ -317,6 +317,7 @@ export const es: Translation = {
     primaryLanguageSuffix: "Idioma principal",
     // Una traducción que la app inició por su cuenta (hoy: el tipo de producto
     // derivado de la categoría). Advertencia, no error — el guardado funcionó.
+    backgroundRetranslationRunning: "Las traducciones se están actualizando en segundo plano: los campos se recargan en cuanto terminen.",
     autoTranslateFailed: "{field} no se pudo traducir automáticamente. Usa el botón de traducir del campo para hacerlo ahora.",
     noSourceText: "No hay texto en el idioma principal para traducir",
     saveChanges: "Guardar",

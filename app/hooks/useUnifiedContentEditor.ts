@@ -725,7 +725,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const ids = readRetranslationTaskIds(response);
     if (ids.length === 0) return;
     setWatchedTaskIds((prev) => [...new Set([...prev, ...ids])]);
-  }, []);
+    // The shop-wide task badge polls on its own clock; a short run (one field
+    // into a couple of languages) can start and finish between two polls and
+    // never show as running at all. Ask now.
+    refreshTaskCount();
+  }, [refreshTaskCount]);
 
   // EVERY response this editor's fetcher sees is offered to the watcher — one
   // call rather than one per action type, because a response carrying no task

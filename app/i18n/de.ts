@@ -317,6 +317,7 @@ export const de = {
     // Eine Uebersetzung, die die App selbst angestossen hat (heute: der aus der
     // Kategorie abgeleitete Produkttyp). Warnung statt Fehler — das Speichern
     // hat geklappt, nur der Zusatzschritt nicht.
+    backgroundRetranslationRunning: "Übersetzungen werden im Hintergrund aktualisiert — die Felder laden sich neu, sobald sie fertig sind.",
     autoTranslateFailed: "{field} konnte nicht automatisch übersetzt werden. Hol es mit dem Übersetzen-Button am Feld nach.",
     noSourceText: "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
     saveChanges: "Speichern",

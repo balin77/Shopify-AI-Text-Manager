@@ -182,6 +182,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         seoTitleSuffix: true,
         seoLimits: true,
         extensionSetupHintShownAt: true,
+        autoTranslateExternalChanges: true,
       },
     });
 
@@ -272,9 +273,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       (l) => l.published !== false,
     ).length;
 
+    // Whether the Max auto-translation is IN FORCE — the stored switch ANDed
+    // with the plan, the same reading the server makes on every write (the
+    // column survives a downgrade). Only a UI default hangs off it: the create
+    // dialog pre-ticks "translate afterwards", because a merchant who asked
+    // for everything to be translated automatically expects a new item to be.
+    const { meetsPlan } = await import("../utils/planUtils");
+    const { AUTO_TRANSLATE_MIN_PLAN } = await import(
+      "../services/translations/translation-change-policy.shared"
+    );
+    const autoTranslateActive =
+      !!settings?.autoTranslateExternalChanges && meetsPlan(subscriptionPlan, AUTO_TRANSLATE_MIN_PLAN);
+
     return json({
       appLanguage,
       subscriptionPlan,
+      autoTranslateActive,
       aiSettings,
       seoTitleSuffix,
       seoLimits,

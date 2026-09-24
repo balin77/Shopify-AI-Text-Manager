@@ -325,6 +325,7 @@ export const en: Translation = {
     // A translation the app started by itself (today: the product type derived
     // from the category). A warning, not an error — the save worked, only the
     // extra step did not.
+    backgroundRetranslationRunning: "Translations are being updated in the background — the fields reload as soon as they are done.",
     autoTranslateFailed: "{field} could not be translated automatically. Use the translate button on the field to do it now.",
     noSourceText: "No text available in the primary language to translate",
     saveChanges: "Save",
