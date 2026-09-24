@@ -186,16 +186,25 @@ button of its own.**
   stepped by 4px — the bulk editor's toolbar, filter bars, pagination, the
   Settings forms. ONE rule in [responsive.css](app/styles/responsive.css)
   lifts every bordered medium/slim button to the token (icon-only ones in both
-  directions, so they stay square) and deliberately leaves `plain`,
+  directions, so they stay square) — on a FINE pointer above 768px only,
+  because at its specificity it would otherwise beat the 44px touch-target
+  rules on tablets — and deliberately leaves `plain`,
   `monochromePlain` and `tertiary` alone — they have no box to line up, and the
   field clear control is plain, so growing it would push the label row it
   sits on. A hand-built input or swatch that stands beside Polaris controls
   spends the same token (`height: var(--app-control-height)` with
   `box-sizing: border-box`), never its own number: the rate-limit fields were
   36px, the colour swatch 34px and the image manager's alt box ~28px, each
-  next to controls of a different height. Below 768px the older touch-target
-  rules take over (buttons and text inputs at `--touch-target-min`, 44px), and
-  `.Polaris-Select__Content` is in that set too — it had been left at 36px.
+  next to controls of a different height. On a phone (≤768px) and on ANY
+  coarse-pointer device the touch-target rules take over instead — buttons,
+  text inputs AND `.Polaris-Select__Content` at `--touch-target-min` (44px);
+  the Select had been left at 36px on phones and the fields at 32px on touch
+  tablets. A hand-built `!important` height must sit inside the same
+  fine-pointer query, or it beats those rules (the rate-limit fields did). The
+  number spinner's two `role="button"` halves are exempt from the touch size:
+  one small control inside a field, and at 44px each they stack it to ~96px.
+  Measured in Chromium: 32px on desktop, 44px on a touch tablet and a phone,
+  for button, Select, TextField and the rate-limit field alike.
 - **A grey frame is one of THREE tokens, and which one is a question about the
   thing being framed.** `--app-field-border-color` is a box a merchant types in
   (every input, the body editors, the probe textareas, and the formatting

@@ -3,26 +3,44 @@
 /* The same height as every other field and button in the app
    (`--app-control-height`, responsive.css) — these were 36px, one step taller
    than the fields and buttons beside them. The input keeps Polaris' own
-   padding, which is what fits a line of text into that height. */
-.rate-limit-field input[type="number"],
-.rate-limit-field .Polaris-TextField__Input {
-  height: var(--app-control-height) !important;
-  min-height: var(--app-control-height) !important;
+   padding, which is what fits a line of text into that height.
+
+   Desktop with a fine pointer only, the same query as the app-wide button
+   rule: these are `!important`, so at every width they would override the
+   44px touch-target rules on phones and tablets. */
+@media (min-width: 769px) and (hover: hover) and (pointer: fine) {
+  .rate-limit-field input[type="number"],
+  .rate-limit-field .Polaris-TextField__Input {
+    height: var(--app-control-height) !important;
+    min-height: var(--app-control-height) !important;
+  }
+
+  /* Buttons only — NOT `[role="button"]`, which also caught the two segments
+     of the number spinner and padded it ~50px wide. */
+  .rate-limit-field button,
+  .rate-limit-field .Polaris-Button {
+    min-height: auto !important;
+    height: var(--app-control-height) !important;
+    padding: 0 16px !important;
+  }
+
+  /* The spinner keeps Polaris' `margin: var(--p-space-100)` on every side, so
+     at the full control height it pushed the field to 40px. */
+  .rate-limit-field .Polaris-TextField__Spinner {
+    width: auto !important;
+    height: calc(var(--app-control-height) - 2 * var(--p-space-100, 0.25rem)) !important;
+  }
 }
 
-/* Override touch target minimum for rate limit fields */
-.rate-limit-field button,
-.rate-limit-field .Polaris-Button,
-.rate-limit-field [role="button"] {
-  min-height: auto !important;
-  height: var(--app-control-height) !important;
-  padding: 0 16px !important;
-}
-
-/* Fix Polaris Spinner styling */
-.rate-limit-field .Polaris-TextField__Spinner {
-  width: auto !important;
-  height: var(--app-control-height) !important;
+/* At every width: the number spinner's two halves are `role="button"`, so
+   the touch-target rules (responsive.css) would give EACH of them 44px and
+   stack the field to ~96px on a phone or tablet, and the phone rule's button
+   padding (12px 16px) would still leave it taller than its neighbours. They
+   are one small control inside a field, not two targets of their own. */
+.rate-limit-field .Polaris-TextField__Spinner [role="button"] {
+  min-height: 0 !important;
+  min-width: 0 !important;
+  padding: 0 var(--p-space-100, 0.25rem) !important;
 }
 
 /* Remove blue focus border/outline */

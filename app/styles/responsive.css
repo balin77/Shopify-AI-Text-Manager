@@ -425,8 +425,12 @@
    sliver instead of a square.
 
    One class of extra specificity beats Polaris' size rule, which is stated in
-   a media query of the same width, so no `!important` is needed. */
-@media (min-width: 48em) {
+   a media query of the same width, so no `!important` is needed — and that is
+   exactly why the query also asks for a FINE pointer and starts one pixel
+   past 768: at 0,3,0 this rule would beat the 44px touch-target rules further
+   down (`hover: none` + `pointer: coarse`, and the phone rule at
+   `max-width: 768px`), shrinking every button on a touch tablet to 32px. */
+@media (min-width: 769px) and (hover: hover) and (pointer: fine) {
   .Polaris-Button:is(.Polaris-Button--sizeMedium, .Polaris-Button--sizeSlim):not(.Polaris-Button--variantPlain, .Polaris-Button--variantMonochromePlain, .Polaris-Button--variantTertiary) {
     min-height: var(--app-control-height);
   }
@@ -1521,6 +1525,14 @@ html {
   [role="link"] {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
+  }
+
+  /* …and the fields beside them. The text-input and Select rules above are
+     bound to `max-width: 768px`, so on a touch TABLET the buttons grew to 44px
+     while every field next to them stayed at Polaris' 32px. */
+  .Polaris-TextField__Input,
+  .Polaris-Select__Content {
+    min-height: var(--touch-target-min);
   }
 
   /* Increase spacing between interactive elements */
