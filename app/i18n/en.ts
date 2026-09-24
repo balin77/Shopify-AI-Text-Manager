@@ -665,6 +665,7 @@ export const en: Translation = {
       chooseThis: "choose this category",
       noChildren: "This category has no subcategories.",
       levelTruncated: "This level has more subcategories than were loaded — use the search above.",
+      remove: "Remove category",
     },
     // PLAN §Phase 3.1 — the membership picker.
     collectionsField: {
@@ -678,6 +679,7 @@ export const en: Translation = {
       truncated: "This product is in more collections than were loaded. Manage the rest in the Shopify admin.",
       unknown: "Not loaded yet — reload this product to see its collections.",
       none: "This shop has no collections yet.",
+      noneSelected: "None",
     },
     themeTemplate: {
       defaultTemplate: "Default",
@@ -4088,9 +4090,9 @@ export const en: Translation = {
       requiresShipping: "Requires shipping",
       countryCodeOfOrigin: "Country of origin (ISO)",
       harmonizedSystemCode: "HS code",
-      // Read-only context: set through a picker in the single editor.
-      productCategory: "Product category",
-      productCollections: "Collections",
+      // Picker cells: the same picker the single editor uses.
+      category: "Product category",
+      collections: "Collections",
     },
     chooseColumns: "Choose columns",
     columnPicker: {
@@ -4117,8 +4119,6 @@ export const en: Translation = {
       missingInventoryItem: "This variant has no Shopify inventory item, which is where cost, weight and customs data live — resync the product first.",
       multipleVariants: "This product has several variants, which can differ in price — edit them under \"Product variants\".",
       variantsNotSynced: "This product's variants are not in the cache yet — resync the products, then edit this.",
-      needsPicker: "This field is set through a picker — open the product in the single editor to change it.",
-      collectionsTruncated: "This product is in more collections than the sync fetched — the list here is incomplete.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",
@@ -4128,6 +4128,13 @@ export const en: Translation = {
       wrongMetaobjectType: "This column belongs to another metaobject type.",
       listSeparatorInValue: "A list value contains the \"|\" separator — edit it in the single-item editor.",
       altTextInImages: "The alt text of every product image — including translations — is edited under \"Images\".",
+    },
+    // What an EMPTY read-only cell shows instead of its value. Without text
+    // there is nothing to hover — the tooltip's explanation was there and
+    // unreachable.
+    readOnlyPlaceholders: {
+      multipleVariants: "Several variants",
+      variantsNotSynced: "Not loaded",
     },
     metaobjectTypeLabel: "Metaobject type",
     searchLabel: "Search",

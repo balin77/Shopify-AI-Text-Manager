@@ -448,6 +448,25 @@ export function diffCollectionMembership(
 }
 
 /**
+ * How ONE cached collection reads for membership screening: rule-based,
+ * manual, or UNKNOWN.
+ *
+ * `attributesSyncedAt` is the discriminator — `Collection.isSmart` is NOT NULL
+ * DEFAULT false on a column added to an existing table, so an unsynced row's
+ * `false` is the migration's default, not a measurement, and must read as
+ * unknown (which every caller then treats as locked). Three places used to
+ * spell this out inline — the picker's option list, the editor's save and the
+ * grid's save — and all three have to give the same answer, or a picker offers
+ * exactly the change its save then refuses.
+ */
+export function collectionAutomation(collection: {
+  isSmart: boolean;
+  attributesSyncedAt: Date | string | null;
+}): boolean | null {
+  return collection.attributesSyncedAt ? collection.isSmart === true : null;
+}
+
+/**
  * The editor carries membership as a comma-separated list of collection GIDs,
  * like every other value in that flat map. Parsed here so the client and the
  * server read it the same way.

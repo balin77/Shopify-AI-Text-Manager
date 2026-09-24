@@ -50,6 +50,8 @@ import {
   type BulkCellEnumLabels,
   type CellNavDirection,
 } from "./BulkCell";
+import type { TaxonomyFieldProps } from "../unified/TaxonomyField";
+import type { BulkCollectionsCellTexts } from "./BulkCollectionsCell";
 
 /** Fixed image-column width — must be a constant so the sticky title column
  * can sit at left:72px. */
@@ -119,6 +121,12 @@ interface BulkGridProps {
    *  undefined while the lookup is pending or after it failed — the cell then
    *  falls back to a text box rather than an empty dropdown. */
   templateSuffixes?: string[];
+  /** What an EMPTY read-only cell shows instead of nothing, per reason — so the
+   *  tooltip explaining it has something to be hovered on (see BulkCell). */
+  readOnlyPlaceholders?: Partial<Record<CellReadOnlyReason, string>>;
+  /** Texts for the two picker cells, from the single editor's own bundles. */
+  categoryTexts?: TaxonomyFieldProps["t"];
+  collectionsTexts?: BulkCollectionsCellTexts;
   handleWarning: string;
   /** Localized read-only explanations per reason (Plan §4.1–§4.3). */
   readOnlyTooltips: Record<CellReadOnlyReason, string>;
@@ -158,6 +166,9 @@ export function BulkGrid({
   columnHeading,
   enumLabels,
   templateSuffixes,
+  readOnlyPlaceholders,
+  categoryTexts,
+  collectionsTexts,
   handleWarning,
   readOnlyTooltips,
   sortButtonLabel,
@@ -778,6 +789,23 @@ export function BulkGrid({
         .cp-bulk-select.cp-bulk-cell-dirty .Polaris-Select__SelectedOption {
           color: var(--p-color-text-magic, #7f56d9);
         }
+        /* The two PICKER cells (category, collections) are a Button that opens
+           a panel, not a Select — same two states, painted on the button. */
+        .cp-bulk-select.cp-bulk-cell-dirty .Polaris-Button {
+          background: var(--p-color-bg-surface-caution, #fff8db);
+          color: var(--p-color-text-magic, #7f56d9);
+        }
+        .cp-bulk-select.cp-bulk-cell-error .Polaris-Button {
+          background: var(--p-color-bg-surface-critical, #fff0f0);
+          box-shadow: inset 0 0 0 1px var(--p-color-border-critical, #d72c0d);
+        }
+        /* A picker cell's button carries a category PATH or a list of titles;
+           one line, cut with an ellipsis — the whole value is on the title. */
+        .cp-bulk-select .Polaris-Button .Polaris-Text--root {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
         /* Ghost (untranslated) state: the primary value greyed out in an
            empty foreign cell (§2 "▒grau▒"). The focused textarea repeats it
            as a native placeholder. */
@@ -921,6 +949,12 @@ export function BulkGrid({
                       errorId={error ? `cp-bulk-err-${type}-${rowIndex}-${i}` : undefined}
                       enumLabels={enumLabels}
                       templateSuffixes={templateSuffixes}
+                      readOnlyPlaceholder={
+                        resolved.readOnlyReason ? readOnlyPlaceholders?.[resolved.readOnlyReason] : undefined
+                      }
+                      row={row}
+                      categoryTexts={categoryTexts}
+                      collectionsTexts={collectionsTexts}
                       onChange={(v) => setEdit(row, col, v)}
                       cellCoord={`${rowIndex}:${i}`}
                       onNavigate={(direction) => navigateFromCell(rowIndex, i, direction)}

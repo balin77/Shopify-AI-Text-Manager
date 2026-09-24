@@ -654,6 +654,7 @@ export const es: Translation = {
       chooseThis: "elegir esta categoría",
       noChildren: "Esta categoría no tiene subcategorías.",
       levelTruncated: "Este nivel tiene más subcategorías de las que se cargaron — usa la búsqueda de arriba.",
+      remove: "Quitar categoría",
     },
     // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
     collectionsField: {
@@ -667,6 +668,7 @@ export const es: Translation = {
       truncated: "Este producto está en más colecciones de las que se cargaron. Gestiona el resto en el admin de Shopify.",
       unknown: "Aún no se ha cargado: recarga este producto para ver sus colecciones.",
       none: "Esta tienda todavía no tiene colecciones.",
+      noneSelected: "Ninguna",
     },
     themeTemplate: {
       defaultTemplate: "Predeterminada",
@@ -4076,9 +4078,9 @@ export const es: Translation = {
       requiresShipping: "Requiere envío",
       countryCodeOfOrigin: "País de origen (ISO)",
       harmonizedSystemCode: "Código arancelario",
-      // Contexto de solo lectura: se establece con un selector en el editor.
-      productCategory: "Categoría de producto",
-      productCollections: "Colecciones",
+      // Celdas de selección: el mismo selector que el editor individual.
+      category: "Categoría de producto",
+      collections: "Colecciones",
     },
     chooseColumns: "Elegir columnas",
     columnPicker: {
@@ -4105,8 +4107,6 @@ export const es: Translation = {
       missingInventoryItem: "Esta variante no tiene artículo de inventario de Shopify, donde viven el coste, el peso y los datos aduaneros — vuelve a sincronizar el producto.",
       multipleVariants: "Este producto tiene varias variantes, que pueden diferir en precio — edítalas en \"Variantes de producto\".",
       variantsNotSynced: "Las variantes de este producto aún no están en la caché — vuelve a sincronizar los productos y edítalo después.",
-      needsPicker: "Este campo se establece con un selector — abre el producto en el editor individual para cambiarlo.",
-      collectionsTruncated: "Este producto está en más colecciones de las que cargó la sincronización — la lista aquí está incompleta.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",
@@ -4116,6 +4116,12 @@ export const es: Translation = {
       wrongMetaobjectType: "Esta columna pertenece a otro tipo de metaobjeto.",
       listSeparatorInValue: "Un valor de la lista contiene el separador \"|\" — edítalo en el editor individual.",
       altTextInImages: "El texto alternativo de todas las imágenes del producto — traducciones incluidas — se edita en \"Imágenes\".",
+    },
+    // Lo que muestra una celda de solo lectura VACÍA en lugar de su valor.
+    // Sin texto no hay nada sobre lo que pasar el ratón.
+    readOnlyPlaceholders: {
+      multipleVariants: "Varias variantes",
+      variantsNotSynced: "No cargado",
     },
     metaobjectTypeLabel: "Tipo de metaobjeto",
     searchLabel: "Buscar",

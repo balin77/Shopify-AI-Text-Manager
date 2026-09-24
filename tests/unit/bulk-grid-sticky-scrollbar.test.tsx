@@ -129,8 +129,6 @@ function grid() {
           missingInventoryItem: "no inventory item",
           multipleVariants: "several variants",
           variantsNotSynced: "variants not synced",
-          needsPicker: "use the single editor",
-          collectionsTruncated: "list incomplete",
         }}
         sortButtonLabel="sort"
         caption="products"

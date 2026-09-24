@@ -20,6 +20,7 @@ import {
 } from "~/services/attribute-sync.shared";
 import {
   diffCollectionMembership,
+  collectionAutomation,
   isValidProductStatus,
   parseCategoryId,
   parseCollectionIds,
@@ -1118,7 +1119,7 @@ async function updatePrimaryProduct(
           where: { shop },
           select: { id: true, isSmart: true, attributesSyncedAt: true },
         })
-      ).map((c) => [c.id, c.attributesSyncedAt ? c.isSmart === true : null] as const),
+      ).map((c) => [c.id, collectionAutomation(c)] as const),
     );
     const diff = diffCollectionMembership(
       cached,

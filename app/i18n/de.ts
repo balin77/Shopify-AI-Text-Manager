@@ -662,6 +662,7 @@ export const de = {
       chooseThis: "diese Kategorie wählen",
       noChildren: "Diese Kategorie hat keine Unterkategorien.",
       levelTruncated: "Diese Ebene hat mehr Unterkategorien, als geladen wurden — nutze die Suche oben.",
+      remove: "Kategorie entfernen",
     },
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {
@@ -675,6 +676,7 @@ export const de = {
       truncated: "Dieses Produkt ist in mehr Kollektionen, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kollektionen zu sehen.",
       none: "Dieser Shop hat noch keine Kollektionen.",
+      noneSelected: "Keine",
     },
     // Das Theme-Vorlagen-Feld. Eine Auswahlliste der Vorlagendateien des
     // veroeffentlichten Themes — ein selbst getippter Suffix rendert die
@@ -4105,9 +4107,9 @@ export const de = {
       requiresShipping: "Versand nötig",
       countryCodeOfOrigin: "Herkunftsland (ISO)",
       harmonizedSystemCode: "Zolltarifnummer",
-      // Nur-Lese-Kontext: per Auswahldialog im Einzeleditor gesetzt.
-      productCategory: "Produktkategorie",
-      productCollections: "Kollektionen",
+      // Auswahl-Zellen: derselbe Picker wie im Einzeleditor.
+      category: "Produktkategorie",
+      collections: "Kollektionen",
     },
     chooseColumns: "Spalten wählen",
     columnPicker: {
@@ -4140,11 +4142,6 @@ export const de = {
       // Resync, keine Einschränkung.
       multipleVariants: "Dieses Produkt hat mehrere Varianten, die unterschiedliche Preise haben können — bearbeite sie unter \"Produktvarianten\".",
       variantsNotSynced: "Die Varianten dieses Produkts sind noch nicht im Cache — lade die Produkte neu und bearbeite das dann.",
-      // Kategorie und Kollektionen: mit Auswahldialog gesetzt, hier nur zum
-      // Überblick. Ein Name ist kein schreibbarer Wert, und eine Zugehörigkeit
-      // ist ein Join/Leave-Diff — beides gehört in den Einzeleditor.
-      needsPicker: "Dieses Feld wird über einen Auswahldialog gesetzt — öffne das Produkt im Einzeleditor, um es zu ändern.",
-      collectionsTruncated: "Dieses Produkt ist in mehr Kollektionen, als der Sync geladen hat — die Liste hier ist unvollständig.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",
@@ -4154,6 +4151,13 @@ export const de = {
       wrongMetaobjectType: "Diese Spalte gehört zu einem anderen Metaobjekt-Typ.",
       listSeparatorInValue: "Ein Listenwert enthält das Trennzeichen \"|\" — bitte im Einzeleditor bearbeiten.",
       altTextInImages: "Der Alt-Text aller Produktbilder — inklusive Übersetzungen — wird unter \"Bilder\" bearbeitet.",
+    },
+    // Was eine LEERE Nur-Lese-Zelle anstelle ihres Werts zeigt. Ohne Text
+    // gibt es nichts, worüber man hovern kann — die Erklärung im Tooltip war
+    // da und unerreichbar.
+    readOnlyPlaceholders: {
+      multipleVariants: "Mehrere Varianten",
+      variantsNotSynced: "Nicht geladen",
     },
     metaobjectTypeLabel: "Metaobjekt-Typ",
     searchLabel: "Suche",
