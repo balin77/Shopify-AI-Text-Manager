@@ -71,6 +71,29 @@
  * closes it — once a key has PROVEN itself through the gate above, every
  * published locale that holds no translation of it gets one too. Only entries
  * that will really be translated are filled; see the option's own note.
+ *
+ * THE SECOND ENTRANCE — a baseline that does not live on a translation row.
+ * The fill above still needs ONE translated locale to prove the key moved, so a
+ * resource nobody had translated yet could never be proven changed: an edit in
+ * the Shopify admin reached nothing, while the same edit made in this app (whose
+ * save needs no proof — it performed the write) translated everything. The
+ * PRIMARY digest baseline (`PrimaryDigestBaseline`, one row per resource, the
+ * digests `translatableContent` reported the last time we looked) closes that:
+ * a managed key whose primary digest moved against IT feeds the same fill, for
+ * the locales that hold no value. Rule one is unchanged and outranks everything
+ * — NO STORED DIGEST, NO EVIDENCE, NOTHING HAPPENS — so the first sync after the
+ * deploy only writes baselines and translates nothing.
+ *
+ * What that entrance does NOT have, by construction, is the SECOND SIGNAL. A
+ * locale with no translation carries no `outdated` flag, and a key whose primary
+ * value is empty has nothing to translate, so neither confirmation above can
+ * ever exist for it: the entrance stands on the digest change ALONE. That is a
+ * deliberate decision, not a loosening, and it is bounded on both sides — it
+ * only ever CREATES a translation where none exists (a locale that already holds
+ * a value is left to the first entrance, so a row Shopify reports `outdated:
+ * false` is never touched), and the second signal exists to protect an EXISTING
+ * translation from a stale flag, of which there is none here. It is also exactly
+ * what the in-app save path (`reconcileAfterPrimarySave`) has always done.
  */
 
 /**
@@ -148,6 +171,14 @@ export interface StaleTranslation {
    * locale, and reports removals the merchant never had.
    */
   filled?: boolean;
+  /**
+   * This fill was proven by the PRIMARY digest baseline alone — no translation
+   * row of the key moved (see THE SECOND ENTRANCE in the header). Always
+   * `filled` as well. Carried so the caller can apply its daily brake to exactly
+   * the work that did not exist before this entrance did, and hold that key's
+   * baseline back when it refuses.
+   */
+  baselineFill?: boolean;
   reason: StaleReason;
   /** The CURRENT primary value ("" when the field was cleared). */
   primaryValue: string;
@@ -224,7 +255,18 @@ export function findStaleTranslations(
    * removal anyway would be an unechoed no-op logged as an unconfirmed removal
    * for every locale the merchant never translated.
    */
-  opts: { fillLocales?: readonly string[]; anyKey?: boolean; translateHandles?: boolean } = {},
+  opts: {
+    fillLocales?: readonly string[];
+    anyKey?: boolean;
+    translateHandles?: boolean;
+    /**
+     * THE SECOND ENTRANCE: key → the PRIMARY digest stored the last time this
+     * resource was looked at (`PrimaryDigestBaseline`). Only consulted together
+     * with `fillLocales`, because all it can ever produce is a fill. Absent, or
+     * a key absent from it, is no evidence (rule one).
+     */
+    previousPrimaryDigests?: Readonly<Record<string, string | null | undefined>>;
+  } = {},
 ): StaleTranslation[] {
   const primaryKnown = Object.keys(primaryContent).length > 0;
   const seen = new Set<string>();
@@ -335,7 +377,119 @@ export function findStaleTranslations(
     }
   }
 
+  // THE SECOND ENTRANCE. A key the first entrance could not prove — typically
+  // because no locale has ever translated it — but whose PRIMARY digest moved
+  // against the per-resource baseline. Same fill, same classifier, same
+  // "never where a value already exists"; only the evidence in front differs,
+  // and it stands on the digest alone (see the header for why that is a
+  // decision and not a loosening).
+  if (opts.fillLocales?.length && opts.previousPrimaryDigests && primaryKnown) {
+    const provenKeys = new Set(stale.map((entry) => entry.key));
+    for (const key of primaryBaselineMovedKeys(primaryContent, opts.previousPrimaryDigests)) {
+      if (provenKeys.has(key)) continue;
+      const entry = primaryContent[key];
+      for (const locale of opts.fillLocales) {
+        const id = `${locale}\u0000${key}`;
+        if (translated.has(id) || seen.has(id)) continue;
+        const candidate: StaleTranslation = {
+          key,
+          locale,
+          reason: "outdated",
+          primaryValue: entry?.value ?? "",
+          digest: entry?.digest ?? null,
+          filled: true,
+          baselineFill: true,
+        };
+        if (
+          classifyStaleTranslation(candidate, true, {
+            anyKey: opts.anyKey,
+            translateHandles: opts.translateHandles,
+          }) !== "retranslate"
+        ) {
+          continue;
+        }
+        seen.add(id);
+        stale.push(candidate);
+      }
+    }
+  }
+
   return stale;
+}
+
+/**
+ * The MANAGED keys whose primary digest moved against the per-resource
+ * baseline — the evidence of THE SECOND ENTRANCE.
+ *
+ * A key qualifies only when ALL of these hold, and every one is rule one in a
+ * different costume: the baseline HAS a digest for it (none ⇒ no evidence — a
+ * first sync, a field filled for the first time since we started recording), the
+ * key HAS a current value with a digest (an absent entry is a cleared field, and
+ * a cleared field has nothing to translate), and the two differ. Deliberately
+ * limited to `MANAGED_TRANSLATION_KEYS`: the baseline only ever records those.
+ */
+export function primaryBaselineMovedKeys(
+  primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
+  previousPrimaryDigests: Readonly<Record<string, string | null | undefined>>,
+): string[] {
+  const moved: string[] = [];
+  for (const [key, entry] of Object.entries(primaryContent)) {
+    if (!MANAGED_TRANSLATION_KEYS.has(key)) continue;
+    const previous = previousPrimaryDigests[key];
+    if (!previous) continue;
+    if (!entry.digest || !entry.value.trim()) continue;
+    if (entry.digest !== previous) moved.push(key);
+  }
+  return moved;
+}
+
+/**
+ * The baseline map to STORE after this look, or `null` when nothing needs
+ * writing — the second is the common case and the point: a sync where no text
+ * moved must not cost a database write (a full sync over 5000 products would
+ * otherwise be 5000 upserts per run).
+ *
+ * Built as an OVERLAY on the previous map, not a replacement: a key whose field
+ * is currently empty keeps the digest of the text it last had, so clearing a
+ * field and writing a NEW text later is still a proven move (text A → nothing →
+ * text B), while restoring the old text is not. `held` keys keep their previous
+ * digest verbatim — the caller refused to act on their evidence (the daily
+ * brake), and advancing the baseline past it would swallow the work instead of
+ * deferring it. An empty `primaryContent` is a failed or partial fetch, never
+ * "every field cleared", so it writes nothing.
+ */
+export function nextPrimaryDigestBaseline(
+  previous: Readonly<Record<string, string>>,
+  primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
+  held: ReadonlySet<string> = new Set(),
+): Record<string, string> | null {
+  const next = primaryDigestBaselineTarget(previous, primaryContent, held);
+  if (!next) return null;
+  const keys = Object.keys(next);
+  const unchanged =
+    keys.length === Object.keys(previous).length && keys.every((key) => next[key] === previous[key]);
+  return unchanged ? null : next;
+}
+
+/**
+ * The map `nextPrimaryDigestBaseline` would store, WITHOUT the "did it change"
+ * question — for a caller whose row no longer holds `previous` (a claim
+ * already advanced it) and that compares against what it holds now. `null`
+ * only for an empty content map (a failed fetch).
+ */
+export function primaryDigestBaselineTarget(
+  previous: Readonly<Record<string, string>>,
+  primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
+  held: ReadonlySet<string> = new Set(),
+): Record<string, string> | null {
+  if (Object.keys(primaryContent).length === 0) return null;
+  const next: Record<string, string> = { ...previous };
+  for (const [key, entry] of Object.entries(primaryContent)) {
+    if (!MANAGED_TRANSLATION_KEYS.has(key) || held.has(key)) continue;
+    if (!entry.digest || !entry.value.trim()) continue;
+    next[key] = entry.digest;
+  }
+  return next;
 }
 
 /**

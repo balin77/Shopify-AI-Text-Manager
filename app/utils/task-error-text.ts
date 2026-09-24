@@ -66,6 +66,8 @@ const FALLBACK: Record<string, string> = {
   translationsNotMirrored:
     "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
   translationsNoneUsable: "The automatic re-translation produced no usable translation.",
+  autoTranslateDailyLimit:
+    "Automatic first translations paused for today: the daily limit of {cap} items was reached, and {count} further change(s) were not translated. Nothing was lost — each one is translated at its next change (pages, articles, blogs and policies: in the nightly check).",
 };
 
 function phrase(t: any, key: string): string {
@@ -156,6 +158,15 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // of zero says nothing a merchant can act on.
     case "translations_none_usable":
       return phrase(t, "translationsNoneUsable");
+    // The brake on first translations proven by the primary digest baseline
+    // alone (stale-translation-sync.server.ts): `<refused>:<cap>`. Written from
+    // a webhook, which has no merchant locale — hence a code.
+    case "auto_translate_daily_limit": {
+      const refused = count(parts[1]);
+      const cap = count(parts[2]);
+      if (refused === null || cap === null) return neutral();
+      return fill(phrase(t, "autoTranslateDailyLimit"), { count: refused, cap });
+    }
     case "translations_not_mirrored": {
       const missed = count(parts[1]);
       if (missed === null) return neutral();
