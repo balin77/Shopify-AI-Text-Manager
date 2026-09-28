@@ -1059,25 +1059,28 @@ export class ProductSyncService {
       const expectedTranslations = publishedLocales.length > 0;
 
       if (expectedTranslations && allTranslations.length === 0) {
-        logger.error(`[ProductSync] 🔴 CRITICAL: No translations fetched for product with ${publishedLocales.length} published locales!`, {
+        const logContext = {
           productId,
           title: productData.title,
           publishedLocales: publishedLocales.map((l) => l.locale).join(', '),
           hadErrors: translationResult.hadErrors,
           errorCount: translationResult.errorCount,
-        });
+        };
 
         // Check if this might be a complete API failure
         // Use a percentage-based threshold: abort if ≥50% of locales failed.
         // Absolute counts (e.g. >= 2) are misleading: 2/3 (67%) and 2/10 (20%) are very different.
         const failureRate = translationResult.errorCount / publishedLocales.length;
         if (publishedLocales.length >= 2 && failureRate >= 0.5) {
-          logger.error(`[ProductSync] 🔴 ABORTING SYNC: ${translationResult.errorCount}/${publishedLocales.length} locales failed (${Math.round(failureRate * 100)}%) - refusing to delete existing translations`);
+          logger.error(`[ProductSync] 🔴 ABORTING SYNC: ${translationResult.errorCount}/${publishedLocales.length} locales failed (${Math.round(failureRate * 100)}%) - refusing to delete existing translations`, logContext);
           throw new Error(`Translation fetch failed for ${translationResult.errorCount}/${publishedLocales.length} locales - aborting to prevent data loss`);
         } else if (translationResult.hadErrors) {
-          logger.warn(`[ProductSync] ⚠️ Some locales failed (${translationResult.errorCount}), but continuing with partial data`);
+          logger.warn(`[ProductSync] ⚠️ No translations fetched and ${translationResult.errorCount} locale(s) failed — continuing with partial data`, logContext);
         } else {
-          logger.warn(`[ProductSync] ⚠️ Product might genuinely have no translations, continuing with sync`);
+          // Every locale answered cleanly with zero translations: the product
+          // simply isn't translated yet (new/test products). Not an error —
+          // logging it at error level produced false CRITICAL alarms in production.
+          logger.debug(`[ProductSync] Product has no translations in any of ${publishedLocales.length} published locale(s)`, logContext);
         }
       }
 
