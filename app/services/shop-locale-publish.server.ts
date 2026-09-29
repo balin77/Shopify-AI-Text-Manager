@@ -549,9 +549,15 @@ export async function applyLocaleChanges(
 // a presence the read never reached would be dropped from it under replace
 // semantics, and the confirming re-read would share the blind spot and call it
 // confirmed. A read that cannot prove it saw everything is `null`.
+//
+// The page sizes are a COST decision: Shopify refuses any single query whose
+// estimated cost exceeds 1000 points (MAX_COST_EXCEEDED, a top-level error), and
+// a nested connection multiplies. markets(50) x webPresences(10) with two locale
+// objects each estimates at about 1650 and was refused as a whole on the owner's
+// shop, so the tab rendered no market at all. 25 x 5 estimates at about 450.
 const MARKET_WEB_PRESENCES = `#graphql
   query appMarketWebPresences($after: String) {
-    markets(first: 50, after: $after) {
+    markets(first: 25, after: $after) {
       pageInfo {
         hasNextPage
         endCursor
@@ -561,7 +567,7 @@ const MARKET_WEB_PRESENCES = `#graphql
           id
           name
           status
-          webPresences(first: 10) {
+          webPresences(first: 5) {
             pageInfo {
               hasNextPage
             }
@@ -583,7 +589,7 @@ const MARKET_WEB_PRESENCES = `#graphql
   }`;
 
 /** A shop with more markets than this is read as "could not load" rather than half-read. */
-const MAX_MARKET_PAGES = 20;
+const MAX_MARKET_PAGES = 40;
 
 const SHOP_LOCALE_MARKETS_UPDATE = `#graphql
   mutation appShopLocaleMarkets($locale: String!, $shopLocale: ShopLocaleInput!) {
@@ -620,8 +626,24 @@ export interface LocaleMarketChange {
  * a failed read (a missing scope, a throttle, a schema change) — "we cannot
  * tell" must never render as "this language is in no market".
  */
-export async function loadMarketWebPresences(admin: GraphqlClient): Promise<MarketWebPresence[] | null> {
+export async function loadMarketWebPresences(
+  admin: GraphqlClient,
+  shop?: string,
+): Promise<MarketWebPresence[] | null> {
   type PageInfo = { hasNextPage?: boolean; endCursor?: string | null } | null;
+  // Every "could not load" names its reason in the log: the tab can only say
+  // THAT it failed, and a schema refusal, a truncated list and an incomplete
+  // node need three different fixes.
+  const fail = (reason: string, detail?: unknown): null => {
+    logger.warn("[ShopLocalePublish] Market web presences could not be read", {
+      context: "ShopLocalePublish",
+      shop,
+      reason,
+      detail,
+    });
+    return null;
+  };
+  const seen: Array<{ name?: string; status?: string; presences: number }> = [];
   try {
     const byId = new Map<string, MarketWebPresence>();
     let after: string | null = null;
@@ -653,22 +675,29 @@ export async function loadMarketWebPresences(admin: GraphqlClient): Promise<Mark
       };
       const markets = body.data?.markets;
       const edges = markets?.edges;
-      if (body.errors?.length || !Array.isArray(edges) || typeof markets?.pageInfo?.hasNextPage !== "boolean") {
-        return null;
+      if (body.errors?.length) {
+        return fail("graphqlErrors", (body.errors as Array<{ message?: string }>).map((e) => e?.message));
       }
+      if (!Array.isArray(edges)) return fail("noMarketsList");
+      if (typeof markets?.pageInfo?.hasNextPage !== "boolean") return fail("marketsPageInfoMissing");
       for (const edge of edges) {
         const market = edge?.node;
-        if (!market) return null;
+        if (!market) return fail("emptyMarketNode");
         const active = market.status === "ACTIVE";
         const presences = market.webPresences;
+        seen.push({ name: market.name, status: market.status, presences: presences?.edges?.length ?? 0 });
         // A market with no web presence (B2B, POS) answers an empty list; a
         // truncated or unanswered list is not the same thing.
-        if (presences && presences.pageInfo?.hasNextPage !== false) return null;
+        if (presences && presences.pageInfo?.hasNextPage !== false) {
+          return fail("webPresencesTruncated", { market: market.name });
+        }
         for (const wpEdge of presences?.edges ?? []) {
           const wp = wpEdge?.node;
           const defaultLocale = wp?.defaultLocale?.locale;
           // Incomplete ⇒ we cannot say which languages it carries: refuse.
-          if (!wp?.id || !defaultLocale) return null;
+          if (!wp?.id || !defaultLocale) {
+            return fail("incompletePresence", { market: market.name, id: wp?.id ?? null, defaultLocale: defaultLocale ?? null });
+          }
           const existing = byId.get(wp.id);
           if (existing) {
             if (active) {
@@ -689,13 +718,25 @@ export async function loadMarketWebPresences(admin: GraphqlClient): Promise<Mark
           });
         }
       }
-      if (!markets!.pageInfo!.hasNextPage) return [...byId.values()];
+      if (!markets!.pageInfo!.hasNextPage) {
+        const result = [...byId.values()];
+        // Read fine, but nothing to offer: say which markets were seen, or
+        // "no market checkboxes" cannot be told from "no markets".
+        if (!result.some((p) => p.active)) {
+          logger.info("[ShopLocalePublish] No active market web presence to offer", {
+            context: "ShopLocalePublish",
+            shop,
+            markets: seen,
+          });
+        }
+        return result;
+      }
       after = markets!.pageInfo!.endCursor ?? null;
-      if (!after) return null;
+      if (!after) return fail("noCursor");
     }
-    return null;
-  } catch {
-    return null;
+    return fail("tooManyMarkets");
+  } catch (error: unknown) {
+    return fail("threw", error instanceof Error ? error.message : String(error));
   }
 }
 
