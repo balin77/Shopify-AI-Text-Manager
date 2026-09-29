@@ -930,6 +930,10 @@ async function nameSharedPresence(
     .map((m) => m.name)
     .filter((n): n is string => typeof n === "string" && n.length > 0);
   if (orphans.length === 0) return presences;
+  // Several active markets folded onto ONE presence is exactly the shape the
+  // owner disputes (2026-09-29: "I definitely have different URLs per market").
+  // Log what Shopify really answers for it, so the next step is a measurement.
+  if (orphans.length > 1) await logMarketDiagnostics(admin, shop, "shared presence");
   return presences.map((p) => (p === unnamed[0] ? { ...p, marketNames: orphans, active: true } : p));
 }
 
@@ -951,6 +955,53 @@ const DIAG_WEB_PRESENCES = `#graphql
       }
     }
   }`;
+// Richer shapes, each its own document: a field this API version does not
+// have fails only its own line, never the others.
+const DIAG_WEB_PRESENCES_RICH = `#graphql
+  query appDiagWebPresencesRich {
+    webPresences(first: 10) {
+      nodes {
+        id
+        subfolderSuffix
+        domain {
+          host
+        }
+        rootUrls {
+          locale
+          url
+        }
+        markets(first: 10) {
+          nodes {
+            name
+            status
+          }
+        }
+      }
+    }
+  }`;
+const DIAG_MARKETS_RICH = `#graphql
+  query appDiagMarketsRich {
+    markets(first: 25) {
+      nodes {
+        id
+        name
+        status
+        webPresences(first: 5) {
+          nodes {
+            id
+            subfolderSuffix
+            domain {
+              host
+            }
+            rootUrls {
+              locale
+              url
+            }
+          }
+        }
+      }
+    }
+  }`;
 const DIAG_LOCALE_PRESENCES = `#graphql
   query appDiagLocalePresences {
     shopLocales {
@@ -962,19 +1013,25 @@ const DIAG_LOCALE_PRESENCES = `#graphql
     }
   }`;
 
-async function logMarketDiagnostics(admin: GraphqlClient, shop?: string): Promise<void> {
+async function logMarketDiagnostics(
+  admin: GraphqlClient,
+  shop?: string,
+  reason = "nothing to offer",
+): Promise<void> {
   const raw = async (document: string) => {
     try {
       const response = await admin.graphql(document);
-      return JSON.stringify(await response.json()).slice(0, 1500);
+      return JSON.stringify(await response.json()).slice(0, 3000);
     } catch (error: unknown) {
       return `threw: ${error instanceof Error ? error.message : String(error)}`;
     }
   };
-  logger.info("[ShopLocalePublish] Market diagnostics (nothing to offer)", {
+  logger.info(`[ShopLocalePublish] Market diagnostics (${reason})`, {
     context: "ShopLocalePublish",
     shop,
     webPresences: await raw(DIAG_WEB_PRESENCES),
+    webPresencesRich: await raw(DIAG_WEB_PRESENCES_RICH),
+    markets: await raw(DIAG_MARKETS_RICH),
     shopLocales: await raw(DIAG_LOCALE_PRESENCES),
   });
 }
