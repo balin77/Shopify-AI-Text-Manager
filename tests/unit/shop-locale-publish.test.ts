@@ -12,7 +12,16 @@ vi.mock("~/utils/logger.server", () => ({
 const clearShopLocalesCache = vi.fn();
 vi.mock("~/utils/shop-locales-cache.server", () => ({ clearShopLocalesCache }));
 
-const { planLocalePublication, setShopLocalesPublished, planLocaleChanges, applyLocaleChanges, loadAvailableLocales } = await import(
+const {
+  planLocalePublication,
+  setShopLocalesPublished,
+  planLocaleChanges,
+  applyLocaleChanges,
+  loadAvailableLocales,
+  loadMarketWebPresences,
+  planMarketAssignments,
+  setLocaleMarkets,
+} = await import(
   "~/services/shop-locale-publish.server"
 );
 
@@ -209,5 +218,190 @@ describe("applyLocaleChanges", () => {
   it("loadAvailableLocales answers null on a failed read, never an empty list", async () => {
     const admin = { graphql: vi.fn(async () => ({ json: async () => ({ errors: [{ message: "x" }] }) }) as unknown as Response) };
     expect(await loadAvailableLocales(admin)).toBeNull();
+  });
+});
+
+describe("market web presences — which markets show a language", () => {
+  const marketsBody = (nlOn: string[] = []) => ({
+    data: {
+      markets: {
+        edges: [
+          {
+            node: {
+              name: "Schweiz",
+              status: "ACTIVE",
+              webPresences: {
+                edges: [
+                  {
+                    node: {
+                      id: "wp1",
+                      defaultLocale: { locale: "de" },
+                      alternateLocales: [{ locale: "en" }, ...(nlOn.includes("wp1") ? [{ locale: "nl" }] : [])],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          // Shares the primary presence: one checkbox, two names.
+          {
+            node: {
+              name: "Liechtenstein",
+              status: "ACTIVE",
+              webPresences: { edges: [{ node: { id: "wp1", defaultLocale: { locale: "de" }, alternateLocales: [] } }] },
+            },
+          },
+          {
+            node: {
+              name: "Frankreich",
+              status: "ACTIVE",
+              webPresences: {
+                edges: [
+                  {
+                    node: {
+                      id: "wp2",
+                      defaultLocale: { locale: "fr" },
+                      alternateLocales: nlOn.includes("wp2") ? [{ locale: "nl" }] : [],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            node: {
+              name: "Entwurf",
+              status: "DRAFT",
+              webPresences: {
+                edges: [{ node: { id: "wp3", defaultLocale: { locale: "de" }, alternateLocales: [{ locale: "en" }] } }],
+              },
+            },
+          },
+        ],
+      },
+    },
+  });
+  const reading = (body: unknown) => ({
+    graphql: vi.fn(async () => ({ json: async () => body }) as unknown as Response),
+  });
+
+  it("groups a SHARED presence under every active market and marks inactive ones", async () => {
+    const presences = await loadMarketWebPresences(reading(marketsBody()));
+    expect(presences).toEqual([
+      { id: "wp1", marketNames: ["Schweiz", "Liechtenstein"], active: true, defaultLocale: "de", locales: ["de", "en"] },
+      { id: "wp2", marketNames: ["Frankreich"], active: true, defaultLocale: "fr", locales: ["fr"] },
+      { id: "wp3", marketNames: [], active: false, defaultLocale: "de", locales: ["de", "en"] },
+    ]);
+  });
+
+  it("a failed read is null, never 'in no market'", async () => {
+    expect(await loadMarketWebPresences(reading({ errors: [{ message: "Access denied" }] }))).toBeNull();
+  });
+
+  const shop = [
+    { locale: "de", primary: true },
+    { locale: "en", primary: false },
+    { locale: "fr", primary: false },
+  ];
+
+  it("keeps a presence's DEFAULT language and an inactive market's presence in the set it sends", async () => {
+    const presences = (await loadMarketWebPresences(reading(marketsBody())))!;
+    const plan = planMarketAssignments(shop, presences, [
+      { locale: "en", webPresenceIds: [] },
+      { locale: "fr", webPresenceIds: ["wp1"] },
+    ]);
+    expect(plan.changes).toEqual([
+      // en off the active presence, but the draft market's copy stays.
+      { locale: "en", webPresenceIds: ["wp3"] },
+      // fr is wp2's default — ticked or not, it stays.
+      { locale: "fr", webPresenceIds: ["wp1", "wp2"] },
+    ]);
+  });
+
+  it("refuses unknown ids, the primary and unknown locales; drops a no-op; accepts a locale being added", async () => {
+    const presences = (await loadMarketWebPresences(reading(marketsBody())))!;
+    const plan = planMarketAssignments(
+      shop,
+      presences,
+      [
+        { locale: "en", webPresenceIds: ["wp1"] },
+        { locale: "fr", webPresenceIds: ["nope"] },
+        { locale: "de", webPresenceIds: ["wp2"] },
+        { locale: "xx", webPresenceIds: ["wp1"] },
+        { locale: "nl", webPresenceIds: ["wp2"] },
+        { locale: "en", webPresenceIds: ["wp3"] },
+      ],
+      { adding: ["nl"] },
+    );
+    expect(plan.changes).toEqual([{ locale: "nl", webPresenceIds: ["wp2"] }]);
+    expect(plan.refused).toEqual([
+      { locale: "fr", error: "unknownMarket" },
+      { locale: "de", error: "primaryLocale" },
+      { locale: "xx", error: "unknownLocale" },
+    ]);
+  });
+
+  it("an unreadable market list refuses every assignment", () => {
+    expect(planMarketAssignments(shop, null, [{ locale: "en", webPresenceIds: [] }]).refused).toEqual([
+      { locale: "en", error: "marketsUnreadable" },
+    ]);
+  });
+
+  function writingThenReading(after: unknown, mutation: unknown = null) {
+    return {
+      graphql: vi.fn(async (query: string, opts?: { variables?: Record<string, unknown> }) => {
+        const body = query.includes("shopLocaleUpdate")
+          ? mutation ?? { data: { shopLocaleUpdate: { shopLocale: { locale: opts?.variables?.locale }, userErrors: [] } } }
+          : after;
+        return { json: async () => body } as unknown as Response;
+      }),
+    };
+  }
+
+  it("confirms only what a RE-READ shows, never the echo", async () => {
+    const admin = writingThenReading(marketsBody(["wp2"]));
+    const result = await setLocaleMarkets(admin, [{ locale: "nl", webPresenceIds: ["wp2"] }]);
+    expect(result).toEqual({ confirmed: [{ locale: "nl", webPresenceIds: ["wp2"] }], failed: [] });
+    expect(admin.graphql.mock.calls[0][1]).toEqual({
+      variables: { locale: "nl", shopLocale: { marketWebPresenceIds: ["wp2"] } },
+    });
+  });
+
+  it("an echoed write the re-read does not show is notConfirmed (e.g. add-only semantics)", async () => {
+    const result = await setLocaleMarkets(writingThenReading(marketsBody(["wp1", "wp2"])), [
+      { locale: "nl", webPresenceIds: ["wp2"] },
+    ]);
+    expect(result.failed).toEqual([{ locale: "nl", error: "notConfirmed" }]);
+  });
+
+  it("a failed re-read is 'unverified', and a schema refusal is reported in Shopify's words", async () => {
+    expect(
+      (await setLocaleMarkets(writingThenReading({ errors: [{}] }), [{ locale: "nl", webPresenceIds: ["wp2"] }]))
+        .failed,
+    ).toEqual([{ locale: "nl", error: "marketsUnverified" }]);
+    const refused = await setLocaleMarkets(
+      writingThenReading(marketsBody(), { errors: [{ message: "Field 'marketWebPresenceIds' is not defined" }] }),
+      [{ locale: "nl", webPresenceIds: ["wp2"] }],
+    );
+    expect(refused.failed).toEqual([{ locale: "nl", error: "Field 'marketWebPresenceIds' is not defined" }]);
+  });
+
+  it("applyLocaleChanges does not assign markets to a language whose addition failed", async () => {
+    const admin = {
+      graphql: vi.fn(async (query: string) => {
+        const body = query.includes("shopLocaleEnable")
+          ? { data: { shopLocaleEnable: { shopLocale: null, userErrors: [{ message: "nope" }] } } }
+          : { data: {} };
+        return { json: async () => body } as unknown as Response;
+      }),
+    };
+    const result = await applyLocaleChanges(admin, {} as never, "s", {
+      add: [{ locale: "nl", published: true }],
+      remove: [],
+      publish: [],
+      markets: [{ locale: "nl", webPresenceIds: ["wp2"] }],
+    });
+    expect(result.failed).toEqual([{ locale: "nl", error: "nope" }]);
+    expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appShopLocaleMarkets"))).toBe(false);
   });
 });

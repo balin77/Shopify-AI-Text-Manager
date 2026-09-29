@@ -312,6 +312,7 @@ async function purgeRetryPairs(db: MinimalDb, shop: string, removed: readonly st
   }
 }
 
+const lc = (s: string) => s.toLowerCase();
 const sameLocale = (a: unknown, b: string) => typeof a === "string" && a.toLowerCase() === b.toLowerCase();
 
 async function runLocaleMutation(
@@ -347,11 +348,18 @@ export async function applyLocaleChanges(
   admin: GraphqlClient,
   db: MinimalDb,
   shop: string,
-  plan: { add: Array<{ locale: string; published: boolean }>; remove: string[]; publish: LocalePublicationChange[] },
+  plan: {
+    add: Array<{ locale: string; published: boolean }>;
+    remove: string[];
+    publish: LocalePublicationChange[];
+    /** From `planMarketAssignments`; applied after adding and publishing. */
+    markets?: LocaleMarketChange[];
+  },
 ): Promise<{
   added: string[];
   removed: string[];
   confirmed: LocalePublicationChange[];
+  marketsConfirmed: LocaleMarketChange[];
   failed: Array<{ locale: string; error: string }>;
 }> {
   const added: string[] = [];
@@ -377,6 +385,15 @@ export async function applyLocaleChanges(
 
   const published = await setShopLocalesPublished(admin, shop, [...plan.publish, ...publishAfterAdd]);
   failed.push(...published.failed);
+
+  // A language whose ADDITION failed does not exist on Shopify, so its market
+  // assignment is not sent — the add's own failure already names it.
+  const failedAdds = new Set(plan.add.filter((a) => !added.includes(a.locale)).map((a) => lc(a.locale)));
+  const markets = await setLocaleMarkets(
+    admin,
+    (plan.markets ?? []).filter((m) => !failedAdds.has(lc(m.locale))),
+  );
+  failed.push(...markets.failed);
 
   for (const locale of plan.remove) {
     const error = await runLocaleMutation(
@@ -439,5 +456,281 @@ export async function applyLocaleChanges(
     clearShopLocalesCache(shop);
   }
 
-  return { added, removed, confirmed: published.confirmed, failed };
+  return { added, removed, confirmed: published.confirmed, marketsConfirmed: markets.confirmed, failed };
+}
+
+// ---------------------------------------------------------------------------
+// Which MARKETS show a language
+// ---------------------------------------------------------------------------
+//
+// Publishing a language is not enough for the storefront's language picker:
+// it lists only the languages of the visitor's market WEB PRESENCE (Shopify
+// admin → Markets → a market → Languages). A language added and published here
+// therefore showed nowhere until the merchant found that setting — reported by
+// the owner with Dutch on a live shop, 2026-09.
+//
+// The unit of assignment is the WEB PRESENCE, not the market: secondary markets
+// often SHARE the primary market's presence (CLAUDE.md, "Markets"), and a
+// language on a shared presence is on every market using it — so the tab offers
+// one checkbox per presence, labelled with every market that uses it.
+//
+// READ: the markets query whose shape `loadMarkets` already runs in production,
+// with the presence `id` added. Only presences of an ACTIVE market are OFFERED
+// (the CLAUDE.md gate), but every presence is read: the write sends a FULL set,
+// and a set built from active markets alone would, under replace semantics,
+// silently take the language off a draft market's presence — so a presence of
+// an inactive market that carries the locale is preserved in every set sent.
+// WRITE: `shopLocaleUpdate(locale, shopLocale: { marketWebPresenceIds })` — the
+// FULL set of presences the locale should be on. NOT measured (the schema proxy
+// is unreachable from the build sandbox): neither the input field nor whether it
+// replaces or adds. So the write is confirmed by RE-READING the presences, never
+// by its echo — a set that did not come out as requested is "notConfirmed",
+// which also catches an add-only reading of the field. A presence whose DEFAULT
+// language is this locale always keeps it (Shopify cannot drop a presence's
+// default language), so the plan forces those in rather than sending a removal
+// that must fail.
+
+const MARKET_WEB_PRESENCES = `#graphql
+  query appMarketWebPresences {
+    markets(first: 50) {
+      edges {
+        node {
+          id
+          name
+          status
+          webPresences(first: 10) {
+            edges {
+              node {
+                id
+                defaultLocale {
+                  locale
+                }
+                alternateLocales {
+                  locale
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+const SHOP_LOCALE_MARKETS_UPDATE = `#graphql
+  mutation appShopLocaleMarkets($locale: String!, $shopLocale: ShopLocaleInput!) {
+    shopLocaleUpdate(locale: $locale, shopLocale: $shopLocale) {
+      shopLocale {
+        locale
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
+export interface MarketWebPresence {
+  id: string;
+  /** Names of every ACTIVE market that uses this presence, in Shopify's order. */
+  marketNames: string[];
+  /** Used by at least one ACTIVE market — only those are offered in the tab. */
+  active: boolean;
+  defaultLocale: string;
+  /** Default + alternates, lower-cased for comparison. */
+  locales: string[];
+}
+
+export interface LocaleMarketChange {
+  locale: string;
+  webPresenceIds: string[];
+}
+
+
+/**
+ * The shop's market web presences with the languages each one serves. `null` on
+ * a failed read (a missing scope, a throttle, a schema change) — "we cannot
+ * tell" must never render as "this language is in no market".
+ */
+export async function loadMarketWebPresences(admin: GraphqlClient): Promise<MarketWebPresence[] | null> {
+  try {
+    const response = await admin.graphql(MARKET_WEB_PRESENCES);
+    const body = (await response.json()) as {
+      errors?: unknown[];
+      data?: {
+        markets?: {
+          edges?: Array<{
+            node?: {
+              name?: string;
+              status?: string;
+              webPresences?: {
+                edges?: Array<{
+                  node?: {
+                    id?: string;
+                    defaultLocale?: { locale?: string } | null;
+                    alternateLocales?: Array<{ locale?: string } | null> | null;
+                  } | null;
+                }>;
+              } | null;
+            } | null;
+          }>;
+        } | null;
+      } | null;
+    };
+    const edges = body.data?.markets?.edges;
+    if (body.errors?.length || !Array.isArray(edges)) return null;
+    const byId = new Map<string, MarketWebPresence>();
+    for (const edge of edges) {
+      const market = edge?.node;
+      if (!market) continue;
+      const active = market.status === "ACTIVE";
+      for (const wpEdge of market.webPresences?.edges ?? []) {
+        const wp = wpEdge?.node;
+        const defaultLocale = wp?.defaultLocale?.locale;
+        if (!wp?.id || !defaultLocale) continue;
+        const existing = byId.get(wp.id);
+        if (existing) {
+          if (active) {
+            existing.active = true;
+            if (market.name && !existing.marketNames.includes(market.name)) existing.marketNames.push(market.name);
+          }
+          continue;
+        }
+        const alternates = (wp.alternateLocales ?? [])
+          .map((a) => a?.locale)
+          .filter((l): l is string => typeof l === "string");
+        byId.set(wp.id, {
+          id: wp.id,
+          marketNames: active && market.name ? [market.name] : [],
+          active,
+          defaultLocale,
+          locales: [...new Set([defaultLocale, ...alternates].map(lc))],
+        });
+      }
+    }
+    return [...byId.values()];
+  } catch {
+    return null;
+  }
+}
+
+/** The presences a locale is on right now. */
+export function presencesOfLocale(presences: readonly MarketWebPresence[], locale: string): string[] {
+  return presences.filter((p) => p.locales.includes(lc(locale))).map((p) => p.id);
+}
+
+const sameSet = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((x) => b.includes(x));
+
+/**
+ * Which requested market assignments are real work. Pure. A locale must exist
+ * (or be added in the same save) and not be the primary or being removed; an id
+ * that is no presence of this shop refuses that locale's change outright rather
+ * than sending a partial set; a presence whose DEFAULT language this is stays in
+ * the set; an unchanged set is dropped.
+ */
+export function planMarketAssignments(
+  current: ReadonlyArray<{ locale: string; primary: boolean }>,
+  presences: readonly MarketWebPresence[] | null,
+  requested: readonly LocaleMarketChange[],
+  context: { adding?: readonly string[]; removing?: readonly string[] } = {},
+): { changes: LocaleMarketChange[]; refused: Array<{ locale: string; error: string }> } {
+  const changes: LocaleMarketChange[] = [];
+  const refused: Array<{ locale: string; error: string }> = [];
+  if (requested.length === 0) return { changes, refused };
+  if (presences === null) {
+    return { changes, refused: requested.map((r) => ({ locale: r.locale, error: "marketsUnreadable" })) };
+  }
+  const known = new Map(current.map((l) => [lc(l.locale), l]));
+  const adding = new Set((context.adding ?? []).map(lc));
+  const removing = new Set((context.removing ?? []).map(lc));
+  const offered = new Set(presences.filter((p) => p.active).map((p) => p.id));
+  const seen = new Set<string>();
+  for (const request of requested) {
+    const key = lc(request.locale);
+    if (seen.has(key) || removing.has(key)) continue;
+    seen.add(key);
+    const entry = known.get(key);
+    if (!entry && !adding.has(key)) {
+      refused.push({ locale: request.locale, error: "unknownLocale" });
+      continue;
+    }
+    if (entry?.primary) {
+      refused.push({ locale: request.locale, error: "primaryLocale" });
+      continue;
+    }
+    const ids = [...new Set(request.webPresenceIds)];
+    if (ids.some((id) => !offered.has(id))) {
+      refused.push({ locale: request.locale, error: "unknownMarket" });
+      continue;
+    }
+    // Kept whatever was ticked: the presences whose DEFAULT this is, and the
+    // inactive ones the tab does not show.
+    const forced = presences
+      .filter((p) => lc(p.defaultLocale) === key || (!p.active && p.locales.includes(key)))
+      .map((p) => p.id);
+    const wanted = [...new Set([...ids, ...forced])];
+    // An added locale is on no presence yet; an unchanged set costs no call.
+    const now = entry ? presencesOfLocale(presences, request.locale) : [];
+    if (sameSet(wanted, now)) continue;
+    changes.push({ locale: request.locale, webPresenceIds: wanted });
+  }
+  return { changes, refused };
+}
+
+/**
+ * Send each assignment, then RE-READ the presences once and confirm every
+ * locale's set against it. One failure never stops the others.
+ */
+export async function setLocaleMarkets(
+  admin: GraphqlClient,
+  changes: readonly LocaleMarketChange[],
+): Promise<{ confirmed: LocaleMarketChange[]; failed: Array<{ locale: string; error: string }> }> {
+  const confirmed: LocaleMarketChange[] = [];
+  const failed: Array<{ locale: string; error: string }> = [];
+  const sent: LocaleMarketChange[] = [];
+  for (const change of changes) {
+    try {
+      const response = await admin.graphql(SHOP_LOCALE_MARKETS_UPDATE, {
+        variables: { locale: change.locale, shopLocale: { marketWebPresenceIds: change.webPresenceIds } },
+      });
+      const body = (await response.json()) as {
+        errors?: Array<{ message?: string }>;
+        data?: {
+          shopLocaleUpdate?: {
+            shopLocale?: { locale?: string } | null;
+            userErrors?: Array<{ message?: string }>;
+          } | null;
+        } | null;
+      };
+      if (body.errors?.length) {
+        failed.push({ locale: change.locale, error: body.errors[0]?.message || "GraphQL error" });
+        continue;
+      }
+      const userErrors = body.data?.shopLocaleUpdate?.userErrors ?? [];
+      if (userErrors.length > 0) {
+        failed.push({ locale: change.locale, error: userErrors.map((e) => e.message).join("; ") });
+        continue;
+      }
+      if (!sameLocale(body.data?.shopLocaleUpdate?.shopLocale?.locale, change.locale)) {
+        failed.push({ locale: change.locale, error: "notConfirmed" });
+        continue;
+      }
+      sent.push(change);
+    } catch (error: unknown) {
+      failed.push({ locale: change.locale, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  if (sent.length > 0) {
+    const after = await loadMarketWebPresences(admin);
+    for (const change of sent) {
+      if (after === null) {
+        failed.push({ locale: change.locale, error: "marketsUnverified" });
+      } else if (sameSet(presencesOfLocale(after, change.locale), change.webPresenceIds)) {
+        confirmed.push(change);
+      } else {
+        failed.push({ locale: change.locale, error: "notConfirmed" });
+      }
+    }
+  }
+  return { confirmed, failed };
 }

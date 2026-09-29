@@ -1249,6 +1249,12 @@ export const de = {
       errorAvailableLookupFailed: "Die verfügbaren Sprachen konnten nicht gelesen werden – versuche es erneut.",
       errorInvalidChanges: "Die Änderungen konnten nicht gelesen werden – lade die Seite neu.",
       errorLocalesUnreadable: "Die Sprachen des Shops konnten gerade nicht gelesen werden – versuche es erneut.",
+      marketsLabel: "Märkte:",
+      noMarketWarning: "Veröffentlicht, aber in keinem Markt – der Sprachwähler im Onlineshop bietet diese Sprache nicht an. Hake mindestens einen Markt an.",
+      marketsUnavailable: "Die Märkte konnten nicht geladen werden – die Zuordnung der Sprachen zu Märkten ist gerade nicht verfügbar. Lade die Seite neu.",
+      errorUnknownMarket: "Diesen Markt gibt es im Shop nicht mehr – lade die Seite neu.",
+      errorMarketsUnreadable: "Die Märkte des Shops konnten gerade nicht gelesen werden – versuche es erneut.",
+      errorMarketsUnverified: "Gesendet, aber die Märkte konnten danach nicht neu gelesen werden – lade die Seite neu, um das Ergebnis zu sehen.",
       removeModal: {
         step1Title: "Sprache „{name}“ entfernen?",
         step2Title: "Entfernen bestätigen",
@@ -4532,11 +4538,11 @@ export const de = {
       tips: [
         "Unveröffentlichte Sprachen werden synchronisiert, bearbeitet und automatisch übersetzt wie aktive",
         "Mit dem Schalter „Im Onlineshop veröffentlicht“ gehst du live – wirksam erst mit „Speichern“",
-        "Die Hauptsprache ist immer veröffentlicht und kann nicht entfernt werden",
+        "Im Sprachwähler des Onlineshops erscheint eine Sprache nur in den Märkten, die du bei ihr anhakst",
         "„Entfernen“ ist endgültig und verlangt eine Bestätigung mit dem Namen der Sprache",
       ],
       details:
-        "Ob eine veröffentlichte Sprache in einem bestimmten Markt angezeigt wird, legst du in Shopify unter Einstellungen → Märkte fest. Beim Entfernen löscht Shopify laut eigener Dokumentation alle Übersetzungen in diese Sprache aus deinem Shop; die App entfernt danach auch ihre lokale Kopie. Deine eigenen Daten zu dieser Sprache – Glossar, direkte Übersetzungen, Alt-Text-Vorlagen – bleiben erhalten. Solange du ungespeicherte Änderungen hast, ist „Entfernen“ gesperrt.",
+        "Märkte, die sich eine Domain teilen, erscheinen als ein gemeinsames Häkchen – die Sprache gilt dann für alle diese Märkte. Die Standardsprache eines Markts bleibt immer angehakt. Die Hauptsprache ist immer veröffentlicht und kann nicht entfernt werden. Beim Entfernen löscht Shopify laut eigener Dokumentation alle Übersetzungen in diese Sprache aus deinem Shop; die App entfernt danach auch ihre lokale Kopie. Deine eigenen Daten zu dieser Sprache – Glossar, direkte Übersetzungen, Alt-Text-Vorlagen – bleiben erhalten. Solange du ungespeicherte Änderungen hast, ist „Entfernen“ gesperrt.",
     },
     shopLanguagesAdd: {
       title: "Sprache hinzufügen",
@@ -4547,7 +4553,7 @@ export const de = {
         "Schaltest du den Schalter vor dem Speichern ein, wird die Sprache gleich veröffentlicht",
       ],
       details:
-        "Ob eine direkt veröffentlichte Sprache in deinen Märkten erscheint, prüfst du danach in Shopify unter Einstellungen → Märkte. Angeboten werden nur Sprachen, die Shopify für deinen Shop zulässt.",
+        "Hake bei der neuen Sprache die Märkte an, in denen sie im Sprachwähler erscheinen soll – ohne Markt bietet der Onlineshop sie nicht an, auch wenn sie veröffentlicht ist. Angeboten werden nur Sprachen, die Shopify für deinen Shop zulässt.",
     },
     autoTranslateHandles: {
       title: "URL-Handles mitübersetzen",
