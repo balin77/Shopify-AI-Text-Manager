@@ -4540,6 +4540,7 @@ export const de = {
         "Grau = UNBEKANNT, nicht fehlend. Diese Angaben holt erst ein Sync — vorher wäre jedes rote Kreuz geraten",
         "Status und Vertriebskanäle sind zwei Zeilen: „Aktiv“ allein macht ein Produkt NICHT sichtbar, dafür braucht es einen Kanal",
         "In einer Fremdsprache ist der Tab read-only — Tags, Hersteller und Kategorie gibt es nur einmal pro Eintrag",
+        "Darunter steht die Vorschau der strukturierten Daten (JSON-LD) — mit ihrem eigenen „?“",
       ],
     },
     seoSidebarScore: {

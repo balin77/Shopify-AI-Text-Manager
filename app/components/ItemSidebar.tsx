@@ -465,7 +465,8 @@ export function ItemSidebar({
   const getScoreLabel = (scoreValue: number): string =>
     t.seo.scoreLabels[scoreLabelKey(scoreValue)];
 
-  // Sub-tabs (Score / Keywords / JSON-LD). Hide a tab entirely when its data
+  // Sub-tabs (Attributes / Score / Keywords; JSON-LD only without an attribute
+  // tab — otherwise it renders under the checklist). Hide a tab entirely when its data
   // isn't applicable to this caller (theme content has no JSON-LD, foreign
   // locales have no keyword tracking) — otherwise merchants would land on an
   // empty pane. With only "score" available, the tab bar is omitted.
@@ -477,7 +478,7 @@ export function ItemSidebar({
   if (attributes) availableTabs.push("attributes");
   availableTabs.push("score");
   if (keywordTrackingEnabled) availableTabs.push("keywords");
-  if (structuredData) availableTabs.push("jsonld");
+  if (structuredData && !attributes) availableTabs.push("jsonld");
   const [activeTab, setActiveTab] = useState<SidebarTab>("score");
   const currentTab = availableTabs.includes(activeTab) ? activeTab : availableTabs[0];
   const tabLabels = (t.seo as unknown as { sidebarTabs?: Record<string, string> }).sidebarTabs;
@@ -496,6 +497,79 @@ export function ItemSidebar({
     keywords: "seoSidebarKeywords",
     jsonld: "seoSidebarJsonLd",
   };
+
+  // The JSON-LD preview lives UNDER the attribute checklist rather than in a
+  // tab of its own: both answer "what does this item tell the outside world
+  // about itself", and a fourth tab in a sidebar this narrow cost more than it
+  // explained. It keeps its own heading and "?", like the readability block.
+  const jsonLdPanel = structuredData ? (
+          <BlockStack gap="200">
+                {jsonLdWarnings.length === 0 ? (
+                  <Badge tone="success">
+                    {t.seo?.structuredDataValid || "Schema looks valid"}
+                  </Badge>
+                ) : (
+                  <BlockStack gap="100">
+                    {jsonLdWarnings.map((w, i) => {
+                      // Prefer the localized copy via the stable warning code;
+                      // fall back to the validator's English default so a
+                      // future warning without a translation still renders.
+                      const localized =
+                        (t.seo?.structuredDataPage?.warnings as
+                          | Record<string, string>
+                          | undefined
+                        )?.[w.code];
+                      return (
+                        <InlineStack key={i} gap="100" blockAlign="center">
+                          <Badge
+                            tone={w.severity === "error" ? "critical" : "warning"}
+                          >
+                            {w.severity}
+                          </Badge>
+                          <Text as="span" variant="bodySm">
+                            {localized || w.message}
+                          </Text>
+                        </InlineStack>
+                      );
+                    })}
+                  </BlockStack>
+                )}
+                <pre
+                  style={{
+                    maxHeight: "260px",
+                    overflow: "auto",
+                    background: "#f6f6f7",
+                    padding: "8px",
+                    borderRadius: "4px",
+                    fontSize: "11px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {jsonLdString}
+                </pre>
+                <Button
+                  size="slim"
+                  onClick={() => {
+                    navigator.clipboard
+                      ?.writeText(
+                        `<script type="application/ld+json">\n${jsonLdString}\n</script>`,
+                      )
+                      .then(
+                        () => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        },
+                        () => setCopied(false),
+                      );
+                  }}
+                >
+                  {copied
+                    ? t.seo?.copied || "Copied!"
+                    : t.seo?.copyJsonLd || "Copy <script> tag"}
+                </Button>
+          </BlockStack>
+  ) : null;
 
   return (
     <Card>
@@ -526,6 +600,26 @@ export function ItemSidebar({
               enumLabels: (t.content as { enumLabels?: Record<string, string> } | undefined)?.enumLabels,
             } as never}
           />
+        )}
+
+        {currentTab === "attributes" && attributes && jsonLdPanel && (
+          <Box
+            padding="300"
+            borderWidth="025"
+            borderColor="border"
+            borderRadius="200"
+            background="bg-surface-secondary"
+          >
+            <BlockStack gap="200">
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <Text as="p" variant="headingSm" fontWeight="semibold">
+                  {t.help?.seoSidebarJsonLd?.title || "JSON-LD"}
+                </Text>
+                <HelpTooltip helpKey="seoSidebarJsonLd" position="below" />
+              </InlineStack>
+              {jsonLdPanel}
+            </BlockStack>
+          </Box>
         )}
 
         {currentTab === "score" && (
@@ -793,75 +887,9 @@ export function ItemSidebar({
         </BlockStack>
         )}
 
-        {/* JSON-LD tab */}
-        {currentTab === "jsonld" && structuredData && (
-          <BlockStack gap="200">
-                {jsonLdWarnings.length === 0 ? (
-                  <Badge tone="success">
-                    {t.seo?.structuredDataValid || "Schema looks valid"}
-                  </Badge>
-                ) : (
-                  <BlockStack gap="100">
-                    {jsonLdWarnings.map((w, i) => {
-                      // Prefer the localized copy via the stable warning code;
-                      // fall back to the validator's English default so a
-                      // future warning without a translation still renders.
-                      const localized =
-                        (t.seo?.structuredDataPage?.warnings as
-                          | Record<string, string>
-                          | undefined
-                        )?.[w.code];
-                      return (
-                        <InlineStack key={i} gap="100" blockAlign="center">
-                          <Badge
-                            tone={w.severity === "error" ? "critical" : "warning"}
-                          >
-                            {w.severity}
-                          </Badge>
-                          <Text as="span" variant="bodySm">
-                            {localized || w.message}
-                          </Text>
-                        </InlineStack>
-                      );
-                    })}
-                  </BlockStack>
-                )}
-                <pre
-                  style={{
-                    maxHeight: "260px",
-                    overflow: "auto",
-                    background: "#f6f6f7",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    fontSize: "11px",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {jsonLdString}
-                </pre>
-                <Button
-                  size="slim"
-                  onClick={() => {
-                    navigator.clipboard
-                      ?.writeText(
-                        `<script type="application/ld+json">\n${jsonLdString}\n</script>`,
-                      )
-                      .then(
-                        () => {
-                          setCopied(true);
-                          setTimeout(() => setCopied(false), 2000);
-                        },
-                        () => setCopied(false),
-                      );
-                  }}
-                >
-                  {copied
-                    ? t.seo?.copied || "Copied!"
-                    : t.seo?.copyJsonLd || "Copy <script> tag"}
-                </Button>
-          </BlockStack>
-        )}
+        {/* JSON-LD as its own tab only where there is no attribute tab to
+            carry it (defensive — every caller with structured data has one). */}
+        {currentTab === "jsonld" && jsonLdPanel}
 
         {/* Keywords tab */}
         {currentTab === "keywords" && keywordTrackingEnabled && (

@@ -4503,6 +4503,7 @@ export const es: Translation = {
         "Gris = DESCONOCIDO, no faltante. Una sincronización obtiene estos datos; antes, cada cruz roja sería una suposición",
         "Estado y canales de venta son dos filas distintas: \u201cActivo\u201d por sí solo NO hace visible un producto, hace falta un canal",
         "En un idioma extranjero la pestaña es de solo lectura — etiquetas, proveedor y categoría existen una vez por elemento",
+        "Debajo está la vista previa de los datos estructurados (JSON-LD), con su propio \u201c?\u201d",
       ],
     },
     seoSidebarScore: {

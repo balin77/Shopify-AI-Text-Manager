@@ -4514,6 +4514,7 @@ export const en: Translation = {
         "Grey = UNKNOWN, not missing. A sync fetches these — before that, every red cross would be a guess",
         "Status and sales channels are two separate rows: \u201cActive\u201d alone does NOT make a product visible, that needs a channel",
         "In a foreign language the tab is read-only — tags, vendor and category exist once per item, not per language",
+        "Below it sits the structured-data (JSON-LD) preview — with its own \u201c?\u201d",
       ],
     },
     seoSidebarScore: {
