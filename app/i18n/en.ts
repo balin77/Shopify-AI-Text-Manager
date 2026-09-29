@@ -1249,7 +1249,7 @@ export const en: Translation = {
       noMarketWarning: "Published, but in no market – the online store's language picker does not offer this language. Tick at least one market.",
       marketsUnavailable: "The markets could not be loaded – assigning languages to markets is unavailable right now. Reload the page.",
       noActiveMarkets:
-        "No active market with its own domain was found – so there is no market selection here. Check in Shopify under Settings → Markets whether a market is active.",
+        "Shopify reports no domain for this shop that languages can be assigned to – so there is no market selection here. In the Shopify admin, markets are their own “Markets” item in the left sidebar; that is where each market's languages are set.",
       errorUnknownMarket: "This market no longer exists in the shop – reload the page.",
       errorMarketsUnreadable: "The shop's markets could not be read just now – try again.",
       errorMarketsUnverified: "Sent, but the markets could not be read back afterwards – reload the page to see the result.",

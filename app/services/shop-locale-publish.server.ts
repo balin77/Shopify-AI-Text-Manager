@@ -890,7 +890,54 @@ export async function loadMarketWebPresences(
   if (top && "presences" in top && top.presences.length > 0) return top.presences;
   const viaMarkets = await loadViaMarkets(admin, shop);
   if (top === null && viaMarkets !== null && viaMarkets.length === 0) return null;
+  if (viaMarkets && !viaMarkets.some((p) => p.active)) await logMarketDiagnostics(admin, shop);
   return viaMarkets;
+}
+
+// Diagnostics only, run when neither read found anything to offer: the raw
+// answers of the top-level list and of the locale-side relation, so ONE log
+// line says which shape this shop's API version actually has. Both documents
+// may be refused by the schema; the refusal is exactly what gets logged.
+const DIAG_WEB_PRESENCES = `#graphql
+  query appDiagWebPresences {
+    webPresences(first: 5) {
+      nodes {
+        id
+        defaultLocale {
+          locale
+        }
+        alternateLocales {
+          locale
+        }
+      }
+    }
+  }`;
+const DIAG_LOCALE_PRESENCES = `#graphql
+  query appDiagLocalePresences {
+    shopLocales {
+      locale
+      published
+      marketWebPresences {
+        id
+      }
+    }
+  }`;
+
+async function logMarketDiagnostics(admin: GraphqlClient, shop?: string): Promise<void> {
+  const raw = async (document: string) => {
+    try {
+      const response = await admin.graphql(document);
+      return JSON.stringify(await response.json()).slice(0, 1500);
+    } catch (error: unknown) {
+      return `threw: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  };
+  logger.info("[ShopLocalePublish] Market diagnostics (nothing to offer)", {
+    context: "ShopLocalePublish",
+    shop,
+    webPresences: await raw(DIAG_WEB_PRESENCES),
+    shopLocales: await raw(DIAG_LOCALE_PRESENCES),
+  });
 }
 
 /** The presences a locale is on right now. */
