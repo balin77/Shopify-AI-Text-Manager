@@ -36,6 +36,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useI18n } from "../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { compareStrings } from "../utils/format";
+import { localizedMarketName } from "../utils/market-name";
 
 interface ShopLanguage {
   locale: string;
@@ -295,7 +296,7 @@ export function SettingsShopLanguagesTab({
                 key={p.id}
                 // Market names when Shopify names any; the host only as the
                 // fallback label for a presence nothing names.
-                label={p.marketNames.join(", ") || p.label || p.id}
+                label={p.marketNames.map((n) => localizedMarketName(n, appLocale)).join(", ") || p.label || p.id}
                 checked={isDefault || ids.includes(p.id)}
                 disabled={isDefault}
                 onChange={(on) => onChange(toggleMarket(ids, p.id, on))}
