@@ -225,12 +225,14 @@ describe("market web presences — which markets show a language", () => {
   const marketsBody = (nlOn: string[] = []) => ({
     data: {
       markets: {
+        pageInfo: { hasNextPage: false, endCursor: null },
         edges: [
           {
             node: {
               name: "Schweiz",
               status: "ACTIVE",
               webPresences: {
+                pageInfo: { hasNextPage: false },
                 edges: [
                   {
                     node: {
@@ -248,7 +250,10 @@ describe("market web presences — which markets show a language", () => {
             node: {
               name: "Liechtenstein",
               status: "ACTIVE",
-              webPresences: { edges: [{ node: { id: "wp1", defaultLocale: { locale: "de" }, alternateLocales: [] } }] },
+              webPresences: {
+                pageInfo: { hasNextPage: false },
+                edges: [{ node: { id: "wp1", defaultLocale: { locale: "de" }, alternateLocales: [] } }],
+              },
             },
           },
           {
@@ -256,6 +261,7 @@ describe("market web presences — which markets show a language", () => {
               name: "Frankreich",
               status: "ACTIVE",
               webPresences: {
+                pageInfo: { hasNextPage: false },
                 edges: [
                   {
                     node: {
@@ -273,6 +279,7 @@ describe("market web presences — which markets show a language", () => {
               name: "Entwurf",
               status: "DRAFT",
               webPresences: {
+                pageInfo: { hasNextPage: false },
                 edges: [{ node: { id: "wp3", defaultLocale: { locale: "de" }, alternateLocales: [{ locale: "en" }] } }],
               },
             },
@@ -296,6 +303,34 @@ describe("market web presences — which markets show a language", () => {
 
   it("a failed read is null, never 'in no market'", async () => {
     expect(await loadMarketWebPresences(reading({ errors: [{ message: "Access denied" }] }))).toBeNull();
+  });
+
+  it("a read that cannot prove it saw EVERY presence is null — the write sends a full set", async () => {
+    const truncatedPresences = marketsBody() as any;
+    truncatedPresences.data.markets.edges[0].node.webPresences.pageInfo.hasNextPage = true;
+    expect(await loadMarketWebPresences(reading(truncatedPresences))).toBeNull();
+    const incomplete = marketsBody() as any;
+    incomplete.data.markets.edges[2].node.webPresences.edges[0].node.defaultLocale = null;
+    expect(await loadMarketWebPresences(reading(incomplete))).toBeNull();
+    const noPageInfo = marketsBody() as any;
+    delete noPageInfo.data.markets.pageInfo;
+    expect(await loadMarketWebPresences(reading(noPageInfo))).toBeNull();
+  });
+
+  it("pages through every market", async () => {
+    const first = marketsBody() as any;
+    const second = marketsBody() as any;
+    first.data.markets.pageInfo = { hasNextPage: true, endCursor: "c1" };
+    first.data.markets.edges = first.data.markets.edges.slice(0, 2);
+    second.data.markets.edges = second.data.markets.edges.slice(2);
+    const admin = {
+      graphql: vi.fn(async (_q: string, opts?: { variables?: Record<string, unknown> }) =>
+        ({ json: async () => (opts?.variables?.after === "c1" ? second : first) }) as unknown as Response,
+      ),
+    };
+    const presences = await loadMarketWebPresences(admin);
+    expect(presences?.map((p) => p.id)).toEqual(["wp1", "wp2", "wp3"]);
+    expect(admin.graphql).toHaveBeenCalledTimes(2);
   });
 
   const shop = [
@@ -403,5 +438,52 @@ describe("market web presences — which markets show a language", () => {
     });
     expect(result.failed).toEqual([{ locale: "nl", error: "nope" }]);
     expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appShopLocaleMarkets"))).toBe(false);
+  });
+});
+
+describe("the market write must not move a publication unnoticed", () => {
+  it("reports a locale whose published state the market write changed", async () => {
+    const presencesAfter = {
+      data: {
+        markets: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          edges: [
+            {
+              node: {
+                name: "Frankreich",
+                status: "ACTIVE",
+                webPresences: {
+                  pageInfo: { hasNextPage: false },
+                  edges: [{ node: { id: "wp2", defaultLocale: { locale: "fr" }, alternateLocales: [{ locale: "en" }] } }],
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    const admin = {
+      graphql: vi.fn(async (query: string, opts?: { variables?: Record<string, unknown> }) => {
+        let body: unknown;
+        if (query.includes("appShopLocaleMarkets")) {
+          body = { data: { shopLocaleUpdate: { shopLocale: { locale: opts?.variables?.locale }, userErrors: [] } } };
+        } else if (query.includes("appShopLocalesPublished")) {
+          // Shopify published `en` on assignment although this save kept it unpublished.
+          body = { data: { shopLocales: [{ locale: "en", published: true }] } };
+        } else {
+          body = presencesAfter;
+        }
+        return { json: async () => body } as unknown as Response;
+      }),
+    };
+    const result = await applyLocaleChanges(admin, {} as never, "s", {
+      add: [],
+      remove: [],
+      publish: [],
+      markets: [{ locale: "en", webPresenceIds: ["wp2"] }],
+      publishedBefore: { en: false },
+    });
+    expect(result.marketsConfirmed).toEqual([{ locale: "en", webPresenceIds: ["wp2"] }]);
+    expect(result.failed).toEqual([{ locale: "en", error: "publicationMovedByMarkets" }]);
   });
 });

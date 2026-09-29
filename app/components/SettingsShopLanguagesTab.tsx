@@ -236,6 +236,8 @@ export function SettingsShopLanguagesTab({
         return s.errorMarketsUnreadable;
       case "marketsUnverified":
         return s.errorMarketsUnverified;
+      case "publicationMovedByMarkets":
+        return s.errorPublicationMovedByMarkets;
       default:
         return code;
     }

@@ -1079,10 +1079,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const plan = isRemoval
         ? planLocaleChanges(current, [], { publish: [], add: [], remove: [removeLocale as string] })
         : planLocaleChanges(current, available, { publish, add, remove: [] });
+      // A language whose addition was REFUSED already has its line; its
+      // markets would only add a second one ("unknown language").
+      const refusedLocales = new Set(plan.refused.map((r) => r.locale.toLowerCase()));
       const marketPlan = isRemoval
         ? { changes: [], refused: [] }
-        : planMarketAssignments(current, presences, markets, { adding: plan.add.map((a) => a.locale) });
-      const outcome = await applyLocaleChanges(admin, db, session.shop, { ...plan, markets: marketPlan.changes });
+        : planMarketAssignments(
+            current,
+            presences,
+            markets.filter((m) => !refusedLocales.has(m.locale.toLowerCase())),
+            { adding: plan.add.map((a) => a.locale) },
+          );
+      const outcome = await applyLocaleChanges(admin, db, session.shop, {
+        ...plan,
+        markets: marketPlan.changes,
+        publishedBefore: Object.fromEntries(current.map((l) => [l.locale, l.published])),
+      });
       const failed = [...plan.refused, ...marketPlan.refused, ...outcome.failed];
       return json({
         success: failed.length === 0,

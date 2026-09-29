@@ -1234,6 +1234,8 @@ export const es: Translation = {
       errorUnknownMarket: "Este mercado ya no existe en la tienda: recarga la página.",
       errorMarketsUnreadable: "Ahora mismo no se pudieron leer los mercados de la tienda: inténtalo de nuevo.",
       errorMarketsUnverified: "Enviado, pero después no se pudieron volver a leer los mercados: recarga la página para ver el resultado.",
+      errorPublicationMovedByMarkets:
+        "Los mercados se guardaron, pero Shopify cambió con ello el estado de publicación de este idioma: revisa el interruptor tras recargar.",
       removeModal: {
         step1Title: "¿Eliminar el idioma «{name}»?",
         step2Title: "Confirmar eliminación",
