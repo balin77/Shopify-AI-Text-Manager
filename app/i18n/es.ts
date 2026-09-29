@@ -1228,6 +1228,12 @@ export const es: Translation = {
       errorAvailableLookupFailed: "No se pudieron leer los idiomas disponibles: inténtalo de nuevo.",
       errorInvalidChanges: "No se pudieron leer los cambios: recarga la página.",
       errorLocalesUnreadable: "Ahora mismo no se pudieron leer los idiomas de la tienda: inténtalo de nuevo.",
+      marketsLabel: "Mercados:",
+      noMarketWarning: "Publicado, pero en ningún mercado: el selector de idioma de la tienda online no ofrece este idioma. Marca al menos un mercado.",
+      marketsUnavailable: "No se pudieron cargar los mercados: ahora mismo no se pueden asignar idiomas a mercados. Recarga la página.",
+      errorUnknownMarket: "Este mercado ya no existe en la tienda: recarga la página.",
+      errorMarketsUnreadable: "Ahora mismo no se pudieron leer los mercados de la tienda: inténtalo de nuevo.",
+      errorMarketsUnverified: "Enviado, pero después no se pudieron volver a leer los mercados: recarga la página para ver el resultado.",
       removeModal: {
         step1Title: "¿Eliminar el idioma «{name}»?",
         step2Title: "Confirmar eliminación",
@@ -4495,11 +4501,11 @@ export const es: Translation = {
       tips: [
         "Los idiomas no publicados se sincronizan, se editan y se traducen automáticamente como los activos",
         "El interruptor «Publicado en la tienda online» es el lanzamiento; se aplica al pulsar Guardar",
-        "El idioma principal siempre está publicado y no se puede eliminar",
+        "Un idioma aparece en el selector de idioma de la tienda online solo en los mercados que marques para él",
         "«Eliminar» es definitivo y pide confirmarlo escribiendo el nombre del idioma",
       ],
       details:
-        "Si un idioma publicado se muestra en un mercado concreto se configura en Shopify, en Configuración → Mercados. Según la documentación de Shopify, al eliminar un idioma se borran de tu tienda todas las traducciones a ese idioma; después la app también elimina su copia local. Tus propios datos sobre ese idioma (glosario, traducciones directas, plantillas de texto alternativo) se conservan. Mientras tengas cambios sin guardar, «Eliminar» está bloqueado.",
+        "Los mercados que comparten un dominio aparecen como una sola casilla: el idioma se aplica entonces a todos ellos. El idioma predeterminado de un mercado siempre queda marcado. El idioma principal siempre está publicado y no se puede eliminar. Según la documentación de Shopify, al eliminar un idioma se borran de tu tienda todas las traducciones a ese idioma; después la app también elimina su copia local. Tus propios datos sobre ese idioma (glosario, traducciones directas, plantillas de texto alternativo) se conservan. Mientras tengas cambios sin guardar, «Eliminar» está bloqueado.",
     },
     shopLanguagesAdd: {
       title: "Añadir un idioma",
@@ -4510,7 +4516,7 @@ export const es: Translation = {
         "Activa su interruptor antes de guardar para publicarlo de inmediato",
       ],
       details:
-        "Si un idioma publicado de inmediato aparece en tus mercados, compruébalo después en Shopify, en Configuración → Mercados. Solo se ofrecen los idiomas que Shopify permite para tu tienda.",
+        "Marca los mercados en los que el nuevo idioma debe aparecer en el selector de idioma: sin mercado la tienda online no lo ofrece, aunque esté publicado. Solo se ofrecen los idiomas que Shopify permite para tu tienda.",
     },
     autoTranslateHandles: {
       title: "Traducir también los handles de URL",

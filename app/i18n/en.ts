@@ -1245,6 +1245,12 @@ export const en: Translation = {
       errorAvailableLookupFailed: "The available languages could not be read – try again.",
       errorInvalidChanges: "The changes could not be read – reload the page.",
       errorLocalesUnreadable: "The shop's languages could not be read just now – try again.",
+      marketsLabel: "Markets:",
+      noMarketWarning: "Published, but in no market – the online store's language picker does not offer this language. Tick at least one market.",
+      marketsUnavailable: "The markets could not be loaded – assigning languages to markets is unavailable right now. Reload the page.",
+      errorUnknownMarket: "This market no longer exists in the shop – reload the page.",
+      errorMarketsUnreadable: "The shop's markets could not be read just now – try again.",
+      errorMarketsUnverified: "Sent, but the markets could not be read back afterwards – reload the page to see the result.",
       removeModal: {
         step1Title: "Remove the language “{name}”?",
         step2Title: "Confirm removal",
@@ -4507,11 +4513,11 @@ export const en: Translation = {
       tips: [
         "Unpublished languages are synced, edited and auto-translated like active ones",
         "The “Published in the online store” switch is the launch – it takes effect when you press Save",
-        "The primary language is always published and cannot be removed",
+        "A language appears in the online store's language picker only in the markets you tick for it",
         "“Remove” is permanent and asks you to confirm by typing the language's name",
       ],
       details:
-        "Whether a published language is shown in a particular market is set in Shopify under Settings → Markets. According to Shopify's documentation, removing a language deletes every translation into it from your store; the app then removes its local copy as well. Your own data about that language – glossary, direct translations, alt-text templates – is kept. While you have unsaved changes, “Remove” is locked.",
+        "Markets that share a domain appear as one checkbox – the language then applies to all of them. A market's default language always stays ticked. The primary language is always published and cannot be removed. According to Shopify's documentation, removing a language deletes every translation into it from your store; the app then removes its local copy as well. Your own data about that language – glossary, direct translations, alt-text templates – is kept. While you have unsaved changes, “Remove” is locked.",
     },
     shopLanguagesAdd: {
       title: "Add a language",
@@ -4522,7 +4528,7 @@ export const en: Translation = {
         "Turn its switch on before saving to publish it straight away",
       ],
       details:
-        "Whether a language published straight away appears in your markets is worth checking afterwards in Shopify under Settings → Markets. Only languages Shopify allows for your shop are offered.",
+        "Tick the markets in which the new language should appear in the language picker – without a market the online store does not offer it, even when it is published. Only languages Shopify allows for your shop are offered.",
     },
     autoTranslateHandles: {
       title: "Translate URL handles too",

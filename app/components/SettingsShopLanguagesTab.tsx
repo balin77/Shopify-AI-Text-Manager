@@ -26,7 +26,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FetcherWithComponents } from "react-router";
 import { useFetcher } from "react-router";
-import { Badge, Banner, BlockStack, Button, Card, InlineStack, List, Select, Text } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Button, Card, Checkbox, InlineStack, List, Select, Text } from "@shopify/polaris";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleRow } from "./ToggleRow";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
@@ -44,10 +44,22 @@ interface ShopLanguage {
   published: boolean;
 }
 
+/** Mirrors `MarketWebPresence` in shop-locale-publish.server.ts (a type import
+ *  from a .server module into a component is not worth the bundling question). */
+interface MarketPresence {
+  id: string;
+  marketNames: string[];
+  active: boolean;
+  defaultLocale: string;
+  locales: string[];
+}
+
 interface Props {
   shopLocales: ShopLanguage[];
   /** Languages Shopify lets this shop add; `null` = the lookup failed. */
   availableLocales: Array<{ isoCode: string; name: string }> | null;
+  /** The shop's market web presences; `null` = the lookup failed. */
+  marketWebPresences?: MarketPresence[] | null;
   fetcher: FetcherWithComponents<any>;
   t: any;
   onHasChangesChange?: (hasChanges: boolean) => void;
@@ -60,7 +72,32 @@ function stateOf(locales: readonly ShopLanguage[]): Record<string, boolean> {
   return Object.fromEntries(locales.filter((l) => !l.primary).map((l) => [l.locale, !!l.published]));
 }
 
-export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetcher, t, onHasChangesChange }: Props) {
+/** Per foreign locale, the OFFERED (active-market) presences it is on — sorted, so the draft compares as a string. */
+function marketStateOf(locales: readonly ShopLanguage[], presences: readonly MarketPresence[]): Record<string, string[]> {
+  return Object.fromEntries(
+    locales
+      .filter((l) => !l.primary)
+      .map((l) => [
+        l.locale,
+        presences
+          .filter((p) => p.active && p.locales.includes(l.locale.toLowerCase()))
+          .map((p) => p.id)
+          .sort(),
+      ]),
+  );
+}
+
+const sameIds = (a: readonly string[] = [], b: readonly string[] = []) =>
+  a.length === b.length && a.every((x) => b.includes(x));
+
+export function SettingsShopLanguagesTab({
+  shopLocales,
+  availableLocales,
+  marketWebPresences = null,
+  fetcher,
+  t,
+  onHasChangesChange,
+}: Props) {
   const s = t.settings?.shopLanguages ?? {};
   const { showInfoBox } = useInfoBox();
   const { locale: appLocale } = useI18n();
@@ -73,19 +110,37 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
   // loader), never while the merchant is mid-draft on an unchanged store.
   const storedKey = JSON.stringify(stored);
   const [draft, setDraft] = useState<Record<string, boolean>>(stored);
-  const [adds, setAdds] = useState<Array<{ locale: string; name: string; published: boolean }>>([]);
+  const [adds, setAdds] = useState<
+    Array<{ locale: string; name: string; published: boolean; webPresenceIds: string[] }>
+  >([]);
   const [pick, setPick] = useState("");
   useEffect(() => {
     setDraft(stored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storedKey]);
 
+  // Which markets show each language — the same draft rule as the switches.
+  const presences = marketWebPresences ?? [];
+  const offered = presences.filter((p) => p.active);
+  const storedMarkets = useMemo(() => marketStateOf(shopLocales, presences), [shopLocales, marketWebPresences]); // eslint-disable-line react-hooks/exhaustive-deps
+  const storedMarketsKey = JSON.stringify(storedMarkets);
+  const [marketDraft, setMarketDraft] = useState<Record<string, string[]>>(storedMarkets);
+  useEffect(() => {
+    setMarketDraft(storedMarkets);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedMarketsKey]);
+  const marketChanges = Object.entries(marketDraft)
+    .filter(([locale, ids]) => locale in storedMarkets && !sameIds(ids, storedMarkets[locale]))
+    .map(([locale, webPresenceIds]) => ({ locale, webPresenceIds }));
+  const toggleMarket = (ids: readonly string[], id: string, on: boolean) =>
+    (on ? [...ids, id] : ids.filter((x) => x !== id)).sort();
+
   // Only locales the shop STILL has: after a removal the draft holds the gone
   // one for a render, and reading it as a change flashed the save bar.
   const changes = Object.entries(draft)
     .filter(([locale, published]) => locale in stored && stored[locale] !== published)
     .map(([locale, published]) => ({ locale, published }));
-  const hasChanges = changes.length > 0 || adds.length > 0;
+  const hasChanges = changes.length > 0 || adds.length > 0 || marketChanges.length > 0;
   useEffect(() => {
     onHasChangesChange?.(hasChanges);
   }, [hasChanges, onHasChangesChange]);
@@ -113,6 +168,11 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
       setDraft((prev) => {
         const next = { ...prev };
         for (const locale of refused) if (locale in stored) next[locale] = stored[locale];
+        return next;
+      });
+      setMarketDraft((prev) => {
+        const next = { ...prev };
+        for (const locale of refused) if (locale in storedMarkets) next[locale] = storedMarkets[locale];
         return next;
       });
     }
@@ -170,6 +230,12 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
         return s.errorInvalidChanges;
       case "localesUnreadable":
         return s.errorLocalesUnreadable;
+      case "unknownMarket":
+        return s.errorUnknownMarket;
+      case "marketsUnreadable":
+        return s.errorMarketsUnreadable;
+      case "marketsUnverified":
+        return s.errorMarketsUnverified;
       default:
         return code;
     }
@@ -185,12 +251,60 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
     form.append("actionType", ACTION);
     form.append("changes", JSON.stringify(changes));
     form.append("add", JSON.stringify(adds.map((a) => ({ locale: a.locale, published: a.published }))));
+    form.append(
+      "markets",
+      JSON.stringify([
+        ...marketChanges,
+        ...adds
+          .filter((a) => a.webPresenceIds.length > 0)
+          .map((a) => ({ locale: a.locale, webPresenceIds: a.webPresenceIds })),
+      ]),
+    );
     setSubmittedHere(true);
     fetcher.submit(form, { method: "post" });
   };
   const handleDiscard = () => {
     setDraft(stored);
+    setMarketDraft(storedMarkets);
     setAdds([]);
+  };
+
+  /**
+   * One checkbox per offered market web presence ("which of these" — a
+   * multi-select, so checkboxes rather than pill switches, CLAUDE.md). A
+   * presence whose DEFAULT language this is stays ticked and locked: Shopify
+   * cannot drop a presence's default language. Published but in no market is
+   * the state the owner hit with Dutch — the one line that says why the
+   * storefront's language picker does not offer it.
+   */
+  const renderMarkets = (locale: string, ids: readonly string[], published: boolean, onChange: (next: string[]) => void) => {
+    if (marketWebPresences === null || offered.length === 0) return null;
+    return (
+      <BlockStack gap="100">
+        <InlineStack gap="300" blockAlign="center" wrap>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {s.marketsLabel}
+          </Text>
+          {offered.map((p) => {
+            const isDefault = p.defaultLocale.toLowerCase() === locale.toLowerCase();
+            return (
+              <Checkbox
+                key={p.id}
+                label={p.marketNames.join(", ") || p.id}
+                checked={isDefault || ids.includes(p.id)}
+                disabled={isDefault}
+                onChange={(on) => onChange(toggleMarket(ids, p.id, on))}
+              />
+            );
+          })}
+        </InlineStack>
+        {published && ids.length === 0 && (
+          <Text as="p" variant="bodySm" tone="caution">
+            {s.noMarketWarning}
+          </Text>
+        )}
+      </BlockStack>
+    );
   };
 
   const primary = shopLocales.find((l) => l.primary);
@@ -225,6 +339,12 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
             isSavingCurrentItem={saving}
           />
         </InlineStack>
+
+        {marketWebPresences === null && (
+          <Text as="p" variant="bodySm" tone="subdued">
+            {s.marketsUnavailable}
+          </Text>
+        )}
 
         {saveFailed.length > 0 && (
           <Banner tone="critical" title={s.failedTitle}>
@@ -289,6 +409,9 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
                     {s.unpublishedHint}
                   </Text>
                 )}
+                {renderMarkets(l.locale, marketDraft[l.locale] ?? [], published, (next) =>
+                  setMarketDraft((prev) => ({ ...prev, [l.locale]: next })),
+                )}
               </BlockStack>
             );
           })}
@@ -311,6 +434,9 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
                   {s.undoAdd || "Don't add"}
                 </Button>
               </InlineStack>
+              {renderMarkets(a.locale, a.webPresenceIds, a.published, (next) =>
+                setAdds((prev) => prev.map((x) => (x.locale === a.locale ? { ...x, webPresenceIds: next } : x))),
+              )}
             </BlockStack>
           ))}
         </BlockStack>
@@ -342,7 +468,10 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
                 onClick={() => {
                   const chosen = availableLocales.find((l) => l.isoCode === pick);
                   if (!chosen) return;
-                  setAdds((prev) => [...prev, { locale: chosen.isoCode, name: chosen.name, published: false }]);
+                  setAdds((prev) => [
+                    ...prev,
+                    { locale: chosen.isoCode, name: chosen.name, published: false, webPresenceIds: [] },
+                  ]);
                   setPick("");
                 }}
               >
