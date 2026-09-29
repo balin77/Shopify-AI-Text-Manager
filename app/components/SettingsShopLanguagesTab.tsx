@@ -343,8 +343,14 @@ export function SettingsShopLanguagesTab({
         </InlineStack>
 
         {marketWebPresences === null && (
-          <Text as="p" variant="bodySm" tone="subdued">
+          <Text as="p" variant="bodySm" tone="caution">
             {s.marketsUnavailable}
+          </Text>
+        )}
+        {/* Read fine, nothing to offer — said, never rendered as silence. */}
+        {marketWebPresences !== null && offered.length === 0 && (
+          <Text as="p" variant="bodySm" tone="caution">
+            {s.noActiveMarkets}
           </Text>
         )}
 

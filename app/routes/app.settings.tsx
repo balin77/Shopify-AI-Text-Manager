@@ -87,7 +87,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Which market web presences show each language — same parallel, `null`
     // on failure ("could not load", never "in no market").
     const marketWebPresencesPromise = import("../services/shop-locale-publish.server").then(
-      ({ loadMarketWebPresences }) => loadMarketWebPresences(admin),
+      ({ loadMarketWebPresences }) => loadMarketWebPresences(admin, session.shop),
     );
     // Fetch shop's locales (incl. name for the glossary locale bar) and display name
     const localesResponse = await admin.graphql(
@@ -1074,7 +1074,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         add.length > 0 ? loadAvailableLocales(admin) : Promise.resolve([]),
         // Re-read, never trusted from the client: the planner validates the
         // ids against it and keeps what the tab does not show.
-        !isRemoval && markets.length > 0 ? loadMarketWebPresences(admin) : Promise.resolve([]),
+        !isRemoval && markets.length > 0 ? loadMarketWebPresences(admin, session.shop) : Promise.resolve([]),
       ]);
       const plan = isRemoval
         ? planLocaleChanges(current, [], { publish: [], add: [], remove: [removeLocale as string] })
