@@ -6,6 +6,7 @@
  * changed fields / alt-text indices, and submitting them via safeSubmit.
  */
 
+import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
@@ -52,9 +53,17 @@ interface UseEditorAutoSaveProps {
     savedLocale: string | null;
     savedMarketId: string;
     savedItemId: string | null;
+    partial: PartialSave | null;
   }>>;
   justSubmittedRef: React.MutableRefObject<boolean>;
   fetcherRef: React.MutableRefObject<any>;
+  /** Staged by a caller right before `safeSubmit` for a PARTIAL save; taken
+   *  over here and bound to the request it belongs to. */
+  partialSaveRef: React.MutableRefObject<PartialSave | null>;
+  /** The partial description of the request IN FLIGHT (null = a full save). */
+  inFlightPartialRef: React.MutableRefObject<PartialSave | null>;
+  /** Until when the next data re-read keeps unsaved edits (see the editor). */
+  preserveEditsUntilRef: React.MutableRefObject<number>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -94,6 +103,9 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     saveQueueRef,
     justSubmittedRef,
     fetcherRef,
+    partialSaveRef,
+    inFlightPartialRef,
+    preserveEditsUntilRef,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -116,6 +128,17 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       formData.append(key, String(value));
     });
 
+    // A partial save is described by the caller just before this call; the
+    // description travels WITH its request (queue entry or in-flight slot),
+    // never in one shared slot a different response could consume.
+    const partial = partialSaveRef.current;
+    partialSaveRef.current = null;
+    if (partial) {
+      // The reload that follows this save re-reads the item; the fields it did
+      // NOT carry may hold unsaved input, which that pass must keep.
+      preserveEditsUntilRef.current = Date.now() + 30_000;
+    }
+
     if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current) {
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
       saveQueueRef.current.push({
@@ -124,9 +147,11 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         savedLocale: savedLocaleRef.current,
         savedMarketId: savedMarketIdRef.current,
         savedItemId: savedItemIdRef.current,
+        partial,
       });
       return;
     }
+    inFlightPartialRef.current = partial;
 
     try {
       justSubmittedRef.current = true;

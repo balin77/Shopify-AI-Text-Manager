@@ -4,12 +4,13 @@
  * most destructive entrance doesn't belong on the entry tier"; this action is
  * directly POSTable, so hiding the button is not a gate).
  *
- * This route only PARSES + DIFFS — it never writes. The returned diff is what
- * typing the same values into the grid would produce (csv-import.server.ts);
- * after the merchant confirms the preview, the CLIENT submits that diff
- * through the normal pipeline (route action ≤ MAX_SYNC_SAVE cells, otherwise
- * the /api/ai seoBulkMeta task), where every entry is re-validated against
- * the server-built column universe. Hard limits (§8.2): 5 MB, 10.000 rows —
+ * `csvImportPreview` only PARSES + DIFFS — it never writes. The diff is what
+ * typing the same values into the grid would produce (csv-import.server.ts).
+ * After the merchant confirms, a SMALL import (≤ MAX_SYNC_SAVE cells) is
+ * submitted by the client through the grid's own save action; a larger one is
+ * posted back here as `csvImportApply`, which recomputes the diff from the
+ * file and applies it as a background Task in save-sized batches
+ * (csv-import-run.server.ts) — no size limit beyond the file caps. Hard limits (§8.2): 5 MB, 10.000 rows —
  * both enforced here (the client pre-checks the file size only for UX).
  */
 
@@ -19,7 +20,7 @@ import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { isValidLocale, isValidShopifyGID } from "../utils/validation";
-import type { BulkRowType } from "../services/bulk-editor/columns.shared";
+import { MAX_SYNC_SAVE, type BulkRowType } from "../services/bulk-editor/columns.shared";
 import {
   allowedRowTypesForPlan,
   buildServerColumnsByType,
@@ -31,11 +32,22 @@ import {
   buildCsvImportPreview,
   type CsvImportPreviewResult,
 } from "../services/bulk-editor/csv-import.server";
+import {
+  chunkImportDiff,
+  startCsvImportTask,
+  type CsvImportApplyResult,
+} from "../services/bulk-editor/csv-import-run.server";
 import type { DataResponse } from "~/types/data-response";
+import { logger } from "~/utils/logger.server";
 
 export type CsvImportActionResult =
   | CsvImportPreviewResult
   | { ok: false; error: "gated" | "invalid" | "tooLarge" };
+
+/** The answer to `csvImportApply` — a started background Task, or why not. */
+export type CsvImportApplyActionResult =
+  | CsvImportApplyResult
+  | { ok: false; error: "gated" | "invalid" | "tooLarge" | "startFailed" };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
@@ -53,7 +65,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   }
 
   const form = await request.formData();
-  if (getFormString(form, "actionType") !== "csvImportPreview") {
+  const actionType = getFormString(form, "actionType");
+  if (actionType !== "csvImportPreview" && actionType !== "csvImportApply") {
     return json<CsvImportActionResult>({ ok: false, error: "invalid" }, { status: 400 });
   }
 
@@ -96,7 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       ? await loadProductMetafieldColumnSpecs(db, shop)
       : [];
 
-  const preview = await buildCsvImportPreview(db, shop, {
+  const importArgs = {
     type,
     locale,
     marketId,
@@ -106,6 +119,43 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     // Blog rows are live-fetched (Phase 5) — the id-restricted row load needs
     // the client. Import resolution stays id-only for blogs (§8.2).
     admin,
-  });
-  return json<CsvImportActionResult>(preview);
+  };
+
+  // A confirmed LARGE import: recomputed from the file and applied as a
+  // background Task in save-sized batches (csv-import-run.server.ts). The
+  // client posts the file again, never a diff — see that module's head.
+  if (actionType === "csvImportApply") {
+    // A throw here (a DB error, a diff the universe rejects) must still answer
+    // the fetcher: an action that throws renders the route's error boundary
+    // and leaves the merchant with a dialog that closed and nothing started.
+    let started: CsvImportApplyResult;
+    try {
+      started = await startCsvImportTask(db, shop, {
+        ...importArgs,
+        admin,
+        columnsByType,
+        allowedTypes,
+      });
+    } catch (err: unknown) {
+      logger.error("[BulkCsvImport] Could not start the import", {
+        context: "BulkEditor",
+        shop,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return json<CsvImportApplyActionResult>({ ok: false, error: "startFailed" }, { status: 500 });
+    }
+    return json<CsvImportApplyActionResult>(started, {
+      status: started.ok ? 200 : started.error === "alreadyRunning" ? 409 : 400,
+    });
+  }
+
+  const preview = await buildCsvImportPreview(db, shop, importArgs);
+  if (!preview.ok) return json<CsvImportActionResult>(preview);
+  // A small import keeps the grid's own save (immediate, per-cell feedback);
+  // anything larger runs in the background, so the client neither needs nor
+  // gets the diff — for a large file it would outweigh the file itself.
+  const { variantProductIdByRowId, ...rest } = preview;
+  if (preview.diff.length <= MAX_SYNC_SAVE) return json<CsvImportActionResult>(rest);
+  const batches = chunkImportDiff(preview.diff, columnsByType[type], { variantProductIdByRowId }).length;
+  return json<CsvImportActionResult>({ ...rest, diff: [], applyInBackground: true, batches });
 };

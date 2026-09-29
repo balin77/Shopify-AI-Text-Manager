@@ -44,6 +44,7 @@
  * `attributesSyncedAt` everywhere else in this app.
  */
 
+import { collectionAutomation } from "~/services/content-attributes.shared";
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
@@ -365,7 +366,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         collections: rows.map((c) => ({
           id: c.id,
           title: c.title,
-          automated: c.attributesSyncedAt ? c.isSmart === true : null,
+          automated: collectionAutomation(c),
         })) satisfies CollectionOption[],
       });
     }

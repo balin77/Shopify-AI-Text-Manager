@@ -19,6 +19,9 @@ export interface ShopLocale {
   locale: string;
   primary: boolean;
   name?: string;
+  /** `false` for a language the merchant is preparing before launch — it is
+   *  translated like any other and only MARKED in the language bar. */
+  published?: boolean;
 }
 
 export interface Translation {
@@ -680,6 +683,12 @@ export interface UseContentEditorReturn {
      * and would otherwise never re-read.
      */
     backgroundRefreshVersion: number;
+    /**
+     * Report unsaved work this hook cannot see (sub-resource and image-manager
+     * edits). While it is true a finished background re-translation does NOT
+     * reload the page; the reload waits until it is false again.
+     */
+    setExternalUnsavedChanges: (hasChanges: boolean) => void;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */

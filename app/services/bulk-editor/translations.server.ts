@@ -339,9 +339,11 @@ export async function findInvalidLocaleOrMarket(
   if (locales.size > 0) {
     const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
     for (const locale of locales) {
-      const match = shopLocales.find((l) => l.locale === locale && l.published && !l.primary);
+      // Published or not: an unpublished locale is a language being prepared,
+      // and writing its translations is exactly what preparing means.
+      const match = shopLocales.find((l) => l.locale === locale && !l.primary);
       if (!match) {
-        return `Locale "${locale}" is not a published foreign locale of this shop.`;
+        return `Locale "${locale}" is not a foreign locale of this shop.`;
       }
     }
   }

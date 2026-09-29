@@ -19,6 +19,7 @@ vi.mock("~/db.server", () => ({ db: { aISettings, productVariant } }));
 vi.mock("../../app/db.server", () => ({ db: { aISettings, productVariant } }));
 
 const { action } = await import("~/routes/api.product-commerce");
+const { resetInventoryInputShapeProbe } = await import("~/services/commerce-write.server");
 
 const PRODUCT = "gid://shopify/Product/1";
 const VARIANT = "gid://shopify/ProductVariant/9";
@@ -167,6 +168,7 @@ describe("inventoryActivate speaks the pinned version's quantity type", () => {
   };
 
   const runActivate = async (version: string) => {
+    resetInventoryInputShapeProbe();
     const previous = process.env.SHOPIFY_API_VERSION;
     process.env.SHOPIFY_API_VERSION = version;
     try {
@@ -182,10 +184,14 @@ describe("inventoryActivate speaks the pinned version's quantity type", () => {
       }));
       authenticate.admin.mockResolvedValue({ admin: { graphql }, session: { shop: "s" } });
       const response = await action({ request: activate(), params: {}, context: {} } as never);
+      // NOT `calls[0]`: the `@idempotent` lookup goes first now, and an index
+      // would pin the introspection instead of the mutation.
+      const call = graphql.mock.calls.find(([query]) => String(query).includes("inventoryActivate"));
+      if (!call) throw new Error("the activate mutation was never sent");
       return {
         body: (response as unknown as { data: Record<string, unknown> }).data,
-        document: graphql.mock.calls[0][0] as string,
-        onHand: (graphql.mock.calls[0][1] as { variables: { onHand: unknown } }).variables.onHand,
+        document: call[0] as string,
+        onHand: (call[1] as { variables: { onHand: unknown } }).variables.onHand,
       };
     } finally {
       // Set back rather than deleted — see the same rule in the hydration tests.

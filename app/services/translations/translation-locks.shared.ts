@@ -22,6 +22,30 @@ export function altTextLockId(productId: string): string {
   return `${productId}#altText`;
 }
 
+/**
+ * ONE product medium's alt, for a repair started by a PER-IMAGE save (the
+ * image manager, the SKU generator, a template apply, the SEO fix). Those saves
+ * come one image at a time — the image manager saves on every blur — and with
+ * the product-wide key each save's claim ABORTED the previous image's run
+ * mid-locale (its entries landing in neither list). A key per medium lets
+ * image 2's save leave image 1's run alone, while a second save of the SAME
+ * image still supersedes the run translating its older text.
+ */
+export function mediaAltLockId(productId: string, mediaId: string): string {
+  return `${altTextLockId(productId)}:${mediaId}`;
+}
+
+/**
+ * The key the PRODUCT SYNC's shield asks for beside `altTextLockId` — marked by
+ * every alt repair, watched by no repair. A per-medium repair must still keep
+ * the `products/update` sync from rewriting the alt-translation cache from a
+ * read-back that has not caught up, without claiming the product-wide lock a
+ * product-editor run is watching.
+ */
+export function altTextSyncShieldId(productId: string): string {
+  return `${productId}#altTextShield`;
+}
+
 /** A product's options, option values and metafields. */
 export function subResourceLockId(productId: string): string {
   return `${productId}#subResources`;

@@ -2,13 +2,17 @@
  * Bulk editor — CSV import preview dialog (docs/plans/PLAN_BULK_EDITOR.md
  * §8.2 step 3): "X rows, Y cells change" plus the first 50 changes in clear
  * text (old → new), the reported unknown/ignored columns, the row-resolution
- * errors — and only the confirm button hands the diff to the normal save
- * pipeline. Nothing is written while this dialog is open.
+ * errors — and only the confirm button starts the write (the grid's own save
+ * for a small import, a background Task in batches for a large one). Nothing
+ * is written while this dialog is open.
  */
 
 import { Modal, BlockStack, Text, Banner } from "@shopify/polaris";
-import type { CsvImportPreview } from "../../services/bulk-editor/csv-import.server";
-import type { CsvRowError } from "../../services/bulk-editor/csv.shared";
+import type {
+  CsvImportDamagedCell,
+  CsvImportPreview,
+} from "../../services/bulk-editor/csv-import.server";
+import type { CsvFileEncoding, CsvRowError } from "../../services/bulk-editor/csv.shared";
 
 /** Cell values in the preview list are clipped — a 5.000-character body diff
  * must not blow up the dialog. */
@@ -32,12 +36,19 @@ export interface CsvImportModalStrings {
   rowErrorUnknownId: string; // {line} {value}
   rowErrorUnknownHandle: string; // {line} {value}
   rowErrorAmbiguousHandle: string; // {line} {value}
+  rowErrorDuplicateRow: string; // {line} {value}
+  target: string; // {target}
+  encodingNotice: string;
+  damagedTitle: string; // {count}
+  damagedHint: string;
+  damagedScientificNotation: string;
+  damagedLeadingZerosLost: string;
+  damagedCellLimitTruncated: string;
   moreRowErrors: string; // {count}
   changesHeading: string; // {count}
   moreChanges: string; // {count}
   emptyValue: string;
-  overBudget: string; // {calls} {max}
-  overCellLimit: string; // {cells} {max}
+  background: string; // {batches}
   apply: string;
   cancel: string;
 }
@@ -47,15 +58,11 @@ interface CsvImportModalProps {
   preview: CsvImportPreview | null;
   /** Localized column heading (same resolver the grid uses). */
   columnLabel: (columnId: string) => string;
-  /** True when the diff would blow the Shopify-call budget (Plan §10.1) —
-   * the confirm button is disabled and the reason shown. */
-  overBudget: boolean;
-  maxCalls: number;
-  /** True when the diff exceeds the per-save cell cap of the task path
-   * (MAX_BULK_TASK_ITEMS, Finding 2) — same disable+reason treatment as the
-   * call budget, BEFORE the server would 400 the confirmed import. */
-  overCellLimit: boolean;
-  maxCells: number;
+  /** The language/market layer the import writes into — the file itself
+   * cannot be trusted to say, so the dialog does. */
+  targetLabel: string;
+  /** How the file was decoded; anything but UTF-8 is named. */
+  encoding: CsvFileEncoding;
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -70,18 +77,26 @@ function rowErrorText(error: CsvRowError, s: CsvImportModalStrings): string {
         ? s.rowErrorUnknownId
         : error.kind === "unknownHandle"
           ? s.rowErrorUnknownHandle
-          : s.rowErrorAmbiguousHandle;
+          : error.kind === "ambiguousHandle"
+            ? s.rowErrorAmbiguousHandle
+            : s.rowErrorDuplicateRow;
   return template.replace("{line}", String(error.line)).replace("{value}", error.value);
+}
+
+function damageText(cell: CsvImportDamagedCell, s: CsvImportModalStrings): string {
+  return cell.kind === "scientificNotation"
+    ? s.damagedScientificNotation
+    : cell.kind === "leadingZerosLost"
+      ? s.damagedLeadingZerosLost
+      : s.damagedCellLimitTruncated;
 }
 
 export function CsvImportModal({
   open,
   preview,
   columnLabel,
-  overBudget,
-  maxCalls,
-  overCellLimit,
-  maxCells,
+  targetLabel,
+  encoding,
   busy,
   onConfirm,
   onCancel,
@@ -92,6 +107,8 @@ export function CsvImportModal({
   const shownErrors = preview.rowErrors.slice(0, ROW_ERRORS_SHOWN);
   const hiddenErrorCount = preview.rowErrors.length - shownErrors.length;
   const hiddenChangeCount = preview.cellsChanged - preview.changes.length;
+  const shownDamaged = preview.damagedCells.slice(0, ROW_ERRORS_SHOWN);
+  const hiddenDamagedCount = preview.damagedCells.length - shownDamaged.length;
 
   const display = (value: string): string => (value === "" ? s.emptyValue : clip(value));
 
@@ -103,13 +120,17 @@ export function CsvImportModal({
       primaryAction={{
         content: s.apply,
         onAction: onConfirm,
-        disabled: !hasChanges || overBudget || overCellLimit || busy,
+        disabled: !hasChanges || busy,
         loading: busy,
       }}
       secondaryActions={[{ content: s.cancel, onAction: onCancel, disabled: busy }]}
     >
       <Modal.Section>
         <BlockStack gap="300">
+          <Text as="p" variant="bodyMd">
+            {s.target.replace("{target}", targetLabel)}
+          </Text>
+          {encoding !== "utf8" && <Banner tone="warning">{s.encodingNotice}</Banner>}
           {hasChanges ? (
             <Text as="p" variant="bodyMd" fontWeight="semibold">
               {s.summary
@@ -127,19 +148,8 @@ export function CsvImportModal({
             </Text>
           )}
 
-          {overBudget && (
-            <Banner tone="critical">
-              {s.overBudget
-                .replace("{calls}", String(preview.estimatedCalls))
-                .replace("{max}", String(maxCalls))}
-            </Banner>
-          )}
-          {overCellLimit && (
-            <Banner tone="critical">
-              {s.overCellLimit
-                .replace("{cells}", String(preview.cellsChanged))
-                .replace("{max}", String(maxCells))}
-            </Banner>
+          {hasChanges && preview.applyInBackground && (
+            <Banner tone="info">{s.background.replace("{batches}", String(preview.batches ?? 1))}</Banner>
           )}
 
           {preview.unknownColumns.length > 0 && (
@@ -163,6 +173,30 @@ export function CsvImportModal({
                 {hiddenErrorCount > 0 && (
                   <Text as="p" variant="bodySm" tone="subdued">
                     {s.moreRowErrors.replace("{count}", String(hiddenErrorCount))}
+                  </Text>
+                )}
+              </BlockStack>
+            </Banner>
+          )}
+
+          {preview.damagedCells.length > 0 && (
+            <Banner
+              tone="warning"
+              title={s.damagedTitle.replace("{count}", String(preview.damagedCells.length))}
+            >
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm">
+                  {s.damagedHint}
+                </Text>
+                {shownDamaged.map((cell, i) => (
+                  <Text as="p" variant="bodySm" key={`${cell.rowId}-${cell.columnId}-${i}`}>
+                    <strong>{clip(cell.rowLabel)}</strong> · {columnLabel(cell.columnId)}:{" "}
+                    {display(cell.oldValue)} → {display(cell.newValue)} ({damageText(cell, s)})
+                  </Text>
+                ))}
+                {hiddenDamagedCount > 0 && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {s.moreRowErrors.replace("{count}", String(hiddenDamagedCount))}
                   </Text>
                 )}
               </BlockStack>

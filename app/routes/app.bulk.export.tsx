@@ -40,6 +40,8 @@ export interface BulkCsvExportPayload {
   csv?: string;
   filename?: string;
   rowCount?: number;
+  /** The file is larger than the import accepts — see csv-export.server.ts. */
+  exceedsImportLimit?: boolean;
   /** One-download guard key for the client effect. */
   generatedAt?: number;
   error?: "gated" | "tooLarge";
@@ -126,6 +128,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     csv: result.csv,
     filename: `bulk-${type}${localeSuffix}-${shopSlug}.csv`,
     rowCount: result.rowCount,
+    exceedsImportLimit: result.exceedsImportLimit,
     generatedAt: Date.now(),
   });
 };

@@ -82,7 +82,10 @@ export function HexColorInput({
   const invalid = hexIsInvalid(value);
   const current = (value ?? "").trim().toLowerCase();
   const control = (
-    <InlineStack gap="200" blockAlign="center" wrap={false}>
+    // `start`, not `center`: the field's label is hidden, so its box is the
+    // top of its column, while a help text or an error grows the column
+    // downwards — centring would drop the swatch below the box it matches.
+    <InlineStack gap="200" blockAlign="start" wrap={false}>
       <input
         type="color"
         aria-label={label}
@@ -91,7 +94,9 @@ export function HexColorInput({
         onChange={(e) => onChange(e.target.value)}
         style={{
           width: "40px",
-          height: "34px",
+          // As tall as the hex TextField beside it (responsive.css token).
+          height: "var(--app-control-height)",
+          boxSizing: "border-box",
           padding: 0,
           border: "1px solid var(--p-color-border)",
           // The swatch corner, from responsive.css. This control and the

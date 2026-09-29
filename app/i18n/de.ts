@@ -75,6 +75,7 @@ export const de = {
     metaDescription: "Meta-Beschreibung",
     primaryLanguage: "Hauptsprache",
     primaryLanguageSuffix: "Hauptsprache",
+    unpublishedLanguageSuffix: "nicht veröffentlicht",
     characters: "Zeichen",
     recommended: "empfohlen",
     preview: "Vorschau",
@@ -314,9 +315,11 @@ export const de = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Hauptsprache",
+    unpublishedLanguageSuffix: "nicht veröffentlicht",
     // Eine Uebersetzung, die die App selbst angestossen hat (heute: der aus der
     // Kategorie abgeleitete Produkttyp). Warnung statt Fehler — das Speichern
     // hat geklappt, nur der Zusatzschritt nicht.
+    backgroundRetranslationRunning: "Übersetzungen werden im Hintergrund aktualisiert — die Felder laden sich neu, sobald sie fertig sind.",
     autoTranslateFailed: "{field} konnte nicht automatisch übersetzt werden. Hol es mit dem Übersetzen-Button am Feld nach.",
     noSourceText: "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
     saveChanges: "Speichern",
@@ -662,6 +665,7 @@ export const de = {
       chooseThis: "diese Kategorie wählen",
       noChildren: "Diese Kategorie hat keine Unterkategorien.",
       levelTruncated: "Diese Ebene hat mehr Unterkategorien, als geladen wurden — nutze die Suche oben.",
+      remove: "Kategorie entfernen",
     },
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {
@@ -675,6 +679,7 @@ export const de = {
       truncated: "Dieses Produkt ist in mehr Kollektionen, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kollektionen zu sehen.",
       none: "Dieser Shop hat noch keine Kollektionen.",
+      noneSelected: "Keine",
     },
     // Das Theme-Vorlagen-Feld. Eine Auswahlliste der Vorlagendateien des
     // veroeffentlichten Themes — ein selbst getippter Suffix rendert die
@@ -793,7 +798,10 @@ export const de = {
       activateNotConfirmed: "Shopify hat den Standort nicht bestätigt, er wurde deshalb nicht aktiviert.",
       activateFailed: "Der Standort konnte nicht aktiviert werden.",
       stockNoBaseline: "Für einen Lagerort gab es keine aktuelle Vergleichsmenge, deshalb wurde er nicht geschrieben. Lade neu und versuch es nochmal.",
-      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
+      // Die Shopify-Version, mit der die App spricht, kennt kein Feld für den
+      // Abgleich. Ohne den wird nicht geschrieben — siehe commerce-write.server.ts.
+      stockCompareUnsupported: "Der Bestand wurde nicht geschrieben: die Shopify-API-Version dieser App bietet keinen Abgleich mit der Menge, die du gesehen hast — und ohne den würde ein Schreibvorgang überschreiben, was sich zwischenzeitlich geändert hat. Die Einzelheiten stehen im Server-Log.",
+      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht, ein Ländercode oder eine Zolltarifnummer (6 bis 13 Ziffern) war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
       itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
       itemFieldsFailed: "Die Artikelangaben konnten nicht gespeichert werden.",
       stockChangedMeanwhile: "Der Bestand hat sich während deiner Bearbeitung geändert, deshalb wurde nichts geschrieben. Lade neu, um die aktuelle Zahl zu sehen.",
@@ -1126,6 +1134,16 @@ export const de = {
     translationPurgeSupersededNote: "Nicht nötig, solange automatisch neu übersetzt wird.",
     autoTranslateHandles: "Auch URL-Handles übersetzen",
     autoTranslateHandlesRequiresParent: "Nur möglich, wenn automatisch neu übersetzt wird.",
+    autoTranslateDailyLimit: "Höchstens so viele Einträge pro Tag erstmals übersetzen",
+    autoTranslateDailyLimitPlaceholder: "Keine Grenze",
+    autoTranslateDailyLimitInvalid: "Eine ganze Zahl ab 1 — oder leer für keine Grenze.",
+    autoTranslateRetrySummary: "Wiederholungsliste: {pending} wartend, {exhausted} endgültig fehlgeschlagen.",
+    autoTranslateRetryErrors: {
+      not_delivered: "Die KI-Übersetzung kam nicht zustande.",
+      could_not_start: "Der Übersetzungslauf konnte nicht starten.",
+      unreadable: "Der Eintrag konnte bei Shopify nicht gelesen werden.",
+      run_failed: "Der Übersetzungslauf ist fehlgeschlagen.",
+    },
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
     translationsProductType: "Produkttyp",
     translationsSearchLabel: "Suchen",
@@ -1201,6 +1219,46 @@ export const de = {
     plan: "Plan",
     feedback: "Feedback",
     otherSettings: "Weiteres",
+    shopLanguages: {
+      title: "Shop-Sprachen",
+      primaryBadge: "Hauptsprache",
+      publishedLabel: "Im Onlineshop veröffentlicht",
+      switchTooltip:
+        "Ein: Die Sprache ist im Onlineshop sichtbar. Aus: Sie wird vorbereitet und ist im Onlineshop nicht sichtbar – die App übersetzt sie trotzdem.",
+      switchTooltipPending: "Noch nicht gespeichert – wirksam erst mit „Speichern“.",
+      unpublishedHint: "Nicht veröffentlicht – wird vorbereitet",
+      primaryHint: "Die Hauptsprache ist immer veröffentlicht.",
+      failedTitle: "Diese Änderungen hat Shopify nicht übernommen",
+      errorPrimaryLocale: "Die Hauptsprache kann nicht unveröffentlicht werden.",
+      errorUnknownLocale: "Diese Sprache gibt es im Shop nicht mehr – lade die Seite neu.",
+      errorNotConfirmed: "Shopify hat die Änderung nicht bestätigt.",
+      scopeHint:
+        "Falls Shopify „Access denied“ meldet: Die App braucht dafür eine neue Berechtigung. Öffne die App einmal neu und bestätige die Berechtigungsanfrage.",
+      noForeign: "Dein Shop hat bisher nur die Hauptsprache.",
+      addTitle: "Sprache hinzufügen",
+      addPlaceholder: "Sprache wählen …",
+      addButton: "Hinzufügen",
+      addUnavailable: "Die verfügbaren Sprachen konnten nicht geladen werden. Lade die Seite neu, um Sprachen hinzuzufügen.",
+      newBadge: "Neu – wird beim Speichern angelegt",
+      undoAdd: "Nicht hinzufügen",
+      removeButton: "Entfernen",
+      removeBlockedByDraft: "Speichere oder verwirf zuerst deine offenen Änderungen.",
+      removedMessage: "Die Sprache „{name}“ wurde entfernt.",
+      errorAlreadyEnabled: "Diese Sprache ist im Shop bereits vorhanden.",
+      errorNotAvailable: "Shopify bietet diese Sprache nicht an.",
+      errorAvailableLookupFailed: "Die verfügbaren Sprachen konnten nicht gelesen werden – versuche es erneut.",
+      errorInvalidChanges: "Die Änderungen konnten nicht gelesen werden – lade die Seite neu.",
+      errorLocalesUnreadable: "Die Sprachen des Shops konnten gerade nicht gelesen werden – versuche es erneut.",
+      removeModal: {
+        step1Title: "Sprache „{name}“ entfernen?",
+        step2Title: "Entfernen bestätigen",
+        intro: "Das entfernt die Sprache aus deinem Shopify-Shop, nicht nur aus dieser App.",
+        consequenceShopLocale:
+          "Laut Shopify werden dabei alle Übersetzungen in diese Sprache aus deinem Shop gelöscht; die App entfernt ihre lokale Kopie ebenfalls.",
+        confirm: "Sprache endgültig entfernen",
+        deleting: "Wird entfernt …",
+      },
+    },
     // Feedback Tab
     feedbackTitle: "Feedback senden",
     feedbackDescription: "Wir freuen uns über Ihr Feedback! Klicken Sie auf den Button unten, um uns eine E-Mail mit Ihren Anregungen, Wünschen oder Fehlermeldungen zu senden.",
@@ -1237,7 +1295,7 @@ export const de = {
     seoFeatureScoreHistory: "Score-Verlauf: {days} Tage",
     seoFeatureSearchConsole: "Search Console: {properties} × Property, {days} Tage",
     seoFeatureIndexNow: "IndexNow: {count} URLs / Monat",
-    seoFeatureScheduledAudit: "Automatischer Nacht-Audit",
+    seoFeatureScheduledAudit: "Automatischer Tages-Audit",
     seoFeatureScheduledCrawl: "Automatischer Wochen-Crawl",
     seoFeatureProNote: "Search Console, Score-Verlauf und IndexNow ab {plan}.",
     aiInstructionsEditable: "KI-Anweisungen bearbeitbar",
@@ -1415,7 +1473,7 @@ export const de = {
     autoHandleRedirectHint: "Ändert sich der Handle eines Eintrags in der Hauptsprache — im Editor wie im Bulk-Editor —, wird die alte URL automatisch auf die neue weitergeleitet. Ohne diese Option laufen bestehende Links auf die alte Adresse ins Leere.",
     seoTitleSuffix: "SEO-Titel Shop-Suffix",
     seoAutoAuditHeading: "Automatische Läufe",
-    seoAutoAuditLabel: "Nächtlicher SEO-Audit",
+    seoAutoAuditLabel: "Täglicher SEO-Audit",
     seoAutoAuditDescription: "Einmal täglich wird dein Shop automatisch gescannt und der SEO-Score als Verlaufspunkt gespeichert — so entsteht ein echter Trend, auch ohne dass du die Übersicht öffnest. Es werden nur Daten gelesen, keine Inhalte verändert.",
     seoAutoCrawlLabel: "Wöchentlicher Website-Crawl",
     seoAutoCrawlDescription: "Einmal pro Woche wird deine Storefront automatisch gecrawlt: kaputte Links, Serverfehler, Weiterleitungsketten, verwaiste Seiten und Head-Abweichungen. Genau die Probleme, die entstehen, ohne dass jemand den Shop anfasst. Wöchentlich statt täglich, weil dabei jede Seite deines Shops abgerufen wird. Es wird nur gelesen, keine Inhalte verändert.",
@@ -2046,8 +2104,12 @@ export const de = {
       slugEmpty: "Der übersetzte URL-Slug für {language} war leer und wurde nicht gespeichert.",
       invalidApiKey: "(der KI-API-Schlüssel wurde abgelehnt)",
       someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
+      handleRedirectsMissing:
+        "{count} URL-Handle(s) wurden neu übersetzt, aber für die bisherige Adresse konnte keine Weiterleitung angelegt werden — lege sie unter URL-Weiterleitungen an, sonst führen alte Links ins Leere.",
       translationsNotMirrored:
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
+      autoTranslateDailyLimit:
+        "Automatische Erstübersetzungen für heute pausiert: Dein Tageslimit von {cap} Einträgen ist erreicht, {count} weitere Einträge stehen auf der Wiederholungsliste und werden in der nächtlichen Wiederholung übersetzt, sobald das Limit es zulässt.",
       translationsNoneUsable:
         "Die automatische Neuübersetzung hat keine verwendbare Übersetzung geliefert.",
     },
@@ -3292,12 +3354,12 @@ export const de = {
         invalidUrl: "Diese URL gehört nicht zu deinem Shop und kann nicht getestet werden.",
         auditFailed: "Der Test konnte nicht durchgeführt werden. Bitte erneut versuchen.",
         quotaExceeded: "Googles PageSpeed-Insights-Tageskontingent ist erschöpft. Bitte später erneut versuchen — für höhere Kontingente kann ein eigener Google PageSpeed API-Key hinterlegt werden (PAGESPEED_API_KEY).",
-        dailyLimitReached: "Du hast dein Tageslimit von {limit} Tests erreicht. Morgen stehen wieder alle Tests zur Verfügung.",
+        dailyLimitReached: "Du hast dein Tageslimit von {limit} Tests erreicht. Das Limit wird täglich um 00:00 UTC zurückgesetzt.",
       },
       budgetBadge: "Noch {remaining} von {limit} Tests heute",
-      budgetExhausted: "Tageslimit erreicht ({used}/{limit}). Morgen geht es weiter — bereits durchgeführte Tests bleiben abrufbar.",
+      budgetExhausted: "Tageslimit erreicht ({used}/{limit}). Es wird um 00:00 UTC zurückgesetzt — bereits durchgeführte Tests bleiben abrufbar.",
       staleQuotaNotice: "Zwischengespeichertes Ergebnis — ein frischer Test war nicht möglich, weil Googles PageSpeed-Insights-Tageskontingent erschöpft ist.",
-      staleDailyLimitNotice: "Zwischengespeichertes Ergebnis — dein Tageslimit von {limit} Tests ist erreicht. Morgen ist wieder ein frischer Test möglich.",
+      staleDailyLimitNotice: "Zwischengespeichertes Ergebnis — dein Tageslimit von {limit} Tests ist erreicht. Ab 00:00 UTC ist wieder ein frischer Test möglich.",
       tabs: {
         performance: "Ladezeit",
         accessibility: "Barrierefreiheit",
@@ -4102,9 +4164,9 @@ export const de = {
       requiresShipping: "Versand nötig",
       countryCodeOfOrigin: "Herkunftsland (ISO)",
       harmonizedSystemCode: "Zolltarifnummer",
-      // Nur-Lese-Kontext: per Auswahldialog im Einzeleditor gesetzt.
-      productCategory: "Produktkategorie",
-      productCollections: "Kollektionen",
+      // Auswahl-Zellen: derselbe Picker wie im Einzeleditor.
+      category: "Produktkategorie",
+      collections: "Kollektionen",
     },
     chooseColumns: "Spalten wählen",
     columnPicker: {
@@ -4137,11 +4199,7 @@ export const de = {
       // Resync, keine Einschränkung.
       multipleVariants: "Dieses Produkt hat mehrere Varianten, die unterschiedliche Preise haben können — bearbeite sie unter \"Produktvarianten\".",
       variantsNotSynced: "Die Varianten dieses Produkts sind noch nicht im Cache — lade die Produkte neu und bearbeite das dann.",
-      // Kategorie und Kollektionen: mit Auswahldialog gesetzt, hier nur zum
-      // Überblick. Ein Name ist kein schreibbarer Wert, und eine Zugehörigkeit
-      // ist ein Join/Leave-Diff — beides gehört in den Einzeleditor.
-      needsPicker: "Dieses Feld wird über einen Auswahldialog gesetzt — öffne das Produkt im Einzeleditor, um es zu ändern.",
-      collectionsTruncated: "Dieses Produkt ist in mehr Kollektionen, als der Sync geladen hat — die Liste hier ist unvollständig.",
+      priceNotSynced: "Der Preis dieser Variante ist noch nicht im Cache — öffne das Produkt einmal im Produkt-Editor, dann erscheint er hier.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",
@@ -4151,6 +4209,14 @@ export const de = {
       wrongMetaobjectType: "Diese Spalte gehört zu einem anderen Metaobjekt-Typ.",
       listSeparatorInValue: "Ein Listenwert enthält das Trennzeichen \"|\" — bitte im Einzeleditor bearbeiten.",
       altTextInImages: "Der Alt-Text aller Produktbilder — inklusive Übersetzungen — wird unter \"Bilder\" bearbeitet.",
+    },
+    // Was eine LEERE Nur-Lese-Zelle anstelle ihres Werts zeigt. Ohne Text
+    // gibt es nichts, worüber man hovern kann — die Erklärung im Tooltip war
+    // da und unerreichbar.
+    readOnlyPlaceholders: {
+      multipleVariants: "Mehrere Varianten",
+      variantsNotSynced: "Nicht geladen",
+      priceNotSynced: "Preis nicht geladen",
     },
     metaobjectTypeLabel: "Metaobjekt-Typ",
     searchLabel: "Suche",
@@ -4166,7 +4232,30 @@ export const de = {
       missingPrice: "Ohne Preis",
       compareAtNotAbovePrice: "Vergleichspreis ≤ Preis",
       missingAltText: "Alt-Text fehlt",
+      statusActive: "Aktiv",
+      statusDraft: "Entwurf",
+      statusUnlisted: "Nicht gelistet",
+      statusArchived: "Archiviert",
+      published: "Sichtbar",
+      hidden: "Ausgeblendet",
+      smartCollection: "Automatisiert (Regeln)",
+      manualCollection: "Manuell",
+      missingDescription: "Beschreibung / Inhalt fehlt",
+      missingImage: "Ohne Bild",
+      missingVendor: "Ohne Hersteller",
+      missingProductType: "Ohne Produkttyp",
+      missingCategory: "Ohne Kategorie",
+      missingTags: "Ohne Tags",
+      missingSummary: "Auszug fehlt",
     },
+    filterSections: {
+      status: "Status",
+      visibility: "Sichtbarkeit",
+      collectionKind: "Kollektionsart",
+      general: "Weitere Filter",
+    },
+    filterAttributeHint: "Filter auf Sichtbarkeit, Kollektionsart, Hersteller, Kategorie und Tags berücksichtigen nur Einträge, deren Attribute bereits synchronisiert sind.",
+    filterClearAll: "Alle Filter zurücksetzen",
     filterApproximateBanner: "Sehr großer Katalog: Der Filter \"Übersetzung fehlt\" ist angenähert und kann einzelne bereits übersetzte Einträge anzeigen.",
     moreVariantsBanner: "Einige Produkte haben mehr als 100 Varianten — die Restmenge wird hier nicht angezeigt und kann im Shopify-Admin bearbeitet werden.",
     priceActions: {
@@ -4303,16 +4392,22 @@ export const de = {
       importProTooltip: "CSV-Import ist ab dem Pro-Plan verfügbar.",
       exportTooLarge: "Der Export umfasst {total} Zeilen (Maximum {max}). Bitte den Filter enger ziehen und erneut exportieren.",
       exportFailed: "CSV-Export fehlgeschlagen. Bitte erneut versuchen.",
+      exportExceedsImport: "Die exportierte Datei ist größer als {max} MB und kann deshalb nicht in einem Stück wieder importiert werden. Für den Re-Import den Filter enger ziehen und in mehreren Dateien exportieren.",
       fileTooLarge: "Die Datei ist größer als {max} MB.",
       tooManyRows: "Die Datei hat mehr als {max} Datenzeilen.",
       emptyFile: "Die Datei enthält keine Datenzeilen.",
       noIdColumn: "Der Datei fehlt die Spalte \"id\" (oder \"field.handle\" als Ersatz) — bitte einen CSV-Export als Vorlage verwenden.",
       importFailed: "CSV-Import fehlgeschlagen. Bitte erneut versuchen.",
+      unsavedEdits: "Es gibt ungespeicherte Änderungen im Raster. Bitte zuerst speichern oder verwerfen, dann die Datei importieren.",
+      badEncoding: "Die Datei ist nicht als UTF-8 gespeichert — Umlaute und Sonderzeichen würden beschädigt. Bitte in Excel als „CSV UTF-8 (durch Trennzeichen getrennt)“ speichern und erneut importieren.",
+      scopeMismatch: "Die Datei wurde für „{file}“ exportiert, das Raster zeigt aber „{view}“. Bitte im Raster dieselbe Sprache und denselben Markt wählen wie beim Export — sonst würden die Texte in die falsche Sprache geschrieben.",
+      importStarted: "CSV-Import gestartet: {rows} Zeilen, {cells} Zellen werden im Hintergrund gespeichert — Fortschritt im Tab „Aufgaben“. Das Raster lädt neu, sobald der Import fertig ist.",
+      alreadyRunning: "Es läuft bereits ein Massen-Speichern für diesen Shop. Bitte warten, bis es im Tab „Aufgaben“ abgeschlossen ist, und dann erneut importieren.",
       preview: {
         title: "CSV-Import — Vorschau",
         summary: "{rows} Zeilen, {cells} Zellen ändern sich.",
         noChanges: "Keine Änderungen — die Datei entspricht dem aktuellen Stand.",
-        clearHint: "Hinweis: Leere Zellen in der Datei löschen den bestehenden Wert.",
+        clearHint: "Hinweis: Leere Zellen in der Datei löschen den bestehenden Wert. Spalten, die in der Datei fehlen, bleiben unverändert.",
         unknownColumns: "Unbekannte Spalten (werden ignoriert):",
         ignoredColumns: "Hier nicht bearbeitbare Spalten (werden ignoriert):",
         rowErrorsTitle: "{count} Zeile(n) konnten nicht zugeordnet werden:",
@@ -4320,6 +4415,15 @@ export const de = {
         rowErrorUnknownId: "Zeile {line}: unbekannte ID \"{value}\".",
         rowErrorUnknownHandle: "Zeile {line}: unbekanntes Handle \"{value}\".",
         rowErrorAmbiguousHandle: "Zeile {line}: mehrdeutiges Handle \"{value}\" — bitte über die ID zuordnen.",
+        rowErrorDuplicateRow: "Zeile {line}: \"{value}\" steht mehrfach in der Datei — nur das erste Vorkommen wird übernommen.",
+        target: "Ziel: {target}",
+        encodingNotice: "Die Datei war nicht als UTF-8 gespeichert und wurde als Windows-Zeichensatz (ANSI) gelesen. Bitte die Umlaute in den Änderungen unten prüfen.",
+        damagedTitle: "{count} Zelle(n) wurden von der Tabellenkalkulation verändert und werden NICHT gespeichert:",
+        damagedHint: "Excel & Co. behandeln solche Werte als Zahlen. Die Spalte in der Tabellenkalkulation als „Text“ formatieren und die Werte neu eintragen — oder diese Zellen im Raster bearbeiten.",
+        damagedScientificNotation: "in wissenschaftliche Schreibweise umgewandelt",
+        damagedLeadingZerosLost: "führende Nullen entfernt",
+        damagedCellLimitTruncated: "bei 32.767 Zeichen abgeschnitten",
+        background: "Der Import wird im Hintergrund in {batches} Paket(en) gespeichert. Du kannst die Seite verlassen; der Fortschritt steht im Tab „Aufgaben“. Bricht der Import ab (z. B. durch ein App-Update), dieselbe Datei einfach erneut importieren — bereits gespeicherte Zeilen werden übersprungen.",
         moreRowErrors: "… und {count} weitere.",
         changesHeading: "Die ersten {count} Änderungen:",
         moreChanges: "… und {count} weitere Änderungen.",
@@ -4407,7 +4511,43 @@ export const de = {
         "Ersetzt die Löschoption darüber, solange die Neuübersetzung greift",
       ],
       details:
-        "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles kommen nur mit, wenn du das darunter ausdrücklich einschaltest.",
+        "Bei Produkten und Kollektionen passiert das automatisch beim nächsten Sync. Bei allem anderen — Seiten, Blogs, Artikeln, Richtlinien, Optionen, Metafeldern, Metaobjekten, Theme-Texten, Alt-Texten und Menü-Titeln — sofort beim Speichern, im Editor wie im Bulk-Editor; wurde der Text ausserhalb geändert, beim nächsten Reload des Eintrags. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; was darüber liegt, wird wie bisher gelöscht. Marktspezifische Übersetzungen werden nie automatisch übersetzt — sie werden gelöscht, sobald sich der Text in der Hauptsprache ändert. URL-Handles werden ohne die Option darunter weiterhin gelöscht, sobald sich der Handle in der Hauptsprache ändert — die fremdsprachige Adresse fällt dann ohne Weiterleitung auf den Handle der Hauptsprache zurück. Mit der Option darunter werden sie stattdessen neu übersetzt.",
+    },
+    autoTranslateDailyLimit: {
+      title: "Tageslimit für Erstübersetzungen",
+      summary:
+        "Optional. Begrenzt, wie viele Einträge pro Tag zum ERSTEN Mal automatisch übersetzt werden — Einträge, die noch keine Übersetzung haben und deren Text ausserhalb der App geändert wurde. Leer lassen heisst: keine Grenze.",
+      tips: [
+        "Schützt deinen KI-Schlüssel, wenn ein Import oder eine andere App viele Texte auf einmal umschreibt",
+        "Was über dem Limit liegt, geht nicht verloren: es kommt auf die Wiederholungsliste und wird nachts nachgeholt",
+        "Fehlgeschlagene automatische Übersetzungen kommen ebenfalls auf die Liste — höchstens zwei weitere Versuche",
+      ],
+      details:
+        "Das Limit zählt Einträge (ein Produkt, eine Seite …), nicht Sprachen oder Felder, und setzt sich täglich um Mitternacht UTC zurück. Das Auffrischen bestehender Übersetzungen und Änderungen, die du in der App speicherst, zählt nicht mit. Die Wiederholungsliste wird im nächtlichen Abgleich abgearbeitet: Ein Eintrag bekommt höchstens zwei weitere Versuche; wird er nur wegen des Limits verschoben, zählt das nicht als Versuch. Was nach zwei Versuchen noch fehlt, bleibt als „endgültig fehlgeschlagen“ hier sichtbar, bis sich der Text erneut ändert. Die Liste gilt für Produkte, Kollektionen, Seiten, Artikel, Blogs und Richtlinien; Metafelder, Optionen, Alt-Texte, Theme-Inhalte und Menüs behalten ihr bisheriges Verhalten.",
+    },
+    shopLanguages: {
+      title: "Shop-Sprachen",
+      summary:
+        "Hier fügst du Sprachen hinzu, veröffentlichst sie im Onlineshop oder nimmst sie wieder heraus. Eine unveröffentlichte Sprache bereitest du in Ruhe vor: Die App behandelt sie genau wie eine aktive – sie erscheint nur noch nicht im Onlineshop.",
+      tips: [
+        "Unveröffentlichte Sprachen werden synchronisiert, bearbeitet und automatisch übersetzt wie aktive",
+        "Mit dem Schalter „Im Onlineshop veröffentlicht“ gehst du live – wirksam erst mit „Speichern“",
+        "Die Hauptsprache ist immer veröffentlicht und kann nicht entfernt werden",
+        "„Entfernen“ ist endgültig und verlangt eine Bestätigung mit dem Namen der Sprache",
+      ],
+      details:
+        "Ob eine veröffentlichte Sprache in einem bestimmten Markt angezeigt wird, legst du in Shopify unter Einstellungen → Märkte fest. Beim Entfernen löscht Shopify laut eigener Dokumentation alle Übersetzungen in diese Sprache aus deinem Shop; die App entfernt danach auch ihre lokale Kopie. Deine eigenen Daten zu dieser Sprache – Glossar, direkte Übersetzungen, Alt-Text-Vorlagen – bleiben erhalten. Solange du ungespeicherte Änderungen hast, ist „Entfernen“ gesperrt.",
+    },
+    shopLanguagesAdd: {
+      title: "Sprache hinzufügen",
+      summary:
+        "Eine neue Sprache wird zunächst unveröffentlicht angelegt, damit du sie in Ruhe übersetzen und später veröffentlichen kannst. In Shopify angelegt wird sie erst mit „Speichern“.",
+      tips: [
+        "Fehlende Übersetzungen füllst du z. B. im Bulk-Editor mit „Fehlende Übersetzungen ergänzen“",
+        "Schaltest du den Schalter vor dem Speichern ein, wird die Sprache gleich veröffentlicht",
+      ],
+      details:
+        "Ob eine direkt veröffentlichte Sprache in deinen Märkten erscheint, prüfst du danach in Shopify unter Einstellungen → Märkte. Angeboten werden nur Sprachen, die Shopify für deinen Shop zulässt.",
     },
     autoTranslateHandles: {
       title: "URL-Handles mitübersetzen",
@@ -4415,11 +4555,11 @@ export const de = {
         "Ein Handle ist die Adresse einer Seite, nicht ihr Text — deshalb eine eigene Entscheidung und standardmässig aus. Mit dieser Option übersetzt die KI auch den Handle neu, sobald sich der Handle in der Hauptsprache ändert, und legt für die alte fremdsprachige Adresse eine Weiterleitung auf die neue an.",
       tips: [
         "Auslöser ist der Handle selbst — eine reine Textänderung genügt nicht",
-        "Nur auffrischen, nie neu anlegen: Sprachen ohne eigenen Handle bleiben beim Handle der Hauptsprache",
-        "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — gelöscht wird er nie",
+        "Auch Sprachen ohne eigenen Handle bekommen einen übersetzten — egal ob du den Handle hier in der App oder im Shopify-Admin änderst. Alte Links funktionieren weiter",
+        "Wo keine Weiterleitung entstehen kann, bleibt der alte Handle stehen — die Neuübersetzung löscht ihn nie",
       ],
       details:
-        "Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Eine Sprache, die bisher keinen eigenen Handle hatte, wird weiter unter dem Handle der Hauptsprache ausgeliefert — diese Adresse bleibt gültig, und ihr ungefragt eine eigene URL zu geben wäre eine Änderung, die niemand verlangt hat. Unverändert bleibt der Handle ausserdem, wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn die Einstellung „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht.",
+        "Der übersetzte Wert wird zu einem gültigen Slug normalisiert; was sich nicht normalisieren lässt, wird verworfen statt geschrieben. Eine Sprache, die bisher keinen eigenen Handle hatte, bekommt einen übersetzten; ihre bisherige Adresse (der Handle der Hauptsprache unter dem Sprachkürzel) wird von der Weiterleitung der Hauptsprache abgedeckt, und Shopify leitet sie auf die übersetzte Adresse. Bei Entwürfen, die nie öffentlich waren, braucht es keine Weiterleitung. Unverändert bleibt der Handle ausserdem, wenn die alte Adresse noch zu einer anderen Sprache oder einem anderen Eintrag gehört, bei marktspezifischen Übersetzungen, bei Blogs (deren Artikel-URLs liessen sich nicht mitnehmen), bei Artikeln unter einem Blog mit eigenem übersetzten Handle, wenn bei einem bestehenden übersetzten Handle die Einstellung „Weiterleitung bei Handle-Änderung“ ausgeschaltet ist, oder wenn die Übersetzung nicht zustande kommt. Gelöscht wird der alte übersetzte Handle in diesen Fällen nicht — eine veraltete Adresse funktioniert, eine gelöschte nicht. Das gilt auch im Bulk-Editor, wenn ein Speichern mehr Läufe bräuchte als erlaubt: die übrigen Felder fallen dann auf die Löschoption zurück, der Handle bleibt stehen.",
     },
     menuActionBar: {
       title: "Diese Aktionsleiste",

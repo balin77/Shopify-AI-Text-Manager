@@ -60,6 +60,14 @@ const DUE_AFTER_MS = parseInt(
  * few resources that really moved, a reconciliation that may start a detached
  * AI run — so this is a concurrency limit on those runs, not a batch size.
  */
+/**
+ * Past this since the last sweep, the shop's baselines are treated as the text
+ * of a time nobody was watching and the sweep only re-records them (see
+ * `baselineOnly` in the scan). Three missed days rather than one, so a restart
+ * or a slow night never costs a shop its repairs.
+ */
+const STALE_SWEEP_AFTER_MS = DUE_AFTER_MS * 3;
+
 const MAX_SHOPS_PER_TICK = Math.max(
   1,
   parseInt(process.env.TRANSLATION_DRIFT_SCAN_BATCH_SIZE || "5", 10),
@@ -79,6 +87,8 @@ export interface TranslationDriftTickStats {
    *  query, a truncated baseline or a paging ceiling. Carried out of the scan
    *  so "0 handed" is never read as "0 changed". */
   incomplete: number;
+  /** Retries from the retry list that started a run. */
+  retried: number;
 }
 
 export class TranslationDriftAutoRunService {
@@ -143,7 +153,7 @@ export class TranslationDriftAutoRunService {
 
   /** One sweep over the due shops. Public so tests can drive it directly. */
   async tick(now: Date = new Date()): Promise<TranslationDriftTickStats> {
-    const stats: TranslationDriftTickStats = { candidates: 0, handed: 0, errored: 0, incomplete: 0 };
+    const stats: TranslationDriftTickStats = { candidates: 0, handed: 0, errored: 0, incomplete: 0, retried: 0 };
 
     const shops = await this.findDueShops(now);
     stats.candidates = shops.length;
@@ -184,15 +194,45 @@ export class TranslationDriftAutoRunService {
           continue;
         }
         const foreignLocales = locales
-          .filter((l: { published: boolean; primary: boolean }) => l.published && !l.primary)
+          .filter((l: { published: boolean; primary: boolean }) => !l.primary)
           .map((l: { locale: string }) => l.locale);
 
+        // A shop whose last sweep is long past (or missing) was not being
+        // looked at — switch off, plan below Max — so its baselines describe
+        // the text as it was then. This sweep only re-records them.
+        const baselineOnly =
+          !settings.lastTranslationScanAt ||
+          now.getTime() - settings.lastTranslationScanAt.getTime() > STALE_SWEEP_AFTER_MS;
         const result = await scanTranslationDrift({
           gateway: new ShopifyApiGateway(admin as never, settings.shop),
           shop: settings.shop,
           foreignLocales,
+          baselineOnly,
         });
         stats.handed += result.handed;
+
+        // THE RETRY LIST (translation-retry.server.ts): work the merchant's
+        // daily limit refused, and runs that failed. Here and not in a tick of
+        // its own, because this is already the one place that runs per shop,
+        // entitled and consenting, once a day — and a failure of it must not
+        // cost the sweep above, so it is caught on its own.
+        try {
+          const { processTranslationRetries } = await import("./translation-retry.server");
+          const retries = await processTranslationRetries({
+            shop: settings.shop,
+            client: admin as never,
+            foreignLocales,
+            dailyLimit: (
+              await (await import("./translation-change-policy.server")).loadTranslationChangePolicy(settings.shop)
+            ).autoTranslateDailyLimit,
+          });
+          stats.retried += retries.started;
+        } catch (err) {
+          logger.warn(`[TranslationDrift] Retry list failed for ${settings.shop}`, {
+            context: "TranslationDrift",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         if (result.failedTypes.length > 0 || result.truncatedTypes.length > 0) {
           stats.incomplete++;
           logger.warn(`[TranslationDrift] Sweep incomplete for ${settings.shop}`, {
@@ -213,7 +253,7 @@ export class TranslationDriftAutoRunService {
 
     logger.info(
       `[TranslationDrift] Tick done: ${stats.candidates} shop(s), ${stats.handed} resource(s) ` +
-        `reconciled, ${stats.incomplete} incomplete, ${stats.errored} errored`,
+        `reconciled, ${stats.retried} retried, ${stats.incomplete} incomplete, ${stats.errored} errored`,
     );
     return stats;
   }

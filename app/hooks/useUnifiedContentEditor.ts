@@ -16,6 +16,7 @@ import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
 import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, preserveUnsavedEdits } from "./useUiDataLoader";
+import type { PartialSave } from "./useUiDataLoader";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -585,6 +586,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedLocale: string | null;
     savedMarketId: string;
     savedItemId: string | null;
+    partial: PartialSave | null;
   }>>([]);
 
   const editableValuesRef = useLatestRef(editableValues);
@@ -593,6 +595,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const isSavePendingRef = useRef(false);
   // Ref to suppress the generic "Changes saved" toast when triggered by translate action
   const isSaveFromTranslateRef = useRef(false);
+  /** The fields a PARTIAL save carried (a single-field translate / Accept &
+   *  Translate). The response handling then treats only these as saved: the
+   *  overlay and the baseline must not absorb unsaved input in other fields. */
+  const partialSaveRef = useRef<PartialSave | null>(null);
+  /** The partial description of the save IN FLIGHT — bound per request by
+   *  `safeSubmit` and the queue drain, consumed by that request's response. */
+  const inFlightPartialRef = useRef<PartialSave | null>(null);
+  /** After a partial save the re-read that follows must keep unsaved input in
+   *  the fields it did not carry (they were not sent, so the server has only
+   *  their old values). Time-boxed, and dropped on any switch. */
+  const preserveEditsUntilRef = useRef(0);
   // Ref to track the fieldKey of a pending copy save so we can clear its loading state on response
   const pendingCopyFieldKeyRef = useRef<string | null>(null);
 
@@ -600,6 +613,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const buildFieldsForSaveRef = useRef<(v: Record<string, string>, l: string) => Record<string, string>>(() => ({}));
   const safeSubmitRef = useRef<(data: Record<string, any>, opts?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void>(() => {});
   const submitAIActionRef = useRef<(data: Record<string, string>, fieldKey: string, onSuccess?: (r: Record<string, unknown>) => void, onError?: (e: string) => void, options?: { suppressErrorBox?: boolean }) => void>(async () => {});
+
+  /**
+   * Bumped once per completed background refresh, for the parts of a page the
+   * field resolver does not reach: the alt texts below (their own effect, keyed
+   * on language/market/item) and the product page's options and metafields
+   * (`useProductSubResources`, keyed on `itemId::locale::market`). None of those
+   * keys moves on a revalidation, so without this the refreshed translations
+   * would be fetched and never shown. Declared above the alt-text hook because
+   * that hook reads it.
+   */
+  const [backgroundRefreshVersion, setBackgroundRefreshVersion] = useState(0);
+  /**
+   * Unsaved work this hook cannot see — the product page's option/metafield
+   * edits and pending image-manager changes live in their own hooks, and
+   * `hasChanges` below knows nothing of them. The page reports it here so the
+   * background refresh waits for those too: a revalidation re-runs the loaders
+   * those cards render from, and re-reading under an unsaved edit is exactly
+   * the automation eating merchant input.
+   */
+  const [externalUnsavedChanges, setExternalUnsavedChanges] = useState(false);
 
   // ============================================================================
   // SUB-HOOK: useEditorAltText
@@ -633,6 +666,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     enabledLanguages,
     editableValues,
     editableValuesRef,
+    backgroundRefreshVersion,
     buildFieldsForSave: (v, l) => buildFieldsForSaveRef.current(v, l),
     safeSubmit: (data, opts) => safeSubmitRef.current(data, opts),
     savedLocaleRef,
@@ -687,14 +721,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  press bumps to a different one and keeps its own, wider semantics. */
   const backgroundRefreshTriggerRef = useRef<number | null>(null);
   /**
-   * Bumped once per completed background refresh, for the parts of a page this
-   * hook does not resolve. The product page's options and metafields are the
-   * case: they are loaded by `useProductSubResources`, whose load effect
-   * short-circuits on `itemId::locale::market` — unchanged by a revalidation —
-   * so the refreshed sub-resource translations would never be rendered.
-   */
-  const [backgroundRefreshVersion, setBackgroundRefreshVersion] = useState(0);
-  /**
    * The runs this SESSION started that have not been seen finished — a union
    * across saves, exactly like the grid's. A merchant saves again while the
    * first run is still working, and the second save may start none at all; a
@@ -712,7 +738,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const ids = readRetranslationTaskIds(response);
     if (ids.length === 0) return;
     setWatchedTaskIds((prev) => [...new Set([...prev, ...ids])]);
-  }, []);
+    // The shop-wide task badge polls on its own clock; a short run (one field
+    // into a couple of languages) can start and finish between two polls and
+    // never show as running at all. Ask now.
+    refreshTaskCount();
+  }, [refreshTaskCount]);
 
   // EVERY response this editor's fetcher sees is offered to the watcher — one
   // call rather than one per action type, because a response carrying no task
@@ -760,6 +790,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // most likely to be asked for.
   const canBackgroundRefresh =
     !hasChanges &&
+    !externalUnsavedChanges &&
     !isLoadingData &&
     fetcher.state === "idle" &&
     revalidator.state === "idle";
@@ -852,6 +883,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     saveQueueRef,
     justSubmittedRef,
     fetcherRef,
+    partialSaveRef,
+    inFlightPartialRef,
+    preserveEditsUntilRef,
   });
 
   // Stable signal that changes when translations arrive for the selected item.
@@ -982,6 +1016,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       dataLoader.onItemSwitch();
       processedSaveResponseRef.current = null;
       isSavePendingRef.current = false;
+      // Its response will never be applied here (the pending flag is gone), so
+      // its partial description must not survive to be read by the next save.
+      inFlightPartialRef.current = null;
       processedTranslateFieldRef.current = null;
       processedTranslateAltTextAllRef.current = null;
       processedTranslateAllRef.current = null;
@@ -1012,10 +1049,31 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Captured BEFORE onDataLoaded overwrites it — it is the baseline the
     // merchant's current input is dirty against, and comparing against the one
     // this very call installs would find every field clean.
-    const previousBaseline = isBackgroundRefresh ? { ...baselineValuesRef.current } : null;
+    // Only a pass that re-reads the SAME item/locale/market may carry input
+    // over. A pass caused by a switch landing inside the refresh window is a
+    // different set of fields: the merchant already answered the leave dialog
+    // for what they typed, and merging it here would copy the old locale's (or
+    // item's) text into the new one's fields as an unsaved edit the next save
+    // writes.
+    const switchedDuringRefresh = itemIdChanged || languageChanged || marketChanged;
+    // A switch ends the window: the fields on screen now belong elsewhere.
+    if (switchedDuringRefresh) preserveEditsUntilRef.current = 0;
+    // The re-read that follows a PARTIAL save (a single-field translate):
+    // the fields that save did not carry may hold unsaved input, and the
+    // server only has their old values — resolving in normal mode would
+    // overwrite what the merchant typed. A ReloadButton press is excluded: it
+    // is the merchant asking for exactly that reset.
+    const preserveAfterPartialSave =
+      !switchedDuringRefresh &&
+      !(refreshTriggered && !isBackgroundRefresh) &&
+      Date.now() < preserveEditsUntilRef.current;
+    const previousBaseline =
+      (isBackgroundRefresh || preserveAfterPartialSave) && !switchedDuringRefresh
+        ? { ...baselineValuesRef.current }
+        : null;
     dataLoader.onDataLoaded(newValues);
 
-    if (isBackgroundRefresh && previousBaseline) {
+    if (previousBaseline) {
       // Defence in depth for the one rule that holds under all circumstances:
       // a field the merchant has typed in and not saved keeps what they typed.
       // The refresh only runs while the editor is clean (see the deferral in
@@ -1833,11 +1891,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       debugLog.response(' Processing save response for locale:', savedLocale);
 
       // Delegate ref mutations to transition method
+      // A partial save overlays exactly what it SENT — from its own values,
+      // not the live view, which may meanwhile show another locale.
+      const partial = inFlightPartialRef.current;
       const result = dataLoader.onSaveComplete(
         savedLocale,
-        editableValues,
+        partial ? { ...editableValues, ...partial.values } : editableValues,
         effectiveFieldDefinitions,
-        fallbackFieldsRef.current
+        fallbackFieldsRef.current,
+        partial ? new Set(Object.keys(partial.values)) : null,
+        savedMarketIdRef.current
       );
 
       // Image alt-text updates (not managed by dataLoader — separate concern)
@@ -1908,6 +1971,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       setIsSaving(false);
+      // Consumed by exactly one response, whatever happens below — a stale set
+      // would make the NEXT full save count as partial.
+      const partial = inFlightPartialRef.current;
+      inFlightPartialRef.current = null;
 
       // Guard: check if the item that was saved is still the currently-selected item.
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
@@ -1942,6 +2009,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           ) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
+          } else if (partial) {
+            // A partial save: only the fields it carried are now saved, and
+            // only if their locale is still the one on screen; the rest keep
+            // the baseline they are dirty against.
+            if (
+              currentLanguageRef.current === partial.locale &&
+              selectedMarketIdRef.current === partial.marketId
+            ) {
+              baselineValuesRef.current = { ...baselineValuesRef.current, ...partial.values };
+              setBaselineVersion(v => v + 1);
+            }
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
@@ -2304,6 +2382,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
+      inFlightPartialRef.current = null;
       setIsSaving(false);
 
       // Clear a copy ("Übertragen") spinner on failure too — otherwise the field's
@@ -2332,6 +2411,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+      inFlightPartialRef.current = null;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
 
@@ -2427,6 +2507,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedLocaleRef.current = next.savedLocale;
       savedMarketIdRef.current = next.savedMarketId;
       savedItemIdRef.current = next.savedItemId;
+      inFlightPartialRef.current = next.partial;
       isSavePendingRef.current = true;
 
       try {
@@ -2527,6 +2608,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isSavePendingRef,
     isSavingCurrentItem,
     isSaveFromTranslateRef,
+    partialSaveRef,
+    currentLanguageRef,
+    selectedMarketIdRef,
     pendingCopyFieldKeyRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
@@ -2796,6 +2880,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       /** Bumped once per completed background refresh — for a card this hook
        *  does not resolve and that has to re-read on its own. */
       backgroundRefreshVersion,
+      /** Report unsaved work held OUTSIDE this hook (see `externalUnsavedChanges`). */
+      setExternalUnsavedChanges,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

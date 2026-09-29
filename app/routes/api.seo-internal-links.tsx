@@ -167,7 +167,9 @@ async function loadApplyContext(db: any, shop: string, admin: any, carryTranslat
 
   const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
   const foreignLocales = carryTranslations
-    ? shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale)
+    // Published or not: the body rewrite below purges or re-translates EVERY
+    // foreign locale's body, so carrying the link must reach them all too.
+    ? shopLocales.filter((l) => !l.primary).map((l) => l.locale)
     : [];
 
   return {

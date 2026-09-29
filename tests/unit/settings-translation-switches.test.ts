@@ -58,6 +58,7 @@ beforeEach(() => {
     subscriptionPlan: "max",
     autoTranslateExternalChanges: false,
     autoTranslateHandles: false,
+    autoTranslateDailyLimit: null,
   });
 });
 
@@ -68,6 +69,21 @@ describe("saveInstructions — the translation switches", () => {
     // Not `translationMode`, not `keywordAwareTranslation`, not the vision
     // pair, not `autoTranslateExternalChanges` — none of them were sent.
     expect(settingsWrite()).toEqual({ autoTranslateHandles: true });
+  });
+
+  it("writes NO instruction text when the payload carries none — a switch-only save", async () => {
+    // The card's copy of the texts is seeded at mount and never re-synced, so
+    // it now sends only what changed; writing every absent field as NULL here
+    // would erase every instruction the merchant did not touch.
+    await run({ autoTranslateHandles: "true" });
+    expect(aIInstructions.upsert).not.toHaveBeenCalled();
+  });
+
+  it("writes ONLY the instruction texts the payload carries", async () => {
+    await run({ writingStyleInstructions: "Kurz und sachlich.", productTitleFormat: "" });
+    const call = (aIInstructions.upsert.mock.calls[0] as unknown as [any])[0];
+    // A cleared field is sent as "" and stored as NULL; nothing else is named.
+    expect(call.update).toEqual({ writingStyleInstructions: "Kurz und sachlich.", productTitleFormat: null });
   });
 
   it("touches AISettings not at all when the payload carries no setting", async () => {
@@ -116,5 +132,55 @@ describe("saveInstructions — the translation switches", () => {
     const { status } = await run({ autoTranslateHandles: "true" });
     expect(status).toBe(200);
     expect(settingsWrite()).toEqual({ autoTranslateHandles: true });
+  });
+});
+
+describe("saveInstructions — the optional daily limit", () => {
+  it("stores a whole number", async () => {
+    const { status } = await run({ autoTranslateDailyLimit: "50" });
+    expect(status).toBe(200);
+    expect(settingsWrite()).toEqual({ autoTranslateDailyLimit: 50 });
+  });
+
+  it("an EMPTY field clears the limit — no limit, not zero", async () => {
+    aISettings.findUnique.mockResolvedValue({
+      subscriptionPlan: "max",
+      autoTranslateExternalChanges: true,
+      autoTranslateHandles: false,
+      autoTranslateDailyLimit: 50,
+    });
+    await run({ autoTranslateDailyLimit: "" });
+    expect(settingsWrite()).toEqual({ autoTranslateDailyLimit: null });
+  });
+
+  it.each(["0", "-3", "2.5", "abc"])("refuses %s BEFORE anything is written", async (value) => {
+    const { status } = await run({ autoTranslateDailyLimit: value, writingStyleInstructions: "x" });
+    expect(status).toBe(400);
+    expect(aISettings.upsert).not.toHaveBeenCalled();
+    expect(aIInstructions.upsert).not.toHaveBeenCalled();
+  });
+
+  it("is plan-gated like the switch it belongs to", async () => {
+    aISettings.findUnique.mockResolvedValue({
+      subscriptionPlan: "pro",
+      autoTranslateExternalChanges: false,
+      autoTranslateHandles: false,
+      autoTranslateDailyLimit: null,
+    });
+    const { status } = await run({ autoTranslateDailyLimit: "10" });
+    expect(status).toBe(403);
+    expect(aISettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("re-sending the stored value is a no-op, not a 403", async () => {
+    aISettings.findUnique.mockResolvedValue({
+      subscriptionPlan: "pro",
+      autoTranslateExternalChanges: false,
+      autoTranslateHandles: false,
+      autoTranslateDailyLimit: 10,
+    });
+    const { status } = await run({ autoTranslateDailyLimit: "10" });
+    expect(status).toBe(200);
+    expect(settingsWrite()).toBeNull();
   });
 });

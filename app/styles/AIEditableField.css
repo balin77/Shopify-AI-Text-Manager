@@ -87,7 +87,9 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.5rem;
-  min-height: 28px;
+  /* One button row: as tall as the buttons it holds (responsive.css token),
+     so the row does not grow by the difference when they appear. */
+  min-height: var(--app-control-height);
 }
 
 .ai-field-footer-left {

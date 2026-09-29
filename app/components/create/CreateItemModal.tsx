@@ -217,6 +217,10 @@ export interface CreateItemModalProps {
    *  "translate afterwards" checkbox DISABLED with a reason, never hidden:
    *  hiding it is what makes merchants think the feature is missing. */
   hasSecondLocale?: boolean;
+  /** Start "translate afterwards" ON — the shop has the automatic
+   *  re-translation switched on, so a new item is expected to be translated
+   *  too. Still a visible switch the merchant can turn off before creating. */
+  defaultTranslateAfterwards?: boolean;
   /** Tooltip for that disabled state (`t.common.requiresSecondLanguage`). */
   requiresSecondLanguageHint?: string;
   t?: CreateItemModalTexts;
@@ -279,6 +283,7 @@ export function CreateItemModal({
   fieldErrors = [],
   mainLanguage = "English",
   hasSecondLocale = false,
+  defaultTranslateAfterwards = false,
   requiresSecondLanguageHint,
   t = {},
 }: CreateItemModalProps) {
@@ -304,8 +309,10 @@ export function CreateItemModal({
   const [requestId, setRequestId] = useState(mintRequestId);
 
   // §2.5a — off by default. Translating every field of every new object is a
-  // real cost in AI calls, so it is an opt-in the merchant sees and ticks.
-  const [translateAfterwards, setTranslateAfterwards] = useState(false);
+  // real cost in AI calls, so it is an opt-in the merchant sees and ticks —
+  // EXCEPT on a shop that already opted into automatic translation of every
+  // change, where leaving a brand-new item untranslated is the surprise.
+  const [translateAfterwards, setTranslateAfterwards] = useState(defaultTranslateAfterwards);
   /**
    * §2.5d — "write the rest with AI", as a DECISION rather than a button.
    *
@@ -401,6 +408,9 @@ export function CreateItemModal({
     if (open) {
       setValues(initialValues ?? {});
       setConfirmingClose(false);
+      // Re-seeded per opening like the values: a switch the merchant turned
+      // off for one item must not stay off for the next.
+      setTranslateAfterwards(defaultTranslateAfterwards);
       // A NEW dialog is a new create; only here does a fresh id belong.
       setRequestId(mintRequestId());
       // A generation still in flight from the previous opening must not write
