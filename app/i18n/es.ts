@@ -1232,7 +1232,7 @@ export const es: Translation = {
       noMarketWarning: "Publicado, pero en ningún mercado: el selector de idioma de la tienda online no ofrece este idioma. Marca al menos un mercado.",
       marketsUnavailable: "No se pudieron cargar los mercados: ahora mismo no se pueden asignar idiomas a mercados. Recarga la página.",
       noActiveMarkets:
-        "No se encontró ningún mercado activo con dominio propio, por eso aquí no hay selección de mercados. Comprueba en Shopify, en Configuración → Mercados, si hay un mercado activo.",
+        "Shopify no indica ningún dominio de esta tienda al que se puedan asignar idiomas, por eso aquí no hay selección de mercados. En el administrador de Shopify, los mercados tienen su propia entrada «Mercados» en la barra lateral izquierda; allí se definen los idiomas de cada mercado.",
       errorUnknownMarket: "Este mercado ya no existe en la tienda: recarga la página.",
       errorMarketsUnreadable: "Ahora mismo no se pudieron leer los mercados de la tienda: inténtalo de nuevo.",
       errorMarketsUnverified: "Enviado, pero después no se pudieron volver a leer los mercados: recarga la página para ver el resultado.",

@@ -1253,7 +1253,7 @@ export const de = {
       noMarketWarning: "Veröffentlicht, aber in keinem Markt – der Sprachwähler im Onlineshop bietet diese Sprache nicht an. Hake mindestens einen Markt an.",
       marketsUnavailable: "Die Märkte konnten nicht geladen werden – die Zuordnung der Sprachen zu Märkten ist gerade nicht verfügbar. Lade die Seite neu.",
       noActiveMarkets:
-        "Es wurde kein aktiver Markt mit eigener Domain gefunden – deshalb gibt es hier keine Markt-Auswahl. Prüfe in Shopify unter Einstellungen → Märkte, ob ein Markt aktiv ist.",
+        "Shopify meldet für diesen Shop keine Domain, der sich Sprachen zuordnen lassen – deshalb gibt es hier keine Markt-Auswahl. Im Shopify-Admin findest du die Märkte als eigenen Punkt „Märkte“ in der linken Leiste; dort legst du pro Markt die Sprachen fest.",
       errorUnknownMarket: "Diesen Markt gibt es im Shop nicht mehr – lade die Seite neu.",
       errorMarketsUnreadable: "Die Märkte des Shops konnten gerade nicht gelesen werden – versuche es erneut.",
       errorMarketsUnverified: "Gesendet, aber die Märkte konnten danach nicht neu gelesen werden – lade die Seite neu, um das Ergebnis zu sehen.",
