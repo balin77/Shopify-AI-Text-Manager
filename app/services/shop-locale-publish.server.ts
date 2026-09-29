@@ -627,7 +627,13 @@ export interface LocaleMarketChange {
  * The FALLBACK reader: web presences found by walking the markets. `null` on a
  * failed read (a missing scope, a throttle, a schema change).
  */
-async function loadViaMarkets(admin: GraphqlClient, shop?: string): Promise<MarketWebPresence[] | null> {
+type SeenMarket = { name?: string; status?: string; presences: number };
+
+async function loadViaMarkets(
+  admin: GraphqlClient,
+  shop?: string,
+  seenOut?: SeenMarket[],
+): Promise<MarketWebPresence[] | null> {
   type PageInfo = { hasNextPage?: boolean; endCursor?: string | null } | null;
   // Every "could not load" names its reason in the log: the tab can only say
   // THAT it failed, and a schema refusal, a truncated list and an incomplete
@@ -642,7 +648,7 @@ async function loadViaMarkets(admin: GraphqlClient, shop?: string): Promise<Mark
     });
     return null;
   };
-  const seen: Array<{ name?: string; status?: string; presences: number }> = [];
+  const seen: SeenMarket[] = seenOut ?? [];
   try {
     const byId = new Map<string, MarketWebPresence>();
     let after: string | null = null;
@@ -721,7 +727,9 @@ async function loadViaMarkets(admin: GraphqlClient, shop?: string): Promise<Mark
         const result = [...byId.values()];
         // Read fine, but nothing to offer: say which markets were seen, or
         // "no market checkboxes" cannot be told from "no markets".
-        if (!result.some((p) => p.active)) {
+        // Not when the caller only wants the market names (nameSharedPresence):
+        // there, "no presence of their own" is the expected shape, not news.
+        if (!seenOut && !result.some((p) => p.active)) {
           logger.info("[ShopLocalePublish] No active market web presence to offer", {
             context: "ShopLocalePublish",
             shop,
@@ -887,11 +895,42 @@ export async function loadMarketWebPresences(
   shop?: string,
 ): Promise<MarketWebPresence[] | null> {
   const top = await loadViaWebPresences(admin, shop);
-  if (top && "presences" in top && top.presences.length > 0) return top.presences;
+  if (top && "presences" in top && top.presences.length > 0) {
+    return nameSharedPresence(admin, shop, top.presences);
+  }
   const viaMarkets = await loadViaMarkets(admin, shop);
   if (top === null && viaMarkets !== null && viaMarkets.length === 0) return null;
   if (viaMarkets && !viaMarkets.some((p) => p.active)) await logMarketDiagnostics(admin, shop);
   return viaMarkets;
+}
+
+/**
+ * MEASURED on the owner's two shops (2026-09-29): the top-level list answers
+ * ONE presence (the shop's own domain) whose `markets` list is EMPTY, while
+ * every active market reports no presence of its own — in the current Markets
+ * model a market without its own domain or subfolder serves from the shop's
+ * primary presence. So the checkbox carried a host name where the merchant
+ * expects market names. When exactly one presence names no market, the active
+ * markets that have no presence of their own are named on it; with several
+ * such presences nothing is guessed and the host stays the label. A failed
+ * markets walk only costs the names, never the presences.
+ */
+async function nameSharedPresence(
+  admin: GraphqlClient,
+  shop: string | undefined,
+  presences: MarketWebPresence[],
+): Promise<MarketWebPresence[]> {
+  const unnamed = presences.filter((p) => p.marketNames.length === 0);
+  if (unnamed.length !== 1) return presences;
+  const seen: SeenMarket[] = [];
+  const walked = await loadViaMarkets(admin, shop, seen);
+  if (walked === null) return presences;
+  const orphans = seen
+    .filter((m) => m.status === "ACTIVE" && m.presences === 0)
+    .map((m) => m.name)
+    .filter((n): n is string => typeof n === "string" && n.length > 0);
+  if (orphans.length === 0) return presences;
+  return presences.map((p) => (p === unnamed[0] ? { ...p, marketNames: orphans, active: true } : p));
 }
 
 // Diagnostics only, run when neither read found anything to offer: the raw

@@ -293,6 +293,8 @@ export function SettingsShopLanguagesTab({
             return (
               <Checkbox
                 key={p.id}
+                // Market names when Shopify names any; the host only as the
+                // fallback label for a presence nothing names.
                 label={p.marketNames.join(", ") || p.label || p.id}
                 checked={isDefault || ids.includes(p.id)}
                 disabled={isDefault}
