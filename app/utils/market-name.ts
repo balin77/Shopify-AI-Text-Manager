@@ -1,0 +1,58 @@
+/**
+ * A Shopify market's name, in the app's language where that is honest.
+ *
+ * Shopify stores a market under the name it was created with — on a shop set
+ * up in English that is "Switzerland" / "European Union", and the Settings →
+ * Shop-Sprachen checkboxes printed exactly that to a German merchant. A market
+ * NAME is merchant data, though, and a renamed market ("DACH-Raum") must stay
+ * as written. So a name is only localized when it IS a region's standard name
+ * in one of the common admin languages (the name Shopify generates for a
+ * one-country market, or the EU); anything else comes back verbatim.
+ *
+ * `Intl.DisplayNames` is the same source `getLocalizedLanguageName` renders
+ * with on both sides of hydration, keyed on the app locale — the residual is
+ * CLDR drift between ICU builds (CLAUDE.md, "Hydration").
+ */
+
+/** Admin languages whose region names are recognised as Shopify's own. */
+const SOURCE_LOCALES = ["en", "de", "es", "fr", "it", "nl", "pt", "pl", "sv", "da", "nb", "fi", "cs", "ja", "zh", "ko"];
+
+let regionIndex: Map<string, string> | null = null;
+
+function displayNames(locale: string): Intl.DisplayNames | null {
+  try {
+    return new Intl.DisplayNames([locale], { type: "region", fallback: "none" });
+  } catch {
+    return null;
+  }
+}
+
+/** Standard region name (lower-cased) → region code, built once. */
+function regionCodeIndex(): Map<string, string> {
+  if (regionIndex) return regionIndex;
+  const index = new Map<string, string>();
+  const codes: string[] = [];
+  for (let a = 65; a <= 90; a++) {
+    for (let b = 65; b <= 90; b++) codes.push(String.fromCharCode(a, b));
+  }
+  for (const locale of SOURCE_LOCALES) {
+    const names = displayNames(locale);
+    if (!names) continue;
+    for (const code of codes) {
+      // ZZ is CLDR's "Unknown Region" — never a market.
+      if (code === "ZZ") continue;
+      const name = names.of(code);
+      if (!name || name === code) continue;
+      const key = name.trim().toLowerCase();
+      if (!index.has(key)) index.set(key, code);
+    }
+  }
+  regionIndex = index;
+  return index;
+}
+
+export function localizedMarketName(name: string, appLocale: string): string {
+  const code = regionCodeIndex().get(name.trim().toLowerCase());
+  if (!code) return name;
+  return displayNames(appLocale)?.of(code) || name;
+}
