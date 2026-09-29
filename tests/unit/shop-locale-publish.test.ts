@@ -330,7 +330,75 @@ describe("market web presences — which markets show a language", () => {
     };
     const presences = await loadMarketWebPresences(admin);
     expect(presences?.map((p) => p.id)).toEqual(["wp1", "wp2", "wp3"]);
-    expect(admin.graphql).toHaveBeenCalledTimes(2);
+    // One top-level attempt that found no list, then two market pages.
+    expect(admin.graphql).toHaveBeenCalledTimes(3);
+  });
+
+  const topLevel = (nodes: unknown[], hasNextPage = false) => ({
+    data: { webPresences: { pageInfo: { hasNextPage, endCursor: hasNextPage ? "p2" : null }, nodes } },
+  });
+  const presenceNode = (id: string, def: string, alts: string[], markets: Array<{ name: string; status: string }>) => ({
+    id,
+    defaultLocale: { locale: def },
+    alternateLocales: alts.map((locale) => ({ locale })),
+    rootUrls: [{ locale: def, url: `https://${id}.example/` }],
+    markets: { pageInfo: { hasNextPage: false }, nodes: markets },
+  });
+
+  it("reads the TOP-LEVEL web presences first — the markets walk can answer empty on 2026-07", async () => {
+    const admin = {
+      graphql: vi.fn(async (query: string) =>
+        ({
+          json: async () =>
+            query.includes("appWebPresences")
+              ? topLevel([
+                  presenceNode("wpA", "de", ["en"], [
+                    { name: "Schweiz", status: "ACTIVE" },
+                    { name: "Spanien", status: "ACTIVE" },
+                  ]),
+                  presenceNode("wpB", "es", [], []),
+                  presenceNode("wpC", "de", [], [{ name: "Entwurf", status: "DRAFT" }]),
+                ])
+              : { data: { markets: { pageInfo: { hasNextPage: false }, edges: [] } } },
+        }) as unknown as Response,
+      ),
+    };
+    const presences = await loadMarketWebPresences(admin);
+    expect(presences).toEqual([
+      { id: "wpA", marketNames: ["Schweiz", "Spanien"], active: true, label: "wpa.example", defaultLocale: "de", locales: ["de", "en"] },
+      // Names no market at all: still offered, labelled by its host.
+      { id: "wpB", marketNames: [], active: true, label: "wpb.example", defaultLocale: "es", locales: ["es"] },
+      { id: "wpC", marketNames: [], active: false, label: "wpc.example", defaultLocale: "de", locales: ["de"] },
+    ]);
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refused top-level document falls back to the markets walk", async () => {
+    const admin = {
+      graphql: vi.fn(async (query: string) =>
+        ({
+          json: async () =>
+            query.includes("appWebPresences")
+              ? { errors: [{ message: "Field 'webPresences' doesn't exist on type 'QueryRoot'" }] }
+              : marketsBody(),
+        }) as unknown as Response,
+      ),
+    };
+    expect((await loadMarketWebPresences(admin))?.map((p) => p.id)).toEqual(["wp1", "wp2", "wp3"]);
+  });
+
+  it("a FAILED top-level read plus an empty walk is 'cannot tell', never 'no market'", async () => {
+    const admin = {
+      graphql: vi.fn(async (query: string) =>
+        ({
+          json: async () =>
+            query.includes("appWebPresences")
+              ? { data: { webPresences: { nodes: [{ id: "x", defaultLocale: null }], pageInfo: { hasNextPage: false } } } }
+              : { data: { markets: { pageInfo: { hasNextPage: false }, edges: [] } } },
+        }) as unknown as Response,
+      ),
+    };
+    expect(await loadMarketWebPresences(admin)).toBeNull();
   });
 
   const shop = [
