@@ -14,8 +14,13 @@
  * while no draft is open, so the two can never ride one request. The server
  * re-reads the shop's languages before any write (shop-locale-publish.server.ts).
  *
- * Names come from Shopify's own `name` (server-rendered, identical on both
- * sides) rather than `Intl.DisplayNames`, which would be a hydration risk.
+ * Language names are shown in the APP's language through
+ * `getLocalizedLanguageName` — the helper the language bar and the glossary
+ * already render with on both sides, keyed on the app locale from the `app.tsx`
+ * loader, so server and browser agree (the stated residual is CLDR drift between
+ * ICU builds, CLAUDE.md "Hydration"). Shopify's own `name` is the fallback for a
+ * code `Intl` does not know. The dropdown is sorted by the localized name with
+ * `compareStrings`, never a bare `localeCompare`.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -28,6 +33,9 @@ import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DeleteItemModal } from "./create/DeleteItemModal";
 import { HelpTooltip } from "./HelpTooltip";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { useI18n } from "../contexts/I18nContext";
+import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { compareStrings } from "../utils/format";
 
 interface ShopLanguage {
   locale: string;
@@ -55,6 +63,11 @@ function stateOf(locales: readonly ShopLanguage[]): Record<string, boolean> {
 export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetcher, t, onHasChangesChange }: Props) {
   const s = t.settings?.shopLanguages ?? {};
   const { showInfoBox } = useInfoBox();
+  const { locale: appLocale } = useI18n();
+  const langName = (code: string, fallback?: string) => getLocalizedLanguageName(code, appLocale, fallback);
+  /** What the switch's two positions mean; "not saved yet" while it differs from the store. */
+  const switchTooltip = (pending: boolean) =>
+    [s.switchTooltip, pending ? s.switchTooltipPending : ""].filter(Boolean).join(" ");
   const stored = useMemo(() => stateOf(shopLocales), [shopLocales]);
   // Re-seeded whenever the STORED state changes (after a save revalidated the
   // loader), never while the merchant is mid-draft on an unchanged store.
@@ -162,9 +175,10 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
     }
   }
   const nameOf = (locale: string) =>
-    shopLocales.find((x) => x.locale === locale)?.name ||
-    availableLocales?.find((x) => x.isoCode === locale)?.name ||
-    locale;
+    langName(
+      locale,
+      shopLocales.find((x) => x.locale === locale)?.name || availableLocales?.find((x) => x.isoCode === locale)?.name,
+    );
 
   const handleSave = () => {
     const form = new FormData();
@@ -185,7 +199,8 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
   const enabledSet = new Set(shopLocales.map((l) => l.locale));
   const addOptions = (availableLocales ?? [])
     .filter((l) => !enabledSet.has(l.isoCode) && !adds.some((a) => a.locale === l.isoCode))
-    .map((l) => ({ label: `${l.name} (${l.isoCode})`, value: l.isoCode }));
+    .map((l) => ({ label: `${langName(l.isoCode, l.name)} (${l.isoCode})`, value: l.isoCode }))
+    .sort((a, b) => compareStrings(a.label, b.label, appLocale));
 
   return (
     <Card>
@@ -233,7 +248,7 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
           {primary && (
             <InlineStack gap="200" blockAlign="center">
               <Text as="p" variant="bodyMd" fontWeight="semibold">
-                {primary.name || primary.locale}
+                {langName(primary.locale, primary.name)}
               </Text>
               <Badge tone="info">{s.primaryBadge}</Badge>
               <Text as="span" variant="bodySm" tone="subdued">
@@ -253,7 +268,8 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
                 <InlineStack align="space-between" blockAlign="center" wrap={false} gap="300">
                   <ToggleRow
                     layout="inline"
-                    label={`${l.name || l.locale} (${l.locale}) — ${s.publishedLabel}`}
+                    label={`${langName(l.locale, l.name)} (${l.locale}) — ${s.publishedLabel}`}
+                    tooltip={switchTooltip(published !== l.published)}
                     checked={published}
                     onChange={(value) => setDraft((prev) => ({ ...prev, [l.locale]: value }))}
                   />
@@ -262,7 +278,7 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
                       variant="plain"
                       tone="critical"
                       disabled={hasChanges}
-                      onClick={() => setRemoving({ locale: l.locale, name: l.name || l.locale })}
+                      onClick={() => setRemoving({ locale: l.locale, name: langName(l.locale, l.name) })}
                     >
                       {s.removeButton || "Remove"}
                     </Button>
@@ -282,7 +298,8 @@ export function SettingsShopLanguagesTab({ shopLocales, availableLocales, fetche
                 <InlineStack gap="200" blockAlign="center">
                   <ToggleRow
                     layout="inline"
-                    label={`${a.name} (${a.locale}) — ${s.publishedLabel}`}
+                    label={`${langName(a.locale, a.name)} (${a.locale}) — ${s.publishedLabel}`}
+                    tooltip={switchTooltip(true)}
                     checked={a.published}
                     onChange={(value) =>
                       setAdds((prev) => prev.map((x) => (x.locale === a.locale ? { ...x, published: value } : x)))
