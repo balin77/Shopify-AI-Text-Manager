@@ -610,6 +610,8 @@ export interface MarketWebPresence {
   marketNames: string[];
   /** Used by at least one ACTIVE market — only those are offered in the tab. */
   active: boolean;
+  /** The presence's own host, for a presence no market name can label. */
+  label?: string;
   defaultLocale: string;
   /** Default + alternates, lower-cased for comparison. */
   locales: string[];
@@ -622,14 +624,10 @@ export interface LocaleMarketChange {
 
 
 /**
- * The shop's market web presences with the languages each one serves. `null` on
- * a failed read (a missing scope, a throttle, a schema change) — "we cannot
- * tell" must never render as "this language is in no market".
+ * The FALLBACK reader: web presences found by walking the markets. `null` on a
+ * failed read (a missing scope, a throttle, a schema change).
  */
-export async function loadMarketWebPresences(
-  admin: GraphqlClient,
-  shop?: string,
-): Promise<MarketWebPresence[] | null> {
+async function loadViaMarkets(admin: GraphqlClient, shop?: string): Promise<MarketWebPresence[] | null> {
   type PageInfo = { hasNextPage?: boolean; endCursor?: string | null } | null;
   // Every "could not load" names its reason in the log: the tab can only say
   // THAT it failed, and a schema refusal, a truncated list and an incomplete
@@ -638,6 +636,7 @@ export async function loadMarketWebPresences(
     logger.warn("[ShopLocalePublish] Market web presences could not be read", {
       context: "ShopLocalePublish",
       shop,
+      path: "markets",
       reason,
       detail,
     });
@@ -738,6 +737,160 @@ export async function loadMarketWebPresences(
   } catch (error: unknown) {
     return fail("threw", error instanceof Error ? error.message : String(error));
   }
+}
+
+// The top-level list, and the one that answers on a 2026-07 shop. MEASURED on
+// the owner's shop (2026-09-29): `markets` reported both active markets with an
+// EMPTY `webPresences` list (the existing `loadMarkets` logged `locales: []` for
+// each), so a reader that only walks markets finds nothing to offer. In the
+// current Markets model a web presence is its own object with the markets that
+// use it hanging off it; that shape is NOT measured, so the markets walk above
+// stays as the fallback when this document is refused.
+const WEB_PRESENCES = `#graphql
+  query appWebPresences($after: String) {
+    webPresences(first: 10, after: $after) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        defaultLocale {
+          locale
+        }
+        alternateLocales {
+          locale
+        }
+        rootUrls {
+          locale
+          url
+        }
+        markets(first: 10) {
+          pageInfo {
+            hasNextPage
+          }
+          nodes {
+            name
+            status
+          }
+        }
+      }
+    }
+  }`;
+
+type TopLevelResult = { presences: MarketWebPresence[] } | { refused: true } | null;
+
+function hostOf(url: unknown): string | undefined {
+  if (typeof url !== "string") return undefined;
+  try {
+    return new URL(url).host || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadViaWebPresences(admin: GraphqlClient, shop?: string): Promise<TopLevelResult> {
+  type PageInfo = { hasNextPage?: boolean; endCursor?: string | null } | null;
+  const fail = (reason: string, detail?: unknown): null => {
+    logger.warn("[ShopLocalePublish] Market web presences could not be read", {
+      context: "ShopLocalePublish",
+      shop,
+      path: "webPresences",
+      reason,
+      detail,
+    });
+    return null;
+  };
+  try {
+    const out: MarketWebPresence[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < MAX_MARKET_PAGES; page++) {
+      const response = await admin.graphql(WEB_PRESENCES, { variables: { after } });
+      const body = (await response.json()) as {
+        errors?: Array<{ message?: string }>;
+        data?: {
+          webPresences?: {
+            pageInfo?: PageInfo;
+            nodes?: Array<{
+              id?: string;
+              defaultLocale?: { locale?: string } | null;
+              alternateLocales?: Array<{ locale?: string } | null> | null;
+              rootUrls?: Array<{ locale?: string; url?: string } | null> | null;
+              markets?: {
+                pageInfo?: PageInfo;
+                nodes?: Array<{ name?: string; status?: string } | null>;
+              } | null;
+            } | null>;
+          } | null;
+        } | null;
+      };
+      if (body.errors?.length) {
+        // A document the schema refuses is the fallback's cue, not a failure.
+        logger.info("[ShopLocalePublish] Top-level webPresences refused, falling back to markets", {
+          context: "ShopLocalePublish",
+          shop,
+          detail: body.errors.map((e) => e?.message),
+        });
+        return { refused: true };
+      }
+      const list = body.data?.webPresences;
+      if (!Array.isArray(list?.nodes)) return fail("noWebPresencesList");
+      if (typeof list?.pageInfo?.hasNextPage !== "boolean") return fail("webPresencesPageInfoMissing");
+      for (const wp of list.nodes) {
+        const defaultLocale = wp?.defaultLocale?.locale;
+        if (!wp?.id || !defaultLocale) {
+          return fail("incompletePresence", { id: wp?.id ?? null, defaultLocale: defaultLocale ?? null });
+        }
+        const markets = (wp.markets?.nodes ?? []).filter(Boolean) as Array<{ name?: string; status?: string }>;
+        const marketsTruncated = wp.markets?.pageInfo?.hasNextPage === true;
+        const activeMarkets = markets.filter((m) => m.status === "ACTIVE");
+        const alternates = (wp.alternateLocales ?? [])
+          .map((a) => a?.locale)
+          .filter((l): l is string => typeof l === "string");
+        const rootUrls = (wp.rootUrls ?? []).filter(Boolean) as Array<{ locale?: string; url?: string }>;
+        const defaultRoot = rootUrls.find((r) => typeof r.locale === "string" && lc(r.locale) === lc(defaultLocale));
+        out.push({
+          id: wp.id,
+          marketNames: activeMarkets.map((m) => m.name).filter((n): n is string => typeof n === "string" && n.length > 0),
+          // Offered when an active market uses it, when its market list was cut
+          // off (unknown is not "inactive"), or when it names no market at all —
+          // a presence the platform reports with nothing attached is still the
+          // one its domain serves, and hiding it is how this tab showed nothing.
+          active: activeMarkets.length > 0 || marketsTruncated || markets.length === 0,
+          label: hostOf(defaultRoot?.url ?? rootUrls[0]?.url),
+          defaultLocale,
+          locales: [...new Set([defaultLocale, ...alternates].map(lc))],
+        });
+      }
+      if (!list.pageInfo!.hasNextPage) return { presences: out };
+      after = list.pageInfo!.endCursor ?? null;
+      if (!after) return fail("noCursor");
+    }
+    return fail("tooManyPresences");
+  } catch (error: unknown) {
+    return fail("threw", error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * The shop's market web presences with the languages each one serves. `null`
+ * on a failed read — "we cannot tell" must never render as "in no market".
+ *
+ * Top-level `webPresences` first; the markets walk only where that document is
+ * refused, or where it reads fine and finds nothing (then the walk decides).
+ * A top-level read that FAILED is never replaced by an empty walk: the owner's
+ * shop answers the walk with nothing by design, so "failed + empty" would read
+ * as "no market" when the truth is "we cannot tell".
+ */
+export async function loadMarketWebPresences(
+  admin: GraphqlClient,
+  shop?: string,
+): Promise<MarketWebPresence[] | null> {
+  const top = await loadViaWebPresences(admin, shop);
+  if (top && "presences" in top && top.presences.length > 0) return top.presences;
+  const viaMarkets = await loadViaMarkets(admin, shop);
+  if (top === null && viaMarkets !== null && viaMarkets.length === 0) return null;
+  return viaMarkets;
 }
 
 /** The presences a locale is on right now. */

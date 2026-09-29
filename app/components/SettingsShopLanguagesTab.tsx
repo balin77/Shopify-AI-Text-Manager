@@ -50,6 +50,7 @@ interface MarketPresence {
   id: string;
   marketNames: string[];
   active: boolean;
+  label?: string;
   defaultLocale: string;
   locales: string[];
 }
@@ -292,7 +293,7 @@ export function SettingsShopLanguagesTab({
             return (
               <Checkbox
                 key={p.id}
-                label={p.marketNames.join(", ") || p.id}
+                label={p.marketNames.join(", ") || p.label || p.id}
                 checked={isDefault || ids.includes(p.id)}
                 disabled={isDefault}
                 onChange={(on) => onChange(toggleMarket(ids, p.id, on))}
