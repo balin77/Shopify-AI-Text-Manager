@@ -373,6 +373,41 @@ describe("market web presences — which markets show a language", () => {
     expect(admin.graphql).toHaveBeenCalledTimes(1);
   });
 
+  it("names the ONE unnamed presence after the active markets that have none of their own", async () => {
+    const admin = {
+      graphql: vi.fn(async (query: string) =>
+        ({
+          json: async () =>
+            query.includes("appWebPresences")
+              ? topLevel([presenceNode("shop", "de", ["en", "fr"], [])])
+              : {
+                  data: {
+                    markets: {
+                      pageInfo: { hasNextPage: false },
+                      edges: [
+                        { node: { name: "Schweiz", status: "ACTIVE", webPresences: { pageInfo: { hasNextPage: false }, edges: [] } } },
+                        { node: { name: "Spanien", status: "ACTIVE", webPresences: { pageInfo: { hasNextPage: false }, edges: [] } } },
+                        { node: { name: "USA", status: "DRAFT", webPresences: { pageInfo: { hasNextPage: false }, edges: [] } } },
+                      ],
+                    },
+                  },
+                },
+        }) as unknown as Response,
+      ),
+    };
+    const presences = await loadMarketWebPresences(admin);
+    expect(presences).toEqual([
+      {
+        id: "shop",
+        marketNames: ["Schweiz", "Spanien"],
+        active: true,
+        label: "shop.example",
+        defaultLocale: "de",
+        locales: ["de", "en", "fr"],
+      },
+    ]);
+  });
+
   it("a refused top-level document falls back to the markets walk", async () => {
     const admin = {
       graphql: vi.fn(async (query: string) =>
