@@ -1219,6 +1219,9 @@ export const en: Translation = {
       title: "Shop languages",
       primaryBadge: "Primary language",
       publishedLabel: "Published in the online store",
+      switchTooltip:
+        "On: the language is visible in the online store. Off: it is being prepared and not visible in the online store – the app still translates it.",
+      switchTooltipPending: "Not saved yet – takes effect when you press Save.",
       unpublishedHint: "Not published – being prepared",
       primaryHint: "The primary language is always published.",
       failedTitle: "Shopify did not apply these changes",

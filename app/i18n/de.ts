@@ -1223,6 +1223,9 @@ export const de = {
       title: "Shop-Sprachen",
       primaryBadge: "Hauptsprache",
       publishedLabel: "Im Onlineshop veröffentlicht",
+      switchTooltip:
+        "Ein: Die Sprache ist im Onlineshop sichtbar. Aus: Sie wird vorbereitet und ist im Onlineshop nicht sichtbar – die App übersetzt sie trotzdem.",
+      switchTooltipPending: "Noch nicht gespeichert – wirksam erst mit „Speichern“.",
       unpublishedHint: "Nicht veröffentlicht – wird vorbereitet",
       primaryHint: "Die Hauptsprache ist immer veröffentlicht.",
       failedTitle: "Diese Änderungen hat Shopify nicht übernommen",

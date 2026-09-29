@@ -1202,6 +1202,9 @@ export const es: Translation = {
       title: "Idiomas de la tienda",
       primaryBadge: "Idioma principal",
       publishedLabel: "Publicado en la tienda online",
+      switchTooltip:
+        "Activado: el idioma es visible en la tienda online. Desactivado: se está preparando y no es visible en la tienda online; la app lo sigue traduciendo.",
+      switchTooltipPending: "Aún no guardado: se aplica al pulsar Guardar.",
       unpublishedHint: "No publicado – en preparación",
       primaryHint: "El idioma principal siempre está publicado.",
       failedTitle: "Shopify no aplicó estos cambios",
