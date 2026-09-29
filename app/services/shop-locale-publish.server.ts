@@ -338,6 +338,57 @@ async function runLocaleMutation(
   }
 }
 
+const SHOP_LOCALES_PUBLISHED = `#graphql
+  query appShopLocalesPublished {
+    shopLocales {
+      locale
+      published
+    }
+  }`;
+
+/**
+ * The market write sends `marketWebPresenceIds` ALONE, after the publish step.
+ * Whether Shopify ties presence membership to publication (auto-publishing on
+ * assignment, or unpublishing on removal) is NOT measured — if it does, a
+ * publish flip confirmed a moment earlier in the same save would be undone
+ * silently. So every locale a market write touched is checked once against the
+ * state this save meant to leave it in. A failed read reports nothing: it can
+ * neither confirm nor refute.
+ */
+async function publicationMovedByMarkets(
+  admin: GraphqlClient,
+  touched: readonly LocaleMarketChange[],
+  confirmedPublish: readonly LocalePublicationChange[],
+  added: readonly string[],
+  before: Record<string, boolean> = {},
+): Promise<Array<{ locale: string; error: string }>> {
+  try {
+    const response = await admin.graphql(SHOP_LOCALES_PUBLISHED);
+    const body = (await response.json()) as {
+      errors?: unknown[];
+      data?: { shopLocales?: Array<{ locale?: string; published?: boolean }> | null } | null;
+    };
+    const rows = body.data?.shopLocales;
+    if (body.errors?.length || !Array.isArray(rows)) return [];
+    const now = new Map(rows.map((r) => [lc(String(r.locale)), r.published]));
+    const out: Array<{ locale: string; error: string }> = [];
+    for (const change of touched) {
+      const key = lc(change.locale);
+      const explicit = confirmedPublish.find((c) => lc(c.locale) === key);
+      const expected =
+        explicit?.published ??
+        Object.entries(before).find(([l]) => lc(l) === key)?.[1] ??
+        (added.some((a) => lc(a) === key) ? false : undefined);
+      const actual = now.get(key);
+      if (expected === undefined || typeof actual !== "boolean") continue;
+      if (actual !== expected) out.push({ locale: change.locale, error: "publicationMovedByMarkets" });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Apply one planned save: enable what is added (then publish those asked to
  * be), flip the publications, disable what is removed and purge its local
@@ -354,6 +405,9 @@ export async function applyLocaleChanges(
     publish: LocalePublicationChange[];
     /** From `planMarketAssignments`; applied after adding and publishing. */
     markets?: LocaleMarketChange[];
+    /** Each existing locale's `published` BEFORE this save — what the market
+     *  write must not have moved (see the re-check below). */
+    publishedBefore?: Record<string, boolean>;
   },
 ): Promise<{
   added: string[];
@@ -389,11 +443,12 @@ export async function applyLocaleChanges(
   // A language whose ADDITION failed does not exist on Shopify, so its market
   // assignment is not sent — the add's own failure already names it.
   const failedAdds = new Set(plan.add.filter((a) => !added.includes(a.locale)).map((a) => lc(a.locale)));
-  const markets = await setLocaleMarkets(
-    admin,
-    (plan.markets ?? []).filter((m) => !failedAdds.has(lc(m.locale))),
-  );
+  const marketChanges = (plan.markets ?? []).filter((m) => !failedAdds.has(lc(m.locale)));
+  const markets = await setLocaleMarkets(admin, marketChanges);
   failed.push(...markets.failed);
+  if (marketChanges.length > 0) {
+    failed.push(...(await publicationMovedByMarkets(admin, marketChanges, published.confirmed, added, plan.publishedBefore)));
+  }
 
   for (const locale of plan.remove) {
     const error = await runLocaleMutation(
@@ -490,15 +545,26 @@ export async function applyLocaleChanges(
 // default language), so the plan forces those in rather than sending a removal
 // that must fail.
 
+// Paged, and both connections report `pageInfo`: the write sends a FULL set, so
+// a presence the read never reached would be dropped from it under replace
+// semantics, and the confirming re-read would share the blind spot and call it
+// confirmed. A read that cannot prove it saw everything is `null`.
 const MARKET_WEB_PRESENCES = `#graphql
-  query appMarketWebPresences {
-    markets(first: 50) {
+  query appMarketWebPresences($after: String) {
+    markets(first: 50, after: $after) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       edges {
         node {
           id
           name
           status
           webPresences(first: 10) {
+            pageInfo {
+              hasNextPage
+            }
             edges {
               node {
                 id
@@ -515,6 +581,9 @@ const MARKET_WEB_PRESENCES = `#graphql
       }
     }
   }`;
+
+/** A shop with more markets than this is read as "could not load" rather than half-read. */
+const MAX_MARKET_PAGES = 20;
 
 const SHOP_LOCALE_MARKETS_UPDATE = `#graphql
   mutation appShopLocaleMarkets($locale: String!, $shopLocale: ShopLocaleInput!) {
@@ -552,62 +621,79 @@ export interface LocaleMarketChange {
  * tell" must never render as "this language is in no market".
  */
 export async function loadMarketWebPresences(admin: GraphqlClient): Promise<MarketWebPresence[] | null> {
+  type PageInfo = { hasNextPage?: boolean; endCursor?: string | null } | null;
   try {
-    const response = await admin.graphql(MARKET_WEB_PRESENCES);
-    const body = (await response.json()) as {
-      errors?: unknown[];
-      data?: {
-        markets?: {
-          edges?: Array<{
-            node?: {
-              name?: string;
-              status?: string;
-              webPresences?: {
-                edges?: Array<{
-                  node?: {
-                    id?: string;
-                    defaultLocale?: { locale?: string } | null;
-                    alternateLocales?: Array<{ locale?: string } | null> | null;
-                  } | null;
-                }>;
-              } | null;
-            } | null;
-          }>;
-        } | null;
-      } | null;
-    };
-    const edges = body.data?.markets?.edges;
-    if (body.errors?.length || !Array.isArray(edges)) return null;
     const byId = new Map<string, MarketWebPresence>();
-    for (const edge of edges) {
-      const market = edge?.node;
-      if (!market) continue;
-      const active = market.status === "ACTIVE";
-      for (const wpEdge of market.webPresences?.edges ?? []) {
-        const wp = wpEdge?.node;
-        const defaultLocale = wp?.defaultLocale?.locale;
-        if (!wp?.id || !defaultLocale) continue;
-        const existing = byId.get(wp.id);
-        if (existing) {
-          if (active) {
-            existing.active = true;
-            if (market.name && !existing.marketNames.includes(market.name)) existing.marketNames.push(market.name);
-          }
-          continue;
-        }
-        const alternates = (wp.alternateLocales ?? [])
-          .map((a) => a?.locale)
-          .filter((l): l is string => typeof l === "string");
-        byId.set(wp.id, {
-          id: wp.id,
-          marketNames: active && market.name ? [market.name] : [],
-          active,
-          defaultLocale,
-          locales: [...new Set([defaultLocale, ...alternates].map(lc))],
-        });
+    let after: string | null = null;
+    for (let page = 0; page < MAX_MARKET_PAGES; page++) {
+      const response = await admin.graphql(MARKET_WEB_PRESENCES, { variables: { after } });
+      const body = (await response.json()) as {
+        errors?: unknown[];
+        data?: {
+          markets?: {
+            pageInfo?: PageInfo;
+            edges?: Array<{
+              node?: {
+                name?: string;
+                status?: string;
+                webPresences?: {
+                  pageInfo?: PageInfo;
+                  edges?: Array<{
+                    node?: {
+                      id?: string;
+                      defaultLocale?: { locale?: string } | null;
+                      alternateLocales?: Array<{ locale?: string } | null> | null;
+                    } | null;
+                  }>;
+                } | null;
+              } | null;
+            }>;
+          } | null;
+        } | null;
+      };
+      const markets = body.data?.markets;
+      const edges = markets?.edges;
+      if (body.errors?.length || !Array.isArray(edges) || typeof markets?.pageInfo?.hasNextPage !== "boolean") {
+        return null;
       }
+      for (const edge of edges) {
+        const market = edge?.node;
+        if (!market) return null;
+        const active = market.status === "ACTIVE";
+        const presences = market.webPresences;
+        // A market with no web presence (B2B, POS) answers an empty list; a
+        // truncated or unanswered list is not the same thing.
+        if (presences && presences.pageInfo?.hasNextPage !== false) return null;
+        for (const wpEdge of presences?.edges ?? []) {
+          const wp = wpEdge?.node;
+          const defaultLocale = wp?.defaultLocale?.locale;
+          // Incomplete ⇒ we cannot say which languages it carries: refuse.
+          if (!wp?.id || !defaultLocale) return null;
+          const existing = byId.get(wp.id);
+          if (existing) {
+            if (active) {
+              existing.active = true;
+              if (market.name && !existing.marketNames.includes(market.name)) existing.marketNames.push(market.name);
+            }
+            continue;
+          }
+          const alternates = (wp.alternateLocales ?? [])
+            .map((a) => a?.locale)
+            .filter((l): l is string => typeof l === "string");
+          byId.set(wp.id, {
+            id: wp.id,
+            marketNames: active && market.name ? [market.name] : [],
+            active,
+            defaultLocale,
+            locales: [...new Set([defaultLocale, ...alternates].map(lc))],
+          });
+        }
+      }
+      if (!markets!.pageInfo!.hasNextPage) return [...byId.values()];
+      after = markets!.pageInfo!.endCursor ?? null;
+      if (!after) return null;
     }
-    return [...byId.values()];
+    return null;
   } catch {
     return null;
   }

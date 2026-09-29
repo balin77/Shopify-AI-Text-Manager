@@ -1255,6 +1255,8 @@ export const de = {
       errorUnknownMarket: "Diesen Markt gibt es im Shop nicht mehr – lade die Seite neu.",
       errorMarketsUnreadable: "Die Märkte des Shops konnten gerade nicht gelesen werden – versuche es erneut.",
       errorMarketsUnverified: "Gesendet, aber die Märkte konnten danach nicht neu gelesen werden – lade die Seite neu, um das Ergebnis zu sehen.",
+      errorPublicationMovedByMarkets:
+        "Die Märkte wurden gespeichert, aber Shopify hat dabei den Veröffentlichungs-Status dieser Sprache geändert – prüfe den Schalter nach dem Neuladen.",
       removeModal: {
         step1Title: "Sprache „{name}“ entfernen?",
         step2Title: "Entfernen bestätigen",
