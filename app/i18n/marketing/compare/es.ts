@@ -21,6 +21,17 @@ export const compareEs: CompareCopy = {
     seo: "SEO y búsqueda con IA",
     media: "Imágenes",
     international: "Vender en el extranjero",
+    seoBasics: "Lo básico",
+    seoTechnical: "Técnica y rastreo",
+    seoSearch: "Google y palabras clave",
+    aiSearch: "Búsqueda con IA",
+    aiEngine: "IA y control",
+    aiTexts: "Textos",
+    aiWorkflow: "Forma de trabajar",
+    gallery: "Galería",
+    assignment: "Asignar imágenes",
+    swatches: "Muestras y listados",
+    imageExtras: "Extras de imagen",
   },
   rows: {
     autoTranslate: {
@@ -87,6 +98,182 @@ export const compareEs: CompareCopy = {
       label: "Conversión de moneda por la app",
       help: "Shopify Markets ya convierte los precios; algunas apps añaden su propio conversor.",
     },
+    metaAi: {
+      label: "Títulos SEO y metadescripciones con IA",
+      help: "La IA escribe títulos y descripciones para los resultados de búsqueda.",
+    },
+    structuredData: {
+      label: "Datos estructurados (JSON-LD)",
+      help: "Datos de producto, reseñas y preguntas frecuentes en la forma que Google lee para resultados enriquecidos.",
+    },
+    storeAudit: {
+      label: "Auditoría de la tienda con puntuación SEO",
+      help: "Revisa todo el contenido y muestra lo que falta o sobra.",
+    },
+    seoPerLanguage: {
+      label: "SEO en todos los idiomas",
+      help: "Puntuación, auditoría y correcciones con IA también para el contenido traducido.",
+    },
+    siteCrawl: {
+      label: "Rastreo en vivo de la tienda",
+      help: "Descarga las páginas reales de su tienda y revisa lo que se sirve.",
+    },
+    brokenLinks: {
+      label: "Encontrar enlaces rotos",
+      help: "Enlaces internos y externos que no llevan a ninguna parte.",
+    },
+    redirects: {
+      label: "Páginas 404 y redirecciones",
+      help: "Detecta páginas 404 visitadas y redirige direcciones antiguas.",
+    },
+    internalLinks: {
+      label: "Enlazado interno",
+      help: "Sugiere enlaces entre sus páginas.",
+    },
+    sitemapControl: {
+      label: "Control del sitemap",
+      help: "Decide qué páginas aparecen en el sitemap.",
+    },
+    pageSpeed: {
+      label: "Medir la velocidad",
+      help: "PageSpeed y datos de visitantes reales.",
+    },
+    speedOptimization: {
+      label: "Mejoras automáticas de velocidad",
+      help: "Modifica el código del tema, por ejemplo con carga diferida o minificación.",
+    },
+    imageCompression: {
+      label: "Comprimir imágenes",
+      help: "Archivos de imagen más pequeños, por ejemplo en WebP.",
+    },
+    searchConsole: {
+      label: "Google Search Console",
+      help: "Clics, impresiones y posiciones dentro de la app.",
+    },
+    keywordTracking: {
+      label: "Seguimiento de palabras clave",
+      help: "Qué términos corresponden a cada página y cómo evolucionan.",
+    },
+    keywordVolume: {
+      label: "Volumen de búsqueda",
+      help: "Estima cuántas veces se busca un término.",
+    },
+    indexNow: {
+      label: "IndexNow",
+      help: "Comunica al instante páginas nuevas y modificadas a Bing y otros buscadores.",
+    },
+    localSeo: {
+      label: "SEO local y backlinks",
+      help: "Datos para la búsqueda local y análisis de enlaces externos a su tienda.",
+    },
+    aiDiscoveryFiles: {
+      label: "llms.txt y agents.md",
+      help: "Archivos que explican su tienda a los asistentes de IA.",
+    },
+    aiCrawlers: {
+      label: "Rastreadores de IA en robots.txt",
+      help: "Decide qué servicios de búsqueda con IA pueden leer su tienda.",
+    },
+    aiReferral: {
+      label: "Visitas desde asistentes de IA",
+      help: "Cuenta los visitantes que llegan desde ChatGPT, Perplexity y otros.",
+    },
+    catalogReadiness: {
+      label: "Catálogo listo para compras con IA",
+      help: "Muestra productos sin marca, categoría, GTIN, descripción o imagen.",
+    },
+    ownKey: {
+      label: "Clave de IA propia",
+      help: "Usa su propia cuenta con el proveedor de IA y le paga directamente.",
+    },
+    includedAi: {
+      label: "IA incluida en el plan",
+      help: "Sin clave propia: el uso de la IA va incluido en el precio.",
+    },
+    productDescriptions: {
+      label: "Descripciones de producto",
+      help: "La IA escribe o mejora los textos de producto.",
+    },
+    blogArticles: {
+      label: "Artículos de blog",
+      help: "La IA escribe artículos para su blog.",
+    },
+    imageToText: {
+      label: "Texto a partir de la imagen",
+      help: "La IA mira la imagen y describe lo que aparece.",
+    },
+    aiImages: {
+      label: "Generar imágenes",
+      help: "La IA crea imágenes nuevas.",
+    },
+    marketingTexts: {
+      label: "Anuncios, correos y redes sociales",
+      help: "Textos para boletines, anuncios y publicaciones.",
+    },
+    bulkGeneration: {
+      label: "Muchos textos a la vez",
+      help: "La IA escribe textos para muchos productos de una vez.",
+    },
+    createWithAi: {
+      label: "Crear contenido nuevo con IA",
+      help: "Al crear un producto o artículo, la IA completa el resto de campos.",
+    },
+    translateGenerated: {
+      label: "Traducir los textos generados",
+      help: "Lo que escribe la IA se traduce a sus otros idiomas.",
+    },
+    multiImagePerVariant: {
+      label: "Varias imágenes por variante",
+      help: "Cada variante tiene su propia galería.",
+    },
+    variantFilter: {
+      label: "La galería sigue a la variante",
+      help: "Al cambiar de variante solo se ven sus imágenes.",
+    },
+    noLayoutShift: {
+      label: "Sin saltos al cargar",
+      help: "La galería aparece en su sitio desde el principio.",
+    },
+    zoomLightbox: {
+      label: "Zoom y pantalla completa",
+      help: "Ampliar imágenes y verlas en una ventana.",
+    },
+    videoAnd3d: {
+      label: "Vídeos y modelos 3D",
+      help: "También vídeos y modelos 3D en la galería de variantes.",
+    },
+    autoAssign: {
+      label: "Asignar imágenes automáticamente",
+      help: "Asignar muchas imágenes a sus variantes de una vez.",
+    },
+    keyGenerator: {
+      label: "Claves de imagen para todas las variantes",
+      help: "Crea claves de asignación con un clic y recuerda sus nombres.",
+    },
+    dragDrop: {
+      label: "Asignar arrastrando",
+      help: "Arrastrar imágenes a mano a la galería de una variante.",
+    },
+    bulkUpload: {
+      label: "Carga masiva",
+      help: "Subir muchas imágenes en un solo paso.",
+    },
+    swatchesProduct: {
+      label: "Muestras de color o imagen en la página de producto",
+      help: "Pequeños colores o imágenes para elegir la variante.",
+    },
+    swatchesCollection: {
+      label: "Muestras en las páginas de colección",
+      help: "Variantes elegibles ya en el listado de productos.",
+    },
+    combinedListings: {
+      label: "Combinar o dividir productos",
+      help: "Mostrar varios productos como uno o dividir uno por color.",
+    },
+    altTranslation: {
+      label: "Traducir textos alternativos",
+      help: "Las descripciones de imagen aparecen en cada idioma de su tienda.",
+    },
   },
   ourStrengths: [
     "Las traducciones se guardan en su tienda Shopify y se conservan si desinstala la aplicación.",
@@ -97,11 +284,66 @@ export const compareEs: CompareCopy = {
     "Herramientas SEO completas, visibilidad en búsquedas con IA y un editor de hoja de cálculo para todo el catálogo.",
     "Galerías de imágenes por variante con carga masiva y conversión a WebP.",
   ],
+  ourStrengthsByTopic: {
+    seo: [
+      "Auditoría SEO, puntuación y correcciones con IA en todos los idiomas de su tienda, no solo en el principal.",
+      "Rastreo en vivo en dos pasos: entrega, y on-page e indexación, comparado con la ejecución anterior.",
+      "Redirecciones también para direcciones traducidas cuando cambia un handle.",
+      "Búsqueda con IA: llms.txt y agents.md, rastreadores de IA en robots.txt, visitas desde asistentes de IA y una revisión del catálogo para compras con IA.",
+      "Search Console, palabras clave por idioma, IndexNow y enlazado interno con vista previa antes de cada cambio.",
+      "Traducción, textos con IA e imágenes de variantes en el mismo plan.",
+    ],
+    aiContent: [
+      "Seis proveedores de IA a elegir: con su propia clave a precio de coste o con IA incluida.",
+      "Instrucciones propias por campo y un glosario, para acertar con el tono y los términos.",
+      "Escribe textos de producto, campos SEO, textos alternativos y artículos, mirando la imagen del producto si lo desea.",
+      "Crea productos y artículos nuevos y completa el resto de campos con IA.",
+      "Traduce lo que escribe a todos los idiomas de su tienda y mantiene las traducciones al día.",
+      "Un editor de hoja de cálculo para muchos textos a la vez.",
+    ],
+    variantImages: [
+      "Varias imágenes, vídeos y modelos 3D por variante, con zoom y pantalla completa.",
+      "Asignación automática por nombre de archivo y SKU o clave de imagen, con un generador de claves que recuerda sus nombres.",
+      "Carga masiva con conversión a WebP.",
+      "Textos alternativos con IA, traducidos a todos los idiomas de su tienda.",
+      "Parte del mismo plan que la traducción, el SEO y los textos con IA: ninguna app aparte solo para imágenes.",
+    ],
+  },
   ourNotes: {
     autoTranslate: "Con su propia clave de IA o con IA incluida",
     aiProvider: "Seis proveedores",
     imagesPerLanguage: "Aún no",
     currency: "Lo hace Shopify Markets",
+    speedOptimization: "Deliberadamente no: nunca tocamos el código del tema",
+    keywordVolume: "Search Console da cifras reales",
+    includedAi: "Gratis: un saldo de prueba único",
+    swatchesProduct: "Todavía no",
+  },
+  topics: {
+    nav: "Temas",
+    suite: "Un plan de ContentPilot cubre todos los temas: traducción, SEO, textos con IA e imágenes de variantes.",
+    preview: "Vista previa: los datos de las otras apps aún no se han comprobado. Esta página no es pública.",
+    items: {
+      translation: { tab: "Traducción" },
+      seo: {
+        tab: "SEO",
+        title: "ContentPilot comparado con apps de SEO para Shopify",
+        intro:
+          "Cómo se compara ContentPilot AI con apps de SEO conocidas para Shopify: auditoría, rastreo, Google, búsqueda con IA, y dónde las otras ofrecen más.",
+      },
+      aiContent: {
+        tab: "Textos con IA",
+        title: "ContentPilot comparado con apps de textos con IA para Shopify",
+        intro:
+          "Cómo se compara ContentPilot AI con apps que escriben textos de producto, campos SEO y artículos con IA.",
+      },
+      variantImages: {
+        tab: "Imágenes de variantes",
+        title: "ContentPilot comparado con apps de imágenes por variante",
+        intro:
+          "Cómo se compara la galería de variantes de ContentPilot AI con apps especializadas en varias imágenes por variante.",
+      },
+    },
   },
   aboutHeading: "Cómo funciona {name}",
   strengthsHeading: "Dónde destaca {name}",
@@ -157,6 +399,7 @@ export const compareEs: CompareCopy = {
     values: {
       unlimited: "Ilimitados",
       shopifyMax: "Todos los que permite Shopify (hasta 20)",
+      pending: "En revisión",
       someAutomatic: "2 automáticos, los demás a mano",
       automaticOf: "{auto} con IA, hasta {total} en total",
       manualOnly: "Solo traducción manual",

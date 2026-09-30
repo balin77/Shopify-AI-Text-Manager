@@ -20,9 +20,42 @@ import { BILLING_PLANS, MANAGED_BILLING_PLANS } from "./billing";
 import { MANAGED_AI_TASTER_ACTIONS } from "./managed-ai-budget";
 import { PLAN_CONFIG } from "./plans";
 
-export const COMPETITORS = ["translate-and-adapt", "weglot", "transcy", "langshop", "t-lab", "langify", "gtranslate"] as const;
+/** Translation apps — the first topic, and the one the page opened with. */
+export const TRANSLATION_COMPETITORS = [
+  "translate-and-adapt",
+  "weglot",
+  "transcy",
+  "langshop",
+  "t-lab",
+  "langify",
+  "gtranslate",
+] as const;
+
+/** SEO apps. Facts PROVISIONAL until the research in docs/marketing/compare-research-prompts.md. */
+export const SEO_COMPETITORS = ["yoast", "storeseo", "seowill", "tinyimg", "booster"] as const;
+
+/** AI content apps. Facts PROVISIONAL, and the list itself is up for the research to confirm. */
+export const AI_CONTENT_COMPETITORS = ["smartli", "writepilot"] as const;
+
+/** Variant image / gallery apps. Facts PROVISIONAL. */
+export const VARIANT_IMAGE_COMPETITORS = [
+  "rubik",
+  "sa-variant-images",
+  "ns-color-swatch",
+  "variant-image-wizard",
+  "gg-image-slider",
+] as const;
+
+export const COMPETITORS = [
+  ...TRANSLATION_COMPETITORS,
+  ...SEO_COMPETITORS,
+  ...AI_CONTENT_COMPETITORS,
+  ...VARIANT_IMAGE_COMPETITORS,
+] as const;
 
 export type CompetitorId = (typeof COMPETITORS)[number];
+
+export type TranslationCompetitorId = (typeof TRANSLATION_COMPETITORS)[number];
 
 /** Product names are not translated. */
 export const COMPETITOR_NAMES: Record<CompetitorId, string> = {
@@ -33,6 +66,18 @@ export const COMPETITOR_NAMES: Record<CompetitorId, string> = {
   "t-lab": "T Lab",
   langify: "Langify",
   gtranslate: "GTranslate",
+  yoast: "Yoast SEO",
+  storeseo: "StoreSEO",
+  seowill: "SEOWILL",
+  tinyimg: "TinyIMG",
+  booster: "Booster SEO",
+  smartli: "Smartli",
+  writepilot: "WritePilot",
+  rubik: "Rubik Variant Images",
+  "sa-variant-images": "SA Variant Image Automator",
+  "ns-color-swatch": "NS Color Swatch",
+  "variant-image-wizard": "Variant Image Wizard",
+  "gg-image-slider": "GG Image Slider",
 };
 
 /**
@@ -41,7 +86,26 @@ export const COMPETITOR_NAMES: Record<CompetitorId, string> = {
  */
 export type Support = "yes" | "partial" | "no" | "unstated" | "higherPlan";
 
-export type CompareGroupId = "translation" | "content" | "seo" | "media" | "international";
+export type CompareGroupId =
+  | "translation"
+  | "content"
+  | "seo"
+  | "media"
+  | "international"
+  // SEO topic
+  | "seoBasics"
+  | "seoTechnical"
+  | "seoSearch"
+  | "aiSearch"
+  // AI content topic
+  | "aiEngine"
+  | "aiTexts"
+  | "aiWorkflow"
+  // Variant images topic
+  | "gallery"
+  | "assignment"
+  | "swatches"
+  | "imageExtras";
 
 export const COMPARE_GROUPS: CompareGroupId[] = ["translation", "content", "seo", "media", "international"];
 
@@ -61,14 +125,62 @@ export type CompareRowId =
   | "altText"
   | "imageManager"
   | "imagesPerLanguage"
-  | "currency";
+  | "currency"
+  // SEO topic
+  | "metaAi"
+  | "structuredData"
+  | "storeAudit"
+  | "seoPerLanguage"
+  | "siteCrawl"
+  | "brokenLinks"
+  | "redirects"
+  | "internalLinks"
+  | "sitemapControl"
+  | "pageSpeed"
+  | "speedOptimization"
+  | "imageCompression"
+  | "searchConsole"
+  | "keywordTracking"
+  | "keywordVolume"
+  | "indexNow"
+  | "localSeo"
+  | "aiDiscoveryFiles"
+  | "aiCrawlers"
+  | "aiReferral"
+  | "catalogReadiness"
+  // AI content topic
+  | "ownKey"
+  | "includedAi"
+  | "productDescriptions"
+  | "blogArticles"
+  | "imageToText"
+  | "aiImages"
+  | "marketingTexts"
+  | "bulkGeneration"
+  | "createWithAi"
+  | "translateGenerated"
+  // Variant images topic
+  | "multiImagePerVariant"
+  | "variantFilter"
+  | "noLayoutShift"
+  | "zoomLightbox"
+  | "videoAnd3d"
+  | "autoAssign"
+  | "keyGenerator"
+  | "dragDrop"
+  | "bulkUpload"
+  | "swatchesProduct"
+  | "swatchesCollection"
+  | "combinedListings"
+  | "altTranslation";
 
 export type CompareRow = {
   id: CompareRowId;
   group: CompareGroupId;
   /** Whether the app can do it on ANY plan. */
   ours: Support;
-  them: Record<CompetitorId, Support>;
+  /** Only the apps of the row's own topic; an app missing here reads "unstated". */
+  them: Partial<Record<CompetitorId, Support>>;
   /**
    * Per plan, in the order of `COMPARE_PRICES[app].plans`, where the answer
    * depends on the plan. An app not listed here answers the same on every
@@ -250,6 +362,309 @@ export function comparePath(competitor: CompetitorId): string {
   return `/compare/${competitor}`;
 }
 
+// ── The other topics ─────────────────────────────────────────────────────
+//
+// Each topic compares ContentPilot against a DIFFERENT kind of app with its
+// own rows: an SEO app answered on translation rows would read "no" almost
+// everywhere, which is true and tells a visitor nothing. Our column is the
+// same plan ladder in every topic, which is the point the page makes — one
+// plan covers all four.
+//
+// Competitor answers below are PROVISIONAL, lifted from
+// docs/reference/COMPETITIVE_ANALYSIS.md §2.2–2.4 and
+// SEO_COMPETITIVE_ANALYSIS_2026-08.md §3 (sources from 01–08/2026, no plan
+// levels). A topic stays unpublished — reachable only as a preview outside
+// production — until the research in docs/marketing/compare-research-prompts.md
+// has replaced them.
+
+const H = "higherPlan" as const;
+/** Pro and up — the variant image manager, crawl, Search Console, IndexNow … */
+const FROM_PRO: Support[] = [H, H, "yes", "yes"];
+/** Basic and up — keywords, the AI-search section. */
+const FROM_BASIC: Support[] = [H, "yes", "yes", "yes"];
+/** Free covers the featured image only, Basic and up every product image. */
+const FEATURED_ONLY_ON_FREE: Support[] = ["partial", "yes", "yes", "yes"];
+
+export const SEO_GROUPS: CompareGroupId[] = ["seoBasics", "seoTechnical", "seoSearch", "aiSearch"];
+
+export const SEO_ROWS: CompareRow[] = [
+  { id: "metaAi", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  { id: "bulkEditor", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  {
+    id: "altText",
+    group: "seoBasics",
+    ours: "yes",
+    them: { yoast: "no", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" },
+    byPlan: { contentpilot: FEATURED_ONLY_ON_FREE },
+  },
+  { id: "structuredData", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  { id: "storeAudit", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  { id: "seoPerLanguage", group: "seoBasics", ours: "yes", them: { yoast: "no", storeseo: "no", seowill: "no", tinyimg: "no", booster: "no" } },
+  {
+    id: "siteCrawl",
+    group: "seoTechnical",
+    ours: "yes",
+    them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "partial", booster: "yes" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "brokenLinks",
+    group: "seoTechnical",
+    ours: "yes",
+    them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "yes", booster: "yes" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  { id: "redirects", group: "seoTechnical", ours: "yes", them: { yoast: "no", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  {
+    id: "internalLinks",
+    group: "seoTechnical",
+    ours: "yes",
+    them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "no", booster: "partial" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "sitemapControl",
+    group: "seoTechnical",
+    ours: "yes",
+    them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  { id: "pageSpeed", group: "seoTechnical", ours: "yes", them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  // A product decision, not a gap we hope to close: the app never edits the
+  // merchant's theme code (CLAUDE.md, "Deploy-critical gotchas").
+  { id: "speedOptimization", group: "seoTechnical", ours: "no", them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  {
+    id: "imageCompression",
+    group: "seoTechnical",
+    ours: "yes",
+    them: { yoast: "no", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "searchConsole",
+    group: "seoSearch",
+    ours: "yes",
+    them: { yoast: "partial", storeseo: "yes", seowill: "partial", tinyimg: "partial", booster: "yes" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "keywordTracking",
+    group: "seoSearch",
+    ours: "yes",
+    them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "partial", booster: "yes" },
+    byPlan: { contentpilot: FROM_BASIC },
+  },
+  { id: "keywordVolume", group: "seoSearch", ours: "no", them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "no", booster: "unstated" } },
+  {
+    id: "indexNow",
+    group: "seoSearch",
+    ours: "yes",
+    them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "partial" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  { id: "localSeo", group: "seoSearch", ours: "no", them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "no", booster: "unstated" } },
+  {
+    id: "aiDiscoveryFiles",
+    group: "aiSearch",
+    ours: "yes",
+    them: { yoast: "partial", storeseo: "yes", seowill: "partial", tinyimg: "yes", booster: "partial" },
+    byPlan: { contentpilot: FROM_BASIC },
+  },
+  {
+    id: "aiCrawlers",
+    group: "aiSearch",
+    ours: "yes",
+    them: { yoast: "no", storeseo: "partial", seowill: "partial", tinyimg: "partial", booster: "partial" },
+    byPlan: { contentpilot: FROM_BASIC },
+  },
+  {
+    id: "aiReferral",
+    group: "aiSearch",
+    ours: "yes",
+    them: { yoast: "no", storeseo: "partial", seowill: "partial", tinyimg: "partial", booster: "no" },
+    byPlan: { contentpilot: FROM_BASIC },
+  },
+  {
+    id: "catalogReadiness",
+    group: "aiSearch",
+    ours: "yes",
+    them: {},
+    byPlan: { contentpilot: FROM_BASIC },
+  },
+];
+
+export const AI_CONTENT_GROUPS: CompareGroupId[] = ["aiEngine", "aiTexts", "aiWorkflow"];
+
+export const AI_CONTENT_ROWS: CompareRow[] = [
+  { id: "aiProvider", group: "aiEngine", ours: "yes", them: { smartli: "no", writepilot: "no" } },
+  { id: "ownKey", group: "aiEngine", ours: "yes", them: {} },
+  // Free carries the one-time taster, each paid plan an "+ AI" variant.
+  {
+    id: "includedAi",
+    group: "aiEngine",
+    ours: "yes",
+    them: { smartli: "yes", writepilot: "yes" },
+    byPlan: { contentpilot: ["partial", "yes", "yes", "yes"] },
+  },
+  {
+    id: "brandVoice",
+    group: "aiEngine",
+    ours: "yes",
+    them: { smartli: "yes", writepilot: "yes" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  { id: "productDescriptions", group: "aiTexts", ours: "yes", them: { smartli: "yes", writepilot: "yes" } },
+  { id: "metaAi", group: "aiTexts", ours: "yes", them: {} },
+  { id: "altText", group: "aiTexts", ours: "yes", them: {}, byPlan: { contentpilot: FEATURED_ONLY_ON_FREE } },
+  // Articles are a Pro content type (maxArticles is 0 below it).
+  {
+    id: "blogArticles",
+    group: "aiTexts",
+    ours: "yes",
+    them: { smartli: "yes", writepilot: "yes" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  { id: "imageToText", group: "aiTexts", ours: "yes", them: { smartli: "yes", writepilot: "no" } },
+  { id: "aiImages", group: "aiTexts", ours: "no", them: { smartli: "yes", writepilot: "no" } },
+  { id: "marketingTexts", group: "aiTexts", ours: "no", them: { smartli: "yes", writepilot: "no" } },
+  { id: "bulkGeneration", group: "aiWorkflow", ours: "yes", them: { smartli: "yes", writepilot: "yes" } },
+  { id: "createWithAi", group: "aiWorkflow", ours: "yes", them: { smartli: "no", writepilot: "no" } },
+  { id: "translateGenerated", group: "aiWorkflow", ours: "yes", them: { smartli: "yes", writepilot: "yes" } },
+];
+
+export const VARIANT_IMAGE_GROUPS: CompareGroupId[] = ["gallery", "assignment", "swatches", "imageExtras"];
+
+/** Everything around the gallery is the variant image manager, a Pro feature. */
+const gallery = (id: CompareRowId, group: CompareGroupId, them: CompareRow["them"]): CompareRow => ({
+  id,
+  group,
+  ours: "yes",
+  them,
+  byPlan: { contentpilot: FROM_PRO },
+});
+
+export const VARIANT_IMAGE_ROWS: CompareRow[] = [
+  gallery("multiImagePerVariant", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "yes" }),
+  gallery("variantFilter", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "yes" }),
+  gallery("noLayoutShift", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "partial", "variant-image-wizard": "partial", "gg-image-slider": "yes" }),
+  gallery("zoomLightbox", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "partial", "gg-image-slider": "yes" }),
+  gallery("videoAnd3d", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "partial", "variant-image-wizard": "partial", "gg-image-slider": "yes" }),
+  gallery("autoAssign", "assignment", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "partial", "variant-image-wizard": "no", "gg-image-slider": "partial" }),
+  gallery("keyGenerator", "assignment", { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" }),
+  gallery("dragDrop", "assignment", { rubik: "yes", "sa-variant-images": "no", "ns-color-swatch": "partial", "variant-image-wizard": "yes", "gg-image-slider": "partial" }),
+  gallery("bulkUpload", "assignment", {}),
+  // The category's lead feature, and our biggest gap in it — said plainly.
+  { id: "swatchesProduct", group: "swatches", ours: "no", them: { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "partial" } },
+  { id: "swatchesCollection", group: "swatches", ours: "no", them: { rubik: "partial", "sa-variant-images": "no", "ns-color-swatch": "yes", "variant-image-wizard": "no", "gg-image-slider": "no" } },
+  { id: "combinedListings", group: "swatches", ours: "no", them: { rubik: "partial", "sa-variant-images": "no", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "no" } },
+  gallery("imageCompression", "imageExtras", { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" }),
+  {
+    id: "altText",
+    group: "imageExtras",
+    ours: "yes",
+    them: { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" },
+    byPlan: { contentpilot: FEATURED_ONLY_ON_FREE },
+  },
+  { id: "altTranslation", group: "imageExtras", ours: "yes", them: { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" } },
+];
+
+export type CompareTopicId = "translation" | "seo" | "aiContent" | "variantImages";
+
+export const COMPARE_TOPIC_ORDER: CompareTopicId[] = ["translation", "seo", "aiContent", "variantImages"];
+
+export type PlanRowId = "languages" | "products" | "volume";
+
+export type CompareTopic = {
+  id: CompareTopicId;
+  /** URL segment under /compare; `null` = /compare itself. */
+  slug: string | null;
+  competitors: readonly CompetitorId[];
+  /** Columns the table opens with; the rest sit behind its `+`. */
+  initial: readonly CompetitorId[];
+  groups: CompareGroupId[];
+  rows: CompareRow[];
+  /** Which plan limits the "Plan" block lists; languages and translation volume mean nothing for an SEO app. */
+  planRows: readonly PlanRowId[];
+  /** The "AI providers" plan row — only where engines are what is compared. */
+  showEngines: boolean;
+  /**
+   * Live on the public site. An unpublished topic answers 404 in production
+   * and is a noindex preview elsewhere (`?preview`), so provisional facts can
+   * be looked at without being published.
+   */
+  published: boolean;
+};
+
+export const COMPARE_TOPICS: Record<CompareTopicId, CompareTopic> = {
+  translation: {
+    id: "translation",
+    slug: null,
+    competitors: TRANSLATION_COMPETITORS,
+    initial: ["translate-and-adapt", "weglot", "transcy", "langshop"],
+    groups: COMPARE_GROUPS,
+    rows: COMPARE_ROWS,
+    planRows: ["languages", "products", "volume"],
+    showEngines: true,
+    published: true,
+  },
+  seo: {
+    id: "seo",
+    slug: "seo",
+    competitors: SEO_COMPETITORS,
+    initial: ["yoast", "storeseo", "seowill", "tinyimg"],
+    groups: SEO_GROUPS,
+    rows: SEO_ROWS,
+    planRows: ["products"],
+    showEngines: false,
+    published: false,
+  },
+  aiContent: {
+    id: "aiContent",
+    slug: "ai-content",
+    competitors: AI_CONTENT_COMPETITORS,
+    initial: AI_CONTENT_COMPETITORS,
+    groups: AI_CONTENT_GROUPS,
+    rows: AI_CONTENT_ROWS,
+    planRows: ["products", "volume"],
+    showEngines: true,
+    published: false,
+  },
+  variantImages: {
+    id: "variantImages",
+    slug: "variant-images",
+    competitors: VARIANT_IMAGE_COMPETITORS,
+    initial: ["rubik", "sa-variant-images", "ns-color-swatch", "variant-image-wizard"],
+    groups: VARIANT_IMAGE_GROUPS,
+    rows: VARIANT_IMAGE_ROWS,
+    planRows: ["products"],
+    showEngines: false,
+    published: false,
+  },
+};
+
+export function topicPath(topic: CompareTopicId): string {
+  const slug = COMPARE_TOPICS[topic].slug;
+  return slug ? `/compare/${slug}` : "/compare";
+}
+
+export function topicBySlug(slug: string | undefined): CompareTopicId | null {
+  return COMPARE_TOPIC_ORDER.find((id) => slug !== undefined && COMPARE_TOPICS[id].slug === slug) ?? null;
+}
+
+export function topicOfCompetitor(competitor: CompetitorId): CompareTopicId {
+  return COMPARE_TOPIC_ORDER.find((id) => COMPARE_TOPICS[id].competitors.includes(competitor)) ?? "translation";
+}
+
+/** Topics a visitor can reach: the published ones, plus every one in a preview. */
+export function visibleTopics(preview: boolean): CompareTopicId[] {
+  return COMPARE_TOPIC_ORDER.filter((id) => preview || COMPARE_TOPICS[id].published);
+}
+
+/** Competitors with a live `/compare/<app>` page — the sitemap and llms.txt list these. */
+export const LIVE_COMPETITORS: CompetitorId[] = COMPETITORS.filter(
+  (id) => COMPARE_TOPICS[topicOfCompetitor(id)].published,
+);
+
 /**
  * The price comparison: every app's plans as its provider lists them — a
  * name, a monthly price in the provider's own currency, and nothing else.
@@ -336,8 +751,13 @@ export type IncludedAi =
 export const INCLUDED_AI_ENGINES = ["OpenAI"];
 
 export type PriceTable = {
+  /**
+   * Plans not researched yet: the table shows "being checked" in every plan
+   * row instead of a guessed price. Only an unpublished topic may carry one
+   * (a test pins that).
+   */
+  pending?: true;
   currency: "EUR" | "USD";
-  /** Free trial of the PAID plans in days; `null` = the app has no paid plan to try. */
   /** Free trial of the PAID plans in days; `null` = no paid plan to try; "unstated" = not published. */
   trialDays: number | null | "unstated";
   plans: PricePlan[];
@@ -349,6 +769,21 @@ const OWN_KEY: PlanVolume = { kind: "ownKey" };
 /** Rows of the price table: every app's plans lined up by position, free first. */
 export function priceLevelCount(apps: readonly PriceAppId[]): number {
   return Math.max(...apps.map((app) => COMPARE_PRICES[app].plans.length));
+}
+
+/** One placeholder plan per app whose plans nobody has checked yet. */
+function pendingTables<T extends CompetitorId>(apps: readonly T[]): Record<T, PriceTable> {
+  return Object.fromEntries(
+    apps.map((app) => [
+      app,
+      {
+        pending: true,
+        currency: "USD",
+        trialDays: "unstated",
+        plans: [{ id: "pending", name: "", monthly: null, languages: "onRequest", products: "unstated", volume: { kind: "onRequest" } }],
+      } satisfies PriceTable,
+    ]),
+  ) as Record<T, PriceTable>;
 }
 
 export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
@@ -461,6 +896,8 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
       { id: "enterprise", name: "Enterprise", monthly: 50, languages: 103, products: "unstated", volume: { kind: "unlimitedWords" } },
     ],
   },
+  // ── Not researched yet (unpublished topics) ──
+  ...pendingTables([...SEO_COMPETITORS, ...AI_CONTENT_COMPETITORS, ...VARIANT_IMAGE_COMPETITORS]),
 };
 
 /**
@@ -487,7 +924,7 @@ export function formatCompareNumber(amount: number, locale: "en" | "de" | "es"):
  * the other apps have more plans, and the table says so in the header.
  */
 export function supportAtLevel(row: CompareRow, app: PriceAppId, level: number): Support {
-  const base = app === "contentpilot" ? row.ours : row.them[app];
+  const base = app === "contentpilot" ? row.ours : (row.them[app] ?? "unstated");
   const perPlan = row.byPlan?.[app];
   if (!perPlan) return base;
   const plans = COMPARE_PRICES[app].plans;
@@ -522,7 +959,11 @@ const TRANSCY_OWN_KEY = ["OpenAI", "Gemini", "DeepL"];
 const LANGSHOP_AI = ["OpenAI", "DeepL Pro", "Google Cloud"];
 
 /** Per plan, in the order of `COMPARE_PRICES[app].plans` (a test pins the lengths). */
-export const COMPARE_ENGINES: Record<PriceAppId, PlanEngines[]> = {
+/**
+ * Only apps whose ENGINES are compared (translation and AI content topics).
+ * An app missing here shows "not stated" in the engine row.
+ */
+export const COMPARE_ENGINES: Partial<Record<PriceAppId, PlanEngines[]>> = {
   contentpilot: [OUR_ENGINES, OUR_ENGINES, OUR_ENGINES, OUR_ENGINES],
   "translate-and-adapt": [{ kind: "shopify" }],
   // Weglot sells "AI translation" with its own "AI Language Model" on every

@@ -1903,6 +1903,55 @@ a.mk-badge:hover {
   max-width: var(--mk-prose-width);
 }
 
+/* ── Comparison topics (/compare, /compare/seo, …) ─────────────────────── */
+
+/* Underlined tabs rather than pills: the pills below them pick a LEVEL of
+   the table, and two rows of identical-looking pills read as one control. */
+.mk-compare-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--mk-border);
+}
+
+.mk-compare-topics__link {
+  padding: 10px 2px;
+  margin-bottom: -1px;
+  font-weight: 600;
+  color: var(--mk-text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+
+.mk-compare-topics__link:hover {
+  color: var(--mk-text);
+}
+
+.mk-compare-topics__link[aria-current="page"] {
+  color: var(--mk-text);
+  border-bottom-color: var(--mk-brand);
+}
+
+.mk-compare-topics__link:focus-visible {
+  outline: 2px solid var(--mk-brand);
+  outline-offset: 2px;
+}
+
+.mk-shell > .mk-compare-preview {
+  margin: 0 0 32px;
+  padding: 10px 14px;
+  border: 1px dashed var(--mk-border-strong);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface-2);
+  font-size: 0.9375rem;
+}
+
+.mk-shell > .mk-compare-suite {
+  margin: -8px 0 0;
+  font-weight: 600;
+}
+
 /* ── Plan by plan ─────────────────────────────────────────────────────── */
 
 .mk-compare-matrix {

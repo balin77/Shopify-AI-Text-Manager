@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   COMPARE_ENGINES,
-  COMPARE_GROUPS,
   COMPARE_PRICES,
-  COMPARE_ROWS,
+  COMPARE_TOPICS,
   priceLevelCount,
+  type CompareTopicId,
   supportAtLevel,
   type PlanEngines,
   type PriceAppId,
@@ -80,17 +80,23 @@ const DEFAULT_LEVEL = 1;
 export function CompareMatrix({
   copy,
   locale,
+  topic,
   apps,
   initialApps,
 }: {
   copy: CompareCopy;
   locale: MarketingLocale;
+  /** Which rows, groups and plan rows the table has. */
+  topic: CompareTopicId;
   /** Every app the visitor can switch on. ContentPilot is always shown. */
   apps: readonly PriceAppId[];
   /** Apps shown before any toggle is touched; default: all of `apps`. */
   initialApps?: readonly PriceAppId[];
 }) {
   const g = copy.glance;
+  const topicConfig = COMPARE_TOPICS[topic];
+  const pending = (app: PriceAppId) => COMPARE_PRICES[app].pending === true;
+  const ourStrengths = copy.ourStrengthsByTopic[topic] ?? copy.ourStrengths;
   // The level count comes from every SELECTABLE app, so switching an app off
   // never takes a level button away from under the visitor.
   const levelCount = priceLevelCount(apps);
@@ -245,6 +251,7 @@ export function CompareMatrix({
                     <span className="mk-compare-matrix__app">{name}</span>
                     <span className="mk-compare-matrix__plan">
                       {stack((at) => {
+                        if (pending(app)) return g.values.pending;
                         const { plan, isTop } = planAt(app, at);
                         return `${plan.name}${isTop ? ` · ${g.topPlan}` : ""}`;
                       })}
@@ -317,6 +324,7 @@ export function CompareMatrix({
               {visible.map((app) => (
                 <td key={app} className={oursClass(app)}>
                   {stack((at) => {
+                    if (pending(app)) return g.values.pending;
                     const { plan } = planAt(app, at);
                     const alt = includedAiTexts(plan, COMPARE_PRICES[app], copy, locale).price;
                     return (
@@ -332,7 +340,7 @@ export function CompareMatrix({
               ))}
               {addFiller}
             </tr>
-            {(["languages", "products", "volume"] as const).map((key) => (
+            {topicConfig.planRows.map((key) => (
               <tr key={key}>
                 <th scope="row">
                   <span className="mk-compare-table__label">
@@ -342,6 +350,7 @@ export function CompareMatrix({
                 {visible.map((app) => (
                   <td key={app} className={oursClass(app)}>
                     {stack((at) => {
+                      if (pending(app)) return g.values.pending;
                       const { plan } = planAt(app, at);
                       const alt = key === "volume" ? includedAiTexts(plan, COMPARE_PRICES[app], copy, locale).volume : null;
                       return (
@@ -356,6 +365,7 @@ export function CompareMatrix({
                 {addFiller}
               </tr>
             ))}
+            {topicConfig.showEngines ? (
             <tr>
               <th scope="row">
                 <span className="mk-compare-table__label">{g.enginesLabel}</span>
@@ -367,7 +377,11 @@ export function CompareMatrix({
                     const alt = includedAiTexts(planAt(app, at).plan, COMPARE_PRICES[app], copy, locale).engines;
                     return (
                       <>
-                        {enginesText(engines[Math.min(at, engines.length - 1)], copy)}
+                        {engines
+                          ? enginesText(engines[Math.min(at, engines.length - 1)], copy)
+                          : pending(app)
+                            ? g.values.pending
+                            : g.engines.unstated}
                         {alt ? <span className="mk-compare-matrix__alt">{alt}</span> : null}
                       </>
                     );
@@ -376,6 +390,7 @@ export function CompareMatrix({
               ))}
               {addFiller}
             </tr>
+            ) : null}
             <tr>
               <th scope="row">
                 <span className="mk-compare-table__label">{g.trialRow}</span>
@@ -384,7 +399,9 @@ export function CompareMatrix({
                 const days = COMPARE_PRICES[app].trialDays;
                 return (
                   <td key={app} className={oursClass(app)}>
-                    {days === null
+                    {pending(app)
+                      ? g.values.pending
+                      : days === null
                       ? g.values.noTrial
                       : days === "unstated"
                         ? g.values.unstated
@@ -396,14 +413,14 @@ export function CompareMatrix({
             </tr>
           </tbody>
 
-          {COMPARE_GROUPS.map((group) => (
+          {topicConfig.groups.map((group) => (
             <tbody key={group}>
               <tr className="mk-compare-table__group">
                 <th scope="rowgroup" colSpan={columns}>
                   <span className="mk-compare-table__group-label">{copy.groups[group]}</span>
                 </th>
               </tr>
-              {COMPARE_ROWS.filter((row) => row.group === group).map((row) => (
+              {topicConfig.rows.filter((row) => row.group === group).map((row) => (
                 <tr key={row.id}>
                   <th scope="row">
                     <span className="mk-compare-table__label">{copy.rows[row.id].label}</span>
@@ -420,7 +437,7 @@ export function CompareMatrix({
                             ? undefined
                             : app === "contentpilot"
                               ? copy.ourNotes[row.id]
-                              : copy.competitors[app].notes?.[row.id];
+                              : copy.competitors[app]?.notes?.[row.id];
                         return <CellAnswer support={support} label={copy.support[support]} note={note} />;
                       })}
                     </td>
@@ -444,11 +461,18 @@ export function CompareMatrix({
               </th>
               {visible.map((app) => (
                 <td key={app} className={oursClass(app)}>
-                  <ul className="mk-compare-strengths">
-                    {(app === "contentpilot" ? copy.ourStrengths : copy.competitors[app].strengths).map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
+                  {(() => {
+                    const items = app === "contentpilot" ? ourStrengths : copy.competitors[app]?.strengths;
+                    // An app of a topic that is not researched yet has no copy.
+                    if (!items) return g.values.pending;
+                    return (
+                      <ul className="mk-compare-strengths">
+                        {items.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    );
+                  })()}
                 </td>
               ))}
               {addFiller}

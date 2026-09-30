@@ -21,6 +21,17 @@ export const compareDe: CompareCopy = {
     seo: "SEO und KI-Suche",
     media: "Bilder",
     international: "Verkaufen im Ausland",
+    seoBasics: "Grundlagen",
+    seoTechnical: "Technik und Crawl",
+    seoSearch: "Google und Keywords",
+    aiSearch: "KI-Suche",
+    aiEngine: "KI und Steuerung",
+    aiTexts: "Texte",
+    aiWorkflow: "Arbeitsweise",
+    gallery: "Galerie",
+    assignment: "Bilder zuweisen",
+    swatches: "Swatches und Listings",
+    imageExtras: "Bild-Extras",
   },
   rows: {
     autoTranslate: {
@@ -87,6 +98,182 @@ export const compareDe: CompareCopy = {
       label: "Währungsumrechnung durch die App",
       help: "Shopify Markets rechnet Preise bereits selbst um; manche Apps bringen einen eigenen Umrechner mit.",
     },
+    metaAi: {
+      label: "SEO-Titel und Meta-Beschreibungen per KI",
+      help: "Die KI schreibt Titel und Beschreibungen für Suchergebnisse.",
+    },
+    structuredData: {
+      label: "Strukturierte Daten (JSON-LD)",
+      help: "Produktdaten, Bewertungen und FAQ in der Form, die Google für Rich Results liest.",
+    },
+    storeAudit: {
+      label: "Shop-Audit mit SEO-Score",
+      help: "Prüft alle Inhalte und zeigt, was fehlt oder zu lang ist.",
+    },
+    seoPerLanguage: {
+      label: "SEO in jeder Sprache",
+      help: "Score, Prüfung und KI-Korrektur auch für übersetzte Inhalte.",
+    },
+    siteCrawl: {
+      label: "Live-Crawl des Shops",
+      help: "Ruft die echten Seiten Ihres Shops ab und prüft, was ausgeliefert wird.",
+    },
+    brokenLinks: {
+      label: "Kaputte Links finden",
+      help: "Interne und externe Links, die ins Leere führen.",
+    },
+    redirects: {
+      label: "404-Seiten und Weiterleitungen",
+      help: "Erkennt aufgerufene 404-Seiten und leitet alte Adressen weiter.",
+    },
+    internalLinks: {
+      label: "Interne Verlinkung",
+      help: "Schlägt Links zwischen Ihren Seiten vor.",
+    },
+    sitemapControl: {
+      label: "Sitemap steuern",
+      help: "Legt fest, welche Seiten in der Sitemap stehen.",
+    },
+    pageSpeed: {
+      label: "Ladezeit messen",
+      help: "PageSpeed und Messwerte echter Besucher.",
+    },
+    speedOptimization: {
+      label: "Ladezeit automatisch verbessern",
+      help: "Greift in den Theme-Code ein, etwa per Lazy-Loading oder Minifizierung.",
+    },
+    imageCompression: {
+      label: "Bilder komprimieren",
+      help: "Kleinere Bilddateien, etwa per WebP.",
+    },
+    searchConsole: {
+      label: "Google Search Console",
+      help: "Klicks, Impressionen und Positionen direkt in der App.",
+    },
+    keywordTracking: {
+      label: "Keywords verfolgen",
+      help: "Welche Suchbegriffe zu welcher Seite gehören und wie sie sich entwickeln.",
+    },
+    keywordVolume: {
+      label: "Suchvolumen von Keywords",
+      help: "Schätzt, wie oft ein Begriff gesucht wird.",
+    },
+    indexNow: {
+      label: "IndexNow",
+      help: "Meldet neue und geänderte Seiten sofort an Bing und weitere Suchmaschinen.",
+    },
+    localSeo: {
+      label: "Local SEO und Backlinks",
+      help: "Angaben für lokale Suche und Analyse fremder Links auf Ihren Shop.",
+    },
+    aiDiscoveryFiles: {
+      label: "llms.txt und agents.md",
+      help: "Dateien, die KI-Assistenten Ihren Shop erklären.",
+    },
+    aiCrawlers: {
+      label: "KI-Crawler in robots.txt",
+      help: "Legt fest, welche KI-Suchdienste Ihren Shop lesen dürfen.",
+    },
+    aiReferral: {
+      label: "Besuche aus KI-Assistenten",
+      help: "Zählt Besucher, die von ChatGPT, Perplexity und anderen kommen.",
+    },
+    catalogReadiness: {
+      label: "Katalog bereit für KI-Shopping",
+      help: "Zeigt Produkte ohne Marke, Kategorie, GTIN, Beschreibung oder Bild.",
+    },
+    ownKey: {
+      label: "Eigener KI-Schlüssel",
+      help: "Sie nutzen Ihr eigenes Konto beim KI-Anbieter und zahlen ihn direkt.",
+    },
+    includedAi: {
+      label: "KI im Plan enthalten",
+      help: "Ohne eigenen Schlüssel: Die KI-Nutzung ist im Preis enthalten.",
+    },
+    productDescriptions: {
+      label: "Produktbeschreibungen",
+      help: "Die KI schreibt oder verbessert Produkttexte.",
+    },
+    blogArticles: {
+      label: "Blogartikel",
+      help: "Die KI schreibt Artikel für Ihren Blog.",
+    },
+    imageToText: {
+      label: "Text aus dem Produktbild",
+      help: "Die KI sieht sich das Bild an und beschreibt, was darauf ist.",
+    },
+    aiImages: {
+      label: "Bilder erzeugen",
+      help: "Die KI erstellt neue Bilder.",
+    },
+    marketingTexts: {
+      label: "Werbetexte, E-Mails, Social Media",
+      help: "Texte für Newsletter, Anzeigen und Beiträge.",
+    },
+    bulkGeneration: {
+      label: "Viele Texte auf einmal",
+      help: "Die KI schreibt Texte für viele Produkte in einem Durchgang.",
+    },
+    createWithAi: {
+      label: "Neue Inhalte mit KI anlegen",
+      help: "Beim Erstellen eines Produkts oder Artikels füllt die KI die restlichen Felder.",
+    },
+    translateGenerated: {
+      label: "Generierte Texte übersetzen",
+      help: "Was die KI schreibt, wird in Ihre anderen Sprachen übersetzt.",
+    },
+    multiImagePerVariant: {
+      label: "Mehrere Bilder pro Variante",
+      help: "Jede Variante bekommt ihre eigene Bildergalerie.",
+    },
+    variantFilter: {
+      label: "Galerie wechselt mit der Variante",
+      help: "Beim Wechsel der Variante zeigt der Shop nur deren Bilder.",
+    },
+    noLayoutShift: {
+      label: "Kein Springen beim Laden",
+      help: "Die Galerie steht sofort an ihrem Platz.",
+    },
+    zoomLightbox: {
+      label: "Zoom und Vollbild",
+      help: "Bilder vergrößern und in einer Lightbox ansehen.",
+    },
+    videoAnd3d: {
+      label: "Videos und 3D-Modelle",
+      help: "Auch Videos und 3D-Modelle in der Variantengalerie.",
+    },
+    autoAssign: {
+      label: "Bilder automatisch zuweisen",
+      help: "Viele Bilder auf einmal den richtigen Varianten zuordnen.",
+    },
+    keyGenerator: {
+      label: "Bildschlüssel für alle Varianten",
+      help: "Erzeugt passende Zuordnungs-Schlüssel mit einem Klick und merkt sich Ihre Bezeichnungen.",
+    },
+    dragDrop: {
+      label: "Zuweisen per Drag & Drop",
+      help: "Bilder von Hand in die Galerie einer Variante ziehen.",
+    },
+    bulkUpload: {
+      label: "Massen-Upload",
+      help: "Viele Bilder in einem Schritt hochladen.",
+    },
+    swatchesProduct: {
+      label: "Farb- und Bild-Swatches auf der Produktseite",
+      help: "Kleine Farbfelder oder Bilder zum Wählen der Variante.",
+    },
+    swatchesCollection: {
+      label: "Swatches auf Kollektionsseiten",
+      help: "Varianten schon in der Produktübersicht wählbar.",
+    },
+    combinedListings: {
+      label: "Produkte kombinieren oder aufteilen",
+      help: "Mehrere Produkte als eines zeigen oder eines nach Farbe aufteilen.",
+    },
+    altTranslation: {
+      label: "Alt-Texte übersetzen",
+      help: "Die Bildbeschreibungen erscheinen in jeder Sprache Ihres Shops.",
+    },
   },
   ourStrengths: [
     "Übersetzungen werden in Ihrem Shopify-Shop gespeichert und bleiben, wenn Sie die App entfernen.",
@@ -97,11 +284,66 @@ export const compareDe: CompareCopy = {
     "Umfassende SEO-Werkzeuge, Sichtbarkeit in KI-Suchen und ein Tabellen-Editor für den ganzen Katalog.",
     "Bildergalerien pro Variante mit Massen-Upload und WebP-Umwandlung.",
   ],
+  ourStrengthsByTopic: {
+    seo: [
+      "SEO-Audit, Score und KI-Korrektur in jeder Sprache Ihres Shops, nicht nur in der Hauptsprache.",
+      "Live-Crawl in zwei Schritten: Auslieferung sowie On-Page und Indexierung, mit Vergleich zum letzten Lauf.",
+      "Weiterleitungen auch für übersetzte Adressen, wenn Sie einen Handle ändern.",
+      "KI-Suche: llms.txt und agents.md, KI-Crawler in robots.txt, Besuche aus KI-Assistenten und ein Katalog-Check für KI-Shopping.",
+      "Search Console, Keywords pro Sprache, IndexNow und interne Verlinkung mit Vorschau vor jeder Änderung.",
+      "Übersetzung, KI-Texte und Variantenbilder im selben Plan.",
+    ],
+    aiContent: [
+      "Sechs KI-Anbieter zur Wahl – mit Ihrem eigenen Schlüssel zum Selbstkostenpreis oder mit enthaltener KI.",
+      "Eigene Anweisungen pro Feld und ein Glossar, damit Tonalität und Fachbegriffe stimmen.",
+      "Schreibt Produkttexte, SEO-Felder, Alt-Texte und Artikel – auf Wunsch mit Blick aufs Produktbild.",
+      "Legt neue Produkte und Artikel an und füllt die restlichen Felder mit KI.",
+      "Übersetzt das Geschriebene in alle Sprachen Ihres Shops und hält Übersetzungen aktuell.",
+      "Ein Tabellen-Editor für viele Texte auf einmal.",
+    ],
+    variantImages: [
+      "Mehrere Bilder, Videos und 3D-Modelle pro Variante, mit Zoom und Vollbild.",
+      "Automatische Zuweisung über Dateiname und SKU oder Bildschlüssel – mit Schlüssel-Generator, der sich Ihre Bezeichnungen merkt.",
+      "Massen-Upload mit Umwandlung in WebP.",
+      "Alt-Texte per KI, übersetzt in jede Sprache Ihres Shops.",
+      "Teil desselben Plans wie Übersetzung, SEO und KI-Texte – keine eigene App nur für Bilder.",
+    ],
+  },
   ourNotes: {
     autoTranslate: "Mit eigenem KI-Key oder enthaltener KI",
     aiProvider: "Sechs Anbieter",
     imagesPerLanguage: "Noch nicht",
     currency: "Macht Shopify Markets",
+    speedOptimization: "Bewusst nicht – wir ändern keinen Theme-Code",
+    keywordVolume: "Search Console liefert echte Zahlen",
+    includedAi: "Gratis: einmaliges Testguthaben",
+    swatchesProduct: "Noch nicht",
+  },
+  topics: {
+    nav: "Themen",
+    suite: "Ein ContentPilot-Plan deckt alle Themen ab: Übersetzung, SEO, KI-Texte und Variantenbilder.",
+    preview: "Vorschau: Die Angaben zu den anderen Apps sind noch nicht geprüft. Diese Seite ist nicht öffentlich.",
+    items: {
+      translation: { tab: "Übersetzung" },
+      seo: {
+        tab: "SEO",
+        title: "ContentPilot im Vergleich mit Shopify-SEO-Apps",
+        intro:
+          "Wie ContentPilot AI gegenüber bekannten SEO-Apps für Shopify abschneidet: Audit, Crawl, Google, KI-Suche – und wo die anderen mehr können.",
+      },
+      aiContent: {
+        tab: "KI-Texte",
+        title: "ContentPilot im Vergleich mit KI-Text-Apps für Shopify",
+        intro:
+          "Wie ContentPilot AI gegenüber Apps abschneidet, die Produkttexte, SEO-Felder und Artikel mit KI schreiben.",
+      },
+      variantImages: {
+        tab: "Variantenbilder",
+        title: "ContentPilot im Vergleich mit Variantenbild-Apps",
+        intro:
+          "Wie die Variantengalerie von ContentPilot AI gegenüber spezialisierten Apps für mehrere Bilder pro Variante abschneidet.",
+      },
+    },
   },
   aboutHeading: "So funktioniert {name}",
   strengthsHeading: "Wo {name} stark ist",
@@ -157,6 +399,7 @@ export const compareDe: CompareCopy = {
     values: {
       unlimited: "Unbegrenzt",
       shopifyMax: "Alle, die Shopify erlaubt (bis 20)",
+      pending: "Wird geprüft",
       someAutomatic: "2 automatisch, weitere von Hand",
       automaticOf: "{auto} per KI, bis {total} insgesamt",
       manualOnly: "Nur von Hand übersetzen",

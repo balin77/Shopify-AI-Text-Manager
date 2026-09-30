@@ -12,7 +12,13 @@ import type { LoaderFunctionArgs } from "react-router";
 import { marketingOrigin } from "../utils/marketing-route.server";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { GUIDE_TOPIC_ORDER, guideTopicPath } from "../config/marketing-guide";
-import { COMPETITORS, comparePath } from "../config/marketing-compare";
+import {
+  COMPARE_TOPICS,
+  COMPARE_TOPIC_ORDER,
+  LIVE_COMPETITORS,
+  comparePath,
+  topicPath,
+} from "../config/marketing-compare";
 import {
   MARKETING_DEFAULT_LOCALE,
   MARKETING_LOCALES,
@@ -31,8 +37,10 @@ const LOCALIZED_PATHS: string[] = [
   ...MARKETING_LOCALIZED_PATHS.filter((path) => path !== "/install" || !MARKETING_SITE.appStoreUrl),
   // One page per guide topic, from the same config the guide routes render.
   ...GUIDE_TOPIC_ORDER.map(guideTopicPath),
-  // One page per compared app.
-  ...COMPETITORS.map(comparePath),
+  // One page per published comparison topic past the first (which is /compare),
+  // and one per compared app of a published topic.
+  ...COMPARE_TOPIC_ORDER.filter((id) => id !== "translation" && COMPARE_TOPICS[id].published).map(topicPath),
+  ...LIVE_COMPETITORS.map(comparePath),
 ];
 
 /** Public but not localized — the URLs the App Store listing points at. */
