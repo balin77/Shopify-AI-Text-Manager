@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   COMPARE_ENGINES,
   COMPARE_GROUPS,
@@ -54,16 +54,26 @@ function LevelStack({
 const DEFAULT_LEVEL = 1;
 
 /**
- * The comparison, plan level by plan level: a row of level buttons, and one
- * table in which every column is one app's plan AT that level — its price,
- * its limits, and then every feature row answered for that plan.
+ * The comparison, plan level by plan level: level buttons and app toggles,
+ * and one table in which every column is one app's plan AT that level — its
+ * price, its limits, every feature row answered for that plan, and last the
+ * app's strengths as text.
  *
  * It is one table on purpose. Prices on top and features below in a second
  * table asked the visitor to match "Level 2" up by hand; here a button click
  * answers "what do I get for roughly this money, from each of them".
  *
- * The level lives in component state and starts at the same value on the
- * server and in the browser, so the first render hydrates cleanly. A real
+ * The controls and the column headers stay in view while the table scrolls,
+ * and only until the table ends (their sticky range is the table's wrapper).
+ * Where the table fits the page they stick to the page, below the site
+ * header. Where it does not (five apps on a phone), the table scrolls in its
+ * own box both ways, the headers stick to that box, and the box is at most
+ * one screen tall — a page-relative sticky header cannot live inside a
+ * horizontal scroll container. Which case applies is MEASURED after mount;
+ * the server renders the scrolling box, which is right on every screen.
+ *
+ * Level and toggles live in component state with the same start values on
+ * the server and in the browser, so the first render hydrates cleanly. A real
  * `<table>` with row and column headers, so a screen reader reads each cell
  * with its feature and its app, and every answer is a word next to its symbol.
  */
@@ -71,15 +81,78 @@ export function CompareMatrix({
   copy,
   locale,
   apps,
+  initialApps,
 }: {
   copy: CompareCopy;
   locale: MarketingLocale;
+  /** Every app the visitor can switch on. ContentPilot is always shown. */
   apps: readonly PriceAppId[];
+  /** Apps shown before any toggle is touched; default: all of `apps`. */
+  initialApps?: readonly PriceAppId[];
 }) {
   const g = copy.glance;
+  // The level count comes from every SELECTABLE app, so switching an app off
+  // never takes a level button away from under the visitor.
   const levelCount = priceLevelCount(apps);
   const [level, setLevel] = useState(Math.min(DEFAULT_LEVEL, levelCount - 1));
+  const [shown, setShown] = useState<readonly PriceAppId[]>(initialApps ?? apps);
+  const visible = apps.filter((app) => app === "contentpilot" || shown.includes(app));
+  const toggleable = apps.filter((app) => app !== "contentpilot");
+  const shownCompetitors = toggleable.filter((app) => shown.includes(app));
+  const toggle = (app: PriceAppId) =>
+    setShown((current) => (current.includes(app) ? current.filter((a) => a !== app) : [...current, app]));
   const levelLabel = (i: number) => (i === 0 ? g.freeLevel : g.level.replace("{n}", String(i)));
+
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [fits, setFits] = useState(false);
+  useEffect(() => {
+    const body = bodyRef.current;
+    const controls = controlsRef.current;
+    const box = scrollRef.current;
+    const table = tableRef.current;
+    if (!body || !controls || !box || !table || typeof ResizeObserver === "undefined") return;
+    const header = document.querySelector<HTMLElement>(".mk-header");
+    // Inside the scroll box the headers stick to the BOX, and the box itself
+    // scrolls with the page — so once the page carries its top under the
+    // sticky controls, the headers would go with it. They are pushed down by
+    // exactly that overlap, never past the box's bottom.
+    let frame = 0;
+    const follow = () => {
+      frame = 0;
+      const stuckAt = (header?.offsetHeight ?? 0) + controls.offsetHeight;
+      const head = table.tHead?.offsetHeight ?? 0;
+      const overlap = stuckAt - box.getBoundingClientRect().top;
+      const shift = Math.max(0, Math.min(overlap, box.clientHeight - head));
+      body.style.setProperty("--mk-compare-shift", `${shift}px`);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(follow);
+    };
+    const measure = () => {
+      // The site header is sticky too and wraps to two rows on a phone, so
+      // its real height is read rather than the desktop token.
+      const headerHeight = header?.offsetHeight ?? 0;
+      body.style.setProperty("--mk-compare-header", `${headerHeight}px`);
+      body.style.setProperty("--mk-compare-controls", `${controls.offsetHeight}px`);
+      setFits(table.offsetWidth <= box.clientWidth + 1);
+      follow();
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    observer.observe(table);
+    observer.observe(controls);
+    if (header) observer.observe(header);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   const planAt = (app: PriceAppId, at: number) => {
     const plans = COMPARE_PRICES[app].plans;
@@ -90,7 +163,7 @@ export function CompareMatrix({
     <LevelStack level={level} count={levelCount} render={render} />
   );
   const oursClass = (app: PriceAppId) => (app === "contentpilot" ? "mk-compare-table__ours" : undefined);
-  const single = apps.length <= 2;
+  const single = visible.length <= 2;
 
   return (
     <section className="mk-compare-matrix" aria-labelledby="compare-matrix-heading">
@@ -99,26 +172,63 @@ export function CompareMatrix({
       </h2>
       <p className="mk-compare-prices__intro">{g.intro}</p>
 
-      <div className="mk-compare-levels" role="group" aria-label={g.levelPicker}>
-        {Array.from({ length: levelCount }, (_, i) => (
-          <button
-            key={i}
-            type="button"
-            className="mk-compare-levels__button"
-            aria-pressed={i === level}
-            onClick={() => setLevel(i)}
-          >
-            {levelLabel(i)}
-          </button>
-        ))}
-      </div>
+      <div ref={bodyRef} className="mk-compare-matrix__body" data-fits={fits ? "true" : undefined}>
+        <div ref={controlsRef} className="mk-compare-controls">
+          <div className="mk-compare-levels" role="group" aria-label={g.levelPicker}>
+            {Array.from({ length: levelCount }, (_, i) => (
+              <button
+                key={i}
+                type="button"
+                className="mk-compare-levels__button"
+                aria-pressed={i === level}
+                onClick={() => setLevel(i)}
+              >
+                {levelLabel(i)}
+              </button>
+            ))}
+          </div>
+          {toggleable.length > 1 ? (
+            <div className="mk-compare-levels mk-compare-apps" role="group" aria-label={g.appPicker}>
+              {toggleable.map((app) => {
+                const on = shown.includes(app);
+                // The last competitor cannot be switched off: a table of
+                // ContentPilot alone compares nothing.
+                const locked = on && shownCompetitors.length === 1;
+                return (
+                  <button
+                    key={app}
+                    type="button"
+                    className="mk-compare-levels__button mk-compare-apps__button"
+                    aria-pressed={on}
+                    disabled={locked}
+                    onClick={() => toggle(app)}
+                  >
+                    <span className="mk-compare-apps__check" aria-hidden="true">
+                      {on ? "✓" : "+"}
+                    </span>
+                    {appName(app)}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
 
-      <div className="mk-compare-table__scroll" tabIndex={0} role="region" aria-labelledby="compare-matrix-heading">
-        <table className={`mk-compare-table mk-compare-matrix__table${single ? " mk-compare-table--single" : ""}`}>
+      <div
+        ref={scrollRef}
+        className="mk-compare-table__scroll"
+        tabIndex={0}
+        role="region"
+        aria-labelledby="compare-matrix-heading"
+      >
+        <table
+          ref={tableRef}
+          className={`mk-compare-table mk-compare-matrix__table${single ? " mk-compare-table--single" : ""}`}
+        >
           <thead>
             <tr>
               <th scope="col">{copy.featureColumn}</th>
-              {apps.map((app) => (
+              {visible.map((app) => (
                 <th scope="col" key={app} className={oursClass(app)}>
                   <span className="mk-compare-matrix__app">
                     {app === "contentpilot" ? MARKETING_SITE.appName : appName(app)}
@@ -136,7 +246,7 @@ export function CompareMatrix({
 
           <tbody>
             <tr className="mk-compare-table__group">
-              <th scope="rowgroup" colSpan={1 + apps.length}>
+              <th scope="rowgroup" colSpan={1 + visible.length}>
                 {g.planGroup}
               </th>
             </tr>
@@ -144,7 +254,7 @@ export function CompareMatrix({
               <th scope="row">
                 <span className="mk-compare-table__label">{g.priceLabel}</span>
               </th>
-              {apps.map((app) => (
+              {visible.map((app) => (
                 <td key={app} className={oursClass(app)}>
                   <span className="mk-compare-glance__price">
                     {stack((at) => (
@@ -161,7 +271,7 @@ export function CompareMatrix({
                     {key === "languages" ? g.languagesLabel : key === "products" ? g.productsLabel : g.aiLabel}
                   </span>
                 </th>
-                {apps.map((app) => (
+                {visible.map((app) => (
                   <td key={app} className={oursClass(app)}>
                     {stack((at) => planLimitTexts(planAt(app, at).plan, copy, locale)[key])}
                   </td>
@@ -172,7 +282,7 @@ export function CompareMatrix({
               <th scope="row">
                 <span className="mk-compare-table__label">{g.enginesLabel}</span>
               </th>
-              {apps.map((app) => (
+              {visible.map((app) => (
                 <td key={app} className={oursClass(app)}>
                   {stack((at) => {
                     const engines = COMPARE_ENGINES[app];
@@ -185,7 +295,7 @@ export function CompareMatrix({
               <th scope="row">
                 <span className="mk-compare-table__label">{g.trialRow}</span>
               </th>
-              {apps.map((app) => {
+              {visible.map((app) => {
                 const days = COMPARE_PRICES[app].trialDays;
                 return (
                   <td key={app} className={oursClass(app)}>
@@ -199,7 +309,7 @@ export function CompareMatrix({
           {COMPARE_GROUPS.map((group) => (
             <tbody key={group}>
               <tr className="mk-compare-table__group">
-                <th scope="rowgroup" colSpan={1 + apps.length}>
+                <th scope="rowgroup" colSpan={1 + visible.length}>
                   {copy.groups[group]}
                 </th>
               </tr>
@@ -209,7 +319,7 @@ export function CompareMatrix({
                     <span className="mk-compare-table__label">{copy.rows[row.id].label}</span>
                     <span className="mk-compare-table__help">{copy.rows[row.id].help}</span>
                   </th>
-                  {apps.map((app) => (
+                  {visible.map((app) => (
                     <td key={app} className={`mk-compare-cell${app === "contentpilot" ? " mk-compare-table__ours" : ""}`}>
                       {stack((at) => {
                         const support = supportAtLevel(row, app, at);
@@ -229,7 +339,31 @@ export function CompareMatrix({
               ))}
             </tbody>
           ))}
+
+          <tbody>
+            <tr className="mk-compare-table__group">
+              <th scope="rowgroup" colSpan={1 + visible.length}>
+                {g.strengthsGroup}
+              </th>
+            </tr>
+            <tr>
+              <th scope="row">
+                <span className="mk-compare-table__label">{g.strengthsRow}</span>
+                <span className="mk-compare-table__help">{g.strengthsHelp}</span>
+              </th>
+              {visible.map((app) => (
+                <td key={app} className={oursClass(app)}>
+                  <ul className="mk-compare-strengths">
+                    {(app === "contentpilot" ? copy.ourStrengths : copy.competitors[app].strengths).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </td>
+              ))}
+            </tr>
+          </tbody>
         </table>
+      </div>
       </div>
       <p className="mk-note mk-compare__table-note">{copy.tableNote}</p>
       <p className="mk-note mk-compare-prices__note">{copy.pricing.note}</p>

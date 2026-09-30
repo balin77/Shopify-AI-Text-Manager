@@ -1909,11 +1909,113 @@ a.mk-badge:hover {
   margin: 36px 0 40px;
 }
 
+/* Controls and column headers stick while the table scrolls — and only
+   until it ends: `.mk-compare-matrix__body` wraps exactly the two, so it is
+   their sticky range. The heights are measured by CompareMatrix. */
+.mk-compare-matrix__body {
+  --mk-compare-header: var(--mk-header-height);
+  --mk-compare-controls: 0px;
+}
+
+.mk-compare-controls {
+  position: sticky;
+  top: var(--mk-compare-header);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 12px;
+  background: var(--mk-bg);
+}
+
 .mk-compare-levels {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 4px 0 16px;
+}
+
+.mk-compare-levels__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mk-compare-apps__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+/* Several apps can be on at once, so a switched-on app is not drawn like the
+   one chosen level: light fill and a tick instead of the dark pill. */
+.mk-compare-apps .mk-compare-apps__button[aria-pressed="true"] {
+  background: var(--mk-brand-soft);
+  border-color: var(--mk-brand);
+  color: var(--mk-text);
+}
+
+.mk-compare-apps .mk-compare-apps__button[aria-pressed="false"] {
+  color: var(--mk-text-muted);
+  border-style: dashed;
+}
+
+.mk-compare-apps__check {
+  font-weight: 700;
+}
+
+/* Not fitting (the server's default, and five apps on a phone): the table
+   scrolls in its own box, at most one screen tall, headers stuck to it. */
+.mk-compare-matrix__body .mk-compare-table__scroll {
+  max-height: calc(100svh - var(--mk-compare-header) - var(--mk-compare-controls) - 16px);
+  overflow: auto;
+}
+
+.mk-compare-matrix__table thead th {
+  position: sticky;
+  top: var(--mk-compare-shift, 0px);
+  z-index: 2;
+}
+
+.mk-compare-matrix__table thead th:first-child {
+  z-index: 3;
+}
+
+/* Fitting: no scroll box at all (`clip` is not a scroll container, so
+   `sticky` works against the page), headers below the controls. */
+.mk-compare-matrix__body[data-fits] .mk-compare-table__scroll {
+  max-height: none;
+  overflow: clip;
+}
+
+.mk-compare-matrix__body[data-fits] .mk-compare-matrix__table thead th {
+  top: calc(var(--mk-compare-header) + var(--mk-compare-controls));
+}
+
+.mk-compare-strengths {
+  margin: 0;
+  padding-left: 1.1em;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.mk-compare-strengths li + li {
+  margin-top: 4px;
+}
+
+@media (max-width: 520px) {
+  /* One scrolling line each instead of three wrapped ones: the sticky bar
+     must not eat half a phone screen. */
+  .mk-compare-levels {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .mk-compare-controls .mk-compare-levels__button {
+    flex: none;
+    padding: 6px 12px;
+    font-size: 0.875rem;
+  }
 }
 
 .mk-compare-levels__button {

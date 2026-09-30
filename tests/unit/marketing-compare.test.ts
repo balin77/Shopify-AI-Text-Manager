@@ -107,3 +107,15 @@ describe("comparison pages", () => {
     }
   });
 });
+
+describe("strengths row of the comparison table", () => {
+  it("has a non-empty strengths list for every app in every language", () => {
+    for (const locale of MARKETING_LOCALES) {
+      const copy = getCompareCopy(locale);
+      expect(copy.ourStrengths.length, locale).toBeGreaterThan(0);
+      for (const id of COMPETITORS) {
+        expect(copy.competitors[id].strengths.length, `${locale} ${id}`).toBeGreaterThan(0);
+      }
+    }
+  });
+});

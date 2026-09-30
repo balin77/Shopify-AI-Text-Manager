@@ -88,6 +88,15 @@ export const compareDe: CompareCopy = {
       help: "Shopify Markets rechnet Preise bereits selbst um; manche Apps bringen einen eigenen Umrechner mit.",
     },
   },
+  ourStrengths: [
+    "Übersetzungen werden in Ihrem Shopify-Shop gespeichert und bleiben, wenn Sie die App entfernen.",
+    "KI-Übersetzung in beliebig vielen Sprachen, nach Ihrer Tonalität, Ihren Regeln und Ihrem Glossar.",
+    "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis.",
+    "Übersetzt Texte anderer Apps und aktualisiert Übersetzungen, wenn sich der Originaltext ändert.",
+    "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
+    "Umfassende SEO-Werkzeuge, Sichtbarkeit in KI-Suchen und ein Tabellen-Editor für den ganzen Katalog.",
+    "Bildergalerien pro Variante mit Massen-Upload und WebP-Umwandlung.",
+  ],
   ourNotes: {
     autoTranslate: "Mit eigenem KI-Schlüssel",
     aiProvider: "Sechs Anbieter",
@@ -129,6 +138,10 @@ export const compareDe: CompareCopy = {
       unstated: "Maschinelle Übersetzung, Dienst nicht angegeben",
     },
     trialRow: "Kostenlose Testzeit",
+    appPicker: "Verglichene Apps",
+    strengthsGroup: "Stärken",
+    strengthsRow: "Wo die App stark ist",
+    strengthsHelp: "Nach den Angaben des Anbieters, von uns zusammengefasst.",
     values: {
       unlimited: "Unbegrenzt",
       someAutomatic: "2 automatisch, weitere von Hand",

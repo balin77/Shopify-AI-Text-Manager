@@ -88,6 +88,15 @@ export const compareEn: CompareCopy = {
       help: "Shopify Markets already converts prices itself; some apps add their own converter.",
     },
   },
+  ourStrengths: [
+    "Translations saved in your Shopify store — they stay if you uninstall.",
+    "AI translation in any number of languages, following your own tone, rules and glossary.",
+    "You choose the AI provider and pay it directly, at cost.",
+    "Translates texts from other apps and updates translations when the original changes.",
+    "Writes and improves product texts, SEO titles and alt texts.",
+    "A full SEO toolkit, AI-search visibility and a spreadsheet editor for the whole catalogue.",
+    "Variant image galleries with bulk upload and WebP conversion.",
+  ],
   ourNotes: {
     autoTranslate: "With your own AI key",
     aiProvider: "Six providers",
@@ -129,6 +138,10 @@ export const compareEn: CompareCopy = {
       unstated: "Machine translation, engine not stated",
     },
     trialRow: "Free trial",
+    appPicker: "Compared apps",
+    strengthsGroup: "Strengths",
+    strengthsRow: "Where the app is strong",
+    strengthsHelp: "Based on the provider's own listing, summarised by us.",
     values: {
       unlimited: "Unlimited",
       someAutomatic: "2 automatic, more by hand",

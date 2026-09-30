@@ -34,6 +34,8 @@ export type CompareCopy = {
   support: Record<Support, string>;
   groups: Record<CompareGroupId, string>;
   rows: Record<CompareRowId, { label: string; help: string }>;
+  /** ContentPilot's own strengths, for the strengths row of the table. */
+  ourStrengths: string[];
   /** Our own notes on a cell, keyed by row. */
   ourNotes: Partial<Record<CompareRowId, string>>;
   aboutHeading: string;
@@ -72,6 +74,12 @@ export type CompareCopy = {
       unstated: string;
     };
     trialRow: string;
+    /** Label of the app toggles above the table. */
+    appPicker: string;
+    /** Group heading of the last table section: where each app is strong. */
+    strengthsGroup: string;
+    strengthsRow: string;
+    strengthsHelp: string;
     values: {
       unlimited: string;
       someAutomatic: string;
