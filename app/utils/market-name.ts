@@ -56,3 +56,31 @@ export function localizedMarketName(name: string, appLocale: string): string {
   if (!code) return name;
   return displayNames(appLocale)?.of(code) || name;
 }
+
+/** The region code a standard market name stands for (`"Spanien"` → `"ES"`), if any. */
+export function regionCodeForName(name: string): string | undefined {
+  return regionCodeIndex().get(name.trim().toLowerCase());
+}
+
+/**
+ * Codes CLDR names that are not countries a market can contain (Shopify's
+ * `CountryCode` is ISO 3166-1 plus Kosovo): territories without their own
+ * country code, the EU/eurozone, the UN, pseudo-locales and the unknown region.
+ */
+const NON_COUNTRY_CODES = new Set(["AC", "CP", "CQ", "DG", "EA", "EU", "EZ", "IC", "QO", "TA", "UN", "XA", "XB", "ZR", "ZZ"]);
+
+/** Every country, named in the app's language — the market editor's picker. */
+export function countryOptions(appLocale: string): Array<{ code: string; name: string }> {
+  const names = displayNames(appLocale) ?? displayNames("en");
+  if (!names) return [];
+  const out: Array<{ code: string; name: string }> = [];
+  for (let a = 65; a <= 90; a++) {
+    for (let b = 65; b <= 90; b++) {
+      const code = String.fromCharCode(a, b);
+      if (NON_COUNTRY_CODES.has(code)) continue;
+      const name = names.of(code);
+      if (name && name !== code) out.push({ code, name });
+    }
+  }
+  return out;
+}
