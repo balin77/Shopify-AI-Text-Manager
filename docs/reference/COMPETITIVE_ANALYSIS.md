@@ -17,87 +17,118 @@
 
 ## 1. Aktuelle Features der App
 
-### 1.1 AI/KI Features
+> **Nachgeführt 2026-09-30** gegen `develop`. Die frühere Fassung (Stand 01/2026) führte
+> Metaobjekte als „Coming Soon" und kannte weder Bulk-Editor, SEO-Bereich, KI-Sichtbarkeit
+> noch die Märkte-Verwaltung. Die öffentliche Website zeigt dieselben Punkte aus
+> Händlersicht: Anleitung `/guide`, Vergleich `/compare`.
+
+### 1.1 KI-Inhalte
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| Multi-Provider AI | ✅ | HuggingFace, Gemini, Claude, OpenAI, Grok, DeepSeek |
-| Produkttitel-Generierung | ✅ | Mit benutzerdefinierten AI-Anweisungen |
-| Produktbeschreibungen | ✅ | Generieren oder verbessern |
-| SEO-Titel & Meta-Beschreibungen | ✅ | Automatische Generierung |
-| Alt-Text für Bilder | ✅ | SEO-optimierte Bildbeschreibungen |
-| URL-Handle-Generierung | ✅ | Automatische Slug-Erstellung |
-| Sammlungs-Content | ✅ | Titel, Beschreibungen, SEO |
-| Blog-Artikel-Content | ✅ | Generierung und Verbesserung |
-| Seiten-Content | ✅ | Statische Seiten |
-| Richtlinien-Content | ✅ | Privacy, AGB, Versand, Rückgabe |
-| Custom AI-Anweisungen | ✅ | Pro Content-Typ konfigurierbar |
-| AI Queue System | ✅ | Rate Limiting, Retry, Progress |
-| Task-Tracking | ✅ | Status, Progress, Queue-Position |
+| Multi-Provider-KI mit eigenem Schlüssel | ✅ | Claude, OpenAI, Gemini, Grok, DeepSeek, HuggingFace — KI-Kosten beim Händler zum Selbstkostenpreis |
+| Generieren / Verbessern | ✅ | Titel, Beschreibungen, SEO-Titel, Meta-Beschreibungen, Handles, Alt-Texte — für Produkte, Kollektionen, Seiten, Blogs, Artikel, Richtlinien |
+| KI-Anweisungen pro Feld und Inhaltstyp | ✅ | Tonalität, Regeln, SEO-Längen; Glossar gilt für Übersetzungen |
+| KI sieht Produktbilder | ✅ | Shopweite Einstellung, Anzahl Bilder pro Anfrage wählbar |
+| Inhalte neu anlegen | ✅ | Produkte, Kollektionen, Seiten, Artikel, Metaobjekte — „Rest mit KI schreiben" + „danach übersetzen" |
+| Aufgaben-Übersicht | ✅ | Hintergrund-Jobs mit Status, Fortschritt, Fehlern |
 
-### 1.2 Übersetzungs-Features
+### 1.2 Übersetzung
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| Multi-Language-Übersetzungen | ✅ | Alle Shop-Locales |
-| Produkt-Übersetzungen | ✅ | Alle Felder |
-| Sammlungs-Übersetzungen | ✅ | Titel, Beschreibung, SEO |
-| Artikel-Übersetzungen | ✅ | Blog-Content |
-| Seiten-Übersetzungen | ✅ | Statische Seiten |
-| Richtlinien-Übersetzungen | ✅ | Shop-Policies |
-| Bild Alt-Text Übersetzungen | ✅ | Bulk-API für MediaImages |
-| Theme-Content-Übersetzungen | ✅ | Templates, Sections |
-| Theme-Standardinhalte (inkl. Checkout) | ✅ | LOCALE_CONTENT nach Präfix gruppiert; `shopify.checkout.*` = kompletter Checkout-Text |
-| E-Mail-Benachrichtigungen | ✅ | EMAIL_TEMPLATE — Bestell-, Versand-, Konto-Mails etc. |
-| Versand & Zustellung | ✅ | DELIVERY_METHOD_DEFINITION (Methodennamen im Checkout) |
-| Filter & Shop-Metadaten | ✅ | FILTER-Labels + SHOP meta_title/meta_description |
-| Cookie-Banner | ✅ | COOKIE_BANNER (via `unstable`, Auto-Fallback) |
-| Zahlung & Lieferschein | ✅ | PAYMENT_GATEWAY, PACKING_SLIP_TEMPLATE (konditional) |
-| Abo-Pläne | ✅ | SELLING_PLAN, SELLING_PLAN_GROUP (konditional) |
-| Locale-Navigation | ✅ | Schnellwechsel im Editor |
+| KI-Übersetzung, unbegrenzt viele Sprachen | ✅ | In jedem Plan; gespeichert in Shopifys eigenem Übersetzungsspeicher |
+| Glossar | ✅ | Feste Begriffe / Markennamen |
+| Alle übersetzbaren Shopify-Ressourcen | ✅ | Produkte inkl. Optionen/Metafelder, Kollektionen, Seiten, Blogs, Artikel, Richtlinien, Menüs (alle Ebenen), Metaobjekte, Theme-Inhalte inkl. Checkout, E-Mails, Versand, Filter, Cookie-Banner, Zahlungsanbieter, Lieferscheine, Abo-Pläne |
+| Marktspezifische Übersetzungen | ✅ | Markt-Ebene im Bulk-Editor und bei Theme-Inhalten |
+| Übersetzte URL-Handles mit Weiterleitungen | ✅ | Opt-in bei der automatischen Übersetzung |
+| Texte anderer Apps (Direktübersetzungen) | ✅ | Storefront-Embed + Sammler |
+| Automatische Nachübersetzung bei Textänderungen | ✅ Max | In der App, im Shopify-Admin, durch Importe; Tageslimit + Wiederholungsliste |
+| Sprachen & Märkte verwalten | ✅ | Sprachen hinzufügen/entfernen/veröffentlichen, Märkte zuweisen, Markt-Adressen (Unterordner), Märkte anlegen/aktivieren |
+| Sprachumschalter | ✅ | Storefront-Embed |
+| Bilder je Sprache | ❌ | Offen |
+| Eigene Währungsumrechnung | ❌ (bewusst) | Shopify Markets rechnet nativ um |
 
-### 1.3 Content-Management
+### 1.3 Massenbearbeitung
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| Produkte | ✅ | Titel, Beschreibung, Handle, SEO, Bilder, Optionen, Metafelder |
-| Collections | ✅ | Mit Translations |
-| Blog-Artikel | ✅ | Mit Translations |
-| Statische Seiten | ✅ | Mit Translations |
-| Shop-Richtlinien | ✅ | 6 Policy-Typen |
-| Menüs | ✅ | Hierarchische Struktur |
-| Theme-Inhalte | ✅ | Templates, Sections, Settings |
-| Metaobjects | 🔄 | Coming Soon |
-| Unified Content Editor | ✅ | Einheitliches UI |
-| HTML-Vorschau | ✅ | Für formatierte Inhalte |
+| Bulk-Editor (Tabellenansicht) | ✅ | Produkte, Varianten, Bilder, Kollektionen, Artikel, Seiten, Blogs, Richtlinien, Metaobjekte — Texte, SEO, Preise, Lager-Attribute, Kategorien, Kollektionen, Übersetzungen |
+| CSV-Export / -Import | ✅ | Auch große Dateien als Hintergrund-Job |
+| „Fehlende Übersetzungen ergänzen" | ✅ | Auswahl pro Eintrag/Feld und Zielsprache |
 
-### 1.4 SEO-Features
+### 1.4 Bilder
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| SEO-Titel-Generator | ✅ | Max. 60 Zeichen |
-| Meta-Description-Generator | ✅ | 120-160 Zeichen |
-| SEO-Score-Berechnung | ✅ | Mit Optimierungsvorschlägen |
-| SEO Sidebar | ✅ | Live-Preview, Keyword-Tracking |
-| Längen-Validierung | ✅ | Title und Meta-Description |
+| Bild-Manager + Variantengalerien | ✅ Pro+ | Mehrere Bilder pro Variante, Storefront-Galerie mit Lightbox/Zoom |
+| Massen-Upload mit Auto-Zuweisung | ✅ | Dateiname ↔ SKU/Image-Key |
+| KI-Alt-Texte + Übersetzung | ✅ | Inkl. Vorlagen |
+| WebP-Umwandlung | ✅ Pro+ | |
 
-### 1.5 Technische Features
+### 1.5 SEO und KI-Sichtbarkeit
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| PostgreSQL DB-Caching | ✅ | Schnelle Ladezeiten |
-| Webhook-System | ✅ | Products, Collections, Articles, Menus |
-| SPA-Navigation | ✅ | Client-Side Routing |
-| Subscription Plans | ✅ | Free, Basic, Pro, Max |
-| GDPR Webhooks | ✅ | Data Request, Redact |
-| API Key Encryption | ✅ | Sichere Speicherung |
-| Prompt Sanitization | ✅ | XSS/Injection-Schutz |
+| Keywords + SEO-Score pro Sprache | ✅ | Inkl. Lesbarkeit |
+| Website-Crawl (Auslieferung + On-Page) | ✅ | Wöchentlich automatisch |
+| Performance, Search Console | ✅ | |
+| Weiterleitungen, 404, interne Links | ✅ | |
+| Sitemap + IndexNow, hreflang-Audit | ✅ | |
+| Strukturierte Daten, Open Graph | ✅ | Aktivierung nach Crawl-Messung |
+| `agents.md` / `llms.txt`, Katalog-Bereitschaft, KI-Referral-Tracking | ✅ | |
+
+### 1.6 Plattform
+
+| Feature | Status | Details |
+|---------|--------|---------|
+| Pläne | ✅ | Free (50 Produkte), Basic €9.90, Pro €19.90, Max €59.90 — Sprachen immer unbegrenzt |
+| App-Oberfläche | ✅ | Deutsch, Englisch, Spanisch |
+| GDPR-Webhooks, verschlüsselte API-Schlüssel | ✅ | |
 
 ---
 
 ## 2. Wettbewerber-Vergleich
 
 ### 2.1 Übersetzungs-Apps
+
+#### Aktueller Stand (2026-09-30) — die vier großen Alternativen
+
+Grundlage der öffentlichen Vergleichsseite `/compare` (Fakten in
+[marketing-compare.ts](../../app/config/marketing-compare.ts) — **beide Stellen
+gemeinsam ändern**). Quellen: App-Store-Einträge und Hilfeseiten der Anbieter,
+Web-Recherche 2026-09 (Links §5). „?" = der Anbieter sagt es nicht klar; das ist
+kein ❌.
+
+| Funktion | ContentPilot | Translate & Adapt | Weglot | Transcy | LangShop |
+|---|---|---|---|---|---|
+| Automatische Übersetzung | ✅ (eigener KI-Key) | ⚠️ nur 2 Sprachen, Rest manuell; 100 Mio. Zeichen/Jahr | ✅ | ✅ | ✅ |
+| Übersetzungen in Shopify gespeichert | ✅ | ✅ | ❌ bei Weglot (JS/Proxy), weg bei Kündigung | ✅ | ✅ |
+| Eigene Anweisungen / Markenstimme | ✅ | ❌ | ✅ (lernendes KI-Modell) | ? | ✅ |
+| Wahl des KI-Anbieters | ✅ 6 | ❌ | ❌ | ⚠️ Engine-Wahl (OpenAI, DeepL, Gemini, …) | ⚠️ Engine-Wahl (ChatGPT, DeepL, Google) |
+| Glossar | ✅ | ❌ | ✅ | ✅ | ✅ (ab Standard) |
+| Theme, Checkout, E-Mails | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Texte anderer Apps | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Übersetzungen folgen Textänderungen | ✅ Max | ? | ✅ | ✅ | ⚠️ neue Produkte, höhere Pläne |
+| Texte schreiben/verbessern mit KI | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Tabellen-Editor für den Katalog | ✅ | ❌ | ❌ | ❌ | ❌ |
+| SEO-Werkzeuge (Keywords, Crawl, GSC) | ✅ | ❌ | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) |
+| KI-Sichtbarkeit (Schema, agents.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| KI-Alt-Texte | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Variantengalerien | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ | ✅ (auch Text im Bild) | ? |
+| Eigene Währungsumrechnung | ❌ (Markets) | ❌ (Markets) | ❌ | ✅ | ✅ |
+| Menschliche Übersetzer | ❌ | ❌ | ✅ | ? | ✅ |
+| Preismodell | Free 50 Prod.; ab €9.90, Sprachen ∞ | gratis | nach Wörtern + Sprachen: Free 1 Spr./2k Wörter, $17, $32 (3 Spr.), $87 (5 Spr.) | Free, $14.90, $29, $69, $99, $599 | Free, ~$9.90, ~$33.90 (+5 Spr.), ~$67.90 (+20 Spr.) |
+| Bewertung (09/2026) | — | 4.5 | 4.5 (≈790) | 4.4 (≈2.530) | 4.5 |
+
+**Offen / vor dem Livegang der Website prüfen:** Transcy „eigene Anweisungen",
+T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"); die
+LangShop-Preise stammen aus Drittquellen. langify und T Lab sind bewusst nicht auf
+der Vergleichsseite (kleinere Verbreitung); Kandidaten für eine spätere Erweiterung.
+
+#### Historische Tabelle (Stand 01–08/2026)
+
 
 | Feature | Unsere App | Transcy | Weglot | LangShop | T Lab |
 |---------|------------|---------|--------|----------|-------|
@@ -907,6 +938,13 @@ laden + in `vars`-Objekt reichen).
 - [LangShop AI Language Translate](https://apps.shopify.com/langshop)
 - [T Lab AI Language Translate](https://apps.shopify.com/content-translation)
 - [Shopify Translate & Adapt](https://apps.shopify.com/translate-and-adapt)
+- [Shopify Help: Translate & Adapt](https://help.shopify.com/manual/markets/languages/translate-adapt-app) (2 Auto-Sprachen)
+- [Transcy: Shopify Translate & Adapt Review 2026](https://transcy.io/blog/shopify-translate-and-adapt-review/) (100 Mio. Zeichen/Jahr, kein Glossar — Konkurrenzquelle)
+- [Shopify Community: Translating images and other media](https://community.shopify.com/t/tips-from-the-team-translating-images-and-other-media/230203)
+- [Transcy Pricing Plan](https://help.transcy.io/en/article/transcy-pricing-plan-1tsl3uz/)
+- [Fudge: Best Shopify apps for international selling (2026)](https://www.fudge.ai/blog/best-shopify-international-apps/) (Weglot-Pläne)
+- [Hextom: Best Shopify translation apps](https://hextom.com/blog/best-shopify-translation-apps/) (Weglot: Speicherung beim Anbieter)
+- [Digismoothie: LangShop](https://www.digismoothie.com/app/langshop)
 
 ### Tag-Übersetzung (Recherche 2026-08, Fußnote ⁶)
 - [Shopify: Manage translations of merchant-provided content](https://shopify.dev/docs/apps/build/markets/manage-translated-content)
@@ -966,3 +1004,4 @@ laden + in `vars`-Objekt reichen).
 | 2026-08-19 | **SEO-Wettbewerbsanalyse abgeschlossen** — [SEO_COMPETITIVE_ANALYSIS_2026-08.md](SEO_COMPETITIVE_ANALYSIS_2026-08.md) §10. Alle P1- und P2.3/P2.4-Lücken sind umgesetzt, auf einem Live-Shop ausgeliefert und gegen Googles Rich Results Test gegengeprüft: `agents.md` (mit merchant-editierbarer Einleitung), Katalog-Bereitschaft, wöchentlicher Crawl, KI-Referral-Tracking, Readability, VideoObject inkl. `uploadDate`. Dabei gefunden: Theme- und App-Markup verschmelzen über dieselbe `@id` — Aktivierung ist deshalb jetzt der letzte Schritt und urteilt anhand der Crawl-Messung. Offen und bewusst offen: LocalBusiness (nur Opt-in), Bild-Dateinamen-SEO, Long-Form-Generator, echtes Prompt-Rank-Tracking, Theme-Eingriffe (⛔ Nicht-Ziel). Größte verbleibende Lücke ist kommunikativ, nicht funktional. |
 | 2026-07-19 | **Content-Templates ⛔ zurückgezogen** nach 2-Tages-Test auf `develop` (Merge `266b00a` → Rollback `69e7b8b`). Kritischer Nutzer-Review ergab: die `{{title}}`/`{{description}}`/`{{language}}`/`{{current_value}}`/`{{field_label}}`-Substitution lieferte der KI keine Info, die sie nicht bereits über die Handler-Prompt-Zeilen (`Context - Title:`, `Language:` etc.) bekam. Templates duplizierten damit die bestehenden per-Field-Custom-Instructions mit rein textueller Umpositionierung. Reverse-Migration `20260719130000_drop_content_template` räumt die DB-Tabelle beim nächsten Deploy weg. §2.3 Fußnote ⁵, §3.1 Punkt 5, §3.5 „Big Picture", §4 Phase 1.3 alle aktualisiert. **Bedingung für einen späteren Wiedereinstieg:** Variablen müssen Zusatz-Info liefern, die die KI heute nicht bekommt (`{{brand}}`/`{{price}}`/`{{tags}}`/`{{vendor}}`/`{{product_type}}`/`{{similar_products}}` aus Shopify). Ohne diese Bedingung deckt Custom-Instructions denselben Bedarf ohne zweite Konfigurationsfläche ab. |
 | 2026-08-20 | **§2.1 Tag-Übersetzung ergänzt** (Web-Recherche): neue Tabellenzeile + Fußnote ⁶. Kernbefund — **keine** App übersetzt Tags als Tags; `tags` ist kein `translatableResource`-Key der Admin API, und tag-/vendor-basierte Filterwerte sind auch in Search & Discovery ausgenommen. Die ⚠️ der Konkurrenz sind drei Umgehungen: LangShops Theme-Duplikat (für Neukunden seit 08.08.2023 abgeschafft, Storefront-Suche kaputt), langifys Polyfill im Theme-Code, Weglot/GTranslates Proxy — alle ersetzen nur die HTML-Ausgabe, alle lassen die Filter-URL (`?filter.p.tag=…`) unübersetzt. Transcy und T Lab sagen es gar nicht erst zu. **Kein Gap für uns:** die Direktübersetzungen sind derselbe DOM-Mechanismus ohne Theme-Eingriff (shop-weites Wörterbuch, für Tags die richtige Granularität), und `field.tags` als `translatable: false` ist die korrekte Modellierung der Plattform-Grenze. Shopifys eigene Empfehlung für übersetzbare Filter bleibt: Metafelder statt Tags. Offen/ungemessen: ob unser Embed Tag-Chips in einem konkreten Theme trifft, und ob Transcy still einen eigenen DOM-Layer hat. |
+| 2026-09-30 | **§1 komplett nachgeführt** (Stand `develop`: Bulk-Editor, SEO-Bereich, KI-Sichtbarkeit, Sprachen & Märkte, automatische Nachübersetzung, Inhalte anlegen, Metaobjekte). **§2.1 neue Vergleichstabelle** ContentPilot vs. Translate & Adapt, Weglot, Transcy, LangShop (Web-Recherche 09/2026), Grundlage der neuen öffentlichen Vergleichsseiten `/compare` und `/compare/<app>`. Eigene Lücken bewusst aufgeführt (Bilder je Sprache, eigene Währungsumrechnung, menschliche Übersetzer). |

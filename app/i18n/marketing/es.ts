@@ -14,6 +14,7 @@ export const es: MarketingTranslation = {
     roadmap: "Hoja de ruta",
     faq: "Preguntas",
     guide: "Guía",
+    compare: "Comparativa",
     install: "Instalar en Shopify",
     installShort: "Instalar",
     menu: "Menú",

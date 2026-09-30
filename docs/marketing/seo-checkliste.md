@@ -8,7 +8,8 @@ Stand: 2026-09-30. Was im Code bereits erledigt ist, steht am Ende. Die Punkte d
 - [ ] **`PUBLIC_SITE_URL` setzen** (nur Production), z. B. `PUBLIC_SITE_URL=https://contentpilot.ai`. Danach zeigen Canonical, hreflang, Sitemap, robots.txt, llms.txt und die strukturierten Daten immer auf diese Domain.
 - [ ] **Shopify-App-URL nicht ändern**, solange nichts anderes geplant ist: Die App im Shopify-Admin darf weiter auf der Railway-Adresse laufen. Soll auch die App auf die neue Domain umziehen, gemeinsam planen, denn das betrifft die Shopify-Konfiguration und alle installierten Shops.
 - [ ] **Development vor Google verstecken.** Beim Development-Service prüfen, dass `APP_ENV=development` gesetzt ist. Kontrolle: `curl -I https://shopify-ai-text-manager-development.up.railway.app/` muss `X-Robots-Tag: noindex, nofollow` zeigen. Production darf diesen Header nicht zeigen.
-- [ ] **Kurztest der wichtigsten Adressen** auf der Live-Domain: `/`, `/de`, `/es`, `/features`, `/guide`, `/guide/glossary`, `/sitemap.xml`, `/robots.txt`, `/llms.txt`. Alle müssen mit 200 antworten, `/features/` mit 301 auf `/features`.
+- [ ] **Vergleichsseiten prüfen, bevor sie online gehen.** `/compare` nennt echte Konkurrenten mit Funktionen und Preismodellen (Stand September 2026). Einmal selbst durchlesen und die Angaben in den App-Store-Einträgen der vier Apps gegenprüfen, besonders die Felder „Keine Angabe“. Die Fakten stehen an einer Stelle; Korrekturen einfach mir sagen.
+- [ ] **Kurztest der wichtigsten Adressen** auf der Live-Domain: `/`, `/de`, `/es`, `/features`, `/guide`, `/guide/glossary`, `/compare`, `/compare/weglot`, `/sitemap.xml`, `/robots.txt`, `/llms.txt`. Alle müssen mit 200 antworten, `/features/` mit 301 auf `/features`.
 
 ## 2. Suchmaschinen anmelden (erste Woche)
 
@@ -36,7 +37,7 @@ Stand: 2026-09-30. Was im Code bereits erledigt ist, steht am Ende. Die Punkte d
 ## 5. Nach 4–6 Wochen: mit echten Daten weitermachen
 
 - [ ] In der Search Console unter *Leistung* nachsehen, bei welchen Suchbegriffen die Seite erscheint, aber kaum geklickt wird (Position 5–20). Mir die Liste geben, dann passe ich Titel und Beschreibungen gezielt an.
-- [ ] **Vergleichsseiten** planen, z. B. „ContentPilot vs. Translate & Adapt“, „vs. Weglot“, „vs. Langify“. Solche Seiten ranken für Suchen kurz vor einer Kaufentscheidung. Sie müssen fair und faktisch sein.
+- [ ] **Vergleichsseiten erweitern:** `/compare` gibt es bereits (Translate & Adapt, Weglot, Transcy, LangShop). Wenn in der Search Console Suchen nach weiteren Apps auftauchen (z. B. „langify alternative"), mir sagen, dann ergänze ich sie.
 - [ ] **Anwendungsfall-Seiten** für Suchbegriffe, die in der Search Console auftauchen, z. B. „Shopify Shop auf Französisch übersetzen“ oder „Shopify Märkte Schweiz Übersetzung“.
 - [ ] Monatlich die Search Console prüfen: *Seiten* (nicht indexiert?), *Core Web Vitals*, *hreflang*-Hinweise.
 
@@ -49,5 +50,6 @@ Stand: 2026-09-30. Was im Code bereits erledigt ist, steht am Ende. Die Punkte d
 - Strukturierte Daten (JSON-LD): Organization, WebSite, SoftwareApplication, FAQPage (Startseite); TechArticle und BreadcrumbList (Anleitung).
 - `/llms.txt` mit allen Seiten und Anleitungsthemen für KI-Assistenten.
 - Interne Links von jedem Funktionsblock zur passenden Anleitungskategorie.
+- Vergleichsseiten `/compare` (Übersicht) und `/compare/<app>` für Translate & Adapt, Weglot, Transcy und LangShop, in drei Sprachen, mit Breadcrumbs, in Sitemap und llms.txt.
 - `noindex`-Header für Nicht-Produktions-Umgebungen, Apple-Touch-Icon.
 - Keine Cookies und keine Drittanbieter-Skripte vor einem Klick; YouTube lädt erst beim Abspielen. Das ist gut für Ladezeit und Datenschutz.

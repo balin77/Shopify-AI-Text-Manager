@@ -25,6 +25,7 @@ export const en = {
     roadmap: "Roadmap",
     faq: "FAQ",
     guide: "Guide",
+    compare: "Compare",
     install: "Install on Shopify",
     installShort: "Install",
     menu: "Menu",

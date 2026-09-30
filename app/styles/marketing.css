@@ -1596,3 +1596,264 @@ a.mk-badge:hover {
   white-space: nowrap;
   border: 0;
 }
+
+/* ── Comparison pages (/compare, /compare/<app>) ─────────────────────────── */
+
+.mk-compare-cards {
+  list-style: none;
+  margin: 32px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+}
+
+.mk-compare-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface);
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+
+.mk-compare-card:hover {
+  border-color: var(--mk-brand);
+}
+
+.mk-compare-card__title {
+  font-weight: 600;
+  font-size: 1.0625rem;
+}
+
+.mk-compare-card__summary {
+  color: var(--mk-text-muted);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  flex: 1;
+}
+
+.mk-compare__heading {
+  margin-bottom: 16px;
+}
+
+.mk-note.mk-compare__disclaimer {
+  margin-top: 16px;
+  max-width: var(--mk-prose-width);
+}
+
+/* The table scrolls inside its own box on a phone; the page never does. */
+.mk-compare-table__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface);
+}
+
+.mk-compare-table__scroll:focus-visible {
+  outline: 2px solid var(--mk-brand);
+  outline-offset: 2px;
+}
+
+.mk-compare-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.mk-compare-table th,
+.mk-compare-table td {
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--mk-border);
+}
+
+.mk-compare-table thead th {
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--mk-surface-2);
+}
+
+/* The feature column stays in view while the answers scroll. */
+.mk-compare-table th[scope="row"],
+.mk-compare-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--mk-surface);
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.mk-compare-table thead th:first-child {
+  background: var(--mk-surface-2);
+}
+
+@media (max-width: 520px) {
+  .mk-compare-table th[scope="row"],
+  .mk-compare-table thead th:first-child {
+    min-width: 150px;
+    max-width: 170px;
+  }
+}
+
+.mk-compare-table__group th {
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--mk-text-muted);
+  background: var(--mk-surface-2);
+}
+
+.mk-compare-table__label {
+  display: block;
+  font-weight: 600;
+}
+
+.mk-compare-table__help {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--mk-text-muted);
+}
+
+.mk-compare-table__ours {
+  background: var(--mk-brand-soft);
+}
+
+.mk-compare-table thead th.mk-compare-table__ours {
+  background: var(--mk-brand-soft);
+  color: var(--mk-brand);
+}
+
+.mk-compare-cell__answer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.mk-compare-cell__symbol {
+  font-weight: 700;
+}
+
+.mk-compare-cell--yes .mk-compare-cell__symbol {
+  color: #1a7f37;
+}
+
+.mk-compare-cell--no .mk-compare-cell__symbol {
+  color: var(--mk-danger);
+}
+
+.mk-compare-cell--partial .mk-compare-cell__symbol,
+.mk-compare-cell--unstated .mk-compare-cell__symbol {
+  color: var(--mk-text-muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  .mk-compare-cell--yes .mk-compare-cell__symbol {
+    color: #6fd08c;
+  }
+}
+
+.mk-compare-cell__note {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  color: var(--mk-text-muted);
+}
+
+.mk-compare-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin-top: 32px;
+}
+
+.mk-compare-detail h2 {
+  font-size: 1.25rem;
+  margin-bottom: 10px;
+}
+
+.mk-compare-detail p {
+  max-width: var(--mk-prose-width);
+  line-height: 1.6;
+}
+
+.mk-compare-detail__pair {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+
+.mk-compare-detail__box {
+  padding: 20px 22px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface);
+}
+
+.mk-compare-detail__box--ours {
+  border-color: var(--mk-brand);
+}
+
+.mk-compare-pricing {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 10px 20px;
+  margin: 0;
+  max-width: 820px;
+}
+
+.mk-compare-pricing dt {
+  font-weight: 600;
+}
+
+.mk-compare-pricing dd {
+  margin: 0;
+  color: var(--mk-text-muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 520px) {
+  .mk-compare-pricing {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .mk-compare-pricing dd {
+    margin-bottom: 10px;
+  }
+}
+
+.mk-compare-detail__verdict {
+  padding: 20px 22px;
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface-2);
+}
+
+.mk-compare-others {
+  margin-top: 36px;
+}
+
+.mk-compare-others h2 {
+  font-size: 1.0625rem;
+  margin-bottom: 10px;
+}
+
+.mk-compare-others ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+}

@@ -13,14 +13,17 @@ import type { LoaderFunctionArgs } from "react-router";
 import { marketingOrigin } from "../utils/marketing-route.server";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { GUIDE_CATEGORIES, guideTopicPath } from "../config/marketing-guide";
+import { COMPETITORS, COMPETITOR_NAMES, comparePath } from "../config/marketing-compare";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { getGuideCopy } from "../i18n/marketing/guide";
+import { getCompareCopy } from "../i18n/marketing/compare";
 import { MARKETING_DEFAULT_LOCALE } from "../services/marketing-locale.shared";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const origin = marketingOrigin(new URL(request.url));
   const t = getMarketingTranslation(MARKETING_DEFAULT_LOCALE);
   const guide = getGuideCopy(MARKETING_DEFAULT_LOCALE);
+  const compare = getCompareCopy(MARKETING_DEFAULT_LOCALE);
 
   const lines: string[] = [
     `# ${MARKETING_SITE.appName}`,
@@ -36,6 +39,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     `- [Home](${origin}/): what the app does and frequently asked questions`,
     `- [Features](${origin}/features): every feature area in one page`,
     `- [Guide](${origin}/guide): how each part of the app works, one topic per page`,
+    `- [Comparison](${origin}/compare): ${compare.intro}`,
     `- [Videos](${origin}/videos): walkthroughs`,
     `- [Roadmap](${origin}/roadmap): what is planned and recently shipped`,
     "",
@@ -49,6 +53,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
     lines.push("");
   }
+
+  lines.push("## Comparisons", "");
+  for (const id of COMPETITORS) {
+    lines.push(
+      `- [${compare.vsTitle.replace("{name}", COMPETITOR_NAMES[id])}](${origin}${comparePath(id)}): ${compare.competitors[id].summary}`,
+    );
+  }
+  lines.push("");
 
   lines.push(
     "## Optional",
