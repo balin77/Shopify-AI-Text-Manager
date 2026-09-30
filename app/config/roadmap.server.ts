@@ -255,6 +255,42 @@ export const ROADMAP: RoadmapEntry[] = [
     notes: "Split out of translation-dashboard when that shipped 2026-09-17, so the deferral stays visible instead of being forgotten. The reason it was deferred is a schema fact: ContentTranslation has a `digest` column but NO `outdated` one (ThemeTranslation and MetaobjectTranslation do), so staleness is not derivable from the cache — findStaleTranslations needs Shopify data. The coverage read is DB-cache-first by contract, and a live sweep per page view would break it. The only sound route is persisting a marker where the digest comparison already proves staleness (stale-translation-sync.server.ts), i.e. a migration plus a write-path change. Worth it only if merchants ask what is outdated rather than what is missing.",
   },
   {
+    id: "extra-languages-browser",
+    visibility: "public",
+    status: "considering",
+    area: "translations",
+    title: {
+      en: "More languages than Shopify allows",
+      de: "Mehr Sprachen, als Shopify erlaubt",
+      es: "Más idiomas de los que permite Shopify",
+    },
+    body: {
+      en: "Shopify limits how many languages a shop can publish. Languages beyond that limit would be translated by the app and shown in the visitor's browser, with the same glossary and tone as every other language. Search engines would not see these pages, and checkout stays in the language the page is translated from.",
+      de: "Shopify begrenzt, wie viele Sprachen ein Shop veröffentlichen kann. Sprachen über dieses Limit hinaus würde die App übersetzen und im Browser des Besuchers anzeigen, mit demselben Glossar und derselben Tonalität wie jede andere Sprache. Suchmaschinen sähen diese Seiten nicht, und der Checkout bleibt in der Sprache, aus der die Seite übersetzt wird.",
+      es: "Shopify limita cuántos idiomas puede publicar una tienda. Los idiomas por encima de ese límite los traduciría la aplicación y se mostrarían en el navegador del visitante, con el mismo glosario y el mismo tono que cualquier otro idioma. Los buscadores no verían estas páginas, y el pago sigue en el idioma del que se traduce la página.",
+    },
+    notes: "Stage 1 of the hybrid plan (2026-09-30). Languages WITHIN Shopify's limit stay native (translationsRegister, /fr/ subfolders, checkout, emails); ContentPilot adds 'extra languages' on top. Working assumption of the owner: this stage for MAX, the proxy stage (extra-languages-proxy) for a possible ENTERPRISE tier — deliberately NOT decided yet, and the plan is cut so it need not be: segmenter, segment store, filling and admin UI (phases 1-3) are shared by both stages, and the stage question falls only at phase 4 with measured numbers. Builds on the direct-translation runtime (direct-translation.js, app proxy dictionary), but needs two things it lacks: block-level segments with inline placeholders instead of single text nodes, and a per-PAGE dictionary instead of the whole locale. The public body states both limits (no SEO, checkout in the source language) on purpose — a merchant must not buy this expecting indexed pages. The compare table keeps saying 'all languages Shopify allows' until this ships.",
+    ref: "docs/plans/PLAN_EXTRA_LANGUAGES.md",
+  },
+  {
+    id: "extra-languages-proxy",
+    visibility: "public",
+    status: "considering",
+    area: "translations",
+    title: {
+      en: "Extra languages that search engines can find",
+      de: "Zusatzsprachen, die Suchmaschinen finden",
+      es: "Idiomas adicionales que los buscadores encuentran",
+    },
+    body: {
+      en: "The same extra languages, served as fully translated pages at their own address such as ja.yourshop.com, with language links for search engines and a translated sitemap. Nothing flickers, because the page arrives already translated. On your side it takes one DNS entry per language.",
+      de: "Dieselben Zusatzsprachen, ausgeliefert als fertig übersetzte Seiten unter einer eigenen Adresse wie ja.ihrshop.ch, mit Sprachverweisen für Suchmaschinen und übersetzter Sitemap. Nichts flackert, weil die Seite bereits übersetzt ankommt. Auf Ihrer Seite braucht es dafür einen DNS-Eintrag pro Sprache.",
+      es: "Los mismos idiomas adicionales, servidos como páginas ya traducidas en su propia dirección, como ja.sutienda.com, con enlaces de idioma para los buscadores y un sitemap traducido. Nada parpadea, porque la página llega ya traducida. Por su parte hace falta una entrada DNS por idioma.",
+    },
+    notes: "Stage 2 of PLAN_EXTRA_LANGUAGES.md: a SEPARATE Railway service (contentpilot-edge) reverse-proxies the shop per CNAME subdomain, segments server-side with the same segmenter and reads the same segment store, rewrites links/canonical/hreflang, and caches only cookie-less responses. Working assumption: Enterprise tier (see enterprise-tier), not Max. Three measurements in phase 0 can kill it outright: Shopify's bot protection against a few datacenter IPs, the cart surviving the jump from ja.shop.tld into checkout, and automatable TLS for customer hostnames (Railway custom-domain limits vs a custom-hostname provider). The native pages also need the RETURN hreflang to the subdomain (app embed, target head), or Google reads the relation as one-sided. Operational cost is the real price: if the service is down the shop is offline in that language, so it ships with a 302-to-source fallback, not an error page.",
+    ref: "docs/plans/PLAN_EXTRA_LANGUAGES.md",
+  },
+  {
     id: "brand-voice",
     visibility: "public",
     status: "considering",
@@ -1211,6 +1247,7 @@ export const ROADMAP: RoadmapEntry[] = [
     area: "platform",
     title: "Enterprise tier (custom pricing, >2500 products, multi-store, API, SLA)",
     target: "2027",
+    notes: "Candidate differentiator added 2026-09-30: extra languages served by proxy with SEO (extra-languages-proxy, PLAN_EXTRA_LANGUAGES.md §8-9) — the one piece of that plan with real infrastructure and operating cost, which is why it is assumed here and not on Max. Not decided.",
     ref: "docs/reference/PRICING_AND_LIMITS.md",
   },
   {

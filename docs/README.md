@@ -93,6 +93,7 @@ die Doku korrigieren.
 | Dokument | Beschreibung |
 |----------|--------------|
 | [PLAN_SEO_SUITE_COMPLETION.md](plans/PLAN_SEO_SUITE_COMPLETION.md) | Fertigstellung der SEO-Suite |
+| [PLAN_EXTRA_LANGUAGES.md](plans/PLAN_EXTRA_LANGUAGES.md) | Zusatzsprachen über Shopifys Limit hinaus — Stufe 1 Browser, Stufe 2 Proxy |
 
 ---
 
