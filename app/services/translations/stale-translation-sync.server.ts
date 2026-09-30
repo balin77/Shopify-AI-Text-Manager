@@ -56,6 +56,9 @@ import { marketOverrideKey } from "./market-layer-purge.server";
 import { TRANSLATION_BATCH } from "../../config/constants";
 import { sanitizeSlug } from "../../utils/slug.utils";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
+// §6a rule 1: a managed refusal must ABORT this repair, never look like a
+// translation the AI could not deliver — that fallback is a deletion.
+import { isManagedRefusal } from "../../../src/services/ai.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
 import type {
   HandleRedirectResolver,
@@ -883,6 +886,17 @@ export interface ReconcileResult {
    * a row it cannot tell the merchant anything about.
    */
   taskId?: string;
+  /**
+   * The repair stood down and touched NOTHING — it did not remove, did not
+   * re-translate, and left every stale row where it was.
+   *
+   * Only managed AI produces this today (PLAN_MANAGED_AI_KEY §6a rule 1): a
+   * refused call must never be recorded as "the AI could not deliver", because
+   * that answer is a deletion. It is deliberately distinct from
+   * `removed: 0, retranslating: 0`, which means the repair RAN and found
+   * nothing to do.
+   */
+  startFailed?: boolean;
 }
 
 const NOTHING: ReconcileResult = { removed: 0, retranslating: 0 };
@@ -1893,6 +1907,52 @@ async function repairStaleTranslations(
   // nothing get touched, and that case never reaches this line.
   const mayPurge = policy.purgeOnPrimaryChange || policy.autoTranslateExternalChanges;
 
+  // ── Managed AI: stand the WHOLE repair down before anything is deleted ─────
+  //
+  // §6a rule 1 says no managed refusal may produce a deletion, and the abort
+  // inside the detached run is not enough to keep that promise. Two deletions
+  // happen BEFORE the run is ever spawned — the market-override purge just
+  // below and the inline global purge after it — and both are conditioned on
+  // the INTENT to re-translate, never on the run having succeeded. A refusal
+  // discovered later therefore left the market wording of every changed key
+  // deleted with nothing that would ever write it back: the repair produces
+  // global rows only, by design.
+  //
+  // So the question is asked here, once, before the first destructive call.
+  // Note this is deliberately not the per-request preflight: that one bounds
+  // SPEND and belongs next to the call, while this one decides whether this
+  // repair may touch the merchant's data at all.
+  if (mayPurge) {
+    try {
+      const { db } = await import("../../db.server");
+      const { resolveAiCredentials } = await import("../ai/ai-credentials.server");
+      const settings = await db.aISettings.findUnique({ where: { shop } });
+      const decision = resolveAiCredentials({ shop, settings });
+      if (!decision.ok && decision.reason !== "noKey") {
+        // `noKey` is BYO's own refusal and is NOT a managed stand-down: a shop
+        // with no key never had a re-translation coming, and the purge is the
+        // behaviour it has always had.
+        logger.warn("[StaleTranslations] Managed AI refused — repair stood down, NOTHING deleted", {
+          context: "StaleTranslations",
+          shop,
+          resourceId,
+          reason: decision.reason,
+        });
+        return { removed: 0, retranslating: 0, startFailed: true };
+      }
+    } catch (error: unknown) {
+      // The lookup failing is not evidence of a refusal, and refusing to
+      // repair on it would leave stale translations live on every shop the
+      // moment the database blinks. Proceed, as this function did before.
+      logger.warn("[StaleTranslations] Could not check the managed-AI gate — proceeding", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // The INLINE purge runs FIRST: one GraphQL call, so the storefront is
   // corrected immediately — and its `markTranslationSaved` then lands BEFORE
   // the detached run captures its baseline below. The other order made the
@@ -2354,27 +2414,23 @@ async function runRetranslation(
   const keyToField = asValues ? {} : invertFieldMap(fieldTranslationKeyMap(resourceType));
 
   const { getTaskExpirationDate } = await import("../../config/constants");
-  const { toValidProvider } = await import("../../../src/services/ai.service");
   const { TranslationService } = await import("../../../src/services/translation.service");
-  const { tryDecryptApiKey } = await import("../../utils/encryption.server");
   const { getInstructionWithDefault } = await import("../../utils/ai-instructions.utils");
   const { buildTranslateInstructions } = await import("../../utils/character-limits");
   // The hybrid batching rule — how many languages of this payload fit one AI
   // response. Dynamic like the import above, to keep this module's static graph
   // as it is.
   const { planLocaleChunks } = await import("../ai/translation-budget.shared");
+  const { aiCredentialsFor } = await import("../ai/ai-credentials.server");
 
   const aiSettings = await db.aISettings.findUnique({ where: { shop } });
-  const provider = toValidProvider(aiSettings?.preferredProvider);
-  const aiConfig = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, shop);
+  const provider = aiCredentials.provider;
+  const aiConfig = aiCredentials.config;
 
   const task = await db.task.create({
     data: {
@@ -2626,6 +2682,14 @@ async function runRetranslation(
                 valueInstructions,
               );
             } catch (chunkError: unknown) {
+              // A managed REFUSAL is not a chunk that failed — it is the whole
+              // run standing down, and it has to leave this function as a
+              // throw so `retranslateStaleEntries` reports `startFailed` and
+              // the caller skips the purge entirely (§6a rule 1). Falling
+              // through to "this chunk's entries route to the removal" would
+              // DELETE the merchant's translations because our prepaid budget
+              // ran out, unrecoverably.
+              if (isManagedRefusal(chunkError)) throw chunkError;
               // Caught PER CHUNK. `translateBatchValues` throws on a length
               // mismatch, and letting that reach the locale's own catch would
               // discard every chunk already translated and purge all of them —
@@ -2802,6 +2866,10 @@ async function runRetranslation(
           }
         }
       } catch (error: unknown) {
+        // Same rule as the chunk catch above, and this is the one that would
+        // have done the damage: "falling back to removal" is exactly what a
+        // budget refusal must never mean.
+        if (isManagedRefusal(error)) throw error;
         logger.warn("[StaleTranslations] Auto-translation failed — falling back to removal", {
           context: "StaleTranslations",
           shop,
@@ -2886,6 +2954,30 @@ async function runRetranslation(
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    if (isManagedRefusal(error)) {
+      // The run stood down rather than failing. The Task row says so with its
+      // own status — a red task blaming the automation for a budget the
+      // merchant can top up is a defect report about nothing — and the throw
+      // is re-raised so the wrapper answers `startFailed` and NOTHING is
+      // purged (§6a rule 1, §3a rule 5).
+      await db.task
+        .update({
+          where: { id: task.id },
+          data: {
+            status: "completed_with_errors",
+            completedAt: new Date(),
+            error: `managed_ai_refused:${(error as { reason?: string }).reason ?? "unknown"}`,
+          },
+        })
+        .catch(() => undefined);
+      logger.warn("[StaleTranslations] Auto-translation stood down — stale rows KEPT", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        reason: (error as { reason?: string }).reason,
+      });
+      throw error;
+    }
     await db.task
       .update({
         where: { id: task.id },

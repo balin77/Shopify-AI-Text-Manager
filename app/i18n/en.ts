@@ -1106,6 +1106,62 @@ export const en: Translation = {
     title: "Settings",
     appSetup: "App Setup",
     aiApiAccess: "AI API Access Codes",
+    managedAi: {
+      heading: "Where the AI comes from",
+      useOwnKey: "Use my own API key",
+      useIncluded: "Use the AI included in my plan",
+      includedHint:
+        "Your plan includes AI. You can switch to your own API key at any time — your stored keys are kept.",
+      notIncludedHint:
+        "Your current plan does not include AI. Choose an AI-included plan to use ours, or add your own API key below.",
+      entitlementEnded:
+        "Your plan no longer includes AI, so your own API key is being used again. Your stored keys were kept.",
+      storedKeys: "{count} stored API key(s), kept so you can switch back",
+      storedKeysNone: "No API keys stored",
+      deleteKeys: "Delete stored keys",
+      deleteKeysConfirm: "Delete them",
+      deleteKeysWarning:
+        "This permanently removes the API keys you gave us. Your provider and model choices are kept.",
+      consentHeading: "Processing with our AI providers",
+      consentLabel: "I agree that my shop's content may be processed by these providers",
+      consentBody:
+        "To use the AI included in your plan, your product texts are sent under our account to OpenAI (the default model) and, if OpenAI is unavailable, to Anthropic. Both are contractually barred from training on this content. Nothing is sent until you agree, and if we ever add a provider we will ask you again.",
+      consentRequired: "Confirm this to start using the included AI.",
+      consentSave: "Confirm",
+      consentWithdraw: "Withdraw",
+      consentGranted: "Confirmed on {date} (version {version})",
+      privacyLink: "Read what is processed and by whom",
+      usageHeading: "AI included in your plan",
+      usageUsed: "{percent}% used this period",
+      usageResets: "Resets on {date}",
+      usageWarning: "You have used {percent}% of this period's AI volume.",
+      usageExhausted:
+        "This period's AI volume is used up. Add your own API key to continue immediately, or wait for the next period.",
+      usageEstimated: "Part of this figure is estimated.",
+      // §10 — the one-time taster. Its own wording throughout, because every
+      // sentence about a period ("used this period", "resets on", "wait for
+      // the next period") is false about a grant that never comes back.
+      activeWithAi: "Active, with AI",
+      notAvailableNotice:
+        "The included AI is not available right now. Your own API key still works as usual.",
+      usageUnavailable:
+        "Your AI usage could not be loaded right now. AI actions may be refused until it can.",
+      tasterHeading: "Free AI trial",
+      tasterHint:
+        "Try the included AI with about {actions} AI actions, once — no API key, no plan change. Your own key stays free and unlimited.",
+      tasterUsed: "{percent}% of your free trial used",
+      tasterStarted: "Started on {date}",
+      tasterWarning:
+        "You have used {percent}% of your one-time free AI trial. It does not reset.",
+      tasterExhausted:
+        "Your free AI trial is used up. Add your own API key to continue for free, or choose an AI-included plan.",
+      planButton: "With AI included — {price}",
+      planVolume: {
+        basic: "Enough for about 300–500 products translated into one language each period.",
+        pro: "Enough for about 600–1,000 products translated into one language each period.",
+        max: "Enough for about 1,500–2,500 products translated into one language each period.",
+      },
+    },
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",
     translations: "Translations",
@@ -2046,6 +2102,14 @@ export const en: Translation = {
       translationsNotMirrored:
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
       translationsNoneUsable: "The automatic re-translation produced no usable translation.",
+      managedAiBudgetExceeded:
+        "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
+      managedAiTasterExhausted:
+        "Your free AI trial is used up — it is a one-time grant and does not reset. Nothing was changed. Add your own API key to continue for free, or choose an AI-included plan.",
+      managedAiConsentMissing:
+        "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
+      managedAiUnavailable:
+        "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
     },
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",

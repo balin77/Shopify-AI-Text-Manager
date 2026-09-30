@@ -30,6 +30,13 @@ import { AISettingsSchema, AIInstructionsSchema, parseFormData, isValidLocale } 
 import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
+import {
+  hasCurrentAiProcessingConsent,
+  toAiKeySource,
+  wantsManagedAi,
+  AI_PROCESSING_CONSENT_VERSION,
+} from "../services/ai/managed-ai.shared";
+import { managedAiAvailable, managedTasterActions } from "../services/ai/ai-credentials.server";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import {
   DEFAULT_GENERAL_INSTRUCTIONS,
@@ -62,6 +69,19 @@ function shallowEqualLimits(
   if (ak.length !== bk.length) return false;
   for (const k of ak) if (a[k] !== b[k]) return false;
   return true;
+}
+
+/**
+ * The reset DATE a `b:<YYYY-MM-DD>` period key names, or null for any other
+ * scheme (`m:<month>`, the taster). Reading the key rather than the mirrored
+ * column is what keeps a stale webhook from showing a reset date in the past:
+ * `managedBudgetPeriod` walks an expired `managedAiPeriodEnd` forward instead
+ * of keying on it, and the card must show the date the budget really resets.
+ */
+function periodEndFromKey(period: string): string | null {
+  if (!period.startsWith("b:")) return null;
+  const day = period.slice(2);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${day}T00:00:00.000Z` : null;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -399,12 +419,86 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
      // when the merchant re-enters that key. Display name is derived at
      // render time.
     const corruptedApiKeys: AIProvider[] = [];
-    for (const { field, provider } of keyFields) {
-      const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
-      decryptedKeys[field] = value || "";
-      if (corrupted) {
-        corruptedApiKeys.push(provider);
-        logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
+
+    // PLAN_MANAGED_AI_KEY §8a rule 5 — in MANAGED mode the key fields are not
+    // rendered, so decrypting them would ship six credentials to the browser
+    // in plaintext on every Settings load for no reason at all. The stored
+    // keys SURVIVE untouched (rule 4: "back to my own key" means back to the
+    // merchant's own setup); only their plaintext stops travelling. What the
+    // merchant keeps is the COUNT and a Delete control (rule 5, GDPR: a
+    // credential they gave us must be erasable without uninstalling the app).
+    // Managed mode is the merchant's stored choice AND a deployment that can
+    // serve it (§9.4's kill switch). Both halves matter here: withholding the
+    // key fields for a shop whose managed AI nothing can serve would hide the
+    // one screen it still needs.
+    const managedAiOffered = managedAiAvailable();
+    const onManagedAi = wantsManagedAi(settings) && managedAiOffered;
+    const storedKeyCount = keyFields.filter(
+      ({ field }) => !!(settings[field] as string | null | undefined),
+    ).length;
+
+    if (!onManagedAi) {
+      for (const { field, provider } of keyFields) {
+        const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
+        decryptedKeys[field] = value || "";
+        if (corrupted) {
+          corruptedApiKeys.push(provider);
+          logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
+        }
+      }
+    }
+
+    // The usage card's numbers — only for a shop actually on managed AI. A
+    // BYO shop pays nothing for us and has nothing to show, and the read is a
+    // DB aggregate we should not make on every Settings load for everybody.
+    let managedAiBudget: {
+      usedMicros: number;
+      limitMicros: number;
+      resetsOn: string | null;
+      estimatedShare: number;
+      /** A period budget that resets, or the one-time taster (§10). */
+      kind: "period" | "taster";
+      /** How many AI actions the taster is worth here — display only. */
+      tasterActions: number;
+      grantedAt: string | null;
+    } | null = null;
+    if (onManagedAi) {
+      try {
+        const { managedBudgetStatus } = await import("../services/ai/managed-budget.server");
+        const status = await managedBudgetStatus(
+          session.shop,
+          settings,
+          (settings.subscriptionPlan ?? "free") as never,
+        );
+        const rows = await db.aiUsageCounter.findMany({
+          where: { shop: session.shop, period: status.period, source: "managed" },
+          select: { calls: true, estimated: true },
+        });
+        const total = rows.reduce((n, r) => n + r.calls, 0);
+        const estimated = rows.filter((r) => r.estimated).reduce((n, r) => n + r.calls, 0);
+        const { managedTasterActions } = await import("../services/ai/ai-credentials.server");
+        managedAiBudget = {
+          usedMicros: status.usedMicros,
+          limitMicros: status.limitMicros,
+          // A taster does not reset, so it has no reset date — and printing
+          // the subscription's period end beside it would promise one.
+          resetsOn:
+            status.kind === "period" && settings.managedAiPeriodEnd
+              ? settings.managedAiPeriodEnd.toISOString()
+              : null,
+          estimatedShare: total > 0 ? estimated / total : 0,
+          kind: status.kind,
+          tasterActions: status.kind === "taster" ? managedTasterActions() : 0,
+          grantedAt: settings.managedAiTasterGrantedAt
+            ? settings.managedAiTasterGrantedAt.toISOString()
+            : null,
+        };
+      } catch (error) {
+        // A usage card that cannot load is not a reason to fail Settings.
+        logger.warn("[SETTINGS LOADER] Managed AI usage unavailable", {
+          context: "Settings",
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -529,9 +623,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       metafieldsLastScanAt: metafieldScanState?.metafieldsLastScanAt
         ? metafieldScanState.metafieldsLastScanAt.toISOString()
         : null,
+      // Consent is an EVENT, so the timestamp travels beside the boolean: the
+      // card shows when it was given, which is what makes it a record rather
+      // than a state somebody could have flipped.
+      managedAiConsentedAt: settings.aiProcessingConsentAt
+        ? settings.aiProcessingConsentAt.toISOString()
+        : null,
+      managedAiConsentVersion: settings.aiProcessingConsentVersion ?? null,
+      managedAiBudget,
+      // Whether this DEPLOYMENT can serve plan-included AI at all (§9.4).
+      // Offering the second price where managed mode is off would sell a
+      // feature every call then refuses.
+      managedAiOffered,
+      // The taster's size in ACTIONS comes from the environment, not from the
+      // usage aggregate, so the offer sentence has a number to show a shop
+      // that has switched nothing on yet — which is the only population it is
+      // addressed to.
+      managedAiTasterActions: managedAiOffered ? managedTasterActions() : 0,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
+
+        // ── Managed AI (PLAN_MANAGED_AI_KEY §8) ───────────────────────────
+        // One choice, shown in two places, rendered from ONE state: the
+        // merchant's stored choice and the Shopify-verified entitlement.
+        aiKeySource: toAiKeySource(settings.aiKeySource),
+        managedAiActive: settings.managedAiActive === true,
+        /** The one-time grant is gone — the offer stops being an invitation. */
+        managedAiTasterSpent: settings.managedAiTasterSpentAt != null,
+        managedAiConsented: hasCurrentAiProcessingConsent(settings),
+        /** How many keys are stored — the line that replaces the hidden tab. */
+        storedApiKeyCount: storedKeyCount,
+        /** True when the key fields were NOT decrypted for this response. */
+        apiKeysWithheld: onManagedAi,
         selectedModel: settings.selectedModel || '',
         appLanguage: settings.appLanguage || "en",
 
@@ -1275,6 +1399,128 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType, enabledCount: toInsert.length, failed });
+    } else if (actionType === "saveAiSource") {
+      // WHOSE key this shop spends — PLAN_MANAGED_AI_KEY §5 step 2, §8.
+      //
+      // The merchant's own choice, and the ONE thing about managed mode they
+      // may set. It writes nothing to the key columns (§8a rule 4): switching
+      // to managed keeps every stored key, the preferred provider and the
+      // model, because "back to my own key" means back to their own SETUP and
+      // not to a default that silently rewrites it.
+      //
+      // "managed" is accepted whenever this DEPLOYMENT can serve it (§9.4),
+      // and that is Phase 4's change: the verified subscription used to be
+      // required here, which made §10's taster — the whole point of which is
+      // to be reachable before anything is bought — unreachable by every Free
+      // shop. What a merchant cannot post is the SIZE of what they get:
+      // `managedAiActive` is mirrored by checkAndSyncSubscription and nothing
+      // else, and `periodBudgetMicros` grants a plan's monthly volume only to
+      // a shop that carries it. Posting this field buys the taster, once,
+      // ever — which is exactly what the UI offers anyway.
+      const requested = toAiKeySource(getFormString(formData, "aiKeySource"));
+
+      if (requested === "managed" && !managedAiAvailable()) {
+        return json(
+          {
+            success: false,
+            actionType,
+            error: "Included AI is not available for this shop.",
+          },
+          { status: 403 }
+        );
+      }
+
+      await db.aISettings.update({
+        where: { shop: session.shop },
+        data: { aiKeySource: requested },
+      });
+
+      logger.info("[Settings] AI key source changed", { shop: session.shop, source: requested });
+      return json({ success: true, actionType, aiKeySource: requested });
+    } else if (actionType === "saveAiProcessingConsent") {
+      // §2 rule 1 — explicit, LOGGED, versioned consent to processing content
+      // through the OPERATOR's AI account. It is what makes managed mode
+      // permissible at all (the compliance audit's §B4 names it as the second
+      // of two acceptable fixes), so three properties are not negotiable.
+      //
+      // EXPLICIT: its own action, its own button, never folded into a Save bar
+      // that also carries five other settings. A box that becomes consent when
+      // some other control is saved is the bundled consent the audit refuses.
+      //
+      // VERSIONED: the stored version is compared for EQUALITY, so the day a
+      // sub-processor changes, bumping the constant re-asks everybody. A
+      // merchant who agreed to two named providers has not agreed to a third.
+      //
+      // LOGGED: the event, not just the state. `aiProcessingConsentAt` is the
+      // record; this line is the audit trail a reviewer asks for.
+      const granted = getFormString(formData, "consent") === "true";
+
+      // The merchant agrees to the text they were SHOWN, which is not
+      // necessarily the text this process now holds: a deploy between the
+      // render and the click would otherwise record agreement to wording
+      // nobody read — which is the one property versioning exists to make
+      // impossible. A mismatch refuses and asks them to look again.
+      const shownVersion = getFormString(formData, "consentVersion");
+      if (granted && shownVersion && shownVersion !== AI_PROCESSING_CONSENT_VERSION) {
+        logger.warn("[Settings] Consent posted against an outdated text version", {
+          shop: session.shop,
+          shown: shownVersion,
+          current: AI_PROCESSING_CONSENT_VERSION,
+        });
+        return json(
+          {
+            success: false,
+            actionType,
+            error: "The processing notice has changed. Please read it again and confirm.",
+          },
+          { status: 409 },
+        );
+      }
+
+      await db.aISettings.update({
+        where: { shop: session.shop },
+        data: granted
+          ? {
+              aiProcessingConsentAt: new Date(),
+              aiProcessingConsentVersion: AI_PROCESSING_CONSENT_VERSION,
+            }
+          : // Withdrawal clears BOTH, so nothing can read a version without a
+            // timestamp as consent.
+            { aiProcessingConsentAt: null, aiProcessingConsentVersion: null },
+      });
+
+      logger.info("[Settings] AI processing consent recorded", {
+        shop: session.shop,
+        granted,
+        version: granted ? AI_PROCESSING_CONSENT_VERSION : null,
+      });
+      return json({ success: true, actionType, consented: granted });
+    } else if (actionType === "deleteAiKeys") {
+      // §8a rule 5 — a merchant must be able to ERASE a credential they gave
+      // us without uninstalling the app. In managed mode the key fields are
+      // hidden, so without this the only erasure route would be uninstalling,
+      // which is a weak answer to a GDPR request and an obvious App Review
+      // question.
+      //
+      // It clears the keys and nothing else: the provider and model choices
+      // survive, so a merchant who deletes a key and pastes a new one is back
+      // where they were.
+      await db.aISettings.update({
+        where: { shop: session.shop },
+        data: {
+          huggingfaceApiKey: null,
+          geminiApiKey: null,
+          claudeApiKey: null,
+          openaiApiKey: null,
+          grokApiKey: null,
+          deepseekApiKey: null,
+        },
+      });
+
+      logger.info("[Settings] Stored AI keys deleted at merchant request", {
+        shop: session.shop,
+      });
+      return json({ success: true, actionType });
     } else if (actionType === "saveAiKeys" || actionType === "saveSettings") {
       // "saveSettings" is the OLD name, kept for exactly one release. An
       // embedded app sits in an iframe for hours, so on deploy day a merchant
@@ -1412,7 +1658,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, managedAiOffered = false, managedAiTasterActions = 0, managedAiConsentedAt = null, managedAiConsentVersion = null, managedAiBudget = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1772,6 +2018,18 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasAIChanges}
+                  managedAi={{
+                    aiKeySource: settings.aiKeySource as "byo" | "managed",
+                    managedAiActive: settings.managedAiActive,
+                    managedAiOffered,
+                    tasterActions: managedAiTasterActions,
+                    tasterSpent: settings.managedAiTasterSpent,
+                    consented: settings.managedAiConsented,
+                    consentedAt: managedAiConsentedAt,
+                    consentVersion: managedAiConsentVersion,
+                    storedApiKeyCount: settings.storedApiKeyCount,
+                    budget: managedAiBudget,
+                  }}
                 />
               )}
 
@@ -1887,6 +2145,8 @@ export default function SettingsPage() {
                     pageCount={pageCount}
                     themeTranslationCount={themeTranslationCount}
                     imageOperationCount={imageOperationCount}
+                    managedAiOffered={managedAiOffered}
+                    managedAiActive={settings.managedAiActive}
                     t={t}
                   />
                 </>

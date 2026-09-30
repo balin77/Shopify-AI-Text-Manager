@@ -66,6 +66,14 @@ const FALLBACK: Record<string, string> = {
   translationsNotMirrored:
     "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
   translationsNoneUsable: "The automatic re-translation produced no usable translation.",
+  managedAiBudgetExceeded:
+    "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
+  managedAiTasterExhausted:
+    "Your free AI trial is used up — it is a one-time grant and does not reset. Nothing was changed. Add your own API key to continue for free, or choose an AI-included plan.",
+  managedAiConsentMissing:
+    "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
+  managedAiUnavailable:
+    "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
 };
 
 function phrase(t: any, key: string): string {
@@ -160,6 +168,18 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
       const missed = count(parts[1]);
       if (missed === null) return neutral();
       return fill(phrase(t, "translationsNotMirrored"), { count: missed });
+    }
+    // A managed run that STOOD DOWN. It is deliberately not a failure of the
+    // automation: nothing was translated and — the part the merchant cares
+    // about — nothing was deleted. The reason is the machine code's second
+    // half; an unknown one still says the safe thing rather than falling
+    // through to the raw string.
+    case "managed_ai_refused": {
+      const reason = parts[1];
+      if (reason === "budgetExceeded") return phrase(t, "managedAiBudgetExceeded");
+      if (reason === "tasterExhausted") return phrase(t, "managedAiTasterExhausted");
+      if (reason === "consentMissing") return phrase(t, "managedAiConsentMissing");
+      return phrase(t, "managedAiUnavailable");
     }
     case "rows_failed": {
       const failed = count(parts[1]);

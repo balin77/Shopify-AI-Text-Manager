@@ -1,12 +1,11 @@
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../../src/services/ai.service";
-import { tryDecryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { withUserInstruction } from "~/utils/ai-user-instruction.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import type { TemplatesActionContext } from "./shared";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "~/services/ai/ai-credentials.server";
 
 export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { db, session, formData, groupId, firstGroup, domain } = ctx;
@@ -39,19 +38,7 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
       data: { status: "running", progress: 20 },
     });
 
-    const aiService = new AIService(
-      toValidProvider(settings?.preferredProvider),
-      {
-        huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-        geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-        claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-        openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-        grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-        deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-      },
-      session.shop,
-      task.id
-    );
+    const aiService = aiServiceFor(settings, session.shop, task.id).service;
 
     let prompt = `Improve the following template field content.
 

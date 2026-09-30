@@ -10,11 +10,11 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../src/services/ai.service";
-import { tryDecryptApiKey } from "../utils/encryption.server";
+import { AIService } from "../../src/services/ai.service";
 import { getFormString } from "~/utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "./ai/ai-credentials.server";
 
 /**
  * Prisma `where` fragment scoping ThemeContent/ThemeTranslation reads to the
@@ -174,15 +174,30 @@ export async function loadThemeGroupResponse(opts: {
   return json({ theme: themeData }, { headers: { "Cache-Control": "no-store" } });
 }
 
-function buildAIService(settings: Record<string, string | null | undefined> | null) {
-  return new AIService(toValidProvider(settings?.preferredProvider), {
-    huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-  });
+/**
+ * The SHOP is not optional here, and it was missing for a long time.
+ *
+ * `AIService.recordUsage` returns immediately without one, so every AI call
+ * made from this module — `generateAIText`, `translateField` and
+ * `translateAll`, the last of which fans out into dozens of provider calls
+ * through `translateFieldsToLocalesChunked` — was invisible to the meter. This
+ * handler is the action of twelve theme routes, so in the ledger a shop
+ * translating its whole theme was indistinguishable from one that never opened
+ * the tab. There is no `taskId` (these run inside the request), which is a
+ * separate matter: those calls are metered under the `adhoc` feature and, as
+ * before, execute outside the queue.
+ *
+ * Note this does NOT pass `selectedModel` — a pre-existing gap that makes
+ * theme AI run on `DEFAULT_MODELS` whatever the merchant picked. The meter
+ * records what really ran (`getModel()` reads the same field), so the
+ * attribution is right either way; the merchant's ignored choice is a separate
+ * bug and not this change's to make.
+ */
+function buildAIService(
+  settings: Record<string, string | null | undefined> | null,
+  shop: string,
+) {
+  return aiServiceFor(settings as never, shop).service;
 }
 
 /**
@@ -236,7 +251,7 @@ export async function handleThemeContentActionResponse(opts: {
       const fieldKey = getFormString(formData, "fieldKey");
       const currentValue = getFormString(formData, "currentValue");
       const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-      const aiService = buildAIService(settings);
+      const aiService = buildAIService(settings, session.shop);
 
       const prompt = `Improve the following template field content.
 
@@ -261,7 +276,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       }
 
       const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-      const aiService = buildAIService(settings);
+      const aiService = buildAIService(settings, session.shop);
       const translatedValue = await aiService.translateContent(sourceText, primaryLocale, targetLocale);
       return json({ success: true, translatedValue, fieldKey });
     }
@@ -287,7 +302,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       }
 
       const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-      const aiService = buildAIService(settings);
+      const aiService = buildAIService(settings, session.shop);
 
       const batchResult = await aiService.translateFieldsToLocalesChunked(
         fieldsToTranslate,

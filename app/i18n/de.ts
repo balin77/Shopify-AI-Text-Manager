@@ -1107,7 +1107,60 @@ export const de = {
   settings: {
     title: "Einstellungen",
     appSetup: "App-Setup",
-    aiApiAccess: "AI API-Zugangscodes",
+    aiApiAccess: "KI-API-Zugangscodes",
+    managedAi: {
+      heading: "Woher die KI kommt",
+      useOwnKey: "Meinen eigenen API-Key verwenden",
+      useIncluded: "Die im Plan enthaltene KI verwenden",
+      includedHint:
+        "Dein Plan enthält KI. Du kannst jederzeit auf deinen eigenen API-Key wechseln — deine gespeicherten Keys bleiben erhalten.",
+      notIncludedHint:
+        "Dein aktueller Plan enthält keine KI. Wähle einen Plan mit KI, oder trage unten deinen eigenen API-Key ein.",
+      entitlementEnded:
+        "Dein Plan enthält keine KI mehr, deshalb wird wieder dein eigener API-Key verwendet. Deine gespeicherten Keys sind erhalten geblieben.",
+      storedKeys: "{count} gespeicherte(r) API-Key(s) — aufbewahrt, damit du zurückwechseln kannst",
+      storedKeysNone: "Keine API-Keys gespeichert",
+      deleteKeys: "Gespeicherte Keys löschen",
+      deleteKeysConfirm: "Endgültig löschen",
+      deleteKeysWarning:
+        "Das entfernt die API-Keys, die du uns gegeben hast, endgültig. Anbieter- und Modellauswahl bleiben erhalten.",
+      consentHeading: "Verarbeitung durch unsere KI-Anbieter",
+      consentLabel: "Ich bin einverstanden, dass Inhalte meines Shops von diesen Anbietern verarbeitet werden",
+      consentBody:
+        "Für die im Plan enthaltene KI werden deine Produkttexte über unser Konto an OpenAI (Standardmodell) und, falls OpenAI nicht erreichbar ist, an Anthropic gesendet. Beide dürfen vertraglich nicht mit diesen Inhalten trainieren. Vorher wird nichts gesendet — und wenn ein weiterer Anbieter hinzukommt, fragen wir erneut.",
+      consentRequired: "Bestätige dies, um die enthaltene KI zu nutzen.",
+      consentSave: "Bestätigen",
+      consentWithdraw: "Widerrufen",
+      consentGranted: "Bestätigt am {date} (Version {version})",
+      privacyLink: "Nachlesen, was verarbeitet wird und von wem",
+      usageHeading: "Im Plan enthaltene KI",
+      usageUsed: "{percent}% in diesem Zeitraum verbraucht",
+      usageResets: "Zurückgesetzt am {date}",
+      usageWarning: "Du hast {percent}% des KI-Volumens dieses Zeitraums verbraucht.",
+      usageExhausted:
+        "Das KI-Volumen dieses Zeitraums ist aufgebraucht. Trage deinen eigenen API-Key ein, um sofort weiterzuarbeiten, oder warte auf den nächsten Zeitraum.",
+      usageEstimated: "Ein Teil dieses Werts ist geschätzt.",
+      activeWithAi: "Aktiv, mit KI",
+      notAvailableNotice:
+        "Die enthaltene KI ist derzeit nicht verfügbar. Dein eigener API-Schlüssel funktioniert unverändert.",
+      usageUnavailable:
+        "Dein KI-Verbrauch konnte gerade nicht geladen werden. Bis dahin können KI-Aktionen abgelehnt werden.",
+      tasterHeading: "Kostenlose KI-Testphase",
+      tasterHint:
+        "Teste die enthaltene KI einmalig mit rund {actions} KI-Aktionen — ohne API-Schlüssel, ohne Planwechsel. Dein eigener Schlüssel bleibt kostenlos und unbegrenzt.",
+      tasterUsed: "{percent}% deines kostenlosen Guthabens verbraucht",
+      tasterStarted: "Gestartet am {date}",
+      tasterWarning:
+        "Du hast {percent}% deines einmaligen kostenlosen KI-Guthabens verbraucht. Es wird nicht erneuert.",
+      tasterExhausted:
+        "Dein kostenloses KI-Guthaben ist aufgebraucht. Hinterlege deinen eigenen API-Schlüssel, um kostenlos weiterzuarbeiten, oder wähle einen Plan mit enthaltener KI.",
+      planButton: "Mit enthaltener KI — {price}",
+      planVolume: {
+        basic: "Reicht für etwa 300–500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
+        pro: "Reicht für etwa 600–1.000 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
+        max: "Reicht für etwa 1.500–2.500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
+      },
+    },
     aiInstructions: "KI-Anweisungen",
     appLanguage: "App-Sprache",
     translations: "Übersetzungen",
@@ -2050,6 +2103,14 @@ export const de = {
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
       translationsNoneUsable:
         "Die automatische Neuübersetzung hat keine verwendbare Übersetzung geliefert.",
+      managedAiBudgetExceeded:
+        "Das in deinem Plan enthaltene KI-Volumen ist für diesen Zeitraum aufgebraucht. Es wurde nichts geändert — deine Übersetzungen sind unverändert geblieben.",
+      managedAiTasterExhausted:
+        "Dein kostenloses KI-Guthaben ist aufgebraucht — es ist einmalig und wird nicht erneuert. Es wurde nichts geändert. Hinterlege deinen eigenen API-Schlüssel, um kostenlos weiterzuarbeiten, oder wähle einen Plan mit enthaltener KI.",
+      managedAiConsentMissing:
+        "Die KI-Verarbeitung ist für diesen Shop nicht bestätigt, deshalb wurde nichts ausgeführt und nichts geändert. Bestätige sie in den Einstellungen und versuche es erneut.",
+      managedAiUnavailable:
+        "Die enthaltene KI war vorübergehend nicht erreichbar, deshalb wurde nichts ausgeführt und nichts geändert. Bitte später erneut versuchen.",
     },
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",

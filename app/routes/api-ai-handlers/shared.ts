@@ -19,6 +19,8 @@ import type { Session } from "@shopify/shopify-api";
 import type { SeoLimits } from "../../utils/character-limits";
 import { resolveSeoLimits } from "../../utils/character-limits";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "~/services/ai/ai-credentials.server";
+import { AI_REFUSAL_STATUS } from "~/services/ai/managed-ai.shared";
 
 // ─── Content type config map ──────────────────────────────────────────────────
 
@@ -215,22 +217,133 @@ export function noAiKeyResponse(
   );
 }
 
+/**
+ * The HTTP gate for an AI action — PLAN_MANAGED_AI_KEY §6.
+ *
+ * Returns a coded refusal response, or `null` when the call may proceed. It
+ * replaces the `getMissingPreferredKey` + `noAiKeyResponse` pair at every
+ * entry point, because BYO's "you have no key" is now one of FOUR reasons a
+ * call can be refused and the other three have nothing to do with keys.
+ *
+ * **This gate is necessary and nowhere near sufficient**, and the comment is
+ * here so nobody mistakes it for the enforcement. It covers the interactive
+ * paths only; the heaviest AI consumers in this app — the webhook
+ * reconciliation, the nightly drift sweep, the bulk flush — never pass one.
+ * The decision that actually bounds spend lives per REQUEST, inside
+ * `executeAIRequest`, and this is its early, friendly copy: refusing before a
+ * Task row exists is a better merchant experience, not a stronger guarantee.
+ *
+ * Every code answers the status `AI_REFUSAL_STATUS` assigns it — the map is
+ * read rather than restated, or the two drift — and the WORDING comes from the
+ * language bundles, shared with the one the Tasks tab renders for the same
+ * refusal on a background run. One refusal, one sentence, wherever a merchant
+ * meets it.
+ */
+const MANAGED_REFUSAL_FALLBACK = {
+  managedAiBudgetExceeded:
+    "The AI volume included in your plan is used up for this period.",
+  // §10 — the taster never resets, so it gets the sentence that names the two
+  // exits instead of the one that promises a reset.
+  managedAiTasterExhausted:
+    "Your free AI trial is used up. Add your own API key to continue for free, or choose an AI-included plan.",
+  managedAiConsentMissing:
+    "AI processing has not been confirmed for this shop. Confirm it in Settings and try again.",
+  managedAiUnavailable: "The included AI is temporarily unavailable. Please try again shortly.",
+} as const;
+
+export async function aiRefusalResponse(
+  settings: AISettings | null,
+  shop: string
+): Promise<DataResponse | null> {
+  const { resolveAiCredentials } = await import("~/services/ai/ai-credentials.server");
+  const decision = resolveAiCredentials({ shop, settings });
+
+  const t = getTranslation((settings?.appLanguage ?? "en") as Locale);
+  const say = (key: keyof typeof MANAGED_REFUSAL_FALLBACK): string => {
+    const value = (t.tasks?.taskErrors as Record<string, unknown> | undefined)?.[key];
+    return typeof value === "string" && value.trim() !== ""
+      ? value
+      : MANAGED_REFUSAL_FALLBACK[key];
+  };
+
+  if (decision.ok) {
+    if (decision.source !== "managed") return null;
+    // Managed: the budget is the one question that costs a DB round trip, so
+    // it is asked last and only for the shops it can refuse.
+    const { managedBudgetStatus } = await import("~/services/ai/managed-budget.server");
+    const status = await managedBudgetStatus(
+      shop,
+      settings,
+      (settings?.subscriptionPlan ?? "free") as never
+    );
+    if (status.allowed) return null;
+    if (status.unavailable) {
+      return json(
+        {
+          success: false,
+          code: "AI_TEMPORARILY_UNAVAILABLE",
+          error: say("managedAiUnavailable"),
+        },
+        { status: AI_REFUSAL_STATUS.managedUnavailable },
+      );
+    }
+    const taster = status.kind === "taster";
+    return json(
+      {
+        success: false,
+        code: taster ? "AI_TASTER_EXHAUSTED" : "AI_BUDGET_EXCEEDED",
+        error: say(taster ? "managedAiTasterExhausted" : "managedAiBudgetExceeded"),
+        usedMicros: status.usedMicros,
+        limitMicros: status.limitMicros,
+      },
+      {
+        status: taster
+          ? AI_REFUSAL_STATUS.tasterExhausted
+          : AI_REFUSAL_STATUS.budgetExceeded,
+      }
+    );
+  }
+
+  if (decision.reason === "noKey") {
+    return noAiKeyResponse(settings, {
+      provider: decision.provider,
+      displayName: getProviderDisplayName(decision.provider),
+    });
+  }
+
+  if (decision.reason === "consentMissing") {
+    return json(
+      {
+        success: false,
+        code: "AI_CONSENT_REQUIRED",
+        error: say("managedAiConsentMissing"),
+      },
+      { status: AI_REFUSAL_STATUS.consentMissing }
+    );
+  }
+
+  // managedUnavailable — ours to fix, never the merchant's, so the message
+  // does not send them anywhere and does not mention a key (§3a rule 9: in
+  // managed mode the AI-keys tab is hidden, and pointing at it is nonsense).
+  return json(
+    {
+      success: false,
+      code: "AI_TEMPORARILY_UNAVAILABLE",
+      error: say("managedAiUnavailable"),
+    },
+    { status: AI_REFUSAL_STATUS.managedUnavailable }
+  );
+}
+
 // ─── AI Service factory ───────────────────────────────────────────────────────
 
-/** Create an AIService instance from shop settings and a task ID. */
+/**
+ * Create an AIService instance from shop settings and a task ID.
+ *
+ * A thin wrapper over the credential resolver since PLAN_MANAGED_AI_KEY §5:
+ * whose key the call spends is one module's answer, and this signature stays
+ * only because a dozen handlers call it.
+ */
 export function createAIService(settings: AISettings | null, shop: string, taskId: string): AIService {
-  return new AIService(
-    toValidProvider(settings?.preferredProvider),
-    {
-      huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-      geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-      claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-      openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-      grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-      deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-      selectedModel: settings?.selectedModel || undefined,
-    },
-    shop,
-    taskId
-  );
+  return aiServiceFor(settings, shop, taskId).service;
 }

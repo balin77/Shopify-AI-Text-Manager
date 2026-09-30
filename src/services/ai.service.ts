@@ -2,7 +2,7 @@ import { HfInference } from '@huggingface/inference';
 import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { AIQueueService } from './ai-queue.service';
+import { AIQueueService, MAX_RATE_LIMIT_RETRIES, rateLimitBucket } from './ai-queue.service';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
 import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
@@ -14,8 +14,66 @@ import {
   perLocaleSourceBudgetChars,
   planLocaleChunks,
 } from '../../app/services/ai/translation-budget.shared';
+import { ADHOC_FEATURE, type AiCredentialSource } from '../../app/services/ai/usage-dimensions.shared';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
+
+/**
+ * What one provider call consumed, as it leaves the provider branch.
+ *
+ * The MODEL rides out with the usage rather than being read back from the
+ * instance afterwards: a failover (planned) switches the model mid-call, and a
+ * cost derived from configuration that has since moved is a cost attributed to
+ * the wrong model.
+ */
+export interface AiCallUsage {
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  /** `provider` = the SDK reported both numbers; `estimate` = we counted characters. */
+  source: 'provider' | 'estimate';
+}
+
+/**
+ * Where a provider call's cost is reported the moment the provider ANSWERS.
+ *
+ * A side channel rather than a return value, and that is the whole point: the
+ * two events are not the same one. `_executeAIRequestInner` returns once, on
+ * success — but a provider that answered has already charged us, and this
+ * function rejects such an answer in sixteen places (`returned empty content`,
+ * `no text block`, a `finish_reason: length` truncation, a content refusal).
+ * Reporting cost through the return value metered every one of those at zero,
+ * and the truncation case is the MOST expensive call shape there is, so the
+ * under-count was biased exactly backwards. Gemini's vision fallback makes the
+ * same point from the other side: two billed provider calls inside one
+ * invocation, which one return value could only express by adding them up and
+ * calling it one call.
+ */
+export interface AiCallMeter {
+  /**
+   * Provider calls STARTED — incremented immediately before each request.
+   *
+   * `dispatched > observed.length` is the only way to know that a call is
+   * still out there generating: it is what makes the timeout's worst-case
+   * charge unconditional. Gating that charge on "nothing has been reported
+   * yet" left the one case with two provider calls — Gemini's vision fallback,
+   * where the first answers and the second hangs — charged for the cheap half
+   * and nothing for the expensive one.
+   */
+  dispatched: number;
+  /** What each provider that ANSWERED reported. */
+  observed: AiCallUsage[];
+}
+
+/**
+ * Tokens charged for ONE image, when the provider reported no usage and we
+ * have to estimate. Deliberately above the real figures (~1,100 on a
+ * gpt-4o-mini-class model for 1024x1024, ~1,290 on Gemini for a large image):
+ * the estimate's whole claim is that it errs expensive, and counting only the
+ * prompt's characters made it err ~90% CHEAP on exactly the vision calls that
+ * are most likely to need it.
+ */
+const ESTIMATED_TOKENS_PER_IMAGE = 1_400;
 
 const LOCALE_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', it: 'Italian',
@@ -78,14 +136,68 @@ export function toValidProvider(value: string | null | undefined): AIProvider {
 }
 
 /**
- * Thrown when an AI call is attempted but the merchant has not configured
- * their own API key for the selected provider.
+ * A managed AI call was REFUSED before it was made — no consent, no budget,
+ * the kill switch, or a credential this deployment cannot serve.
  *
- * IMPORTANT (Shopify PPA / API Terms compliance): ContentPilot must NOT send
- * merchant content to any third-party AI service through an operator-owned
- * (shared) key. Each shop must use its own key. This error is the guaranteed
- * backstop that blocks every AI call path — including background tasks — when
- * no merchant key is present.
+ * Its own class, and thrown rather than returned, for one reason: it has to be
+ * TELLABLE APART from "the AI could not deliver this text". A detached repair
+ * turns the latter into `translationsRemove` plus a local delete, so a refusal
+ * mistaken for a failure deletes storefront translations because our prepaid
+ * budget ran out — unrecoverably, since the digest baseline has already moved
+ * (PLAN_MANAGED_AI_KEY §6a rule 1, §3a rule 5). Every caller that purges on
+ * failure must check `isManagedRefusal` and ABORT instead.
+ */
+export class ManagedAiRefusedError extends Error {
+  readonly code = 'MANAGED_AI_REFUSED' as const;
+  /** "consentMissing" | "budgetExceeded" | "managedUnavailable". */
+  readonly reason: string;
+  readonly usedMicros?: number;
+  readonly limitMicros?: number;
+
+  constructor(reason: string, detail?: { usedMicros?: number; limitMicros?: number }) {
+    super(`Managed AI refused: ${reason}`);
+    this.name = 'ManagedAiRefusedError';
+    this.reason = reason;
+    this.usedMicros = detail?.usedMicros;
+    this.limitMicros = detail?.limitMicros;
+  }
+}
+
+/**
+ * Is this error a managed refusal? Checked by INSTANCE and by CODE: the error
+ * crosses a dynamic-import boundary on some paths, where two copies of the
+ * class can exist and `instanceof` quietly answers false — which here means a
+ * purge instead of an abort.
+ */
+export function isManagedRefusal(error: unknown): error is ManagedAiRefusedError {
+  if (error instanceof ManagedAiRefusedError) return true;
+  return (error as { code?: string } | null)?.code === 'MANAGED_AI_REFUSED';
+}
+
+/**
+ * Thrown when an AI call is attempted but no usable key is available for the
+ * selected provider.
+ *
+ * **The compliance statement this used to carry has changed, and saying so is
+ * the point.** It read: merchant content must NEVER go to an AI provider
+ * through an operator-owned key, each shop must use its own. That was this
+ * app's own reading of the Shopify PPA / API Terms, written to justify the
+ * BYO-only design — and the audit it cites (§B4) in fact names TWO acceptable
+ * fixes, of which enforced BYO is the first. The app now also implements the
+ * second: an operator key behind an explicit, logged, versioned in-app consent
+ * gate (PLAN_MANAGED_AI_KEY §2).
+ *
+ * What that does NOT change is where a credential may come from. This class,
+ * and `initializeProvider` below, still read no environment variable: the key
+ * is injected by `app/services/ai/ai-credentials.server.ts`, the single module
+ * that reads the operator credential AND enforces consent, the kill switch and
+ * the budget. A key obtainable only together with its gate cannot be obtained
+ * past it — which is the guarantee in the only form that survives review.
+ *
+ * So this error still means what it always meant: no usable key, block the
+ * call, on every path including background tasks. It is NOT the error a
+ * managed refusal produces — see `ManagedAiRefusedError`, and the reason the
+ * two must stay distinguishable.
  */
 export class MissingAIKeyError extends Error {
   readonly code = 'NO_AI_KEY' as const;
@@ -162,6 +274,107 @@ export interface AIServiceConfig {
   grokApiKey?: string;
   deepseekApiKey?: string;
   selectedModel?: string;
+  /**
+   * Whose key this instance is spending — the meter's `source` column
+   * (PLAN_MANAGED_AI_KEY §4.4). Absent means the merchant's own key, which is
+   * what every construction site resolves to until a managed subscription
+   * exists; the resolver sets it, and Phase 2 makes it required once there is
+   * something other than "byo" for it to be.
+   */
+  credentialSource?: AiCredentialSource;
+  /**
+   * Asked before EVERY provider call, and only installed for managed ones.
+   *
+   * The decision has to live per REQUEST rather than per service instance: a
+   * bulk run holds one instance for hundreds of calls, and a budget checked
+   * once at construction is a budget checked before the spend it is supposed
+   * to bound. The HTTP gates are the early, friendly copy of this; the heaviest
+   * consumers in this app never pass one (§6a).
+   *
+   * It is a CALLBACK rather than a lookup in here because `ai.service.ts` must
+   * never learn that `process.env` exists — the whole compliance guarantee is
+   * that the operator credential has one reader, and this is the seam through
+   * which that reader keeps answering (and, when the failover ships, through
+   * which it can answer with a different credential).
+   */
+  preflight?: () => Promise<
+    { ok: true } | { ok: false; reason: string; usedMicros?: number; limitMicros?: number }
+  >;
+  /**
+   * This instance was REFUSED managed AI before it was built — the reason, for
+   * the error every call on it throws.
+   *
+   * It exists because refusing at CONSTRUCTION is not an option and refusing
+   * only at call time was not enough. The resolver used to answer a managed
+   * refusal with a keyless config, which made `initializeProvider` throw
+   * `MissingAIKeyError` — a different error, meaning a different thing, and
+   * the detached repair's purge path does not recognise it. A budget that ran
+   * out would then have deleted the merchant's storefront translations through
+   * a door the abort rule never covered, because the throw happens before any
+   * call the rule guards.
+   *
+   * So the service CONSTRUCTS (no provider client, no key anywhere near it)
+   * and every call on it refuses with the one error type that means "stand
+   * down", whichever of the eleven paths built it and whether it built eagerly
+   * or lazily.
+   */
+  managedRefusal?: string;
+  /**
+   * The ledger PERIOD a managed call is counted in — the shop's BILLING
+   * period, not the calendar month (§7 rule 3).
+   *
+   * It has to travel with the credential because the meter and the budget must
+   * key on the same string: written under `m:2026-09` and read back under
+   * `b:2026-10-14`, the used figure is always zero and the cap never fires. The
+   * resolver computes it (it is the only thing that has the subscription's
+   * mirrored period end) and BYO leaves it unset, which keeps the calendar
+   * month for traffic nobody caps.
+   */
+  usagePeriod?: string;
+  /**
+   * Which GLOBAL pool a managed call draws from (§9.3). Set by the resolver
+   * beside the period, for the same reason: the meter must record against the
+   * pool the preflight checked, or the cap is measured over a different number
+   * than it enforces.
+   */
+  usagePool?: 'paid' | 'taster';
+  /**
+   * Swap this instance onto the OTHER managed credential — §3a rule 8.
+   *
+   * Where the switch lives is decided by three mechanics, not by taste.
+   * `isInputTooLongError` is a private static and `executeAIRequest` REPLACES
+   * that error with a merchant-facing sentence before any caller sees it, so
+   * above this method the exclusion could only be applied by string-matching a
+   * UI message. `askAI` latches the first auth failure and fails every later
+   * call fast, so a 401 handled above it never arrives. And the queue
+   * re-enqueues the same closure, which captures this instance and therefore
+   * its provider, so the switch cannot live there either.
+   *
+   * It is a CALLBACK because `ai.service.ts` must never read `process.env`:
+   * the resolver is the one module that holds the operator credential, and
+   * this is how it hands over the second one without that changing.
+   *
+   * Returns the new `(provider, config)` pair, or null when no fallback is
+   * configured — in which case the original error stands.
+   */
+  switchToFailover?: () => Promise<{ provider: AIProvider; config: AIServiceConfig } | null>;
+  /**
+   * This instance is running on the FALLBACK credential — §3a rules 1 and 3.
+   *
+   * It changes what the ledger records, not what the merchant is charged: the
+   * budget is debited at the DEFAULT model's price whatever ran, because an
+   * outage must not shrink what the merchant bought. The gap is what we
+   * absorb, and it is the number the failover pool is measured against.
+   */
+  failoverServed?: boolean;
+  /**
+   * The DEFAULT managed model's id, carried onto a failover instance so the
+   * meter can price the merchant's side at it (§3a rule 1). Absent on every
+   * non-failover call, where the model that ran IS the model billed.
+   */
+  defaultModelForBilling?: string;
+  /** The default credential's provider, when the failover crossed providers. */
+  defaultProviderForBilling?: AIProvider;
 }
 
 /**
@@ -217,6 +430,8 @@ export class AIService {
    * alt-texts, SEO — is covered automatically.
    */
   private glossaryRulesPromise?: Promise<GlossaryRule[]>;
+  /** The ledger's `feature` dimension for this instance — see resolveFeature. */
+  private featurePromise?: Promise<string>;
 
   constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
@@ -300,9 +515,22 @@ export class AIService {
   }
 
   private initializeProvider() {
-    // Compliance backstop: only the merchant's own key is ever used. No
-    // operator-owned process.env.*_API_KEY fallback. An empty key blocks the
-    // call for EVERY AIService consumer, including background tasks.
+    // Compliance backstop: this function never reads an environment variable.
+    // The key it uses is the merchant's own, or — where the shop bought the
+    // managed option, consented, and the deployment has it configured — the
+    // operator's, INJECTED by `ai-credentials.server.ts`, which is the one
+    // module that reads that credential and the one that gates it on consent,
+    // the kill switch and the budget (PLAN_MANAGED_AI_KEY §2, §5). An empty
+    // key blocks the call for EVERY AIService consumer, including background
+    // tasks.
+    if (this.config.managedRefusal) {
+      // Managed AI was refused for this shop. Build NOTHING: no client, no key.
+      // Every call on this instance throws ManagedAiRefusedError, which the
+      // detached repair recognises as "stand down" rather than as a
+      // translation the AI could not deliver — the difference between a stale
+      // row kept and a storefront translation deleted.
+      return;
+    }
     if (this.provider === 'huggingface') {
       const apiKey = this.config.huggingfaceApiKey || '';
       if (!apiKey) throw new MissingAIKeyError('huggingface');
@@ -1215,6 +1443,11 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
       Array.from({ length: Math.min(TRANSLATION_BATCH.MAX_CONCURRENCY, jobs.length) }, () => worker()),
     );
 
+    // A managed refusal aborts regardless of how many siblings succeeded — see
+    // the same rule in `translateFieldsToLocalesChunked`.
+    const refusal = errors.find((e) => isManagedRefusal(e));
+    if (refusal) throw refusal;
+
     // Every chunk failed → throw, so the caller's own fallback runs instead of
     // being handed a map of empty strings that looks like "the AI translated
     // nothing on purpose". An auth error is the first one, which is what makes a
@@ -2116,6 +2349,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       Array.from({ length: Math.min(MAX_CONCURRENCY, jobs.length) }, () => worker())
     );
 
+    // A managed REFUSAL is not a chunk that failed — it is the whole operation
+    // standing down, and it has to leave here as a throw whether or not a
+    // sibling chunk succeeded. Otherwise its cells come back empty, which every
+    // caller reads as "the AI could not deliver" — and on the repair path that
+    // answer is a deletion (§6a rule 1). The repair happened to abort anyway,
+    // through two unrelated completeness checks agreeing by coincidence; a
+    // defence by coincidence is not one.
+    const refusal = errors.find((e) => isManagedRefusal(e));
+    if (refusal) throw refusal;
+
     // Every chunk failed → throw so the caller can fall back to sequential.
     if (succeeded === 0 && errors.length > 0) {
       throw errors[0];
@@ -2163,7 +2406,23 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           this.taskId,
           this.provider,
           estimatedTokens,
-          () => this.executeAIRequest(prompt, imageUrls)
+          // The queue hands over how many rate-limit retries this request has
+          // already had. §3a rule 7 makes the failover wait for them, and the
+          // queue is the only place that counts them — this closure runs
+          // INSIDE its retry loop, so asserting "already spent" from in here
+          // (the first cut did) failed a 429 over on the very first attempt.
+          (attempt) => this.executeAIRequest(prompt, imageUrls, attempt),
+          // Which rate-limit bucket this call is ADMITTED against (§9.1),
+          // decided from what is knowable before dispatch.
+          this.config.credentialSource === 'managed' ? 'managed' : 'byo',
+          // …and which one it was really SERVED on, asked afterwards: a
+          // managed call can swap onto the fallback provider inside the
+          // closure, and its tokens belong to that account's window.
+          () =>
+            rateLimitBucket(
+              this.config.credentialSource === 'managed' ? 'managed' : 'byo',
+              this.provider,
+            )
         );
       }
     } catch (error) {
@@ -2172,6 +2431,21 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // re-throw this rather than swallowing it (see isAuthError usages), so an
       // invalid key always surfaces instead of silently producing no output.
       if (isAuthError(error)) {
+        // §3a rule 9 — an auth failure on the OPERATOR's key is our incident,
+        // not the merchant's. `InvalidAIKeyError` says "your API key was
+        // rejected" and sends them to a tab that renders nothing in managed
+        // mode; worse, it is not a managed refusal, so on a detached repair it
+        // reads as "the AI could not deliver" and DELETES translations because
+        // our own key was revoked. It reaches here only when the failover
+        // could not run — no fallback configured, the ceiling or the global
+        // budget spent, or the fallback failing too.
+        if (this.config.credentialSource === 'managed') {
+          loggers.ai('error', '[AI-SERVICE] Operator credential rejected', {
+            shop: this.shop,
+            provider: this.provider,
+          });
+          throw new ManagedAiRefusedError('managedUnavailable');
+        }
         this.authError = new InvalidAIKeyError(error instanceof Error ? error.message : String(error));
         throw this.authError;
       }
@@ -2304,8 +2578,79 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   private static readonly INPUT_TOO_LONG_MESSAGE =
     'The text is too long for the AI model to process. Please shorten the content and try again.';
 
-  private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
+  /**
+   * THE meter's charge point, and deliberately not `askAI`: `replayRequest`
+   * (task recovery) calls this method directly, past the queue and past
+   * anything askAI would carry, so a meter one level up would silently miss
+   * every recovered task.
+   *
+   * Everything the inner call REPORTED is charged in a `finally`, so a
+   * provider answer that we then reject is still paid for. Two things that
+   * follows from, both of which were holes:
+   *
+   * - A call that loses the timeout race is charged at its WORST CASE, never
+   *   at zero. `Promise.race` does not cancel the loser: the provider finishes
+   *   generating and bills us, and the calls that time out are the longest and
+   *   most expensive ones, so metering them at zero biased the under-count
+   *   towards exactly the wrong end. The worst case is the prompt's estimate in
+   *   and `max_tokens` out — what the call COULD have produced.
+   * - Nothing is charged for a call that never reached a provider (a
+   *   connection error, an invalid key, a dropped image fetch): `observed` is
+   *   empty and there is no timeout to substitute a worst case for.
+   *
+   * What it still cannot see, stated rather than hidden: the provider SDKs
+   * retry internally (`AI_SDK_MAX_RETRIES`), so one logical call can be up to
+   * three HTTP attempts. A failed attempt generates no tokens and is normally
+   * not billed, which is why this is a stated residual and not a correction.
+   */
+  private async executeAIRequest(
+    prompt: string,
+    imageUrls?: string[],
+    /** Rate-limit retries the QUEUE has already spent on this call (§3a rule 7). */
+    queueAttempt = 0,
+  ): Promise<string> {
+    // A refusal decided at BUILD time (no consent, kill switch, a credential
+    // this deployment cannot serve) fails every call on this instance, and
+    // fails it as a refusal rather than as a missing key.
+    if (this.config.managedRefusal) {
+      throw new ManagedAiRefusedError(this.config.managedRefusal);
+    }
+
+    // BEFORE the timer and before the queue slot does any work: a refused call
+    // must cost nothing at all, and a refusal thrown from inside the race
+    // would be charged a worst case by the timeout branch below.
+    if (this.config.preflight) {
+      const verdict = await this.config.preflight();
+      if (!verdict.ok) {
+        throw new ManagedAiRefusedError(verdict.reason, {
+          usedMicros: verdict.usedMicros,
+          limitMicros: verdict.limitMicros,
+        });
+      }
+    }
+
+    // §3a rule 6 — the breaker GATE on the default provider, and it is the
+    // half that was missing: the breaker recorded outcomes and nothing ever
+    // asked it anything, so an open circuit changed nothing. Every call still
+    // paid the full timeout against a dead provider before failing over, the
+    // half-open probe was never issued, and the circuit therefore never
+    // closed again — which also made the trip counter, the thing the log line
+    // calls a page, permanently stuck at one.
+    //
+    // Open ⇒ go straight to the fallback. Half-open ⇒ THIS call is the probe
+    // and goes to the primary while everyone else holds the fallback.
+    if (this.isManagedPrimary()) {
+      const { breakerAllows } = await import(
+        '../../app/services/ai/managed-failover.server'
+      );
+      const verdict = breakerAllows(this.provider);
+      if (!verdict.allow) {
+        await this.switchToFailoverGuarded('breakerOpen');
+      }
+    }
+
     let timer: NodeJS.Timeout | undefined;
+    const meter: AiCallMeter = { dispatched: 0, observed: [] };
     try {
       // Backstop timeout: even if a provider SDK ignores its own timeout
       // (e.g. Gemini/HF have no constructor timeout), this guarantees the
@@ -2316,21 +2661,425 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           AI_REQUEST_TIMEOUT_MS,
         );
       });
-      return await Promise.race([
-        this._executeAIRequestInner(prompt, imageUrls),
-        timeoutPromise,
-      ]);
+      const onPrimary = this.isManagedPrimary();
+      try {
+        const answer = await Promise.race([
+          this._executeAIRequestInner(prompt, imageUrls, meter),
+          timeoutPromise,
+        ]);
+        // A managed SUCCESS on the default provider, recorded — without it
+        // the breaker's window is 100 % failures by construction and it opens
+        // after five failover-eligible errors whatever the real rate is. It
+        // is also what CLOSES a half-open circuit.
+        if (onPrimary) await this.recordPrimaryOutcome(true);
+        return answer;
+      } catch (firstError) {
+        if (onPrimary) await this.recordPrimaryOutcome(false);
+        // §3a — the failover. HERE, below askAI's auth latch and BEFORE the
+        // input-too-long replacement below, which is the only place both are
+        // still true.
+        const retried = await this.tryFailover(firstError, prompt, imageUrls, meter, queueAttempt);
+        if (retried !== null) return retried;
+        throw firstError;
+      }
     } catch (error) {
+      if (error instanceof AIRequestTimeoutError && meter.dispatched > meter.observed.length) {
+        // A call was still generating when the clock ran out. Charged at its
+        // worst case per dispatch that never answered, not merely when NOTHING
+        // answered: Gemini's vision fallback can have a cheap first answer and
+        // an expensive second call still in flight.
+        for (let i = meter.observed.length; i < meter.dispatched; i++) {
+          meter.observed.push(this.worstCaseUsage(prompt, imageUrls?.length ?? 0));
+        }
+      }
       if (AIService.isInputTooLongError(error)) {
         throw new Error(AIService.INPUT_TOO_LONG_MESSAGE);
       }
       throw error;
     } finally {
       if (timer) clearTimeout(timer);
+      // AWAITED rather than fired off: one upsert against a call that took
+      // seconds is not worth measuring, while a detached write is one the
+      // process can be killed out from under — and an under-counted ledger is
+      // what a budget would later be enforced against. `recordUsage` never
+      // throws, so this cannot turn a successful generation into a failed one,
+      // nor replace the error a failed one is about to throw.
+      for (const usage of meter.observed) {
+        // Guarded here as well as inside `recordUsage`: this loop runs in a
+        // `finally` that may be unwinding an error, and anything thrown from
+        // it — including from the logger in that method's own catch — would
+        // REPLACE the error the caller is about to see with a bookkeeping one.
+        try {
+          await this.recordUsage(usage);
+        } catch {
+          // Deliberately silent: the one thing left that could report this is
+          // the logger that just failed.
+        }
+      }
     }
   }
 
-  private async _executeAIRequestInner(prompt: string, imageUrls?: string[]): Promise<string> {
+  /**
+   * Try the OTHER managed provider, or answer null to let the original error
+   * stand — §3a.
+   *
+   * Never throws: a failure here must leave the caller with the FIRST error,
+   * which is the one that describes what actually happened. It returns null
+   * for every reason not to fail over, and the reasons are as important as
+   * the mechanism:
+   *
+   * - not a managed call (a merchant's own key is not ours to reroute),
+   * - no fallback configured,
+   * - the error is one the second provider answers identically (§3a rule 7),
+   * - the breaker is open on the fallback too,
+   * - this SHOP has used up its failover allowance (rule 2).
+   */
+  private async tryFailover(
+    error: unknown,
+    prompt: string,
+    imageUrls: string[] | undefined,
+    meter: AiCallMeter,
+    queueAttempt: number,
+  ): Promise<string | null> {
+    if (this.config.credentialSource !== 'managed' || !this.config.switchToFailover) return null;
+    // A refusal is not a provider failure — it is us declining, and retrying
+    // it on the other account would spend the operator's money on a call that
+    // was never allowed.
+    if (isManagedRefusal(error)) return null;
+
+    try {
+      const { classifyFailover, statusOf } = await import(
+        '../../app/services/ai/managed-failover.shared'
+      );
+      const verdict = classifyFailover({
+        status: statusOf(error),
+        message: error instanceof Error ? error.message : String(error),
+        // The queue retries a rate limit by re-enqueueing the same closure,
+        // and this runs INSIDE that closure — so the retries are spent only
+        // once the queue says so. Hardcoding `true` here made every 429 fail
+        // over on the first attempt, at ~14x the price, on the one lever a
+        // shop can pull deliberately by queueing enough work (rule 2).
+        rateLimitRetriesExhausted: queueAttempt >= MAX_RATE_LIMIT_RETRIES,
+      });
+      if (!verdict.failOver) return null;
+
+      // Bank what the PRIMARY attempt already spent BEFORE the identity can
+      // move. `recordUsage` reads `this.provider` and `this.config`, and the
+      // entries in `meter.observed` belong to the call that just failed — a
+      // Gemini vision fallback can answer once and fail on a second dispatch,
+      // and the timeout branch fills entries too. Left in the meter they were
+      // priced at the FALLBACK's unknown-model ceiling and billed there, which
+      // is rule 1 broken in the one case it exists for.
+      await this.drainMeter(meter);
+
+      if (!(await this.switchToFailoverGuarded(verdict.reason))) return null;
+
+      const { recordBreakerOutcome } = await import(
+        '../../app/services/ai/managed-failover.server'
+      );
+      const text = await this._executeAIRequestInner(prompt, imageUrls, meter);
+      recordBreakerOutcome(this.provider, true);
+      return text;
+    } catch (failoverError) {
+      // The fallback failed too, and it has to be RECORDED as a failure or the
+      // fallback's own breaker can never open — the first cut only ever
+      // recorded its successes, so a permanently broken fallback was probed
+      // on every single call for ever.
+      try {
+        const { recordBreakerOutcome } = await import(
+          '../../app/services/ai/managed-failover.server'
+        );
+        if (this.config.failoverServed) recordBreakerOutcome(this.provider, false);
+      } catch {
+        // Bookkeeping only — never allowed to replace the caller's error.
+      }
+      // The caller gets the FIRST error, which describes the outage rather
+      // than our reaction to it.
+      loggers.ai('error', '[AI-SERVICE] Failover attempt failed', {
+        shop: this.shop,
+        error: failoverError instanceof Error ? failoverError.message : String(failoverError),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Is this instance a MANAGED call still on its default credential?
+   *
+   * The one predicate the breaker gate and the outcome recording both ask, so
+   * a call already served by the fallback can never be recorded against the
+   * primary's window (which would make a healthy fallback close a dead
+   * primary's circuit).
+   */
+  private isManagedPrimary(): boolean {
+    return (
+      this.config.credentialSource === 'managed' &&
+      !!this.config.switchToFailover &&
+      this.config.failoverServed !== true
+    );
+  }
+
+  /** Tell the breaker how a DEFAULT-credential managed call went. Never throws. */
+  private async recordPrimaryOutcome(ok: boolean): Promise<void> {
+    try {
+      const { recordBreakerOutcome } = await import(
+        '../../app/services/ai/managed-failover.server'
+      );
+      recordBreakerOutcome(this.provider, ok);
+    } catch {
+      // Bookkeeping only — never allowed to replace the caller's error.
+    }
+  }
+
+  /**
+   * Move this instance onto the fallback credential, or answer false.
+   *
+   * ONE gate for both entrances — the breaker finding the primary open before
+   * a call, and an error classifying as failover-worthy after one — because
+   * the three things it checks are money: the per-SHOP ceiling (rule 2: the
+   * triggers are shop-reachable and the breaker is global), the GLOBAL
+   * failover budget (rule 4), and the fallback's own breaker.
+   */
+  private async switchToFailoverGuarded(reason: string): Promise<boolean> {
+    if (!this.config.switchToFailover) return false;
+    const { breakerAllows, shopFailoverExhausted } = await import(
+      '../../app/services/ai/managed-failover.server'
+    );
+
+    if (this.shop && this.config.usagePeriod) {
+      if (await shopFailoverExhausted(this.shop, this.config.usagePeriod)) {
+        loggers.ai('warn', '[AI-SERVICE] Failover ceiling reached for this shop', {
+          shop: this.shop,
+        });
+        return false;
+      }
+    }
+
+    const { failoverBudgetExhausted } = await import(
+      '../../app/services/ai/managed-global-pool.server'
+    );
+    if (await failoverBudgetExhausted()) return false;
+
+    const swapped = await this.config.switchToFailover();
+    if (!swapped) return false;
+    if (!breakerAllows(swapped.provider).allow) return false;
+
+    loggers.ai('warn', '[AI-SERVICE] Managed failover', {
+      shop: this.shop,
+      from: this.provider,
+      to: swapped.provider,
+      reason,
+    });
+
+    // Re-initialise onto the other credential. `initializeProvider` builds
+    // exactly one client from `this.provider`, so both have to move.
+    this.provider = swapped.provider;
+    this.config = { ...swapped.config, failoverServed: true };
+    this.initializeProvider();
+    return true;
+  }
+
+  /**
+   * Record everything the meter holds NOW and reset it.
+   *
+   * Used by the failover, where the identity the entries belong to is about to
+   * change. Resetting `dispatched` with it is deliberate: the second attempt's
+   * accounting starts fresh, and the timeout branch's "a dispatch that never
+   * answered" comparison is about the attempt in flight, not about both.
+   */
+  private async drainMeter(meter: AiCallMeter): Promise<void> {
+    const pending = meter.observed.splice(0, meter.observed.length);
+    meter.dispatched = 0;
+    for (const usage of pending) {
+      try {
+        await this.recordUsage(usage);
+      } catch {
+        // Deliberately silent, like the drain in executeAIRequest's finally.
+      }
+    }
+  }
+
+  /**
+   * What a call that never came back might have cost: the prompt (plus its
+   * images) in, and the output ceiling every provider here is configured with
+   * out. Flagged as an estimate like any other counted call.
+   */
+  private worstCaseUsage(prompt: string, imageCount: number): AiCallUsage {
+    return {
+      inputTokens:
+        AIService.estimateTokensFor(prompt) + imageCount * ESTIMATED_TOKENS_PER_IMAGE,
+      outputTokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+      model: this.getModel(),
+      source: 'estimate',
+    };
+  }
+
+  /**
+   * Hand one completed call to the meter (PLAN_MANAGED_AI_KEY §4).
+   *
+   * Two guards, both deliberate. Without a `shop` there is nothing to meter
+   * against — unit tests and ad-hoc usage construct an AIService with no shop,
+   * the same condition `loadGlossaryRules` short-circuits on. And the whole
+   * body is wrapped: the generation has already succeeded by the time this
+   * runs, so a bookkeeping failure must never reach the caller, who would
+   * surface it as a failed save and invite a retry that pays for the same
+   * tokens twice.
+   */
+  private async recordUsage(usage: AiCallUsage): Promise<void> {
+    if (!this.shop) return;
+    try {
+      // Dynamic import for the same reason savePromptToTask uses one: it keeps
+      // db.server out of this module's static graph.
+      const { recordAiUsage } = await import('../../app/services/ai/usage-meter.server');
+      await recordAiUsage({
+        shop: this.shop,
+        provider: this.provider,
+        model: usage.model,
+        feature: await this.resolveFeature(),
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        // Not a default so much as a fact: no managed credential exists in the
+        // app yet, so every construction site today really is spending the
+        // merchant's own key. Phase 1 introduces the resolver that sets this,
+        // and makes the field REQUIRED in the same change — at that point an
+        // unset field is a bug, and a default would hide it.
+        source: this.config.credentialSource ?? 'byo',
+        estimated: usage.source === 'estimate',
+        failover: this.config.failoverServed === true,
+        // §3a rule 1: the merchant is billed at the DEFAULT model's price
+        // whatever ran. An outage they did not cause and cannot see must not
+        // make their volume evaporate at 14x speed — we carry the difference,
+        // and the ledger keeps both numbers so "what did the outage cost us"
+        // stays answerable.
+        ...(this.config.failoverServed && this.config.defaultModelForBilling
+          ? {
+              billedModel: this.config.defaultModelForBilling,
+              ...(this.config.defaultProviderForBilling
+                ? { billedProvider: this.config.defaultProviderForBilling }
+                : {}),
+            }
+          : {}),
+        taskId: this.taskId,
+        ...(this.config.usagePeriod ? { period: this.config.usagePeriod } : {}),
+        ...(this.config.usagePool ? { pool: this.config.usagePool } : {}),
+      });
+    } catch (error) {
+      loggers.ai('error', '[AI-SERVICE] Failed to record AI usage', {
+        shop: this.shop,
+        provider: this.provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Which FEATURE this instance's calls belong to — `Task.type`, the
+   * vocabulary the app already uses (bulkTranslation, aiGeneration,
+   * seoBulkMeta, bulkEditorTranslate, …), or `ADHOC_FEATURE` for an
+   * interactive call that has no task.
+   *
+   * Read ONCE per instance, not per call: one AIService is one task, and a
+   * bulk run makes hundreds of calls. Memoised on the instance exactly like
+   * `glossaryRulesPromise`, and a failed lookup answers `adhoc` rather than
+   * throwing — the dimension is worth having and never worth a failed save.
+   */
+  private resolveFeature(): Promise<string> {
+    if (!this.taskId) return Promise.resolve(ADHOC_FEATURE);
+    if (!this.featurePromise) {
+      const taskId = this.taskId;
+      this.featurePromise = (async () => {
+        try {
+          const { db } = await import('../../app/db.server');
+          const row = await db.task.findUnique({ where: { id: taskId }, select: { type: true } });
+          return row?.type || ADHOC_FEATURE;
+        } catch {
+          return ADHOC_FEATURE;
+        }
+      })();
+    }
+    return this.featurePromise;
+  }
+
+  /**
+   * What ONE provider call really consumed.
+   *
+   * `source` is the honest half: `provider` means the SDK reported both
+   * numbers, `estimate` means it did not and we counted characters. An
+   * estimate is never silently equal to a measurement — the ledger stores the
+   * share of estimated calls, so "the meter says X and the invoice says Y" is
+   * diagnosable instead of mysterious.
+   */
+  /**
+   * Gemini reports usage on the RESPONSE object, which this branch obtains at
+   * three separate sites. Reading it in one helper is what keeps the three
+   * from drifting.
+   */
+  private static geminiUsage(response: unknown): { input?: number | null; output?: number | null } | null {
+    const meta = (response as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } })
+      ?.usageMetadata;
+    if (!meta) return null;
+    return { input: meta.promptTokenCount, output: meta.candidatesTokenCount };
+  }
+
+  private static estimateTokensFor(text: string): number {
+    // Deliberately pessimistic: ~4 chars/token is the Latin-script average, and
+    // an estimate that errs cheap is the one that understates a bill. Non-Latin
+    // scripts run denser than 4, so 3 is the direction that cannot hide cost.
+    return Math.ceil(text.length / 3);
+  }
+
+  /**
+   * Build usage from an SDK that reported it, or fall back to an estimate.
+   *
+   * `imageCount` is not decoration: an image is ~1,100-1,300 input tokens the
+   * prompt string knows nothing about, so without it the estimate on a vision
+   * call came out at roughly a tenth of the truth while wearing the label
+   * "rounds up". A PARTIAL report (one number present, the other not) falls
+   * back wholesale rather than mixing a measurement with a guess.
+   */
+  private usageOf(
+    prompt: string,
+    output: string,
+    reported: { input?: number | null; output?: number | null } | null,
+    imageCount = 0,
+  ): AiCallUsage {
+    const model = this.getModel();
+    const input = reported?.input;
+    const out = reported?.output;
+    // `input > 0` and not `>= 0`: a real provider call always has input tokens
+    // — the prompt was sent — so a usage object reporting zero of them is a
+    // gateway or a routed provider filling the field with nothing, not a
+    // measurement. Accepting it stored an `estimated: false` row of 0 tokens
+    // and EUR 0, which is worse than an estimate: it lands in the MEASURED
+    // half of the report and drags down the per-call average §7's price ladder
+    // stands on, indistinguishably from a real cheap call. `out` may
+    // legitimately be 0 (an answer we then reject carries input and no
+    // output), so only the input side decides.
+    if (typeof input === 'number' && typeof out === 'number' && input > 0 && out >= 0) {
+      return { inputTokens: input, outputTokens: out, model, source: 'provider' };
+    }
+    return {
+      inputTokens:
+        AIService.estimateTokensFor(prompt) + imageCount * ESTIMATED_TOKENS_PER_IMAGE,
+      outputTokens: AIService.estimateTokensFor(output),
+      model,
+      source: 'estimate',
+    };
+  }
+
+  /**
+   * One provider call. Returns the text; reports what it COST into `meter`,
+   * the moment the provider's response object is in hand — before every guard
+   * below that can reject that answer, and once per provider call rather than
+   * once per invocation (Gemini's vision fallback makes two). `meter.dispatched`
+   * is bumped before each request so a call that never answers is still known
+   * about. See `AiCallMeter` for why those are different events.
+   */
+  private async _executeAIRequestInner(
+    prompt: string,
+    imageUrls: string[] | undefined,
+    meter: AiCallMeter,
+  ): Promise<string> {
     // One local truth for "is this a vision call": every provider branch below
     // asks the same question, and a branch that asked it differently is how a
     // text-only provider would end up with an image in its payload.
@@ -2355,17 +3104,48 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       loggers.ai('warn', '[AI-SERVICE] Dropped image URL(s) the model cannot be given', { dropped });
     }
     const hasImages = images.length > 0;
+    /**
+     * One OpenAI-shaped answer: report first, then judge it.
+     *
+     * `sentImages` is passed per branch rather than read from `images.length`,
+     * because two of the providers below are text-only and never put an image
+     * in their payload — charging their estimate for images the merchant
+     * happened to have attached invented tokens that were never sent.
+     */
+    const reportChat = (
+      completion: { usage?: { prompt_tokens?: number; completion_tokens?: number } | null },
+      text: string,
+      sentImages: number,
+    ) => {
+      meter.observed.push(
+        this.usageOf(
+          prompt,
+          text,
+          {
+            input: completion.usage?.prompt_tokens,
+            output: completion.usage?.completion_tokens,
+          },
+          sentImages,
+        ),
+      );
+    };
+
     if (this.provider === 'huggingface' && this.huggingface) {
       // HuggingFace: text-only (no vision support)
+      meter.dispatched++;
       const response = await this.huggingface.chatCompletion({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
         max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         temperature: 0.7,
       });
+      // HuggingFace's chat-completion output declares `usage`, but whether a
+      // routed provider fills it is a runtime question — absent is the
+      // estimate case, never zero.
+      const hfContent = response.choices[0]?.message?.content ?? '';
+      reportChat(response, hfContent, 0); // text-only provider
       if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
-      const hfContent = response.choices[0].message.content;
-      if (!hfContent || !hfContent.trim()) throw new Error('HuggingFace returned empty content');
+      if (!hfContent.trim()) throw new Error('HuggingFace returned empty content');
       return hfContent;
     } else if (this.provider === 'gemini' && this.gemini) {
       // Gemini: supports vision with URL
@@ -2379,133 +3159,167 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           // the text-only fallback that makes a slow CDN survivable never
           // runs. Bounded by AI_IMAGES_PER_REQUEST_MAX either way.
           const encoded = await Promise.all(images.map((url) => this.fetchImageAsBase64(url)));
+          meter.dispatched++;
           const result = await this.gemini.generateContent([
             { text: prompt },
             ...encoded.map((data) => ({ inlineData: { mimeType: 'image/jpeg', data } })),
           ]);
           const response = await result.response;
-          const geminiText = response.text();
-          if (!geminiText || !geminiText.trim()) throw new Error('Gemini returned empty response');
+          // The usage is read BEFORE `response.text()`, which THROWS when the
+          // candidate was blocked for safety or carries no text part — a
+          // response Google has still billed for its input, images included.
+          // Reading it after cost us exactly that call, every time.
+          const visionReported = AIService.geminiUsage(response);
+          let geminiText = '';
+          try {
+            geminiText = response.text();
+          } finally {
+            meter.observed.push(
+              this.usageOf(prompt, geminiText, visionReported, images.length),
+            );
+          }
+          if (!geminiText.trim()) throw new Error('Gemini returned empty response');
           return geminiText;
         } catch (error) {
           if (AIService.isInputTooLongError(error)) throw error;
           loggers.ai('warn', '[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
-          // Fallback to text-only
+          // Fallback to text-only. This is the one branch in the app that
+          // makes TWO provider calls in one invocation — and they are reported
+          // as two, not summed: a sum would count one call, which is exactly
+          // the per-call average Phase 0 exists to measure.
+          meter.dispatched++;
           const result = await this.gemini.generateContent(prompt);
           const response = await result.response;
-          const geminiTextFallback = response.text();
-          if (!geminiTextFallback || !geminiTextFallback.trim()) throw new Error('Gemini returned empty response');
+          const fallbackReported = AIService.geminiUsage(response);
+          let geminiTextFallback = '';
+          try {
+            geminiTextFallback = response.text();
+          } finally {
+            meter.observed.push(this.usageOf(prompt, geminiTextFallback, fallbackReported));
+          }
+          if (!geminiTextFallback.trim()) throw new Error('Gemini returned empty response');
           return geminiTextFallback;
         }
       } else {
+        meter.dispatched++;
         const result = await this.gemini.generateContent(prompt);
         const response = await result.response;
-        const geminiTextOnly = response.text();
-        if (!geminiTextOnly || !geminiTextOnly.trim()) throw new Error('Gemini returned empty response');
+        const reported = AIService.geminiUsage(response);
+        let geminiTextOnly = '';
+        try {
+          geminiTextOnly = response.text();
+        } finally {
+          meter.observed.push(this.usageOf(prompt, geminiTextOnly, reported));
+        }
+        if (!geminiTextOnly.trim()) throw new Error('Gemini returned empty response');
         return geminiTextOnly;
       }
     } else if (this.provider === 'claude' && this.anthropic) {
       // Claude: supports vision with URL
-      if (hasImages) {
-        const message = await this.anthropic.messages.create({
-          model: this.getModel(),
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          messages: [{
-            role: 'user',
-            content: [
-              // Images FIRST, then the prompt — the order every branch here
-              // uses, and the one Anthropic documents for multi-image prompts.
-              ...images.map((url) => ({ type: 'image' as const, source: { type: 'url' as const, url } })),
-              { type: 'text', text: prompt },
-            ],
-          }],
-        });
-        const textBlock = message.content.find((b) => b.type === 'text');
-        if (!textBlock) throw new Error('Claude returned no text block');
-        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
-        return textBlock.text;
-      } else {
-        const message = await this.anthropic.messages.create({
-          model: this.getModel(),
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          messages: [{ role: 'user', content: prompt }],
-        });
-        const textBlock = message.content.find((b) => b.type === 'text');
-        if (!textBlock) throw new Error('Claude returned no text block');
-        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
-        return textBlock.text;
-      }
+      meter.dispatched++;
+      const message = hasImages
+        ? await this.anthropic.messages.create({
+            model: this.getModel(),
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            messages: [{
+              role: 'user',
+              content: [
+                // Images FIRST, then the prompt — the order every branch here
+                // uses, and the one Anthropic documents for multi-image prompts.
+                ...images.map((url) => ({ type: 'image' as const, source: { type: 'url' as const, url } })),
+                { type: 'text', text: prompt },
+              ],
+            }],
+          })
+        : await this.anthropic.messages.create({
+            model: this.getModel(),
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            messages: [{ role: 'user', content: prompt }],
+          });
+      const textBlock = message.content.find((b) => b.type === 'text');
+      const claudeText = textBlock?.text ?? '';
+      // `input_tokens` deliberately EXCLUDES cache_creation/cache_read tokens.
+      // This app uses no prompt caching; adopting it means adding them here or
+      // silently under-counting.
+      meter.observed.push(
+        this.usageOf(
+          prompt,
+          claudeText,
+          { input: message.usage?.input_tokens, output: message.usage?.output_tokens },
+          hasImages ? images.length : 0,
+        ),
+      );
+      if (!textBlock) throw new Error('Claude returned no text block');
+      if (!claudeText.trim()) throw new Error('Claude returned empty text');
+      return claudeText;
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL
-      if (hasImages) {
-        const completion = await this.openai.chat.completions.create({
-          model: this.getModel(),
-          messages: [{
-            role: 'user',
-            content: [
-              ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
-              { type: 'text' as const, text: prompt },
-            ],
-          }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-        });
-        if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
-        const openaiVisionContent = completion.choices[0].message.content;
-        if (!openaiVisionContent || !openaiVisionContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return openaiVisionContent;
-      } else {
-        const completion = await this.openai.chat.completions.create({
-          model: this.getModel(),
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-        });
-        if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
-        const openaiContent = completion.choices[0].message.content;
-        if (!openaiContent || !openaiContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return openaiContent;
-      }
+      meter.dispatched++;
+      const completion = hasImages
+        ? await this.openai.chat.completions.create({
+            model: this.getModel(),
+            messages: [{
+              role: 'user',
+              content: [
+                ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+                { type: 'text' as const, text: prompt },
+              ],
+            }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+          })
+        : await this.openai.chat.completions.create({
+            model: this.getModel(),
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+          });
+      const openaiContent = completion.choices[0]?.message?.content ?? '';
+      reportChat(completion, openaiContent, hasImages ? images.length : 0);
+      if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
+      // A `finish_reason: length` truncation answers with empty content after
+      // generating the FULL output allowance — the single most expensive call
+      // shape there is, which is why the report above happens first.
+      if (!openaiContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+      return openaiContent;
     } else if (this.provider === 'grok' && this.grok) {
       // Grok: supports vision with URL (similar to GPT-4o)
-      if (hasImages) {
-        const completion = await this.grok.chat.completions.create({
-          model: this.getModel(),
-          messages: [{
-            role: 'user',
-            content: [
-              ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
-              { type: 'text' as const, text: prompt },
-            ],
-          }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          temperature: 0.7,
-        });
-        if (!completion.choices[0]) throw new Error('Grok returned empty response');
-        const grokVisionContent = completion.choices[0].message.content;
-        if (!grokVisionContent || !grokVisionContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return grokVisionContent;
-      } else {
-        const completion = await this.grok.chat.completions.create({
-          model: this.getModel(),
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
-          temperature: 0.7,
-        });
-        if (!completion.choices[0]) throw new Error('Grok returned empty response');
-        const grokContent = completion.choices[0].message.content;
-        if (!grokContent || !grokContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
-        return grokContent;
-      }
+      meter.dispatched++;
+      const completion = hasImages
+        ? await this.grok.chat.completions.create({
+            model: this.getModel(),
+            messages: [{
+              role: 'user',
+              content: [
+                ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+                { type: 'text' as const, text: prompt },
+              ],
+            }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            temperature: 0.7,
+          })
+        : await this.grok.chat.completions.create({
+            model: this.getModel(),
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            temperature: 0.7,
+          });
+      const grokContent = completion.choices[0]?.message?.content ?? '';
+      reportChat(completion, grokContent, hasImages ? images.length : 0);
+      if (!completion.choices[0]) throw new Error('Grok returned empty response');
+      if (!grokContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+      return grokContent;
     } else if (this.provider === 'deepseek' && this.deepseek) {
       // DeepSeek: text-only (no vision support)
+      meter.dispatched++;
       const completion = await this.deepseek.chat.completions.create({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
         max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
         temperature: 0.7,
       });
+      const deepseekContent = completion.choices[0]?.message?.content ?? '';
+      reportChat(completion, deepseekContent, 0); // text-only provider
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');
-      const deepseekContent = completion.choices[0].message.content;
-      if (!deepseekContent || !deepseekContent.trim()) throw new Error(`DeepSeek returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+      if (!deepseekContent.trim()) throw new Error(`DeepSeek returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
       return deepseekContent;
     }
 

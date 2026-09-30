@@ -38,6 +38,8 @@ export interface AISettingsForValidation {
   hasOpenaiApiKey: boolean;
   hasGrokApiKey: boolean;
   hasDeepseekApiKey: boolean;
+  /** Managed AI is serving this shop — see PLAN_MANAGED_AI_KEY §8a rule 6. */
+  managedAiWorking?: boolean;
   preferredProvider: string | null;
 }
 

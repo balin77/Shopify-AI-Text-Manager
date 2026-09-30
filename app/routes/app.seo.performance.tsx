@@ -487,18 +487,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       db.aIInstructions.findUnique({ where: { shop } }),
     ]);
 
-    // Same provider/serviceConfig assembly as handleUnifiedContentActions
-    // (unified-content.actions.ts) — the merchant's configured AI setup.
-    const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
-    const serviceConfig = {
-      huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-      geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-      claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-      openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-      grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-      deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-      selectedModel: aiSettings?.selectedModel || undefined,
-    };
+    // PLAN_MANAGED_AI_KEY §5 — the eleventh copy of that assembly, and the one
+    // that was missed by hand and found by the isolation guard. Whose key this
+    // spends is the resolver's answer.
+    const { aiCredentialsFor } = await import("../services/ai/ai-credentials.server");
+    const aiCredentials = aiCredentialsFor(aiSettings, shop);
+    const provider = aiCredentials.provider;
+    const serviceConfig = aiCredentials.config;
     // Same language source the PSI call already uses (AISettings.appLanguage,
     // see getShopLanguage) — what handleGenerateAltText receives as
     // `mainLanguage` from its clients.

@@ -42,6 +42,104 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // ── Managed AI (PLAN_MANAGED_AI_KEY Phase 1) ───────────────────────────────
+  //
+  // The key source is a SECOND AXIS beside the plan, never a fifth plan value:
+  // every `Record<Plan, …>` in the app keeps working, and a merchant on any
+  // tier can be on either side of it.
+  //
+  // `aiKeySource` is the merchant's STORED CHOICE ("byo" | "managed"). It may
+  // only be set to "managed" while the verified subscription says so, and
+  // switching to managed NEVER deletes a stored key — the way back has to stay
+  // one click, or "I hit the cap" becomes a support ticket.
+  aiKeySource String @default("byo")
+
+  // Mirrored from the SHOPIFY-VERIFIED subscription by checkAndSyncSubscription,
+  // exactly like `subscriptionPlan` — never from a form field and never from
+  // the client. A merchant cannot grant themselves managed AI by posting.
+  managedAiActive Boolean @default(false)
+
+  // When the current BILLING period ends, mirrored from the same subscription.
+  //
+  // The budget is per BILLING period, not per calendar month (§7 rule 3), and
+  // the difference is money: plans bill EVERY_30_DAYS with APPLY_IMMEDIATELY
+  // proration on switches, so a calendar key hands a sign-up on the 31st two
+  // full budgets in one period — on Max that is a 29.4 % cost share, 1.47x the
+  // guard the whole pricing rests on — and makes upgrade-spend-cancel a
+  // repeatable ~EUR 3.87 loop. NULL means the period is unknown, and the
+  // budget key then falls back to the calendar month, which is the honest
+  // answer rather than a guessed period boundary.
+  managedAiPeriodEnd DateTime?
+
+  // Explicit, logged, versioned consent to processing content through the
+  // OPERATOR's AI account (compliance audit §B4's second acceptable fix, which
+  // is the only thing that makes managed mode buildable). Never pre-ticked,
+  // never bundled into the plan purchase, and re-asked when the version
+  // changes — which it does the day a managed sub-processor changes.
+  aiProcessingConsentAt      DateTime?
+  aiProcessingConsentVersion String?
+
+  // The one-time managed-AI TASTER (PLAN_MANAGED_AI_KEY §10) — the grant that
+  // lets an evaluating merchant see the feature before buying anything.
+  //
+  // Once per shop, EVER: a shop that spent it on Free gets nothing extra
+  // during the paid trial it later starts, and nothing extra as a dev store.
+  // Tracked exactly like `trialConsumedAt`, with the same stated residual — an
+  // uninstall plus a GDPR redact clears it, so a determined merchant can
+  // re-grant by reinstalling. Accepted: the grant is worth cents, and
+  // retaining a record of an uninstalled shop is a GDPR conversation not worth
+  // having at this price.
+  managedAiTasterGrantedAt DateTime?
+
+  /**
+   * What the taster was WORTH when it was granted, in micro-euro — frozen.
+   *
+   * The limit is derived from the price of the managed default model, and the
+   * used figure never resets. Re-deriving it on every read made "once, ever"
+   * false in both directions: moving `MANAGED_AI_MODEL` to a dearer model
+   * silently re-granted a second taster to every shop that had spent its
+   * first, and moving to a cheaper one retroactively exhausted shops in the
+   * middle of theirs. An ops action nobody would associate with a grant is
+   * exactly the kind that must not be one.
+   *
+   * Null means "not granted yet", and then the current derivation applies —
+   * which is what makes a model change move the cost for NEW shops, as §10
+   * intends, and leave settled ones alone.
+   */
+  managedAiTasterMicros Int?
+
+  /**
+   * When the taster was found SPENT — a stamp, not the enforcement.
+   *
+   * The ledger row under the `taster` key is what refuses a second grant.
+   * This exists because `resolveAiCredentials` is synchronous and runs on
+   * every detached path: without a column it cannot know, and a shop whose
+   * AI-included plan ENDED would stay in managed mode with a spent taster
+   * and a perfectly good API key of its own that nothing ever reached.
+   */
+  managedAiTasterSpentAt DateTime?
+
+  // Is this a Shopify PARTNER DEVELOPMENT store? Three-valued on purpose
+  // (null = never determined), written at subscription-sync time where an
+  // admin client exists. `isDevStore`'s catch returns false, so a lookup that
+  // FAILED and a shop that is genuinely not a dev store are the same boolean —
+  // the `attributesSyncedAt` trap again. The credential resolver runs per AI
+  // request, including on detached paths that hold no admin client at all, so
+  // looking it up there would permanently answer "not a dev store" (= uncapped)
+  // on exactly the unattended paths the cap exists for.
+  partnerDevelopment Boolean?
+
+  /**
+   * The verified subscription carries `test: true`, i.e. it charges nothing —
+   * §7a's second signal, mirrored because the credential resolver runs on
+   * detached paths that hold no admin client and cannot ask Shopify.
+   *
+   * Three-valued like `partnerDevelopment` beside it: null means no sync has
+   * established it, and an unknown answer must not cost a paying merchant
+   * their budget. Written only where a subscription was really read.
+   */
+  subscriptionIsTest Boolean?
+
   // How to handle Shopify's richtext rule ("all top level nodes must be
   // <p>/<ul>/<ol>/<h1>-<h6>") when saving primary theme-settings values
   // (e.g. Brand information → brand_description). Merchant-selectable in Settings.
@@ -208,14 +306,14 @@ model AISettings {
   // Default ON for the same reason as seoAutoAuditEnabled — an entitled shop
   // should get the delivery report without hunting for a checkbox — and ANDed
   // into the sweep's due-query, so switching it off costs nothing per tick.
-  seoAutoCrawlEnabled Boolean   @default(true)
+  seoAutoCrawlEnabled   Boolean   @default(true)
   // Last automatic storefront crawl for this shop — see
   // services/seo/crawl-auto-run.service.ts. Null = never auto-crawled. Same
   // backoff-stamp rules as lastAutoAuditAt: written on every path, never a
   // lock, and only shops on a plan with seo.scheduledCrawl are selected.
   // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
   // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
-  lastAutoCrawlAt     DateTime?
+  lastAutoCrawlAt       DateTime?
   // Backoff stamp for the translation-drift sweep — the change event Shopify
   // does not send for pages, articles, blogs and policies. Its own column
   // because it has its own cadence; one stamp cannot express two.
@@ -519,6 +617,20 @@ model Task {
   estimatedTokens Int? // Estimated tokens for this task
   provider        String? // AI provider used (huggingface, gemini, claude, openai, grok, deepseek) - for recovery
   aiModel         String? // AI model name used (e.g., gpt-4o, claude-3-5-sonnet-20241022)
+
+  // What this run really consumed (PLAN_MANAGED_AI_KEY §4.3). `estimatedTokens`
+  // above is the QUEUE's guess, taken before the call and charging a flat 8192
+  // output tokens; these three are the measured aftermath, summed over every
+  // provider call the task made. Task rows expire after 3 days, so this is the
+  // cheapest possible per-run cost record — the durable one is AiUsageCounter.
+  //
+  // A 0 here means "nothing recorded", never a measured zero: a row written
+  // before the meter shipped reads the same as a run that made no AI call. The
+  // ambiguity is bounded by `expiresAt` (3 days) and is the reason these are
+  // per-run convenience columns rather than a source anything bills from.
+  inputTokens  Int @default(0)
+  outputTokens Int @default(0)
+  costMicros   Int @default(0) // micro-EUR, priced per model (app/config/ai-pricing.ts)
 
   startedAt   DateTime  @default(now())
   completedAt DateTime?
@@ -928,23 +1040,23 @@ model GroupedFieldTranslation {
 /// every merchant on the platform, and hold nothing a shop owns. Scoping them
 /// would store 14 608 rows per locale PER SHOP for data that cannot differ.
 model TaxonomyCategoryName {
-  id       String @id @default(cuid())
+  id        String   @id @default(cuid())
   /// The dist folder of Shopify's taxonomy repo: "de", "pt-BR".
-  locale   String
+  locale    String
   /// "gid://shopify/TaxonomyCategory/hg-3-72" -- the id the Admin API returns.
-  gid      String
+  gid       String
   /// The whole path, which is what identifies a category to a human.
-  fullName String
+  fullName  String
   /// The last segment, split at import so no read has to do it. This is what a
   /// derived product type is built from.
-  name     String
+  name      String
   /// Has no children. DERIVED from the GID hierarchy at import (the file does
   /// not carry it) — the picker marks a non-leaf "(broad)", and a search hit
   /// with no answer here would be marked broad whether it is or not.
-  isLeaf   Boolean
+  isLeaf    Boolean
   /// The taxonomy release these rows came from ("2026-05"). Diagnostic: the
   /// import is triggered by an unknown GID, not by comparing versions.
-  version  String   @default("")
+  version   String   @default("")
   updatedAt DateTime @updatedAt
 
   @@unique([locale, gid])
@@ -1472,6 +1584,99 @@ model ImageOperationCounter {
 
   @@unique([shop, period])
   @@index([shop])
+}
+
+// What the AI really consumed (PLAN_MANAGED_AI_KEY §4.3).
+//
+// Usage data, not entitlement data — the same rule ImageOperationCounter above
+// follows, so it is deliberately absent from getSyncScope / planCacheCleanup.
+//
+// The KEY is the whole design, and the first cut got it wrong in a way that
+// made the feature pointless: it was (shop, period, source) alone, one row per
+// shop per month, which blends every feature, provider and model into a single
+// average that describes none of them. Phase 0 exists to answer "what does one
+// operation cost, per feature" and that key cannot be asked it. The only store
+// carrying the feature dimension was `Task`, which the reaper deletes after 3
+// days — so a 4-week measurement window would have kept its last three days.
+// Every dimension below is therefore part of the key:
+//   • `source`    — the merchant's own key ("byo") or the operator's
+//                   ("managed"). BYO is metered too, uncapped: it is where this
+//                   app's price numbers come from, and it is the "what is this
+//                   costing me" answer no provider API gives uniformly.
+//   • `provider` + `model` — because they are what the price depends on. They
+//                   also make "was this row priced at the unknown-model
+//                   ceiling / not priced at all" DERIVABLE at read time from
+//                   app/config/ai-pricing.ts, which is why no column says so.
+//   • `feature`   — `Task.type` (bulkTranslation, aiGeneration, seoBulkFix …),
+//                   or "adhoc" for a call that belongs to no task.
+//   • `estimated` — whether the provider reported the token counts or we
+//                   counted characters. Its own key column rather than a
+//                   counter, so the measured average can be computed WITHOUT
+//                   the estimates in it; mixing them in one row made the one
+//                   number §7's price ladder stands on uncleanable.
+// Row count stays trivial: a few dozen per shop-month.
+//
+// `costMicros` is what WE pay the provider, `billedMicros` what is charged
+// against the merchant's budget. Equal today; they diverge on a failover,
+// where the merchant is billed at the default model's price and we carry the
+// difference (§3a rules 1-2). One column could not express that afterwards.
+//
+// The four volume columns are BIGINT, and that is a correction rather than
+// caution: Int32 holds 2.1e9 TOKENS, which on the pinned managed default is
+// about EUR 99 of input spend — and Postgres RAISES on an integer overflow
+// rather than clamping, so the row would simply stop advancing mid-period,
+// silently, including the very column enforcement reads. They are read back as
+// Number at the one boundary that exposes them (`getAiUsage`), so no BigInt
+// ever reaches a `JSON.stringify`.
+model AiUsageCounter {
+  id            String   @id @default(cuid())
+  shop          String
+  period        String // "m:YYYY-MM" (UTC). Phase 2's billing period is "b:<start>" — prefixed so the two schemes can never be read as one.
+  source        String // "managed" | "byo"
+  provider      String // "openai" | "claude" | "gemini" | "grok" | "deepseek" | "huggingface"
+  model         String // the model id the call actually ran on
+  feature       String // Task.type, or "adhoc"
+  estimated     Boolean // true = token counts were counted, not reported
+  calls         Int      @default(0)
+  failoverCalls Int      @default(0) // calls served by the fallback provider
+  inputTokens   BigInt   @default(0)
+  outputTokens  BigInt   @default(0)
+  costMicros    BigInt   @default(0) // micro-EUR we really paid
+  billedMicros  BigInt   @default(0) // micro-EUR charged against the merchant's budget
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, period, source, provider, model, feature, estimated])
+  @@index([shop, period])
+}
+
+// The GLOBAL monthly cap on managed AI spend (PLAN_MANAGED_AI_KEY §9.3).
+//
+// Its own table, deliberately NOT a sentinel row in the shop-scoped counter
+// above. Not because the GDPR guard would fail — that guard checks every
+// shop-scoped MODEL is purged, and a `shop: "__global__"` row would simply
+// survive redactShopData's exact-match delete — but because a global counter
+// has no tenant and therefore no business in a per-shop unique key, and a
+// surviving row that LOOKS like a shop is worse than a separate table in
+// every later audit.
+//
+// TWO POOLS, not one. A paid pool sized from the subscriptions actually sold,
+// and a smaller taster pool. With one pool, a listing spike of free installs
+// spending their tasters trips the cap on the 18th and 503s every PAYING
+// merchant for the rest of the month — the plan names free shops as the least
+// accountable population and must not then let them refuse the revenue.
+//
+// `failoverMicros` is what §3a rule 4's budget is measured against: the part
+// of a failover we absorb, which is the gap between what we paid and what the
+// merchant was billed.
+model ManagedAiGlobalCounter {
+  id             String   @id @default(cuid())
+  period         String // same key scheme as AiUsageCounter
+  pool           String // "paid" | "taster"
+  costMicros     BigInt   @default(0)
+  failoverMicros BigInt   @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([period, pool])
 }
 
 // SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon

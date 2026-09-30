@@ -43,6 +43,8 @@ interface ThemeContentDomainPageProps {
       hasOpenaiApiKey: boolean;
       hasGrokApiKey: boolean;
       hasDeepseekApiKey: boolean;
+      /** Managed AI is serving this shop — key, entitlement and consent. */
+      managedAiWorking?: boolean;
     } | null;
     /** Theme-Auswahl: installed themes + resolved selection (from the loader). */
     themeOptions?: { id: string; name: string; role: string }[];
@@ -101,9 +103,14 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   const hasAiKeyForTitles = useMemo(() => {
     const s = data.aiSettings;
     if (!s) return false;
-    // Lowercase to match the server gate (getMissingPreferredKey →
-    // toValidProvider lowercases); a mixed-case stored value must not silently
-    // fall through to the "any key" default and disagree with the server.
+    // PLAN_MANAGED_AI_KEY §8a rule 6 — a shop on managed AI has a working
+    // source without any key of its own, and gating on the six `has*ApiKey`
+    // booleans made this feature silently never fire for exactly the
+    // merchants who paid for AI to be included.
+    if (s.managedAiWorking) return true;
+    // Lowercase to match the server gate (toValidProvider lowercases); a
+    // mixed-case stored value must not silently fall through to the "any key"
+    // default and disagree with the server.
     switch ((s.preferredProvider ?? "").toLowerCase()) {
       case "claude": return s.hasClaudeApiKey;
       case "openai": return s.hasOpenaiApiKey;

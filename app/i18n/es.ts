@@ -1089,6 +1089,59 @@ export const es: Translation = {
     title: "Configuración",
     appSetup: "Configuración de la aplicación",
     aiApiAccess: "Códigos de acceso a la API de IA",
+    managedAi: {
+      heading: "De dónde viene la IA",
+      useOwnKey: "Usar mi propia clave de API",
+      useIncluded: "Usar la IA incluida en mi plan",
+      includedHint:
+        "Tu plan incluye IA. Puedes cambiar a tu propia clave cuando quieras — tus claves guardadas se conservan.",
+      notIncludedHint:
+        "Tu plan actual no incluye IA. Elige un plan con IA incluida, o añade tu propia clave abajo.",
+      entitlementEnded:
+        "Tu plan ya no incluye IA, así que se vuelve a usar tu propia clave. Tus claves guardadas se conservaron.",
+      storedKeys: "{count} clave(s) de API guardada(s), conservadas para que puedas volver",
+      storedKeysNone: "No hay claves de API guardadas",
+      deleteKeys: "Eliminar claves guardadas",
+      deleteKeysConfirm: "Eliminarlas",
+      deleteKeysWarning:
+        "Esto elimina definitivamente las claves de API que nos diste. Tu proveedor y modelo se conservan.",
+      consentHeading: "Procesamiento por nuestros proveedores de IA",
+      consentLabel: "Acepto que el contenido de mi tienda sea procesado por estos proveedores",
+      consentBody:
+        "Para usar la IA incluida en tu plan, tus textos se envían con nuestra cuenta a OpenAI (el modelo por defecto) y, si OpenAI no está disponible, a Anthropic. Ambos tienen prohibido por contrato entrenar con este contenido. No se envía nada hasta que aceptes, y si algún día añadimos un proveedor te lo volveremos a preguntar.",
+      consentRequired: "Confírmalo para empezar a usar la IA incluida.",
+      consentSave: "Confirmar",
+      consentWithdraw: "Retirar",
+      consentGranted: "Confirmado el {date} (versión {version})",
+      privacyLink: "Leer qué se procesa y quién lo procesa",
+      usageHeading: "IA incluida en tu plan",
+      usageUsed: "{percent}% usado en este periodo",
+      usageResets: "Se reinicia el {date}",
+      usageWarning: "Has usado el {percent}% del volumen de IA de este periodo.",
+      usageExhausted:
+        "El volumen de IA de este periodo se ha agotado. Añade tu propia clave para continuar ahora, o espera al siguiente periodo.",
+      usageEstimated: "Parte de esta cifra es una estimación.",
+      activeWithAi: "Activo, con IA",
+      notAvailableNotice:
+        "La IA incluida no está disponible ahora mismo. Tu propia clave de API sigue funcionando igual.",
+      usageUnavailable:
+        "No se pudo cargar tu consumo de IA. Hasta entonces, las acciones de IA pueden rechazarse.",
+      tasterHeading: "Prueba gratuita de IA",
+      tasterHint:
+        "Prueba la IA incluida con unas {actions} acciones de IA, una sola vez: sin clave de API y sin cambiar de plan. Tu propia clave sigue siendo gratuita e ilimitada.",
+      tasterUsed: "{percent}% de tu prueba gratuita usado",
+      tasterStarted: "Iniciada el {date}",
+      tasterWarning:
+        "Has usado el {percent}% de tu prueba gratuita de IA. Es única y no se renueva.",
+      tasterExhausted:
+        "Tu prueba gratuita de IA se ha agotado. Añade tu propia clave de API para seguir gratis, o elige un plan con IA incluida.",
+      planButton: "Con IA incluida — {price}",
+      planVolume: {
+        basic: "Alcanza para unos 300–500 productos traducidos a un idioma por periodo.",
+        pro: "Alcanza para unos 600–1.000 productos traducidos a un idioma por periodo.",
+        max: "Alcanza para unos 1.500–2.500 productos traducidos a un idioma por periodo.",
+      },
+    },
     aiInstructions: "Instrucciones de IA",
     appLanguage: "Idioma de la aplicación",
     translations: "Traducciones",
@@ -2031,6 +2084,14 @@ export const es: Translation = {
         "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
       translationsNoneUsable:
         "La retraducción automática no produjo ninguna traducción utilizable.",
+      managedAiBudgetExceeded:
+        "El volumen de IA incluido en tu plan se ha agotado para este periodo. No se cambió nada: tus traducciones se mantienen tal cual.",
+      managedAiTasterExhausted:
+        "Tu prueba gratuita de IA se ha agotado: es una concesión única y no se renueva. No se cambió nada. Añade tu propia clave de API para seguir gratis, o elige un plan con IA incluida.",
+      managedAiConsentMissing:
+        "El procesamiento con IA no está confirmado para esta tienda, así que no se ejecutó ni se cambió nada. Confírmalo en Ajustes e inténtalo de nuevo.",
+      managedAiUnavailable:
+        "La IA incluida no estuvo disponible temporalmente, así que no se ejecutó ni se cambió nada. Inténtalo más tarde.",
     },
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",
