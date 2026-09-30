@@ -170,7 +170,16 @@ export async function enqueueTranslationRetry(
     // real reason (a bad key) dodge `exhausted` forever. And a RUNNING row's
     // count belongs to its running retry; the new pairs get their own count
     // when that retry settles (`settleTranslationRetry`, "new work").
-    const resetCount = entry.reason === "failed" && !running && !entry.preserveAttempts;
+    //
+    // `preserveAttempts` (a managed-AI deferral) protects a LIVE row's count.
+    // Merged into an EXHAUSTED row it would park the new pairs in a row the
+    // sweep never selects again — "failed for good" over a budget, which a
+    // refusal must never produce — so there the new work gets its own fresh
+    // count, exactly as an exhausted row with new work always has.
+    const deferredIntoExhausted = !!entry.preserveAttempts && existing?.status === "exhausted";
+    const resetCount =
+      !running &&
+      ((entry.reason === "failed" && !entry.preserveAttempts) || deferredIntoExhausted);
     const data = {
       resourceType: entry.resourceType,
       contentKind: entry.contentKind,
@@ -371,6 +380,8 @@ export async function processTranslationRetries(
     dailyLimit?: number | null;
     /** Test seam. */
     retry?: typeof import("./stale-translation-sync.server").retryAutoTranslation;
+    /** Test seam: the shop-wide managed-AI gate (`managedRepairRefusal`). */
+    managedRefusal?: (shop: string) => Promise<string | null>;
   },
   dbClient?: Db | null,
 ): Promise<{ started: number; settled: number; postponed: number }> {
@@ -391,6 +402,30 @@ export async function processTranslationRetries(
     take: retriesPerSweep(params.dailyLimit ?? null),
   });
   if (rows.length === 0) return stats;
+
+  // A managed-AI refusal (budget spent, taster spent, no consent, switched
+  // off) is SHOP-wide, so it is asked ONCE here, before a single Shopify
+  // read. Asked per row, a shop whose refusal lasts — consent never given, a
+  // taster spent with no key — paid a full resource read per row every night
+  // only to postpone each one. The rows are left exactly as they are: no
+  // attempt spent, nothing settled, picked up again once the refusal lifts.
+  const gate =
+    params.managedRefusal ??
+    (params.retry
+      ? null // a caller that stubs the retry decides the gate too
+      : (await import("./stale-translation-sync.server")).managedRepairRefusal);
+  const refusal = gate ? await gate(params.shop).catch(() => null) : null;
+  if (refusal) {
+    stats.postponed = rows.length;
+    logger.info("[TranslationRetry] Managed AI refused — the retry list waits", {
+      context: "TranslationRetry",
+      shop: params.shop,
+      reason: refusal,
+      rows: rows.length,
+    });
+    return stats;
+  }
+
   const retry = params.retry ?? (await import("./stale-translation-sync.server")).retryAutoTranslation;
   const published = new Set(params.foreignLocales);
 

@@ -86,6 +86,9 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       upsert: vi.fn(async (_args?: unknown) => ({})),
       // The per-day de-duplication of managed-AI stand-down rows.
       findFirst: vi.fn(async (_args?: unknown): Promise<{ id: string } | null> => null),
+      findUnique: vi.fn(async (_args?: unknown): Promise<{ createdAt: Date } | null> => ({
+        createdAt: new Date(),
+      })),
       delete: vi.fn(async (_args?: unknown) => ({})),
     },
   };
@@ -2910,10 +2913,18 @@ describe("a MANAGED-AI stand-down never costs the retry list, the daily limit or
       throw new ManagedAiRefusedError("budgetExceeded");
     });
 
+    // An OLDER refusal row exists today: a retry run's row folds into it
+    // (the nightly sweep is what can produce hundreds; nobody watches them).
+    db.task.findFirst.mockResolvedValue({ id: "earlier-stand-down" });
+
     const outcome = await retryAutoTranslation(retryParams("failed"));
     await awaitDetachedRetranslations();
 
     expect(outcome).toBe("started");
+    expect(db.task.delete).toHaveBeenCalledTimes(1);
+    // Only a strictly older row may absorb this one — never "any other row".
+    const foldQuery = (db.task.findFirst.mock.calls.at(-1) as any[])[0];
+    expect(foldQuery.where.OR).toBeDefined();
     expect(shopify.registerCalls).toEqual([]);
     expect(shopify.removeCalls).toEqual([]);
     expect(db.autoTranslateRetry.delete).not.toHaveBeenCalled();
@@ -2962,7 +2973,8 @@ describe("a MANAGED-AI stand-down never costs the retry list, the daily limit or
 
   it("sync: a refusal INSIDE a normal run defers its pairs without resetting the attempt count", async () => {
     db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
-    // An earlier refusal row exists today: this run's own Task row is folded into it.
+    // An earlier refusal row exists today — but a run an in-app save or a
+    // change event started may be WATCHED by a page, so its row is kept.
     db.task.findFirst.mockResolvedValue({ id: "earlier-stand-down" });
     ai.translate = vi.fn(async () => {
       throw new ManagedAiRefusedError("tasterExhausted");
@@ -2980,8 +2992,7 @@ describe("a MANAGED-AI stand-down never costs the retry list, the daily limit or
     expect(enqueued.update.reason).toBe("failed");
     expect(enqueued.update.attempts).toBeUndefined();
     expect(enqueued.update.lastError).toBe("managed_ai_refused:tasterExhausted");
-    // One refusal row per shop and day, not one per resource.
-    expect(db.task.delete).toHaveBeenCalledWith({ where: { id: result.taskId } });
+    expect(db.task.delete).not.toHaveBeenCalled();
   });
 });
 

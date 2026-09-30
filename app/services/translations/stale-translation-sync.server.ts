@@ -4394,7 +4394,12 @@ async function runRetranslation(
           },
         })
         .catch(() => undefined);
-      await foldManagedRefusalTask(db, shop, task.id, refusedCode);
+      // Folded only for a RETRY run: the nightly sweep is what can produce
+      // hundreds of these, and no client watches its Task ids. A run an
+      // in-app save started hands its id to the page's watcher, and a
+      // deleted row reads there as "not started yet" — a five-minute stall
+      // before the grid reloads — so that row is kept.
+      if (params.retryId) await foldManagedRefusalTask(db, shop, task.id, refusedCode);
       logger.warn("[StaleTranslations] Auto-translation stood down — stale rows KEPT", {
         context: "StaleTranslations",
         shop,
@@ -4448,6 +4453,11 @@ async function foldManagedRefusalTask(
   try {
     const now = new Date();
     const startOfUtcDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const own = await db.task.findUnique({ where: { id: taskId }, select: { createdAt: true } });
+    if (!own) return;
+    // Only a STRICTLY OLDER row (ties broken by id) lets this one go. "Any
+    // other row" let two runs refused in the same moment each find the other
+    // and each delete itself — the day then kept no refusal row at all.
     const earlier = await db.task.findFirst({
       where: {
         shop,
@@ -4455,7 +4465,10 @@ async function foldManagedRefusalTask(
         fieldType: "autoTranslateExternalChange",
         error: code,
         createdAt: { gte: startOfUtcDay },
-        id: { not: taskId },
+        OR: [
+          { createdAt: { lt: own.createdAt } },
+          { createdAt: own.createdAt, id: { lt: taskId } },
+        ],
       },
       select: { id: true },
     });

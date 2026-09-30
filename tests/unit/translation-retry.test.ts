@@ -125,6 +125,29 @@ describe("enqueue and settle", () => {
     expect(fake.rows[0].pairs).toEqual([pair("de"), pair("fr")]);
   });
 
+  it("a managed deferral keeps a LIVE row's count but never parks work in an EXHAUSTED row", async () => {
+    const defer = (pairs: ReturnType<typeof pair>[]) =>
+      enqueueTranslationRetry(
+        {
+          shop: SHOP, resourceId: PRODUCT, resourceType: "Product", contentKind: "product",
+          pairs, reason: "failed", preserveAttempts: true, error: "managed_ai_refused:budgetExceeded",
+        },
+        fake.db,
+      );
+    await enqueue([pair("de")]);
+    fake.rows[0].attempts = 1;
+    await defer([pair("fr")]);
+    expect(fake.rows[0]).toMatchObject({ attempts: 1, status: "pending" });
+
+    // Exhausted: the sweep never selects it again, so the deferred pairs would
+    // be "failed for good" over a budget. They get a fresh count instead.
+    fake.rows[0].attempts = 2;
+    fake.rows[0].status = "exhausted";
+    await defer([pair("es")]);
+    expect(fake.rows[0]).toMatchObject({ attempts: 0, status: "pending" });
+    expect(fake.rows[0].pairs).toEqual([pair("de"), pair("fr"), pair("es")]);
+  });
+
   it("settles a retry that delivered everything by deleting the row", async () => {
     await enqueue();
     await settleTranslationRetry(fake.rows[0].id, { handed: [pair("de")], remaining: [] }, fake.db);
@@ -214,6 +237,25 @@ describe("processTranslationRetries", () => {
     expect(fake.rows[0]).toHaveProperty("startedAt");
     // A locale the shop no longer publishes is owed nothing.
     expect((retry.mock.calls[0] as any[])[0].pairs).toEqual([pair("de")]);
+  });
+
+  it("a shop-wide managed refusal postpones the whole batch without a single retry", async () => {
+    const fake = fakeDb();
+    await enqueueTranslationRetry(
+      { shop: SHOP, resourceId: PRODUCT, resourceType: "Product", contentKind: "product", pairs: [pair("de")], reason: "failed" },
+      fake.db,
+    );
+    const retry = vi.fn();
+    const stats = await processTranslationRetries(
+      {
+        shop: SHOP, client: {} as never, foreignLocales: ["de"], retry: retry as never,
+        managedRefusal: async () => "consentMissing",
+      },
+      fake.db,
+    );
+    expect(retry).not.toHaveBeenCalled();
+    expect(stats.postponed).toBe(1);
+    expect(fake.rows[0]).toMatchObject({ status: "pending", attempts: 0 });
   });
 
   it("drops a row whose every locale is no longer published", async () => {

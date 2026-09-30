@@ -142,7 +142,11 @@ export async function repairChangedProductAlts(params: ProductAltRepairParams): 
       mirror: productImageAltMirror(shop, productId),
       translateAs: { kind: "values", context: "product image alt texts", sourceLocale: primaryLocale },
     });
-    if (!outcome.startFailed) await removeUnaddressable();
+    // Only a MANAGED stand-down holds the local delete back — that is the
+    // refusal-never-deletes rule. Any other start failure (a DB blink on a
+    // shop using its own key) keeps the behaviour this had before: the
+    // unaddressable image's local rows go by the stored answer.
+    if (!outcome.managedStandDown) await removeUnaddressable();
     return outcome.taskId ? { taskId: outcome.taskId } : {};
   } catch (error: unknown) {
     logger.warn("[AltRepair] Alt-text re-translation failed — translations kept", {
