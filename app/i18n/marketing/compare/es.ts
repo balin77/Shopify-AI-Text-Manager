@@ -3,7 +3,7 @@ import type { CompareCopy } from "./types";
 export const compareEs: CompareCopy = {
   title: "ContentPilot frente a otras apps de traducción para Shopify",
   intro:
-    "Cómo se compara ContentPilot AI con Translate & Adapt, Weglot, Transcy y LangShop: qué hace bien cada app, en qué se diferencian y cuál encaja con cada tienda.",
+    "Cómo se compara ContentPilot AI con Translate & Adapt, Weglot, Transcy, LangShop, T Lab, Langify y GTranslate: qué hace bien cada app, en qué se diferencian y cuál encaja con cada tienda.",
   vsTitle: "ContentPilot vs. {name}",
   vsMetaTitle: "ContentPilot vs. {name}: apps de traducción para Shopify comparadas",
   tableHeading: "Función por función",
@@ -136,6 +136,7 @@ export const compareEs: CompareCopy = {
       shopify: "Traducción automática de Shopify",
       vendor: "IA propia del proveedor, no seleccionable",
       unstated: "Traducción automática, motor no indicado",
+      manual: "Ninguno: solo traducción manual",
     },
     trialRow: "Prueba gratuita",
     includedAi: {
@@ -156,6 +157,11 @@ export const compareEs: CompareCopy = {
     values: {
       unlimited: "Ilimitados",
       someAutomatic: "2 automáticos, los demás a mano",
+      automaticOf: "{auto} con IA, hasta {total} en total",
+      manualOnly: "Solo traducción manual",
+      wordsOnce: "{n} palabras una sola vez, más en paquetes de palabras",
+      oncePerLanguage: "Una sola vez por idioma, contado en productos y no en palabras",
+      oncePerLanguageOrOwnKey: "Una sola vez por idioma; ilimitado con su propia clave de API",
       noProductLimit: "Sin límite",
       ownKey: "Con su propia clave de IA: ilimitado, paga directamente a su proveedor de IA",
       included: "Incluido",
@@ -286,6 +292,95 @@ export const compareEs: CompareCopy = {
         aiProvider: "Varios motores de IA",
         bulkEditor: "Solo traducciones",
         followChanges: "Productos y colecciones nuevos",
+      },
+    },
+    "t-lab": {
+      kind: "Aplicación de traducción con IA para Shopify",
+      summary:
+        "T Lab traduce tiendas Shopify con IA, por niveles de idiomas y número de productos. ContentPilot añade traducción con IA en todos los idiomas que quiera, sus propias instrucciones para la IA, herramientas SEO y redacción de contenidos. Así se comparan.",
+      about:
+        "T Lab es una aplicación de traducción para Shopify que escribe en el almacenamiento de traducciones de Shopify. Traduce a mano o con una IA basada en OpenAI; cuántos idiomas traduce la IA, y para cuántos productos, depende del plan. Esos cupos son únicos por idioma y no se renuevan cada mes. Lo que Shopify no puede traducir —imágenes, textos de otras apps, textos fijos— la app lo sustituye con un script en la tienda.",
+      strengths: [
+        "Un plan gratuito con traducción con IA a un idioma y hasta 500 productos.",
+        "Glosario y traducción de imágenes incluso en el plan gratuito.",
+        "Traduce textos de otras apps como Judge.me o PageFly.",
+        "Autopilot en Premium traduce automáticamente el contenido nuevo y modificado; clave propia de OpenAI, Anthropic, DeepL, DeepSeek o Google.",
+      ],
+      ourEdge: [
+        "Traducción con IA en todos los idiomas que quiera, sin un cupo único por idioma.",
+        "Sus propias instrucciones y un glosario, para que la IA traduzca con su tono.",
+        "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
+        "Herramientas SEO completas y visibilidad en búsquedas con IA.",
+        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante.",
+      ],
+      verdict:
+        "Elija T Lab si quiere traducir pocos idiomas con IA a bajo precio y necesita traducir imágenes, textos de otras apps o monedas. Elija ContentPilot si quiere todos los idiomas que necesite con su propio tono, sin un cupo único por idioma, y una sola app para textos, SEO y traducciones.",
+      notes: {
+        nativeStorage: "Imágenes y sustituciones propias mediante la app",
+        brandVoice: "Contexto de la tienda; tono solo con clave propia",
+        themeCheckout: "Correos: sin datos",
+        followChanges: "Automático con Autopilot (Premium)",
+        currency: "No en el checkout",
+        aiProvider: "Mediante su propia clave de API",
+      },
+    },
+    langify: {
+      kind: "Aplicación de traducción para Shopify",
+      summary:
+        "Langify traduce tiendas Shopify a mano o de forma automática, con un cupo de palabras por plan. ContentPilot añade traducción con IA con sus propias instrucciones, todos los idiomas que quiera, herramientas SEO y redacción de contenidos. Así se comparan.",
+      about:
+        "Langify es una aplicación de traducción veterana para Shopify que escribe en el almacenamiento de traducciones de Shopify. En el plan gratuito traduce a mano hasta cinco idiomas. Los planes de pago traducen automáticamente con DeepL y Google; su cupo de palabras se abona una sola vez al contratar y se pueden comprar más en paquetes. La traducción con IA está en una beta cerrada desde Growth.",
+      strengths: [
+        "Traducciones manuales ilimitadas en todos los planes, también en el gratuito.",
+        "Traducción del checkout y de las notificaciones incluso en el plan gratuito.",
+        "Traducción de imágenes e importación y exportación de traducciones desde el plan Basic.",
+        "Control total: la app nunca traduce por sí sola, solo cuando usted lo indica.",
+      ],
+      ourEdge: [
+        "Traducción con IA sin cupo de palabras: paga directamente a su proveedor de IA o elige un plan con IA incluida.",
+        "Las traducciones siguen automáticamente los cambios del texto original.",
+        "Sus propias instrucciones y un glosario para la IA.",
+        "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
+        "Herramientas SEO, visibilidad en búsquedas con IA y un editor de hoja de cálculo para todo el catálogo.",
+      ],
+      verdict:
+        "Elija Langify si traduce sobre todo a mano y quiere lanzar cada traducción usted mismo. Elija ContentPilot si quiere que la IA haga la mayor parte de la traducción, sin cupo de palabras, con su propio tono y también cuando cambia el texto original.",
+      notes: {
+        nativeStorage: "Sustituciones propias mediante la app",
+        brandVoice: "Solo tú/usted con DeepL",
+        aiProvider: "DeepL o la beta de IA",
+        followChanges: "A mano con «Translate outdated»",
+        seoToolkit: "Traduce título y descripción SEO",
+        imagesPerLanguage: "Imágenes de producto, colección, artículo y tema",
+      },
+    },
+    gtranslate: {
+      kind: "Servicio de traducción para muchas plataformas web",
+      summary:
+        "GTranslate traduce sitios web en muchas plataformas mediante su propia red, sin límite de palabras. ContentPilot funciona dentro de Shopify, guarda las traducciones en su tienda y añade herramientas SEO y de contenido. Así se comparan.",
+      about:
+        "GTranslate traduce sitios web en muchas plataformas, entre ellas Shopify. El plan gratuito es un selector de idioma que traduce la página en el navegador del visitante, sin indexación en buscadores y sin edición. Los planes de pago sirven las páginas traducidas desde su propia «Translation Delivery Network», así que las traducciones se guardan en GTranslate.",
+      strengths: [
+        "Todos los idiomas y palabras ilimitadas, incluso en planes económicos.",
+        "Su proxy también traduce la mayoría de los textos de otras apps (planes de pago).",
+        "Las páginas traducidas se indexan, URL traducidas desde Business y dominios por país.",
+        "Funciona en muchas plataformas, no solo en Shopify; 15 días de prueba.",
+      ],
+      ourEdge: [
+        "Las traducciones se guardan en su tienda Shopify y se conservan si desinstala la aplicación.",
+        "Traducción con IA con su propio tono, con glosario y elección del proveedor de IA.",
+        "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
+        "Herramientas SEO, visibilidad en búsquedas con IA y un editor de hoja de cálculo para todo el catálogo.",
+      ],
+      verdict:
+        "Elija GTranslate si traduce sitios web en varias plataformas con un solo servicio y no quiere límite de palabras. Elija ContentPilot si su tienda funciona con Shopify, quiere que las traducciones pertenezcan a su tienda y busca textos, SEO y traducciones en una sola app.",
+      notes: {
+        nativeStorage: "Se guardan en GTranslate",
+        glossary: "Solo excluir términos",
+        themeCheckout: "Checkout y correos: sin datos",
+        followChanges: "Cuando caduca la caché",
+        seoToolkit: "Indexación y URL traducidas",
+        aiVisibility: "Páginas traducidas legibles para rastreadores de IA",
       },
     },
   },

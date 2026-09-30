@@ -53,7 +53,11 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
         ? g.values.unlimited
         : plan.languages === "someAutomatic"
           ? g.values.someAutomatic
-          : n(plan.languages);
+          : typeof plan.languages === "object"
+            ? g.values.automaticOf
+                .replace("{auto}", n(plan.languages.automatic))
+                .replace("{total}", n(plan.languages.total))
+            : n(plan.languages);
   const products = plan.onRequest
     ? g.values.onRequest
     : plan.products === null
@@ -65,7 +69,13 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
   const volume =
     v.kind === "ownKey"
       ? g.values.ownKey
-      : v.kind === "onRequest"
+      : v.kind === "manualOnly"
+        ? g.values.manualOnly
+        : v.kind === "oncePerLanguage"
+          ? g.values.oncePerLanguage
+          : v.kind === "oncePerLanguageOrOwnKey"
+            ? g.values.oncePerLanguageOrOwnKey
+            : v.kind === "onRequest"
         ? g.values.onRequest
         : v.kind === "included"
           ? g.values.included
@@ -74,6 +84,7 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
             : (
                 {
                   words: g.values.words,
+                  wordsOnce: g.values.wordsOnce,
                   tokensMonth: g.values.tokensMonth,
                   tokensMonthOwnKey: g.values.tokensMonthOwnKey,
                   wordsPlusTokens: g.values.wordsPlusTokens,

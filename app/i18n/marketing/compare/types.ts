@@ -72,6 +72,7 @@ export type CompareCopy = {
       shopify: string;
       vendor: string;
       unstated: string;
+      manual: string;
     };
     trialRow: string;
     /** The "+ AI" variant of our plans: the merchant uses a key of ours. */
@@ -96,6 +97,12 @@ export type CompareCopy = {
     values: {
       unlimited: string;
       someAutomatic: string;
+      /** `{auto}` translated by AI out of `{total}` addable. */
+      automaticOf: string;
+      manualOnly: string;
+      wordsOnce: string;
+      oncePerLanguage: string;
+      oncePerLanguageOrOwnKey: string;
       noProductLimit: string;
       ownKey: string;
       included: string;

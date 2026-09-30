@@ -235,6 +235,36 @@ Funktionszeilen. Wo eine Antwort vom Plan abhängt, steht sie in `byPlan` — f�
 Anbieter gleich, unsere eigenen Plangrenzen eingeschlossen („Höherer Plan“ statt
 „Nein“). Eine App mit weniger Plänen zeigt auf höheren Stufen ihren höchsten Plan.
 
+#### Nachtrag 2026-09-30 — drei weitere Apps: T Lab, Langify, GTranslate
+
+Geprüft gegen App-Store-Einträge, Preisseiten und Hilfe-Center (Agent, Rohtext der Seiten)
+plus Preis-Screenshots des Inhabers. Auf `/compare` sind sie über das `+` im Tabellenkopf
+zuschaltbar (Startansicht bleibt T&A, Weglot, Transcy, LangShop); jede hat eine eigene
+`/compare/<app>`-Seite.
+
+| | T Lab (Sherpas Design) | Langify | GTranslate |
+|---|---|---|---|
+| Pläne (USD/Monat) | Free 0 · Pro 11,99 · Business 29,99 · Premium 59,99 | Free 0 · Basic 17,50 · Growth 29,95 · Premium 59,95 | Free 0 · Bilingual Startup 12 · Startup 25 · Business 35 · Enterprise 50 (nur Website) |
+| Sprachen | beliebig von Hand, KI für 1 / 5 / 10 / 20 | 5 (nur manuell) / 20 / 20 / 20 | alle; Bilingual = 1 |
+| Volumen | KI-Kontingent **einmalig pro Sprache**, gezählt in Produkten: 500 / 3.000 / 7.000 / 15.000 (Premium mit eigenem Key unbegrenzt) | Wörter **einmalig** bei Abschluss: – / 10k / 50k / 200k, danach Wortpakete | unbegrenzt |
+| Engines | Standard-Engine auf OpenAI-Basis; Premium eigener Key (OpenAI, Anthropic, DeepL, DeepSeek, Google) | DeepL + Google; KI-Beta (DeepSeek, Gemma) ab Growth | nicht genannt („AI translation“) |
+| Speicherort | Shopify (Bilder + eigene Ersetzungen per App-Embed) | Shopify (eigene Ersetzungen über die App) | **nicht Shopify**: Free im Browser, bezahlt auf GTranslate-Servern (Proxy) |
+| Eigene KI-Anweisungen | ⚠️ Shop-Kontext (300 Z.); Tonalität nur mit eigenem Key (Premium) | ⚠️ nur Du/Sie (DeepL) | ? |
+| Glossar | ✅ ab Free (5 / 20 / ∞ / ∞) | ✅ ab Basic (Beta) | ⚠️ nur Begriffe ausschließen |
+| Theme / Checkout / E-Mails | ⚠️ Theme + Checkout ja, E-Mails ? | ✅ | ⚠️ Theme ja, Rest ? |
+| Texte anderer Apps | ✅ ab Free | ✅ ab Basic | ✅ bezahlt (Proxy) |
+| Folgt Textänderungen | ⚠️ von Hand („Outdated“); automatisch nur Autopilot (Premium) | ⚠️ nur von Hand („Translate outdated“, ab Growth) | ⚠️ nach Cache-Ablauf |
+| SEO / KI-Suche | ? (SEO-Funktionen gehören zur Schwester-App Smart SEO) | ⚠️ übersetzt SEO-Titel/-Beschreibung | ⚠️ Indexierung, übersetzte URLs, Länder-Domains |
+| Bilder pro Sprache | ✅ ab Free (10 / 100 / ∞) | ✅ ab Basic | ? |
+| Währungsumrechnung | ✅ ab Business (nicht im Checkout) | ❌ („doesn't perform currency conversion“) | ? |
+| Testzeit | keine Angabe | keine Angabe | 15 Tage |
+| Bewertung | 4,9 (1.033) | 4,7 (727) | 4,7 (685) |
+
+Widersprüche App Store ↔ Hilfe (T Lab): Premium-Engines (Store: DeepL, Google, ChatGPT;
+Hilfe: zusätzlich Anthropic, DeepSeek), Premium-Produktlimit (Store: nur „unbegrenzt mit
+eigenem Key“; Hilfe: 15.000), Import/Export (Store ab Pro, Hilfe ab Free). Die Tabelle folgt
+der Hilfe, weil sie genauer ist.
+
 #### Historische Tabelle (Stand 01–08/2026)
 
 
@@ -1097,6 +1127,7 @@ laden + in `vars`-Objekt reichen).
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-09-30 | T Lab, Langify und GTranslate ergänzt (§2.1 Nachtrag), geprüft gegen App Store, Preisseiten und Hilfe-Center; auf `/compare` per `+` zuschaltbar |
 | 2026-01-27 | Initiale Erstellung der Wettbewerbsanalyse |
 | 2026-05-18 | Preise/Ratings Mai 2026; Image Compression als ✅ (WebP ab Pro) korrigiert; §3.5 Gap-Kontext & Priorisierung ergänzt (Status: nicht eingeplant, Bugs zuerst) |
 | 2026-05-18 | §3.5-Banner nachgezogen: Limit-Befunde 1–4 alle erledigt (Commit 1327432) — Befund 4 via Bild-Quota + WebP-Spreizung Pro 2/Max 6; Template-Verweise auf „zusätzliches Differenzial" entschärft |

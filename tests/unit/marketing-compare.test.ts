@@ -27,7 +27,7 @@ describe("comparison pages", () => {
 
   it("only accepts the listed competitors as slugs", () => {
     expect(isCompetitorId("weglot")).toBe(true);
-    expect(isCompetitorId("langify")).toBe(false);
+    expect(isCompetitorId("not-an-app")).toBe(false);
     expect(isCompetitorId(undefined)).toBe(false);
   });
 

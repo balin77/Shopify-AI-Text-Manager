@@ -15,6 +15,12 @@ import { localizedPath } from "../services/marketing-locale.shared";
 import { CompareDisclaimer, CompareMatrix } from "../components/marketing/CompareTable";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 
+/**
+ * The apps the table opens with. The others are one click away behind the
+ * `+` in its header row: eight columns do not fit a reading-width page.
+ */
+const INITIAL_APPS = ["contentpilot", "translate-and-adapt", "weglot", "transcy", "langshop"] as const;
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   redirectTrailingSlash(url);
@@ -62,7 +68,7 @@ export default function MarketingCompare() {
             <p className="mk-lead">{copy.intro}</p>
           </div>
 
-          <CompareMatrix copy={copy} locale={locale} apps={PRICE_APPS} />
+          <CompareMatrix copy={copy} locale={locale} apps={PRICE_APPS} initialApps={INITIAL_APPS} />
 
           <ul className="mk-compare-cards">
             {COMPETITORS.map((id) => {

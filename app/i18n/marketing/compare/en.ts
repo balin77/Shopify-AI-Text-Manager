@@ -3,7 +3,7 @@ import type { CompareCopy } from "./types";
 export const compareEn: CompareCopy = {
   title: "ContentPilot compared with other Shopify translation apps",
   intro:
-    "How ContentPilot AI stacks up against Translate & Adapt, Weglot, Transcy and LangShop — what each app does well, where they differ, and which one fits which shop.",
+    "How ContentPilot AI stacks up against Translate & Adapt, Weglot, Transcy, LangShop, T Lab, Langify and GTranslate — what each app does well, where they differ, and which one fits which shop.",
   vsTitle: "ContentPilot vs {name}",
   vsMetaTitle: "ContentPilot vs {name}: Shopify translation apps compared",
   tableHeading: "Feature by feature",
@@ -136,6 +136,7 @@ export const compareEn: CompareCopy = {
       shopify: "Shopify's machine translation",
       vendor: "The provider's own AI, not selectable",
       unstated: "Machine translation, engine not stated",
+      manual: "None — manual translation only",
     },
     trialRow: "Free trial",
     includedAi: {
@@ -156,6 +157,11 @@ export const compareEn: CompareCopy = {
     values: {
       unlimited: "Unlimited",
       someAutomatic: "2 automatic, more by hand",
+      automaticOf: "{auto} by AI, up to {total} in total",
+      manualOnly: "Manual translation only",
+      wordsOnce: "{n} words once, more as word packs",
+      oncePerLanguage: "Once per language, counted in products rather than words",
+      oncePerLanguageOrOwnKey: "Once per language; unlimited with your own API key",
       noProductLimit: "No limit",
       ownKey: "With your own AI key: unlimited — you pay your AI provider directly",
       included: "Included",
@@ -286,6 +292,95 @@ export const compareEn: CompareCopy = {
         aiProvider: "Several AI engines",
         bulkEditor: "Translations only",
         followChanges: "New products and collections",
+      },
+    },
+    "t-lab": {
+      kind: "AI translation app for Shopify",
+      summary:
+        "T Lab translates Shopify stores with AI, tiered by languages and number of products. ContentPilot adds AI translation in any number of languages, your own instructions for the AI, SEO tools and content writing. Here is how they compare.",
+      about:
+        "T Lab is a translation app for Shopify that writes into Shopify's own translation storage. It translates by hand or with an AI based on OpenAI; how many languages the AI translates, and for how many products, depends on the plan. Those allowances are one-time per language and do not renew monthly. What Shopify cannot translate itself — images, other apps' texts, hard-coded texts — the app replaces with a script in the store.",
+      strengths: [
+        "A free plan with AI translation for one language and up to 500 products.",
+        "A glossary and image translation even on the free plan.",
+        "Translates texts from other apps such as Judge.me or PageFly.",
+        "Autopilot on Premium translates new and changed content automatically; own key for OpenAI, Anthropic, DeepL, DeepSeek or Google.",
+      ],
+      ourEdge: [
+        "AI translation in any number of languages, without a one-time allowance per language.",
+        "Your own instructions and a glossary, so the AI translates in your tone.",
+        "Writes and improves product texts, SEO titles and alt texts.",
+        "A full SEO toolkit and visibility in AI search.",
+        "A spreadsheet editor for the whole catalogue and variant image galleries.",
+      ],
+      verdict:
+        "Choose T Lab if you want a few languages translated by AI at a low price and need images, other apps' texts or currencies handled. Choose ContentPilot if you want any number of languages in your own voice, without a one-time allowance per language, and one app for texts, SEO and translations.",
+      notes: {
+        nativeStorage: "Images and custom replacements via the app",
+        brandVoice: "Store context; tone only with your own key",
+        themeCheckout: "Emails: not stated",
+        followChanges: "Automatic with Autopilot (Premium)",
+        currency: "Not in checkout",
+        aiProvider: "Through your own API key",
+      },
+    },
+    langify: {
+      kind: "Translation app for Shopify",
+      summary:
+        "Langify translates Shopify stores by hand or by machine, with a word allowance per plan. ContentPilot adds AI translation with your own instructions, any number of languages, SEO tools and content writing. Here is how they compare.",
+      about:
+        "Langify is a long-standing translation app for Shopify that writes into Shopify's own translation storage. On the free plan you translate up to five languages by hand. The paid plans machine-translate with DeepL and Google; their word allowance is credited once at sign-up, with more words sold as word packs. AI translation is in a closed beta from Growth.",
+      strengths: [
+        "Unlimited manual translations on every plan, including the free one.",
+        "Checkout and notification translation even on the free plan.",
+        "Image translation and import/export of translations from the Basic plan.",
+        "Full control: the app never translates on its own, only when you tell it to.",
+      ],
+      ourEdge: [
+        "AI translation without a word allowance — you pay your AI provider directly or pick a plan with AI included.",
+        "Translations follow changes to the original text automatically.",
+        "Your own instructions and a glossary for the AI.",
+        "Writes and improves product texts, SEO titles and alt texts.",
+        "SEO tools, AI-search visibility and a spreadsheet editor for the whole catalogue.",
+      ],
+      verdict:
+        "Choose Langify if you mostly translate by hand and want to trigger every translation yourself. Choose ContentPilot if you want the AI to do most of the translating, without a word allowance, in your own voice and also when the original text changes.",
+      notes: {
+        nativeStorage: "Custom replacements via the app",
+        brandVoice: "Formal/informal with DeepL only",
+        aiProvider: "DeepL or the AI beta",
+        followChanges: "By hand via “Translate outdated”",
+        seoToolkit: "Translates SEO title and description",
+        imagesPerLanguage: "Product, collection, article and theme images",
+      },
+    },
+    gtranslate: {
+      kind: "Translation service for many website platforms",
+      summary:
+        "GTranslate translates websites on many platforms through its own network, with no word limit. ContentPilot works inside Shopify, saves translations in your store and adds SEO and content tools. Here is how they compare.",
+      about:
+        "GTranslate translates websites on many platforms, Shopify among them. The free plan is a language switcher that translates the page in the visitor's browser — not indexed by search engines and not editable. The paid plans serve the translated pages from GTranslate's own “Translation Delivery Network”, so the translations live with GTranslate.",
+      strengths: [
+        "All languages and unlimited words, even on low-priced plans.",
+        "Its proxy also translates most texts from other apps (paid plans).",
+        "Translated pages are indexed, translated URLs from Business, country domains.",
+        "Works on many platforms, not only Shopify; 15-day trial.",
+      ],
+      ourEdge: [
+        "Translations are saved in your Shopify store and stay if you uninstall.",
+        "AI translation in your own voice, with a glossary and a choice of AI provider.",
+        "Writes and improves product texts, SEO titles and alt texts.",
+        "SEO tools, AI-search visibility and a spreadsheet editor for the whole catalogue.",
+      ],
+      verdict:
+        "Choose GTranslate if you translate websites on several platforms with one service and want no word limit. Choose ContentPilot if your shop runs on Shopify, you want the translations to belong to your store, and you want texts, SEO and translations in one app.",
+      notes: {
+        nativeStorage: "Stored with GTranslate",
+        glossary: "Excluding terms only",
+        themeCheckout: "Checkout, emails: not stated",
+        followChanges: "Once the cache expires",
+        seoToolkit: "Indexing and translated URLs",
+        aiVisibility: "Translated pages readable by AI crawlers",
       },
     },
   },

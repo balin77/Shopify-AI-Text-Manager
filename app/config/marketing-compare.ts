@@ -20,7 +20,7 @@ import { BILLING_PLANS, MANAGED_BILLING_PLANS } from "./billing";
 import { MANAGED_AI_TASTER_ACTIONS } from "./managed-ai-budget";
 import { PLAN_CONFIG } from "./plans";
 
-export const COMPETITORS = ["translate-and-adapt", "weglot", "transcy", "langshop"] as const;
+export const COMPETITORS = ["translate-and-adapt", "weglot", "transcy", "langshop", "t-lab", "langify", "gtranslate"] as const;
 
 export type CompetitorId = (typeof COMPETITORS)[number];
 
@@ -30,6 +30,9 @@ export const COMPETITOR_NAMES: Record<CompetitorId, string> = {
   weglot: "Weglot",
   transcy: "Transcy",
   langshop: "LangShop",
+  "t-lab": "T Lab",
+  langify: "Langify",
+  gtranslate: "GTranslate",
 };
 
 /**
@@ -80,13 +83,16 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "autoTranslate",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "yes", "t-lab": "yes", langify: "yes", gtranslate: "yes" },
+    byPlan: {
+      langify: ["higherPlan", "yes", "yes", "yes"],
+    },
   },
   {
     id: "nativeStorage",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "yes", weglot: "no", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "yes", weglot: "no", transcy: "yes", langshop: "yes", "t-lab": "partial", langify: "partial", gtranslate: "no" },
     // Transcy's free plan translates in the visitor's browser (google.translate.js,
     // "non-edit languages"); only the paid plans write into Shopify.
     byPlan: {
@@ -97,8 +103,10 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "brandVoice",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes", "t-lab": "partial", langify: "partial", gtranslate: "unstated" },
     byPlan: {
+      langify: ["higherPlan", "partial", "partial", "partial"],
+      "t-lab": ["partial", "partial", "partial", "yes"],
       transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
       contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
       weglot: ["higherPlan", "higherPlan", "higherPlan", "higherPlan", "yes", "yes", "yes"],
@@ -108,8 +116,10 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "aiProvider",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "yes", langshop: "yes", "t-lab": "yes", langify: "partial", gtranslate: "unstated" },
     byPlan: {
+      langify: ["higherPlan", "higherPlan", "partial", "partial"],
+      "t-lab": ["higherPlan", "higherPlan", "higherPlan", "yes"],
       transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
       langshop: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes", "yes"],
     },
@@ -118,8 +128,9 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "glossary",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes", "t-lab": "yes", langify: "yes", gtranslate: "partial" },
     byPlan: {
+      langify: ["higherPlan", "yes", "yes", "yes"],
       transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
       langshop: ["higherPlan", "yes", "yes", "yes", "yes", "yes", "yes"],
     },
@@ -128,7 +139,7 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "themeCheckout",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "yes", weglot: "yes", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "yes", weglot: "yes", transcy: "yes", langshop: "yes", "t-lab": "partial", langify: "yes", gtranslate: "partial" },
     byPlan: {
       contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
     },
@@ -137,8 +148,10 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "thirdPartyApps",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes", "t-lab": "yes", langify: "yes", gtranslate: "yes" },
     byPlan: {
+      gtranslate: ["higherPlan", "yes", "yes", "yes", "yes"],
+      langify: ["higherPlan", "yes", "yes", "yes"],
       contentpilot: ["higherPlan", "higherPlan", "higherPlan", "yes"],
       langshop: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes", "yes"],
     },
@@ -147,8 +160,10 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "followChanges",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "partial" },
+    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "partial", "t-lab": "partial", langify: "partial", gtranslate: "partial" },
     byPlan: {
+      langify: ["higherPlan", "higherPlan", "partial", "partial"],
+      "t-lab": ["partial", "partial", "partial", "yes"],
       contentpilot: ["higherPlan", "higherPlan", "higherPlan", "yes"],
       transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
       langshop: ["higherPlan", "higherPlan", "partial", "partial", "partial", "partial", "partial"],
@@ -158,13 +173,13 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "aiWriting",
     group: "content",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no", "t-lab": "unstated", langify: "unstated", gtranslate: "unstated" },
   },
   {
     id: "bulkEditor",
     group: "content",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "partial" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "partial", "t-lab": "unstated", langify: "unstated", gtranslate: "unstated" },
     byPlan: {
       contentpilot: ["higherPlan", "yes", "yes", "yes"],
       langshop: ["higherPlan", "partial", "partial", "partial", "partial", "partial", "partial"],
@@ -174,8 +189,9 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "seoToolkit",
     group: "seo",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no", "t-lab": "unstated", langify: "partial", gtranslate: "partial" },
     byPlan: {
+      gtranslate: ["higherPlan", "partial", "partial", "partial", "partial"],
       contentpilot: ["partial", "partial", "yes", "yes"],
     },
   },
@@ -183,8 +199,9 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "aiVisibility",
     group: "seo",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no", "t-lab": "unstated", langify: "unstated", gtranslate: "partial" },
     byPlan: {
+      gtranslate: ["higherPlan", "partial", "partial", "partial", "partial"],
       contentpilot: ["partial", "yes", "yes", "yes"],
     },
   },
@@ -192,13 +209,13 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "altText",
     group: "media",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no", "t-lab": "unstated", langify: "unstated", gtranslate: "unstated" },
   },
   {
     id: "imageManager",
     group: "media",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no", "t-lab": "unstated", langify: "unstated", gtranslate: "unstated" },
     byPlan: {
       contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
     },
@@ -207,8 +224,9 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "imagesPerLanguage",
     group: "international",
     ours: "no",
-    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "unstated" },
+    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "unstated", "t-lab": "yes", langify: "yes", gtranslate: "unstated" },
     byPlan: {
+      langify: ["higherPlan", "yes", "yes", "yes"],
       transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
     },
   },
@@ -216,8 +234,9 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "currency",
     group: "international",
     ours: "no",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "yes", langshop: "yes", "t-lab": "yes", langify: "no", gtranslate: "unstated" },
     byPlan: {
+      "t-lab": ["higherPlan", "higherPlan", "yes", "yes"],
       transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
     },
   },
@@ -249,7 +268,13 @@ export type PriceAppId = "contentpilot" | CompetitorId;
 export const PRICE_APPS: PriceAppId[] = ["contentpilot", ...COMPETITORS];
 
 /** How many languages a plan translates. */
-export type PlanLanguages = number | "unlimited" | "someAutomatic" | "onRequest";
+export type PlanLanguages =
+  | number
+  | "unlimited"
+  | "someAutomatic"
+  | "onRequest"
+  /** Some languages translated by AI, more addable by hand (T Lab). */
+  | { automatic: number; total: number };
 
 /**
  * How much translating a plan buys. Each provider meters something different
@@ -259,6 +284,13 @@ export type PlanLanguages = number | "unlimited" | "someAutomatic" | "onRequest"
  */
 export type PlanVolume =
   | { kind: "ownKey" }
+  /** No machine translation in the plan at all (Langify Free). */
+  | { kind: "manualOnly" }
+  /** T Lab: a one-time allowance per language, counted in products, not per month. */
+  | { kind: "oncePerLanguage" }
+  | { kind: "oncePerLanguageOrOwnKey" }
+  /** Langify: words credited once at sign-up, not per month. */
+  | { kind: "wordsOnce"; amount: number }
   | { kind: "onRequest" }
   | { kind: "included" }
   | { kind: "unlimitedWords" }
@@ -304,7 +336,8 @@ export const INCLUDED_AI_ENGINES = ["OpenAI"];
 export type PriceTable = {
   currency: "EUR" | "USD";
   /** Free trial of the PAID plans in days; `null` = the app has no paid plan to try. */
-  trialDays: number | null;
+  /** Free trial of the PAID plans in days; `null` = no paid plan to try; "unstated" = not published. */
+  trialDays: number | null | "unstated";
   plans: PricePlan[];
 };
 
@@ -380,6 +413,51 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
       { id: "unlimited", name: "Unlimited", monthly: 500, languages: 20, products: null, volume: { kind: "unlimitedWords" } },
     ],
   },
+  // T Lab – AI Language Translate (Sherpas Design), App Store listing and its
+  // help centre (checked 2026-09-30). Any number of languages by hand, N of
+  // them by AI. The AI limit counts products (plus collections, articles and
+  // pages) and is ONE-TIME per language — "lifetime, they do not reset
+  // monthly". Premium: 15,000 products, unlimited with the merchant's own key.
+  "t-lab": {
+    currency: "USD",
+    trialDays: "unstated",
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: { automatic: 1, total: 20 }, products: 500, volume: { kind: "oncePerLanguage" } },
+      { id: "pro", name: "Pro", monthly: 11.99, languages: { automatic: 5, total: 20 }, products: 3000, volume: { kind: "oncePerLanguage" } },
+      { id: "business", name: "Business", monthly: 29.99, languages: { automatic: 10, total: 20 }, products: 7000, volume: { kind: "oncePerLanguage" } },
+      { id: "premium", name: "Premium", monthly: 59.99, languages: 20, products: 15000, volume: { kind: "oncePerLanguageOrOwnKey" } },
+    ],
+  },
+  // Langify, its pricing page and help centre (checked 2026-09-30). Free is
+  // manual only; the paid plans credit their machine-translation words ONCE
+  // at sign-up, more only as word packs. "There is no limit on the amount of
+  // text you can translate on any plan" — no product limit. No trial.
+  langify: {
+    currency: "USD",
+    trialDays: "unstated",
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: 5, products: null, volume: { kind: "manualOnly" } },
+      { id: "basic", name: "Basic", monthly: 17.5, languages: 20, products: null, volume: { kind: "wordsOnce", amount: 10000 } },
+      { id: "growth", name: "Growth", monthly: 29.95, languages: 20, products: null, volume: { kind: "wordsOnce", amount: 50000 } },
+      { id: "premium", name: "Premium", monthly: 59.95, languages: 20, products: null, volume: { kind: "wordsOnce", amount: 200000 } },
+    ],
+  },
+  // GTranslate, its own plan table (2026-09-30). Free is a language widget
+  // that translates in the visitor's browser (not indexed, not editable, no
+  // commercial use); the paid plans serve translated pages from GTranslate's
+  // "Translation Delivery Network". "Bilingual Startup" is one extra language;
+  // Enterprise is listed only on gtranslate.io. 15-day trial.
+  gtranslate: {
+    currency: "USD",
+    trialDays: 15,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "bilingual", name: "Bilingual Startup", monthly: 12, languages: 1, products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "startup", name: "Startup", monthly: 25, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "business", name: "Business", monthly: 35, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "enterprise", name: "Enterprise", monthly: 50, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
+    ],
+  },
 };
 
 /**
@@ -428,7 +506,9 @@ export type PlanEngines =
   /** The provider's own AI; the engine cannot be chosen. */
   | { kind: "vendor" }
   /** Machine translation whose engine the provider does not name. */
-  | { kind: "unstated" };
+  | { kind: "unstated" }
+  /** No machine translation in this plan. */
+  | { kind: "manual" };
 
 const OUR_ENGINES: PlanEngines = {
   kind: "ownKey",
@@ -465,5 +545,30 @@ export const COMPARE_ENGINES: Record<PriceAppId, PlanEngines[]> = {
     { kind: "list", names: LANGSHOP_AI },
     { kind: "list", names: LANGSHOP_AI },
     { kind: "list", names: LANGSHOP_AI },
+  ],
+  // T Lab: a standard engine "based on OpenAI ChatGPT" on every plan; Premium
+  // adds the merchant's own key (help centre; the App Store names fewer).
+  "t-lab": [
+    { kind: "list", names: ["OpenAI"] },
+    { kind: "list", names: ["OpenAI"] },
+    { kind: "list", names: ["OpenAI"] },
+    { kind: "list", names: ["OpenAI"], ownKey: ["OpenAI", "Anthropic", "DeepL", "DeepSeek", "Google Translate"] },
+  ],
+  // Langify: DeepL, Google for languages DeepL lacks; an AI beta (DeepSeek,
+  // Gemma) from Growth.
+  langify: [
+    { kind: "manual" },
+    { kind: "list", names: ["DeepL", "Google"] },
+    { kind: "list", names: ["DeepL", "Google", "DeepSeek (Beta)", "Gemma (Beta)"] },
+    { kind: "list", names: ["DeepL", "Google", "DeepSeek (Beta)", "Gemma (Beta)"] },
+  ],
+  // GTranslate: "Machine translation" on Free, "AI translation" from Custom,
+  // no engine named on either.
+  gtranslate: [
+    { kind: "unstated" },
+    { kind: "vendor" },
+    { kind: "vendor" },
+    { kind: "vendor" },
+    { kind: "vendor" },
   ],
 };

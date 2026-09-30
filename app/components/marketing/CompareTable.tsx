@@ -380,7 +380,11 @@ export function CompareMatrix({
                 const days = COMPARE_PRICES[app].trialDays;
                 return (
                   <td key={app} className={oursClass(app)}>
-                    {days === null ? g.values.noTrial : g.values.trialDays.replace("{n}", String(days))}
+                    {days === null
+                      ? g.values.noTrial
+                      : days === "unstated"
+                        ? g.values.unstated
+                        : g.values.trialDays.replace("{n}", String(days))}
                   </td>
                 );
               })}
@@ -470,6 +474,8 @@ function enginesText(engines: PlanEngines, copy: CompareCopy): string {
       return e.vendor;
     case "unstated":
       return e.unstated;
+    case "manual":
+      return e.manual;
   }
 }
 
