@@ -86,7 +86,11 @@ export default function MarketingGuideTopic() {
           </header>
 
           <figure className="mk-guide__video">
-            <VideoFrame source={video} title={copy.title} pendingLabel={t.guide.videoPending} t={t} />
+            {/* Keyed by topic: prev/next stay on this route, so without the
+                key a started embed would carry its "playing" state into the
+                next topic and load a third-party iframe without a click, and
+                a <video> would keep playing the previous topic's file. */}
+            <VideoFrame key={topic} source={video} title={copy.title} pendingLabel={t.guide.videoPending} t={t} />
             <figcaption className="mk-note">
               {video === null
                 ? t.guide.videoPendingBody
