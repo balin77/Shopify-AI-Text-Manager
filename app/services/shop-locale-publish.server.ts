@@ -1,6 +1,6 @@
 /**
  * Publish / unpublish a shop's languages from inside the app
- * (Settings → Shop-Sprachen).
+ * (Settings → Sprachen und Märkte).
  *
  * An UNPUBLISHED language is one the merchant is preparing: this app syncs,
  * keeps and auto-translates it exactly like a published one

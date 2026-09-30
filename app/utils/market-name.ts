@@ -3,7 +3,7 @@
  *
  * Shopify stores a market under the name it was created with — on a shop set
  * up in English that is "Switzerland" / "European Union", and the Settings →
- * Shop-Sprachen checkboxes printed exactly that to a German merchant. A market
+ * Sprachen-und-Märkte checkboxes printed exactly that to a German merchant. A market
  * NAME is merchant data, though, and a renamed market ("DACH-Raum") must stay
  * as written. So a name is only localized when it IS a region's standard name
  * in one of the common admin languages (the name Shopify generates for a
@@ -67,7 +67,16 @@ export function regionCodeForName(name: string): string | undefined {
  * `CountryCode` is ISO 3166-1 plus Kosovo): territories without their own
  * country code, the EU/eurozone, the UN, pseudo-locales and the unknown region.
  */
-const NON_COUNTRY_CODES = new Set(["AC", "CP", "CQ", "DG", "EA", "EU", "EZ", "IC", "QO", "TA", "UN", "XA", "XB", "ZR", "ZZ"]);
+// Reserved and non-country codes, plus the RETIRED country codes CLDR aliases
+// to a current one (UK→GB, DD→DE, SU→RU, YU/CS→RS, BU→MM, AN→CW, …). The
+// retired ones are listed statically, not only detected at runtime: an engine
+// whose `Intl.Locale` does not canonicalize would otherwise keep whichever of
+// the pair comes first alphabetically — DD before DE — and Shopify's
+// CountryCode enum refuses the retired one at schema level.
+const NON_COUNTRY_CODES = new Set([
+  "AC", "CP", "CQ", "DG", "EA", "EU", "EZ", "IC", "QO", "TA", "UN", "XA", "XB", "ZR", "ZZ",
+  "AN", "BU", "CS", "DD", "DY", "FX", "HV", "NH", "RH", "SU", "TP", "UK", "VD", "YD", "YU",
+]);
 
 /** Every country, named in the app's language — the market editor's picker. */
 export function countryOptions(appLocale: string): Array<{ code: string; name: string }> {
@@ -78,9 +87,23 @@ export function countryOptions(appLocale: string): Array<{ code: string; name: s
     for (let b = 65; b <= 90; b++) {
       const code = String.fromCharCode(a, b);
       if (NON_COUNTRY_CODES.has(code)) continue;
+      // A RETIRED code (UK, DD, SU, YU, BU, …) is an alias of a current one and
+      // carries the same name — "Vereinigtes Königreich" twice in one list.
+      // CLDR's alias table says which is which; only the current code is kept.
+      if (!isCanonicalRegion(code)) continue;
       const name = names.of(code);
       if (name && name !== code) out.push({ code, name });
     }
   }
-  return out;
+  // Backstop for an engine without the alias table: one entry per NAME.
+  const seen = new Set<string>();
+  return out.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true)));
+}
+
+function isCanonicalRegion(code: string): boolean {
+  try {
+    return new Intl.Locale(`und-${code}`).region === code;
+  } catch {
+    return true;
+  }
 }

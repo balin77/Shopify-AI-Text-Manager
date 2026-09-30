@@ -101,9 +101,9 @@ export function MarketProbeCard() {
   return (
     <Card>
       <BlockStack gap="300">
-        <Text as="h3" variant="headingSm">Markets and addresses (Shop-Sprachen writes)</Text>
+        <Text as="h3" variant="headingSm">Markets and addresses (Sprachen und Märkte writes)</Text>
         <Text as="p" tone="subdued">
-          Measures every write behind Settings → Shop-Sprachen → Märkte und Adressen, through the app&apos;s own
+          Measures every write behind Settings → Sprachen und Märkte → Märkte und Adressen, through the app&apos;s own
           functions: creating a market as a DRAFT, giving it its own subfolder, assigning a language to that
           address (and whether <code>marketWebPresenceIds</code> REPLACES or ADDS), removing the address, and
           whether <code>marketDelete</code> takes an attached address with it. Also introspects every input type

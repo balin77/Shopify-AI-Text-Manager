@@ -1,5 +1,5 @@
 /**
- * Settings → Shop-Sprachen → "Märkte und Adressen": which markets have an
+ * Settings → Sprachen und Märkte → "Märkte und Adressen": which markets have an
  * address of their own, and the two acts that change it.
  *
  * Shopify keeps a shop's languages on the WEB PRESENCE, and markets without a
@@ -21,6 +21,7 @@ import { Badge, Banner, BlockStack, Button, Checkbox, InlineStack, Modal, Select
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DeleteItemModal } from "./create/DeleteItemModal";
 import { HelpTooltip } from "./HelpTooltip";
+import { ToggleRow } from "./ToggleRow";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { countryOptions, localizedMarketName, regionCodeForName } from "../utils/market-name";
@@ -56,6 +57,7 @@ const REMOVE_ACTION = "removeMarketAddress";
 const CREATE_MARKET_ACTION = "createMarket";
 const DELETE_MARKET_ACTION = "deleteMarket";
 const REMOVE_ORPHAN_ACTION = "removeOrphanAddress";
+const SET_STATUS_ACTION = "setMarketStatus";
 /** The id the new-market form's answers are keyed on (it has no market yet). */
 const NEW_MARKET = "new";
 
@@ -69,6 +71,8 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
   const [removing, setRemoving] = useState<{ marketId: string; name: string } | null>(null);
   const [addingMarket, setAddingMarket] = useState(false);
   const [deletingMarket, setDeletingMarket] = useState<{ marketId: string; name: string } | null>(null);
+  /** Switching a market on or off — confirmed in its own dialog (it decides where the shop sells). */
+  const [switching, setSwitching] = useState<{ marketId: string; name: string; to: "ACTIVE" | "DRAFT" } | null>(null);
   const [newName, setNewName] = useState("");
   const [newCountries, setNewCountries] = useState<string[]>([]);
   const [countryPick, setCountryPick] = useState("");
@@ -99,6 +103,22 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
     (suffix !== createInitial.suffix || defaultLocale !== createInitial.defaultLocale || alternates.length > 0);
 
   const langName = (code: string, fallback?: string) => getLocalizedLanguageName(code, appLocale, fallback);
+  // The primary market first, then the others in Shopify's own order.
+  const orderedMarkets = useMemo(() => {
+    const list = addresses?.markets ?? [];
+    return [...list.filter((m) => m.primary === true), ...list.filter((m) => m.primary !== true)];
+  }, [addresses]);
+  // Activating is offered for any draft; switching OFF only a market KNOWN not
+  // to be the primary one — the storefront's own market is not left to an
+  // unmeasured Shopify guard (the server refuses it too: `primaryUnknown`).
+  const switchLocked = (m: MarketAddressesView["markets"][number]) =>
+    m.primary === true || (m.status === "ACTIVE" && m.primary !== false);
+  const switchTooltip = (m: MarketAddressesView["markets"][number]): string | undefined => {
+    if (blocked) return s.removeBlockedByDraft;
+    if (m.primary === true) return a.switchTooltipPrimary;
+    if (m.status === "ACTIVE" && m.primary !== false) return a.errorPrimaryUnknown;
+    return m.status === "ACTIVE" ? a.switchTooltipActive : a.switchTooltipDraft;
+  };
   const marketName = (name: string) => localizedMarketName(name, appLocale);
   const primaryLocale = locales.find((l) => l.primary)?.locale ?? locales[0]?.locale ?? "";
 
@@ -113,13 +133,15 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
 
   useEffect(() => {
     if (fetcher.state !== "idle" || !response?.success) return;
-    const name = creating?.name ?? removing?.name ?? deletingMarket?.name ?? removingOrphan?.label ?? newName;
+    const name =
+      creating?.name ?? removing?.name ?? deletingMarket?.name ?? switching?.name ?? removingOrphan?.label ?? newName;
     const message: Record<string, string | undefined> = {
       [CREATE_ACTION]: a.createdMessage,
       [REMOVE_ACTION]: a.removedMessage,
       [CREATE_MARKET_ACTION]: a.marketCreatedMessage,
       [DELETE_MARKET_ACTION]: a.marketDeletedMessage,
       [REMOVE_ORPHAN_ACTION]: a.orphanRemovedMessage,
+      [SET_STATUS_ACTION]: response.status === "DRAFT" ? a.marketDeactivatedMessage : a.marketActivatedMessage,
     };
     showInfoBox((message[response.actionType] || "").replace("{name}", marketName(name)), "success");
     setCreating(null);
@@ -127,6 +149,7 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
     setAddingMarket(false);
     setDeletingMarket(null);
     setRemovingOrphan(null);
+    setSwitching(null);
     setConfirmingClose(false);
     setSubmittedFor(null);
     // React Router revalidates the loaders after the action by itself.
@@ -147,6 +170,7 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
       notSubfolder: a.errorNotSubfolder,
       presenceShared: a.errorPresenceShared,
       primaryMarket: a.errorPrimaryMarket,
+      primaryUnknown: a.errorPrimaryUnknown,
       createdNotDraft: a.errorCreatedNotDraft,
       removeAddressFirst: a.errorRemoveAddressFirst,
       notOrphan: a.errorNotOrphan,
@@ -193,8 +217,8 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
   }
   return (
     <BlockStack gap="200">
-      <InlineStack align="space-between" blockAlign="center" gap="300">
-        <SectionHeading a={a} />
+      <SectionHeading a={a} />
+      <InlineStack align="start">
         <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
           <Button
             disabled={blocked || busy}
@@ -211,17 +235,29 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
           </Button>
         </DisabledActionTooltip>
       </InlineStack>
-      {addresses.markets.map((m) => (
+      {orderedMarkets.map((m) => (
         <InlineStack key={m.marketId} align="space-between" blockAlign="center" gap="300">
           <BlockStack gap="050">
-            <InlineStack gap="200" blockAlign="center">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                {marketName(m.name)}
-              </Text>
+            <InlineStack gap="200" blockAlign="center" wrap={false}>
+              {/* The switch is where the language list has its own, and like
+                  every act here it saves NOTHING by itself: flipping it opens
+                  the confirmation, and only that dialog's button writes. While
+                  the dialog is open it shows the state being asked about. */}
+              <ToggleRow
+                layout="inline"
+                label={marketName(m.name)}
+                tooltip={switchTooltip(m)}
+                checked={switching?.marketId === m.marketId ? switching.to === "ACTIVE" : m.status === "ACTIVE"}
+                disabled={blocked || busy || switchLocked(m)}
+                onChange={(on) => {
+                  setSubmittedFor(null);
+                  setSwitching({ marketId: m.marketId, name: m.name, to: on ? "ACTIVE" : "DRAFT" });
+                }}
+              />
               {m.status !== "ACTIVE" && <Badge>{a.draftBadge}</Badge>}
             </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
-              {m.status !== "ACTIVE"
+              {m.status !== "ACTIVE" && !m.own
                 ? a.draftHint
                 : m.primary === true
                   ? (a.primaryAddress || "{url}").replace("{url}", addresses.sharedUrl ?? "")
@@ -319,6 +355,45 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
           </InlineStack>
         );
       })}
+
+      {switching && (
+        <Modal
+          open
+          onClose={() => !busy && setSwitching(null)}
+          title={((switching.to === "ACTIVE" ? a.activateTitle : a.deactivateTitle) || "{name}").replace(
+            "{name}",
+            marketName(switching.name),
+          )}
+          primaryAction={{
+            content: switching.to === "ACTIVE" ? a.activateConfirm : a.deactivateConfirm,
+            destructive: switching.to === "DRAFT",
+            loading: busy,
+            disabled: busy,
+            onAction: () => {
+              const form = new FormData();
+              form.append("actionType", SET_STATUS_ACTION);
+              form.append("marketId", switching.marketId);
+              form.append("status", switching.to);
+              setSubmittedFor(switching.marketId);
+              fetcher.submit(form, { method: "post" });
+            },
+          }}
+          secondaryActions={[{ content: t.common?.cancel || "Cancel", onAction: () => setSwitching(null), disabled: busy }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="300">
+              {failure && (
+                <Banner tone="critical">
+                  <p>{failure}</p>
+                </Banner>
+              )}
+              <Banner tone="warning">
+                <p>{switching.to === "ACTIVE" ? a.activateWarning : a.deactivateWarning}</p>
+              </Banner>
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
 
       {removingOrphan && (
         <DeleteItemModal
