@@ -47,6 +47,7 @@ export function SettingsSetupTab({
   const variantGalleryEmbedUrl = buildEmbedUrl("variant-gallery-embed");
   const localeSwitcherEmbedUrl = buildEmbedUrl("locale-switcher");
   const directTranslationEmbedUrl = buildEmbedUrl("direct-translation");
+  const localizedMediaEmbedUrl = buildEmbedUrl("localized-media");
   // SEO embeds. Their own sections link HERE rather than to the theme editor:
   // every embed the app owns is activated in one place, so a merchant never has
   // to remember which feature hid its activation on which page.
@@ -284,6 +285,22 @@ export function SettingsSetupTab({
             details={details?.variantGallery}
             {...detailLabels}
             buttonLabel={t.settings.themeSetupOptionAButton}
+            requiredPlan="pro"
+            currentPlan={subscriptionPlan}
+            requiresPlanText={ts.themeSetupOptionRequiresPlan}
+          />
+
+          <Divider />
+
+          <EmbedActivateBox
+            title={ts.themeSetupLocalizedImagesTitle ?? "Images per language (app embed)"}
+            description={
+              ts.themeSetupLocalizedImagesDescription ??
+              "Shows the product images you replaced per language or market (product page → Images per language) to visitors in that language or market. Without the embed enabled, the gallery keeps the original images."
+            }
+            url={localizedMediaEmbedUrl}
+            {...detailLabels}
+            buttonLabel={ts.themeSetupLocalizedImagesButton ?? "Activate images per language"}
             requiredPlan="pro"
             currentPlan={subscriptionPlan}
             requiresPlanText={ts.themeSetupOptionRequiresPlan}

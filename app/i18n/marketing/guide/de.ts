@@ -147,6 +147,7 @@ export const guideDe: GuideCopy = {
             "Varianten-Galerie — zeigt pro Variante die passenden Bilder.",
             "Sprach- und Länderauswahl — ein Umschalter auf Basis von Shopifys eigener Lokalisierung.",
             "Direktübersetzungen — übersetzt Texte anderer Apps.",
+            "Bilder je Sprache — zeigt die Produktbilder, die Sie pro Sprache oder Markt ersetzt haben.",
             "Web Vitals — misst die Ladezeit bei echten Besuchern.",
           ],
         },
@@ -457,6 +458,54 @@ export const guideDe: GuideCopy = {
       ],
       tips: [
         "Ändern Sie einen Theme-Text in der Hauptsprache, werden seine Übersetzungen nach Ihrer Einstellung gelöscht oder neu übersetzt — genau wie bei Produkten.",
+        "Bilder im Theme erscheinen als Bildvorschau. Pro Sprache und Markt können Sie ein anderes Bild wählen — siehe „Andere Bilder je Sprache“.",
+      ],
+    },
+
+    "images-per-language": {
+      title: "Andere Bilder je Sprache",
+      summary:
+        "Zeigen Sie Kundinnen und Kunden in einer Sprache oder einem Markt ein anderes Bild — zum Beispiel ein Banner oder Produktfoto mit übersetzter Beschriftung.",
+      sections: [
+        {
+          heading: "Wofür",
+          paragraphs: [
+            "Texte lassen sich übersetzen, Text in einem Bild nicht. Ein Banner mit „Sale“ oder ein Produktfoto mit deutscher Beschriftung sieht in jeder Sprache gleich aus. Mit „Bilder je Sprache“ legen Sie für eine Sprache — und auf Wunsch nur für einen bestimmten Markt — ein anderes Bild fest. Es ersetzt das Original 1:1; alle anderen Sprachen sehen weiterhin das Originalbild.",
+          ],
+        },
+        {
+          heading: "Theme-Bilder",
+          paragraphs: [
+            "Bilder in Ihrem Theme (zum Beispiel ein Banner auf der Startseite) finden Sie unter Inhalte → Theme bei den Texten des jeweiligen Abschnitts. Statt eines Textfeldes sehen Sie dort eine Vorschau des Bildes.",
+          ],
+          steps: [
+            "Oben die Sprache wählen — und, falls das Bild nur in einem Markt anders sein soll, den Markt.",
+            "Beim Bild auf „Bild für diese Sprache wählen“ klicken und ein Bild aus Ihren Dateien wählen oder hochladen.",
+            "Speichern. Mit „Originalbild verwenden“ nehmen Sie die Auswahl wieder zurück.",
+          ],
+        },
+        {
+          heading: "Produktbilder",
+          paragraphs: [
+            "Auf der Produktseite finden Sie unter dem Bild-Manager die Karte „Bilder je Sprache“. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert.",
+            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images per language“ (die Karte verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
+          ],
+          list: [
+            "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
+            "Ändern Sie später das Originalbild, weist die Karte darauf hin, damit Sie prüfen können, ob das Ersatzbild noch passt.",
+            "Wird ein Originalbild aus dem Produkt gelöscht, listet die Karte seine Ersatzbilder separat auf, damit Sie sie entfernen können.",
+          ],
+        },
+        {
+          heading: "Was nicht ersetzt wird",
+          paragraphs: [
+            "Produktkacheln in Kollektionen, der Warenkorb sowie Feeds für Google Shopping, die Shop-App und andere Verkaufskanäle zeigen weiterhin das Originalbild. Für Kollektions- und Blogbilder gibt es diese Funktion noch nicht.",
+          ],
+        },
+      ],
+      tips: [
+        "Die KI übersetzt oder verändert keine Bilder. Bei Theme-Bildern bieten die Übersetzen-Knöpfe deshalb nichts an — ein Bild behalten Sie, bis Sie ein anderes wählen.",
+        "Ein Bild, das in einer Sprache gleich bleiben soll, zählt nicht als fehlende Übersetzung.",
       ],
     },
 

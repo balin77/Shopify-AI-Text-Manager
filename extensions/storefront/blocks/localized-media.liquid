@@ -1,0 +1,55 @@
+{%- comment -%}
+  App Embed — "Images per language": swaps a product's images for the
+  replacement the merchant set for the visitor's language (and market) in the
+  app. Shopify cannot store a product image per language, so this is the one
+  place the swap can happen; og:image and the JSON-LD image list do the same
+  server-side through snippets/cp-localized-image.liquid.
+
+  Data: `custom.localized_media` (json), written ONLY by the app — see the
+  snippet's header for the shape. `o` (the original's filename) and `u` (a
+  Shopify CDN https URL) are validated by the app before they are written, so
+  they are safe inside a CSS attribute selector and a JSON island.
+
+  Pre-paint: the <style> hides every <img> showing an original that has a
+  replacement here, BEFORE the page paints, so the visitor never sees the
+  original flash and swap. assets/localized-media.js rewrites the URLs and
+  marks each image, which shows it again. The inline timer is the fail-safe:
+  if the script never runs, nothing stays hidden for longer than 3 seconds.
+
+  Liquid budget: this block and the snippet are all the Liquid the feature
+  owns; every decision that can be made in the browser is made in the asset.
+{%- endcomment -%}
+{%- if product != blank -%}
+{%- liquid
+  assign lm = product.metafields.custom.localized_media.value
+  assign loc = request.locale.iso_code | downcase
+  assign mk = localization.market.id | append: ''
+  assign sel = ''
+  for e in lm.e
+    if e.l == loc
+      if e.k == blank or e.k == mk
+        assign sel = sel | append: ',img[src*="/' | append: e.o | append: '"]:not([data-cp-lm]),img[srcset*="/' | append: e.o | append: '"]:not([data-cp-lm])'
+      endif
+    endif
+  endfor
+-%}
+{%- if sel != '' -%}
+<style id="cp-lm-prehide">{{ sel | remove_first: ',' }}{visibility:hidden}</style>
+<script>setTimeout(function(){var s=document.getElementById('cp-lm-prehide');s&&s.remove()},3000)</script>
+<script type="application/json" id="cp-lm-data">{"l":{{ loc | json }},"k":{{ mk | json }},"e":{{ lm.e | json }}}</script>
+<script src="{{ 'localized-media.js' | asset_url }}" defer></script>
+{%- endif -%}
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Images per language",
+  "target": "head",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Shows the product images you replaced per language or market in the app."
+    }
+  ]
+}
+{% endschema %}

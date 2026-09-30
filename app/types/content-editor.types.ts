@@ -274,7 +274,11 @@ export type FieldType =
   // published theme, so it needs a lookup before it knows what it offers —
   // which is what keeps it out of the plain `select` type. It saves like any
   // other attribute.
-  | 'themeTemplate';
+  | 'themeTemplate'
+  // A theme setting whose value is an IMAGE reference
+  // (`shopify://shop_images/<file>`): a picker per language/market instead of
+  // a text box, never offered to the AI (PLAN_LOCALIZED_IMAGES Phase 1a).
+  | 'themeImage';
 
 /**
  * One dynamic field handed to a page's `renderFieldGroup`.

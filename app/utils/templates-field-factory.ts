@@ -5,6 +5,7 @@
  */
 
 import type { FieldDefinition, FieldType } from "../types/content-editor.types";
+import { isThemeImageReference } from "./theme-image-reference.shared";
 
 interface TranslatableContentItem {
   key: string;
@@ -22,16 +23,22 @@ export function createTemplateFieldDefinitions(
   }
 
   // Filter out null/undefined items to prevent "Cannot read properties of null" errors
-  return translatableContent.filter((item) => item != null).map((item) => ({
-    key: item.key,
-    type: detectFieldType(item.value),
-    label: extractReadableName(item.key),
-    translationKey: item.key, // For templates, key IS the translation key
-    supportsAI: true,
-    supportsFormatting: false, // Templates don't support formatting
-    supportsTranslation: true,
-    aiInstructionsKey: "themeContent",
-  }));
+  return translatableContent.filter((item) => item != null).map((item) => {
+    // An image setting is a file choice per language, not text: no AI and no
+    // translate/copy buttons (both would hand a reference to the AI or copy
+    // the original over a chosen image). It still saves like any theme value.
+    const isImage = isThemeImageReference(item.value);
+    return {
+      key: item.key,
+      type: detectFieldType(item.value),
+      label: extractReadableName(item.key),
+      translationKey: item.key, // For templates, key IS the translation key
+      supportsAI: !isImage,
+      supportsFormatting: false, // Templates don't support formatting
+      supportsTranslation: !isImage,
+      aiInstructionsKey: "themeContent",
+    };
+  });
 }
 
 /**
@@ -39,6 +46,7 @@ export function createTemplateFieldDefinitions(
  */
 export function detectFieldType(value: string): FieldType {
   if (!value) return "text";
+  if (isThemeImageReference(value)) return "themeImage";
   return /<(p|h[1-6]|div|span|ul|ol|li|br|strong|em|a|b|i|u)\b[^>]*>/i.test(value)
     ? "html"
     : "text";

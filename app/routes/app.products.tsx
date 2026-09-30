@@ -27,7 +27,7 @@ import { getPlanDisplayName } from "../utils/planUtils";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useVariantImageManager } from "../hooks/useVariantImageManager";
 import { VariantImageManager } from "../components/image-manager/VariantImageManager";
-import { Spinner, Text } from "@shopify/polaris";
+import { BlockStack, Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
@@ -36,6 +36,7 @@ import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
+import { LocalizedImagesCard } from "~/components/localized-images/LocalizedImagesCard";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -367,7 +368,15 @@ export const loader = createContentLoader({
     // so this costs one query per shop, not one per load.
     const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
     const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode };
+    // "Images per language" (PLAN_LOCALIZED_IMAGES Phase 1b) rides on the
+    // image manager's gate; its storefront half is the `localized-media` app
+    // embed, activated through the theme editor's deep link (api key, never
+    // the extension uid — see SettingsSetupTab).
+    const apiKey = (process.env.SHOPIFY_API_KEY || "").trim();
+    const localizedImagesEmbedUrl = apiKey
+      ? `https://${ctx.session.shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/localized-media`
+      : null;
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl };
   },
 });
 
@@ -403,7 +412,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -1098,6 +1107,7 @@ export default function ProductsPage() {
             },
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
+            <BlockStack gap="400">
             <VariantImageManager
               productId={editor.selectedItem.id}
               onSaveResponse={editor.helpers.trackRetranslationTasks}
@@ -1145,6 +1155,18 @@ export default function ProductsPage() {
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
             />
+            {/* Keyed on the product and on the image list the manager last
+                confirmed, so an image added or removed there is reflected
+                here without a page reload. */}
+            <LocalizedImagesCard
+              key={`${editor.selectedItem.id}:${imageManagerState.resetCounter}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}`}
+              productId={editor.selectedItem.id}
+              shopLocales={shopLocales}
+              markets={markets ?? []}
+              currentLanguage={editor.state.currentLanguage}
+              embedActivationUrl={localizedImagesEmbedUrl}
+            />
+            </BlockStack>
           ) : undefined}
         />
       </div>

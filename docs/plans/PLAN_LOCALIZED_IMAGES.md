@@ -1,6 +1,16 @@
 # Andere Bilder je Sprache — Plan
 
-**Status:** **Geplant, nicht begonnen.** Roadmap-Einträge `localized-images` (geplant) und `image-translation` (Stufe 2, erwogen) in [roadmap.server.ts](../../app/config/roadmap.server.ts). Analyse vom 2026-09-30, gegen den Code geprüft. Plattform-Aussagen aus Shopify-Changelog und Drittquellen — **nicht gemessen**, deshalb ist Phase 0 eine Messung.
+**Status:** **In Umsetzung bis Phase 1b** (Owner-Entscheid 2026-09-30). Phase 2 wird nur VORBEREITET (Datenfelder, Veraltet-Erkennung), nicht gebaut. Roadmap-Einträge `localized-images` und `image-translation` in [roadmap.server.ts](../../app/config/roadmap.server.ts). Plattform-Aussagen zu Theme-Bildern stammen aus Shopify-Changelog und Drittquellen — **nicht gemessen**; die Probe aus Phase 0 misst sie mit einem Klick.
+
+## Owner-Entscheide (2026-09-30)
+
+| Frage | Entscheid |
+|---|---|
+| Nur Sprache oder auch Markt? | **Auch pro Markt.** Ein Markt-Eintrag schlägt den Eintrag „alle Märkte“ derselben Sprache. |
+| Welche Ressourcen? | **Nur Produkte und Theme.** Kollektionen/Artikel später. |
+| Wo im Storefront? | Produktseite (Galerie, Thumbnails, Lightbox-Links) + `og:image` + JSON-LD. Keine Kollektionskacheln, kein Warenkorb. |
+| 1:1 oder mehr? | **Nur 1:1-Ersatz.** Kein Ausblenden, keine zusätzlichen Bilder. |
+| Umfang jetzt | Phase 0, 1a, 1b umsetzen; Phase 2 nur vorbereiten. |
 
 **Frage:** Kann ein Händler pro Sprache (und ggf. pro Markt) andere Bilder zeigen, wie es die Konkurrenz anbietet? Und später: kann die KI den Text in einem Bild übersetzen und ein neues Bild erzeugen?
 
@@ -46,6 +56,20 @@ Die Konkurrenz (EZ Product Image Translate, LangShop, Transcy) tauscht Produktbi
 - Nie an die KI.
 - Markt-Ebene wie bei Theme-Texten.
 
+### Umgesetztes Design (Stand dieser Umsetzung)
+
+**Gemeinsam:** Ein Bildwert ist ein Wert, den die KI NIE sieht — `isThemeImageReference` ([theme-image-reference.shared.ts](../../app/utils/theme-image-reference.shared.ts)) ist das eine Prädikat, das jeder KI-Pfad fragt.
+
+**Phase 0:** Probe `api.theme-image-probe.tsx` (Settings → Probes → Translation). Liest die gecachten Theme-Zeilen, zählt Bildwerte je Ressourcentyp, prüft an EINER Stichprobe live, ob Shopify den Schlüssel mit Digest als übersetzbar meldet, und schreibt optional (Bestätigung) den unveränderten Primärwert als Übersetzung in einer Sprache, die dort nichts hält — Echo, frische Lesung, Entfernung mit Echo; dasselbe mit `marketId`. Keine sichtbare Änderung im Shop, weil das Bild dasselbe bleibt, und keine überschriebene Übersetzung, weil nur ein leerer Platz verwendet wird.
+
+**Phase 1a (Theme):** `templates-field-factory` erkennt Bildwerte und gibt ihnen den Feldtyp `themeImage` ohne KI- und Übersetzungsknöpfe. Das Feld zeigt Vorschau und Dateiname, in einer Fremdsprache „Bild für diese Sprache/diesen Markt wählen“ (Bibliothek oder Upload über den bestehenden Datei-Dialog) und „Zurücksetzen“. Gespeichert wird über den bestehenden Theme-Speicherpfad (`translationsRegister` mit Echo, Markt über `marketId`, Spiegel in `ThemeTranslation`) — der Wert ist einfach `shopify://shop_images/<datei>`. Vollständigkeitsprüfung zählt Bildwerte nicht als „fehlende Übersetzung“.
+
+**Phase 1b (Produkte):** Speicherort ist das Produkt-Metafeld `custom.localized_media` (json) — die EINE Quelle, kein DB-Spiegel, weil der Plan-Cache-Cleanup Produkte aus der DB löschen darf und die Ersatzbilder dann lokal verschwunden, im Shop aber aktiv wären. Eintrag: `o` Original-Dateiname (Schlüssel für Storefront), `m` Original-MediaImage-GID, `l` Sprache (klein), `k` numerische Markt-ID oder `""`, `u` Ersatz-CDN-URL, `f` Ersatz-File-GID, `a` Herkunft (`manual`/`ai`), `s` Quell-Stempel (Original-URL beim Setzen), `t` Zeitpunkt. Schreiben = Lesen-Ändern-Schreiben mit `metafieldsSet`, bestätigt nur durch das Echo; leere Liste = `metafieldsDelete`. Dateiname und URL werden vor dem Schreiben validiert, weil beide im Storefront in CSS-Selektor und JSON landen. Storefront: App-Embed `localized-media` (Prehide-CSS vor dem ersten Paint, Tausch per `assets/localized-media.js`, MutationObserver für nachgeladene Galerien) und `snippets/cp-localized-image.liquid` für `og:image` und das JSON-LD-Bildarray.
+
+**Phase-2-Vorbereitung:** Herkunft `a` und Quell-Stempel `s` sind ab dem ersten Eintrag gesetzt; der Editor zeigt „Original wurde geändert“, wenn die aktuelle URL des Originals vom Stempel abweicht, und „Original nicht mehr vorhanden“ für Einträge, deren Medium fehlt. Die Schreibfunktion nimmt `origin` als Parameter — die KI-Bildübersetzung ruft später dieselbe Funktion mit `origin: "ai"`.
+
+**Bekannte Grenzen (gesagt, nicht versteckt):** Kanal-Feeds (Google, Shop-App, KI-Kanäle) zeigen das Original. Ohne aktiviertes App-Embed passiert im Storefront nur `og:image`/JSON-LD (wenn diese Embeds aktiv sind). Das Original wird geladen, bevor es ersetzt wird (Bandbreite, kein sichtbares Flackern dank Prehide; Failsafe nach 3 s). Zwei gleichzeitige Bearbeitungen desselben Produkts: die spätere gewinnt.
+
 ### Phase 1b — Produktbilder pro Sprache (über unsere Galerie)
 
 - **Datenmodell:** App-eigener Metaobjekt-Typ „lokalisiertes Bild“ mit Sprache, optionalem Markt, Originalmedium, Ersatzbild (`file_reference`), **Herkunft** (manuell/KI) und **Quell-Stempel** (Originaldatei + Stand). Referenziert vom Produkt über ein Metafeld. Liquid bekommt das Ersatzbild als echtes Bildobjekt, sodass `image_url` mit den bestehenden Breiten funktioniert.
@@ -62,12 +86,10 @@ Die Konkurrenz (EZ Product Image Translate, LangShop, Transcy) tauscht Produktbi
 4. Staged Upload, als Ersatzbild der Sprache eintragen (`origin: ai`).
 5. Wird das Original ersetzt, gilt das übersetzte Bild über den Quell-Stempel als veraltet.
 
-## 4. Offene Entscheidungen (Owner)
+## 4. Offene Punkte
 
-1. Ersatzbilder nur pro Sprache oder auch pro Markt?
-2. Tausch nur in der Produktgalerie, oder auch in Kollektionskacheln, Suche und Warenkorb (dort nur per JS über den Dateinamen: fragil, Flackern)?
-3. Nur 1:1-Ersatz, oder dürfen Sprachen Bilder ausblenden bzw. zusätzliche bekommen?
-4. Plan-Zuordnung (welcher Tarif, Mengenbegrenzung wie bei der Konkurrenz?).
+1. Plan-Zuordnung: vorerst an denselben Plan-Schalter wie der Bild-Manager gebunden (`variantImageManager`, ab Pro). Mengenbegrenzung: keine.
+2. Kollektionen/Artikel, Kollektionskacheln, Warenkorb: später, falls gewünscht.
 
 ## 5. Quellen
 

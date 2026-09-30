@@ -26,6 +26,7 @@ import { hasFieldMissingTranslations } from "../utils/field-validation.utils";
 import type { ValidationOverlays } from "../utils/field-validation.utils";
 import type { FieldDefinition, ContentType } from "../types/content-editor.types";
 import { IMAGE_ALL_LOCALES_AI_ACTIONS, IMAGE_PER_LOCALE_AI_ACTIONS } from "../constants/ai-actions";
+import { ThemeImageField } from "./localized-images/ThemeImageField";
 
 export interface FieldRendererProps {
   field: FieldDefinition;
@@ -277,6 +278,27 @@ export function UnifiedFieldRenderer(
       currentLanguage,
       t,
     });
+  }
+
+  // Theme image setting (shopify://shop_images/…): a picker per language and
+  // market, never the AI. The primary reference comes from the item's own
+  // translatableContent — the value this field holds in a foreign locale is
+  // "" until an image was chosen for it.
+  if (field.type === "themeImage") {
+    const primaryValue = Array.isArray(selectedItem?.translatableContent)
+      ? String((selectedItem.translatableContent as Array<{ key: string; value?: string }>).find((c) => c?.key === field.key)?.value ?? "")
+      : "";
+    return (
+      <ThemeImageField
+        label={field.label}
+        value={value}
+        primaryValue={primaryValue}
+        onChange={onChange}
+        isPrimaryLocale={isPrimaryLocale}
+        readOnly={readOnly}
+        currentLanguage={currentLanguage}
+      />
+    );
   }
 
   // Image Gallery Field

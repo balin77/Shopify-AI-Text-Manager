@@ -16,6 +16,7 @@ import {
 import { TIMING } from "~/constants/timing";
 import { PULSE_SYNC_EPOCH } from "~/utils/contentEditor.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { isThemeImageReference } from "~/utils/theme-image-reference.shared";
 
 // ============================================================================
 // Overlay Types
@@ -381,6 +382,9 @@ export function hasLocaleMissingTranslations(
       // Primary content: check overlay first
       const primaryValue = overlays?.savedPrimaryValues?.[item.key] ?? item.value;
       if (isFieldEmpty(primaryValue)) return false;
+      // An image setting shows the original in every language unless the merchant
+      // CHOSE another one: keeping it is not a missing translation.
+      if (isThemeImageReference(primaryValue)) return false;
       return !hasTranslationForField(selectedItem, item.key, locale, overlays);
     });
   }
@@ -559,6 +563,9 @@ export function getMissingLocaleTranslationFields(
       .filter((item: { key: string; value: string }) => {
         const primaryValue = overlays?.savedPrimaryValues?.[item.key] ?? item.value;
         if (isFieldEmpty(primaryValue)) return false;
+        // An image setting shows the original in every language unless the merchant
+        // CHOSE another one: keeping it is not a missing translation.
+        if (isThemeImageReference(primaryValue)) return false;
         return !hasTranslationForField(selectedItem, item.key, locale, overlays);
       })
       .map((item: { key: string; value: string }) => item.key);
@@ -838,6 +845,9 @@ export function hasFieldMissingTranslations(
     );
     const primaryValue = overlays?.savedPrimaryValues?.[translationKey] ?? tcEntry?.value;
     if (!primaryValue || isFieldEmpty(primaryValue)) return false;
+    // An image setting shows the original in every language unless the merchant
+    // CHOSE another one: keeping it is not a missing translation.
+    if (isThemeImageReference(primaryValue)) return false;
     return foreignLocales.some(locale =>
       !hasTranslationForField(selectedItem, translationKey, locale.locale, overlays)
     );

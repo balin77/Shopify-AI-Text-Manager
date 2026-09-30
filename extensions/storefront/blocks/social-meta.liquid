@@ -11,7 +11,10 @@
     image:       product.featured_image → block default_og_image setting
                  → shop.brand.logo
   Product pages may override title/description/image via the metafields
-  `custom.og_description` / `custom.og_image` when present.
+  `custom.og_description` / `custom.og_image` when present. A replacement
+  image the merchant set in the app for the visitor's language/market
+  (snippets/cp-localized-image.liquid) wins over the featured image; the
+  merchant's own `custom.og_image` still wins over both.
 
   All values are HTML *attribute* content (not JSON), so they use `| escape`
   rather than `| json`.
@@ -35,6 +38,12 @@
   assign og_image = ''
   if is_product and product.featured_image
     assign og_image = product.featured_image | image_url: width: 1200
+    capture og_lm
+      render 'cp-localized-image', src: og_image, width: 1200
+    endcapture
+    if og_lm != blank
+      assign og_image = og_lm
+    endif
   elsif block.settings.default_og_image
     assign og_image = block.settings.default_og_image | image_url: width: 1200
   elsif shop.brand.logo
