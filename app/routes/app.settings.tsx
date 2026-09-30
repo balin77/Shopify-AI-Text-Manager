@@ -1037,6 +1037,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!checked.ok) return json({ success: false, actionType, marketId: "new", error: checked.error }, { status: 400 });
       const outcome = await createMarket(admin, session.shop, { name: checked.name, countries: checked.countries });
       return json({ success: outcome.ok, actionType, marketId: "new", error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "setMarketStatus") {
+      // Activate a (draft) market or switch one back to draft — the moment the
+      // shop starts or stops selling into its countries (market-address.server.ts).
+      const { setMarketStatus } = await import("../services/market-address.server");
+      const marketId = getFormString(formData, "marketId");
+      const status = getFormString(formData, "status");
+      if (!marketId || (status !== "ACTIVE" && status !== "DRAFT")) {
+        return json({ success: false, actionType, marketId: marketId ?? "", error: "invalidChanges" }, { status: 400 });
+      }
+      const outcome = await setMarketStatus(admin, session.shop, marketId, status);
+      return json({ success: outcome.ok, actionType, marketId, status, error: outcome.ok ? undefined : outcome.error });
     } else if (actionType === "removeOrphanAddress") {
       // An address no market uses any more — removed only while the fresh
       // read still shows it unclaimed (market-address.server.ts).
