@@ -87,6 +87,20 @@ describe("isMarketingPath", () => {
     expect(isMarketingPath("/de/features/")).toBe(true);
   });
 
+  it("recognises the guide and every one of its topic pages in every locale", async () => {
+    const { GUIDE_TOPIC_ORDER, guideTopicPath } = await import("../../app/config/marketing-guide");
+    expect(isMarketingPath("/guide")).toBe(true);
+    expect(isMarketingPath("/es/guide")).toBe(true);
+    for (const topic of GUIDE_TOPIC_ORDER) {
+      const path = guideTopicPath(topic);
+      expect(isMarketingPath(path)).toBe(true);
+      expect(isMarketingPath(`/de${path}`)).toBe(true);
+      expect(isMarketingPath(`/es${path}/`)).toBe(true);
+    }
+    // Deeper paths are not guide pages and must not lose App Bridge.
+    expect(isMarketingPath("/guide/glossary/extra")).toBe(false);
+  });
+
   it("does NOT claim the embedded app or its endpoints", () => {
     // This predicate decides whether App Bridge is rendered. A false positive
     // here would take App Bridge off an embedded page and break the admin.

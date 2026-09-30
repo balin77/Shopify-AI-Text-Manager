@@ -24,6 +24,7 @@ export const en = {
     videos: "Videos",
     roadmap: "Roadmap",
     faq: "FAQ",
+    guide: "Guide",
     install: "Install on Shopify",
     installShort: "Install",
     menu: "Menu",
@@ -166,6 +167,25 @@ export const en = {
       "feature-media": "The image manager with alt texts in several languages",
       "feature-structure": "The menu editor with a nested navigation tree",
     },
+  },
+
+  guide: {
+    title: "Guide",
+    intro:
+      "How every part of the app works, one topic at a time. Each topic explains what the feature does and how to use it; a short video for each is being recorded.",
+    topicCount: "{count} topics",
+    videoBadge: "Video",
+    videoPendingBadge: "Video coming",
+    videoPending: "Video coming soon",
+    videoPendingBody: "The walkthrough for this topic is being recorded. Until then, the text below covers everything.",
+    tips: "Good to know",
+    inThisCategory: "In this category",
+    allTopics: "All topics",
+    previous: "Previous",
+    next: "Next",
+    helpTitle: "Still stuck?",
+    helpBody: "Write to us — we answer every question, and the good ones end up in this guide.",
+    helpAction: "Contact support",
   },
 
   videos: {

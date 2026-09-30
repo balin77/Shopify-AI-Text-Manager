@@ -10,6 +10,7 @@
 
 import type { LoaderFunctionArgs } from "react-router";
 import { MARKETING_SITE } from "../config/marketing-site";
+import { GUIDE_TOPIC_ORDER, guideTopicPath } from "../config/marketing-guide";
 import {
   MARKETING_DEFAULT_LOCALE,
   MARKETING_LOCALES,
@@ -24,9 +25,11 @@ import {
  * there, and a sitemap that lists a redirect reports a soft error for every
  * locale it names.
  */
-const LOCALIZED_PATHS = MARKETING_LOCALIZED_PATHS.filter(
-  (path) => path !== "/install" || !MARKETING_SITE.appStoreUrl,
-);
+const LOCALIZED_PATHS: string[] = [
+  ...MARKETING_LOCALIZED_PATHS.filter((path) => path !== "/install" || !MARKETING_SITE.appStoreUrl),
+  // One page per guide topic, from the same config the guide routes render.
+  ...GUIDE_TOPIC_ORDER.map(guideTopicPath),
+];
 
 /** Public but not localized — the URLs the App Store listing points at. */
 const PLAIN_PATHS = ["/privacy", "/terms"];

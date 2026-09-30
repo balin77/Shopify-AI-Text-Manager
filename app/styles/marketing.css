@@ -247,6 +247,16 @@ html {
   }
 }
 
+/* Five items (four links and the language switcher) share the phone's nav
+   row; on the narrowest screens the link padding gives way before the row
+   wraps. */
+@media (max-width: 420px) {
+  .mk-nav a:not(.mk-btn) {
+    padding: 8px 6px;
+    font-size: 0.875rem;
+  }
+}
+
 /* ── Buttons ────────────────────────────────────────────────────── */
 
 .mk-btn {
@@ -920,6 +930,336 @@ a.mk-badge:hover {
 .mk-note {
   font-size: 0.875rem;
   color: var(--mk-text-muted);
+}
+
+/* ── Guide (/guide, /guide/<topic>) ─────────────────────────────── */
+
+.mk-nav a:not(.mk-btn)[aria-current="true"] {
+  color: var(--mk-text);
+  background: var(--mk-surface-2);
+}
+
+.mk-guide-index {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(40px, 6vw, 72px);
+  padding-bottom: clamp(24px, 4vw, 40px);
+}
+
+.mk-guide-category {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+  scroll-margin-top: calc(var(--mk-header-height) + 16px);
+}
+
+@media (min-width: 900px) {
+  .mk-guide-category {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2.4fr);
+    gap: 40px;
+  }
+}
+
+.mk-guide-category__head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mk-guide-category__head h2 {
+  font-size: clamp(1.375rem, 2.6vw, 1.75rem);
+}
+
+.mk-guide-category__head p {
+  color: var(--mk-text-muted);
+}
+
+.mk-guide-topics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+
+.mk-guide-topic {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface);
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.mk-guide-topic:hover {
+  border-color: var(--mk-brand);
+}
+
+.mk-guide-topic__title {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.mk-guide-topic__summary {
+  color: var(--mk-text-muted);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  flex: 1;
+}
+
+.mk-guide-badge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--mk-text-muted);
+  background: var(--mk-surface-2);
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.mk-guide-badge--ready {
+  color: var(--mk-brand);
+  background: var(--mk-brand-soft);
+}
+
+.mk-guide {
+  padding-block: clamp(32px, 5vw, 56px) clamp(56px, 8vw, 104px);
+}
+
+.mk-guide__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: var(--mk-text-muted);
+  margin-bottom: clamp(20px, 3vw, 32px);
+}
+
+.mk-guide__crumbs a {
+  text-decoration: none;
+  color: var(--mk-text-muted);
+}
+
+.mk-guide__crumbs a:hover {
+  color: var(--mk-text);
+}
+
+.mk-guide__layout {
+  display: grid;
+  gap: clamp(32px, 5vw, 56px);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 980px) {
+  .mk-guide__layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+
+  .mk-guide__side {
+    position: sticky;
+    top: calc(var(--mk-header-height) + 24px);
+  }
+}
+
+.mk-guide__article {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(24px, 4vw, 36px);
+  min-width: 0;
+}
+
+.mk-guide__header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: var(--mk-prose-width);
+}
+
+.mk-guide__header h1 {
+  font-size: clamp(1.875rem, 4.4vw, 2.625rem);
+}
+
+.mk-guide__video {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mk-guide__video .mk-video__frame {
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  overflow: hidden;
+}
+
+.mk-guide__body {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(24px, 4vw, 32px);
+  max-width: var(--mk-prose-width);
+}
+
+.mk-guide__body section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mk-guide__body h2 {
+  font-size: clamp(1.25rem, 2.4vw, 1.5rem);
+}
+
+.mk-guide__steps {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: mk-step;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mk-guide__steps li {
+  counter-increment: mk-step;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+/* The number is `::before`, i.e. the first of exactly TWO grid items — the
+   same one-child rule as `.mk-points`. */
+.mk-guide__steps li::before {
+  content: counter(mk-step);
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--mk-brand);
+  background: var(--mk-brand-soft);
+  margin-top: 1px;
+}
+
+.mk-guide__tips {
+  border: 1px solid var(--mk-border);
+  border-inline-start: 3px solid var(--mk-brand);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface);
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mk-guide__tips h2 {
+  font-size: 1rem;
+}
+
+.mk-guide__pager {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  border-top: 1px solid var(--mk-border);
+  padding-top: clamp(20px, 3vw, 28px);
+}
+
+.mk-guide__pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-sm);
+  text-decoration: none;
+  font-weight: 600;
+  background: var(--mk-surface);
+}
+
+.mk-guide__pager-link:hover {
+  border-color: var(--mk-brand);
+}
+
+.mk-guide__pager-link--next {
+  text-align: end;
+  grid-column: 2;
+}
+
+.mk-guide__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mk-guide__side-card {
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.mk-guide__side-card h2 {
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--mk-text-muted);
+}
+
+.mk-guide__side-card p {
+  color: var(--mk-text-muted);
+  font-size: 0.9375rem;
+}
+
+.mk-guide__side-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.mk-guide__side-card li a {
+  display: block;
+  text-decoration: none;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--mk-text-muted);
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+
+.mk-guide__side-card li a:hover {
+  color: var(--mk-text);
+  background: var(--mk-surface-2);
+}
+
+.mk-guide__side-card li a[aria-current="page"] {
+  color: var(--mk-brand);
+  background: var(--mk-brand-soft);
+  font-weight: 600;
+}
+
+.mk-guide__all {
+  font-size: 0.9375rem;
 }
 
 /* ── Install form ───────────────────────────────────────────────── */
