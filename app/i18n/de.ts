@@ -1250,6 +1250,8 @@ export const de = {
       errorInvalidChanges: "Die Änderungen konnten nicht gelesen werden – lade die Seite neu.",
       errorLocalesUnreadable: "Die Sprachen des Shops konnten gerade nicht gelesen werden – versuche es erneut.",
       marketsLabel: "Märkte:",
+      sharedMarketsHint:
+        "Märkte ohne eigene Domain oder eigenen Unterordner teilen sich eine Sprachliste – deshalb lassen sie sich hier nur gemeinsam an- und abwählen.",
       noMarketWarning: "Veröffentlicht, aber in keinem Markt – der Sprachwähler im Onlineshop bietet diese Sprache nicht an. Hake mindestens einen Markt an.",
       marketsUnavailable: "Die Märkte konnten nicht geladen werden – die Zuordnung der Sprachen zu Märkten ist gerade nicht verfügbar. Lade die Seite neu.",
       noActiveMarkets:
@@ -4540,6 +4542,7 @@ export const de = {
       summary:
         "Hier fügst du Sprachen hinzu, veröffentlichst sie im Onlineshop oder nimmst sie wieder heraus. Eine unveröffentlichte Sprache bereitest du in Ruhe vor: Die App behandelt sie genau wie eine aktive – sie erscheint nur noch nicht im Onlineshop.",
       tips: [
+        "Märkte ohne eigene Domain oder eigenen Unterordner (z. B. /de-ch) teilen sich eine Sprachliste und sind nur gemeinsam wählbar",
         "Unveröffentlichte Sprachen werden synchronisiert, bearbeitet und automatisch übersetzt wie aktive",
         "Mit dem Schalter „Im Onlineshop veröffentlicht“ gehst du live – wirksam erst mit „Speichern“",
         "Im Sprachwähler des Onlineshops erscheint eine Sprache nur in den Märkten, die du bei ihr anhakst",
