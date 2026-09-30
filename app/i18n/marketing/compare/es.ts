@@ -120,6 +120,14 @@ export const compareEs: CompareCopy = {
     languagesLabel: "Idiomas",
     productsLabel: "Productos",
     aiLabel: "Traducciones",
+    enginesLabel: "Proveedores de IA",
+    engines: {
+      ownKey: "{list}: con su propia clave",
+      plusOwnKey: "Clave propia: {list}",
+      shopify: "Traducción automática de Shopify",
+      vendor: "IA propia del proveedor, no seleccionable",
+      unstated: "Traducción automática, motor no indicado",
+    },
     trialRow: "Prueba gratuita",
     values: {
       unlimited: "Ilimitados",

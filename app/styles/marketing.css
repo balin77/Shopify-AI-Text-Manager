@@ -2025,3 +2025,18 @@ a.mk-badge:hover {
     white-space: normal;
   }
 }
+
+/* One cell, every level's content in the same grid area: the cell sizes to
+   its longest level, so switching levels shifts no column and no row. */
+.mk-level-stack {
+  display: grid;
+}
+
+.mk-level-stack__item {
+  grid-area: 1 / 1;
+  display: block;
+}
+
+.mk-level-stack__item:not([data-active]) {
+  visibility: hidden;
+}

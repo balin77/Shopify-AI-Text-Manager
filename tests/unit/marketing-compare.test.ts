@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMPARE_ENGINES,
   COMPARE_PRICES,
   PRICE_APPS,
   formatComparePrice,
@@ -98,5 +99,11 @@ describe("comparison pages", () => {
     const row = COMPARE_ROWS.find((r) => r.id === "thirdPartyApps")!;
     expect(supportAtLevel(row, "contentpilot", 0)).toBe("higherPlan");
     expect(supportAtLevel(row, "contentpilot", 3)).toBe("yes");
+  });
+
+  it("names the engines of every plan of every app", () => {
+    for (const app of PRICE_APPS) {
+      expect(COMPARE_ENGINES[app], app).toHaveLength(COMPARE_PRICES[app].plans.length);
+    }
   });
 });

@@ -1,10 +1,12 @@
 import { useState } from "react";
 import {
+  COMPARE_ENGINES,
   COMPARE_GROUPS,
   COMPARE_PRICES,
   COMPARE_ROWS,
   priceLevelCount,
   supportAtLevel,
+  type PlanEngines,
   type PriceAppId,
   type Support,
 } from "../../config/marketing-compare";
@@ -20,6 +22,33 @@ const SYMBOL: Record<Support, string> = {
   unstated: "?",
   higherPlan: "↑",
 };
+
+/**
+ * Every level's content of one cell, stacked in the same grid area with only
+ * the active one visible. The cell is therefore always as wide and as tall as
+ * its LONGEST level, so switching levels moves nothing — the table used to
+ * re-flow its column widths and row heights on every click. Hidden layers are
+ * `visibility: hidden`, which also takes them out of the accessibility tree.
+ */
+function LevelStack({
+  level,
+  count,
+  render,
+}: {
+  level: number;
+  count: number;
+  render: (level: number) => React.ReactNode;
+}) {
+  return (
+    <span className="mk-level-stack">
+      {Array.from({ length: count }, (_, i) => (
+        <span key={i} className="mk-level-stack__item" data-active={i === level ? "true" : undefined}>
+          {render(i)}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 /** Level shown first: the first PAID level, which is what most visitors compare. */
 const DEFAULT_LEVEL = 1;
@@ -52,11 +81,14 @@ export function CompareMatrix({
   const [level, setLevel] = useState(Math.min(DEFAULT_LEVEL, levelCount - 1));
   const levelLabel = (i: number) => (i === 0 ? g.freeLevel : g.level.replace("{n}", String(i)));
 
-  const planOf = (app: PriceAppId) => {
+  const planAt = (app: PriceAppId, at: number) => {
     const plans = COMPARE_PRICES[app].plans;
-    const index = Math.min(level, plans.length - 1);
-    return { plan: plans[index], isTop: level > index };
+    const index = Math.min(at, plans.length - 1);
+    return { plan: plans[index], isTop: at > index };
   };
+  const stack = (render: (at: number) => React.ReactNode) => (
+    <LevelStack level={level} count={levelCount} render={render} />
+  );
   const oursClass = (app: PriceAppId) => (app === "contentpilot" ? "mk-compare-table__ours" : undefined);
   const single = apps.length <= 2;
 
@@ -86,20 +118,19 @@ export function CompareMatrix({
           <thead>
             <tr>
               <th scope="col">{copy.featureColumn}</th>
-              {apps.map((app) => {
-                const { plan, isTop } = planOf(app);
-                return (
-                  <th scope="col" key={app} className={oursClass(app)}>
-                    <span className="mk-compare-matrix__app">
-                      {app === "contentpilot" ? MARKETING_SITE.appName : appName(app)}
-                    </span>
-                    <span className="mk-compare-matrix__plan">
-                      {plan.name}
-                      {isTop ? ` · ${g.topPlan}` : ""}
-                    </span>
-                  </th>
-                );
-              })}
+              {apps.map((app) => (
+                <th scope="col" key={app} className={oursClass(app)}>
+                  <span className="mk-compare-matrix__app">
+                    {app === "contentpilot" ? MARKETING_SITE.appName : appName(app)}
+                  </span>
+                  <span className="mk-compare-matrix__plan">
+                    {stack((at) => {
+                      const { plan, isTop } = planAt(app, at);
+                      return `${plan.name}${isTop ? ` · ${g.topPlan}` : ""}`;
+                    })}
+                  </span>
+                </th>
+              ))}
             </tr>
           </thead>
 
@@ -116,7 +147,9 @@ export function CompareMatrix({
               {apps.map((app) => (
                 <td key={app} className={oursClass(app)}>
                   <span className="mk-compare-glance__price">
-                    <PlanPrice plan={planOf(app).plan} table={COMPARE_PRICES[app]} copy={copy} locale={locale} />
+                    {stack((at) => (
+                      <PlanPrice plan={planAt(app, at).plan} table={COMPARE_PRICES[app]} copy={copy} locale={locale} />
+                    ))}
                   </span>
                 </td>
               ))}
@@ -130,11 +163,24 @@ export function CompareMatrix({
                 </th>
                 {apps.map((app) => (
                   <td key={app} className={oursClass(app)}>
-                    {planLimitTexts(planOf(app).plan, copy, locale)[key]}
+                    {stack((at) => planLimitTexts(planAt(app, at).plan, copy, locale)[key])}
                   </td>
                 ))}
               </tr>
             ))}
+            <tr>
+              <th scope="row">
+                <span className="mk-compare-table__label">{g.enginesLabel}</span>
+              </th>
+              {apps.map((app) => (
+                <td key={app} className={oursClass(app)}>
+                  {stack((at) => {
+                    const engines = COMPARE_ENGINES[app];
+                    return enginesText(engines[Math.min(at, engines.length - 1)], copy);
+                  })}
+                </td>
+              ))}
+            </tr>
             <tr>
               <th scope="row">
                 <span className="mk-compare-table__label">{g.trialRow}</span>
@@ -163,26 +209,22 @@ export function CompareMatrix({
                     <span className="mk-compare-table__label">{copy.rows[row.id].label}</span>
                     <span className="mk-compare-table__help">{copy.rows[row.id].help}</span>
                   </th>
-                  {apps.map((app) => {
-                    const support = supportAtLevel(row, app, level);
-                    // A cell's note explains the feature, not the plan: it is
-                    // dropped where the answer is "on a higher plan".
-                    const note =
-                      support === "higherPlan"
-                        ? undefined
-                        : app === "contentpilot"
-                          ? copy.ourNotes[row.id]
-                          : copy.competitors[app].notes?.[row.id];
-                    return (
-                      <CompareCell
-                        key={app}
-                        support={support}
-                        label={copy.support[support]}
-                        note={note}
-                        ours={app === "contentpilot"}
-                      />
-                    );
-                  })}
+                  {apps.map((app) => (
+                    <td key={app} className={`mk-compare-cell${app === "contentpilot" ? " mk-compare-table__ours" : ""}`}>
+                      {stack((at) => {
+                        const support = supportAtLevel(row, app, at);
+                        // A cell's note explains the feature, not the plan: it
+                        // is dropped where the answer is "on a higher plan".
+                        const note =
+                          support === "higherPlan"
+                            ? undefined
+                            : app === "contentpilot"
+                              ? copy.ourNotes[row.id]
+                              : copy.competitors[app].notes?.[row.id];
+                        return <CellAnswer support={support} label={copy.support[support]} note={note} />;
+                      })}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -195,19 +237,27 @@ export function CompareMatrix({
   );
 }
 
-function CompareCell({
-  support,
-  label,
-  note,
-  ours = false,
-}: {
-  support: Support;
-  label: string;
-  note?: string;
-  ours?: boolean;
-}) {
+function enginesText(engines: PlanEngines, copy: CompareCopy): string {
+  const e = copy.glance.engines;
+  switch (engines.kind) {
+    case "ownKey":
+      return e.ownKey.replace("{list}", engines.names.join(", "));
+    case "list": {
+      const base = engines.names.join(", ");
+      return engines.ownKey ? `${base}. ${e.plusOwnKey.replace("{list}", engines.ownKey.join(", "))}` : base;
+    }
+    case "shopify":
+      return e.shopify;
+    case "vendor":
+      return e.vendor;
+    case "unstated":
+      return e.unstated;
+  }
+}
+
+function CellAnswer({ support, label, note }: { support: Support; label: string; note?: string }) {
   return (
-    <td className={`mk-compare-cell mk-compare-cell--${support}${ours ? " mk-compare-table__ours" : ""}`}>
+    <span className={`mk-compare-cell--${support}`}>
       <span className="mk-compare-cell__answer">
         <span className="mk-compare-cell__symbol" aria-hidden="true">
           {SYMBOL[support]}
@@ -215,7 +265,7 @@ function CompareCell({
         {label}
       </span>
       {note ? <span className="mk-compare-cell__note">{note}</span> : null}
-    </td>
+    </span>
   );
 }
 

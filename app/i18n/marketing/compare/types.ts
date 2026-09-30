@@ -62,6 +62,15 @@ export type CompareCopy = {
     languagesLabel: string;
     productsLabel: string;
     aiLabel: string;
+    enginesLabel: string;
+    engines: {
+      /** `{list}` is the provider names. */
+      ownKey: string;
+      plusOwnKey: string;
+      shopify: string;
+      vendor: string;
+      unstated: string;
+    };
     trialRow: string;
     values: {
       unlimited: string;

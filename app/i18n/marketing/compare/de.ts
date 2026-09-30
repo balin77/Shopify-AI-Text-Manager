@@ -120,6 +120,14 @@ export const compareDe: CompareCopy = {
     languagesLabel: "Sprachen",
     productsLabel: "Produkte",
     aiLabel: "Übersetzungen",
+    enginesLabel: "KI-Anbieter",
+    engines: {
+      ownKey: "{list} – mit Ihrem eigenen Schlüssel",
+      plusOwnKey: "Eigener Schlüssel: {list}",
+      shopify: "Maschinelle Übersetzung von Shopify",
+      vendor: "Eigene KI des Anbieters, nicht wählbar",
+      unstated: "Maschinelle Übersetzung, Dienst nicht angegeben",
+    },
     trialRow: "Kostenlose Testzeit",
     values: {
       unlimited: "Unbegrenzt",

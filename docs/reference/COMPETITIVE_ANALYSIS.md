@@ -119,6 +119,7 @@ Legende: ✅ ja · ⚠️ teilweise · ❌ nein · ? keine klare Angabe (≠ nei
 | Übersetzungen in Shopify gespeichert | ✅ | ✅ | ❌ „stored on the Weglot database“ (AWS Frankfurt) | ⚠️ erst ab Local Plus; Gratis übersetzt im Browser (google.translate.js) | ✅ |
 | Eigene Anweisungen / Tonalität | ✅ ab Pro | ❌ | ⚠️ „Tone of voice“ ab Advanced ($329) — nur formell/informell | ✅ Freitext-Anweisungen ab Local Plus; Tonwahl mit eigenem Key ab Continental | ✅ alle |
 | Wahl des KI-Anbieters | ✅ 6 Anbieter, alle Pläne | ❌ | ❌ | ✅ OpenAI, Gemini, Baidu, Yandex, Grok, DeepSeek ab Local Plus; eigener Key (OpenAI/Gemini/DeepL) ab Continental | ✅ OpenAI, DeepL Pro, Google Cloud ab Standard |
+| KI-Dienste je Plan | Claude, OpenAI, Gemini, Grok, DeepSeek, Hugging Face — alle Pläne, eigener Key | Shopify-Maschinenübersetzung | eigene KI, nicht wählbar | Google (alle); + OpenAI, Gemini, Baidu, Yandex, Grok, DeepSeek ab Local Plus; eigener Key OpenAI/Gemini/DeepL ab Continental | Dienst nicht genannt (Free/Basic); OpenAI, DeepL Pro, Google Cloud ab Standard |
 | Glossar | ✅ alle Pläne | ❌ (in Hilfe und App Store nicht erwähnt) | ✅ alle | ✅ ab Regional (20 → 200 → 500 → ∞) | ✅ ab Basic (5 → 100 → 250 → 500 → 1000 → ∞) |
 | Theme, Checkout, E-Mails | ✅ ab Pro | ✅ | ✅ | ✅ | ✅ (Checkout alle Pläne) |
 | Texte anderer Apps | ✅ nur Max | ❌ | ✅ | ✅ alle (bearbeiten ab Local Plus) | ✅ ab Standard |

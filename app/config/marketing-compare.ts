@@ -398,3 +398,58 @@ export function supportAtLevel(row: CompareRow, app: PriceAppId, level: number):
   const plans = COMPARE_PRICES[app].plans;
   return perPlan[Math.min(level, plans.length - 1)] ?? base;
 }
+
+/**
+ * Which AI or translation engines a plan translates with — the question
+ * behind "choice of AI provider", answered per plan. Provider names are
+ * proper nouns and stay here; the words around them are copy.
+ */
+export type PlanEngines =
+  /** Only through the merchant's own key (ours). */
+  | { kind: "ownKey"; names: string[] }
+  /** Engines the app offers, optionally more through an own key. */
+  | { kind: "list"; names: string[]; ownKey?: string[] }
+  /** Shopify's built-in machine translation. */
+  | { kind: "shopify" }
+  /** The provider's own AI; the engine cannot be chosen. */
+  | { kind: "vendor" }
+  /** Machine translation whose engine the provider does not name. */
+  | { kind: "unstated" };
+
+const OUR_ENGINES: PlanEngines = {
+  kind: "ownKey",
+  names: ["Claude", "OpenAI", "Gemini", "Grok", "DeepSeek", "Hugging Face"],
+};
+const TRANSCY_AI = ["OpenAI", "Gemini", "Baidu", "Yandex", "Grok", "DeepSeek"];
+const TRANSCY_OWN_KEY = ["OpenAI", "Gemini", "DeepL"];
+const LANGSHOP_AI = ["OpenAI", "DeepL Pro", "Google Cloud"];
+
+/** Per plan, in the order of `COMPARE_PRICES[app].plans` (a test pins the lengths). */
+export const COMPARE_ENGINES: Record<PriceAppId, PlanEngines[]> = {
+  contentpilot: [OUR_ENGINES, OUR_ENGINES, OUR_ENGINES, OUR_ENGINES],
+  "translate-and-adapt": [{ kind: "shopify" }],
+  // Weglot sells "AI translation" with its own "AI Language Model" on every
+  // plan and names no engine a merchant could pick.
+  weglot: Array.from({ length: 7 }, (): PlanEngines => ({ kind: "vendor" })),
+  // Transcy's plan comparison: "Free Engine: Google" on every plan, the LLMs
+  // from Local Plus, own API keys from Continental.
+  transcy: [
+    { kind: "list", names: ["Google"] },
+    { kind: "list", names: ["Google", ...TRANSCY_AI] },
+    { kind: "list", names: ["Google", ...TRANSCY_AI] },
+    { kind: "list", names: ["Google", ...TRANSCY_AI], ownKey: TRANSCY_OWN_KEY },
+    { kind: "list", names: ["Google", ...TRANSCY_AI], ownKey: TRANSCY_OWN_KEY },
+    { kind: "list", names: ["Google", ...TRANSCY_AI], ownKey: TRANSCY_OWN_KEY },
+  ],
+  // LangShop: "OpenAI, DeepL Pro, Google Cloud integrations" from Standard;
+  // below that it translates by machine without naming the engine.
+  langshop: [
+    { kind: "unstated" },
+    { kind: "unstated" },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+  ],
+};
