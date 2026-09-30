@@ -1776,7 +1776,12 @@ a.mk-badge:hover {
 }
 
 .mk-compare-cell--partial .mk-compare-cell__symbol,
-.mk-compare-cell--unstated .mk-compare-cell__symbol {
+.mk-compare-cell--unstated .mk-compare-cell__symbol,
+.mk-compare-cell--higherPlan .mk-compare-cell__symbol {
+  color: var(--mk-text-muted);
+}
+
+.mk-compare-cell--higherPlan {
   color: var(--mk-text-muted);
 }
 
@@ -1879,71 +1884,12 @@ a.mk-badge:hover {
   max-width: var(--mk-prose-width);
 }
 
-/* ── Price comparison ─────────────────────────────────────────────────── */
-
-.mk-compare-prices {
-  margin-top: 48px;
-}
+/* ── Price text shared by the plan-by-plan table ──────────────────────── */
 
 .mk-compare-prices__intro {
   color: var(--mk-text-muted);
   max-width: var(--mk-prose-width);
   margin-bottom: 20px;
-}
-
-.mk-compare-prices__grid {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 16px;
-  /* 200px so all five apps share one row on a desktop: a fifth card
-     wrapping alone under the other four reads as an afterthought. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-  align-items: start;
-}
-
-.mk-compare-prices__card {
-  padding: 20px;
-  border: 1px solid var(--mk-border);
-  border-radius: var(--mk-radius);
-  background: var(--mk-surface);
-}
-
-.mk-compare-prices__card--ours {
-  border-color: var(--mk-brand);
-}
-
-.mk-compare-prices__card h3 {
-  font-size: 1.0625rem;
-  margin-bottom: 4px;
-}
-
-.mk-compare-prices__card dl {
-  margin: 14px 0 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.mk-compare-prices__plan {
-  padding: 10px 0;
-  border-top: 1px solid var(--mk-border);
-}
-
-/* Wraps: in a narrow card "Continental 69 US$ / Monat" is wider than the
-   card, and the price then moves under the name instead of spilling out. */
-.mk-compare-prices__plan dt {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  column-gap: 12px;
-  row-gap: 2px;
-  font-weight: 600;
-}
-
-.mk-compare-prices__price {
-  white-space: nowrap;
 }
 
 .mk-compare-prices__unit {
@@ -1952,14 +1898,130 @@ a.mk-badge:hover {
   color: var(--mk-text-muted);
 }
 
-.mk-compare-prices__plan dd {
-  margin: 4px 0 0;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--mk-text-muted);
-}
-
 .mk-note.mk-compare-prices__note {
   margin-top: 16px;
   max-width: var(--mk-prose-width);
+}
+
+/* ── Plan by plan ─────────────────────────────────────────────────────── */
+
+.mk-compare-matrix {
+  margin: 36px 0 40px;
+}
+
+.mk-compare-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 16px;
+}
+
+.mk-compare-levels__button {
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--mk-border-strong);
+  background: var(--mk-surface);
+  color: var(--mk-text);
+  cursor: pointer;
+}
+
+.mk-compare-levels__button:hover {
+  border-color: var(--mk-text-muted);
+}
+
+.mk-compare-levels__button[aria-pressed="true"] {
+  background: var(--mk-ink);
+  border-color: var(--mk-ink);
+  color: var(--mk-text-invert);
+}
+
+.mk-compare-levels__button:focus-visible {
+  outline: 2px solid var(--mk-brand);
+  outline-offset: 2px;
+}
+
+.mk-compare-matrix__app {
+  display: block;
+}
+
+.mk-compare-matrix__plan {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--mk-text-muted);
+  white-space: normal;
+}
+
+.mk-compare-glance__price {
+  display: block;
+  font-weight: 700;
+  font-size: 1.0625rem;
+  white-space: nowrap;
+}
+
+.mk-compare-matrix__table td {
+  min-width: 140px;
+}
+
+/* One app against ours: fixed layout, so both answer columns are the same
+   width and neither breaks a word because the other holds a longer text. */
+.mk-compare-matrix__table.mk-compare-table--single {
+  table-layout: fixed;
+}
+
+.mk-compare-matrix__table.mk-compare-table--single td {
+  min-width: 0;
+}
+
+.mk-compare-matrix__table.mk-compare-table--single thead th:first-child {
+  width: 40%;
+}
+
+@media (max-width: 520px) {
+  /* The answers are short ("✓ Ja"), the feature names are long German
+     compounds: the labels get the wider column on a phone. */
+  .mk-compare-matrix__table.mk-compare-table--single thead th:first-child {
+    width: 38%;
+  }
+
+  .mk-compare-matrix__table .mk-compare-table__label {
+    font-size: 0.875rem;
+  }
+
+  .mk-compare-matrix__table td {
+    font-size: 0.8125rem;
+  }
+
+  .mk-compare-matrix__table .mk-compare-glance__price {
+    font-size: 0.9375rem;
+  }
+
+  .mk-compare-matrix__table th,
+  .mk-compare-matrix__table td {
+    padding-inline: 8px;
+  }
+
+  .mk-compare-matrix__table th[scope="row"] {
+    min-width: 0;
+  }
+
+  .mk-compare-matrix__table td,
+  .mk-compare-matrix__table th {
+    hyphens: auto;
+    /* `anywhere`, not `break-word`: only it lowers a table cell's
+       min-content width, where a browser has no hyphenation dictionary. */
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .mk-compare-glance__price {
+    white-space: normal;
+  }
+
+  .mk-compare-cell__answer {
+    white-space: normal;
+  }
 }

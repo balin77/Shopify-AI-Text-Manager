@@ -3,6 +3,7 @@ import {
   COMPARE_PRICES,
   PRICE_APPS,
   formatComparePrice,
+  supportAtLevel,
   COMPARE_GROUPS,
   COMPARE_ROWS,
   COMPETITORS,
@@ -57,21 +58,6 @@ describe("comparison pages", () => {
     }
   });
 
-  it("describes every plan of every app in every language", () => {
-    for (const locale of MARKETING_LOCALES) {
-      const copy = getCompareCopy(locale);
-      for (const app of PRICE_APPS) {
-        expect(copy.pricing.summaries[app]).toBeTruthy();
-        for (const plan of COMPARE_PRICES[app].plans) {
-          expect(copy.pricing.plans[app][plan.id], `${locale}/${app}/${plan.id}`).toBeTruthy();
-        }
-        expect(Object.keys(copy.pricing.plans[app]).sort()).toEqual(
-          COMPARE_PRICES[app].plans.map((p) => p.id).sort(),
-        );
-      }
-    }
-  });
-
   it("advertises exactly the prices the app bills", () => {
     const ours = Object.fromEntries(COMPARE_PRICES.contentpilot.plans.map((p) => [p.id, p.monthly]));
     expect(ours).toEqual({
@@ -87,5 +73,30 @@ describe("comparison pages", () => {
     expect(formatComparePrice(9.9, "EUR", "de")).toBe("9,90 €");
     expect(formatComparePrice(17, "USD", "es")).toBe("17 US$");
     expect(formatComparePrice(14.9, "USD", "en")).toBe("$14.90");
+  });
+
+  it("lists a per-plan answer for every plan of the app it describes", () => {
+    for (const row of COMPARE_ROWS) {
+      for (const [app, answers] of Object.entries(row.byPlan ?? {})) {
+        const plans = COMPARE_PRICES[app as keyof typeof COMPARE_PRICES].plans;
+        expect(answers, `${row.id}/${app}`).toHaveLength(plans.length);
+      }
+    }
+  });
+
+  it("never says 'higher plan' on an app's top plan, and reads its top plan past its ladder", () => {
+    for (const row of COMPARE_ROWS) {
+      for (const app of PRICE_APPS) {
+        const top = COMPARE_PRICES[app].plans.length - 1;
+        expect(supportAtLevel(row, app, top), `${row.id}/${app}`).not.toBe("higherPlan");
+        expect(supportAtLevel(row, app, 99)).toBe(supportAtLevel(row, app, top));
+      }
+    }
+  });
+
+  it("describes our own plan limits in the per-plan view too", () => {
+    const row = COMPARE_ROWS.find((r) => r.id === "thirdPartyApps")!;
+    expect(supportAtLevel(row, "contentpilot", 0)).toBe("higherPlan");
+    expect(supportAtLevel(row, "contentpilot", 3)).toBe("yes");
   });
 });

@@ -42,17 +42,56 @@ export type CompareCopy = {
   verdictHeading: string;
   /** Under the table: it answers "can the app do this at all", never "on which plan". */
   tableNote: string;
-  pricing: {
+  /** The price table at the top of both pages. */
+  glance: {
     heading: string;
     intro: string;
+    /** Header of the row-label column. */
+    planColumn: string;
+    /** Label of the level buttons. */
+    levelPicker: string;
+    /** Marks a column showing an app's top plan at a level past its ladder. */
+    topPlan: string;
+    /** Group heading above price, limits and trial. */
+    planGroup: string;
+    /** Row label of the first row. */
+    freeLevel: string;
+    /** Row label of every further row; `{n}` is 1, 2, 3 … */
+    level: string;
+    priceLabel: string;
+    languagesLabel: string;
+    productsLabel: string;
+    aiLabel: string;
+    trialRow: string;
+    values: {
+      unlimited: string;
+      twoAutomatic: string;
+      noProductLimit: string;
+      ownKey: string;
+      included: string;
+      unlimitedWords: string;
+      /** `{n}` is the number. */
+      words: string;
+      tokensMonth: string;
+      tokensMonthOwnKey: string;
+      wordsPlusTokens: string;
+      wordsPlusTokensOwnKey: string;
+      unstated: string;
+      trialDays: string;
+      noTrial: string;
+      notOffered: string;
+      onRequest: string;
+      oneLanguage: string;
+      languages: string;
+    };
+  };
+  pricing: {
     perMonth: string;
+    perYear: string;
     free: string;
+    onRequest: string;
     /** Currency, tax, annual discounts, AI costs — one sentence. */
     note: string;
-    /** One line per app under its name, e.g. "priced by languages and words". */
-    summaries: Record<PriceAppId, string>;
-    /** What each plan includes, keyed by the plan ids in `COMPARE_PRICES`. */
-    plans: Record<PriceAppId, Record<string, string>>;
   };
   /** Month the facts were last checked, written out ("September 2026"). */
   checkedAt: string;
