@@ -382,6 +382,30 @@ describe("saveMenuTree", () => {
     expect(result.purgedTranslationCount).toBe(1);
   });
 
+  it("KEEPS the translations when managed AI refused to run (startFailed)", async () => {
+    // A stand-down is not "nothing happened": the rule is that a managed
+    // refusal (budget spent, taster spent, no consent) never deletes.
+    loadTranslationChangePolicy.mockResolvedValue({
+      purgeOnPrimaryChange: false,
+      purgeUnreconciledSurfaces: true,
+      autoTranslateExternalChanges: true,
+      plan: "max",
+    });
+    reconcileAfterPrimarySave.mockResolvedValue({ removed: 0, retranslating: 0, startFailed: true });
+    captureLinkTranslations.mockResolvedValue([]);
+    restoreLinkTranslations.mockResolvedValue({ restored: 0, failed: [] });
+
+    const tree = [
+      { ...baseTree[0] },
+      { ...baseTree[1], title: "Kontakt & Anfahrt" },
+    ];
+    const { result } = await runSave(tree, { locales: ["en"] });
+
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
+    expect(removeAndVerifyAcrossLocales).not.toHaveBeenCalled();
+    expect(result.purgedTranslationCount).toBe(0);
+  });
+
   it("falls back to the deletion when the primary locale is unknown", async () => {
     // Nothing to translate FROM, so the repair cannot run — and leaving the
     // stale title translation live is the one direction this never takes.

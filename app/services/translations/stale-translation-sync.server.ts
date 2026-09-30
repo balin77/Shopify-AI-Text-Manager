@@ -1940,6 +1940,29 @@ async function repairStaleTranslations(
         });
         return { removed: 0, retranslating: 0, startFailed: true };
       }
+      // The static decision above cannot see MONEY: a spent period budget, a
+      // spent taster or an exhausted global pool are decided per call by the
+      // preflight, i.e. only once the detached run makes its first request —
+      // after the market overrides below are already gone. Ask the same two
+      // questions here (one DB read each, and only for a managed shop).
+      if (decision.ok && decision.source === "managed") {
+        const plan = (settings?.subscriptionPlan ?? "free") as never;
+        const { managedBudgetStatus, managedPoolFor } = await import("../ai/managed-budget.server");
+        const { globalPoolStatus } = await import("../ai/managed-global-pool.server");
+        const budget = await managedBudgetStatus(shop, settings, plan);
+        const pool = budget.allowed
+          ? await globalPoolStatus(managedPoolFor(shop, settings, plan))
+          : null;
+        if (!budget.allowed || (pool && !pool.allowed)) {
+          logger.warn("[StaleTranslations] Managed AI budget or pool spent — repair stood down, NOTHING deleted", {
+            context: "StaleTranslations",
+            shop,
+            resourceId,
+            reason: !budget.allowed ? "budget" : "globalPool",
+          });
+          return { removed: 0, retranslating: 0, startFailed: true };
+        }
+      }
     } catch (error: unknown) {
       // The lookup failing is not evidence of a refusal, and refusing to
       // repair on it would leave stale translations live on every shop the
@@ -2610,6 +2633,9 @@ async function runRetranslation(
         }
       }
     } catch (prefetchError: unknown) {
+      // A refusal is the same answer on the per-locale path below; asking it
+      // again there only costs a second refused preflight.
+      if (isManagedRefusal(prefetchError)) throw prefetchError;
       // Never fatal: the loop below still has its per-locale path, which is
       // exactly what this replaced. An auth error surfaces there instead, on the
       // first locale, the way it always did.

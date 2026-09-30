@@ -140,6 +140,13 @@ export function ManagedAiCard({
   // mounted.
   const [modeDraft, setModeDraft] = useState<"byo" | "managed" | null>(null);
 
+  // What the server said about the last post. The card's posts are all
+  // refusable — a consent against a changed text (409), a mode the deployment
+  // cannot serve (403), a failed key deletion — and a refusal nobody sees
+  // reads as "it worked" to the merchant who clicked.
+  const lastResult = fetcher.state === "idle" ? (fetcher.data as { success?: boolean; error?: string } | undefined) : undefined;
+  const lastError = lastResult && lastResult.success === false ? lastResult.error || "" : null;
+
   const busy = (action: string) =>
     fetcher.state !== "idle" && fetcher.formData?.get("actionType") === action;
 
@@ -178,6 +185,12 @@ export function ManagedAiCard({
             {m.heading}
           </Text>
 
+          {lastError !== null && (
+            <Banner tone="critical">
+              <Text as="p">{lastError || t?.common?.error || "Error"}</Text>
+            </Banner>
+          )}
+
           {/* The entitlement ended while the merchant's choice still says
               "managed". Their own key is being used again — the friendly
               fallback, and not something to discover by noticing a different
@@ -205,6 +218,7 @@ export function ManagedAiCard({
               includes AI" tells a paying merchant they turned it off. */}
           <DisabledActionTooltip hint={managedAiOffered ? undefined : m.notAvailableNotice} block>
             <ToggleRow
+              layout="inline"
               label={m.useIncluded ?? ""}
               checked={chosenMode === "managed"}
               disabled={!managedAiOffered || busy("saveAiSource")}

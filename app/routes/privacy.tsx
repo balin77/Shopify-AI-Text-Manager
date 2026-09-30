@@ -15,7 +15,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     appUrl,
-    lastUpdated: '2026-02-04',
+    lastUpdated: '2026-09-30',
     companyName: 'Gubler - Multimedia und Print',
     appName: 'ContentPilot AI',
     supportEmail: 'gublerra@gmail.com',
@@ -109,7 +109,9 @@ export default function PrivacyPolicy() {
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>4.1 AI Service Providers</h3>
         <p>
           {appName} sends store content to a third-party AI provider <strong>only</strong> when
-          you explicitly trigger an AI generation or translation action. There are two ways that
+          you trigger an AI generation or translation action, or when you have switched on an
+          automation that does so for you (for example, automatically re-translating content
+          whose original text changed). There are two ways that
           content can reach a provider, and which one applies to your shop is your choice:
         </p>
         <ul style={{ marginLeft: '20px' }}>
@@ -119,8 +121,9 @@ export default function PrivacyPolicy() {
             default and, unless you have chosen otherwise, the only mode that applies to you.
           </li>
           <li>
-            <strong>AI included in your plan.</strong> If you subscribe to a plan that includes
-            AI and switch your shop to it, content is sent under an account operated by{' '}
+            <strong>AI included in your plan, or the free trial.</strong> If you subscribe to a
+            plan that includes AI, or use the one-time free AI trial the app offers before you buy
+            anything, and switch your shop to it, content is sent under an account operated by{' '}
             {appName} instead. This never happens without your <strong>explicit, recorded
             consent</strong>, which you give in the app's settings and can withdraw there at any
             time; if you have not given it, no content is sent under our account. We ask again
@@ -146,9 +149,11 @@ export default function PrivacyPolicy() {
           Content is sent solely to produce the output you requested. It is processed
           transiently by the provider to generate a response and is <strong>not used by
           {appName} to train any machine-learning or AI models</strong>, whether it was sent
-          under your own key or under ours. When plan-included AI is used, {appName} is the
-          controller of the account the request is made from and records how much was used, in
-          order to apply your plan's volume; the content itself is not retained by us beyond
+          under your own key or under ours. {appName} records how much AI was used (number of
+          requests, token counts and cost, never the content), for both modes: under our account
+          to apply your plan's volume or your trial, under your own key to understand overall usage
+          and to size our plans. When plan-included AI is used, {appName} is the controller of
+          the account the request is made from. The content itself is not retained by us beyond
           what is needed to produce and store the result you asked for. The handling of your
           content by each provider is governed by that provider's own terms and privacy policy.
           Most of these providers process data on infrastructure located outside the European

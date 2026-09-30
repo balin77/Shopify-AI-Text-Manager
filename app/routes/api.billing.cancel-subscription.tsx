@@ -59,7 +59,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     for (let attempt = 1; attempt <= MAX_DB_RETRIES; attempt++) {
       try {
-        await syncSubscriptionToDatabase(session.shop, 'free');
+        // The managed half ends with the subscription. Omitting it (the old
+        // call) left `managedAiActive: true` beside plan `free`, a pair the
+        // budget refuses as contradictory — so a merchant with their own key
+        // was refused instead of falling back to it until the next sync.
+        await syncSubscriptionToDatabase(session.shop, 'free', {
+          active: false,
+          currentPeriodEnd: null,
+        });
         dbUpdateSuccess = true;
         break;
       } catch (error) {

@@ -256,6 +256,22 @@ if (process.env.MANAGED_AI_ENABLED === 'true') {
   checkManagedCredential('MANAGED_AI_', 'managed (default)', true);
   checkManagedCredential('MANAGED_AI_FALLBACK_', 'managed (failover)', false);
 
+  // The global pools are the operator's last in-app ceiling on total spend.
+  // Unset means UNLIMITED — and the taster is per shop while partner dev
+  // stores cost nothing to create, so without MANAGED_AI_TASTER_POOL_MICROS
+  // free spend grows with installs and nothing stops it. Warn, loudly.
+  for (const [name, what] of [
+    ['MANAGED_AI_POOL_MICROS', 'paid managed spend'],
+    ['MANAGED_AI_TASTER_POOL_MICROS', 'free-trial (taster) spend'],
+    ['MANAGED_AI_FAILOVER_POOL_MICROS', 'failover spend'],
+  ]) {
+    const raw = process.env[name];
+    const n = Number(raw);
+    if (!raw || !Number.isFinite(n) || n <= 0) {
+      warnings.push(`⚠️  ${name} is not set (or not a positive number) — ${what} has NO global monthly cap`);
+    }
+  }
+
   // §7a, belt and braces: the operator key must never be served from the
   // dev/custom-app build, and the cheapest place to find that out is here.
   // The dev/custom-app client_id, mirroring the constant in

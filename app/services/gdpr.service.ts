@@ -429,6 +429,12 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${aiUsageCountersDeleted.count} AI usage counters`);
 
+    // 24c. The AI processing consent log — shop-scoped, goes with the shop.
+    const aiConsentEventsDeleted = await tx.aiConsentEvent.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${aiConsentEventsDeleted.count} AI consent events`);
+
     // 25. Delete enabled metafield-definition selections — shop-scoped config
     //     (which product metafields the merchant enabled for translation).
     const enabledMetafieldDefsDeleted = await tx.enabledMetafieldDefinition.deleteMany({

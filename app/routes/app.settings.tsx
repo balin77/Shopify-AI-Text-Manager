@@ -1487,6 +1487,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             // timestamp as consent.
             { aiProcessingConsentAt: null, aiProcessingConsentVersion: null },
       });
+      // The durable record. The columns above are the CURRENT answer and a
+      // withdrawal clears them; this row is what still shows, afterwards,
+      // that consent was given for the calls made while it stood. Its own
+      // try: the consent itself is saved, and a failed log line must not
+      // report the merchant's decision as failed.
+      try {
+        await db.aiConsentEvent.create({
+          data: {
+            shop: session.shop,
+            granted,
+            version: granted ? AI_PROCESSING_CONSENT_VERSION : null,
+          },
+        });
+      } catch (error) {
+        logger.error("[Settings] Could not append the AI consent event", {
+          shop: session.shop,
+          granted,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       logger.info("[Settings] AI processing consent recorded", {
         shop: session.shop,
@@ -1504,7 +1524,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // It clears the keys and nothing else: the provider and model choices
       // survive, so a merchant who deletes a key and pastes a new one is back
       // where they were.
-      await db.aISettings.update({
+      // updateMany: a shop with no settings row has no keys to delete, and
+      // `update` would throw on it and report the erasure as failed.
+      await db.aISettings.updateMany({
         where: { shop: session.shop },
         data: {
           huggingfaceApiKey: null,

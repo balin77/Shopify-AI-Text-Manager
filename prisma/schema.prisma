@@ -1649,6 +1649,23 @@ model AiUsageCounter {
   @@index([shop, period])
 }
 
+// Every grant and withdrawal of the AI processing consent, append-only.
+//
+// `AISettings.aiProcessingConsentAt/Version` hold the CURRENT answer and are
+// cleared on withdrawal — which also erased the only durable proof that
+// consent existed for the managed calls made before it (GDPR Art. 7(1): the
+// controller must be able to DEMONSTRATE consent; audit §B4 asks for it to be
+// logged). This table is that proof. Deleted with the shop on redact.
+model AiConsentEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  granted   Boolean
+  version   String? // the consent text version agreed to; null on withdrawal
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+}
+
 // The GLOBAL monthly cap on managed AI spend (PLAN_MANAGED_AI_KEY §9.3).
 //
 // Its own table, deliberately NOT a sentinel row in the shop-scoped counter

@@ -283,3 +283,58 @@ describe('a plan column that contradicts the entitlement is never a grant', () =
     expect(aggregate).not.toHaveBeenCalled();
   });
 });
+
+describe('a plan switch does not mint a second period budget', () => {
+  // Evaluates the `where` the budget sends against an in-memory ledger, so
+  // the test asserts which ROWS count rather than the shape of a query.
+  type Where = { period?: unknown; OR?: Array<{ period: unknown }> };
+  const matches = (cond: unknown, key: string): boolean => {
+    if (typeof cond === 'string') return cond === key;
+    const c = cond as { startsWith?: string; gt?: string };
+    return (!c.startsWith || key.startsWith(c.startsWith)) && (!c.gt || key > c.gt);
+  };
+  const ledger = (rows: Record<string, number>) =>
+    aggregate.mockImplementation(async (args: { where: Where }) => {
+      const w = args.where;
+      const keys = Object.keys(rows).filter((k) =>
+        w.OR ? w.OR.some((o) => matches(o.period, k)) : matches(w.period, k),
+      );
+      return { _sum: { billedMicros: BigInt(keys.reduce((n, k) => n + rows[k], 0)) } };
+    });
+
+  const now = new Date();
+  const inDays = (d: number) => new Date(now.getTime() + d * 86_400_000);
+  const key = (d: Date) => `b:${d.toISOString().slice(0, 10)}`;
+
+  it('spend under a REPLACED subscription still counts until its period ends', async () => {
+    // Spent the whole Max budget under the old subscription (ends in 20 days),
+    // then switched plans — the new subscription ends in 30 days.
+    ledger({ [key(inDays(20))]: MANAGED_BUDGET_MICROS.max });
+    const status = await managedBudgetStatus(
+      shop,
+      settingsFor({ managedAiActive: true, subscriptionPlan: 'max', managedAiPeriodEnd: inDays(30) }),
+      'max',
+    );
+    expect(status.period).toBe(key(inDays(30)));
+    expect(status.usedMicros).toBe(MANAGED_BUDGET_MICROS.max);
+    expect(status.allowed).toBe(false);
+  });
+
+  it('a natural renewal starts fresh — the previous period ended', async () => {
+    ledger({ [key(inDays(-10))]: MANAGED_BUDGET_MICROS.max });
+    const status = await managedBudgetStatus(
+      shop,
+      settingsFor({ managedAiActive: true, subscriptionPlan: 'max', managedAiPeriodEnd: inDays(20) }),
+      'max',
+    );
+    expect(status.usedMicros).toBe(0);
+    expect(status.allowed).toBe(true);
+  });
+
+  it('the taster still reads its own key only', async () => {
+    ledger({ [key(inDays(20))]: 999_999, [TASTER_PERIOD]: 5 });
+    const status = await managedBudgetStatus(shop, settingsFor(), 'free');
+    expect(status.kind).toBe('taster');
+    expect(status.usedMicros).toBe(5);
+  });
+});
