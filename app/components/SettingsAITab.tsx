@@ -352,7 +352,14 @@ export function SettingsAITab({
 
   return (
     <>
-    {managedAi && <ManagedAiCard {...managedAi} fetcher={fetcher} t={t} />}
+    {/* Only where this deployment OFFERS managed AI — or the shop already
+        chose it, so the card can say why it is not being served. While the
+        feature is switched off (MANAGED_AI_ENABLED) every merchant would
+        otherwise see a greyed-out switch for something that does not exist
+        yet, which reads as a broken feature (and is one in App Review). */}
+    {managedAi && (managedAi.managedAiOffered || managedAi.aiKeySource === "managed") && (
+      <ManagedAiCard {...managedAi} fetcher={fetcher} t={t} />
+    )}
     {keyFieldsHidden ? null : (
     <Card>
       <BlockStack gap="500">
