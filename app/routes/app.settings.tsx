@@ -77,7 +77,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       await checkAndSyncSubscription(admin, session.shop);
     }
 
-    // The languages Shopify lets this shop ADD (Settings → Shop-Sprachen) —
+    // The languages Shopify lets this shop ADD (Settings → Sprachen und Märkte) —
     // its own query, started IN PARALLEL with the one below: a failure must not
     // take the settings page down, and `null` tells the tab "could not load",
     // never "nothing can be added".
@@ -1111,7 +1111,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const outcome = await createMarketSubfolder(admin, session.shop, checked.request);
       return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
     } else if (actionType === "saveShopLocalePublication" || actionType === "removeShopLocale") {
-      // Settings → Shop-Sprachen. Everything submitted is replayed over the
+      // Settings → Sprachen und Märkte. Everything submitted is replayed over the
       // shop's CURRENT locales, read fresh here: the client's copy may be a
       // minute old, and an unknown or primary locale is refused rather than
       // sent (shop-locale-publish.server.ts). A REMOVAL is its own action,
@@ -1840,9 +1840,9 @@ export default function SettingsPage() {
   useEffect(() => {
     const sections = [
       { id: "setup", title: t.settings.appSetup },
-      { id: "languages", title: t.settings.shopLanguages?.title || "Shop languages" },
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
+      { id: "languages", title: t.settings.shopLanguages?.title || "Languages and markets" },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "other", title: t.settings.otherSettings || "Weiteres" },
       { id: "plan", title: t.settings.plan },
@@ -1907,25 +1907,6 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => handleSectionChange("languages")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "languages" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "languages" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "languages" ? "semibold" : "regular"}>
-                  {t.settings.shopLanguages?.title || "Shop languages"}
-                </Text>
-              </button>
-              <button
                 onClick={() => handleSectionChange("ai")}
                 style={{
                   width: "100%",
@@ -1961,6 +1942,25 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "instructions" ? "semibold" : "regular"}>
                   {t.settings.aiInstructions}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("languages")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "languages" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "languages" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "languages" ? "semibold" : "regular"}>
+                  {t.settings.shopLanguages?.title || "Languages and markets"}
                 </Text>
               </button>
               <button

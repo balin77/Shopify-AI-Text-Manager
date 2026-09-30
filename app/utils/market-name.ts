@@ -3,7 +3,7 @@
  *
  * Shopify stores a market under the name it was created with — on a shop set
  * up in English that is "Switzerland" / "European Union", and the Settings →
- * Shop-Sprachen checkboxes printed exactly that to a German merchant. A market
+ * Sprachen-und-Märkte checkboxes printed exactly that to a German merchant. A market
  * NAME is merchant data, though, and a renamed market ("DACH-Raum") must stay
  * as written. So a name is only localized when it IS a region's standard name
  * in one of the common admin languages (the name Shopify generates for a

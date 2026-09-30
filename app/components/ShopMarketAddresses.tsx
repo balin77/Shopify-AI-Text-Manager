@@ -1,5 +1,5 @@
 /**
- * Settings → Shop-Sprachen → "Märkte und Adressen": which markets have an
+ * Settings → Sprachen und Märkte → "Märkte und Adressen": which markets have an
  * address of their own, and the two acts that change it.
  *
  * Shopify keeps a shop's languages on the WEB PRESENCE, and markets without a
@@ -21,6 +21,7 @@ import { Badge, Banner, BlockStack, Button, Checkbox, InlineStack, Modal, Select
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DeleteItemModal } from "./create/DeleteItemModal";
 import { HelpTooltip } from "./HelpTooltip";
+import { ToggleRow } from "./ToggleRow";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { countryOptions, localizedMarketName, regionCodeForName } from "../utils/market-name";
@@ -102,6 +103,22 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
     (suffix !== createInitial.suffix || defaultLocale !== createInitial.defaultLocale || alternates.length > 0);
 
   const langName = (code: string, fallback?: string) => getLocalizedLanguageName(code, appLocale, fallback);
+  // The primary market first, then the others in Shopify's own order.
+  const orderedMarkets = useMemo(() => {
+    const list = addresses?.markets ?? [];
+    return [...list.filter((m) => m.primary === true), ...list.filter((m) => m.primary !== true)];
+  }, [addresses]);
+  // Activating is offered for any draft; switching OFF only a market KNOWN not
+  // to be the primary one — the storefront's own market is not left to an
+  // unmeasured Shopify guard (the server refuses it too: `primaryUnknown`).
+  const switchLocked = (m: MarketAddressesView["markets"][number]) =>
+    m.primary === true || (m.status === "ACTIVE" && m.primary !== false);
+  const switchTooltip = (m: MarketAddressesView["markets"][number]): string | undefined => {
+    if (blocked) return s.removeBlockedByDraft;
+    if (m.primary === true) return a.switchTooltipPrimary;
+    if (m.status === "ACTIVE" && m.primary !== false) return a.errorPrimaryUnknown;
+    return m.status === "ACTIVE" ? a.switchTooltipActive : a.switchTooltipDraft;
+  };
   const marketName = (name: string) => localizedMarketName(name, appLocale);
   const primaryLocale = locales.find((l) => l.primary)?.locale ?? locales[0]?.locale ?? "";
 
@@ -218,13 +235,25 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
           </Button>
         </DisabledActionTooltip>
       </InlineStack>
-      {addresses.markets.map((m) => (
+      {orderedMarkets.map((m) => (
         <InlineStack key={m.marketId} align="space-between" blockAlign="center" gap="300">
           <BlockStack gap="050">
-            <InlineStack gap="200" blockAlign="center">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                {marketName(m.name)}
-              </Text>
+            <InlineStack gap="200" blockAlign="center" wrap={false}>
+              {/* The switch is where the language list has its own, and like
+                  every act here it saves NOTHING by itself: flipping it opens
+                  the confirmation, and only that dialog's button writes. While
+                  the dialog is open it shows the state being asked about. */}
+              <ToggleRow
+                layout="inline"
+                label={marketName(m.name)}
+                tooltip={switchTooltip(m)}
+                checked={switching?.marketId === m.marketId ? switching.to === "ACTIVE" : m.status === "ACTIVE"}
+                disabled={blocked || busy || switchLocked(m)}
+                onChange={(on) => {
+                  setSubmittedFor(null);
+                  setSwitching({ marketId: m.marketId, name: m.name, to: on ? "ACTIVE" : "DRAFT" });
+                }}
+              />
               {m.status !== "ACTIVE" && <Badge>{a.draftBadge}</Badge>}
             </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
@@ -268,23 +297,6 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
                   {a.createButton}
                 </Button>
               )}
-            </DisabledActionTooltip>
-          )}
-          {/* Activating is offered for any draft; DEACTIVATING only where the
-              market is KNOWN not to be the primary one — switching the shop's
-              own storefront off is the one outcome not left to Shopify. */}
-          {(m.status === "ACTIVE" ? m.primary === false : m.primary !== true) && (
-            <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
-              <Button
-                variant={m.status === "ACTIVE" ? "plain" : undefined}
-                disabled={blocked || busy}
-                onClick={() => {
-                  setSubmittedFor(null);
-                  setSwitching({ marketId: m.marketId, name: m.name, to: m.status === "ACTIVE" ? "DRAFT" : "ACTIVE" });
-                }}
-              >
-                {m.status === "ACTIVE" ? a.deactivateButton : a.activateButton}
-              </Button>
             </DisabledActionTooltip>
           )}
           {m.primary !== true && (

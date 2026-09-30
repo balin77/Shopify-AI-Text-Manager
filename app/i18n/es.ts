@@ -1199,7 +1199,7 @@ export const es: Translation = {
     feedback: "Feedback",
     otherSettings: "Otros",
     shopLanguages: {
-      title: "Idiomas de la tienda",
+      title: "Idiomas y mercados",
       primaryBadge: "Idioma principal",
       publishedLabel: "Publicado en la tienda online",
       switchTooltip:
@@ -1305,6 +1305,9 @@ export const es: Translation = {
           consequenceMarketAddress: "La dirección deja de existir y su código queda libre. Ningún mercado pierde su dirección.",
         },
         discardInput: "Descartar lo introducido",
+        switchTooltipActive: "Activo: la tienda vende en los países de este mercado. Desactivarlo pide confirmación.",
+        switchTooltipDraft: "Borrador: activarlo pide confirmación; después la tienda vende en estos países.",
+        switchTooltipPrimary: "Mercado principal: es la dirección principal de la tienda y siempre está activo.",
         activateButton: "Activar",
         deactivateButton: "Desactivar",
         activateTitle: "¿Activar el mercado «{name}»?",
@@ -4585,7 +4588,7 @@ export const es: Translation = {
         "El límite cuenta elementos (un producto, una página…), no idiomas ni campos, y se reinicia cada día a medianoche UTC. Actualizar traducciones existentes y los cambios que guardas en la app no cuentan. La lista de reintentos se procesa en la revisión nocturna: un elemento recibe como máximo dos intentos más; si solo se pospone por el límite, no cuenta como intento. Lo que sigue faltando tras dos intentos queda visible aquí como «fallido definitivamente» hasta que el texto vuelva a cambiar. La lista cubre productos, colecciones, páginas, artículos, blogs y políticas; los metacampos, opciones, textos alternativos, contenido del tema y menús mantienen su comportamiento anterior.",
     },
     shopLanguages: {
-      title: "Idiomas de la tienda",
+      title: "Idiomas y mercados",
       summary:
         "Aquí añades idiomas, los publicas en la tienda online o los vuelves a quitar. Un idioma no publicado es uno que preparas con calma: la app lo trata exactamente igual que uno activo; solo que aún no aparece en la tienda online.",
       tips: [

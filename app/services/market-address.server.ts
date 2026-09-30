@@ -1,6 +1,6 @@
 /**
  * Give a market its OWN address (a subfolder such as `/es-es`), or take it back
- * onto the shop's shared one — Settings → Shop-Sprachen → "Märkte und Adressen".
+ * onto the shop's shared one — Settings → Sprachen und Märkte → "Märkte und Adressen".
  *
  * Why this exists: Shopify keeps a shop's languages on the WEB PRESENCE, not on
  * the market (MEASURED on the owner's two shops, 2026-09-29/30 — see
