@@ -16,7 +16,8 @@
  *    honest one is the reason this page is worth ranking for.
  */
 
-import { BILLING_PLANS } from "./billing";
+import { BILLING_PLANS, MANAGED_BILLING_PLANS } from "./billing";
+import { MANAGED_AI_TASTER_ACTIONS } from "./managed-ai-budget";
 import { PLAN_CONFIG } from "./plans";
 
 export const COMPETITORS = ["translate-and-adapt", "weglot", "transcy", "langshop"] as const;
@@ -86,13 +87,19 @@ export const COMPARE_ROWS: CompareRow[] = [
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "yes", weglot: "no", transcy: "yes", langshop: "yes" },
+    // Transcy's free plan translates in the visitor's browser (google.translate.js,
+    // "non-edit languages"); only the paid plans write into Shopify.
+    byPlan: {
+      transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
+    },
   },
   {
     id: "brandVoice",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "no", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes" },
     byPlan: {
+      transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
       contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
       weglot: ["higherPlan", "higherPlan", "higherPlan", "higherPlan", "yes", "yes", "yes"],
     },
@@ -140,7 +147,7 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "followChanges",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "partial" },
+    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "partial" },
     byPlan: {
       contentpilot: ["higherPlan", "higherPlan", "higherPlan", "yes"],
       transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
@@ -242,7 +249,7 @@ export type PriceAppId = "contentpilot" | CompetitorId;
 export const PRICE_APPS: PriceAppId[] = ["contentpilot", ...COMPETITORS];
 
 /** How many languages a plan translates. */
-export type PlanLanguages = number | "unlimited" | "twoAutomatic" | "onRequest";
+export type PlanLanguages = number | "unlimited" | "someAutomatic" | "onRequest";
 
 /**
  * How much translating a plan buys. Each provider meters something different
@@ -279,7 +286,20 @@ export type PricePlan = {
   /** Product limit; `null` = no product limit; "unstated" = the provider's table leaves it blank. */
   products: number | null | "unstated";
   volume: PlanVolume;
+  /**
+   * Ours only: the SECOND way to pay for the AI — a key of ours instead of
+   * the merchant's. Free carries the one-time taster, each paid plan its
+   * "+ AI" variant, read off `MANAGED_BILLING_PLANS` like the prices above.
+   */
+  includedAi?: IncludedAi;
 };
+
+export type IncludedAi =
+  | { kind: "taster"; actions: number }
+  | { kind: "plan"; monthly: number; tier: "basic" | "pro" | "max" };
+
+/** The provider the included AI runs on — the default the Settings consent names. */
+export const INCLUDED_AI_ENGINES = ["OpenAI"];
 
 export type PriceTable = {
   currency: "EUR" | "USD";
@@ -301,16 +321,19 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
     currency: "EUR",
     trialDays: BILLING_PLANS.basic.trialDays ?? null,
     plans: [
-      { id: "free", name: "Free", monthly: 0, languages: "unlimited", products: PLAN_CONFIG.free.maxProducts, volume: OWN_KEY },
-      { id: "basic", name: "Basic", monthly: BILLING_PLANS.basic.price, languages: "unlimited", products: PLAN_CONFIG.basic.maxProducts, volume: OWN_KEY },
-      { id: "pro", name: "Pro", monthly: BILLING_PLANS.pro.price, languages: "unlimited", products: PLAN_CONFIG.pro.maxProducts, volume: OWN_KEY },
-      { id: "max", name: "Max", monthly: BILLING_PLANS.max.price, languages: "unlimited", products: PLAN_CONFIG.max.maxProducts, volume: OWN_KEY },
+      { id: "free", name: "Free", monthly: 0, languages: "unlimited", products: PLAN_CONFIG.free.maxProducts, volume: OWN_KEY, includedAi: { kind: "taster", actions: MANAGED_AI_TASTER_ACTIONS } },
+      { id: "basic", name: "Basic", monthly: BILLING_PLANS.basic.price, languages: "unlimited", products: PLAN_CONFIG.basic.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.basic.price, tier: "basic" } },
+      { id: "pro", name: "Pro", monthly: BILLING_PLANS.pro.price, languages: "unlimited", products: PLAN_CONFIG.pro.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.pro.price, tier: "pro" } },
+      { id: "max", name: "Max", monthly: BILLING_PLANS.max.price, languages: "unlimited", products: PLAN_CONFIG.max.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.max.price, tier: "max" } },
     ],
   },
   "translate-and-adapt": {
     currency: "USD",
     trialDays: null,
-    plans: [{ id: "free", name: "Free", monthly: 0, languages: "twoAutomatic", products: null, volume: { kind: "included" } }],
+    // Two automatic languages: what the App Store listing and the app itself
+    // offer (owner, 2026-09-30). Shopify's help page says "up to 8"; the app
+    // is what a merchant gets, so it wins.
+    plans: [{ id: "free", name: "Free", monthly: 0, languages: "someAutomatic", products: null, volume: { kind: "included" } }],
   },
   weglot: {
     currency: "USD",
@@ -320,11 +343,11 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
       { id: "starter", name: "Starter", monthly: 17, languages: 1, products: null, volume: { kind: "words", amount: 10000 } },
       { id: "business", name: "Business", monthly: 32, languages: 3, products: null, volume: { kind: "words", amount: 50000 } },
       { id: "pro", name: "Pro", monthly: 87, languages: 5, products: null, volume: { kind: "words", amount: 200000 } },
-      // Weglot's own website lists three larger plans the App Store does not,
-      // priced in EUROS (owner's screenshot, 2026-09-30). Shown in the currency
-      // Weglot states rather than converted.
-      { id: "advanced", name: "Advanced", monthly: 299, currency: "EUR", languages: 10, products: null, volume: { kind: "words", amount: 1000000 } },
-      { id: "extended", name: "Extended", monthly: 699, currency: "EUR", languages: 20, products: null, volume: { kind: "words", amount: 5000000 } },
+      // Weglot's own website lists three larger plans the App Store does not.
+      // USD as the website states it (it bills in EUR, "USD pricing is an
+      // estimate"); verified against the website 2026-09-30.
+      { id: "advanced", name: "Advanced", monthly: 329, languages: 10, products: null, volume: { kind: "words", amount: 1000000 } },
+      { id: "extended", name: "Extended", monthly: 769, languages: 20, products: null, volume: { kind: "words", amount: 5000000 } },
       { id: "enterprise", name: "Enterprise", monthly: null, onRequest: true, languages: "onRequest", products: null, volume: { kind: "onRequest" } },
     ],
   },
@@ -389,3 +412,58 @@ export function supportAtLevel(row: CompareRow, app: PriceAppId, level: number):
   const plans = COMPARE_PRICES[app].plans;
   return perPlan[Math.min(level, plans.length - 1)] ?? base;
 }
+
+/**
+ * Which AI or translation engines a plan translates with — the question
+ * behind "choice of AI provider", answered per plan. Provider names are
+ * proper nouns and stay here; the words around them are copy.
+ */
+export type PlanEngines =
+  /** Only through the merchant's own key (ours). */
+  | { kind: "ownKey"; names: string[] }
+  /** Engines the app offers, optionally more through an own key. */
+  | { kind: "list"; names: string[]; ownKey?: string[] }
+  /** Shopify's built-in machine translation. */
+  | { kind: "shopify" }
+  /** The provider's own AI; the engine cannot be chosen. */
+  | { kind: "vendor" }
+  /** Machine translation whose engine the provider does not name. */
+  | { kind: "unstated" };
+
+const OUR_ENGINES: PlanEngines = {
+  kind: "ownKey",
+  names: ["Claude", "OpenAI", "Gemini", "Grok", "DeepSeek", "Hugging Face"],
+};
+const TRANSCY_AI = ["OpenAI", "Gemini", "Baidu", "Yandex", "Grok", "DeepSeek"];
+const TRANSCY_OWN_KEY = ["OpenAI", "Gemini", "DeepL"];
+const LANGSHOP_AI = ["OpenAI", "DeepL Pro", "Google Cloud"];
+
+/** Per plan, in the order of `COMPARE_PRICES[app].plans` (a test pins the lengths). */
+export const COMPARE_ENGINES: Record<PriceAppId, PlanEngines[]> = {
+  contentpilot: [OUR_ENGINES, OUR_ENGINES, OUR_ENGINES, OUR_ENGINES],
+  "translate-and-adapt": [{ kind: "shopify" }],
+  // Weglot sells "AI translation" with its own "AI Language Model" on every
+  // plan and names no engine a merchant could pick.
+  weglot: Array.from({ length: 7 }, (): PlanEngines => ({ kind: "vendor" })),
+  // Transcy's plan comparison: "Free Engine: Google" on every plan, the LLMs
+  // from Local Plus, own API keys from Continental.
+  transcy: [
+    { kind: "list", names: ["Google"] },
+    { kind: "list", names: ["Google", ...TRANSCY_AI] },
+    { kind: "list", names: ["Google", ...TRANSCY_AI] },
+    { kind: "list", names: ["Google", ...TRANSCY_AI], ownKey: TRANSCY_OWN_KEY },
+    { kind: "list", names: ["Google", ...TRANSCY_AI], ownKey: TRANSCY_OWN_KEY },
+    { kind: "list", names: ["Google", ...TRANSCY_AI], ownKey: TRANSCY_OWN_KEY },
+  ],
+  // LangShop: "OpenAI, DeepL Pro, Google Cloud integrations" from Standard;
+  // below that it translates by machine without naming the engine.
+  langshop: [
+    { kind: "unstated" },
+    { kind: "unstated" },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+    { kind: "list", names: LANGSHOP_AI },
+  ],
+};

@@ -34,6 +34,8 @@ export type CompareCopy = {
   support: Record<Support, string>;
   groups: Record<CompareGroupId, string>;
   rows: Record<CompareRowId, { label: string; help: string }>;
+  /** ContentPilot's own strengths, for the strengths row of the table. */
+  ourStrengths: string[];
   /** Our own notes on a cell, keyed by row. */
   ourNotes: Partial<Record<CompareRowId, string>>;
   aboutHeading: string;
@@ -62,10 +64,38 @@ export type CompareCopy = {
     languagesLabel: string;
     productsLabel: string;
     aiLabel: string;
+    enginesLabel: string;
+    engines: {
+      /** `{list}` is the provider names. */
+      ownKey: string;
+      plusOwnKey: string;
+      shopify: string;
+      vendor: string;
+      unstated: string;
+    };
     trialRow: string;
+    /** The "+ AI" variant of our plans: the merchant uses a key of ours. */
+    includedAi: {
+      /** Under our price; `{price}` is the "+ AI" price. */
+      price: string;
+      /** Free plan: the one-time trial; `{n}` is the number of AI actions. */
+      taster: string;
+      /** How far the included AI reaches per month, per plan. */
+      volume: Record<"basic" | "pro" | "max", string>;
+      /** `{list}` is the provider the included AI runs on. */
+      engines: string;
+    };
+    /** `+` button at the end of the header row, and its menu's label. */
+    addApp: string;
+    /** Accessible name / tooltip of a column header that hides its app; `{name}` is the app. */
+    removeApp: string;
+    /** Group heading of the last table section: where each app is strong. */
+    strengthsGroup: string;
+    strengthsRow: string;
+    strengthsHelp: string;
     values: {
       unlimited: string;
-      twoAutomatic: string;
+      someAutomatic: string;
       noProductLimit: string;
       ownKey: string;
       included: string;

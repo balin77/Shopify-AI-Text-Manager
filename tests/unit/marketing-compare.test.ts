@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMPARE_ENGINES,
   COMPARE_PRICES,
   PRICE_APPS,
   formatComparePrice,
@@ -98,5 +99,36 @@ describe("comparison pages", () => {
     const row = COMPARE_ROWS.find((r) => r.id === "thirdPartyApps")!;
     expect(supportAtLevel(row, "contentpilot", 0)).toBe("higherPlan");
     expect(supportAtLevel(row, "contentpilot", 3)).toBe("yes");
+  });
+
+  it("names the engines of every plan of every app", () => {
+    for (const app of PRICE_APPS) {
+      expect(COMPARE_ENGINES[app], app).toHaveLength(COMPARE_PRICES[app].plans.length);
+    }
+  });
+});
+
+describe("strengths row of the comparison table", () => {
+  it("has a non-empty strengths list for every app in every language", () => {
+    for (const locale of MARKETING_LOCALES) {
+      const copy = getCompareCopy(locale);
+      expect(copy.ourStrengths.length, locale).toBeGreaterThan(0);
+      for (const id of COMPETITORS) {
+        expect(copy.competitors[id].strengths.length, `${locale} ${id}`).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe("included-AI prices on the comparison table", () => {
+  it("shows the '+ AI' price Shopify charges for each paid plan, and the taster on Free", async () => {
+    const { MANAGED_BILLING_PLANS } = await import("../../app/config/billing");
+    const { MANAGED_AI_TASTER_ACTIONS } = await import("../../app/config/managed-ai-budget");
+    const { COMPARE_PRICES } = await import("../../app/config/marketing-compare");
+    const [free, basic, pro, max] = COMPARE_PRICES.contentpilot.plans;
+    expect(free.includedAi).toEqual({ kind: "taster", actions: MANAGED_AI_TASTER_ACTIONS });
+    expect(basic.includedAi).toMatchObject({ kind: "plan", monthly: MANAGED_BILLING_PLANS.basic.price });
+    expect(pro.includedAi).toMatchObject({ kind: "plan", monthly: MANAGED_BILLING_PLANS.pro.price });
+    expect(max.includedAi).toMatchObject({ kind: "plan", monthly: MANAGED_BILLING_PLANS.max.price });
   });
 });

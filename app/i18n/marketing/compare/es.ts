@@ -88,8 +88,17 @@ export const compareEs: CompareCopy = {
       help: "Shopify Markets ya convierte los precios; algunas apps añaden su propio conversor.",
     },
   },
+  ourStrengths: [
+    "Las traducciones se guardan en su tienda Shopify y se conservan si desinstala la aplicación.",
+    "Traducción con IA en todos los idiomas que quiera, con su propio tono, sus reglas y su glosario.",
+    "Usted elige el proveedor de IA y le paga directamente, a precio de coste, o elige un plan con IA incluida.",
+    "Traduce textos de otras apps y actualiza las traducciones cuando cambia el texto original.",
+    "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
+    "Herramientas SEO completas, visibilidad en búsquedas con IA y un editor de hoja de cálculo para todo el catálogo.",
+    "Galerías de imágenes por variante con carga masiva y conversión a WebP.",
+  ],
   ourNotes: {
-    autoTranslate: "Con su propia clave de IA",
+    autoTranslate: "Con su propia clave de IA o con IA incluida",
     aiProvider: "Seis proveedores",
     imagesPerLanguage: "Aún no",
     currency: "Lo hace Shopify Markets",
@@ -120,12 +129,35 @@ export const compareEs: CompareCopy = {
     languagesLabel: "Idiomas",
     productsLabel: "Productos",
     aiLabel: "Traducciones",
+    enginesLabel: "Proveedores de IA",
+    engines: {
+      ownKey: "{list}: con su propia clave",
+      plusOwnKey: "Clave propia: {list}",
+      shopify: "Traducción automática de Shopify",
+      vendor: "IA propia del proveedor, no seleccionable",
+      unstated: "Traducción automática, motor no indicado",
+    },
     trialRow: "Prueba gratuita",
+    includedAi: {
+      price: "o {price} con IA incluida",
+      taster: "O, una sola vez, unas {n} acciones de IA para probar, sin clave propia",
+      volume: {
+        basic: "Con IA incluida: alcanza para unos 300–500 productos, cada uno traducido a un idioma, al mes",
+        pro: "Con IA incluida: alcanza para unos 600–1.000 productos, cada uno traducido a un idioma, al mes",
+        max: "Con IA incluida: alcanza para unos 1.500–2.500 productos, cada uno traducido a un idioma, al mes",
+      },
+      engines: "Con IA incluida: {list}",
+    },
+    addApp: "Añadir una aplicación a la comparación",
+    removeApp: "Quitar {name} de la comparación",
+    strengthsGroup: "Puntos fuertes",
+    strengthsRow: "Dónde destaca la aplicación",
+    strengthsHelp: "Según la información del proveedor, resumida por nosotros.",
     values: {
       unlimited: "Ilimitados",
-      twoAutomatic: "2 automáticos, los demás a mano",
+      someAutomatic: "2 automáticos, los demás a mano",
       noProductLimit: "Sin límite",
-      ownKey: "Ilimitado: paga directamente a su proveedor de IA",
+      ownKey: "Con su propia clave de IA: ilimitado, paga directamente a su proveedor de IA",
       included: "Incluido",
       unlimitedWords: "Palabras ilimitadas",
       words: "{n} palabras",
@@ -147,7 +179,7 @@ export const compareEs: CompareCopy = {
     perYear: "/ año",
     free: "Gratis",
     onRequest: "Precio a consultar",
-    note: "Precios mensuales en la moneda de cada proveedor, sin impuestos. Varios proveedores son más baratos con pago anual. Con ContentPilot usa su propia clave de IA, así que el uso de IA lo factura aparte su proveedor de IA.",
+    note: "Precios mensuales en la moneda del proveedor, sin impuestos. Varios proveedores son más baratos con pago anual. Con ContentPilot usa su propia clave de IA —y su proveedor de IA le factura el uso por separado— o un plan con IA incluida.",
   },
   competitors: {
     "translate-and-adapt": {
@@ -160,7 +192,7 @@ export const compareEs: CompareCopy = {
         "Totalmente gratuita, hecha por la propia Shopify.",
         "Adapta textos por mercado, como el español de España y el de México.",
         "Cubre tema, checkout y correos de notificación.",
-        "Encaja bien si solo necesita uno o dos idiomas más y traduce poco.",
+        "Encaja bien si necesita uno o dos idiomas más y le basta una traducción automática estándar.",
       ],
       ourEdge: [
         "Traducción con IA en todos los idiomas que quiera, con su propio tono y sus reglas.",
@@ -171,9 +203,10 @@ export const compareEs: CompareCopy = {
         "Herramientas SEO completas y un editor de hoja de cálculo para todo el catálogo.",
       ],
       verdict:
-        "Quédese con Translate & Adapt si vende en uno o dos idiomas adicionales y cambia sus textos pocas veces. Elija ContentPilot si quiere más idiomas, términos coherentes o una sola app para textos, SEO y traducciones. Ambas guardan en el almacén de traducciones de Shopify, así que puede cambiar cuando quiera y conservar todo.",
+        "Quédese con Translate & Adapt si vende en uno o dos idiomas adicionales y le basta una traducción automática estándar. Elija ContentPilot si quiere traducciones con su propio tono y glosario, traducir los textos de otras apps o una sola app para textos, SEO y traducciones. Ambas guardan en el almacén de traducciones de Shopify, así que puede cambiar cuando quiera y conservar todo.",
       notes: {
         autoTranslate: "Dos idiomas",
+        followChanges: "Sincronización semanal, desactivada por defecto",
         imagesPerLanguage: "Solo imágenes del tema",
       },
     },
@@ -199,6 +232,7 @@ export const compareEs: CompareCopy = {
       verdict:
         "Elija Weglot si tiene sitios en varias plataformas y quiere un único servicio de traducción para todos, o si necesita traductores profesionales. Elija ContentPilot si su tienda funciona con Shopify, quiere que las traducciones pertenezcan a su tienda y no quiere límites de palabras.",
       notes: {
+        brandVoice: "Solo formal o informal",
         nativeStorage: "Guardadas en Weglot",
       },
     },
