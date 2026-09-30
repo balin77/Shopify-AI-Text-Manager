@@ -349,9 +349,10 @@ const SHOP_LOCALES_PUBLISHED = `#graphql
 /**
  * The market write sends `marketWebPresenceIds` ALONE, after the publish step.
  * Whether Shopify ties presence membership to publication (auto-publishing on
- * assignment, or unpublishing on removal) is measured only HALF: on a
- * PUBLISHED locale an add and a removal left it published (market probe,
- * 2026-09-30); what an UNPUBLISHED one does is still open — if it moves, a
+ * assignment, or unpublishing on removal) is MEASURED not to (market probe,
+ * 2026-09-30, API 2026-07): a PUBLISHED locale ("de") stayed published and an
+ * UNPUBLISHED one ("nl") stayed unpublished through an add and a removal. The
+ * check stays, because a later version may tie them after all — if it did, a
  * publish flip confirmed a moment earlier in the same save would be undone
  * silently. So every locale a market write touched is checked once against the
  * state this save meant to leave it in. A failed read reports nothing: it can
