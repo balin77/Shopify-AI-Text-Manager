@@ -39,7 +39,7 @@
   if is_product and product.featured_image
     assign og_image = product.featured_image | image_url: width: 1200
     capture og_lm
-      render 'cp-localized-image', src: og_image, width: 1200
+      render 'cp-localized-image', product: product, src: og_image, width: 1200
     endcapture
     if og_lm != blank
       assign og_image = og_lm

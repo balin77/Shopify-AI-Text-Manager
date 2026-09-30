@@ -11,18 +11,26 @@
  * is carried onto the replacement, so a thumbnail stays a thumbnail.
  *
  * A MutationObserver covers galleries that render later (variant switches,
- * our own variant gallery, lazy loaders). A rewritten URL points at a
- * different filename, so it can never match again — the observer cannot loop.
+ * our own variant gallery, lazy loaders). Every URL this script writes is
+ * remembered and never rewritten again, so the observer cannot loop even on a
+ * map that swaps two originals for each other. Only Shopify image URLs are
+ * touched (cdn.shopify.com or the shop's /cdn/shop/ path), so another app's
+ * picture that happens to share a filename is left alone.
  */
 (function () {
   "use strict";
+  var style = document.getElementById("cp-lm-prehide");
+  function unhide() {
+    if (style) style.remove();
+    style = null;
+  }
   var dataEl = document.getElementById("cp-lm-data");
-  if (!dataEl) return;
+  if (!dataEl) return unhide();
   var data;
   try {
     data = JSON.parse(dataEl.textContent || "{}");
   } catch (e) {
-    return;
+    return unhide();
   }
   var market = String(data.k || "");
   var locale = String(data.l || "").toLowerCase();
@@ -36,7 +44,15 @@
     var key = String(e.o).toLowerCase();
     if (!map[key] || k) map[key] = e.u;
   });
-  if (!Object.keys(map).length) return;
+  if (!Object.keys(map).length) return unhide();
+  // Every URL this script wrote. A replacement is never rewritten again, even
+  // when its filename is itself an original somewhere in the map (the app
+  // refuses that, but a hand-edited metafield could still carry A→B and B→A,
+  // which would otherwise loop through the observer for ever).
+  var written = new Set();
+  function isShopifyImageUrl(url) {
+    return url.hostname === "cdn.shopify.com" || url.pathname.indexOf("/cdn/shop/") === 0;
+  }
 
   var LEGACY_SIZE =
     /_(pico|icon|thumb|small|compact|medium|large|grande|original|master|\d+x\d*|\d*x\d+)(_crop_[a-z]+)?(@\dx)?(?=\.[a-z0-9]+$)/i;
@@ -50,12 +66,20 @@
     } catch (e) {
       return null;
     }
+    if (written.has(url.toString()) || !isShopifyImageUrl(url)) return null;
     var segs = url.pathname.split("/");
     var file = segs[segs.length - 1] || "";
-    var legacy = file.match(LEGACY_SIZE);
-    var base = legacy ? file.replace(LEGACY_SIZE, "") : file;
-    var target = map[base.toLowerCase()];
-    if (!target) return null;
+    // The exact name first: a real filename may END in something that looks
+    // like a legacy size suffix ("banner_1200x628.jpg"). Only when the exact
+    // name is unknown is the suffix read as the old img_url size form.
+    var target = map[file.toLowerCase()];
+    var legacy = null;
+    if (!target) {
+      legacy = file.match(LEGACY_SIZE);
+      if (!legacy) return null;
+      target = map[file.replace(LEGACY_SIZE, "").toLowerCase()];
+      if (!target) return null;
+    }
     var out;
     try {
       out = new URL(target, location.href);
@@ -70,13 +94,17 @@
       var w = /^(\d+)x/.exec(legacy[1]);
       if (w) out.searchParams.set("width", w[1]);
     }
-    return out.toString();
+    var result = out.toString();
+    written.add(result);
+    return result;
   }
 
   function rewriteSrcset(value) {
     var changed = false;
+    // Candidates are separated by a comma FOLLOWED BY WHITESPACE; a bare
+    // comma may be part of a URL (image CDNs with transform parameters).
     var next = value
-      .split(",")
+      .split(/,\s+/)
       .map(function (part) {
         var bits = part.trim().split(/\s+/);
         var rep = replacementFor(bits[0]);
@@ -123,8 +151,10 @@
   }
 
   scan(document);
-  var style = document.getElementById("cp-lm-prehide");
-  if (style) style.remove();
+  // The pre-paint hide stays in place: its `:not([data-cp-lm])` guard releases
+  // every image this script has looked at, and it keeps covering originals a
+  // gallery inserts later (variant switches) until the observer rewrites
+  // them. The inline 3 s timer still removes it in every case.
 
   new MutationObserver(function (records) {
     records.forEach(function (r) {

@@ -5,10 +5,13 @@
   place the swap can happen; og:image and the JSON-LD image list do the same
   server-side through snippets/cp-localized-image.liquid.
 
-  Data: `custom.localized_media` (json), written ONLY by the app — see the
-  snippet's header for the shape. `o` (the original's filename) and `u` (a
-  Shopify CDN https URL) are validated by the app before they are written, so
-  they are safe inside a CSS attribute selector and a JSON island.
+  Data: `custom.localized_media` (json) — see the snippet's header for the
+  shape. The app validates `o` and `u` before it writes them, but anything
+  with metafield access (another app, an import, the admin's metafield
+  editor) can write this value too, so the <style> never trusts it: an `o`
+  carrying a quote, an angle bracket or a backslash is skipped there (it could
+  otherwise close the selector or the <style> element). The JSON island goes
+  through `json`, which escapes it.
 
   Pre-paint: the <style> hides every <img> showing an original that has a
   replacement here, BEFORE the page paints, so the visitor never sees the
@@ -28,7 +31,9 @@
   for e in lm.e
     if e.l == loc
       if e.k == blank or e.k == mk
+        unless e.o contains '"' or e.o contains '<' or e.o contains '>' or e.o contains '\'
         assign sel = sel | append: ',img[src*="/' | append: e.o | append: '"]:not([data-cp-lm]),img[srcset*="/' | append: e.o | append: '"]:not([data-cp-lm])'
+        endunless
       endif
     endif
   endfor

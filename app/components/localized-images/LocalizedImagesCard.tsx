@@ -132,6 +132,12 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
     void load();
   }, [load]);
 
+  // The route answers with machine codes; the merchant reads sentences.
+  const errorText = useCallback((code: string | undefined, fallback: string) => {
+    const known = code ? (tx.errors as Record<string, string>)[code] : undefined;
+    return known ?? tx.saveFailed.replace("{error}", fallback);
+  }, [tx]);
+
   const post = useCallback(async (payload: Record<string, unknown>, slot: string, okText: string) => {
     setBusySlot(slot);
     setNotice(null);
@@ -143,7 +149,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
       });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; entries?: LocalizedMediaEntry[]; media?: MediaImage[]; code?: string; message?: string };
       if (!res.ok || !body.ok) {
-        setNotice({ tone: "critical", text: tx.saveFailed.replace("{error}", body.message || body.code || `HTTP ${res.status}`) });
+        setNotice({ tone: "critical", text: errorText(body.code, body.message || `HTTP ${res.status}`) });
         return;
       }
       if (body.entries) setEntries(body.entries);
@@ -154,7 +160,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
     } finally {
       setBusySlot(null);
     }
-  }, [productId, tx]);
+  }, [productId, tx, errorText]);
 
   const handlePicked = useCallback(async (items: AddedItem[]) => {
     const sourceMediaId = pickerFor;
@@ -164,11 +170,11 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
     const picked = await resolvePickedImage(items.find((i) => i.source !== "external_url") ?? items[0]);
     if ("error" in picked) {
       setBusySlot(null);
-      setNotice({ tone: "critical", text: tx.saveFailed.replace("{error}", picked.error) });
+      setNotice({ tone: "critical", text: errorText(picked.code, picked.error) });
       return;
     }
     await post({ intent: "set", sourceMediaId, locale, marketId, fileId: picked.fileId }, sourceMediaId, tx.saved);
-  }, [pickerFor, post, locale, marketId, tx]);
+  }, [pickerFor, post, locale, marketId, errorText]);
 
   const mediaIds = useMemo(() => new Set(media.map((m) => m.id)), [media]);
   const orphans = useMemo(() => entries.filter((e) => !mediaIds.has(e.m)), [entries, mediaIds]);

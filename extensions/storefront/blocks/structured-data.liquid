@@ -235,7 +235,7 @@
     {%- assign img_printed = 0 -%}
     {%- for p_image in product.images limit: 10 -%}
       {%- assign img_url = p_image | image_url: width: 1200 -%}
-      {%- capture img_lm -%}{%- render 'cp-localized-image', src: img_url, width: 1200 -%}{%- endcapture -%}
+      {%- capture img_lm -%}{%- render 'cp-localized-image', product: product, src: img_url, width: 1200 -%}{%- endcapture -%}
       {%- if img_lm != blank -%}{%- assign img_url = img_lm -%}{%- endif -%}
       {%- assign img_scheme = img_url | slice: 0, 2 -%}
       {%- if img_scheme == '//' -%}{%- assign img_url = img_url | prepend: 'https:' -%}{%- endif -%}

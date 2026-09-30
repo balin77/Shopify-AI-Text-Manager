@@ -191,6 +191,23 @@ describe("localized media — Shopify write path", () => {
     }
   });
 
+  it("refuses a replacement that is itself one of the product's images (no chains, no cycles)", async () => {
+    const OTHER_URL = "https://cdn.shopify.com/s/files/1/0001/files/shirt-back.jpg?v=3";
+    const read = () => ({
+      product: {
+        metafield: null,
+        media: { nodes: [
+          { id: MEDIA, mediaContentType: "IMAGE", alt: null, image: { url: ORIG_URL } },
+          { id: "gid://shopify/MediaImage/11", mediaContentType: "IMAGE", alt: null, image: { url: OTHER_URL } },
+        ] },
+      },
+    });
+    const { fn, calls } = fakeGraphql([read, fileRead(OTHER_URL)]);
+    const res = await setLocalizedImage({ graphql: fn as never, productId: PRODUCT, sourceMediaId: MEDIA, locale: "fr", marketId: "", fileId: FILE, origin: "manual", scope });
+    expect(res).toMatchObject({ ok: false, code: "replacementIsOriginal" });
+    expect(calls).toHaveLength(2);
+  });
+
   it("counts a write only when Shopify echoes this product's value", async () => {
     const noEcho = fakeGraphql([() => ({ metafieldsSet: { metafields: [], userErrors: [] } })]);
     expect(await writeProductLocalizedMedia(noEcho.fn as never, PRODUCT, [entry()], false)).toMatchObject({ ok: false, code: "writeNotConfirmed" });

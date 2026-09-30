@@ -37,8 +37,12 @@
 export const LOCALIZED_MEDIA_NAMESPACE = "custom";
 export const LOCALIZED_MEDIA_KEY = "localized_media";
 export const LOCALIZED_MEDIA_TYPE = "json";
-/** A product with a few hundred image × locale × market entries is already absurd. */
-export const MAX_LOCALIZED_MEDIA_ENTRIES = 500;
+/**
+ * Every entry of a product travels in its page's <head> (the storefront island),
+ * so the cap is about page weight as much as sanity: 20 images × 5 languages ×
+ * 2 market layers.
+ */
+export const MAX_LOCALIZED_MEDIA_ENTRIES = 200;
 
 export type LocalizedMediaOrigin = "manual" | "ai";
 

@@ -60,6 +60,7 @@ export type LocalizedMediaErrorCode =
   | "invalidFile"
   | "fileNotReady"
   | "sameFile"
+  | "replacementIsOriginal"
   | "tooManyEntries";
 
 export type LocalizedMediaResult<T> = ({ ok: true } & T) | { ok: false; code: LocalizedMediaErrorCode; message?: string };
@@ -221,6 +222,13 @@ export async function setLocalizedImage(args: {
   // Same filename would make the storefront swap a no-op (and the pre-paint
   // hide would then fall to its fail-safe) — refuse it as the pointless edit it is.
   if (replacementName.toLowerCase() === o.toLowerCase()) return { ok: false, code: "sameFile" };
+  // A replacement that is itself one of this product's images would chain
+  // (A→B while B→C shows C in the gallery but B in og:image) or cycle (A→B,
+  // B→A). The storefront guards against the loop, but the only honest answer
+  // is one level of replacement, so it is refused here.
+  if (current.media.some((mm) => (storefrontFilename(mm.url) ?? "").toLowerCase() === replacementName.toLowerCase())) {
+    return { ok: false, code: "replacementIsOriginal" };
+  }
 
   const entry: LocalizedMediaEntry = {
     o,

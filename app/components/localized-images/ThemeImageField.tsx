@@ -97,7 +97,7 @@ export function ThemeImageField({
     const picked = await resolvePickedImage(items.find((i) => i.source !== "external_url") ?? items[0]);
     setBusy(false);
     if ("error" in picked) {
-      setError(tx.fileFailed.replace("{error}", picked.error));
+      setError(picked.code === "stillProcessing" ? tx.errors.stillProcessing : tx.fileFailed.replace("{error}", picked.error));
       return;
     }
     const raw = filenameFromCdnUrl(picked.url);
