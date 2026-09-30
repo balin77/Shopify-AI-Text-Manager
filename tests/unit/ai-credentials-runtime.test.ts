@@ -214,6 +214,24 @@ describe('a served managed shop is gated per request', () => {
     expect((await creds.config.preflight!()).ok).toBe(true);
   });
 
+  it('hands back the ledger it CHECKED — which is not the one computed at build', async () => {
+    // A cancel mid-run drops the shop from its billing-period budget to the
+    // taster. The config was built under the period key; the preflight now
+    // reads the taster's. The service writes THIS call's usage under what the
+    // preflight answers, or the meter fills a row the budget no longer reads.
+    const { db } = await import('~/db.server');
+    const built = managed({ managedAiPeriodEnd: new Date(Date.now() + 10 * 86_400_000) });
+    const creds = aiCredentialsFor(built, 'demo.myshopify.com');
+    expect(creds.config.usagePeriod).toMatch(/^b:/);
+    expect(creds.config.usagePool).toBe('paid');
+
+    (db.aISettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      managed({ managedAiActive: false }),
+    );
+    const verdict = await creds.config.preflight!();
+    expect(verdict).toMatchObject({ ok: true, period: 'taster', pool: 'taster' });
+  });
+
   it('a spent budget reaches the CALL as a refusal', async () => {
     const { db } = await import('~/db.server');
     (db.aISettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(managed());

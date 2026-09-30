@@ -370,6 +370,12 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
       // §3a rule 8 — the seam the switch goes through. `ai.service.ts` never
       // reads `process.env`, so the second credential is handed over by the
       // one module that holds it, on demand and not before.
+      //
+      // The config returned here carries no preflight, and that is correct
+      // only because the service fails over PER REQUEST: it runs the fallback
+      // as a delegate for one call, after THIS config's preflight admitted
+      // that call, and never adopts the fallback config as its own. Adopting
+      // it (the first cut) dropped the preflight for every later call.
       switchToFailover: async () => {
         const fallback = readManagedCredential("failover");
         if (!fallback) return null;
@@ -616,7 +622,8 @@ function managedPreflight(
     // and would send them to buy more of something we cannot serve.
     const { globalPoolStatus, alertIfPoolLow } = await import("./managed-global-pool.server");
     // The pool's own period, NOT `status.period` — see `globalPoolPeriod`.
-    const poolStatus = await globalPoolStatus(managedPoolFor(shop, settings, plan));
+    const pool = managedPoolFor(shop, settings, plan);
+    const poolStatus = await globalPoolStatus(pool);
     alertIfPoolLow(poolStatus);
     if (!poolStatus.allowed) return { ok: false, reason: "managedUnavailable" };
 
@@ -648,6 +655,12 @@ function managedPreflight(
       );
     }
 
-    return { ok: true };
+    // WHICH ledger this answer was checked against travels back with it, and
+    // the service writes this call's usage under exactly these. The config's
+    // own `usagePeriod`/`usagePool` were computed when the service was BUILT;
+    // a run that outlives a billing-period end, a trial or a cancel reads its
+    // budget here under the NEW key, and metering it under the old one made
+    // the used figure zero and the cap decorative for the rest of the run.
+    return { ok: true, period: status.period, pool };
   };
 }

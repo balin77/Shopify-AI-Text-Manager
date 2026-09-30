@@ -3,6 +3,9 @@ import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai'
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { AIQueueService, MAX_RATE_LIMIT_RETRIES, rateLimitBucket } from './ai-queue.service';
+// Pure and import-free, so a static edge costs nothing — the stateful half
+// (the breaker, the ceiling) stays behind a dynamic import like db.server.
+import { classifyFailover, statusOf } from '../../app/services/ai/managed-failover.shared';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
 import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
@@ -75,6 +78,29 @@ export interface AiCallMeter {
  */
 const ESTIMATED_TOKENS_PER_IMAGE = 1_400;
 
+/**
+ * The ledger ONE call was admitted under — the period and pool the managed
+ * preflight checked for it, empty for a call with no preflight.
+ *
+ * Per call, not per instance, because the two drift apart: the resolver
+ * computes `usagePeriod`/`usagePool` once, when the service is built, while
+ * the preflight re-derives them from fresh settings before every call. A bulk
+ * run that crosses a billing-period end, a trial that ends mid-run, or a
+ * cancel that drops the shop to the taster made the budget read one key while
+ * the meter kept writing the other — i.e. the cap measured a row nobody was
+ * writing to, and the run was uncapped.
+ */
+interface CallLedger {
+  period?: string;
+  pool?: 'paid' | 'taster';
+}
+
+/** How a call routed onto the failover credential ended. */
+type FailoverRoute =
+  | { outcome: 'refused' }
+  | { outcome: 'answered'; text: string }
+  | { outcome: 'failed'; error: unknown };
+
 const LOCALE_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', it: 'Italian',
   de: 'German', pt: 'Portuguese', nl: 'Dutch', ja: 'Japanese',
@@ -126,6 +152,43 @@ class AIRequestTimeoutError extends Error {
     super(`AI request timed out after ${ms}ms`);
     this.name = 'AIRequestTimeoutError';
   }
+}
+
+/**
+ * The Chat Completions parameters that depend on WHICH OpenAI model runs.
+ *
+ * The reasoning families — `gpt-5*` and the `o`-series — REJECT `max_tokens`
+ * with a 400 ("use max_completion_tokens instead"), and a 400 is classified
+ * `badRequest`, which never fails over. With `gpt-5-nano` as the managed
+ * default that is not a degraded mode but a total outage, and the same 400
+ * hits any merchant who picks a gpt-5 model for their own key. They also
+ * accept only the default `temperature`, which is why the OpenAI branch sends
+ * none at all (Grok and DeepSeek keep theirs — those are other providers on
+ * the same SDK, and this rule is OpenAI's).
+ *
+ * `max_completion_tokens` on a reasoning model counts the hidden REASONING
+ * tokens too, so the original gpt-5 trio is asked for `minimal` effort: at the
+ * default (`medium`) a long translation can spend the whole allowance thinking
+ * and come back as an empty `finish_reason: length` — billed in full, and the
+ * single most expensive call shape there is. Only those three (and their dated
+ * snapshots): `gpt-5-chat*` is not a reasoning model, and the later gpt-5.x
+ * releases changed the accepted effort values and already default to the
+ * lowest, so guessing a value there is how a 400 comes back.
+ *
+ * Every other model keeps `max_tokens`, byte-identical to before.
+ */
+export function openAiChatParams(
+  model: string,
+  maxOutputTokens: number,
+): { max_tokens: number } | { max_completion_tokens: number; reasoning_effort?: 'minimal' } {
+  const id = (model || '').toLowerCase().trim();
+  const reasoningFamily = id.startsWith('gpt-5') || /^o\d/.test(id);
+  if (!reasoningFamily) return { max_tokens: maxOutputTokens };
+  const minimalEffort = /^gpt-5(-mini|-nano)?(-\d{4}-\d{2}-\d{2})?$/.test(id);
+  return {
+    max_completion_tokens: maxOutputTokens,
+    ...(minimalEffort ? { reasoning_effort: 'minimal' as const } : {}),
+  };
 }
 
 const VALID_PROVIDERS: readonly AIProvider[] = ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'];
@@ -298,7 +361,17 @@ export interface AIServiceConfig {
    * which it can answer with a different credential).
    */
   preflight?: () => Promise<
-    { ok: true } | { ok: false; reason: string; usedMicros?: number; limitMicros?: number }
+    | {
+        ok: true;
+        /**
+         * The ledger period and pool this answer was checked against. The
+         * call's usage is written under THESE, not under the construction-
+         * time `usagePeriod`/`usagePool` — see `CallLedger`.
+         */
+        period?: string;
+        pool?: 'paid' | 'taster';
+      }
+    | { ok: false; reason: string; usedMicros?: number; limitMicros?: number }
   >;
   /**
    * This instance was REFUSED managed AI before it was built — the reason, for
@@ -402,6 +475,57 @@ export interface TranslateFieldsToLocalesOptions {
   keywordDirectiveFor?: (locales: string[]) => string | undefined;
 }
 
+/**
+ * Per-shop in-flight ceiling for MANAGED calls that bypass the queue — §6's
+ * overshoot bound, on the path the queue's global concurrency does not reach.
+ *
+ * Four, because that is one translate-all's fan-out: a single request runs at
+ * full speed and only a second one (another tab, a double click) waits. The
+ * waiters are FIFO and a released slot is handed straight to the next one, so
+ * nobody starves behind later arrivals. Process-local like the queue itself
+ * (production runs one instance), and bounded: a shop's entry is deleted the
+ * moment nothing is in flight or waiting.
+ */
+export const MANAGED_DIRECT_MAX_IN_FLIGHT_PER_SHOP = 4;
+const managedDirectSlots = new Map<string, { active: number; waiters: Array<() => void> }>();
+
+async function acquireManagedDirectSlot(shop: string): Promise<() => void> {
+  let entry = managedDirectSlots.get(shop);
+  if (!entry) {
+    entry = { active: 0, waiters: [] };
+    managedDirectSlots.set(shop, entry);
+  }
+  if (entry.active < MANAGED_DIRECT_MAX_IN_FLIGHT_PER_SHOP) {
+    entry.active++;
+  } else {
+    const slots = entry;
+    // The slot is TRANSFERRED by the releaser (active is not decremented and
+    // re-incremented), so a newcomer arriving in between cannot jump the line.
+    await new Promise<void>((resolve) => slots.waiters.push(resolve));
+  }
+  let released = false;
+  return () => {
+    // Idempotent: a double release would hand out a slot that was never taken.
+    if (released) return;
+    released = true;
+    const current = managedDirectSlots.get(shop);
+    if (!current) return;
+    const next = current.waiters.shift();
+    if (next) {
+      next();
+      return;
+    }
+    current.active--;
+    if (current.active <= 0) managedDirectSlots.delete(shop);
+  };
+}
+
+/** Test seam — how many managed direct calls a shop has in flight / waiting. */
+export function managedDirectSlotState(shop: string): { active: number; waiting: number } | null {
+  const entry = managedDirectSlots.get(shop);
+  return entry ? { active: entry.active, waiting: entry.waiters.length } : null;
+}
+
 export class AIService {
   private huggingface?: HfInference;
   private gemini?: GenerativeModel;
@@ -432,6 +556,12 @@ export class AIService {
   private glossaryRulesPromise?: Promise<GlossaryRule[]>;
   /** The ledger's `feature` dimension for this instance — see resolveFeature. */
   private featurePromise?: Promise<string>;
+  /**
+   * The service a managed call is failed over ONTO, built on first need —
+   * see `failoverDelegate`. Never this instance's identity: the failover is
+   * per request, so `provider` and `config` stay the primary's for good.
+   */
+  private failoverService?: AIService;
 
   constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
@@ -1527,7 +1657,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         try {
           recovered[locale] = await this.translateBatchValues(values, fromLang, locale, context, instructions);
         } catch (localeError: unknown) {
-          if (isAuthError(localeError)) throw localeError;
+          // A managed REFUSAL stands the whole call down exactly like an auth
+          // failure: swallowed here, its locale would come back as "not
+          // translated", which the repair path answers with a deletion
+          // (§6a rule 1) — over a budget that ran out, not a bad answer.
+          if (isAuthError(localeError) || isManagedRefusal(localeError)) throw localeError;
           loggers.ai('error', '[AI-SERVICE] Per-locale value retry failed', { locale });
         }
       }
@@ -2392,11 +2526,30 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
 
     let response: string;
+    // Where this call is SERVED, per call — see `executeAIRequest`'s `served`.
+    const served = { provider: this.provider };
 
     try {
       // If no shop/taskId provided, execute directly (backward compatibility)
       if (!this.shop || !this.taskId) {
-        response = await this.executeAIRequest(prompt, imageUrls);
+        // A MANAGED call that skips the queue still spends the operator's key,
+        // and nothing else bounds how many run at once: an interactive
+        // translate-all fans out four workers per HTTP request, and a merchant
+        // with three tabs open is twelve. §6's overshoot bound ("a call may
+        // START only while remaining > 0", overshoot ≤ concurrency × worst
+        // call) holds only while concurrency is bounded per shop, so the
+        // excess WAITS here — never fails, because a refusal on this path
+        // would be a lie about a budget that is not spent. BYO is untouched:
+        // it is the merchant's own key and their own provider limits.
+        const release =
+          this.config.credentialSource === 'managed' && this.shop
+            ? await acquireManagedDirectSlot(this.shop)
+            : null;
+        try {
+          response = await this.executeAIRequest(prompt, imageUrls, 0, served);
+        } finally {
+          release?.();
+        }
       } else {
         // Use queue for rate-limited execution
         const estimatedTokens = this.estimateTokens(prompt);
@@ -2411,7 +2564,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           // queue is the only place that counts them — this closure runs
           // INSIDE its retry loop, so asserting "already spent" from in here
           // (the first cut did) failed a 429 over on the very first attempt.
-          (attempt) => this.executeAIRequest(prompt, imageUrls, attempt),
+          (attempt) => {
+            // Each queue attempt starts on the primary again.
+            served.provider = this.provider;
+            return this.executeAIRequest(prompt, imageUrls, attempt, served);
+          },
           // Which rate-limit bucket this call is ADMITTED against (§9.1),
           // decided from what is knowable before dispatch.
           this.config.credentialSource === 'managed' ? 'managed' : 'byo',
@@ -2421,7 +2578,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           () =>
             rateLimitBucket(
               this.config.credentialSource === 'managed' ? 'managed' : 'byo',
-              this.provider,
+              served.provider,
             )
         );
       }
@@ -2430,7 +2587,17 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // typed error and trip the breaker. Callers that loop over locales must
       // re-throw this rather than swallowing it (see isAuthError usages), so an
       // invalid key always surfaces instead of silently producing no output.
-      if (isAuthError(error)) {
+      // A bare 403 on the OPERATOR's key counts too. `isAuthError` leaves a
+      // bare 403 out on purpose — providers also use it for quota and policy
+      // blocks, and a merchant must not be told their key is invalid over one
+      // — but on our key every reading of it is ours to fix, and letting it
+      // through as a plain error is the one outcome that must not happen: on a
+      // detached repair a plain error reads as "the AI could not deliver" and
+      // DELETES translations. `classifyFailover` already treats it as `ourAuth`,
+      // so it reaches here only when the failover could not serve it.
+      const operatorKeyRefused =
+        this.config.credentialSource === 'managed' && statusOf(error) === 403;
+      if (isAuthError(error) || operatorKeyRefused) {
         // §3a rule 9 — an auth failure on the OPERATOR's key is our incident,
         // not the merchant's. `InvalidAIKeyError` says "your API key was
         // rejected" and sends them to a tab that renders nothing in managed
@@ -2608,6 +2775,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     imageUrls?: string[],
     /** Rate-limit retries the QUEUE has already spent on this call (§3a rule 7). */
     queueAttempt = 0,
+    /**
+     * Where the answer is reported to have been SERVED — the queue's rate-limit
+     * bucket reads it back once the closure has run. Per CALL rather than read
+     * off the instance: the failover no longer moves the instance, and one
+     * instance runs several calls at once (the chunked translate fans out four
+     * workers), so an instance field would report a sibling's route.
+     */
+    served?: { provider: AIProvider },
   ): Promise<string> {
     // A refusal decided at BUILD time (no consent, kill switch, a credential
     // this deployment cannot serve) fails every call on this instance, and
@@ -2619,6 +2794,15 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // BEFORE the timer and before the queue slot does any work: a refused call
     // must cost nothing at all, and a refusal thrown from inside the race
     // would be charged a worst case by the timeout branch below.
+    //
+    // What the preflight ANSWERS is kept for this one call. The ledger period
+    // and pool it checked are the ones this call's usage is written under:
+    // `this.config.usagePeriod` was computed once, at construction, while the
+    // preflight re-derives both from fresh settings — so a bulk run crossing a
+    // billing boundary, a trial ending or a cancel mid-run wrote its meter
+    // under one key while the budget was read under another, and the cap
+    // measured a row nobody was writing to.
+    let ledger: CallLedger = {};
     if (this.config.preflight) {
       const verdict = await this.config.preflight();
       if (!verdict.ok) {
@@ -2627,28 +2811,136 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           limitMicros: verdict.limitMicros,
         });
       }
+      ledger = { period: verdict.period, pool: verdict.pool };
     }
 
-    // §3a rule 6 — the breaker GATE on the default provider, and it is the
-    // half that was missing: the breaker recorded outcomes and nothing ever
-    // asked it anything, so an open circuit changed nothing. Every call still
-    // paid the full timeout against a dead provider before failing over, the
-    // half-open probe was never issued, and the circuit therefore never
-    // closed again — which also made the trip counter, the thing the log line
-    // calls a page, permanently stuck at one.
+    // §3a rule 6 — the breaker GATE on the default provider. Open ⇒ this call
+    // goes straight to the fallback. Half-open ⇒ THIS call is the probe and
+    // goes to the primary while everyone else holds the fallback.
     //
-    // Open ⇒ go straight to the fallback. Half-open ⇒ THIS call is the probe
-    // and goes to the primary while everyone else holds the fallback.
+    // The failover is PER REQUEST and never moves the instance. It used to
+    // swap `this.config` for the fallback's, which has no preflight and no way
+    // back: every later call on a bulk run's instance skipped the budget, the
+    // consent re-read, the kill switch and the global pool, the per-shop
+    // failover ceiling and the failover budget were asked once at switch time
+    // and never again, and the instance stayed on the 14x model for the rest
+    // of the run however soon the primary recovered. Now `this.config` is
+    // always the primary's, every call is gated, and every call asks the
+    // breaker afresh.
+    let primaryProbe = false;
     if (this.isManagedPrimary()) {
       const { breakerAllows } = await import(
         '../../app/services/ai/managed-failover.server'
       );
-      const verdict = breakerAllows(this.provider);
-      if (!verdict.allow) {
-        await this.switchToFailoverGuarded('breakerOpen');
+      const gate = breakerAllows(this.provider);
+      if (!gate.allow) {
+        const routed = await this.runOnFailover('breakerOpen', prompt, imageUrls, ledger, queueAttempt, served);
+        if (routed.outcome === 'answered') return routed.text;
+        // The fallback ran and failed: the primary is known to be down, so
+        // there is nothing better to try — its error is what happened.
+        if (routed.outcome === 'failed') throw this.normalizeError(routed.error);
+        // Refused (no fallback, ceiling, budget, fallback breaker): fall
+        // through to the primary, which is what an open breaker did before
+        // the failover existed.
+      } else {
+        primaryProbe = gate.probe;
       }
     }
 
+    const onPrimary = this.isManagedPrimary();
+    // A claimed half-open probe has to be RESOLVED — by an outcome, or by
+    // handing the slot back. A probe that ended on a non-health error (a 400,
+    // a content refusal, an early 429) records nothing, and without the
+    // release the breaker stayed "probing" forever: no call was ever let
+    // through to the primary again until the process restarted.
+    let probeResolved = false;
+    try {
+      try {
+        const answer = await this.meteredAttempt(prompt, imageUrls, ledger);
+        // A managed SUCCESS on the default provider, recorded — without it
+        // the breaker's window is 100 % failures by construction. It is also
+        // what CLOSES a half-open circuit.
+        if (onPrimary) {
+          await this.recordOutcome(this.provider, true, primaryProbe);
+          probeResolved = true;
+        }
+        return answer;
+      } catch (firstError) {
+        // §3a — the failover. HERE, below askAI's auth latch and BEFORE the
+        // input-too-long replacement, which is the only place both are still
+        // true. A refusal is us declining, never a provider failure: it is
+        // neither counted nor retried elsewhere.
+        const verdict =
+          onPrimary && !isManagedRefusal(firstError)
+            ? classifyFailover({
+                status: statusOf(firstError),
+                message: firstError instanceof Error ? firstError.message : String(firstError),
+                // The queue retries a rate limit by re-enqueueing this closure,
+                // so the retries are spent only once it says so.
+                rateLimitRetriesExhausted: queueAttempt >= MAX_RATE_LIMIT_RETRIES,
+              })
+            : null;
+        // Only a PROVIDER-HEALTH failure counts against the breaker, and the
+        // classifier that decides whether to fail over is the one that
+        // decides that too. Counting every failure let one shop open the
+        // GLOBAL circuit for everybody — five oversized prompts, five content
+        // refusals, or a burst of 429s the queue was about to retry anyway —
+        // and put every managed shop on the 14x model for a healthy provider.
+        if (verdict?.failOver) {
+          await this.recordOutcome(this.provider, false, primaryProbe);
+          probeResolved = true;
+        }
+        if (verdict?.failOver) {
+          const routed = await this.runOnFailover(
+            verdict.reason,
+            prompt,
+            imageUrls,
+            ledger,
+            queueAttempt,
+            served,
+          );
+          if (routed.outcome === 'answered') return routed.text;
+        }
+        // The caller gets the FIRST error, which describes the outage rather
+        // than our reaction to it.
+        throw firstError;
+      }
+    } catch (error) {
+      throw this.normalizeError(error);
+    } finally {
+      if (primaryProbe && !probeResolved) await this.releaseBreakerProbe(this.provider);
+    }
+  }
+
+  /** The one error rewrite a caller may see — input-too-long in plain words. */
+  private normalizeError(error: unknown): unknown {
+    if (AIService.isInputTooLongError(error)) {
+      return new Error(AIService.INPUT_TOO_LONG_MESSAGE);
+    }
+    return error;
+  }
+
+  /**
+   * ONE provider attempt, raced against the backstop timeout and CHARGED
+   * before it returns — the meter's unit.
+   *
+   * It is the unit rather than the whole request because a failover is two
+   * attempts on two identities, and each must be settled on its own: the
+   * first cut shared one meter between them and reset it at the switch, so a
+   * primary that HUNG (dispatched, never answered) lost its worst-case charge
+   * the moment the failover began — refused switch or not. Here the primary's
+   * attempt is charged in full, worst case included, before the failover
+   * starts, and the fallback's attempt gets its own timer and its own worst
+   * case: it used to run outside the race, so a hung fallback held the queue
+   * slot past the 120s ceiling and was never charged at all.
+   *
+   * Throws the provider's error unchanged; normalisation is the caller's.
+   */
+  private async meteredAttempt(
+    prompt: string,
+    imageUrls: string[] | undefined,
+    ledger: CallLedger,
+  ): Promise<string> {
     let timer: NodeJS.Timeout | undefined;
     const meter: AiCallMeter = { dispatched: 0, observed: [] };
     try {
@@ -2661,27 +2953,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           AI_REQUEST_TIMEOUT_MS,
         );
       });
-      const onPrimary = this.isManagedPrimary();
-      try {
-        const answer = await Promise.race([
-          this._executeAIRequestInner(prompt, imageUrls, meter),
-          timeoutPromise,
-        ]);
-        // A managed SUCCESS on the default provider, recorded — without it
-        // the breaker's window is 100 % failures by construction and it opens
-        // after five failover-eligible errors whatever the real rate is. It
-        // is also what CLOSES a half-open circuit.
-        if (onPrimary) await this.recordPrimaryOutcome(true);
-        return answer;
-      } catch (firstError) {
-        if (onPrimary) await this.recordPrimaryOutcome(false);
-        // §3a — the failover. HERE, below askAI's auth latch and BEFORE the
-        // input-too-long replacement below, which is the only place both are
-        // still true.
-        const retried = await this.tryFailover(firstError, prompt, imageUrls, meter, queueAttempt);
-        if (retried !== null) return retried;
-        throw firstError;
-      }
+      return await Promise.race([
+        this._executeAIRequestInner(prompt, imageUrls, meter),
+        timeoutPromise,
+      ]);
     } catch (error) {
       if (error instanceof AIRequestTimeoutError && meter.dispatched > meter.observed.length) {
         // A call was still generating when the clock ran out. Charged at its
@@ -2692,25 +2967,26 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           meter.observed.push(this.worstCaseUsage(prompt, imageUrls?.length ?? 0));
         }
       }
-      if (AIService.isInputTooLongError(error)) {
-        throw new Error(AIService.INPUT_TOO_LONG_MESSAGE);
-      }
       throw error;
     } finally {
       if (timer) clearTimeout(timer);
+      // SPLICED, so an answer that lands after the timeout (the race does not
+      // cancel the loser) can never be charged a second time on top of the
+      // worst case that stood in for it.
+      const settled = meter.observed.splice(0, meter.observed.length);
       // AWAITED rather than fired off: one upsert against a call that took
       // seconds is not worth measuring, while a detached write is one the
       // process can be killed out from under — and an under-counted ledger is
       // what a budget would later be enforced against. `recordUsage` never
       // throws, so this cannot turn a successful generation into a failed one,
       // nor replace the error a failed one is about to throw.
-      for (const usage of meter.observed) {
+      for (const usage of settled) {
         // Guarded here as well as inside `recordUsage`: this loop runs in a
         // `finally` that may be unwinding an error, and anything thrown from
         // it — including from the logger in that method's own catch — would
         // REPLACE the error the caller is about to see with a bookkeeping one.
         try {
-          await this.recordUsage(usage);
+          await this.recordUsage(usage, ledger);
         } catch {
           // Deliberately silent: the one thing left that could report this is
           // the logger that just failed.
@@ -2720,96 +2996,144 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   /**
-   * Try the OTHER managed provider, or answer null to let the original error
-   * stand — §3a.
+   * Serve ONE call on the OTHER managed credential — §3a.
    *
-   * Never throws: a failure here must leave the caller with the FIRST error,
-   * which is the one that describes what actually happened. It returns null
-   * for every reason not to fail over, and the reasons are as important as
-   * the mechanism:
+   * Never throws. It answers `refused` for every reason not to fail over, and
+   * the reasons are as important as the mechanism — each is money, and each is
+   * asked on EVERY failover-served call, not once per instance:
    *
-   * - not a managed call (a merchant's own key is not ours to reroute),
-   * - no fallback configured,
-   * - the error is one the second provider answers identically (§3a rule 7),
-   * - the breaker is open on the fallback too,
-   * - this SHOP has used up its failover allowance (rule 2).
+   * - no fallback configured (or none distinct from the default),
+   * - this SHOP has used up its failover allowance (rule 2: the triggers are
+   *   shop-reachable and the breaker is global),
+   * - the GLOBAL failover budget is spent (rule 4),
+   * - the fallback's own breaker is open.
+   *
+   * The call runs on a DELEGATE service built from the fallback config, so the
+   * primary instance never changes identity and its preflight keeps running
+   * for every call. The delegate is metered under the ledger THIS call's
+   * preflight admitted, and billed at the default model's price (rule 1)
+   * through the `defaultModelForBilling` its config carries.
    */
-  private async tryFailover(
-    error: unknown,
+  private async runOnFailover(
+    reason: string,
     prompt: string,
     imageUrls: string[] | undefined,
-    meter: AiCallMeter,
+    ledger: CallLedger,
     queueAttempt: number,
-  ): Promise<string | null> {
-    if (this.config.credentialSource !== 'managed' || !this.config.switchToFailover) return null;
-    // A refusal is not a provider failure — it is us declining, and retrying
-    // it on the other account would spend the operator's money on a call that
-    // was never allowed.
-    if (isManagedRefusal(error)) return null;
+    served?: { provider: AIProvider },
+  ): Promise<FailoverRoute> {
+    if (this.config.credentialSource !== 'managed' || !this.config.switchToFailover) {
+      return { outcome: 'refused' };
+    }
 
+    let delegate: AIService | null;
+    let gate: { allow: boolean; probe: boolean };
     try {
-      const { classifyFailover, statusOf } = await import(
-        '../../app/services/ai/managed-failover.shared'
-      );
-      const verdict = classifyFailover({
-        status: statusOf(error),
-        message: error instanceof Error ? error.message : String(error),
-        // The queue retries a rate limit by re-enqueueing the same closure,
-        // and this runs INSIDE that closure — so the retries are spent only
-        // once the queue says so. Hardcoding `true` here made every 429 fail
-        // over on the first attempt, at ~14x the price, on the one lever a
-        // shop can pull deliberately by queueing enough work (rule 2).
-        rateLimitRetriesExhausted: queueAttempt >= MAX_RATE_LIMIT_RETRIES,
-      });
-      if (!verdict.failOver) return null;
-
-      // Bank what the PRIMARY attempt already spent BEFORE the identity can
-      // move. `recordUsage` reads `this.provider` and `this.config`, and the
-      // entries in `meter.observed` belong to the call that just failed — a
-      // Gemini vision fallback can answer once and fail on a second dispatch,
-      // and the timeout branch fills entries too. Left in the meter they were
-      // priced at the FALLBACK's unknown-model ceiling and billed there, which
-      // is rule 1 broken in the one case it exists for.
-      await this.drainMeter(meter);
-
-      if (!(await this.switchToFailoverGuarded(verdict.reason))) return null;
-
-      const { recordBreakerOutcome } = await import(
+      const { breakerAllows, shopFailoverExhausted } = await import(
         '../../app/services/ai/managed-failover.server'
       );
-      const text = await this._executeAIRequestInner(prompt, imageUrls, meter);
-      recordBreakerOutcome(this.provider, true);
-      return text;
-    } catch (failoverError) {
-      // The fallback failed too, and it has to be RECORDED as a failure or the
-      // fallback's own breaker can never open — the first cut only ever
-      // recorded its successes, so a permanently broken fallback was probed
-      // on every single call for ever.
-      try {
-        const { recordBreakerOutcome } = await import(
-          '../../app/services/ai/managed-failover.server'
-        );
-        if (this.config.failoverServed) recordBreakerOutcome(this.provider, false);
-      } catch {
-        // Bookkeeping only — never allowed to replace the caller's error.
+      // The period THIS call's preflight checked — the ceiling reads the same
+      // ledger rows the meter writes, so it has to ask the same key.
+      const period = ledger.period ?? this.config.usagePeriod;
+      if (this.shop && period && (await shopFailoverExhausted(this.shop, period))) {
+        loggers.ai('warn', '[AI-SERVICE] Failover ceiling reached for this shop', {
+          shop: this.shop,
+        });
+        return { outcome: 'refused' };
       }
-      // The caller gets the FIRST error, which describes the outage rather
-      // than our reaction to it.
+
+      const { failoverBudgetExhausted } = await import(
+        '../../app/services/ai/managed-global-pool.server'
+      );
+      if (await failoverBudgetExhausted()) return { outcome: 'refused' };
+
+      delegate = await this.failoverDelegate();
+      if (!delegate) return { outcome: 'refused' };
+      gate = breakerAllows(delegate.provider);
+      if (!gate.allow) return { outcome: 'refused' };
+    } catch (error) {
+      loggers.ai('error', '[AI-SERVICE] Failover could not be prepared', {
+        shop: this.shop,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { outcome: 'refused' };
+    }
+
+    loggers.ai('warn', '[AI-SERVICE] Managed failover', {
+      shop: this.shop,
+      from: this.provider,
+      to: delegate.provider,
+      reason,
+    });
+    if (served) served.provider = delegate.provider;
+
+    // The fallback's breaker is recorded here, success AND health failure, or
+    // it can never open (the first cut recorded only successes) — and a probe
+    // slot claimed by `breakerAllows` above is handed back when no outcome
+    // settled it, or the fallback stays disabled until a restart.
+    let probeResolved = false;
+    try {
+      const text = await delegate.meteredAttempt(prompt, imageUrls, ledger);
+      await this.recordOutcome(delegate.provider, true, gate.probe);
+      probeResolved = true;
+      return { outcome: 'answered', text };
+    } catch (failoverError) {
+      if (
+        !isManagedRefusal(failoverError) &&
+        classifyFailover({
+          status: statusOf(failoverError),
+          message: failoverError instanceof Error ? failoverError.message : String(failoverError),
+          rateLimitRetriesExhausted: queueAttempt >= MAX_RATE_LIMIT_RETRIES,
+        }).failOver
+      ) {
+        await this.recordOutcome(delegate.provider, false, gate.probe);
+        probeResolved = true;
+      }
       loggers.ai('error', '[AI-SERVICE] Failover attempt failed', {
         shop: this.shop,
         error: failoverError instanceof Error ? failoverError.message : String(failoverError),
       });
-      return null;
+      return { outcome: 'failed', error: failoverError };
+    } finally {
+      if (gate.probe && !probeResolved) await this.releaseBreakerProbe(delegate.provider);
     }
   }
 
   /**
-   * Is this instance a MANAGED call still on its default credential?
-   *
-   * The one predicate the breaker gate and the outcome recording both ask, so
-   * a call already served by the fallback can never be recorded against the
-   * primary's window (which would make a healthy fallback close a dead
-   * primary's circuit).
+   * The service that runs this instance's failover calls, built once from the
+   * config the resolver hands over. Cached only once it EXISTS: "no fallback"
+   * and a construction failure are re-asked on the next call, which costs an
+   * environment read, while caching them would pin an instance to "no
+   * failover" for a whole run over one misread.
+   */
+  private async failoverDelegate(): Promise<AIService | null> {
+    if (this.failoverService) return this.failoverService;
+    const swapped = await this.config.switchToFailover?.();
+    if (!swapped) return null;
+    const delegate = new AIService(
+      swapped.provider,
+      // The delegate carries NO preflight and no switch of its own: it is
+      // only ever reached through `runOnFailover`, after this instance's own
+      // preflight admitted the call — a second gate would be a second DB round
+      // trip deciding the same question, and a second switch a failover of a
+      // failover.
+      { ...swapped.config, credentialSource: 'managed', failoverServed: true, preflight: undefined, switchToFailover: undefined },
+      this.shop,
+      this.taskId,
+    );
+    // One feature lookup per instance, not one per identity.
+    delegate.featurePromise = this.resolveFeature();
+    this.failoverService = delegate;
+    return delegate;
+  }
+
+  /**
+   * Is this instance a MANAGED call on its default credential with a failover
+   * behind it? The one predicate the breaker gate and the outcome recording
+   * both ask. A failover delegate never answers yes (it carries no switch), so
+   * a call served by the fallback can never be recorded against the primary's
+   * window — which would make a healthy fallback close a dead primary's
+   * circuit.
    */
   private isManagedPrimary(): boolean {
     return (
@@ -2819,83 +3143,31 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     );
   }
 
-  /** Tell the breaker how a DEFAULT-credential managed call went. Never throws. */
-  private async recordPrimaryOutcome(ok: boolean): Promise<void> {
+  /**
+   * Tell the breaker how a managed call to `provider` went. `probe` says
+   * whether this call HOLDS the half-open probe — only then may its outcome
+   * close or re-open the circuit. Never throws.
+   */
+  private async recordOutcome(provider: AIProvider, ok: boolean, probe: boolean): Promise<void> {
     try {
       const { recordBreakerOutcome } = await import(
         '../../app/services/ai/managed-failover.server'
       );
-      recordBreakerOutcome(this.provider, ok);
+      recordBreakerOutcome(provider, ok, undefined, { probe });
     } catch {
       // Bookkeeping only — never allowed to replace the caller's error.
     }
   }
 
-  /**
-   * Move this instance onto the fallback credential, or answer false.
-   *
-   * ONE gate for both entrances — the breaker finding the primary open before
-   * a call, and an error classifying as failover-worthy after one — because
-   * the three things it checks are money: the per-SHOP ceiling (rule 2: the
-   * triggers are shop-reachable and the breaker is global), the GLOBAL
-   * failover budget (rule 4), and the fallback's own breaker.
-   */
-  private async switchToFailoverGuarded(reason: string): Promise<boolean> {
-    if (!this.config.switchToFailover) return false;
-    const { breakerAllows, shopFailoverExhausted } = await import(
-      '../../app/services/ai/managed-failover.server'
-    );
-
-    if (this.shop && this.config.usagePeriod) {
-      if (await shopFailoverExhausted(this.shop, this.config.usagePeriod)) {
-        loggers.ai('warn', '[AI-SERVICE] Failover ceiling reached for this shop', {
-          shop: this.shop,
-        });
-        return false;
-      }
-    }
-
-    const { failoverBudgetExhausted } = await import(
-      '../../app/services/ai/managed-global-pool.server'
-    );
-    if (await failoverBudgetExhausted()) return false;
-
-    const swapped = await this.config.switchToFailover();
-    if (!swapped) return false;
-    if (!breakerAllows(swapped.provider).allow) return false;
-
-    loggers.ai('warn', '[AI-SERVICE] Managed failover', {
-      shop: this.shop,
-      from: this.provider,
-      to: swapped.provider,
-      reason,
-    });
-
-    // Re-initialise onto the other credential. `initializeProvider` builds
-    // exactly one client from `this.provider`, so both have to move.
-    this.provider = swapped.provider;
-    this.config = { ...swapped.config, failoverServed: true };
-    this.initializeProvider();
-    return true;
-  }
-
-  /**
-   * Record everything the meter holds NOW and reset it.
-   *
-   * Used by the failover, where the identity the entries belong to is about to
-   * change. Resetting `dispatched` with it is deliberate: the second attempt's
-   * accounting starts fresh, and the timeout branch's "a dispatch that never
-   * answered" comparison is about the attempt in flight, not about both.
-   */
-  private async drainMeter(meter: AiCallMeter): Promise<void> {
-    const pending = meter.observed.splice(0, meter.observed.length);
-    meter.dispatched = 0;
-    for (const usage of pending) {
-      try {
-        await this.recordUsage(usage);
-      } catch {
-        // Deliberately silent, like the drain in executeAIRequest's finally.
-      }
+  /** Hand back a half-open probe no outcome settled. Never throws. */
+  private async releaseBreakerProbe(provider: AIProvider): Promise<void> {
+    try {
+      const { releaseBreakerProbe } = await import(
+        '../../app/services/ai/managed-failover.server'
+      );
+      releaseBreakerProbe(provider);
+    } catch {
+      // Bookkeeping only.
     }
   }
 
@@ -2925,7 +3197,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * surface it as a failed save and invite a retry that pays for the same
    * tokens twice.
    */
-  private async recordUsage(usage: AiCallUsage): Promise<void> {
+  private async recordUsage(usage: AiCallUsage, ledger: CallLedger = {}): Promise<void> {
     if (!this.shop) return;
     try {
       // Dynamic import for the same reason savePromptToTask uses one: it keeps
@@ -2960,8 +3232,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             }
           : {}),
         taskId: this.taskId,
-        ...(this.config.usagePeriod ? { period: this.config.usagePeriod } : {}),
-        ...(this.config.usagePool ? { pool: this.config.usagePool } : {}),
+        // The period and pool THIS call's preflight checked win over the ones
+        // computed at construction — see `CallLedger`. The construction-time
+        // pair stays as the fallback for a call with no preflight (BYO, and
+        // the recovery replay of a config that never had one).
+        ...((ledger.period ?? this.config.usagePeriod)
+          ? { period: ledger.period ?? this.config.usagePeriod }
+          : {}),
+        ...((ledger.pool ?? this.config.usagePool)
+          ? { pool: ledger.pool ?? this.config.usagePool }
+          : {}),
       });
     } catch (error) {
       loggers.ai('error', '[AI-SERVICE] Failed to record AI usage', {
@@ -3265,12 +3545,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
                 { type: 'text' as const, text: prompt },
               ],
             }],
-            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            ...openAiChatParams(this.getModel(), TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS),
           })
         : await this.openai.chat.completions.create({
             model: this.getModel(),
             messages: [{ role: 'user', content: prompt }],
-            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            ...openAiChatParams(this.getModel(), TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS),
           });
       const openaiContent = completion.choices[0]?.message?.content ?? '';
       reportChat(completion, openaiContent, hasImages ? images.length : 0);

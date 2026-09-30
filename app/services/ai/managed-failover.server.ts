@@ -77,13 +77,28 @@ export function breakerAllows(provider: string, now = Date.now()): { allow: bool
   return { allow: true, probe: true };
 }
 
-/** Record how a managed call to `provider` went. */
-export function recordBreakerOutcome(provider: string, ok: boolean, now = Date.now()): void {
+/**
+ * Record how a managed call to `provider` went.
+ *
+ * `opts.probe` says whether THIS outcome is the half-open probe's. Left out,
+ * any outcome settles an outstanding probe (the original contract, which the
+ * breaker's own tests exercise). Passed as `false`, it does not: a call that
+ * was dispatched to the primary WITHOUT holding the probe — one that started
+ * while the circuit was still closed, or fell through to the primary because
+ * the fallback was refused — would otherwise decide the probe's verdict, and
+ * one lucky success closed a circuit whose probe was still out.
+ */
+export function recordBreakerOutcome(
+  provider: string,
+  ok: boolean,
+  now = Date.now(),
+  opts?: { probe?: boolean },
+): void {
   const w = windowFor(provider);
   w.events = w.events.filter((e) => now - e.at < WINDOW_MS);
   w.events.push({ at: now, ok });
 
-  if (w.probing) {
+  if (w.probing && opts?.probe !== false) {
     w.probing = false;
     if (ok) {
       logger.info(`[ManagedAI] Circuit closed for ${provider} — probe succeeded`);
@@ -112,6 +127,24 @@ export function recordBreakerOutcome(provider: string, ok: boolean, now = Date.n
       `[ManagedAI] Circuit opened for ${provider}: ${failures}/${w.events.length} failed in the last minute`,
     );
   }
+}
+
+/**
+ * Hand back a half-open probe that no OUTCOME settled.
+ *
+ * `breakerAllows` claims the one probe slot, and only `recordBreakerOutcome`
+ * used to clear it. But a probe can end on an error that says nothing about
+ * the provider's health — a malformed 400, a content refusal, an input that is
+ * too long, a 429 the queue will retry — and recording those would let one
+ * shop's bad prompt decide the circuit for everyone. Unrecorded, though, the
+ * slot stayed claimed forever: `breakerAllows` answered "a probe is out" to
+ * every later call and the circuit could neither close nor re-open until the
+ * process restarted. So the caller that claimed it releases it, and the NEXT
+ * real call probes instead. A no-op on a closed breaker.
+ */
+export function releaseBreakerProbe(provider: string): void {
+  const w = breakers.get(provider);
+  if (w && w.openedAt !== null) w.probing = false;
 }
 
 /** Test seam — the breaker is process-local state with no natural reset. */
