@@ -22,7 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
-import { TaxonomyField } from "~/components/unified/TaxonomyField";
+import { TaxonomyField, resetTaxonomyLabelsForTests } from "~/components/unified/TaxonomyField";
 
 const gid = (n: number) => `gid://shopify/TaxonomyCategory/${n}`;
 
@@ -88,6 +88,7 @@ const openPicker = async () => {
 
 describe("TaxonomyField — browsing", () => {
   beforeEach(() => {
+    resetTaxonomyLabelsForTests();
     vi.stubGlobal("fetch", mockFetch());
   });
   afterEach(() => {
@@ -198,6 +199,7 @@ describe("TaxonomyField — browsing", () => {
  */
 describe("TaxonomyField — the page behind the popover", () => {
   beforeEach(() => {
+    resetTaxonomyLabelsForTests();
     vi.stubGlobal("fetch", mockFetch());
   });
   afterEach(() => {
@@ -269,6 +271,7 @@ describe("TaxonomyField — how wide the boxes get", () => {
     document.querySelector("[style*='--app-dropdown-panel-max-width']")?.getAttribute("style") ?? "";
 
   beforeEach(() => {
+    resetTaxonomyLabelsForTests();
     vi.stubGlobal("fetch", mockFetch());
   });
   afterEach(() => {
@@ -352,6 +355,9 @@ describe("TaxonomyField — the label on the control", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    // A localized name learned here is module state (it has to survive a grid
+    // cell's remount) — so it must not survive into the next test.
+    resetTaxonomyLabelsForTests();
   });
 
   it("replaces the cached English label with the shop's language", async () => {

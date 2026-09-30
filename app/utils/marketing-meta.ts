@@ -38,6 +38,10 @@ interface MarketingMetaInput {
   title: string;
   description: string;
   siteName: string;
+  /** `website` (default) or `article` — a guide topic is a document, not a site. */
+  ogType?: "website" | "article";
+  /** schema.org objects, each emitted as its own JSON-LD script (marketing-jsonld.ts). */
+  jsonLd?: Record<string, unknown>[];
 }
 
 /**
@@ -55,6 +59,8 @@ export function buildMarketingMeta({
   title,
   description,
   siteName,
+  ogType = "website",
+  jsonLd = [],
 }: MarketingMetaInput): MetaDescriptor[] {
   const canonical = `${origin}${localizedPath(locale, path)}`;
 
@@ -78,7 +84,7 @@ export function buildMarketingMeta({
     { title },
     { name: "description", content: description },
     { tagName: "link", rel: "canonical", href: canonical },
-    { property: "og:type", content: "website" },
+    { property: "og:type", content: ogType },
     { property: "og:site_name", content: siteName },
     { property: "og:title", content: title },
     { property: "og:description", content: description },
@@ -97,5 +103,8 @@ export function buildMarketingMeta({
     { name: "twitter:description", content: description },
     { name: "twitter:image", content: shareImage },
     ...alternates,
+    // React Router renders this key as <script type="application/ld+json">,
+    // JSON-escaped, so a value from the copy cannot close the script tag.
+    ...jsonLd.map((node) => ({ "script:ld+json": node })),
   ];
 }

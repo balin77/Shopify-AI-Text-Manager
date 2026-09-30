@@ -364,9 +364,28 @@ function invalidValueDetail(spec: ConditionKindSpec, condition: RuleCondition): 
   // and silently dropping the decimals changes which products match.
   if (spec.scalarType === "Int") return /^-?\d+$/.test(value) ? null : where("value");
   if (spec.read === "money" || spec.read === "weight" || spec.scalarType === "Decimal") {
-    return /^-?\d+([.,]\d+)?$/.test(value) ? null : where("value");
+    return ruleDecimal(value) !== null ? null : where("value");
   }
   return null;
+}
+
+/**
+ * A rule's decimal value (a price, a weight, a Decimal scalar) as the dot
+ * string Shopify's input takes, or null when it is not one.
+ *
+ * A comma is as good as a dot, and a missing digit on either side of the
+ * separator is completed rather than refused — ".5" is 0.5 and "2." is 2, the
+ * way people type them. The validator and the builder both go through this,
+ * so what passes the form is exactly what gets sent: a value the gate
+ * admitted but the builder sent verbatim (".5" as a `Decimal`) would fail at
+ * the schema level, where the merchant only sees "rules could not be saved".
+ */
+export function ruleDecimal(value: string): string | null {
+  const match = /^(-?)(\d*)(?:[.,](\d*))?$/.exec(value.trim());
+  if (!match) return null;
+  const [, sign, whole, fraction = ""] = match;
+  if (whole === "" && fraction === "") return null;
+  return `${sign}${whole || "0"}${fraction === "" ? "" : `.${fraction}`}`;
 }
 
 export function validateRuleSources(sources: RuleSource[]): RuleValidationError[] {
@@ -488,12 +507,12 @@ export function toConditionInput(side: ConditionSide, condition: RuleCondition):
       inner.matchType = condition.matchType ?? "ANY";
     } else if (spec.read === "money") {
       inner.value = {
-        amount: condition.value.replace(",", "."),
+        amount: ruleDecimal(condition.value) ?? condition.value,
         currencyCode: condition.currencyCode || "XXX",
       };
     } else if (spec.read === "weight") {
       inner.value = {
-        value: Number.parseFloat(condition.value.replace(",", ".")),
+        value: Number.parseFloat(ruleDecimal(condition.value) ?? condition.value),
         unit: condition.weightUnit ?? "KILOGRAMS",
       };
     } else if (spec.list) {
@@ -506,7 +525,7 @@ export function toConditionInput(side: ConditionSide, condition: RuleCondition):
     } else if (spec.scalarType === "Int") {
       inner.value = Number.parseInt(condition.value, 10);
     } else if (spec.scalarType === "Decimal") {
-      inner.value = condition.value.replace(",", ".");
+      inner.value = ruleDecimal(condition.value) ?? condition.value;
     } else if (spec.scalarType === "Boolean") {
       inner.value = condition.value === "true";
     } else {

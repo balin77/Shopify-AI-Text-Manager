@@ -208,6 +208,50 @@ describe("resolveCellValue — a price cell on a product row", () => {
     );
     expect(cell.readOnlyReason).toBe("variantsNotSynced");
   });
+
+  it("shows an uncached PRICE as not loaded, never as an empty price", () => {
+    // A row the image manager created carried no price. Shopify has no
+    // variant without one, so the blank is the cache's, and the compare-at
+    // beside it is unknown for the same reason.
+    const row = productRow({
+      variantCount: 1,
+      singleVariant: { id: "gid://shopify/ProductVariant/1", price: "", compareAtPrice: "", sku: "KB-1" },
+    });
+    for (const id of [VAR_PRICE_COLUMN_ID, VAR_COMPARE_AT_COLUMN_ID]) {
+      const cell = resolveCellValue(row, productColumn(id));
+      expect(cell.editable).toBe(false);
+      expect(cell.readOnlyReason).toBe("priceNotSynced");
+    }
+    expect(resolveCellValue(row, productColumn(VAR_SKU_COLUMN_ID)).editable).toBe(true);
+  });
+
+  it("reads SEVERAL off the cached options when the variants are not cached", () => {
+    // The list reload caches options but no variants. An option with two
+    // values proves several variants, and "reload to edit" would be an errand
+    // that leaves the cell read-only anyway.
+    const cell = resolveCellValue(
+      productRow({
+        variantCount: 0,
+        singleVariant: undefined,
+        options: [
+          {
+            id: "gid://shopify/ProductOption/1",
+            position: 1,
+            name: "Size",
+            values: [
+              { id: "gid://shopify/ProductOptionValue/1", name: "S" },
+              { id: "gid://shopify/ProductOptionValue/2", name: "M" },
+            ],
+            hasValueIds: true,
+            linked: false,
+          },
+        ],
+      }),
+      productColumn(VAR_PRICE_COLUMN_ID),
+    );
+    expect(cell.editable).toBe(false);
+    expect(cell.readOnlyReason).toBe("multipleVariants");
+  });
 });
 
 // ─── The call estimate ─────────────────────────────────────────────────────

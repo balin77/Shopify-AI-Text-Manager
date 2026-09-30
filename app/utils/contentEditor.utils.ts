@@ -37,7 +37,9 @@ export interface MetaobjectEntry {
  */
 export function getLocalizedLanguageName(localeCode: string, appLocale: string, fallbackName?: string): string {
   try {
-    const displayNames = new Intl.DisplayNames([appLocale], { type: 'language' });
+    // `fallback: 'none'` answers undefined for a code Intl does not know, so the
+    // caller's own name (e.g. Shopify's) wins over echoing the raw code back.
+    const displayNames = new Intl.DisplayNames([appLocale], { type: 'language', fallback: 'none' });
     const name = displayNames.of(localeCode);
     if (name) return name.charAt(0).toUpperCase() + name.slice(1);
   } catch {

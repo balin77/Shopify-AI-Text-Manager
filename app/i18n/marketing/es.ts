@@ -13,6 +13,8 @@ export const es: MarketingTranslation = {
     videos: "Vídeos",
     roadmap: "Hoja de ruta",
     faq: "Preguntas",
+    guide: "Guía",
+    compare: "Comparativa",
     install: "Instalar en Shopify",
     installShort: "Instalar",
     menu: "Menú",
@@ -31,6 +33,7 @@ export const es: MarketingTranslation = {
 
   pillars: {
     more: "Ver todas las funciones",
+    compare: "Comparar con otras apps de traducción",
     title: "Tres cosas que hace bien",
     items: [
       {
@@ -49,6 +52,8 @@ export const es: MarketingTranslation = {
   },
 
   features: {
+    guideLink: "Cómo funciona — ver la guía",
+    compareLink: "¿Cómo se compara con Translate & Adapt, Weglot y otras?",
     title: "Funciones",
     intro:
       "La aplicación es un conjunto de herramientas con algo en común: todas trabajan sobre el texto del que está hecha su tienda. Esto es lo que incluye.",
@@ -152,6 +157,25 @@ export const es: MarketingTranslation = {
       "feature-media": "El gestor de imágenes con textos alternativos en varios idiomas",
       "feature-structure": "El editor de menús con un árbol de navegación anidado",
     },
+  },
+
+  guide: {
+    title: "Guía",
+    intro:
+      "Cómo funciona cada parte de la app, tema a tema. Cada tema explica qué hace la función y cómo usarla; estamos grabando un vídeo corto para cada uno.",
+    topicCount: "{count} temas",
+    videoBadge: "Vídeo",
+    videoPendingBadge: "Vídeo próximamente",
+    videoPending: "Vídeo próximamente",
+    videoPendingBody: "Estamos grabando el vídeo de este tema. Mientras tanto, el texto de abajo lo explica todo.",
+    tips: "Conviene saber",
+    inThisCategory: "En esta categoría",
+    allTopics: "Todos los temas",
+    previous: "Anterior",
+    next: "Siguiente",
+    helpTitle: "¿Sigues con dudas?",
+    helpBody: "Escríbenos — respondemos a todas las preguntas, y las buenas acaban en esta guía.",
+    helpAction: "Contactar con soporte",
   },
 
   videos: {

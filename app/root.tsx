@@ -17,6 +17,9 @@ import {
 
 export const links: LinksFunction = () => [
   { rel: "icon", href: "/app-icon.png", type: "image/png" },
+  // iOS home-screen / share-sheet icon. Without it Safari requests
+  // /apple-touch-icon.png, which is a 404 on every visit.
+  { rel: "apple-touch-icon", href: "/app-icon.png" },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

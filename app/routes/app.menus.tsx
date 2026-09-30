@@ -183,7 +183,7 @@ export const loader = createContentLoader({
       primary: boolean;
       published?: boolean;
     }>)
-      .filter((l) => l.published !== false && !l.primary)
+      .filter((l) => !l.primary) // published or not — a language being prepared
       .map((l) => l.locale);
 
     // Every menu item's `resourceId`, resolved to a title the merchant reads.
@@ -394,7 +394,7 @@ export async function action({ request }: ActionFunctionArgs) {
     // without `read_markets` gets the global layer and no error.
     const shopLocales = await getCachedShopLocales(admin, session.shop);
     const foreignLocales = shopLocales
-      .filter((l) => !l.primary && (l as { published?: boolean }).published !== false)
+      .filter((l) => !l.primary) // published or not
       .map((l) => l.locale);
     // Bound, exactly like every other caller (product-sync, metaobject-sync):
     // an inline wrapper here would be a second opinion about the gateway's
@@ -627,7 +627,9 @@ export default function MenusPage() {
   const [translateError, setTranslateError] = useState<string | null>(null);
 
   const localeList = useMemo(
-    () => (shopLocales || []).filter((l: any) => l.primary || l.published !== false),
+    // Every shop locale, published or not — an unpublished one is a language
+    // being prepared, and its menu titles are translated like any other.
+    () => (shopLocales || []),
     [shopLocales],
   );
   const foreignLocales = useMemo(
@@ -975,7 +977,15 @@ export default function MenusPage() {
     // wiping it because a background run finished would take the one record of
     // the save away mid-read.
     backgroundRevalidationRef.current = true;
-    revalidator.revalidate();
+    try {
+      revalidator.revalidate();
+    } catch {
+      // An AbortError from the admin interfering: no revalidation is running,
+      // so the flag would otherwise stay up and swallow the next Reload's
+      // retirement of the tree report. Put the debt back instead.
+      backgroundRevalidationRef.current = false;
+      refreshOwedRef.current = true;
+    }
     // `canRefresh` is what re-runs this once the merchant is done editing; the
     // attempt counter is what re-runs it when a second batch settles while the
     // page was already clean.

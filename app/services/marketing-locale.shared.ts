@@ -101,7 +101,28 @@ export function preferredLocaleFromHeader(header: string | null): MarketingLocal
  * added to the nav alone is the failure this exists to remove (it rendered
  * with App Bridge, Sentry and `lang="en"` on its German URL).
  */
-export const MARKETING_LOCALIZED_PATHS = ["/", "/features", "/videos", "/roadmap", "/install"] as const;
+export const MARKETING_LOCALIZED_PATHS = [
+  "/",
+  "/features",
+  "/guide",
+  "/compare",
+  "/videos",
+  "/roadmap",
+  "/install",
+] as const;
+
+/**
+ * The guide's topic pages (`/guide/<topic>`), recognised by SHAPE rather than
+ * listed: the topic list lives in `config/marketing-guide.ts`, and this module
+ * stays import-free (the language switcher renders it in component scope). The
+ * sitemap enumerates the real topics from that config; an unknown slug that
+ * matches the shape is still a public page — the guide route answers it with
+ * the public 404, which must render without App Bridge like every other.
+ */
+const MARKETING_GUIDE_TOPIC_PATH = /^\/guide\/[a-z0-9-]+$/;
+
+/** `/compare/<app>`, recognised by shape for the same reason as the guide topics. */
+const MARKETING_COMPARE_PATH = /^\/compare\/[a-z0-9-]+$/;
 
 /**
  * Every public path, localized or not. `/privacy` and `/terms` are not part
@@ -137,7 +158,11 @@ export function isMarketingPath(pathname: string): boolean {
   const withoutTrailingSlash =
     pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
   const { rest } = stripMarketingLocalePrefix(withoutTrailingSlash);
-  return MARKETING_PATHS.has(rest);
+  return (
+    MARKETING_PATHS.has(rest) ||
+    MARKETING_GUIDE_TOPIC_PATH.test(rest) ||
+    MARKETING_COMPARE_PATH.test(rest)
+  );
 }
 
 /** The document language for a URL, for `<html lang>`. */

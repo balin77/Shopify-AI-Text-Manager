@@ -101,8 +101,23 @@ export interface TranslationChangePolicy {
    * (handle-retranslation.server.ts).
    */
   autoTranslateHandles: boolean;
+  /**
+   * The merchant's OPTIONAL daily limit on FIRST automatic translations — the
+   * resources whose auto-translation rests on the primary digest baseline
+   * alone (stale-translation-sync.server.ts). `null` = no limit, which is the
+   * default: the setting is the merchant's to set, not ours to impose. Only
+   * meaningful while `autoTranslateExternalChanges` is in force, and `null`
+   * whenever it is not.
+   */
+  autoTranslateDailyLimit: number | null;
   /** The shop's plan, for callers that log or surface it. */
   plan: Plan;
+}
+
+/** A stored limit that is not a positive integer is no limit — never zero,
+ *  which would silently stop every first translation. */
+function normalizeDailyLimit(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 /** The historic, hard-coded behaviour — also the fail-open fallback. */
@@ -114,6 +129,7 @@ const DEFAULT_POLICY: TranslationChangePolicy = {
   // is no handle to refresh, and a slug that moves on the strength of a failed
   // lookup is the one outcome this option must never produce.
   autoTranslateHandles: false,
+  autoTranslateDailyLimit: null,
   plan: "free",
 };
 
@@ -133,6 +149,7 @@ export async function loadTranslationChangePolicy(
         translationPurgeOnPrimaryChange: true,
         autoTranslateExternalChanges: true,
         autoTranslateHandles: true,
+        autoTranslateDailyLimit: true,
         subscriptionPlan: true,
       },
     });
@@ -156,6 +173,7 @@ export async function loadTranslationChangePolicy(
       // the merchant switching the automation off, and reading it on its own
       // would let a sub-decision act where the decision it belongs to does not.
       autoTranslateHandles: autoTranslate && (row?.autoTranslateHandles ?? false),
+      autoTranslateDailyLimit: autoTranslate ? normalizeDailyLimit(row?.autoTranslateDailyLimit) : null,
       plan,
     };
   } catch (error: unknown) {

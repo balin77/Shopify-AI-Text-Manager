@@ -229,6 +229,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         seoTitleSuffix: true,
         seoLimits: true,
         extensionSetupHintShownAt: true,
+        autoTranslateExternalChanges: true,
       },
     });
 
@@ -322,13 +323,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // primary locale) and the nav reads it as multi-language, so a lookup
     // hiccup can never grey out a section the merchant can actually use.
     const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+    // PUBLISHED locales only, on purpose: this count gates the SEO sections
+    // that exist for a multi-language STOREFRONT (hreflang), exactly like
+    // app.seo.tsx's. The editors' translate buttons do not read it — they
+    // count every shop locale, unpublished ones included.
     const localeCount = (await getCachedShopLocales(admin, session.shop)).filter(
       (l) => l.published !== false,
     ).length;
 
+    // Whether the Max auto-translation is IN FORCE — the stored switch ANDed
+    // with the plan, the same reading the server makes on every write (the
+    // column survives a downgrade). Only a UI default hangs off it: the create
+    // dialog pre-ticks "translate afterwards", because a merchant who asked
+    // for everything to be translated automatically expects a new item to be.
+    const { meetsPlan } = await import("../utils/planUtils");
+    const { AUTO_TRANSLATE_MIN_PLAN } = await import(
+      "../services/translations/translation-change-policy.shared"
+    );
+    const autoTranslateActive =
+      !!settings?.autoTranslateExternalChanges && meetsPlan(subscriptionPlan, AUTO_TRANSLATE_MIN_PLAN);
+
     return json({
       appLanguage,
       subscriptionPlan,
+      autoTranslateActive,
       aiSettings,
       seoTitleSuffix,
       seoLimits,

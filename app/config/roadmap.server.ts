@@ -107,9 +107,9 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "Puntuación SEO a lo largo del tiempo",
     },
     body: {
-      en: "Every nightly check is already stored. It will read as a line, so a change to the shop is visible without remembering last week's number.",
-      de: "Jede nächtliche Prüfung wird bereits gespeichert. Sie wird als Linie lesbar, damit eine Änderung am Shop sichtbar wird, ohne sich die Zahl der Vorwoche zu merken.",
-      es: "Cada revisión nocturna ya se guarda. Se leerá como una línea, para que un cambio en la tienda se vea sin recordar el número de la semana pasada.",
+      en: "Every daily check is already stored. It will read as a line, so a change to the shop is visible without remembering last week's number.",
+      de: "Jede tägliche Prüfung wird bereits gespeichert. Sie wird als Linie lesbar, damit eine Änderung am Shop sichtbar wird, ohne sich die Zahl der Vorwoche zu merken.",
+      es: "Cada revisión diaria ya se guarda. Se leerá como una línea, para que un cambio en la tienda se vea sin recordar el número de la semana pasada.",
     },
     notes: "FIRST in this list 2026-09-17: it is the only entry here that is already SOLD. The DATA is already there: SeoScoreSnapshot is written by the nightly audit with plan-based retention (plans.ts scoreHistoryDays: Pro 30, Max 365), and getAuditTrend() in audit.service.ts exists — with no caller. SeoKeywordSnapshot is likewise written and never displayed. The plan tab already SELLS 'Score-Verlauf: {days} Tage' (SettingsPlanTab.tsx), so this is owed, not optional: the chart is the whole remaining work. No chart library is needed or wanted — an inline SVG line stays hydration-safe. Crawl diff (two snapshots) is shipped separately.",
   },

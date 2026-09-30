@@ -74,6 +74,10 @@ const FALLBACK: Record<string, string> = {
     "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
   managedAiUnavailable:
     "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
+  handleRedirectsMissing:
+    "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
+  autoTranslateDailyLimit:
+    "Automatic first translations paused for today: your daily limit of {cap} items was reached, and {count} further items are on the retry list. They are translated in the nightly retry as soon as the limit allows.",
 };
 
 function phrase(t: any, key: string): string {
@@ -164,6 +168,22 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // of zero says nothing a merchant can act on.
     case "translations_none_usable":
       return phrase(t, "translationsNoneUsable");
+    // The brake on first translations proven by the primary digest baseline
+    // alone (stale-translation-sync.server.ts): `<refused>:<cap>`. Written from
+    // a webhook, which has no merchant locale — hence a code.
+    case "auto_translate_daily_limit": {
+      const refused = count(parts[1]);
+      const cap = count(parts[2]);
+      if (refused === null || cap === null) return neutral();
+      return fill(phrase(t, "autoTranslateDailyLimit"), { count: refused, cap });
+    }
+    // A handle was re-translated but its OLD foreign URL got no redirect —
+    // unattended, so the Task row is the only place the merchant learns it.
+    case "handle_redirects_missing": {
+      const missed = count(parts[1]);
+      if (missed === null) return neutral();
+      return fill(phrase(t, "handleRedirectsMissing"), { count: missed });
+    }
     case "translations_not_mirrored": {
       const missed = count(parts[1]);
       if (missed === null) return neutral();

@@ -135,11 +135,11 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     .filter(Boolean);
   const targetLocales = [...new Set(requested)];
   const unknown = targetLocales.find(
-    (locale) => !shopLocales.some((l) => l.locale === locale && l.published && !l.primary),
+    (locale) => !shopLocales.some((l) => l.locale === locale && !l.primary),
   );
   if (unknown) {
     return json(
-      { success: false, error: `Locale "${unknown}" is not a published foreign locale of this shop.` },
+      { success: false, error: `Locale "${unknown}" is not a foreign locale of this shop.` },
       { status: 400 },
     );
   }

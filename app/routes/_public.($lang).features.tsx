@@ -1,16 +1,38 @@
 import type { LoaderFunctionArgs, MetaFunction } from "react-router";
-import { useLoaderData } from "react-router";
+import { Link, useLoaderData } from "react-router";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import { requireMarketingLocale } from "../utils/marketing-route.server";
+import {
+  marketingOrigin,
+  redirectTrailingSlash,
+  requireMarketingLocale,
+} from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 import { MediaSlot } from "../components/marketing/MediaSlot";
+import type { GuideCategoryId } from "../config/marketing-guide";
+import { localizedPath } from "../services/marketing-locale.shared";
+
+/**
+ * Where each feature block is explained step by step. A feature page that
+ * links into the guide passes its visitors (and a crawler) straight to the
+ * how-to, instead of leaving the guide reachable from the nav alone.
+ */
+const GUIDE_CATEGORY_FOR_FEATURE: Record<string, GuideCategoryId> = {
+  ai: "ai-content",
+  translations: "translations",
+  bulk: "bulk",
+  seo: "seo",
+  aeo: "ai-visibility",
+  media: "media",
+  structure: "translations",
+};
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  redirectTrailingSlash(url);
   const locale = requireMarketingLocale(params.lang, "/features", url.search);
-  return { locale, origin: url.origin };
+  return { locale, origin: marketingOrigin(url) };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
@@ -37,6 +59,9 @@ export default function MarketingFeatures() {
           <div className="mk-section__head">
             <h1>{t.features.title}</h1>
             <p className="mk-lead">{t.features.intro}</p>
+            <Link className="mk-arrow" to={localizedPath(locale, "/compare")}>
+              {t.features.compareLink}
+            </Link>
           </div>
 
           {/* Anchor row: seven blocks are a lot to scroll blind through. */}
@@ -65,6 +90,14 @@ export default function MarketingFeatures() {
                   <li key={point}>{point}</li>
                 ))}
               </ul>
+              {GUIDE_CATEGORY_FOR_FEATURE[group.id] ? (
+                <Link
+                  className="mk-arrow mk-feature__guide"
+                  to={`${localizedPath(locale, "/guide")}#${GUIDE_CATEGORY_FOR_FEATURE[group.id]}`}
+                >
+                  {t.features.guideLink}
+                </Link>
+              ) : null}
             </div>
             <div className="mk-feature__media">
               {/* No cast: the group ids are literal in en.ts, so a feature

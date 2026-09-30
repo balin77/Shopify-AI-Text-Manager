@@ -22,6 +22,7 @@ import {
   RULES_MIN_API_VERSION,
   conditionKind,
   newCondition,
+  ruleDecimal,
   rulesAvailableOn,
   toConditionInput,
   toSourcesInput,
@@ -248,7 +249,34 @@ describe("validateRuleSources", () => {
   });
 });
 
+describe("ruleDecimal", () => {
+  it("completes a missing digit on either side and takes a comma", () => {
+    expect(ruleDecimal(".5")).toBe("0.5");
+    expect(ruleDecimal("2.")).toBe("2");
+    expect(ruleDecimal("1,25")).toBe("1.25");
+    expect(ruleDecimal("-,5")).toBe("-0.5");
+    expect(ruleDecimal(".")).toBeNull();
+    expect(ruleDecimal("1.2.3")).toBeNull();
+    expect(ruleDecimal("abc")).toBeNull();
+  });
+});
+
 describe("toConditionInput", () => {
+  it("sends a price and a weight typed without a leading zero as the number they mean", () => {
+    // The validator admits ".5"; the builder must send what it admitted in the
+    // shape the input takes, or the save fails at the schema level.
+    expect(
+      toConditionInput("inclusion", {
+        localId: "c1", kind: "variantCompareAtPrice", relation: "GREATER_THAN", value: ".5", currencyCode: "CHF",
+      }),
+    ).toEqual({ variantCompareAtPrice: { relation: "GREATER_THAN", value: { amount: "0.5", currencyCode: "CHF" } } });
+    expect(
+      toConditionInput("inclusion", {
+        localId: "c1", kind: "variantWeight", relation: "LESS_THAN", value: ",25", weightUnit: "KILOGRAMS",
+      }),
+    ).toEqual({ variantWeight: { relation: "LESS_THAN", value: { value: 0.25, unit: "KILOGRAMS" } } });
+  });
+
   it("nests a list condition with its OWN matchType", () => {
     // The second level — the one the legacy ruleSet projection drops.
     expect(

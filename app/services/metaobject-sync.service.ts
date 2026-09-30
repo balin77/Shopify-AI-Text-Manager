@@ -420,7 +420,8 @@ export class MetaobjectSyncService {
     if (metaobjects.length === 0) return 0;
 
     const locales = await this.getLocales();
-    const foreignLocales = locales.filter(l => !l.primary && l.published);
+    // Published or not — an unpublished locale is a language being prepared.
+    const foreignLocales = locales.filter(l => !l.primary);
 
     if (foreignLocales.length === 0) return 0;
 

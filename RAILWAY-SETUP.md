@@ -290,7 +290,7 @@ NODE_ENV=production
 SHOPIFY_API_KEY=<dein-production-api-key>
 SHOPIFY_API_SECRET=<dein-production-api-secret>
 SHOPIFY_API_VERSION=2025-10
-SHOPIFY_SCOPES=read_legal_policies,write_legal_policies,read_locales,read_online_store_navigation,write_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,write_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations
+SHOPIFY_SCOPES=read_legal_policies,write_legal_policies,read_locales,write_locales,read_markets,write_markets,read_online_store_navigation,write_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,write_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations
 SHOPIFY_APP_URL=${{RAILWAY_PUBLIC_DOMAIN}} oder deine Custom Domain
 AI_PROVIDER=huggingface
 HUGGINGFACE_API_KEY=<dein-key>
@@ -300,6 +300,8 @@ DATABASE_URL=${{Postgres.DATABASE_URL}} (automatisch gesetzt)
 ```
 
 > **Hinweis**: Shop-Name und Access-Token werden automatisch aus der Datenbank-Session geladen (Multi-Tenant SaaS).
+
+> **Öffentliche Website (SEO)**: Optional `PUBLIC_SITE_URL=https://<deine-domain>` nur in **Production** setzen. Canonical-Links, hreflang, Sitemap, robots.txt, llms.txt und strukturierte Daten zeigen dann immer auf diese eine Adresse, egal über welchen Host eine Seite aufgerufen wird. Ohne die Variable wird die aufgerufene Adresse verwendet. In **Development** `APP_ENV=development` gesetzt lassen: Dann schickt der Server auf jede Antwort `X-Robots-Tag: noindex`, damit die Dev-Kopie der Website nicht bei Google landet.
 
 #### Development Environment Variables:
 ```

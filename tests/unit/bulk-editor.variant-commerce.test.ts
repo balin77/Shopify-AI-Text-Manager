@@ -493,7 +493,7 @@ describe("applyBulkDiff — the InventoryItem half", () => {
 
     const result = await applyBulkDiff(
       { db: db as never, shop: SHOP, admin: admin as never, columnsByType },
-      [entry(V1, VAR_COST_COLUMN_ID, "1.00"), entry(V1, VAR_HS_CODE_COLUMN_ID, "6109")],
+      [entry(V1, VAR_COST_COLUMN_ID, "1.00"), entry(V1, VAR_HS_CODE_COLUMN_ID, "610910")],
     );
 
     expect(result.failures).toHaveLength(2);
