@@ -161,6 +161,16 @@ const MARKET_DELETE = `#graphql
     }
   }`;
 
+const LEGACY_PRESENCE_DELETE = `#graphql
+  mutation marketProbeLegacyPresenceDelete($webPresenceId: ID!) {
+    marketWebPresenceDelete(webPresenceId: $webPresenceId) {
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
 const PRESENCE_DELETE = `#graphql
   mutation marketProbePresenceDelete($id: ID!) {
     webPresenceDelete(id: $id) {
@@ -296,9 +306,50 @@ export async function action({ request }: ActionFunctionArgs) {
     return s;
   };
 
-  // What this run created — the cleanup works off these, never off names.
+  // What this run created — the cleanup works off these. The market NAME is
+  // unique per run, so a market whose create was never confirmed can still be
+  // found (and removed) by it.
+  const marketName = `ContentPilot probe ${Date.now()}`;
   let marketId: string | null = null;
   let suffix: string | null = null;
+  const knownPresenceIds = new Set<string>();
+  /** The one real locale this run writes to, and the state it must go back to. */
+  let localeTest: { locale: string; beforeIds: string[]; publishedBefore: boolean; restored: boolean } | null = null;
+  let hasWebPresenceDelete = true;
+
+  const adoptByName = async (): Promise<string | null | undefined> => {
+    const read = await loadMarketAddresses(admin, shop);
+    if (!read) return undefined; // cannot tell
+    return read.markets.find((m) => m.name === marketName)?.marketId ?? null;
+  };
+  const readLocale = async (locale: string) => {
+    const body = await raw(SHOP_LOCALES);
+    const hit = (body.data?.shopLocales ?? []).find((l: any) => l?.locale === locale);
+    if (!hit || !Array.isArray(hit.marketWebPresences)) return null; // cannot tell
+    return { ids: hit.marketWebPresences.map((p: any) => p.id) as string[], published: !!hit.published };
+  };
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+  /** Put the locale back exactly: presences AND publication, confirmed by a re-read. */
+  const restoreLocale = async (): Promise<string | null> => {
+    if (!localeTest) return null;
+    const { locale, beforeIds, publishedBefore } = localeTest;
+    await raw(SHOP_LOCALE_PRESENCES, { locale, shopLocale: { marketWebPresenceIds: beforeIds } });
+    let now = await readLocale(locale);
+    if (now && now.published !== publishedBefore) {
+      await raw(SHOP_LOCALE_PRESENCES, { locale, shopLocale: { published: publishedBefore } });
+      now = await readLocale(locale);
+    }
+    if (!now) return `could not re-read "${locale}" after restoring it`;
+    // The probe presence may still be listed (add-only semantics); it goes with
+    // the presence itself in the cleanup, so only the ORIGINAL set matters here.
+    const missing = beforeIds.filter((id) => !now!.ids.includes(id));
+    const extra = now.ids.filter((id) => !beforeIds.includes(id) && !knownPresenceIds.has(id));
+    if (missing.length || extra.length || now.published !== publishedBefore) {
+      return `"${locale}" is not back to its previous state (missing ${missing.join(", ") || "none"}, extra ${extra.join(", ") || "none"}, published ${now.published} vs ${publishedBefore})`;
+    }
+    localeTest.restored = true;
+    return null;
+  };
 
   try {
     // ── 0. Schema ────────────────────────────────────────────────────────
@@ -317,7 +368,9 @@ export async function action({ request }: ActionFunctionArgs) {
         : { name, exists: false };
     });
     if (mutations.errors?.length) {
-      step({ id: "schema", title: "Mutation list", outcome: "failed", detail: mutations.errors.map((e) => e.message).join("; ") });
+      step({ id: "schemaError", title: "Mutation list", outcome: "failed", detail: mutations.errors.map((e) => e.message).join("; ") });
+    } else {
+      hasWebPresenceDelete = report.schema.mutations.some((m) => m.name === "webPresenceDelete" && m.exists);
     }
     for (const name of SHAPE_TYPES) {
       const body = await raw(INPUT_SHAPE, { name });
@@ -366,14 +419,15 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // ── 2. Create a DRAFT market (app's createMarket) ────────────────────
-    const name = `ContentPilot probe ${Date.now()}`;
     const attempts: string[] = [];
     let country: string | null = null;
+    let createdAsDraft = false;
     for (const c of countries) {
-      const outcome = await createMarket(admin, shop, { name, countries: [c] });
+      const outcome = await createMarket(admin, shop, { name: marketName, countries: [c] });
       if (outcome.ok) {
         marketId = outcome.marketId;
         country = c;
+        createdAsDraft = true;
         attempts.push(`${c}: created as DRAFT`);
         break;
       }
@@ -382,16 +436,28 @@ export async function action({ request }: ActionFunctionArgs) {
         // Created but not as a draft (`createdNotDraft`): it exists and is
         // possibly selling — record it for the cleanup and stop here.
         marketId = outcome.marketId;
-        country = c;
         report.verdict.push("🛑 marketCreate did NOT create a draft — the app would report createdNotDraft. The market is deleted again below.");
         break;
       }
       if (outcome.error === "notSupported" || outcome.error === "schemaUnreadable") break;
+      // Any other failure may still have created the market (a lagging or
+      // failed re-read, a throw after Shopify ran it): look for it by name
+      // BEFORE trying another country, or a second market would be created.
+      const adopted = await adoptByName();
+      if (adopted) {
+        marketId = adopted;
+        attempts.push(`${c}: the market EXISTS nevertheless (${adopted}) — the app's confirmation missed it`);
+        break;
+      }
+      if (adopted === undefined) {
+        attempts.push("stopped: the markets could not be re-read, so another attempt could create a second market");
+        break;
+      }
     }
     const created = step({
       id: "createMarket",
       title: "createMarket (DRAFT, one country) — the app's own function",
-      outcome: marketId && attempts[attempts.length - 1]?.endsWith("created as DRAFT") ? "ok" : "failed",
+      outcome: createdAsDraft ? "ok" : "failed",
       detail: attempts.join(" · "),
     });
     if (created.outcome !== "ok") throw new Error("stop: no DRAFT market to measure on");
@@ -412,18 +478,22 @@ export async function action({ request }: ActionFunctionArgs) {
       alternateLocales: [],
     });
     let subDetail = sub.ok ? `/${suffix} created and confirmed by a re-read.` : `refused: ${sub.error}.`;
-    let presenceId: string | null = null;
     const findOwn = (a: MarketAddresses | null) => a?.markets.find((m) => m.marketId === marketId)?.own ?? null;
     let afterSub = await loadMarketAddresses(admin, shop);
     if (!sub.ok && (sub.error === "notConfirmed" || sub.error === "unverified")) {
       await sleep(3000);
       afterSub = await loadMarketAddresses(admin, shop);
-      subDetail += findOwn(afterSub)
-        ? " After 3 s the market DOES carry it — Shopify's read lags; the app's immediate re-read is too early."
-        : " After 3 s still not on the market.";
+      if (!afterSub) subDetail += " After 3 s the addresses still cannot be read.";
+      else if (findOwn(afterSub)) {
+        subDetail +=
+          sub.error === "notConfirmed"
+            ? " After 3 s the market DOES carry it — Shopify's read lags; the app's immediate re-read is too early."
+            : " After 3 s the market carries it — the app's re-read had failed.";
+      } else subDetail += " After 3 s still not on the market.";
     }
     const own = findOwn(afterSub);
-    presenceId = own?.presenceId ?? afterSub?.orphans.find((o) => o.subfolderSuffix === suffix)?.presenceId ?? null;
+    const presenceId = own?.presenceId ?? afterSub?.orphans.find((o) => o.subfolderSuffix === suffix)?.presenceId ?? null;
+    if (presenceId) knownPresenceIds.add(presenceId);
     const presenceRaw = await raw(PRESENCES_RAW);
     const presenceNode = (presenceRaw.data?.webPresences?.nodes ?? []).find((p: any) => p?.id === presenceId);
     step({
@@ -442,76 +512,77 @@ export async function action({ request }: ActionFunctionArgs) {
     // An UNPUBLISHED second language first: nobody sees it on the storefront.
     const foreign = (locales.data?.shopLocales ?? []).filter((l: any) => !l.primary);
     const target = foreign.find((l: any) => !l.published) ?? foreign[0];
-    if (target && !Array.isArray(target.marketWebPresences)) {
-      // The restore below sends the set read HERE. A missing list read as
-      // "none" would restore the language into NO market — so no test at all.
-      step({
-        id: "languages",
-        title: "shopLocaleUpdate(marketWebPresenceIds)",
-        outcome: "skipped",
-        detail: `The presences of "${target.locale}" could not be read, so nothing was written to it.`,
-      });
-    } else if (!presenceId) {
-      step({ id: "languages", title: "shopLocaleUpdate(marketWebPresenceIds)", outcome: "skipped", detail: "No probe presence to assign a language to." });
+    const title = `shopLocaleUpdate(marketWebPresenceIds)${target ? ` on "${target.locale}"` : ""}`;
+    if (!presenceId) {
+      step({ id: "languages", title, outcome: "skipped", detail: "No probe presence to assign a language to." });
     } else if (!target) {
-      step({ id: "languages", title: "shopLocaleUpdate(marketWebPresenceIds)", outcome: "skipped", detail: "The shop has no second language." });
+      step({ id: "languages", title, outcome: "skipped", detail: "The shop has no second language." });
+    } else if (!Array.isArray(target.marketWebPresences)) {
+      // The restore sends the set read HERE. A missing list read as "none"
+      // would restore the language into NO market — so no test at all.
+      step({ id: "languages", title, outcome: "skipped", detail: `The presences of "${target.locale}" could not be read, so nothing was written to it.` });
     } else {
-      const beforeIds: string[] = (target.marketWebPresences ?? []).map((p: any) => p.id);
-      const publishedBefore = !!target.published;
+      const beforeIds: string[] = target.marketWebPresences.map((p: any) => p.id);
+      // Recorded BEFORE the first write, so the finally restores it whatever happens next.
+      localeTest = { locale: target.locale, beforeIds, publishedBefore: !!target.published, restored: false };
       const add = await raw(SHOP_LOCALE_PRESENCES, {
         locale: target.locale,
         shopLocale: { marketWebPresenceIds: [...beforeIds, presenceId] },
       });
-      const readAfterAdd = await raw(SHOP_LOCALES);
-      const afterAdd = (readAfterAdd.data?.shopLocales ?? []).find((l: any) => l.locale === target.locale);
-      const afterAddIds: string[] = (afterAdd?.marketWebPresences ?? []).map((p: any) => p.id);
-      // Restore the EXACT previous set; if the probe presence survives it, the
-      // field only ever adds (the app's full-set writes could never remove).
+      const addErrors = [...(add.errors ?? []), ...(add.data?.shopLocaleUpdate?.userErrors ?? [])].map((e: any) => e.message);
+      const afterAdd = await readLocale(target.locale);
       const restore = await raw(SHOP_LOCALE_PRESENCES, {
         locale: target.locale,
         shopLocale: { marketWebPresenceIds: beforeIds },
       });
-      const readAfterRestore = await raw(SHOP_LOCALES);
-      const afterRestore = (readAfterRestore.data?.shopLocales ?? []).find((l: any) => l.locale === target.locale);
-      const afterRestoreIds: string[] = (afterRestore?.marketWebPresences ?? []).map((p: any) => p.id);
-      const addErrors = [...(add.errors ?? []), ...(add.data?.shopLocaleUpdate?.userErrors ?? [])].map((e: any) => e.message);
       const restoreErrors = [...(restore.errors ?? []), ...(restore.data?.shopLocaleUpdate?.userErrors ?? [])].map(
         (e: any) => e.message,
       );
-      const added = afterAddIds.includes(presenceId);
-      const semantics = !added
-        ? "the add did not land"
-        : afterRestoreIds.includes(presenceId)
-          ? "ADD-ONLY (sending the old set did not remove the new presence)"
-          : "REPLACE (sending the old set removed it again)";
-      const lostOriginal = beforeIds.filter((id) => !afterRestoreIds.includes(id));
-      const publicationMoved = !!afterRestore && !!afterRestore.published !== publishedBefore;
+      let afterRestore = await readLocale(target.locale);
+      if (afterRestore?.ids.includes(presenceId) && !restoreErrors.length) {
+        // Looks add-only — but a lagging read looks the same. Ask once more.
+        await sleep(3000);
+        afterRestore = await readLocale(target.locale);
+      }
+      let semantics: string;
+      let known = true;
+      if (addErrors.length) semantics = `the add was refused: ${addErrors.join("; ")}`;
+      else if (!afterAdd) (semantics = "cannot tell — the re-read after the add failed"), (known = false);
+      else if (!afterAdd.ids.includes(presenceId)) semantics = "the add reported no error but is not in the re-read";
+      else if (restoreErrors.length) (semantics = `cannot tell — the restore was refused: ${restoreErrors.join("; ")}`), (known = false);
+      else if (!afterRestore) (semantics = "cannot tell — the re-read after the restore failed"), (known = false);
+      else if (afterRestore.ids.includes(presenceId)) semantics = "ADD-ONLY (sending the old set did not remove the new presence, still after 3 s)";
+      else semantics = "REPLACE (sending the old set removed it again)";
+      const publicationMoved = !!afterAdd && afterAdd.published !== localeTest.publishedBefore;
+      const restoreProblem = await restoreLocale();
       step({
         id: "languages",
-        title: `shopLocaleUpdate(marketWebPresenceIds) on "${target.locale}"`,
-        outcome: added && !lostOriginal.length && !publicationMoved ? "ok" : "failed",
+        title,
+        outcome: !known || restoreProblem ? "warning" : addErrors.length || !afterAdd?.ids.includes(presenceId) ? "failed" : "ok",
         detail:
-          `Before: ${beforeIds.length} presence(s). Add: ${addErrors.length ? addErrors.join("; ") : added ? "landed" : "no error, but not in the re-read"}. ` +
-          `Restore: ${restoreErrors.length ? restoreErrors.join("; ") : "sent"}. Semantics: ${semantics}. ` +
-          (lostOriginal.length ? `⚠️ ORIGINAL presences missing after restore: ${lostOriginal.join(", ")}. ` : "") +
-          (publicationMoved ? `⚠️ The publication moved (published ${publishedBefore} → ${afterRestore.published}). ` : "Publication unchanged."),
-        data: { beforeIds, afterAddIds, afterRestoreIds },
+          `Before: ${beforeIds.length} presence(s). Semantics: ${semantics}. ` +
+          (publicationMoved
+            ? `⚠️ Assigning the presence MOVED the publication (published ${localeTest.publishedBefore} → ${afterAdd!.published}); it was put back. `
+            : "Publication unchanged by the assignment. ") +
+          (restoreProblem ? `⚠️ Restore: ${restoreProblem}.` : "Restored to the exact previous state (confirmed)."),
+        data: { beforeIds, afterAdd, afterRestore },
       });
-      if (lostOriginal.length) {
-        report.verdict.push(`🛑 "${target.locale}" lost presences it had before: ${lostOriginal.join(", ")} — re-tick them in Shop-Sprachen.`);
-      }
     }
 
     // ── 5. Remove the own address (app's removeMarketAddress) ────────────
     if (own?.subfolderSuffix) {
       const removed = await removeMarketAddress(admin, shop, marketId!);
       let detail = removed.ok ? "Removed and confirmed by a re-read." : `refused: ${removed.error}.`;
-      if (!removed.ok && removed.error === "notConfirmed") {
+      if (!removed.ok && (removed.error === "notConfirmed" || removed.error === "unverified")) {
         await sleep(3000);
         const later = await loadMarketAddresses(admin, shop);
-        detail += later && !later.takenSuffixes.includes(suffix)
-          ? " After 3 s it IS gone — Shopify's read lags."
-          : " After 3 s still there.";
+        detail += !later
+          ? " After 3 s the addresses still cannot be read."
+          : !later.takenSuffixes.includes(suffix)
+            ? removed.error === "notConfirmed"
+              ? " After 3 s it IS gone — Shopify's read lags."
+              : " After 3 s it is gone — the app's re-read had failed."
+            : " After 3 s still there.";
       }
       step({ id: "removeAddress", title: "removeMarketAddress — the app's own function", outcome: removed.ok ? "ok" : "failed", detail });
     } else {
@@ -525,42 +596,57 @@ export async function action({ request }: ActionFunctionArgs) {
       defaultLocale: primaryLocale ?? "en",
       alternateLocales: [],
     });
-    if (!again.ok) {
+    const afterAgain = await loadMarketAddresses(admin, shop);
+    const againOwn = findOwn(afterAgain);
+    if (againOwn?.presenceId) knownPresenceIds.add(againOwn.presenceId);
+    for (const o of afterAgain?.orphans ?? []) if (o.subfolderSuffix === suffix) knownPresenceIds.add(o.presenceId);
+    if (!again.ok || !againOwn) {
       step({
         id: "deleteWithPresence",
         title: "marketDelete with an attached presence",
         outcome: "skipped",
-        detail: `Could not attach a second subfolder (${again.error}), so this could not be measured.`,
+        detail: `Could not attach a second subfolder (${again.ok ? "not on the market in the re-read" : again.error}), so this could not be measured.`,
       });
     } else {
       const del = await raw(MARKET_DELETE, { id: marketId });
       const delErrors = [...(del.errors ?? []), ...(del.data?.marketDelete?.userErrors ?? [])].map((e: any) => e.message);
       const echoed = del.data?.marketDelete?.deletedId === marketId;
-      if (echoed) marketId = null;
+      const settle = async () => {
+        const read = await loadMarketAddresses(admin, shop);
+        return {
+          read,
+          orphan: read?.orphans.find((o) => o.subfolderSuffix === suffix) ?? null,
+          gone: !!read && !read.takenSuffixes.includes(suffix!),
+        };
+      };
       await sleep(1000);
-      const afterDelete = await loadMarketAddresses(admin, shop);
-      const orphan = afterDelete?.orphans.find((o) => o.subfolderSuffix === suffix) ?? null;
+      let s = await settle();
+      if (s.read && !s.orphan && !s.gone) {
+        // Taken but not unused: most likely the delete has not landed in the read yet.
+        await sleep(3000);
+        s = await settle();
+      }
       let detail = delErrors.length
         ? `marketDelete refused: ${delErrors.join("; ")}.`
         : echoed
           ? "marketDelete echoed the id."
           : "marketDelete answered without the id.";
-      if (afterDelete === null) detail += " The re-read failed — cannot tell whether the presence survived.";
-      else if (orphan) {
-        detail += ` The presence SURVIVED as an unused address (${orphan.presenceId}) — the app's "remove the address first" rule is needed.`;
-        const cleaned = await removeOrphanAddress(admin, shop, orphan.presenceId);
+      if (!s.read) detail += " The re-read failed — cannot tell whether the presence survived.";
+      else if (s.orphan) {
+        detail += ` The presence SURVIVED as an unused address (${s.orphan.presenceId}) — the app's "remove the address first" rule is needed.`;
+        const cleaned = await removeOrphanAddress(admin, shop, s.orphan.presenceId);
         detail += ` removeOrphanAddress: ${cleaned.ok ? "removed and confirmed" : cleaned.error}.`;
-      } else if (!afterDelete.takenSuffixes.includes(suffix)) {
+      } else if (s.gone) {
         detail += " The presence went WITH the market — the \"remove the address first\" rule is stricter than needed.";
       } else {
-        detail += " The suffix is still taken, but not by an unused presence — see the raw data.";
+        detail += " After 4 s the suffix is still taken, but not by an unused presence — see the raw data.";
       }
       step({
         id: "deleteWithPresence",
         title: "marketDelete with an attached presence (sent raw — the app refuses this on purpose)",
-        outcome: delErrors.length ? "failed" : "info",
+        outcome: delErrors.length ? "failed" : s.read && (s.orphan || s.gone) ? "info" : "warning",
         detail,
-        data: { afterDelete },
+        data: { afterDelete: s.read },
       });
     }
   } catch (error: unknown) {
@@ -571,34 +657,55 @@ export async function action({ request }: ActionFunctionArgs) {
     step({ id: "stopped", title: "Stopped", outcome: message.startsWith("stop:") ? "warning" : "failed", detail: message });
   } finally {
     // ── Cleanup: everything this run created, whatever happened above ────
-    const now = await loadMarketAddresses(admin, shop).catch(() => null);
-    if (now === null && (marketId || suffix)) {
-      report.cleanup.notes.push("The final read failed — cleanup is sent blind and cannot be confirmed.");
+    // 1. The real locale first: it is the one thing a storefront could show.
+    if (localeTest && !localeTest.restored) {
+      const problem = await restoreLocale();
+      if (problem) report.cleanup.leftovers.push(`${problem} — check it in Settings → Shop-Sprachen.`);
+      else report.cleanup.notes.push(`Language "${localeTest.locale}" restored in the cleanup.`);
     }
+    // 2. The market — adopted by its unique name if no id was ever confirmed.
+    if (!marketId) {
+      const adopted = await adoptByName();
+      if (adopted) marketId = adopted;
+    }
+    const deletePresence = async (id: string) => {
+      const r = await raw(hasWebPresenceDelete ? PRESENCE_DELETE : LEGACY_PRESENCE_DELETE, hasWebPresenceDelete ? { id } : { webPresenceId: id });
+      const payload = hasWebPresenceDelete ? r.data?.webPresenceDelete : r.data?.marketWebPresenceDelete;
+      const errs = [...(r.errors ?? []), ...(payload?.userErrors ?? [])].map((e: any) => e.message);
+      report.cleanup.notes.push(`presence delete ${id}: ${errs.length ? errs.join("; ") : "sent"}`);
+    };
+    const now = await loadMarketAddresses(admin, shop);
+    if (now === null && (marketId || suffix)) {
+      report.cleanup.notes.push("The cleanup's read failed — the known ids are deleted blind.");
+    }
+    const probePresences = new Set<string>(knownPresenceIds);
     const probeOwn = marketId ? now?.markets.find((m) => m.marketId === marketId)?.own : null;
-    const probePresences = new Set<string>();
     if (probeOwn?.presenceId && probeOwn.subfolderSuffix === suffix) probePresences.add(probeOwn.presenceId);
     for (const o of now?.orphans ?? []) if (suffix && o.subfolderSuffix === suffix) probePresences.add(o.presenceId);
+    // Only delete a known id the read still shows (or blind when it failed).
     for (const id of probePresences) {
-      const r = await raw(PRESENCE_DELETE, { id });
-      const errs = [...(r.errors ?? []), ...(r.data?.webPresenceDelete?.userErrors ?? [])].map((e: any) => e.message);
-      report.cleanup.notes.push(`webPresenceDelete ${id}: ${errs.length ? errs.join("; ") : "sent"}`);
+      const stillThere =
+        now === null || now.orphans.some((o) => o.presenceId === id) || now.markets.some((m) => m.own?.presenceId === id);
+      if (stillThere) await deletePresence(id);
     }
-    if (marketId) {
+    if (marketId && (now === null || now.markets.some((m) => m.marketId === marketId))) {
       const r = await raw(MARKET_DELETE, { id: marketId });
       const errs = [...(r.errors ?? []), ...(r.data?.marketDelete?.userErrors ?? [])].map((e: any) => e.message);
       report.cleanup.notes.push(`marketDelete ${marketId}: ${errs.length ? errs.join("; ") : r.data?.marketDelete?.deletedId ? "deleted" : "no id echoed"}`);
     }
-    const final = await loadMarketAddresses(admin, shop).catch(() => null);
+    // 3. A presence Shopify refused to delete while attached is free now.
+    let final = await loadMarketAddresses(admin, shop);
+    const leftoverOrphans = (final?.orphans ?? []).filter((o) => suffix && o.subfolderSuffix === suffix);
+    for (const o of leftoverOrphans) await deletePresence(o.presenceId);
+    if (leftoverOrphans.length) final = await loadMarketAddresses(admin, shop);
     if (final) {
-      if (marketId && final.markets.some((m) => m.marketId === marketId)) {
-        report.cleanup.leftovers.push(`Market ${marketId} (ContentPilot probe …) — delete it in Shopify admin → Markets.`);
-      }
+      const market = final.markets.find((m) => m.name === marketName);
+      if (market) report.cleanup.leftovers.push(`Market "${marketName}" (${market.marketId}) — delete it in Shopify admin → Markets.`);
       if (suffix && final.takenSuffixes.includes(suffix)) {
         report.cleanup.leftovers.push(`A presence with subfolder /${suffix} — it shows as "unused address" in Shop-Sprachen and can be removed there.`);
       }
-    } else if (marketId || suffix) {
-      report.cleanup.leftovers.push("Unknown — the final read failed. Check Shopify admin → Markets for a market named 'ContentPilot probe …'.");
+    } else if (marketId || suffix || knownPresenceIds.size) {
+      report.cleanup.leftovers.push(`Unknown — the final read failed. Check Shopify admin → Markets for a market named "${marketName}".`);
     }
     report.cleanup.allRemoved = report.cleanup.leftovers.length === 0;
   }

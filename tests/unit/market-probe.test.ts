@@ -26,7 +26,16 @@ const { __resetMarketAddressCache } = await import("~/services/market-address.se
 
 const done = { hasNextPage: false };
 
-function makeShop(opts: { deleteTakesPresence: boolean; attachThrows?: boolean; addOnly?: boolean }) {
+function makeShop(opts: {
+  deleteTakesPresence: boolean;
+  attachThrows?: boolean;
+  addOnly?: boolean;
+  /** Assigning a presence publishes the locale (unmeasured in reality). */
+  assignPublishes?: boolean;
+  /** The next N market reads leave the newest market out (a lagging read). */
+  hideNewMarketReads?: number;
+}) {
+  let hidden = opts.hideNewMarketReads ?? 0;
   const markets: Array<{ id: string; name: string; status: string; presences: string[] }> = [
     { id: "mCH", name: "Schweiz", status: "ACTIVE", presences: [] },
   ];
@@ -36,6 +45,7 @@ function makeShop(opts: { deleteTakesPresence: boolean; attachThrows?: boolean; 
   const locales = [
     { locale: "de", primary: true, published: true, presences: ["wpShared"] },
     { locale: "en", primary: false, published: true, presences: ["wpShared"] },
+    { locale: "nl", primary: false, published: false, presences: [] as string[] },
   ];
   let seq = 0;
   const reply = (data: unknown) => ({ json: async () => ({ data }) }) as unknown as Response;
@@ -76,10 +86,11 @@ function makeShop(opts: { deleteTakesPresence: boolean; attachThrows?: boolean; 
       return reply({ webPresences: { pageInfo: done, nodes: presences.map(presenceNode) } });
     }
     if (query.includes("appMarketAddressMarkets")) {
+      const visible = hidden > 0 && markets.length > 1 ? (hidden--, markets.slice(0, -1)) : markets;
       return reply({
         markets: {
           pageInfo: done,
-          nodes: markets.map((m) => ({
+          nodes: visible.map((m) => ({
             id: m.id,
             name: m.name,
             status: m.status,
@@ -123,8 +134,12 @@ function makeShop(opts: { deleteTakesPresence: boolean; attachThrows?: boolean; 
     }
     if (query.includes("marketProbeLocalePresences")) {
       const l = locales.find((x) => x.locale === v.locale)!;
-      const ids: string[] = v.shopLocale.marketWebPresenceIds;
-      l.presences = opts.addOnly ? [...new Set([...l.presences, ...ids])] : [...ids];
+      if (typeof v.shopLocale.published === "boolean") l.published = v.shopLocale.published;
+      const ids: string[] | undefined = v.shopLocale.marketWebPresenceIds;
+      if (ids) {
+        if (opts.assignPublishes && ids.length > l.presences.length) l.published = true;
+        l.presences = opts.addOnly ? [...new Set([...l.presences, ...ids])] : [...ids];
+      }
       return reply({ shopLocaleUpdate: { shopLocale: { locale: l.locale, published: l.published, marketWebPresences: [] }, userErrors: [] } });
     }
     // Everything else (the tab's language-presence read) is refused — the probe
@@ -162,6 +177,26 @@ describe("market probe", () => {
     expect(fake.markets.map((m) => m.id)).toEqual(["mCH"]);
     expect(fake.presences.map((p) => p.id)).toEqual(["wpShared"]);
     expect(fake.locales.find((l) => l.locale === "en")!.presences).toEqual(["wpShared"]);
+    // The UNPUBLISHED language is the one written to, and it is back as it was.
+    expect(report.steps.find((s: any) => s.id === "languages").title).toContain('"nl"');
+    expect(fake.locales.find((l) => l.locale === "nl")).toMatchObject({ published: false, presences: [] });
+  });
+
+  it("puts a publication back that the assignment moved", async () => {
+    fake = makeShop({ deleteTakesPresence: true, assignPublishes: true });
+    const report = await run();
+    expect(report.steps.find((s: any) => s.id === "languages").detail).toContain("MOVED the publication");
+    expect(fake.locales.find((l) => l.locale === "nl")).toMatchObject({ published: false, presences: [] });
+    expect(report.cleanup.allRemoved).toBe(true);
+  });
+
+  it("finds a market whose create the app could not confirm, instead of creating a second one", async () => {
+    fake = makeShop({ deleteTakesPresence: true, hideNewMarketReads: 1 });
+    const report = await run();
+    expect(report.steps.find((s: any) => s.id === "createMarket").detail).toContain("EXISTS nevertheless");
+    expect(fake.admin.graphql.mock.calls.filter(([q]) => String(q).includes("appMarketCreate"))).toHaveLength(1);
+    expect(fake.markets.map((m) => m.id)).toEqual(["mCH"]);
+    expect(report.cleanup.allRemoved).toBe(true);
   });
 
   it("reports ADD-ONLY semantics and a presence marketDelete leaves behind — and still cleans up", async () => {
