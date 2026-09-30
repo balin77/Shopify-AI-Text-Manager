@@ -91,14 +91,14 @@ export const compareDe: CompareCopy = {
   ourStrengths: [
     "Übersetzungen werden in Ihrem Shopify-Shop gespeichert und bleiben, wenn Sie die App entfernen.",
     "KI-Übersetzung in beliebig vielen Sprachen, nach Ihrer Tonalität, Ihren Regeln und Ihrem Glossar.",
-    "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis.",
+    "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis — oder nehmen einen Plan mit enthaltener KI.",
     "Übersetzt Texte anderer Apps und aktualisiert Übersetzungen, wenn sich der Originaltext ändert.",
     "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
     "Umfassende SEO-Werkzeuge, Sichtbarkeit in KI-Suchen und ein Tabellen-Editor für den ganzen Katalog.",
     "Bildergalerien pro Variante mit Massen-Upload und WebP-Umwandlung.",
   ],
   ourNotes: {
-    autoTranslate: "Mit eigenem KI-Schlüssel",
+    autoTranslate: "Mit eigenem KI-Key oder enthaltener KI",
     aiProvider: "Sechs Anbieter",
     imagesPerLanguage: "Noch nicht",
     currency: "Macht Shopify Markets",
@@ -138,6 +138,16 @@ export const compareDe: CompareCopy = {
       unstated: "Maschinelle Übersetzung, Dienst nicht angegeben",
     },
     trialRow: "Kostenlose Testzeit",
+    includedAi: {
+      price: "oder {price} mit enthaltener KI",
+      taster: "Oder einmalig rund {n} KI-Aktionen zum Testen, ohne eigenen Key",
+      volume: {
+        basic: "Mit enthaltener KI: reicht für etwa 300–500 Produkte, je in eine Sprache übersetzt, pro Monat",
+        pro: "Mit enthaltener KI: reicht für etwa 600–1.000 Produkte, je in eine Sprache übersetzt, pro Monat",
+        max: "Mit enthaltener KI: reicht für etwa 1.500–2.500 Produkte, je in eine Sprache übersetzt, pro Monat",
+      },
+      engines: "Mit enthaltener KI: {list}",
+    },
     addApp: "App zum Vergleich hinzufügen",
     removeApp: "{name} aus dem Vergleich entfernen",
     strengthsGroup: "Stärken",
@@ -147,7 +157,7 @@ export const compareDe: CompareCopy = {
       unlimited: "Unbegrenzt",
       someAutomatic: "2 automatisch, weitere von Hand",
       noProductLimit: "Keine Grenze",
-      ownKey: "Unbegrenzt – Sie bezahlen Ihren KI-Anbieter direkt",
+      ownKey: "Mit eigenem KI-Key: unbegrenzt – Sie bezahlen Ihren KI-Anbieter direkt",
       included: "Inklusive",
       unlimitedWords: "Unbegrenzte Wörter",
       words: "{n} Wörter",
@@ -169,7 +179,7 @@ export const compareDe: CompareCopy = {
     perYear: "/ Jahr",
     free: "Kostenlos",
     onRequest: "Preis auf Anfrage",
-    note: "Monatspreise in der Währung des Anbieters, ohne Steuern. Mehrere Anbieter sind bei jährlicher Zahlung günstiger. Bei ContentPilot nutzen Sie Ihren eigenen KI-Schlüssel; die KI-Nutzung rechnet Ihr KI-Anbieter separat ab.",
+    note: "Monatspreise in der Währung des Anbieters, ohne Steuern. Mehrere Anbieter sind bei jährlicher Zahlung günstiger. Bei ContentPilot nutzen Sie entweder Ihren eigenen KI-Schlüssel — dann rechnet Ihr KI-Anbieter die Nutzung separat ab — oder einen Plan mit enthaltener KI.",
   },
   competitors: {
     "translate-and-adapt": {

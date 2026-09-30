@@ -74,6 +74,17 @@ export type CompareCopy = {
       unstated: string;
     };
     trialRow: string;
+    /** The "+ AI" variant of our plans: the merchant uses a key of ours. */
+    includedAi: {
+      /** Under our price; `{price}` is the "+ AI" price. */
+      price: string;
+      /** Free plan: the one-time trial; `{n}` is the number of AI actions. */
+      taster: string;
+      /** How far the included AI reaches per month, per plan. */
+      volume: Record<"basic" | "pro" | "max", string>;
+      /** `{list}` is the provider the included AI runs on. */
+      engines: string;
+    };
     /** `+` button at the end of the header row, and its menu's label. */
     addApp: string;
     /** Accessible name / tooltip of a column header that hides its app; `{name}` is the app. */

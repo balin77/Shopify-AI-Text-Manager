@@ -91,14 +91,14 @@ export const compareEs: CompareCopy = {
   ourStrengths: [
     "Las traducciones se guardan en su tienda Shopify y se conservan si desinstala la aplicación.",
     "Traducción con IA en todos los idiomas que quiera, con su propio tono, sus reglas y su glosario.",
-    "Usted elige el proveedor de IA y le paga directamente, a precio de coste.",
+    "Usted elige el proveedor de IA y le paga directamente, a precio de coste, o elige un plan con IA incluida.",
     "Traduce textos de otras apps y actualiza las traducciones cuando cambia el texto original.",
     "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
     "Herramientas SEO completas, visibilidad en búsquedas con IA y un editor de hoja de cálculo para todo el catálogo.",
     "Galerías de imágenes por variante con carga masiva y conversión a WebP.",
   ],
   ourNotes: {
-    autoTranslate: "Con su propia clave de IA",
+    autoTranslate: "Con su propia clave de IA o con IA incluida",
     aiProvider: "Seis proveedores",
     imagesPerLanguage: "Aún no",
     currency: "Lo hace Shopify Markets",
@@ -138,6 +138,16 @@ export const compareEs: CompareCopy = {
       unstated: "Traducción automática, motor no indicado",
     },
     trialRow: "Prueba gratuita",
+    includedAi: {
+      price: "o {price} con IA incluida",
+      taster: "O, una sola vez, unas {n} acciones de IA para probar, sin clave propia",
+      volume: {
+        basic: "Con IA incluida: alcanza para unos 300–500 productos, cada uno traducido a un idioma, al mes",
+        pro: "Con IA incluida: alcanza para unos 600–1.000 productos, cada uno traducido a un idioma, al mes",
+        max: "Con IA incluida: alcanza para unos 1.500–2.500 productos, cada uno traducido a un idioma, al mes",
+      },
+      engines: "Con IA incluida: {list}",
+    },
     addApp: "Añadir una aplicación a la comparación",
     removeApp: "Quitar {name} de la comparación",
     strengthsGroup: "Puntos fuertes",
@@ -147,7 +157,7 @@ export const compareEs: CompareCopy = {
       unlimited: "Ilimitados",
       someAutomatic: "2 automáticos, los demás a mano",
       noProductLimit: "Sin límite",
-      ownKey: "Ilimitado: paga directamente a su proveedor de IA",
+      ownKey: "Con su propia clave de IA: ilimitado, paga directamente a su proveedor de IA",
       included: "Incluido",
       unlimitedWords: "Palabras ilimitadas",
       words: "{n} palabras",
@@ -169,7 +179,7 @@ export const compareEs: CompareCopy = {
     perYear: "/ año",
     free: "Gratis",
     onRequest: "Precio a consultar",
-    note: "Precios mensuales en la moneda de cada proveedor, sin impuestos. Varios proveedores son más baratos con pago anual. Con ContentPilot usa su propia clave de IA, así que el uso de IA lo factura aparte su proveedor de IA.",
+    note: "Precios mensuales en la moneda del proveedor, sin impuestos. Varios proveedores son más baratos con pago anual. Con ContentPilot usa su propia clave de IA —y su proveedor de IA le factura el uso por separado— o un plan con IA incluida.",
   },
   competitors: {
     "translate-and-adapt": {

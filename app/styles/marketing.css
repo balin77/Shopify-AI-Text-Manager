@@ -2073,6 +2073,19 @@ a.mk-badge:hover {
   top: calc(var(--mk-compare-header) + var(--mk-compare-controls));
 }
 
+/* The second way to pay for our AI, one line under the first. */
+.mk-compare-matrix__alt {
+  display: block;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--mk-border);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--mk-text);
+  white-space: normal;
+}
+
 .mk-compare-strengths {
   margin: 0;
   padding-left: 1.1em;

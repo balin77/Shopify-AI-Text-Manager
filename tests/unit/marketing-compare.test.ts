@@ -119,3 +119,16 @@ describe("strengths row of the comparison table", () => {
     }
   });
 });
+
+describe("included-AI prices on the comparison table", () => {
+  it("shows the '+ AI' price Shopify charges for each paid plan, and the taster on Free", async () => {
+    const { MANAGED_BILLING_PLANS } = await import("../../app/config/billing");
+    const { MANAGED_AI_TASTER_ACTIONS } = await import("../../app/config/managed-ai-budget");
+    const { COMPARE_PRICES } = await import("../../app/config/marketing-compare");
+    const [free, basic, pro, max] = COMPARE_PRICES.contentpilot.plans;
+    expect(free.includedAi).toEqual({ kind: "taster", actions: MANAGED_AI_TASTER_ACTIONS });
+    expect(basic.includedAi).toMatchObject({ kind: "plan", monthly: MANAGED_BILLING_PLANS.basic.price });
+    expect(pro.includedAi).toMatchObject({ kind: "plan", monthly: MANAGED_BILLING_PLANS.pro.price });
+    expect(max.includedAi).toMatchObject({ kind: "plan", monthly: MANAGED_BILLING_PLANS.max.price });
+  });
+});

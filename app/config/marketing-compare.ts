@@ -16,7 +16,8 @@
  *    honest one is the reason this page is worth ranking for.
  */
 
-import { BILLING_PLANS } from "./billing";
+import { BILLING_PLANS, MANAGED_BILLING_PLANS } from "./billing";
+import { MANAGED_AI_TASTER_ACTIONS } from "./managed-ai-budget";
 import { PLAN_CONFIG } from "./plans";
 
 export const COMPETITORS = ["translate-and-adapt", "weglot", "transcy", "langshop"] as const;
@@ -285,7 +286,20 @@ export type PricePlan = {
   /** Product limit; `null` = no product limit; "unstated" = the provider's table leaves it blank. */
   products: number | null | "unstated";
   volume: PlanVolume;
+  /**
+   * Ours only: the SECOND way to pay for the AI — a key of ours instead of
+   * the merchant's. Free carries the one-time taster, each paid plan its
+   * "+ AI" variant, read off `MANAGED_BILLING_PLANS` like the prices above.
+   */
+  includedAi?: IncludedAi;
 };
+
+export type IncludedAi =
+  | { kind: "taster"; actions: number }
+  | { kind: "plan"; monthly: number; tier: "basic" | "pro" | "max" };
+
+/** The provider the included AI runs on — the default the Settings consent names. */
+export const INCLUDED_AI_ENGINES = ["OpenAI"];
 
 export type PriceTable = {
   currency: "EUR" | "USD";
@@ -307,10 +321,10 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
     currency: "EUR",
     trialDays: BILLING_PLANS.basic.trialDays ?? null,
     plans: [
-      { id: "free", name: "Free", monthly: 0, languages: "unlimited", products: PLAN_CONFIG.free.maxProducts, volume: OWN_KEY },
-      { id: "basic", name: "Basic", monthly: BILLING_PLANS.basic.price, languages: "unlimited", products: PLAN_CONFIG.basic.maxProducts, volume: OWN_KEY },
-      { id: "pro", name: "Pro", monthly: BILLING_PLANS.pro.price, languages: "unlimited", products: PLAN_CONFIG.pro.maxProducts, volume: OWN_KEY },
-      { id: "max", name: "Max", monthly: BILLING_PLANS.max.price, languages: "unlimited", products: PLAN_CONFIG.max.maxProducts, volume: OWN_KEY },
+      { id: "free", name: "Free", monthly: 0, languages: "unlimited", products: PLAN_CONFIG.free.maxProducts, volume: OWN_KEY, includedAi: { kind: "taster", actions: MANAGED_AI_TASTER_ACTIONS } },
+      { id: "basic", name: "Basic", monthly: BILLING_PLANS.basic.price, languages: "unlimited", products: PLAN_CONFIG.basic.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.basic.price, tier: "basic" } },
+      { id: "pro", name: "Pro", monthly: BILLING_PLANS.pro.price, languages: "unlimited", products: PLAN_CONFIG.pro.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.pro.price, tier: "pro" } },
+      { id: "max", name: "Max", monthly: BILLING_PLANS.max.price, languages: "unlimited", products: PLAN_CONFIG.max.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.max.price, tier: "max" } },
     ],
   },
   "translate-and-adapt": {

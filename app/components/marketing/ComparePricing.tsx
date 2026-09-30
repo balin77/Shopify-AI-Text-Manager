@@ -1,5 +1,6 @@
 import {
   COMPETITOR_NAMES,
+  INCLUDED_AI_ENGINES,
   formatCompareNumber,
   formatComparePrice,
   type PriceAppId,
@@ -80,4 +81,27 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
                 } as const
               )[v.kind].replace("{n}", n(v.amount));
   return { languages, products, volume };
+}
+
+/**
+ * Our plans' second way to pay for the AI, as one line per table row: the
+ * "+ AI" price under the price, its volume under ours, its provider under
+ * the provider list. Empty for every plan without one (all competitors).
+ */
+export function includedAiTexts(plan: PricePlan, table: PriceTable, copy: CompareCopy, locale: MarketingLocale) {
+  const ai = plan.includedAi;
+  const t = copy.glance.includedAi;
+  if (!ai) return { price: null, volume: null, engines: null };
+  if (ai.kind === "taster") {
+    return {
+      price: null,
+      volume: t.taster.replace("{n}", formatCompareNumber(ai.actions, locale)),
+      engines: t.engines.replace("{list}", INCLUDED_AI_ENGINES.join(", ")),
+    };
+  }
+  return {
+    price: t.price.replace("{price}", formatComparePrice(ai.monthly, plan.currency ?? table.currency, locale)),
+    volume: t.volume[ai.tier],
+    engines: t.engines.replace("{list}", INCLUDED_AI_ENGINES.join(", ")),
+  };
 }

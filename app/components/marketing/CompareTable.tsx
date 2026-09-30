@@ -13,7 +13,7 @@ import {
 import { MARKETING_SITE } from "../../config/marketing-site";
 import type { CompareCopy } from "../../i18n/marketing/compare";
 import type { MarketingLocale } from "../../services/marketing-locale.shared";
-import { PlanPrice, appName, planLimitTexts } from "./ComparePricing";
+import { PlanPrice, appName, includedAiTexts, planLimitTexts } from "./ComparePricing";
 
 const SYMBOL: Record<Support, string> = {
   yes: "✓",
@@ -312,11 +312,18 @@ export function CompareMatrix({
               </th>
               {visible.map((app) => (
                 <td key={app} className={oursClass(app)}>
-                  <span className="mk-compare-glance__price">
-                    {stack((at) => (
-                      <PlanPrice plan={planAt(app, at).plan} table={COMPARE_PRICES[app]} copy={copy} locale={locale} />
-                    ))}
-                  </span>
+                  {stack((at) => {
+                    const { plan } = planAt(app, at);
+                    const alt = includedAiTexts(plan, COMPARE_PRICES[app], copy, locale).price;
+                    return (
+                      <>
+                        <span className="mk-compare-glance__price">
+                          <PlanPrice plan={plan} table={COMPARE_PRICES[app]} copy={copy} locale={locale} />
+                        </span>
+                        {alt ? <span className="mk-compare-matrix__alt">{alt}</span> : null}
+                      </>
+                    );
+                  })}
                 </td>
               ))}
               {addFiller}
@@ -330,7 +337,16 @@ export function CompareMatrix({
                 </th>
                 {visible.map((app) => (
                   <td key={app} className={oursClass(app)}>
-                    {stack((at) => planLimitTexts(planAt(app, at).plan, copy, locale)[key])}
+                    {stack((at) => {
+                      const { plan } = planAt(app, at);
+                      const alt = key === "volume" ? includedAiTexts(plan, COMPARE_PRICES[app], copy, locale).volume : null;
+                      return (
+                        <>
+                          {planLimitTexts(plan, copy, locale)[key]}
+                          {alt ? <span className="mk-compare-matrix__alt">{alt}</span> : null}
+                        </>
+                      );
+                    })}
                   </td>
                 ))}
                 {addFiller}
@@ -344,7 +360,13 @@ export function CompareMatrix({
                 <td key={app} className={oursClass(app)}>
                   {stack((at) => {
                     const engines = COMPARE_ENGINES[app];
-                    return enginesText(engines[Math.min(at, engines.length - 1)], copy);
+                    const alt = includedAiTexts(planAt(app, at).plan, COMPARE_PRICES[app], copy, locale).engines;
+                    return (
+                      <>
+                        {enginesText(engines[Math.min(at, engines.length - 1)], copy)}
+                        {alt ? <span className="mk-compare-matrix__alt">{alt}</span> : null}
+                      </>
+                    );
                   })}
                 </td>
               ))}

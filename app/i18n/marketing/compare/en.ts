@@ -91,14 +91,14 @@ export const compareEn: CompareCopy = {
   ourStrengths: [
     "Translations saved in your Shopify store — they stay if you uninstall.",
     "AI translation in any number of languages, following your own tone, rules and glossary.",
-    "You choose the AI provider and pay it directly, at cost.",
+    "You choose the AI provider and pay it directly, at cost — or pick a plan with AI included.",
     "Translates texts from other apps and updates translations when the original changes.",
     "Writes and improves product texts, SEO titles and alt texts.",
     "A full SEO toolkit, AI-search visibility and a spreadsheet editor for the whole catalogue.",
     "Variant image galleries with bulk upload and WebP conversion.",
   ],
   ourNotes: {
-    autoTranslate: "With your own AI key",
+    autoTranslate: "With your own AI key or AI included",
     aiProvider: "Six providers",
     imagesPerLanguage: "Not yet",
     currency: "Shopify Markets does this",
@@ -138,6 +138,16 @@ export const compareEn: CompareCopy = {
       unstated: "Machine translation, engine not stated",
     },
     trialRow: "Free trial",
+    includedAi: {
+      price: "or {price} with AI included",
+      taster: "Or about {n} AI actions once to try it, no key needed",
+      volume: {
+        basic: "With AI included: enough for about 300–500 products, each translated into one language, per month",
+        pro: "With AI included: enough for about 600–1,000 products, each translated into one language, per month",
+        max: "With AI included: enough for about 1,500–2,500 products, each translated into one language, per month",
+      },
+      engines: "With AI included: {list}",
+    },
     addApp: "Add an app to the comparison",
     removeApp: "Hide {name} from the comparison",
     strengthsGroup: "Strengths",
@@ -147,7 +157,7 @@ export const compareEn: CompareCopy = {
       unlimited: "Unlimited",
       someAutomatic: "2 automatic, more by hand",
       noProductLimit: "No limit",
-      ownKey: "Unlimited — you pay your AI provider directly",
+      ownKey: "With your own AI key: unlimited — you pay your AI provider directly",
       included: "Included",
       unlimitedWords: "Unlimited words",
       words: "{n} words",
@@ -169,7 +179,7 @@ export const compareEn: CompareCopy = {
     perYear: "/ year",
     free: "Free",
     onRequest: "Price on request",
-    note: "Monthly prices in the provider's own currency, before tax. Several providers are cheaper when billed yearly. With ContentPilot you use your own AI key, so AI usage is billed separately by your AI provider.",
+    note: "Monthly prices in the provider's own currency, before tax. Several providers are cheaper when billed yearly. With ContentPilot you either use your own AI key — then your AI provider bills the usage separately — or a plan with AI included.",
   },
   competitors: {
     "translate-and-adapt": {
