@@ -70,7 +70,7 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "nativeStorage",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "yes", weglot: "no", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "yes", weglot: "unstated", transcy: "yes", langshop: "yes" },
   },
   {
     id: "brandVoice",

@@ -60,7 +60,7 @@ export const compareEn: CompareCopy = {
     },
     bulkEditor: {
       label: "Spreadsheet editor for the whole catalogue",
-      help: "Edit titles, SEO fields, prices and translations of many items at once, with CSV import and export.",
+      help: "Edit titles, SEO fields, prices and more for many items at once, in one table.",
     },
     seoToolkit: {
       label: "SEO toolkit",
@@ -72,7 +72,7 @@ export const compareEn: CompareCopy = {
     },
     altText: {
       label: "Image alt texts written by AI",
-      help: "Descriptions for every image, in every language.",
+      help: "The AI writes a description for each image.",
     },
     imageManager: {
       label: "Variant image galleries",
@@ -89,6 +89,10 @@ export const compareEn: CompareCopy = {
   },
   ourNotes: {
     autoTranslate: "With your own AI key",
+    brandVoice: "Pro plan and up",
+    themeCheckout: "Pro plan and up",
+    thirdPartyApps: "Max plan",
+    imageManager: "Pro plan and up",
     aiProvider: "Six providers",
     followChanges: "Max plan",
     imagesPerLanguage: "Not yet",
@@ -112,7 +116,7 @@ export const compareEn: CompareCopy = {
     "translate-and-adapt": {
       kind: "Shopify's own free translation app",
       summary:
-        "Translate & Adapt is free and built by Shopify. ContentPilot adds AI with your own instructions, a glossary, texts from other apps, SEO tools and content writing. Here is how they compare.",
+        "Translate & Adapt is free and built by Shopify. ContentPilot adds AI translation in any number of languages, a glossary, SEO tools and content writing — and, on its larger plans, your own AI instructions and texts from other apps. Here is how they compare.",
       about:
         "Translate & Adapt is made by Shopify and costs nothing. It translates up to two languages automatically; every further language is translated by hand. Its big strength is adapting content per market, for example different spellings for the UK and the US.",
       strengths: [
@@ -122,10 +126,10 @@ export const compareEn: CompareCopy = {
         "A good fit if you only need one or two extra languages and translate little.",
       ],
       ourEdge: [
-        "AI translation in any number of languages, following your own tone and rules.",
+        "AI translation in any number of languages; from the Pro plan it follows your own tone and rules.",
         "A glossary, so brand names and fixed terms are never mistranslated.",
-        "Translates texts from other apps, such as review widgets.",
-        "Updates translations automatically when you change the original text.",
+        "Translates texts from other apps, such as review widgets (Max plan).",
+        "Updates translations automatically when you change the original text (Max plan).",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and a spreadsheet editor for the whole catalogue.",
       ],
@@ -142,7 +146,7 @@ export const compareEn: CompareCopy = {
       summary:
         "Weglot translates websites on many platforms and charges by translated words. ContentPilot works inside Shopify, saves translations in your shop and adds SEO and content tools. Here is how they compare.",
       about:
-        "Weglot is a translation service for many website platforms, Shopify among them. It detects your store's text and shows translated pages from its own system. The translations are stored with Weglot, and plans are priced by the number of languages and translated words.",
+        "Weglot is a translation service for many website platforms, Shopify among them. It detects your store's text and serves translated pages through its own system. Plans are priced by the number of languages and translated words.",
       strengths: [
         "Mature product with a visual editor that shows translations in place.",
         "Glossary and AI that learns your brand voice.",
@@ -151,7 +155,7 @@ export const compareEn: CompareCopy = {
       ],
       ourEdge: [
         "Translations are saved in your Shopify store and stay if you uninstall.",
-        "Unlimited languages on every plan, and no word limits.",
+        "Unlimited languages on every plan and no word limits — plans are sized by number of products.",
         "You choose the AI provider and pay it directly, at cost.",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit, AI-search visibility and a spreadsheet editor for the whole catalogue.",
@@ -160,14 +164,11 @@ export const compareEn: CompareCopy = {
         "Choose Weglot if you run websites on several platforms and want one translation service for all of them, or if you need professional translators. Choose ContentPilot if your shop runs on Shopify, you want the translations to belong to your store, and you want no word limits.",
       pricing:
         "A small free plan, then plans priced by number of languages and translated words.",
-      notes: {
-        nativeStorage: "Stored with Weglot",
-      },
     },
     transcy: {
       kind: "Translation and currency app for Shopify",
       summary:
-        "Transcy combines translation, currency conversion and image translation. ContentPilot focuses on AI translation with your own instructions, plus SEO and content tools. Here is how they compare.",
+        "Transcy combines translation, currency conversion and image translation. ContentPilot combines AI translation with SEO and content tools. Here is how they compare.",
       about:
         "Transcy is a Shopify app that combines translation with a currency converter, visitor location detection and image translation. It works with several translation engines and offers a language and currency switcher for the storefront.",
       strengths: [
@@ -177,11 +178,11 @@ export const compareEn: CompareCopy = {
         "Translates texts from other apps.",
       ],
       ourEdge: [
-        "Your own instructions for the AI, so translations follow your tone.",
+        "Your own instructions for the AI, so translations follow your tone (Pro plan and up).",
         "Unlimited languages on every plan.",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and AI-search visibility.",
-        "A spreadsheet editor for the whole catalogue, plus variant image galleries.",
+        "A spreadsheet editor for the whole catalogue, plus variant image galleries (Pro plan and up).",
       ],
       verdict:
         "Choose Transcy if you need a currency converter beyond Shopify Markets or text translated inside images. Choose ContentPilot if you want translations in your own voice and one app for texts, SEO and translations.",
@@ -207,7 +208,7 @@ export const compareEn: CompareCopy = {
         "You choose the AI provider and pay it directly, at cost.",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and AI-search visibility.",
-        "A spreadsheet editor for the whole catalogue, plus variant image galleries.",
+        "A spreadsheet editor for the whole catalogue, plus variant image galleries (Pro plan and up).",
       ],
       verdict:
         "Choose LangShop if you want human translators on call or a currency converter beyond Shopify Markets. Choose ContentPilot if you want unlimited languages and one app for texts, SEO and translations.",

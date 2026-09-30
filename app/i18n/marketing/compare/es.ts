@@ -60,7 +60,7 @@ export const compareEs: CompareCopy = {
     },
     bulkEditor: {
       label: "Editor de hoja de cálculo para todo el catálogo",
-      help: "Edite títulos, campos SEO, precios y traducciones de muchos elementos a la vez, con importación y exportación CSV.",
+      help: "Edite títulos, campos SEO, precios y más de muchos elementos a la vez, en una sola tabla.",
     },
     seoToolkit: {
       label: "Herramientas SEO",
@@ -72,7 +72,7 @@ export const compareEs: CompareCopy = {
     },
     altText: {
       label: "Textos alternativos escritos por IA",
-      help: "Descripciones para cada imagen, en cada idioma.",
+      help: "La IA escribe una descripción para cada imagen.",
     },
     imageManager: {
       label: "Galerías de imágenes por variante",
@@ -89,6 +89,10 @@ export const compareEs: CompareCopy = {
   },
   ourNotes: {
     autoTranslate: "Con su propia clave de IA",
+    brandVoice: "Desde el plan Pro",
+    themeCheckout: "Desde el plan Pro",
+    thirdPartyApps: "Plan Max",
+    imageManager: "Desde el plan Pro",
     aiProvider: "Seis proveedores",
     followChanges: "Plan Max",
     imagesPerLanguage: "Aún no",
@@ -112,7 +116,7 @@ export const compareEs: CompareCopy = {
     "translate-and-adapt": {
       kind: "La app de traducción gratuita de Shopify",
       summary:
-        "Translate & Adapt es gratuita y la hace Shopify. ContentPilot añade IA con sus propias instrucciones, glosario, textos de otras apps, herramientas SEO y redacción de contenido. Así se comparan.",
+        "Translate & Adapt es gratuita y la hace Shopify. ContentPilot añade traducción con IA en todos los idiomas, glosario, herramientas SEO y redacción de contenido; en los planes superiores, también instrucciones propias para la IA y textos de otras apps. Así se comparan.",
       about:
         "Translate & Adapt es de Shopify y no cuesta nada. Traduce automáticamente hasta dos idiomas; cada idioma adicional se traduce a mano. Su gran punto fuerte es adaptar el contenido por mercado, por ejemplo distintas formas de escribir para España y México.",
       strengths: [
@@ -122,10 +126,10 @@ export const compareEs: CompareCopy = {
         "Encaja bien si solo necesita uno o dos idiomas más y traduce poco.",
       ],
       ourEdge: [
-        "Traducción con IA en todos los idiomas que quiera, con su propio tono y sus reglas.",
+        "Traducción con IA en todos los idiomas que quiera; desde el plan Pro, con su propio tono y sus reglas.",
         "Un glosario, para que los nombres de marca y términos fijos nunca se traduzcan mal.",
-        "Traduce textos de otras apps, como los widgets de reseñas.",
-        "Actualiza las traducciones automáticamente cuando cambia el texto original.",
+        "Traduce textos de otras apps, como los widgets de reseñas (plan Max).",
+        "Actualiza las traducciones automáticamente cuando cambia el texto original (plan Max).",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y un editor de hoja de cálculo para todo el catálogo.",
       ],
@@ -142,7 +146,7 @@ export const compareEs: CompareCopy = {
       summary:
         "Weglot traduce sitios web en muchas plataformas y cobra por palabras traducidas. ContentPilot funciona dentro de Shopify, guarda las traducciones en su tienda y añade herramientas SEO y de contenido. Así se comparan.",
       about:
-        "Weglot es un servicio de traducción para muchas plataformas web, entre ellas Shopify. Detecta los textos de su tienda y muestra páginas traducidas desde su propio sistema. Las traducciones se guardan en Weglot, y los planes dependen del número de idiomas y de palabras traducidas.",
+        "Weglot es un servicio de traducción para muchas plataformas web, entre ellas Shopify. Detecta los textos de su tienda y sirve las páginas traducidas a través de su propio sistema. Los planes dependen del número de idiomas y de palabras traducidas.",
       strengths: [
         "Producto maduro con un editor visual que muestra las traducciones en la página.",
         "Glosario y una IA que aprende la voz de su marca.",
@@ -151,7 +155,7 @@ export const compareEs: CompareCopy = {
       ],
       ourEdge: [
         "Las traducciones se guardan en su tienda Shopify y se conservan si desinstala la app.",
-        "Idiomas ilimitados en todos los planes y sin límite de palabras.",
+        "Idiomas ilimitados en todos los planes y sin límite de palabras; los planes se miden por número de productos.",
         "Usted elige el proveedor de IA y le paga directamente, a precio de coste.",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas, visibilidad en búsquedas con IA y un editor de hoja de cálculo para todo el catálogo.",
@@ -160,14 +164,11 @@ export const compareEs: CompareCopy = {
         "Elija Weglot si tiene sitios en varias plataformas y quiere un único servicio de traducción para todos, o si necesita traductores profesionales. Elija ContentPilot si su tienda funciona con Shopify, quiere que las traducciones pertenezcan a su tienda y no quiere límites de palabras.",
       pricing:
         "Un pequeño plan gratuito y después planes según el número de idiomas y de palabras traducidas.",
-      notes: {
-        nativeStorage: "Guardadas en Weglot",
-      },
     },
     transcy: {
       kind: "App de traducción y moneda para Shopify",
       summary:
-        "Transcy combina traducción, conversión de moneda y traducción de imágenes. ContentPilot se centra en la traducción con IA según sus instrucciones, más herramientas SEO y de contenido. Así se comparan.",
+        "Transcy combina traducción, conversión de moneda y traducción de imágenes. ContentPilot combina la traducción con IA con herramientas SEO y de contenido. Así se comparan.",
       about:
         "Transcy es una app de Shopify que combina la traducción con un conversor de moneda, la detección de la ubicación del visitante y la traducción de imágenes. Trabaja con varios motores de traducción e incluye un selector de idioma y moneda para la tienda.",
       strengths: [
@@ -177,11 +178,11 @@ export const compareEs: CompareCopy = {
         "Traduce textos de otras apps.",
       ],
       ourEdge: [
-        "Instrucciones propias para la IA, para que las traducciones sigan su tono.",
+        "Instrucciones propias para la IA, para que las traducciones sigan su tono (desde el plan Pro).",
         "Idiomas ilimitados en todos los planes.",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y visibilidad en búsquedas con IA.",
-        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante.",
+        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante (desde el plan Pro).",
       ],
       verdict:
         "Elija Transcy si necesita un conversor de moneda más allá de Shopify Markets o traducir el texto dentro de las imágenes. Elija ContentPilot si quiere traducciones con su propio tono y una sola app para textos, SEO y traducciones.",
@@ -207,10 +208,10 @@ export const compareEs: CompareCopy = {
         "Usted elige el proveedor de IA y le paga directamente, a precio de coste.",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y visibilidad en búsquedas con IA.",
-        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante.",
+        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante (desde el plan Pro).",
       ],
       verdict:
-        "Elija LangShop si quiere traductores humanos a mano o un conversor de moneda más allá de Shopify Markets. Elija ContentPilot si quiere idiomas ilimitados y una sola app para textos, SEO y traducciones.",
+        "Elija LangShop si quiere traductores humanos a su disposición o un conversor de moneda más allá de Shopify Markets. Elija ContentPilot si quiere idiomas ilimitados y una sola app para textos, SEO y traducciones.",
       pricing: "Un plan gratuito para catálogos pequeños y después planes según idiomas y funciones.",
       notes: {
         aiProvider: "Varios motores",

@@ -60,7 +60,7 @@ export const compareDe: CompareCopy = {
     },
     bulkEditor: {
       label: "Tabellen-Editor für den ganzen Katalog",
-      help: "Titel, SEO-Felder, Preise und Übersetzungen vieler Einträge auf einmal bearbeiten, mit CSV-Import und -Export.",
+      help: "Titel, SEO-Felder, Preise und mehr für viele Einträge auf einmal bearbeiten, in einer Tabelle.",
     },
     seoToolkit: {
       label: "SEO-Werkzeuge",
@@ -72,7 +72,7 @@ export const compareDe: CompareCopy = {
     },
     altText: {
       label: "Alt-Texte für Bilder per KI",
-      help: "Beschreibungen für jedes Bild, in jeder Sprache.",
+      help: "Die KI schreibt für jedes Bild eine Beschreibung.",
     },
     imageManager: {
       label: "Bildergalerien pro Variante",
@@ -89,6 +89,10 @@ export const compareDe: CompareCopy = {
   },
   ourNotes: {
     autoTranslate: "Mit eigenem KI-Schlüssel",
+    brandVoice: "Ab Pro-Plan",
+    themeCheckout: "Ab Pro-Plan",
+    thirdPartyApps: "Max-Plan",
+    imageManager: "Ab Pro-Plan",
     aiProvider: "Sechs Anbieter",
     followChanges: "Max-Plan",
     imagesPerLanguage: "Noch nicht",
@@ -112,20 +116,20 @@ export const compareDe: CompareCopy = {
     "translate-and-adapt": {
       kind: "Shopifys eigene kostenlose Übersetzungs-App",
       summary:
-        "Translate & Adapt ist kostenlos und stammt von Shopify. ContentPilot ergänzt KI mit eigenen Anweisungen, ein Glossar, Texte anderer Apps, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
+        "Translate & Adapt ist kostenlos und stammt von Shopify. ContentPilot ergänzt KI-Übersetzung in beliebig vielen Sprachen, ein Glossar, SEO-Werkzeuge und das Schreiben von Inhalten – in den größeren Plänen auch eigene KI-Anweisungen und Texte anderer Apps. Der Vergleich.",
       about:
         "Translate & Adapt stammt von Shopify und kostet nichts. Zwei Sprachen übersetzt die App automatisch, jede weitere Sprache wird von Hand übersetzt. Ihre große Stärke ist das Anpassen von Inhalten pro Markt, etwa unterschiedliche Schreibweisen für Deutschland und die Schweiz.",
       strengths: [
         "Komplett kostenlos, direkt von Shopify.",
         "Passt Formulierungen pro Markt an, etwa für Deutschland und die Schweiz.",
         "Deckt Theme, Checkout und Benachrichtigungs-E-Mails ab.",
-        "Passt gut, wenn Sie nur eine oder zwei zusätzliche Sprachen brauchen und wenig übersetzt.",
+        "Passt gut, wenn Sie nur eine oder zwei zusätzliche Sprachen brauchen und wenig übersetzen.",
       ],
       ourEdge: [
-        "KI-Übersetzung in beliebig vielen Sprachen, nach Ihrer eigenen Tonalität und Ihren Regeln.",
+        "KI-Übersetzung in beliebig vielen Sprachen; ab dem Pro-Plan nach Ihrer eigenen Tonalität und Ihren Regeln.",
         "Ein Glossar, damit Markennamen und feste Begriffe nie falsch übersetzt werden.",
-        "Übersetzt auch Texte anderer Apps, etwa Bewertungs-Widgets.",
-        "Aktualisiert Übersetzungen automatisch, wenn Sie den Originaltext ändern.",
+        "Übersetzt auch Texte anderer Apps, etwa Bewertungs-Widgets (Max-Plan).",
+        "Aktualisiert Übersetzungen automatisch, wenn Sie den Originaltext ändern (Max-Plan).",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und ein Tabellen-Editor für den ganzen Katalog.",
       ],
@@ -142,7 +146,7 @@ export const compareDe: CompareCopy = {
       summary:
         "Weglot übersetzt Websites auf vielen Plattformen und rechnet nach übersetzten Wörtern ab. ContentPilot arbeitet in Shopify, speichert Übersetzungen in Ihrem Shop und bringt SEO- und Content-Werkzeuge mit. Der Vergleich.",
       about:
-        "Weglot ist ein Übersetzungsdienst für viele Website-Plattformen, darunter Shopify. Er erkennt die Texte Ihres Shops und zeigt übersetzte Seiten aus dem eigenen System an. Die Übersetzungen liegen bei Weglot, die Pläne richten sich nach der Zahl der Sprachen und der übersetzten Wörter.",
+        "Weglot ist ein Übersetzungsdienst für viele Website-Plattformen, darunter Shopify. Er erkennt die Texte Ihres Shops und liefert übersetzte Seiten über das eigene System aus. Die Pläne richten sich nach der Zahl der Sprachen und der übersetzten Wörter.",
       strengths: [
         "Ausgereiftes Produkt mit visuellem Editor, der Übersetzungen direkt auf der Seite zeigt.",
         "Glossar und eine KI, die Ihre Markenstimme lernt.",
@@ -151,7 +155,7 @@ export const compareDe: CompareCopy = {
       ],
       ourEdge: [
         "Übersetzungen werden in Ihrem Shopify-Shop gespeichert und bleiben, wenn Sie die App entfernen.",
-        "Beliebig viele Sprachen in jedem Plan und keine Wortlimits.",
+        "Beliebig viele Sprachen in jedem Plan und keine Wortlimits – die Pläne richten sich nach der Zahl der Produkte.",
         "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge, Sichtbarkeit in KI-Suchen und ein Tabellen-Editor für den ganzen Katalog.",
@@ -160,14 +164,11 @@ export const compareDe: CompareCopy = {
         "Wählen Sie Weglot, wenn Sie Websites auf mehreren Plattformen betreiben und einen Übersetzungsdienst für alle wollen, oder wenn Sie professionelle Übersetzer brauchen. Wählen Sie ContentPilot, wenn Ihr Shop auf Shopify läuft, die Übersetzungen Ihrem Shop gehören sollen und Sie keine Wortlimits wollen.",
       pricing:
         "Ein kleiner kostenloser Plan, danach Pläne nach Anzahl Sprachen und übersetzten Wörtern.",
-      notes: {
-        nativeStorage: "Liegen bei Weglot",
-      },
     },
     transcy: {
       kind: "Übersetzungs- und Währungs-App für Shopify",
       summary:
-        "Transcy verbindet Übersetzung, Währungsumrechnung und Bildübersetzung. ContentPilot setzt auf KI-Übersetzung nach Ihren Anweisungen, dazu SEO- und Content-Werkzeuge. Der Vergleich.",
+        "Transcy verbindet Übersetzung, Währungsumrechnung und Bildübersetzung. ContentPilot verbindet KI-Übersetzung mit SEO- und Content-Werkzeugen. Der Vergleich.",
       about:
         "Transcy ist eine Shopify-App, die Übersetzung mit einem Währungsumrechner, Standorterkennung der Besucher und Bildübersetzung verbindet. Sie arbeitet mit mehreren Übersetzungsdiensten und bringt einen Sprach- und Währungsumschalter für den Shop mit.",
       strengths: [
@@ -177,11 +178,11 @@ export const compareDe: CompareCopy = {
         "Übersetzt Texte anderer Apps.",
       ],
       ourEdge: [
-        "Eigene Anweisungen für die KI, damit Übersetzungen Ihre Tonalität treffen.",
+        "Eigene Anweisungen für die KI, damit Übersetzungen Ihre Tonalität treffen (ab Pro-Plan).",
         "Beliebig viele Sprachen in jedem Plan.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
-        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
+        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante (ab Pro-Plan).",
       ],
       verdict:
         "Wählen Sie Transcy, wenn Sie einen Währungsumrechner über Shopify Markets hinaus oder übersetzten Text in Bildern brauchen. Wählen Sie ContentPilot, wenn Übersetzungen in Ihrer eigenen Tonalität entstehen sollen und Sie eine App für Texte, SEO und Übersetzungen suchen.",
@@ -207,7 +208,7 @@ export const compareDe: CompareCopy = {
         "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
-        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
+        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante (ab Pro-Plan).",
       ],
       verdict:
         "Wählen Sie LangShop, wenn Sie menschliche Übersetzer auf Abruf oder einen Währungsumrechner über Shopify Markets hinaus wollen. Wählen Sie ContentPilot, wenn Sie beliebig viele Sprachen und eine App für Texte, SEO und Übersetzungen wollen.",

@@ -42,7 +42,7 @@
 | Alle übersetzbaren Shopify-Ressourcen | ✅ | Produkte inkl. Optionen/Metafelder, Kollektionen, Seiten, Blogs, Artikel, Richtlinien, Menüs (alle Ebenen), Metaobjekte, Theme-Inhalte inkl. Checkout, E-Mails, Versand, Filter, Cookie-Banner, Zahlungsanbieter, Lieferscheine, Abo-Pläne |
 | Marktspezifische Übersetzungen | ✅ | Markt-Ebene im Bulk-Editor und bei Theme-Inhalten |
 | Übersetzte URL-Handles mit Weiterleitungen | ✅ | Opt-in bei der automatischen Übersetzung |
-| Texte anderer Apps (Direktübersetzungen) | ✅ | Storefront-Embed + Sammler |
+| Texte anderer Apps (Direktübersetzungen) | ✅ Max | Storefront-Embed + Sammler |
 | Automatische Nachübersetzung bei Textänderungen | ✅ Max | In der App, im Shopify-Admin, durch Importe; Tageslimit + Wiederholungsliste |
 | Sprachen & Märkte verwalten | ✅ | Sprachen hinzufügen/entfernen/veröffentlichen, Märkte zuweisen, Markt-Adressen (Unterordner), Märkte anlegen/aktivieren |
 | Sprachumschalter | ✅ | Storefront-Embed |
@@ -103,26 +103,26 @@ kein ❌.
 | Funktion | ContentPilot | Translate & Adapt | Weglot | Transcy | LangShop |
 |---|---|---|---|---|---|
 | Automatische Übersetzung | ✅ (eigener KI-Key) | ⚠️ nur 2 Sprachen, Rest manuell; 100 Mio. Zeichen/Jahr | ✅ | ✅ | ✅ |
-| Übersetzungen in Shopify gespeichert | ✅ | ✅ | ❌ bei Weglot (JS/Proxy), weg bei Kündigung | ✅ | ✅ |
-| Eigene Anweisungen / Markenstimme | ✅ | ❌ | ✅ (lernendes KI-Modell) | ? | ✅ |
+| Übersetzungen in Shopify gespeichert | ✅ | ✅ | ? — Drittquellen sagen „bei Weglot (JS/Proxy)“, nicht in Weglots eigener Shopify-Doku verifiziert; Seite zeigt „Keine Angabe“ | ✅ | ✅ |
+| Eigene Anweisungen / Markenstimme | ✅ ab Pro | ❌ | ✅ (lernendes KI-Modell) | ? | ✅ |
 | Wahl des KI-Anbieters | ✅ 6 | ❌ | ❌ | ⚠️ Engine-Wahl (OpenAI, DeepL, Gemini, …) | ⚠️ Engine-Wahl (ChatGPT, DeepL, Google) |
 | Glossar | ✅ | ❌ | ✅ | ✅ | ✅ (ab Standard) |
-| Theme, Checkout, E-Mails | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Texte anderer Apps | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Theme, Checkout, E-Mails | ✅ ab Pro | ✅ | ✅ | ✅ | ✅ |
+| Texte anderer Apps | ✅ Max | ❌ | ✅ | ✅ | ✅ |
 | Übersetzungen folgen Textänderungen | ✅ Max | ? | ✅ | ✅ | ⚠️ neue Produkte, höhere Pläne |
 | Texte schreiben/verbessern mit KI | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Tabellen-Editor für den Katalog | ✅ | ❌ | ❌ | ❌ | ❌ |
 | SEO-Werkzeuge (Keywords, Crawl, GSC) | ✅ | ❌ | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) |
 | KI-Sichtbarkeit (Schema, agents.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | KI-Alt-Texte | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Variantengalerien | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Variantengalerien | ✅ ab Pro | ❌ | ❌ | ❌ | ❌ |
 | Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ | ✅ (auch Text im Bild) | ? |
 | Eigene Währungsumrechnung | ❌ (Markets) | ❌ (Markets) | ❌ | ✅ | ✅ |
 | Menschliche Übersetzer | ❌ | ❌ | ✅ | ? | ✅ |
 | Preismodell | Free 50 Prod.; ab €9.90, Sprachen ∞ | gratis | nach Wörtern + Sprachen: Free 1 Spr./2k Wörter, $17, $32 (3 Spr.), $87 (5 Spr.) | Free, $14.90, $29, $69, $99, $599 | Free, ~$9.90, ~$33.90 (+5 Spr.), ~$67.90 (+20 Spr.) |
 | Bewertung (09/2026) | — | 4.5 | 4.5 (≈790) | 4.4 (≈2.530) | 4.5 |
 
-**Offen / vor dem Livegang der Website prüfen:** Transcy „eigene Anweisungen",
+**Offen / vor dem Livegang der Website prüfen:** Weglot-Speicherort, T&A-Glossar (Quelle nur Konkurrenz-Blogs), Transcy „eigene Anweisungen",
 T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"); die
 LangShop-Preise stammen aus Drittquellen. langify und T Lab sind bewusst nicht auf
 der Vergleichsseite (kleinere Verbreitung); Kandidaten für eine spätere Erweiterung.

@@ -34,7 +34,7 @@ export function CompareTable({
 }) {
   return (
     <div className="mk-compare-table__scroll" tabIndex={0} role="region" aria-label={copy.tableHeading}>
-      <table className="mk-compare-table">
+      <table className={`mk-compare-table${competitors.length === 1 ? " mk-compare-table--single" : ""}`}>
         <thead>
           <tr>
             <th scope="col">{copy.featureColumn}</th>
@@ -51,7 +51,7 @@ export function CompareTable({
         {COMPARE_GROUPS.map((group) => (
           <tbody key={group}>
             <tr className="mk-compare-table__group">
-              <th scope="colgroup" colSpan={2 + competitors.length}>
+              <th scope="rowgroup" colSpan={2 + competitors.length}>
                 {copy.groups[group]}
               </th>
             </tr>
