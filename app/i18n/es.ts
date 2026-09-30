@@ -1122,6 +1122,7 @@ export const es: Translation = {
         "El volumen de IA de este periodo se ha agotado. Añade tu propia clave para continuar ahora, o espera al siguiente periodo.",
       usageEstimated: "Parte de esta cifra es una estimación.",
       activeWithAi: "Activo, con IA",
+      consentTextChanged: "El aviso sobre el procesamiento con IA ha cambiado. Léelo de nuevo y confírmalo.",
       notAvailableNotice:
         "La IA incluida no está disponible ahora mismo. Tu propia clave de API sigue funcionando igual.",
       usageUnavailable:

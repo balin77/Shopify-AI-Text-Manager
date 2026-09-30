@@ -2828,6 +2828,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // always the primary's, every call is gated, and every call asks the
     // breaker afresh.
     let primaryProbe = false;
+    // A failover REFUSED on the breaker-open route (ceiling, failover budget,
+    // fallback breaker) is refused for this call: asking again after the
+    // primary fails would repeat the same DB reads and the same log line.
+    let failoverRefused = false;
     if (this.isManagedPrimary()) {
       const { breakerAllows } = await import(
         '../../app/services/ai/managed-failover.server'
@@ -2839,6 +2843,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         // The fallback ran and failed: the primary is known to be down, so
         // there is nothing better to try — its error is what happened.
         if (routed.outcome === 'failed') throw this.normalizeError(routed.error);
+        failoverRefused = true;
         // Refused (no fallback, ceiling, budget, fallback breaker): fall
         // through to the primary, which is what an open breaker did before
         // the failover existed.
@@ -2890,7 +2895,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           await this.recordOutcome(this.provider, false, primaryProbe);
           probeResolved = true;
         }
-        if (verdict?.failOver) {
+        if (verdict?.failOver && !failoverRefused) {
           const routed = await this.runOnFailover(
             verdict.reason,
             prompt,
@@ -2898,8 +2903,15 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             ledger,
             queueAttempt,
             served,
+            // The primary attempt has been CHARGED by now (a timeout is
+            // charged its worst case), so the budget this call's preflight
+            // admitted may already be spent.
+            true,
           );
           if (routed.outcome === 'answered') return routed.text;
+          // The error re-thrown is the PRIMARY's, so the queue's rate window
+          // has to be charged to the primary's bucket, not to the fallback's.
+          if (served) served.provider = this.provider;
         }
         // The caller gets the FIRST error, which describes the outage rather
         // than our reaction to it.
@@ -3021,9 +3033,26 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     ledger: CallLedger,
     queueAttempt: number,
     served?: { provider: AIProvider },
+    recheckBudget = false,
   ): Promise<FailoverRoute> {
     if (this.config.credentialSource !== 'managed' || !this.config.switchToFailover) {
       return { outcome: 'refused' };
+    }
+
+    // §6: a call may START only while budget remains. After a failed primary
+    // attempt that is no longer what the preflight at the top established —
+    // a timed-out primary was charged its worst case — so the dearer fallback
+    // asks again. A refusal here is thrown as one, never folded into
+    // "refused": the primary's plain error would read to a repair as "the AI
+    // could not deliver", and that answer is a deletion.
+    if (recheckBudget && this.config.preflight) {
+      const verdict = await this.config.preflight();
+      if (!verdict.ok) {
+        throw new ManagedAiRefusedError(verdict.reason, {
+          usedMicros: verdict.usedMicros,
+          limitMicros: verdict.limitMicros,
+        });
+      }
     }
 
     let delegate: AIService | null;

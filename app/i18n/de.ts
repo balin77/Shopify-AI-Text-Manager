@@ -1141,6 +1141,7 @@ export const de = {
         "Das KI-Volumen dieses Zeitraums ist aufgebraucht. Trage deinen eigenen API-Key ein, um sofort weiterzuarbeiten, oder warte auf den nächsten Zeitraum.",
       usageEstimated: "Ein Teil dieses Werts ist geschätzt.",
       activeWithAi: "Aktiv, mit KI",
+      consentTextChanged: "Der Hinweis zur KI-Verarbeitung wurde geändert. Bitte lies ihn erneut und bestätige ihn dann.",
       notAvailableNotice:
         "Die enthaltene KI ist derzeit nicht verfügbar. Dein eigener API-Schlüssel funktioniert unverändert.",
       usageUnavailable:

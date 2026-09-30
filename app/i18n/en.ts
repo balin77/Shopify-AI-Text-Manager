@@ -1142,6 +1142,7 @@ export const en: Translation = {
       // sentence about a period ("used this period", "resets on", "wait for
       // the next period") is false about a grant that never comes back.
       activeWithAi: "Active, with AI",
+      consentTextChanged: "The AI processing notice has changed. Please read it again and confirm.",
       notAvailableNotice:
         "The included AI is not available right now. Your own API key still works as usual.",
       usageUnavailable:

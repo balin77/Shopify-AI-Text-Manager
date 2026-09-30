@@ -126,6 +126,17 @@ describe('every purge path in the repair stands down on a refusal', () => {
     expect(caller.slice(0, 400)).toMatch(/purgeStaleEntries/);
   });
 
+  it('the pre-gate stands down only where a re-translation is coming', () => {
+    // With auto-translate off, the purge is the merchant's own answer and no
+    // AI call is pending — a spent budget must not keep the stale text live.
+    expect(src).toMatch(
+      /if \(mayPurge && policy\.autoTranslateExternalChanges && retranslate\.length > 0\) \{/,
+    );
+    // And the gate asks MONEY too, not only the static decision.
+    expect(src).toMatch(/managedBudgetStatus\(shop, settings, plan\)/);
+    expect(src).toMatch(/globalPoolStatus\(managedPoolFor\(shop, settings, plan\)\)/);
+  });
+
   it('a stood-down run does not report itself as failed', () => {
     // A red task blaming the automation for a budget the merchant can top up
     // is a defect report about nothing.

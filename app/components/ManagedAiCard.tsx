@@ -144,8 +144,22 @@ export function ManagedAiCard({
   // refusable — a consent against a changed text (409), a mode the deployment
   // cannot serve (403), a failed key deletion — and a refusal nobody sees
   // reads as "it worked" to the merchant who clicked.
-  const lastResult = fetcher.state === "idle" ? (fetcher.data as { success?: boolean; error?: string } | undefined) : undefined;
-  const lastError = lastResult && lastResult.success === false ? lastResult.error || "" : null;
+  const lastResult =
+    fetcher.state === "idle"
+      ? (fetcher.data as { success?: boolean; error?: string; code?: string } | undefined)
+      : undefined;
+  // A refusal with a CODE is phrased from the bundle — the server's `error`
+  // is English and this card ships in three languages.
+  const lastError =
+    lastResult && lastResult.success === false
+      ? (lastResult.code === "consentTextChanged"
+          ? m.consentTextChanged
+          : lastResult.code === "managedAiNotAvailable"
+            ? m.notAvailableNotice
+            : undefined) ||
+        lastResult.error ||
+        ""
+      : null;
 
   const busy = (action: string) =>
     fetcher.state !== "idle" && fetcher.formData?.get("actionType") === action;

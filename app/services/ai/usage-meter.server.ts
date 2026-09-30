@@ -32,6 +32,7 @@
  *   out is converted back to Number at the boundary.
  */
 
+import { calendarPeriodKey } from "./managed-periods.shared";
 import type { AIProvider } from "../../utils/api-key-validation";
 import {
   type AiCredentialSource,
@@ -119,9 +120,7 @@ export interface RecordedAiUsage {
  * discriminator, which is the class of ambiguity this repo keeps paying for.
  */
 export function currentAiUsagePeriod(date: Date = new Date()): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return `m:${y}-${m}`;
+  return calendarPeriodKey(date);
 }
 
 /**

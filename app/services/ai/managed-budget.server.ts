@@ -26,7 +26,10 @@ import {
 } from "../../config/managed-ai-budget";
 import { resolveDevPlanMode } from "../dev-plan-override.server";
 import { boughtManagedAi } from "./managed-ai.shared";
-import { currentAiUsagePeriod, managedBudgetPeriod } from "./usage-meter.server";
+import { managedBudgetPeriod } from "./usage-meter.server";
+import { usedPeriodsFilter } from "./managed-periods.shared";
+
+export { usedPeriodsFilter };
 import { logger } from "../../utils/logger.server";
 
 export interface ManagedBudgetStatus {
@@ -297,44 +300,6 @@ export async function managedBudgetStatus(
       readFailed: true,
     };
   }
-}
-
-/**
- * Which ledger keys count as USED against the budget being checked.
- *
- * The taster is one key, forever. A PERIOD budget is not just the current
- * key, and the difference is a repeatable loop: the key is derived from the
- * subscription's `currentPeriodEnd`, and a plan switch (`APPLY_IMMEDIATELY`)
- * or a cancel + re-subscribe REPLACES the subscription with one that has its
- * own billing cycle — a new end date, a new key, and a used figure of zero.
- * Max+AI → Basic+AI → Max+AI inside one week would mint three budgets for the
- * price of a few prorated days. So every period key whose end is still in the
- * FUTURE counts too: a replaced subscription's spend keeps weighing on the new
- * one until the day the old period would have ended, and a natural renewal
- * (whose old key ends today or earlier) drops out by itself. The current
- * calendar key is included for the same reason — it is where a managed call
- * is written while the period end is not mirrored yet, and a spend there
- * must not vanish the moment the mirror lands.
- *
- * Conservative in one stated direction: a downgrade right after heavy spend
- * can find the smaller budget already used until the old period ends. That is
- * the intended answer — the alternative is the loop above.
- */
-function usedPeriodsFilter(
-  period: string,
-  kind: "period" | "taster",
-  now: Date = new Date(),
-): { period: string } | { OR: Array<Record<string, unknown>> } {
-  if (kind === "taster") return { period };
-  const today = now.toISOString().slice(0, 10);
-  return {
-    OR: [
-      { period },
-      { period: currentAiUsagePeriod(now) },
-      // ISO dates compare as strings; `gt` keeps a key ending TODAY out.
-      { period: { startsWith: "b:", gt: `b:${today}` } },
-    ],
-  };
 }
 
 /** The share used, 0-1, for the "80 % warning before a wall" (§6). */

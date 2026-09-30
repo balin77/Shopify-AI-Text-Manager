@@ -1922,7 +1922,14 @@ async function repairStaleTranslations(
   // Note this is deliberately not the per-request preflight: that one bounds
   // SPEND and belongs next to the call, while this one decides whether this
   // repair may touch the merchant's data at all.
-  if (mayPurge) {
+  //
+  // Only where a re-translation is actually COMING. A refusal can cancel a
+  // deletion only because the deletion was going to be replaced by new text;
+  // with auto-translate off (or nothing left to re-translate) the purge is the
+  // merchant's own stored answer and involves no AI call at all — standing it
+  // down over an AI budget left the stale translation live for good, since
+  // the sync has already moved the digest baseline past it.
+  if (mayPurge && policy.autoTranslateExternalChanges && retranslate.length > 0) {
     try {
       const { db } = await import("../../db.server");
       const { resolveAiCredentials } = await import("../ai/ai-credentials.server");

@@ -464,14 +464,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } | null = null;
     if (onManagedAi) {
       try {
-        const { managedBudgetStatus } = await import("../services/ai/managed-budget.server");
+        const { managedBudgetStatus, usedPeriodsFilter } = await import(
+          "../services/ai/managed-budget.server"
+        );
         const status = await managedBudgetStatus(
           session.shop,
           settings,
           (settings.subscriptionPlan ?? "free") as never,
         );
         const rows = await db.aiUsageCounter.findMany({
-          where: { shop: session.shop, period: status.period, source: "managed" },
+          // The rows the budget's used figure is summed over, so the share of
+          // estimated calls describes that same number.
+          where: { shop: session.shop, source: "managed", ...usedPeriodsFilter(status.period, status.kind) },
           select: { calls: true, estimated: true },
         });
         const total = rows.reduce((n, r) => n + r.calls, 0);
@@ -1421,6 +1425,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           {
             success: false,
             actionType,
+            code: "managedAiNotAvailable",
             error: "Included AI is not available for this shop.",
           },
           { status: 403 }
@@ -1470,6 +1475,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           {
             success: false,
             actionType,
+            code: "consentTextChanged",
             error: "The processing notice has changed. Please read it again and confirm.",
           },
           { status: 409 },

@@ -181,8 +181,17 @@ export function shopFailoverCeiling(): number {
 export async function shopFailoverExhausted(shop: string, period: string): Promise<boolean> {
   try {
     const { db } = await import("../../db.server");
+    // The same OPEN periods the budget counts, or a plan switch — a new
+    // period key — would hand the shop a fresh failover ceiling, the loop
+    // the budget closes.
+    const { usedPeriodsFilter } = await import("./managed-periods.shared");
+    const { TASTER_PERIOD } = await import("../../config/managed-ai-budget");
     const agg = await db.aiUsageCounter.aggregate({
-      where: { shop, period, source: "managed" },
+      where: {
+        shop,
+        source: "managed",
+        ...usedPeriodsFilter(period, period === TASTER_PERIOD ? "taster" : "period"),
+      },
       _sum: { failoverCalls: true },
     });
     return (agg._sum.failoverCalls ?? 0) >= shopFailoverCeiling();

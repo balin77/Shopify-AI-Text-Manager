@@ -226,7 +226,8 @@ describe('the failover is PER REQUEST — the instance never becomes the fallbac
 
     // Both calls were gated; the first cut's swapped config had no preflight,
     // so the second one would have skipped budget, consent and the pool.
-    expect(preflight).toHaveBeenCalledTimes(2);
+    // Three answers: call 1, the re-check before its failover, call 2.
+    expect(preflight).toHaveBeenCalledTimes(3);
     expect(openaiCreate).toHaveBeenCalledTimes(2);
     expect(internals(service).provider).toBe('openai');
     expect(internals(service).config.failoverServed).toBeUndefined();
@@ -239,6 +240,7 @@ describe('the failover is PER REQUEST — the instance never becomes the fallbac
     const preflight = vi
       .fn<Preflight>()
       .mockResolvedValueOnce({ ok: true, period: 'b:2026-10-14', pool: 'paid' })
+      .mockResolvedValueOnce({ ok: true, period: 'b:2026-10-14', pool: 'paid' })
       .mockResolvedValueOnce({ ok: false, reason: 'budgetExceeded' });
     const { service } = managedService({ preflight });
 
@@ -246,6 +248,24 @@ describe('the failover is PER REQUEST — the instance never becomes the fallbac
     const error = await internals(service).replayRequest('p').catch((e) => e);
     expect(isManagedRefusal(error)).toBe(true);
     expect(anthropicCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('the fallback re-asks the budget: a primary charged past it does not start the 14x call', async () => {
+    // The primary failed AFTER its preflight — e.g. a timeout charged its
+    // worst case — and the budget is now spent. The fallback must not start,
+    // and the answer is a REFUSAL (never the primary's plain error, which a
+    // repair would read as "the AI could not deliver" and delete on).
+    openaiCreate.mockRejectedValueOnce(httpError(503, 'service unavailable'));
+    anthropicCreate.mockResolvedValue(haikuAnswer());
+    const preflight = vi
+      .fn<Preflight>()
+      .mockResolvedValueOnce({ ok: true, period: 'b:2026-10-14', pool: 'paid' })
+      .mockResolvedValueOnce({ ok: false, reason: 'budgetExceeded' });
+    const { service } = managedService({ preflight });
+
+    const error = await internals(service).replayRequest('p').catch((e) => e);
+    expect(isManagedRefusal(error)).toBe(true);
+    expect(anthropicCreate).not.toHaveBeenCalled();
   });
 
   it('bills the fallback at the DEFAULT model and marks it a failover', async () => {
@@ -308,7 +328,10 @@ describe('the meter writes under the ledger the PREFLIGHT checked', () => {
     await internals(service).replayRequest('p');
 
     expect(mockRecordAiUsage.mock.calls[0][0].period).toBe('b:2026-11-14');
-    expect(mockAggregate.mock.calls[0][0].where.period).toBe('b:2026-11-14');
+    // The ceiling sums the open periods the budget sums — the call's own key
+    // is always one of them.
+    const where = mockAggregate.mock.calls[0][0].where;
+    expect(where.OR).toContainEqual({ period: 'b:2026-11-14' });
   });
 
   it('a call with no preflight keeps the construction-time period', async () => {
