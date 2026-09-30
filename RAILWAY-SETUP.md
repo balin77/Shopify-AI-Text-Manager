@@ -244,6 +244,8 @@ DATABASE_URL=${{Postgres.DATABASE_URL}} (automatisch gesetzt)
 
 > **Hinweis**: Shop-Name und Access-Token werden automatisch aus der Datenbank-Session geladen (Multi-Tenant SaaS).
 
+> **Öffentliche Website (SEO)**: Optional `PUBLIC_SITE_URL=https://<deine-domain>` nur in **Production** setzen. Canonical-Links, hreflang, Sitemap, robots.txt, llms.txt und strukturierte Daten zeigen dann immer auf diese eine Adresse, egal über welchen Host eine Seite aufgerufen wird. Ohne die Variable wird die aufgerufene Adresse verwendet. In **Development** `APP_ENV=development` gesetzt lassen: Dann schickt der Server auf jede Antwort `X-Robots-Tag: noindex`, damit die Dev-Kopie der Website nicht bei Google landet.
+
 #### Development Environment Variables:
 ```
 NODE_ENV=development

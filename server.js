@@ -198,6 +198,19 @@ app.use(compression());
 // http://expressjs.com/en/advanced/best-practice-security.html#at-a-minimum-disable-x-powered-by-header
 app.disable("x-powered-by");
 
+// A non-production deployment serves the same public website on its own
+// Railway host, and a search engine that finds it indexes the site twice.
+// Only an EXPLICIT non-production APP_ENV opts out of indexing — an unset
+// variable keeps the old behaviour, because a production deploy that loses the
+// variable must not vanish from search. The header covers every response, so
+// the website, robots.txt, sitemap.xml and llms.txt are all covered.
+if (process.env.APP_ENV && process.env.APP_ENV !== "production") {
+  app.use((_req, res, next) => {
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    next();
+  });
+}
+
 // HTTP → HTTPS redirect — defense-in-depth. Railway terminates TLS and also
 // redirects at the proxy level, but this catches any path that reaches the app
 // with X-Forwarded-Proto: http (e.g., internal mis-routing or proxy config change).

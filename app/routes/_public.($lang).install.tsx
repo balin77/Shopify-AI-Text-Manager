@@ -28,11 +28,16 @@ import { Form, redirect, useActionData, useLoaderData, useNavigation } from "rea
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import { requireMarketingLocale } from "../utils/marketing-route.server";
+import {
+  marketingOrigin,
+  redirectTrailingSlash,
+  requireMarketingLocale,
+} from "../utils/marketing-route.server";
 import { normalizeShopDomain } from "../services/marketing-shop-domain.shared";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  redirectTrailingSlash(url);
 
   // 302, not 301: a listing URL can change, and a permanent redirect is cached
   // by browsers in a way nobody can clear afterwards.
@@ -41,7 +46,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   const locale = requireMarketingLocale(params.lang, "/install", url.search);
-  return { locale, origin: url.origin };
+  return { locale, origin: marketingOrigin(url) };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {

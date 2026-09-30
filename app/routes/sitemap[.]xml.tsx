@@ -9,6 +9,7 @@
  */
 
 import type { LoaderFunctionArgs } from "react-router";
+import { marketingOrigin } from "../utils/marketing-route.server";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { GUIDE_TOPIC_ORDER, guideTopicPath } from "../config/marketing-guide";
 import {
@@ -43,7 +44,7 @@ function escapeXml(value: string): string {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { origin } = new URL(request.url);
+  const origin = marketingOrigin(new URL(request.url));
 
   const entries: string[] = [];
 

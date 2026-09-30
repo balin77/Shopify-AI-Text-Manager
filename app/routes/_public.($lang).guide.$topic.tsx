@@ -12,13 +12,19 @@ import {
   guideTopicPath,
   isGuideTopicId,
 } from "../config/marketing-guide";
+import { breadcrumbLd, guideArticleLd } from "../utils/marketing-jsonld";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import { requireMarketingLocale } from "../utils/marketing-route.server";
+import {
+  marketingOrigin,
+  redirectTrailingSlash,
+  requireMarketingLocale,
+} from "../utils/marketing-route.server";
 import { localizedPath } from "../services/marketing-locale.shared";
 import { VideoFrame } from "../components/marketing/VideoFrame";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  redirectTrailingSlash(url);
   // The locale gate runs FIRST and with the real path, so `/en/guide/x`
   // redirects to `/guide/x` like every other page before the slug is judged.
   const locale = requireMarketingLocale(params.lang, `/guide/${params.topic ?? ""}`, url.search);
@@ -27,20 +33,44 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // The public layout's boundary renders this with the site chrome.
     throw new Response("Not Found", { status: 404 });
   }
-  return { locale, origin: url.origin, topic };
+  return { locale, origin: marketingOrigin(url), topic };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
   if (!data) return [{ title: MARKETING_SITE.appName }];
   const t = getMarketingTranslation(data.locale);
-  const copy = getGuideCopy(data.locale).topics[data.topic];
+  const guide = getGuideCopy(data.locale);
+  const copy = guide.topics[data.topic];
+  const categoryId = guideCategoryOf(data.topic);
+  const guideUrl = `${data.origin}${localizedPath(data.locale, "/guide")}`;
+  const topicUrl = `${data.origin}${localizedPath(data.locale, guideTopicPath(data.topic))}`;
   return buildMarketingMeta({
     origin: data.origin,
     locale: data.locale,
     path: guideTopicPath(data.topic),
-    title: `${copy.title} — ${t.guide.title} — ${t.site.name}`,
+    // Topic + product only: "— Anleitung —" in the middle pushed most titles
+    // past the ~60 characters a result shows, and the breadcrumb below
+    // already tells a search engine this page belongs to the guide.
+    title: `${copy.title} — ${t.site.name}`,
     description: copy.summary,
     siteName: t.site.name,
+    ogType: "article",
+    jsonLd: [
+      guideArticleLd({
+        origin: data.origin,
+        locale: data.locale,
+        url: topicUrl,
+        headline: copy.title,
+        description: copy.summary,
+        section: guide.categories[categoryId].title,
+      }),
+      breadcrumbLd([
+        { name: t.site.name, url: `${data.origin}${localizedPath(data.locale, "/")}` },
+        { name: t.guide.title, url: guideUrl },
+        { name: guide.categories[categoryId].title, url: `${guideUrl}#${categoryId}` },
+        { name: copy.title, url: topicUrl },
+      ]),
+    ],
   });
 };
 

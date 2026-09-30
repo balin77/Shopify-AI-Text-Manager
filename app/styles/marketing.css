@@ -720,6 +720,11 @@ a.mk-badge:hover {
   font-size: clamp(1.5rem, 2.8vw, 2rem);
 }
 
+.mk-feature__guide {
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
 .mk-feature__lead {
   color: var(--mk-text-muted);
   max-width: var(--mk-prose-width);

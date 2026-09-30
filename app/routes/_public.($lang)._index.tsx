@@ -9,9 +9,14 @@ import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 import { Link, redirect, useLoaderData } from "react-router";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
+import { faqLd, organizationLd, softwareApplicationLd, websiteLd } from "../utils/marketing-jsonld";
 import { buildMarketingMeta } from "../utils/marketing-meta";
 import { localizedPath } from "../services/marketing-locale.shared";
-import { requireMarketingLocale } from "../utils/marketing-route.server";
+import {
+  marketingOrigin,
+  redirectTrailingSlash,
+  requireMarketingLocale,
+} from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 import { MediaSlot } from "../components/marketing/MediaSlot";
 import { ScrollStory } from "../components/marketing/ScrollStory";
@@ -31,6 +36,7 @@ const PILLAR_SLOTS = ["pillar-writes", "pillar-translates", "pillar-found"] as c
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  redirectTrailingSlash(url);
 
   if (SHOPIFY_ENTRY_PARAMS.some((param) => url.searchParams.has(param))) {
     throw redirect(`${MARKETING_SITE.appPath}${url.search}`);
@@ -38,7 +44,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const locale = requireMarketingLocale(params.lang, "/", url.search);
 
-  return { locale, origin: url.origin };
+  return { locale, origin: marketingOrigin(url) };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
@@ -51,6 +57,14 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
     title: `${t.site.name} — ${t.site.tagline}`,
     description: t.site.description,
     siteName: t.site.name,
+    jsonLd: [
+      organizationLd(data.origin),
+      websiteLd(data.origin, data.locale, t),
+      softwareApplicationLd(data.origin, data.locale, t),
+      // The landing page renders exactly these questions (#faq), so the
+      // markup describes what is on the page and nothing more.
+      faqLd(t),
+    ],
   });
 };
 

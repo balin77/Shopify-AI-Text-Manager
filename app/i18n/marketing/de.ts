@@ -50,6 +50,7 @@ export const de: MarketingTranslation = {
   },
 
   features: {
+    guideLink: "So geht es — zur Anleitung",
     title: "Funktionen",
     intro:
       "Die App ist eine Sammlung von Werkzeugen mit einer Gemeinsamkeit: Sie arbeiten alle an dem Text, aus dem Ihr Shop besteht. Das ist drin.",

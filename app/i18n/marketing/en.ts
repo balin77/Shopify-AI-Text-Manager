@@ -63,6 +63,7 @@ export const en = {
   },
 
   features: {
+    guideLink: "How it works in the guide",
     title: "Features",
     intro:
       "The app is a set of tools that share one thing: they all work on the text your shop is made of. Here is what is in it.",

@@ -10,6 +10,7 @@
  */
 
 import type { LoaderFunctionArgs } from "react-router";
+import { marketingOrigin } from "../utils/marketing-route.server";
 
 const DISALLOWED = ["/app", "/admin", "/api", "/auth", "/webhooks", "/proxy"];
 
@@ -21,7 +22,7 @@ const DISALLOWED = ["/app", "/admin", "/api", "/auth", "/webhooks", "/proxy"];
 const ALLOWED = ["/app-icon.png"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { origin } = new URL(request.url);
+  const origin = marketingOrigin(new URL(request.url));
 
   const body = [
     "User-agent: *",

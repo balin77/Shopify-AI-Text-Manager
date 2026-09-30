@@ -4,15 +4,21 @@ import { getMarketingTranslation } from "../i18n/marketing";
 import { getGuideCopy } from "../i18n/marketing/guide";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { GUIDE_CATEGORIES, GUIDE_VIDEOS, guideTopicPath } from "../config/marketing-guide";
+import { breadcrumbLd } from "../utils/marketing-jsonld";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import { requireMarketingLocale } from "../utils/marketing-route.server";
+import {
+  marketingOrigin,
+  redirectTrailingSlash,
+  requireMarketingLocale,
+} from "../utils/marketing-route.server";
 import { localizedPath } from "../services/marketing-locale.shared";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  redirectTrailingSlash(url);
   const locale = requireMarketingLocale(params.lang, "/guide", url.search);
-  return { locale, origin: url.origin };
+  return { locale, origin: marketingOrigin(url) };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
@@ -25,6 +31,12 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
     title: `${t.guide.title} — ${t.site.name}`,
     description: t.guide.intro,
     siteName: t.site.name,
+    jsonLd: [
+      breadcrumbLd([
+        { name: t.site.name, url: `${data.origin}${localizedPath(data.locale, "/")}` },
+        { name: t.guide.title, url: `${data.origin}${localizedPath(data.locale, "/guide")}` },
+      ]),
+    ],
   });
 };
 

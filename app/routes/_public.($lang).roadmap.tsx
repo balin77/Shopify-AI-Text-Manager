@@ -16,7 +16,11 @@ import { getMarketingTranslation, type MarketingTranslation } from "../i18n/mark
 import { MARKETING_SITE } from "../config/marketing-site";
 import { publicRoadmap, type RoadmapArea, type RoadmapStatus } from "../config/roadmap.server";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import { requireMarketingLocale } from "../utils/marketing-route.server";
+import {
+  marketingOrigin,
+  redirectTrailingSlash,
+  requireMarketingLocale,
+} from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 import type { MarketingLocale } from "../services/marketing-locale.shared";
 
@@ -40,6 +44,7 @@ interface RoadmapCard {
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  redirectTrailingSlash(url);
   const locale = requireMarketingLocale(params.lang, "/roadmap", url.search);
 
   const sections = SECTIONS.map(({ status, label }) => {
@@ -61,7 +66,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return { status, label, cards };
   }).filter((section) => section.cards.length > 0);
 
-  return { locale, origin: url.origin, sections };
+  return { locale, origin: marketingOrigin(url), sections };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {

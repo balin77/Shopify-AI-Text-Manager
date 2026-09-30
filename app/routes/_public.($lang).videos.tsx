@@ -4,14 +4,19 @@ import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { MARKETING_VIDEOS } from "../config/marketing-videos";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import { requireMarketingLocale } from "../utils/marketing-route.server";
+import {
+  marketingOrigin,
+  redirectTrailingSlash,
+  requireMarketingLocale,
+} from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 import { VideoCard } from "../components/marketing/VideoCard";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  redirectTrailingSlash(url);
   const locale = requireMarketingLocale(params.lang, "/videos", url.search);
-  return { locale, origin: url.origin };
+  return { locale, origin: marketingOrigin(url) };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
