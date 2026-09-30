@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useState, type SVGProps } from "react";
 import { useFetcher } from "react-router";
-import { Badge, Banner, BlockStack, Button, Checkbox, InlineStack, Modal, Select, Tag, Text, TextField } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Button, Checkbox, InlineStack, Modal, Select, Tag, Text, TextField, Tooltip } from "@shopify/polaris";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DeleteItemModal } from "./create/DeleteItemModal";
 import { HelpTooltip } from "./HelpTooltip";
@@ -324,14 +324,6 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
               )}
             </DisabledActionTooltip>
           )}
-          {/* A link OUT to Shopify admin (new tab): the graph of this
-              market's languages, currency and address. It changes nothing,
-              so neither an open draft nor a running request blocks it. */}
-          {m.adminGraphUrl && (
-            <Button variant="plain" icon={MarketGraphIcon} url={m.adminGraphUrl} target="_blank">
-              {a.showInGraph}
-            </Button>
-          )}
           {m.primary !== true && (
             <DisabledActionTooltip
               hint={blocked ? s.removeBlockedByDraft : ownBlocksDelete(m) ? a.errorRemoveAddressFirst : undefined}
@@ -348,6 +340,16 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
                 {a.deleteMarketButton}
               </Button>
             </DisabledActionTooltip>
+          )}
+          {/* Last in the row: a link OUT to Shopify admin (new tab), the graph
+              of this market's languages, currency and address. An icon button
+              with its words in the tooltip and as its accessible name. It
+              changes nothing, so neither an open draft nor a running request
+              blocks it. */}
+          {m.adminGraphUrl && (
+            <Tooltip content={a.showInGraph}>
+              <Button icon={MarketGraphIcon} url={m.adminGraphUrl} target="_blank" accessibilityLabel={a.showInGraph} />
+            </Tooltip>
           )}
           </InlineStack>
         </InlineStack>

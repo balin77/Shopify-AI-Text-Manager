@@ -37,7 +37,7 @@ const addresses: MarketAddressesView = {
       primary: false,
       own: null,
       currency: null,
-      adminGraphUrl: null,
+      adminGraphUrl: "https://admin.shopify.com/store/shop/markets/graph?market_id=2",
     },
   ],
 };
@@ -63,11 +63,18 @@ describe("ShopMarketAddresses — currency and graph link", () => {
   it("shows the currency and links to the market graph in a new tab, even with a draft open", () => {
     renderIt(true);
     expect(screen.getByText(/Währung: CHF · Schweizer Franken/)).toBeTruthy();
-    const link = screen.getByRole("link", { name: /Im Diagramm anzeigen/ });
-    expect(link.getAttribute("href")).toBe("https://admin.shopify.com/store/shop/markets/graph?market_id=1");
-    expect(link.getAttribute("target")).toBe("_blank");
-    // One link: the draft market has no graph URL, and no currency line.
-    expect(screen.getAllByRole("link", { name: /Im Diagramm anzeigen/ })).toHaveLength(1);
+    const links = screen.getAllByRole("link", { name: "Im Diagramm anzeigen" });
+    expect(links.map((l) => l.getAttribute("href"))).toEqual([
+      "https://admin.shopify.com/store/shop/markets/graph?market_id=1",
+      "https://admin.shopify.com/store/shop/markets/graph?market_id=2",
+    ]);
+    expect(links.every((l) => l.getAttribute("target") === "_blank")).toBe(true);
+    // An icon button: its words are the accessible name and the tooltip, not visible text.
+    expect(links[1].textContent?.trim()).toBe("");
+    // Last in the row — after "Löschen".
+    const del = screen.getByRole("button", { name: "Markt löschen" });
+    expect(del.compareDocumentPosition(links[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // No currency line where none was read.
     expect(screen.getAllByText(/Währung:/)).toHaveLength(1);
   });
 });
