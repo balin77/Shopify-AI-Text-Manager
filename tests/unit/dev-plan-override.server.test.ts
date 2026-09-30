@@ -127,6 +127,9 @@ describe('setDevForcedPlan()', () => {
       await setDevForcedPlan(SHOP, 'max', true);
       expect(mockUpsert.mock.calls.at(-1)![0].update.devForcedManagedAi).toBe(false);
 
+      vi.stubEnv('MANAGED_AI_POOL_MICROS', '2000000');
+      vi.stubEnv('MANAGED_AI_TASTER_POOL_MICROS', '1000000');
+      vi.stubEnv('MANAGED_AI_FAILOVER_POOL_MICROS', '1000000');
       process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
       await setDevForcedPlan(SHOP, 'max', true);
       expect(mockUpsert.mock.calls.at(-1)![0].update.devForcedManagedAi).toBe(true);
@@ -134,6 +137,7 @@ describe('setDevForcedPlan()', () => {
       await setDevForcedPlan(SHOP, 'free', true);
       expect(mockUpsert.mock.calls.at(-1)![0].update.devForcedManagedAi).toBe(false);
     } finally {
+      vi.unstubAllEnvs();
       if (saved === undefined) delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
       else process.env.MANAGED_AI_ALLOW_DEV_BUILD = saved;
     }

@@ -610,11 +610,15 @@ describe('checkAndSyncSubscription() – dev override short-circuit', () => {
       process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
     });
     afterEach(() => {
+      vi.unstubAllEnvs();
       if (savedFlag === undefined) delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
       else process.env.MANAGED_AI_ALLOW_DEV_BUILD = savedFlag;
     });
 
     it('a forced "+ AI" plan stands in for the purchase, with a period end SET ONCE', async () => {
+      vi.stubEnv('MANAGED_AI_POOL_MICROS', '2000000');
+      vi.stubEnv('MANAGED_AI_TASTER_POOL_MICROS', '1000000');
+      vi.stubEnv('MANAGED_AI_FAILOVER_POOL_MICROS', '1000000');
       process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
       mockAISettingsFindUnique.mockResolvedValue({
         shop, subscriptionPlan: 'max', trialConsumedAt: null,

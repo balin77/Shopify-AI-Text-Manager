@@ -286,7 +286,7 @@ if (process.env.MANAGED_AI_ENABLED === 'true') {
     // The testing opt-in: every shop the dev app runs on pays nothing, so each
     // cent spent here is spent against no revenue. It may only run under a
     // hard global ceiling — a missing pool is an error here, not a warning.
-    for (const name of ['MANAGED_AI_POOL_MICROS', 'MANAGED_AI_TASTER_POOL_MICROS']) {
+    for (const name of ['MANAGED_AI_POOL_MICROS', 'MANAGED_AI_TASTER_POOL_MICROS', 'MANAGED_AI_FAILOVER_POOL_MICROS']) {
       const n = Number(process.env[name]);
       if (!process.env[name] || !Number.isFinite(n) || n <= 0) {
         errors.push(`❌ MANAGED_AI_ALLOW_DEV_BUILD is true but ${name} is not set — testing managed AI on the dev build needs a global cap`);

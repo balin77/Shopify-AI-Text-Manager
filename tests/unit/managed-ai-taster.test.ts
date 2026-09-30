@@ -355,6 +355,9 @@ describe('the dev build\'s TESTING opt-in', () => {
       delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
       expect(periodBudgetMicros(shop, settings, 'max')).toBe(0);
 
+      vi.stubEnv('MANAGED_AI_POOL_MICROS', '2000000');
+      vi.stubEnv('MANAGED_AI_TASTER_POOL_MICROS', '1000000');
+      vi.stubEnv('MANAGED_AI_FAILOVER_POOL_MICROS', '1000000');
       process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
       expect(periodBudgetMicros(shop, settings, 'max')).toBe(MANAGED_BUDGET_MICROS.max);
 
@@ -362,6 +365,7 @@ describe('the dev build\'s TESTING opt-in', () => {
       process.env.SHOPIFY_API_KEY = 'some-public-client-id';
       expect(periodBudgetMicros(shop, settings, 'max')).toBe(0);
     } finally {
+      vi.unstubAllEnvs();
       restore('SHOPIFY_API_KEY', saved.key);
       restore('APP_ENV', saved.env);
       restore('MANAGED_AI_ALLOW_DEV_BUILD', saved.flag);

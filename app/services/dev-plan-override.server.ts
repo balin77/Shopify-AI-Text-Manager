@@ -98,8 +98,24 @@ export function isDevAppBuild(): boolean {
  * placing it in either of them would make the other one's import a cycle.
  */
 export function managedDevTestingEnabled(): boolean {
-  return process.env.MANAGED_AI_ALLOW_DEV_BUILD === 'true' && isDevAppBuild();
+  return (
+    process.env.MANAGED_AI_ALLOW_DEV_BUILD === 'true' &&
+    isDevAppBuild() &&
+    // Asked HERE as well as in validate-env: `npm run dev` / `shopify app dev`
+    // never run that script, and an unset pool means NO ceiling — on a build
+    // whose every shop pays nothing. Without all three the opt-in is off.
+    DEV_TESTING_POOLS.every((name) => {
+      const n = Number(process.env[name]);
+      return !!process.env[name] && Number.isFinite(n) && n > 0;
+    })
+  );
 }
+
+const DEV_TESTING_POOLS = [
+  'MANAGED_AI_POOL_MICROS',
+  'MANAGED_AI_TASTER_POOL_MICROS',
+  'MANAGED_AI_FAILOVER_POOL_MICROS',
+] as const;
 
 /**
  * Decides which (if any) dev billing affordance applies for this shop.

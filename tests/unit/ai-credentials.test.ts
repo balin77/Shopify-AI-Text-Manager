@@ -67,6 +67,9 @@ const ENV_KEYS = [
   'SHOPIFY_API_KEY',
   'APP_ENV',
   'MANAGED_AI_ALLOW_DEV_BUILD',
+  'MANAGED_AI_POOL_MICROS',
+  'MANAGED_AI_TASTER_POOL_MICROS',
+  'MANAGED_AI_FAILOVER_POOL_MICROS',
 ];
 let saved: Record<string, string | undefined>;
 
@@ -142,6 +145,13 @@ describe('the kill switch', () => {
     process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
     process.env.APP_ENV = 'development';
     process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
+    // Without the global caps the opt-in is OFF — `npm run dev` never runs
+    // validate-env, so the runtime has to refuse by itself.
+    delete process.env.MANAGED_AI_POOL_MICROS;
+    expect(managedAiAvailable()).toBe(false);
+    process.env.MANAGED_AI_POOL_MICROS = '2000000';
+    process.env.MANAGED_AI_TASTER_POOL_MICROS = '1000000';
+    process.env.MANAGED_AI_FAILOVER_POOL_MICROS = '1000000';
     expect(managedAiAvailable()).toBe(true);
 
     // Anything but the exact string keeps the guard.
