@@ -108,7 +108,7 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "followChanges",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "unstated", weglot: "yes", transcy: "yes", langshop: "partial" },
+    them: { "translate-and-adapt": "unstated", weglot: "yes", transcy: "yes", langshop: "yes" },
   },
   {
     id: "aiWriting",
@@ -120,7 +120,7 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "bulkEditor",
     group: "content",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "partial" },
   },
   {
     id: "seoToolkit",
@@ -236,8 +236,8 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
     plans: [
       { id: "free", name: "Free", monthly: 0 },
       { id: "basic", name: "Basic", monthly: 10 },
-      { id: "standard", name: "Standard", monthly: 34 },
-      { id: "advanced", name: "Advanced", monthly: 68 },
+      { id: "standard", name: "Standard", monthly: 40 },
+      { id: "advanced", name: "Advanced", monthly: 75 },
     ],
   },
 };

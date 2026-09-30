@@ -106,12 +106,12 @@ kein ❌.
 | Übersetzungen in Shopify gespeichert | ✅ | ✅ | ? — Drittquellen sagen „bei Weglot (JS/Proxy)“, nicht in Weglots eigener Shopify-Doku verifiziert; Seite zeigt „Keine Angabe“ | ✅ | ✅ |
 | Eigene Anweisungen / Markenstimme | ✅ ab Pro | ❌ | ✅ (lernendes KI-Modell) | ? | ✅ |
 | Wahl des KI-Anbieters | ✅ 6 | ❌ | ❌ | ⚠️ Engine-Wahl (OpenAI, DeepL, Gemini, …) | ⚠️ Engine-Wahl (ChatGPT, DeepL, Google) |
-| Glossar | ✅ | ❌ | ✅ | ✅ | ✅ (ab Standard) |
+| Glossar | ✅ | ❌ | ✅ | ✅ (ab Regional) | ✅ (ab Basic) |
 | Theme, Checkout, E-Mails | ✅ ab Pro | ✅ | ✅ | ✅ | ✅ |
 | Texte anderer Apps | ✅ Max | ❌ | ✅ | ✅ | ✅ |
-| Übersetzungen folgen Textänderungen | ✅ Max | ? | ✅ | ✅ | ⚠️ neue Produkte, höhere Pläne |
+| Übersetzungen folgen Textänderungen | ✅ Max | ? | ✅ | ✅ | ✅ Auto-Sync ab Standard |
 | Texte schreiben/verbessern mit KI | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Tabellen-Editor für den Katalog | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Tabellen-Editor für den Katalog | ✅ | ❌ | ❌ | ❌ | ⚠️ nur Übersetzungen (Bulk-Bearbeitung) |
 | SEO-Werkzeuge (Keywords, Crawl, GSC) | ✅ | ❌ | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) |
 | KI-Sichtbarkeit (Schema, agents.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | KI-Alt-Texte | ✅ | ❌ | ❌ | ❌ | ❌ |
@@ -119,13 +119,13 @@ kein ❌.
 | Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ | ✅ (auch Text im Bild) | ? |
 | Eigene Währungsumrechnung | ❌ (Markets) | ❌ (Markets) | ❌ | ✅ | ✅ |
 | Menschliche Übersetzer | ❌ | ❌ | ✅ | ? | ✅ |
-| Preismodell | Free 50 Prod.; Basic €9.90, Pro €19.90, Max €59.90 — Sprachen ∞ | gratis | Free 1 Spr./2k Wörter, Starter $17 (1 Spr./10k), Business $32 (3/50k), Pro $87 (5/200k) | Free, Local Plus $14.90 (1 Spr.), Regional $29 (3 Spr., Glossar 20), Continental $69 (15 Spr., Glossar 200, Geolocation, eigener Key), Cross-Border $99, Global $599 | Free (50 Prod., 1 Spr.), Basic $10, Standard $34 (+5 Spr., Glossar), Advanced $68 (+20 Spr., neue Produkte automatisch) |
+| Preismodell | Free 50 Prod.; Basic €9.90, Pro €19.90, Max €59.90 — Sprachen ∞ | gratis | Free 1 Spr./2k Wörter, Starter $17 (1 Spr./10k), Business $32 (3/50k), Pro $87 (5/250k); 14 Tage Test; externe Kosten ggf. separat von Weglot — laut App-Store-Screenshot des Inhabers 2026-09-30 | Free (1 Spr., 1 Währung, unbegr. Wörter, Drittanbieter-Apps), Local Plus $14.90 (1 Spr. bearbeitbar, 150 KI-Tokens), Regional $29 (3 Spr., 300 Tokens, 3 Währungen, Glossar 20, 10 Bilder), Continental $69 (15 Spr., 500 Tokens, 15 Währungen, Glossar 200, Geolocation, eigener DeepL/OpenAI/Gemini-Key); 7 Tage Test — laut App-Store-Screenshot des Inhabers 2026-09-30 | Free (1 Spr., 50 Prod.), Basic $10 (1 Spr., 250 Prod., Glossar 5), Standard $40 (3 Spr., 2000 Prod., Glossar 100, Auto-Sync, DeepL/OpenAI/Google, Drittanbieter-Apps), Advanced $75 (5 Spr., 5000 Prod., Glossar 250, Shopify Flow); 14 Tage Test — laut App-Store-Screenshot des Inhabers 2026-09-30 |
 | Bewertung (09/2026) | — | 4.5 | 4.5 (≈790) | 4.4 (≈2.530) | 4.5 |
 
 **Offen / vor dem Livegang der Website prüfen:** Weglot-Speicherort, T&A-Glossar (Quelle nur Konkurrenz-Blogs), Transcy „eigene Anweisungen",
-T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"). Planinhalte/Preise: Transcy aus der
-eigenen Hilfeseite, LangShop aus Drittquellen (Transcy-Review, Digismoothie),
-Weglot aus Fudge — alle in `COMPARE_PRICES` (marketing-compare.ts) gespiegelt.
+T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"). Planinhalte/Preise: Transcy aus dem
+App-Store-Eintrag (Screenshot 2026-09-30), LangShop aus dem App-Store-Eintrag (Screenshot 2026-09-30; die Drittquellen mit $34/$68 waren falsch),
+Weglot aus dem App-Store-Eintrag (Screenshot 2026-09-30) — alle in `COMPARE_PRICES` (marketing-compare.ts) gespiegelt.
 **Fairness-Regel der Seite:** die Funktionstabelle beantwortet nur „kann die App
 das überhaupt", nie „ab welchem Plan" — Planstufen stehen ausschließlich im
 Preisvergleich, für alle Anbieter gleich. **Offen:** die Managed-AI-Variante
