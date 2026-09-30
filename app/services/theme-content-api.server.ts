@@ -187,11 +187,9 @@ export async function loadThemeGroupResponse(opts: {
  * separate matter: those calls are metered under the `adhoc` feature and, as
  * before, execute outside the queue.
  *
- * Note this does NOT pass `selectedModel` — a pre-existing gap that makes
- * theme AI run on `DEFAULT_MODELS` whatever the merchant picked. The meter
- * records what really ran (`getModel()` reads the same field), so the
- * attribution is right either way; the merchant's ignored choice is a separate
- * bug and not this change's to make.
+ * The model comes from the credential resolver (`aiServiceFor`): the
+ * merchant's `selectedModel` on their own key, the operator's model in managed
+ * mode. The meter records what really ran (`getModel()` reads the same field).
  */
 function buildAIService(
   settings: Record<string, string | null | undefined> | null,

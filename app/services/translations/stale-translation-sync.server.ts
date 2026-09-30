@@ -1844,6 +1844,74 @@ async function reserveHandleRedirects(
   return { retranslate: kept, declined: [...declined], keptHandles, handleContexts };
 }
 
+/**
+ * Make a pre-check STAND-DOWN visible (PLAN_MANAGED_AI_KEY §6a rule 3).
+ *
+ * The repair's up-front managed gate returns before any Task row exists, so
+ * without this auto-translate simply stopped: nothing translated, nothing
+ * deleted, and nothing on the Tasks tab to say why. One terminal row per
+ * (shop, reason) per UTC DAY — a webhook-heavy shop can hit this gate hundreds
+ * of times an hour, and a Tasks tab full of identical rows hides the one the
+ * merchant needs as surely as none. The status is `completed_with_errors`, not
+ * `failed`: nothing went wrong in the automation, and the error is the same
+ * machine code the in-run refusal writes, so `taskErrorText` renders it.
+ *
+ * Never throws: it runs on a path that has just decided to change nothing,
+ * and a bookkeeping failure must not turn that into an exception.
+ */
+export async function recordManagedStandDown(
+  target: Pick<
+    RepairTarget,
+    "shop" | "resourceId" | "contentKind" | "taskResourceType" | "resourceTitle"
+  >,
+  reason: string,
+  now: Date = new Date(),
+): Promise<void> {
+  try {
+    const { db } = await import("../../db.server");
+    const error = `managed_ai_refused:${reason}`;
+    const startOfUtcDay = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const existing = await db.task.findFirst({
+      where: {
+        shop: target.shop,
+        type: "translation",
+        fieldType: "autoTranslateExternalChange",
+        error,
+        createdAt: { gte: startOfUtcDay },
+      },
+      select: { id: true },
+    });
+    if (existing) return;
+    const { getTaskExpirationDate } = await import("../../config/constants");
+    await db.task.create({
+      data: {
+        shop: target.shop,
+        type: "translation",
+        status: "completed_with_errors",
+        resourceType: target.taskResourceType ?? target.contentKind,
+        resourceId: target.resourceId,
+        resourceTitle: target.resourceTitle || target.resourceId,
+        fieldType: "autoTranslateExternalChange",
+        progress: 100,
+        total: 0,
+        error,
+        completedAt: now,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not record the managed-AI stand-down", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function repairStaleTranslations(
   target: RepairTarget,
   stale: readonly StaleTranslation[],
@@ -1945,6 +2013,7 @@ async function repairStaleTranslations(
           resourceId,
           reason: decision.reason,
         });
+        await recordManagedStandDown(target, decision.reason);
         return { removed: 0, retranslating: 0, startFailed: true };
       }
       // The static decision above cannot see MONEY: a spent period budget, a
@@ -1956,17 +2025,32 @@ async function repairStaleTranslations(
         const plan = (settings?.subscriptionPlan ?? "free") as never;
         const { managedBudgetStatus, managedPoolFor } = await import("../ai/managed-budget.server");
         const { globalPoolStatus } = await import("../ai/managed-global-pool.server");
+        const { fallBackToOwnKeyIfTasterSpent } = await import("../ai/ai-credentials.server");
         const budget = await managedBudgetStatus(shop, settings, plan);
+        // §10: a spent TASTER is stamped here too, and a shop with a key of its
+        // own is handed back to it — the detached run resolves its credentials
+        // afresh (`aiCredentialsFor`) and then spends the merchant's key, so
+        // the repair proceeds instead of standing down for ever. Only the
+        // preflight used to stamp, and it is never reached behind this return.
+        const ownKey = budget.allowed ? null : await fallBackToOwnKeyIfTasterSpent(shop, budget);
         const pool = budget.allowed
           ? await globalPoolStatus(managedPoolFor(shop, settings, plan))
           : null;
-        if (!budget.allowed || (pool && !pool.allowed)) {
+        if ((!budget.allowed && !ownKey) || (pool && !pool.allowed)) {
+          const reason = !budget.allowed
+            ? budget.unavailable
+              ? "managedUnavailable"
+              : budget.kind === "taster"
+                ? "tasterExhausted"
+                : "budgetExceeded"
+            : "managedUnavailable";
           logger.warn("[StaleTranslations] Managed AI budget or pool spent — repair stood down, NOTHING deleted", {
             context: "StaleTranslations",
             shop,
             resourceId,
             reason: !budget.allowed ? "budget" : "globalPool",
           });
+          await recordManagedStandDown(target, reason);
           return { removed: 0, retranslating: 0, startFailed: true };
         }
       }

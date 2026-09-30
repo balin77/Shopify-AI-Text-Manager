@@ -9,7 +9,8 @@
 import { data as json } from "react-router";
 import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
-import { AIService, isAuthError } from "../../../src/services/ai.service";
+import { AIService, isAuthError, isManagedRefusal } from "../../../src/services/ai.service";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import { getFormString } from "../../utils/form-data.utils";
 import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
@@ -535,6 +536,8 @@ export async function handleTranslateSubResources(
         error: msg.substring(0, 1000),
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateSubResources", fieldId: getFormString(formData, "fieldId") });
+    if (refused) return refused;
     return json({ success: false, error: msg }, { status: 500 });
   }
 }
@@ -666,7 +669,9 @@ export async function handleTranslateSubResourceToAllLocales(
         // Only a run whose EVERY chunk failed throws, so this is every locale.
         // An invalid API key aborts instead: every retry would 401 too, and
         // reporting success with all locales failed hides the real cause.
-        if (isAuthError(err)) throw err;
+        // A managed refusal (budget, taster, consent) aborts for the same
+        // reason: every locale would be refused identically.
+        if (isAuthError(err) || isManagedRefusal(err)) throw err;
         logger.error("[UnifiedContent] Failed to translate sub-resources", {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });
@@ -768,6 +773,8 @@ export async function handleTranslateSubResourceToAllLocales(
         error: msg.substring(0, 1000),
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateSubResourceToAllLocales", fieldId: getFormString(formData, "fieldId") });
+    if (refused) return refused;
     return json({ success: false, error: msg }, { status: 500 });
   }
 }

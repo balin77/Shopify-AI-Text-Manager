@@ -40,6 +40,7 @@ export interface AISettingsForValidation {
   hasDeepseekApiKey: boolean;
   /** Managed AI is serving this shop — see PLAN_MANAGED_AI_KEY §8a rule 6. */
   managedAiWorking?: boolean;
+  managedAiConsentMissing?: boolean;
   preferredProvider: string | null;
 }
 

@@ -6,6 +6,8 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import type { TemplatesActionContext } from "./shared";
 import type { DataResponse } from "~/types/data-response";
 import { aiServiceFor } from "~/services/ai/ai-credentials.server";
+import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 
 export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { db, session, formData, groupId, firstGroup, domain } = ctx;
@@ -13,6 +15,14 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
   const currentValue = getFormString(formData, "currentValue");
   const mainLanguage = getFormString(formData, "mainLanguage");
   const fieldLabel = extractReadableName(fieldType);
+
+  // Compliance gate: whose key, consent, kill switch and budget — before a
+  // Task row exists (same as templates-translate-field).
+  const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+  const refusal = await aiRefusalResponse(settings, session.shop);
+  if (refusal) {
+    return refusal;
+  }
 
   const task = await db.task.create({
     data: {
@@ -29,10 +39,6 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
   });
 
   try {
-    const settings = await db.aISettings.findUnique({
-      where: { shop: session.shop },
-    });
-
     await db.task.update({
       where: { id: task.id },
       data: { status: "running", progress: 20 },
@@ -79,6 +85,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         error: msg.substring(0, 1000),
       },
     });
+    const refused = managedRefusalResponseFromError(error, settings);
+    if (refused) return refused;
     return json({ success: false, error: msg }, { status: 500 });
   }
 }

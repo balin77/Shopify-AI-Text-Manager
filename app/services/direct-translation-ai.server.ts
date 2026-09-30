@@ -68,9 +68,12 @@ export async function runAiTask(
   const { getTaskExpirationDate } = await import("../config/constants");
 
   const total = params.items.length * params.locales.length;
-  const { toValidProvider } = await import("../../src/services/ai.service");
-  const aiSettings = await db.aISettings.findUnique({ where: { shop }, select: { preferredProvider: true } });
-  const provider = toValidProvider(aiSettings?.preferredProvider);
+  // The Task's provider label is the one the call will really spend — the
+  // resolver's answer (managed mode runs the operator's provider, not the
+  // merchant's stored preference), the same one `buildTranslateBatch` uses.
+  const { aiCredentialsFor } = await import("./ai/ai-credentials.server");
+  const aiSettings = await db.aISettings.findUnique({ where: { shop } });
+  const provider = aiCredentialsFor(aiSettings, shop).provider;
 
   const task = await db.task.create({
     data: {

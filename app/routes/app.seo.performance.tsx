@@ -337,7 +337,7 @@ type MatchAltImagesResult =
 /** Response of the `generateAltText` intent (alt-text bridge, plan §7). */
 type GenerateAltTextResult =
   | { ok: true; altText: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: string };
 
 /**
  * PROBE (accessibility plan §3.3): response of the `debugRawPsi` intent — the
@@ -510,6 +510,18 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       language: mainLanguage,
     });
 
+    // Compliance gate (managed AI: consent, kill switch, budget; BYO: key) —
+    // before a Task row exists, like every other AI entry point.
+    const { aiRefusalResponse } = await import("./api-ai-handlers/shared");
+    const { refusalPayload, managedRefusalResponseFromError } = await import(
+      "../utils/ai-refusal-response.server"
+    );
+    const refusal = await aiRefusalResponse(aiSettings, shop);
+    if (refusal) {
+      const { error, code, status } = refusalPayload(refusal);
+      return json<GenerateAltTextResult>({ ok: false, error, code }, { status });
+    }
+
     const task = await db.task.create({
       data: {
         shop,
@@ -539,6 +551,11 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     } catch (err: unknown) {
       const message = getFullErrorMessage(err);
       await failTask(message);
+      const refused = managedRefusalResponseFromError(err, aiSettings);
+      if (refused) {
+        const { error, code, status } = refusalPayload(refused);
+        return json<GenerateAltTextResult>({ ok: false, error, code }, { status });
+      }
       return json<GenerateAltTextResult>({ ok: false, error: message }, { status: 500 });
     }
     if (!altText) {

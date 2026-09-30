@@ -932,6 +932,7 @@ export const es: Translation = {
       },
       createWarnings: {
         translateChainFailed: "El elemento se creó, pero la traducción no llegó a terminar. Usa \"Traducir a todos los idiomas\" en el elemento.",
+        translateChainPartial: "El elemento se creó, pero algunos idiomas no se pudieron traducir. Usa \"Traducir a todos los idiomas\" en el elemento.",
         aiPartial: "La IA no pudo escribir algunos campos: se han quedado vacíos y puedes completarlos desde el editor.",
         keywordStuffed: "El texto repite tu palabra clave más de lo que le conviene: merece una lectura.",
       },
@@ -1420,6 +1421,8 @@ export const es: Translation = {
     aiInstructionsDescription: "Configura cómo la IA debe generar tu contenido. Estos ajustes se aplican a todos los textos generados por IA.",
     appLanguageDescription: "Elige el idioma para la interfaz de usuario",
     manageAiKeys: "Gestionar códigos de acceso a la API de IA",
+    managedAiConsentMissingBanner: "El procesamiento con IA aún no está confirmado para esta tienda. Confírmalo en Ajustes para usar la IA incluida.",
+    managedAiConsentMissingAction: "Confirmar en Ajustes",
     aiKeysDescription: "Configura tus proveedores de IA preferidos. Las claves API se almacenan de forma segura cifradas y solo se usan para las traducciones de tu tienda.",
     preferredProvider: "Proveedor de IA preferido",
     providerHelp: "Elige el proveedor predeterminado para la generación y traducción de IA",

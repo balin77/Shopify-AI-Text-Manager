@@ -218,7 +218,11 @@ export class ManagedAiRefusedError extends Error {
   readonly limitMicros?: number;
 
   constructor(reason: string, detail?: { usedMicros?: number; limitMicros?: number }) {
-    super(`Managed AI refused: ${reason}`);
+    // The MESSAGE is the machine code `taskErrorText` and the client's
+    // `translateErrorMessage` both render, because every surface that shows a
+    // caught error shows `error.message` — a Tasks row, a toast, a bulk cell.
+    // English prose here reached merchants raw in every language.
+    super(`managed_ai_refused:${reason}`);
     this.name = 'ManagedAiRefusedError';
     this.reason = reason;
     this.usedMicros = detail?.usedMicros;

@@ -39,6 +39,31 @@ export interface GenerateRestResult {
   stuffingWarning: boolean;
 }
 
+/**
+ * The coded refusals `aiRefusalResponse` answers with (managed budget / taster
+ * / consent / availability, BYO's missing key). Each one refuses EVERY
+ * following call identically, so a run stops on the first instead of firing
+ * one refused request per field.
+ */
+const AI_REFUSAL_RESPONSE_CODES = new Set([
+  "AI_BUDGET_EXCEEDED",
+  "AI_TASTER_EXHAUSTED",
+  "AI_CONSENT_REQUIRED",
+  "AI_TEMPORARILY_UNAVAILABLE",
+  "NO_AI_KEY",
+  "INVALID_AI_KEY",
+]);
+
+/** A refused AI call; `message` is the server's (already localised) sentence. */
+export class AiRefusedError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "AiRefusedError";
+    this.code = code;
+  }
+}
+
 async function postAi(body: Record<string, string>): Promise<Record<string, unknown>> {
   const formData = new FormData();
   for (const [key, value] of Object.entries(body)) formData.set(key, value);
@@ -48,14 +73,21 @@ async function postAi(body: Record<string, string>): Promise<Record<string, unkn
   const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (!data) throw new Error(`AI request failed (${response.status})`);
   if (data.success === false) {
-    throw new Error(typeof data.error === "string" ? data.error : "AI request failed");
+    const message = typeof data.error === "string" ? data.error : "AI request failed";
+    if (typeof data.code === "string" && AI_REFUSAL_RESPONSE_CODES.has(data.code)) {
+      throw new AiRefusedError(data.code, message);
+    }
+    throw new Error(message);
   }
   return data;
 }
 
 export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
   const [busyField, setBusyField] = useState<string | null>(null);
-  /** A warning CODE (`t.aiWarnings.*`), never a sentence. */
+  /**
+   * A warning CODE (`t.aiWarnings.*`) — or, for a refused call, the server's
+   * own localised sentence, which the modal's `t.aiWarnings[x] || x` shows as is.
+   */
   const [aiError, setAiError] = useState<string | null>(null);
   const [altBusy, setAltBusy] = useState(false);
 
@@ -96,6 +128,8 @@ export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
       const filled: Record<string, string> = {};
       const failed: string[] = [];
       let stuffingWarning = false;
+      /** Set on the first refusal: the run stops and the banner names it. */
+      let refusalMessage: string | null = null;
 
       const title = values.title ?? "";
       const longTextKey = LONG_TEXT_KEY_BY_RESOURCE[resource] ?? "";
@@ -105,6 +139,12 @@ export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
           if (token !== restToken.current) return null;
           // Never overwrite. See the header — "the rest" means the rest.
           if ((values[field.createKey] ?? "").trim()) continue;
+          // Refused once ⇒ refused for every field: report the rest as not
+          // written rather than asking again.
+          if (refusalMessage !== null) {
+            failed.push(field.createKey);
+            continue;
+          }
 
           setBusyField(field.createKey);
           try {
@@ -133,10 +173,12 @@ export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
             if (generated.trim()) filled[field.createKey] = generated;
             else failed.push(field.createKey);
             if (data.keywordStuffingWarning === true) stuffingWarning = true;
-          } catch {
+          } catch (error) {
             // Per FIELD, never all-or-nothing: three good fields and one
             // failure is a better outcome than nothing, and the caller lists
-            // what did not come through.
+            // what did not come through. A REFUSAL is the exception — it
+            // refuses every following field the same way.
+            if (error instanceof AiRefusedError) refusalMessage = error.message;
             failed.push(field.createKey);
           }
         }
@@ -151,7 +193,10 @@ export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
       if (token !== restToken.current) return null;
       // A CODE, phrased by the modal — the app ships in three languages, and a
       // sentence built here would be English for everyone.
-      if (Object.keys(filled).length === 0 && failed.length > 0) setAiError("allFailed");
+      // A refusal carries its own sentence (localised server-side); the modal
+      // renders `t.aiWarnings[code] || code`, so it shows through verbatim.
+      if (refusalMessage !== null) setAiError(refusalMessage);
+      else if (Object.keys(filled).length === 0 && failed.length > 0) setAiError("allFailed");
       return { filled, failed, stuffingWarning };
     },
     [mainLanguage],

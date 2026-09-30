@@ -49,6 +49,7 @@ import { handleCreateContent } from "./content/create.actions";
 import { handleDeleteContent } from "./content/delete.actions";
 import { handleDuplicateContent } from "./content/duplicate.actions";
 import { aiCredentialsFor } from "~/services/ai/ai-credentials.server";
+import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -56,6 +57,26 @@ import {
   handleTranslateSubResourceToAllLocales,
   handleSavePrimarySubResources,
 } from "./content/sub-resources.action";
+
+/**
+ * The actions of this handler that spend an AI call. The rest (load, save,
+ * create, delete, SKU-based alt texts) never reach a provider and must not be
+ * refused over a spent AI budget.
+ */
+export const AI_CONTENT_ACTIONS: ReadonlySet<string> = new Set([
+  "translateField",
+  "translateAll",
+  "translateAllForLocale",
+  "translateFieldToAllLocales",
+  "generateAltText",
+  "generateAllAltTexts",
+  "translateAltText",
+  "translateAltTextToAllLocales",
+  "translateSubResources",
+  "translateSubResourceToAllLocales",
+  "generateAIText",
+  "formatAIText",
+]);
 
 interface UnifiedContentActionsConfig {
   admin: AdminApiContext;
@@ -124,6 +145,21 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     provider,
     serviceConfig,
   };
+
+  // ── Managed-AI compliance gate ──────────────────────────────────────────────
+  // Whose key, consent, kill switch and budget — asked once, BEFORE any Task
+  // row or AI call, and only for the actions that reach an AI. A refusal used
+  // to surface as a raw 500 or as every locale silently "failed". The body
+  // echoes `actionType`/`fieldType` so the editor lands it where that action's
+  // own error lands (a field error for the single-field translations).
+  if (AI_CONTENT_ACTIONS.has(action)) {
+    const fieldType = getFormString(formData, "fieldType");
+    const refusal = await aiRefusalFor(aiSettings, session.shop, {
+      actionType: action,
+      ...(fieldType ? { fieldType } : {}),
+    });
+    if (refusal) return refusal;
+  }
 
   // ── Delegate to extracted handlers ──────────────────────────────────────────
   switch (action) {
@@ -423,6 +459,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       } catch (updateErr) {
         console.error("Failed to update task status:", updateErr);
       }
+      const refused = managedRefusalResponseFromError(error, aiSettings, { actionType: action, fieldType });
+      if (refused) return refused;
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }
@@ -608,6 +646,8 @@ Allowed formatting changes:
       } catch (updateErr) {
         console.error("Failed to update task status:", updateErr);
       }
+      const refused = managedRefusalResponseFromError(error, aiSettings, { actionType: action, fieldType });
+      if (refused) return refused;
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }

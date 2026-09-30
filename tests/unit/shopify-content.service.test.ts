@@ -22,6 +22,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ShopifyContentService } from '../../src/services/shopify-content.service';
+import { ManagedAiRefusedError } from '../../src/services/ai.service';
 
 vi.mock('~/utils/logger.server', () => ({
   loggers: {
@@ -1399,6 +1400,37 @@ describe('ShopifyContentService.translateAllContent() — request count and fiel
     expect(ts.translateFieldsToLocalesChunked.mock.calls[0][2]).toEqual(['en', 'es', 'fr', 'it']);
     expect(result.failedLocales).toEqual([]);
     expect(result.translations.it.description).toBe('[it] Eine Vase aus Ton');
+  });
+
+  // A managed-AI refusal (budget, taster, consent) refuses every locale the
+  // same way. It used to be swallowed into the per-locale fallback and come
+  // out as "every locale failed" with success:true — the reason lost.
+  it('aborts on a managed refusal from the SHORT batch instead of failing every locale', async () => {
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    ts.translateShortFieldsBatch.mockRejectedValueOnce(new ManagedAiRefusedError('budgetExceeded'));
+
+    await expect(service.translateAllContent(params(admin, makeDb(), {
+      fields: { title: 'Vase' },
+      translationService: ts as any,
+    }) as any)).rejects.toBeInstanceOf(ManagedAiRefusedError);
+    // No per-locale fallback: each one would be refused identically.
+    expect(ts.translateProduct).not.toHaveBeenCalled();
+    expect(admin.registerCalls).toHaveLength(0);
+  });
+
+  it('aborts on a managed refusal from the LONG batch instead of a per-locale retry', async () => {
+    const admin = makeAdmin();
+    const service = new ShopifyContentService(admin as any);
+    const ts = makeBatchingService();
+    ts.translateFieldsToLocalesChunked.mockRejectedValueOnce(new ManagedAiRefusedError('consentMissing'));
+
+    await expect(service.translateAllContent(params(admin, makeDb(), {
+      fields: { description: 'Eine Vase aus Ton' },
+      translationService: ts as any,
+    }) as any)).rejects.toMatchObject({ reason: 'consentMissing' });
+    expect(ts.translateProduct).not.toHaveBeenCalled();
   });
 
   it('retries only the locale a batch came back short of, never the whole run', async () => {

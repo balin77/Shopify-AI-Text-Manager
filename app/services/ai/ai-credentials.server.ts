@@ -533,6 +533,61 @@ async function stampTaster(
 }
 
 /**
+ * Stamp `managedAiTasterSpentAt` when a budget answer says the TASTER is spent.
+ *
+ * The synchronous resolver hands a spent taster back to the merchant's own
+ * key only once this column is set (§10), so EVERY place that learns "the
+ * taster is spent" has to write it — not only the per-request preflight. The
+ * HTTP gate and the repair pre-check refused on the same answer without
+ * stamping, and a shop that had since added its own key was then refused on
+ * every interactive click for ever, because the preflight that would have
+ * stamped is never reached behind a refusal.
+ *
+ * Guarded on the column still being NULL, so it is idempotent and never moves
+ * an existing date. Never throws (`stampTaster` swallows and logs). Returns
+ * whether the status was a spent taster at all.
+ */
+export async function markTasterSpentIfExhausted(
+  shop: string,
+  status: { kind: string; allowed: boolean; unavailable?: boolean; readFailed?: boolean },
+): Promise<boolean> {
+  // A ledger that could not be READ is no evidence the taster is spent, and
+  // the stamp is permanent — so a database blink must not write it.
+  if (status.kind !== "taster" || status.allowed || status.unavailable || status.readFailed) {
+    return false;
+  }
+  await stampTaster(shop, { managedAiTasterSpentAt: new Date() }, { managedAiTasterSpentAt: null });
+  return true;
+}
+
+/**
+ * A spent taster, and the merchant has a key of their own: stamp the taster,
+ * re-read the settings and ask the resolver again. Returns the BYO decision
+ * (with the fresh settings) when the shop now resolves to its own key, `null`
+ * otherwise — including when the status was not a spent taster, or the
+ * re-read failed (refusing is then the safe answer, as it was before).
+ */
+export async function fallBackToOwnKeyIfTasterSpent(
+  shop: string,
+  status: { kind: string; allowed: boolean; unavailable?: boolean; readFailed?: boolean },
+): Promise<{ settings: AISettings | null; decision: AiCredentialDecision } | null> {
+  if (!(await markTasterSpentIfExhausted(shop, status))) return null;
+  try {
+    const { db } = await import("../../db.server");
+    const settings = await db.aISettings.findUnique({ where: { shop } });
+    const decision = resolveAiCredentials({ shop, settings });
+    if (decision.ok && decision.source === "byo") return { settings, decision };
+  } catch (error) {
+    logger.warn(
+      `[ManagedAI] Could not re-resolve credentials for ${shop} after the taster was spent: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return null;
+}
+
+/**
  * The per-REQUEST gate installed on every managed AIService.
  *
  * It is asked before each provider call rather than once per service instance
@@ -594,10 +649,8 @@ function managedPreflight(
       // shop back to its own key from the next call rather than refusing
       // every one of them for ever. Only on fresh settings: a stale snapshot
       // would write the stamp against a row whose grant may have moved.
-      if (status.kind === "taster" && settingsAreFresh && settings?.managedAiTasterSpentAt == null) {
-        await stampTaster(shop, { managedAiTasterSpentAt: new Date() }, {
-          managedAiTasterSpentAt: null,
-        });
+      if (settingsAreFresh && settings?.managedAiTasterSpentAt == null) {
+        await markTasterSpentIfExhausted(shop, status);
       }
       return {
         // A spent TASTER is its own refusal (§10): it never resets, so the

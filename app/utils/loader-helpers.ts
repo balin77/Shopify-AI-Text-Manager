@@ -10,6 +10,16 @@ import {
   hasCurrentAiProcessingConsent,
   wantsManagedAi,
 } from "../services/ai/managed-ai.shared";
+import { managedAiAvailable } from "../services/ai/ai-credentials.server";
+
+/** `managedAiAvailable`, never throwing — a loader must not fail over it. */
+function managedAiAvailableSafe(): boolean {
+  try {
+    return managedAiAvailable();
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Load AI settings for API key validation in loaders.
@@ -59,6 +69,12 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
     // which is where §10 puts that sentence anyway.
     managedAiWorking:
       wantsManagedAi(settings ?? null) && hasCurrentAiProcessingConsent(settings ?? null),
+    // Managed chosen + available in this deployment, consent missing: the
+    // merchant is to be sent to confirm AI processing, not to add a key.
+    managedAiConsentMissing:
+      managedAiAvailableSafe() &&
+      wantsManagedAi(settings ?? null) &&
+      !hasCurrentAiProcessingConsent(settings ?? null),
     preferredProvider: settings?.preferredProvider || null,
   };
 }

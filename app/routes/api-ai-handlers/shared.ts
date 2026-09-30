@@ -251,77 +251,61 @@ const MANAGED_REFUSAL_FALLBACK = {
   managedAiUnavailable: "The included AI is temporarily unavailable. Please try again shortly.",
 } as const;
 
-export async function aiRefusalResponse(
-  settings: AISettings | null,
-  shop: string
-): Promise<DataResponse | null> {
-  const { resolveAiCredentials } = await import("~/services/ai/ai-credentials.server");
-  const decision = resolveAiCredentials({ shop, settings });
-
+function managedRefusalSay(settings: AISettings | null) {
   const t = getTranslation((settings?.appLanguage ?? "en") as Locale);
-  const say = (key: keyof typeof MANAGED_REFUSAL_FALLBACK): string => {
+  return (key: keyof typeof MANAGED_REFUSAL_FALLBACK): string => {
     const value = (t.tasks?.taskErrors as Record<string, unknown> | undefined)?.[key];
     return typeof value === "string" && value.trim() !== ""
       ? value
       : MANAGED_REFUSAL_FALLBACK[key];
   };
+}
 
-  if (decision.ok) {
-    if (decision.source !== "managed") return null;
-    // Managed: the budget is the one question that costs a DB round trip, so
-    // it is asked last and only for the shops it can refuse.
-    const { managedBudgetStatus } = await import("~/services/ai/managed-budget.server");
-    const status = await managedBudgetStatus(
-      shop,
-      settings,
-      (settings?.subscriptionPlan ?? "free") as never
-    );
-    if (status.allowed) return null;
-    if (status.unavailable) {
-      return json(
-        {
-          success: false,
-          code: "AI_TEMPORARILY_UNAVAILABLE",
-          error: say("managedAiUnavailable"),
-        },
-        { status: AI_REFUSAL_STATUS.managedUnavailable },
-      );
-    }
-    const taster = status.kind === "taster";
+/**
+ * The coded response for a MANAGED refusal — one builder for the up-front
+ * gate below AND for a refusal the per-request preflight raises mid-call
+ * (`ManagedAiRefusedError`, caught in `api.ai.tsx`). Two builders would come
+ * to answer one refusal with two codes.
+ *
+ * `reason` is the resolver's / preflight's refusal code; anything it does not
+ * recognise answers `managedUnavailable` — ours to fix, never the merchant's.
+ */
+export function managedRefusalResponse(
+  reason: string,
+  settings: AISettings | null,
+  detail?: { usedMicros?: number; limitMicros?: number },
+): DataResponse {
+  const say = managedRefusalSay(settings);
+  const micros =
+    detail && (detail.usedMicros != null || detail.limitMicros != null)
+      ? { usedMicros: detail.usedMicros, limitMicros: detail.limitMicros }
+      : {};
+  if (reason === "budgetExceeded" || reason === "tasterExhausted") {
+    const taster = reason === "tasterExhausted";
     return json(
       {
         success: false,
         code: taster ? "AI_TASTER_EXHAUSTED" : "AI_BUDGET_EXCEEDED",
         error: say(taster ? "managedAiTasterExhausted" : "managedAiBudgetExceeded"),
-        usedMicros: status.usedMicros,
-        limitMicros: status.limitMicros,
+        ...micros,
       },
       {
         status: taster
           ? AI_REFUSAL_STATUS.tasterExhausted
           : AI_REFUSAL_STATUS.budgetExceeded,
-      }
+      },
     );
   }
-
-  if (decision.reason === "noKey") {
-    return noAiKeyResponse(settings, {
-      provider: decision.provider,
-      displayName: getProviderDisplayName(decision.provider),
-    });
-  }
-
-  if (decision.reason === "consentMissing") {
+  if (reason === "consentMissing") {
     return json(
       {
         success: false,
         code: "AI_CONSENT_REQUIRED",
         error: say("managedAiConsentMissing"),
       },
-      { status: AI_REFUSAL_STATUS.consentMissing }
+      { status: AI_REFUSAL_STATUS.consentMissing },
     );
   }
-
   // managedUnavailable — ours to fix, never the merchant's, so the message
   // does not send them anywhere and does not mention a key (§3a rule 9: in
   // managed mode the AI-keys tab is hidden, and pointing at it is nonsense).
@@ -331,7 +315,64 @@ export async function aiRefusalResponse(
       code: "AI_TEMPORARILY_UNAVAILABLE",
       error: say("managedAiUnavailable"),
     },
-    { status: AI_REFUSAL_STATUS.managedUnavailable }
+    { status: AI_REFUSAL_STATUS.managedUnavailable },
+  );
+}
+
+export async function aiRefusalResponse(
+  settings: AISettings | null,
+  shop: string
+): Promise<DataResponse | null> {
+  const { resolveAiCredentials, fallBackToOwnKeyIfTasterSpent } = await import(
+    "~/services/ai/ai-credentials.server"
+  );
+  const decision = resolveAiCredentials({ shop, settings });
+
+  if (decision.ok) {
+    if (decision.source !== "managed") return null;
+    // Managed: the budget is the one question that costs a DB round trip, so
+    // it is asked last and only for the shops it can refuse.
+    const plan = (settings?.subscriptionPlan ?? "free") as never;
+    const { managedBudgetStatus, managedPoolFor } = await import(
+      "~/services/ai/managed-budget.server"
+    );
+    const status = await managedBudgetStatus(shop, settings, plan);
+    if (!status.allowed) {
+      if (status.unavailable) return managedRefusalResponse("managedUnavailable", settings);
+      // §10: a spent taster is STAMPED here too, and a merchant with a key of
+      // their own is handed straight back to it. Without this, only the
+      // per-request preflight stamped — and it is never reached behind this
+      // refusal, so a shop that had added its own key stayed refused for ever.
+      if (await fallBackToOwnKeyIfTasterSpent(shop, status)) return null;
+      return managedRefusalResponse(
+        status.kind === "taster" ? "tasterExhausted" : "budgetExceeded",
+        settings,
+        { usedMicros: status.usedMicros, limitMicros: status.limitMicros },
+      );
+    }
+    // The GLOBAL pool (§9.3) — asked here as well, like the repair pre-check,
+    // so an exhausted outer ring refuses before a Task row exists instead of
+    // on the first provider call. Its refusal is `managedUnavailable`: the
+    // merchant has budget left.
+    const { globalPoolStatus } = await import("~/services/ai/managed-global-pool.server");
+    const pool = await globalPoolStatus(managedPoolFor(shop, settings, plan));
+    if (!pool.allowed) return managedRefusalResponse("managedUnavailable", settings);
+    return null;
+  }
+
+  if (decision.reason === "noKey") {
+    return noAiKeyResponse(settings, {
+      provider: decision.provider,
+      displayName: getProviderDisplayName(decision.provider),
+    });
+  }
+
+  return managedRefusalResponse(
+    decision.reason,
+    settings,
+    "usedMicros" in decision
+      ? { usedMicros: decision.usedMicros, limitMicros: decision.limitMicros }
+      : undefined,
   );
 }
 

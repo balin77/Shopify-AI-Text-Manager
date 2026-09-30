@@ -6,7 +6,8 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
 import { decryptApiKey } from "../../utils/encryption.server";
@@ -229,6 +230,8 @@ export async function handleGenerateAltText(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "generateAltText" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -315,6 +318,9 @@ export async function handleGenerateAllAltTexts(
           data: { progress: progressPercent, processed: i + 1 },
         });
       } catch (error: unknown) {
+        // A managed refusal refuses every remaining image identically — abort
+        // the run so the merchant sees why, instead of N empty alt texts.
+        if (isManagedRefusal(error)) throw error;
         logger.error("Failed to generate alt-text for image", {
           context: "UnifiedContent",
           imageIndex: i,
@@ -344,6 +350,8 @@ export async function handleGenerateAllAltTexts(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "generateAllAltTexts" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -433,6 +441,8 @@ export async function handleTranslateAltText(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAltText" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -716,6 +726,8 @@ export async function handleTranslateAltTextToAllLocales(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAltTextToAllLocales" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }

@@ -947,6 +947,7 @@ export const en: Translation = {
       },
       createWarnings: {
         translateChainFailed: "The item was created, but translating it did not finish. Use \"Translate all\" on the item.",
+        translateChainPartial: "The item was created, but some languages could not be translated. Use \"Translate all\" on the item.",
         aiPartial: "The AI could not write some of the fields — they stayed empty and can be filled in from the editor.",
         keywordStuffed: "The text repeats your keyword more often than is good for it — worth a read.",
       },
@@ -1440,6 +1441,8 @@ export const en: Translation = {
     aiInstructionsDescription: "Configure how AI should generate your content. These settings apply to all AI-generated texts.",
     appLanguageDescription: "Choose the language for the user interface",
     manageAiKeys: "Manage AI API Access Codes",
+    managedAiConsentMissingBanner: "AI processing has not been confirmed for this shop yet. Confirm it in Settings to use the included AI.",
+    managedAiConsentMissingAction: "Confirm in Settings",
     aiKeysDescription: "Configure your preferred AI providers. API keys are stored securely encrypted and only used for your shop translations.",
     preferredProvider: "Preferred AI Provider",
     providerHelp: "Choose the default provider for AI generation and translations",

@@ -952,6 +952,7 @@ export const de = {
       },
       createWarnings: {
         translateChainFailed: "Der Eintrag wurde angelegt, aber die Übersetzung ist nicht fertig geworden. Nutze „In alle Sprachen übersetzen\" am Eintrag.",
+        translateChainPartial: "Der Eintrag wurde angelegt, aber einige Sprachen konnten nicht übersetzt werden. Nutze „In alle Sprachen übersetzen\" am Eintrag.",
         aiPartial: "Einige Felder konnte die KI nicht schreiben — sie sind leer geblieben und lassen sich im Editor nachziehen.",
         keywordStuffed: "Der Text wiederholt dein Keyword öfter, als ihm guttut — lies ihn kurz gegen.",
       },
@@ -1439,6 +1440,8 @@ export const de = {
     aiInstructionsDescription: "Konfigurieren Sie, wie die KI Ihre Inhalte generieren soll. Diese Einstellungen werden auf alle KI-generierten Texte angewendet.",
     appLanguageDescription: "Wählen Sie die Sprache für die Benutzeroberfläche",
     manageAiKeys: "AI API-Zugangscodes verwalten",
+    managedAiConsentMissingBanner: "Die KI-Verarbeitung ist für diesen Shop noch nicht bestätigt. Bestätigen Sie sie in den Einstellungen, um die enthaltene KI zu nutzen.",
+    managedAiConsentMissingAction: "In den Einstellungen bestätigen",
     aiKeysDescription: "Konfigurieren Sie Ihre bevorzugten KI-Anbieter. Die API-Schlüssel werden sicher verschlüsselt gespeichert und nur für Ihre Shop-Übersetzungen verwendet.",
     preferredProvider: "Bevorzugter AI-Anbieter",
     providerHelp: "Wählen Sie den Standard-Anbieter für KI-Generierung und Übersetzungen",

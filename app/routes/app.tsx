@@ -55,7 +55,11 @@ type AiSettingsRow = {
   aiProcessingConsentVersion?: string | null;
 } | null | undefined;
 
-function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: string | null) => string | null) {
+function buildAiSettingsFlags(
+  settings: AiSettingsRow,
+  decryptApiKey: (v?: string | null) => string | null,
+  managedAvailable = false,
+) {
   return {
     hasHuggingfaceApiKey: !!decryptApiKey(settings?.huggingfaceApiKey),
     hasGeminiApiKey: !!decryptApiKey(settings?.geminiApiKey),
@@ -82,6 +86,17 @@ function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: strin
      */
     managedAiWorking:
       wantsManagedAi(settings ?? null) && hasCurrentAiProcessingConsent(settings ?? null),
+    /**
+     * Managed AI is chosen and this deployment serves it, but the current
+     * processing consent is missing — every AI call is refused with
+     * `AI_CONSENT_REQUIRED`. The banner must say "confirm AI processing", not
+     * "add an API key": a managed shop needs no key, and the keys tab is not
+     * where the consent is given.
+     */
+    managedAiConsentMissing:
+      managedAvailable &&
+      wantsManagedAi(settings ?? null) &&
+      !hasCurrentAiProcessingConsent(settings ?? null),
   };
 }
 
@@ -227,9 +242,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const subscriptionPlan = (settings?.subscriptionPlan || "free") as Plan;
 
     // Build API-key presence flags from the single query result
+    const { managedAiAvailable } = await import("~/services/ai/ai-credentials.server");
+    let managedAvailable = false;
+    try {
+      managedAvailable = managedAiAvailable();
+    } catch {
+      managedAvailable = false;
+    }
     let aiSettings: ReturnType<typeof buildAiSettingsFlags>;
     try {
-      aiSettings = buildAiSettingsFlags(settings, decryptApiKey);
+      aiSettings = buildAiSettingsFlags(settings, decryptApiKey, managedAvailable);
     } catch {
       aiSettings = buildAiSettingsFlags(null, decryptApiKey);
     }
@@ -415,11 +437,33 @@ function AppContent() {
     // "has a working AI source" is. A merchant who PAID for AI included would
     // otherwise be told on every screen that AI does not work, and sent to a
     // tab that in managed mode no longer renders the fields it names.
+    const CONSENT_MISSING = "managed-ai:consent-missing";
     if (aiSettings.managedAiWorking) {
       dismissByKey("missing-api-key:any");
       dismissByKey("missing-api-key:preferred");
+      dismissByKey(CONSENT_MISSING);
       return;
     }
+
+    // Managed AI chosen and available, consent not (or no longer) given: the
+    // way out is the confirmation in Settings, not a key this shop does not
+    // need. Shown INSTEAD of the key warnings.
+    if (aiSettings.managedAiConsentMissing) {
+      dismissByKey("missing-api-key:any");
+      dismissByKey("missing-api-key:preferred");
+      showInfoBox(
+        t.settings?.managedAiConsentMissingBanner ||
+          "AI processing has not been confirmed for this shop yet. Confirm it in Settings to use the included AI.",
+        "warning",
+        {
+          url: "/app/settings?tab=ai",
+          label: t.settings?.managedAiConsentMissingAction || "Confirm in Settings",
+        },
+        CONSENT_MISSING,
+      );
+      return;
+    }
+    dismissByKey(CONSENT_MISSING);
 
     const hasAnyKey =
       aiSettings.hasHuggingfaceApiKey ||

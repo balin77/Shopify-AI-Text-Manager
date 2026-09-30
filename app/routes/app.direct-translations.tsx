@@ -174,6 +174,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return requested.filter((l) => allow.has(l));
   };
 
+  /** The AI compliance gate, shaped for this page (the `actionType` echo). */
+  const aiRefusal = async (extra: Record<string, unknown> = {}) => {
+    const [{ aiRefusalResponse }, { withRefusalShape }] = await Promise.all([
+      import("./api-ai-handlers/shared"),
+      import("../utils/ai-refusal-response.server"),
+    ]);
+    const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+    const refusal = await aiRefusalResponse(settings, session.shop);
+    return refusal ? withRefusalShape(refusal, { actionType, ...extra }) : null;
+  };
+
   try {
     switch (actionType) {
       case "save": {
@@ -238,6 +249,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const locales = scope === "all" ? enabledTargets(targets) : locale ? [locale] : [];
         if (locales.length === 0) return json({ success: true, actionType, itemId: id, translated: 0 });
 
+        // Compliance gate (managed consent / budget / availability, BYO key)
+        // BEFORE the detached run: a refusal inside it only ever reached the
+        // Tasks tab, while the merchant here was told "started".
+        const refusal = await aiRefusal({ itemId: id });
+        if (refusal) return refusal;
+
         // Run in the background — the Task poller surfaces progress/completion
         // and the page revalidates when the running count drops to zero.
         void runAiTask(session.shop, {
@@ -262,6 +279,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       case "addCandidates": {
         const ids = JSON.parse(getFormString(formData, "ids") || "[]") as string[];
         const withAi = getFormString(formData, "withAi") === "true";
+        // Refused AI → refuse the whole request before anything is added, so
+        // the merchant is not left with items that silently never got their
+        // translations (they can add them again without AI).
+        if (withAi) {
+          const refusal = await aiRefusal();
+          if (refusal) return refusal;
+        }
         const created = await dt.addCandidatesAsItems(db, session.shop, Array.isArray(ids) ? ids : []);
         if (withAi && created.length > 0) {
           const { targets } = await resolveLocales();
