@@ -24,7 +24,7 @@ import {
   TASTER_PERIOD,
   type BudgetContext,
 } from "../../config/managed-ai-budget";
-import { resolveDevPlanMode } from "../dev-plan-override.server";
+import { managedDevTestingEnabled, resolveDevPlanMode } from "../dev-plan-override.server";
 import { boughtManagedAi } from "./managed-ai.shared";
 import { managedBudgetPeriod } from "./usage-meter.server";
 import { usedPeriodsFilter } from "./managed-periods.shared";
@@ -76,6 +76,12 @@ export interface ManagedBudgetStatus {
  * global pool bounds what this cannot see.
  */
 export function budgetContextFor(shop: string, settings: AISettings | null): BudgetContext {
+  // The dev build's explicit TESTING opt-in: every shop the dev app runs on
+  // "pays nothing" by construction, so with these signals standing an "+ AI"
+  // test subscription could never be tested. See `managedDevTestingEnabled`.
+  if (managedDevTestingEnabled()) {
+    return { partnerDevelopment: false, testSubscription: false, devPlanMode: false, inTrial: false };
+  }
   return {
     partnerDevelopment: settings?.partnerDevelopment ?? null,
     // §7a signal 2, mirrored by `syncSubscriptionToDatabase`. It was

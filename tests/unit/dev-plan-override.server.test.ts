@@ -113,10 +113,34 @@ describe('setDevForcedPlan()', () => {
     expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop: SHOP },
-        update: { devForcedPlan: 'basic' },
-        create: { shop: SHOP, devForcedPlan: 'basic' },
+        update: { devForcedPlan: 'basic', devForcedManagedAi: false },
+        create: { shop: SHOP, devForcedPlan: 'basic', devForcedManagedAi: false },
       }),
     );
+  });
+
+  it('records the "+ AI" choice only under the managed-AI TESTING opt-in, never for free', async () => {
+    process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
+    const saved = process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+    try {
+      delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      await setDevForcedPlan(SHOP, 'max', true);
+      expect(mockUpsert.mock.calls.at(-1)![0].update.devForcedManagedAi).toBe(false);
+
+      vi.stubEnv('MANAGED_AI_POOL_MICROS', '2000000');
+      vi.stubEnv('MANAGED_AI_TASTER_POOL_MICROS', '1000000');
+      vi.stubEnv('MANAGED_AI_FAILOVER_POOL_MICROS', '1000000');
+      process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
+      await setDevForcedPlan(SHOP, 'max', true);
+      expect(mockUpsert.mock.calls.at(-1)![0].update.devForcedManagedAi).toBe(true);
+
+      await setDevForcedPlan(SHOP, 'free', true);
+      expect(mockUpsert.mock.calls.at(-1)![0].update.devForcedManagedAi).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      if (saved === undefined) delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      else process.env.MANAGED_AI_ALLOW_DEV_BUILD = saved;
+    }
   });
 
   it('refuses (throws) outside override mode — never writes in public build', async () => {

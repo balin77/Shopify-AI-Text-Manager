@@ -65,7 +65,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // hard-gated (dev client_id + APP_ENV !== 'production') — dead in the
     // public App-Store build.
     if (resolveDevPlanMode(session.shop) === 'override') {
-      await setDevForcedPlan(session.shop, plan);
+      await setDevForcedPlan(session.shop, plan, aiMode === 'managed');
       logger.warn('[Billing] Override mode — plan set without Shopify (custom-app build)', {
         plan,
         shop: session.shop,

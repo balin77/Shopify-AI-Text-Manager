@@ -66,6 +66,10 @@ const ENV_KEYS = [
   'DEV_APP_CLIENT_ID',
   'SHOPIFY_API_KEY',
   'APP_ENV',
+  'MANAGED_AI_ALLOW_DEV_BUILD',
+  'MANAGED_AI_POOL_MICROS',
+  'MANAGED_AI_TASTER_POOL_MICROS',
+  'MANAGED_AI_FAILOVER_POOL_MICROS',
 ];
 let saved: Record<string, string | undefined>;
 
@@ -134,6 +138,25 @@ describe('the kill switch', () => {
     expect(
       resolveAiCredentials({ shop: 's', settings: managedShop({ openaiApiKey: null }) }),
     ).toEqual({ ok: false, reason: 'managedUnavailable' });
+  });
+
+  it('serves it on the dev build only under the explicit TESTING opt-in', () => {
+    configureManaged();
+    process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
+    process.env.APP_ENV = 'development';
+    process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
+    // Without the global caps the opt-in is OFF — `npm run dev` never runs
+    // validate-env, so the runtime has to refuse by itself.
+    delete process.env.MANAGED_AI_POOL_MICROS;
+    expect(managedAiAvailable()).toBe(false);
+    process.env.MANAGED_AI_POOL_MICROS = '2000000';
+    process.env.MANAGED_AI_TASTER_POOL_MICROS = '1000000';
+    process.env.MANAGED_AI_FAILOVER_POOL_MICROS = '1000000';
+    expect(managedAiAvailable()).toBe(true);
+
+    // Anything but the exact string keeps the guard.
+    process.env.MANAGED_AI_ALLOW_DEV_BUILD = '1';
+    expect(managedAiAvailable()).toBe(false);
   });
 });
 
