@@ -86,13 +86,19 @@ export const COMPARE_ROWS: CompareRow[] = [
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "yes", weglot: "no", transcy: "yes", langshop: "yes" },
+    // Transcy's free plan translates in the visitor's browser (google.translate.js,
+    // "non-edit languages"); only the paid plans write into Shopify.
+    byPlan: {
+      transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
+    },
   },
   {
     id: "brandVoice",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "no", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes" },
     byPlan: {
+      transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
       contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
       weglot: ["higherPlan", "higherPlan", "higherPlan", "higherPlan", "yes", "yes", "yes"],
     },
@@ -140,7 +146,7 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "followChanges",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "partial" },
+    them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "partial" },
     byPlan: {
       contentpilot: ["higherPlan", "higherPlan", "higherPlan", "yes"],
       transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
@@ -242,7 +248,7 @@ export type PriceAppId = "contentpilot" | CompetitorId;
 export const PRICE_APPS: PriceAppId[] = ["contentpilot", ...COMPETITORS];
 
 /** How many languages a plan translates. */
-export type PlanLanguages = number | "unlimited" | "twoAutomatic" | "onRequest";
+export type PlanLanguages = number | "unlimited" | "someAutomatic" | "onRequest";
 
 /**
  * How much translating a plan buys. Each provider meters something different
@@ -310,7 +316,10 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
   "translate-and-adapt": {
     currency: "USD",
     trialDays: null,
-    plans: [{ id: "free", name: "Free", monthly: 0, languages: "twoAutomatic", products: null, volume: { kind: "included" } }],
+    // Two automatic languages: what the App Store listing and the app itself
+    // offer (owner, 2026-09-30). Shopify's help page says "up to 8"; the app
+    // is what a merchant gets, so it wins.
+    plans: [{ id: "free", name: "Free", monthly: 0, languages: "someAutomatic", products: null, volume: { kind: "included" } }],
   },
   weglot: {
     currency: "USD",
@@ -320,11 +329,11 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
       { id: "starter", name: "Starter", monthly: 17, languages: 1, products: null, volume: { kind: "words", amount: 10000 } },
       { id: "business", name: "Business", monthly: 32, languages: 3, products: null, volume: { kind: "words", amount: 50000 } },
       { id: "pro", name: "Pro", monthly: 87, languages: 5, products: null, volume: { kind: "words", amount: 200000 } },
-      // Weglot's own website lists three larger plans the App Store does not,
-      // priced in EUROS (owner's screenshot, 2026-09-30). Shown in the currency
-      // Weglot states rather than converted.
-      { id: "advanced", name: "Advanced", monthly: 299, currency: "EUR", languages: 10, products: null, volume: { kind: "words", amount: 1000000 } },
-      { id: "extended", name: "Extended", monthly: 699, currency: "EUR", languages: 20, products: null, volume: { kind: "words", amount: 5000000 } },
+      // Weglot's own website lists three larger plans the App Store does not.
+      // USD as the website states it (it bills in EUR, "USD pricing is an
+      // estimate"); verified against the website 2026-09-30.
+      { id: "advanced", name: "Advanced", monthly: 329, languages: 10, products: null, volume: { kind: "words", amount: 1000000 } },
+      { id: "extended", name: "Extended", monthly: 769, languages: 20, products: null, volume: { kind: "words", amount: 5000000 } },
       { id: "enterprise", name: "Enterprise", monthly: null, onRequest: true, languages: "onRequest", products: null, volume: { kind: "onRequest" } },
     ],
   },

@@ -123,7 +123,7 @@ export const compareEs: CompareCopy = {
     trialRow: "Prueba gratuita",
     values: {
       unlimited: "Ilimitados",
-      twoAutomatic: "2 automáticos, los demás a mano",
+      someAutomatic: "2 automáticos, los demás a mano",
       noProductLimit: "Sin límite",
       ownKey: "Ilimitado: paga directamente a su proveedor de IA",
       included: "Incluido",
@@ -160,7 +160,7 @@ export const compareEs: CompareCopy = {
         "Totalmente gratuita, hecha por la propia Shopify.",
         "Adapta textos por mercado, como el español de España y el de México.",
         "Cubre tema, checkout y correos de notificación.",
-        "Encaja bien si solo necesita uno o dos idiomas más y traduce poco.",
+        "Encaja bien si necesita uno o dos idiomas más y le basta una traducción automática estándar.",
       ],
       ourEdge: [
         "Traducción con IA en todos los idiomas que quiera, con su propio tono y sus reglas.",
@@ -171,9 +171,10 @@ export const compareEs: CompareCopy = {
         "Herramientas SEO completas y un editor de hoja de cálculo para todo el catálogo.",
       ],
       verdict:
-        "Quédese con Translate & Adapt si vende en uno o dos idiomas adicionales y cambia sus textos pocas veces. Elija ContentPilot si quiere más idiomas, términos coherentes o una sola app para textos, SEO y traducciones. Ambas guardan en el almacén de traducciones de Shopify, así que puede cambiar cuando quiera y conservar todo.",
+        "Quédese con Translate & Adapt si vende en uno o dos idiomas adicionales y le basta una traducción automática estándar. Elija ContentPilot si quiere traducciones con su propio tono y glosario, traducir los textos de otras apps o una sola app para textos, SEO y traducciones. Ambas guardan en el almacén de traducciones de Shopify, así que puede cambiar cuando quiera y conservar todo.",
       notes: {
         autoTranslate: "Dos idiomas",
+        followChanges: "Sincronización semanal, desactivada por defecto",
         imagesPerLanguage: "Solo imágenes del tema",
       },
     },
@@ -199,6 +200,7 @@ export const compareEs: CompareCopy = {
       verdict:
         "Elija Weglot si tiene sitios en varias plataformas y quiere un único servicio de traducción para todos, o si necesita traductores profesionales. Elija ContentPilot si su tienda funciona con Shopify, quiere que las traducciones pertenezcan a su tienda y no quiere límites de palabras.",
       notes: {
+        brandVoice: "Solo formal o informal",
         nativeStorage: "Guardadas en Weglot",
       },
     },

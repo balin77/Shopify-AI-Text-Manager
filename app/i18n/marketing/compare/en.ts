@@ -123,7 +123,7 @@ export const compareEn: CompareCopy = {
     trialRow: "Free trial",
     values: {
       unlimited: "Unlimited",
-      twoAutomatic: "2 automatic, more by hand",
+      someAutomatic: "2 automatic, more by hand",
       noProductLimit: "No limit",
       ownKey: "Unlimited — you pay your AI provider directly",
       included: "Included",
@@ -160,7 +160,7 @@ export const compareEn: CompareCopy = {
         "Completely free, made by Shopify itself.",
         "Adapts wording per market, such as British and American English.",
         "Covers theme, checkout and notification emails.",
-        "A good fit if you only need one or two extra languages and translate little.",
+        "A good fit if you need one or two extra languages and standard machine translation is enough.",
       ],
       ourEdge: [
         "AI translation in any number of languages, following your own tone and rules.",
@@ -171,9 +171,10 @@ export const compareEn: CompareCopy = {
         "A full SEO toolkit and a spreadsheet editor for the whole catalogue.",
       ],
       verdict:
-        "Stay with Translate & Adapt if you sell in one or two extra languages and rarely change your texts. Choose ContentPilot when you want more languages, consistent wording, or one app for texts, SEO and translations. Both write into Shopify's own translation storage, so you can switch at any time and keep what you have.",
+        "Stay with Translate & Adapt if you sell in one or two extra languages and standard machine translation is good enough. Choose ContentPilot when you want translations in your own voice with a glossary, texts from other apps translated, or one app for texts, SEO and translations. Both write into Shopify's own translation storage, so you can switch at any time and keep what you have.",
       notes: {
         autoTranslate: "Two languages",
+        followChanges: "Weekly auto-sync, off by default",
         imagesPerLanguage: "Theme images only",
       },
     },
@@ -199,6 +200,7 @@ export const compareEn: CompareCopy = {
       verdict:
         "Choose Weglot if you run websites on several platforms and want one translation service for all of them, or if you need professional translators. Choose ContentPilot if your shop runs on Shopify, you want the translations to belong to your store, and you want no word limits.",
       notes: {
+        brandVoice: "Formal or informal only",
         nativeStorage: "Stored with Weglot",
       },
     },

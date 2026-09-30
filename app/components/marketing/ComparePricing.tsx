@@ -50,8 +50,8 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
       ? g.values.onRequest
       : plan.languages === "unlimited"
         ? g.values.unlimited
-        : plan.languages === "twoAutomatic"
-          ? g.values.twoAutomatic
+        : plan.languages === "someAutomatic"
+          ? g.values.someAutomatic
           : n(plan.languages);
   const products = plan.onRequest
     ? g.values.onRequest

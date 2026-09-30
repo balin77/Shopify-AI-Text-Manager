@@ -65,7 +65,7 @@ export type CompareCopy = {
     trialRow: string;
     values: {
       unlimited: string;
-      twoAutomatic: string;
+      someAutomatic: string;
       noProductLimit: string;
       ownKey: string;
       included: string;
