@@ -236,6 +236,10 @@ model AISettings {
   // this column is provably never consulted by the public App-Store build.
   // null = no override (normal Shopify-derived plan).
   devForcedPlan String? // "free" | "basic" | "pro" | "max" | null
+  // Dev build only, and only with MANAGED_AI_ALLOW_DEV_BUILD: the forced plan
+  // was chosen as its "+ AI" variant. The custom-app build has no Billing API,
+  // so nothing else can record that a managed plan was "bought" there.
+  devForcedManagedAi Boolean @default(false)
 
   // Persistent per-shop trial-consumption marker. Set ONCE when a trial-bearing
   // subscription is verified ACTIVE (never optimistically at the mutation call,

@@ -66,6 +66,7 @@ const ENV_KEYS = [
   'DEV_APP_CLIENT_ID',
   'SHOPIFY_API_KEY',
   'APP_ENV',
+  'MANAGED_AI_ALLOW_DEV_BUILD',
 ];
 let saved: Record<string, string | undefined>;
 
@@ -134,6 +135,18 @@ describe('the kill switch', () => {
     expect(
       resolveAiCredentials({ shop: 's', settings: managedShop({ openaiApiKey: null }) }),
     ).toEqual({ ok: false, reason: 'managedUnavailable' });
+  });
+
+  it('serves it on the dev build only under the explicit TESTING opt-in', () => {
+    configureManaged();
+    process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
+    process.env.APP_ENV = 'development';
+    process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
+    expect(managedAiAvailable()).toBe(true);
+
+    // Anything but the exact string keeps the guard.
+    process.env.MANAGED_AI_ALLOW_DEV_BUILD = '1';
+    expect(managedAiAvailable()).toBe(false);
   });
 });
 

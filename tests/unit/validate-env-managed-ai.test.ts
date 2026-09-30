@@ -72,3 +72,15 @@ describe('the dev-build guard uses the real client id', () => {
     expect(src).not.toMatch(/process\.env\.DEV_APP_CLIENT_ID/);
   });
 });
+
+describe('the dev-build TESTING opt-in', () => {
+  it('lifts the dev-build error only with MANAGED_AI_ALLOW_DEV_BUILD, and then demands the pools', () => {
+    expect(src).toMatch(/process\.env\.MANAGED_AI_ALLOW_DEV_BUILD !== 'true'/);
+    // Under the opt-in a missing global cap is an ERROR, never a warning:
+    // every shop on the dev build pays nothing.
+    const block = src.slice(src.indexOf('} else if (devBuild) {'));
+    expect(block.slice(0, 900)).toMatch(/MANAGED_AI_POOL_MICROS/);
+    expect(block.slice(0, 900)).toMatch(/MANAGED_AI_TASTER_POOL_MICROS/);
+    expect(block.slice(0, 900)).toMatch(/errors\.push/);
+  });
+});

@@ -103,7 +103,11 @@ und verweigert eine halbe Konfiguration.
 Der Operator-Key wird von genau einem Modul gelesen
 (`app/services/ai/ai-credentials.server.ts`), das zugleich Einwilligung,
 Kill-Switch und Budget prüft; ein Test hält das fest. Im Dev-/Custom-App-Build
-wird er grundsätzlich nicht ausgeliefert.
+wird er grundsätzlich nicht ausgeliefert — AUSSER mit dem Test-Schalter unten.
+
+| Variable (nur Development) | Bedeutung |
+|---|---|
+| `MANAGED_AI_ALLOW_DEV_BUILD` | Nur `"true"` und nur im Dev-Build (Dev-Client-ID, `APP_ENV` ≠ `production`): Managed AI darf dort zum **Testen** laufen. Hebt zwei Regeln auf, die genau diesen Build betreffen: die Sperre des Operator-Keys im Dev-Build und die Regel „zahlt nichts ⇒ nur Schnupperkontingent" (Entwicklungsshops, Test-Abos, Dev-Plan-Override, Trial) — sonst wäre ein „+ KI"-Plan dort nie testbar. Da der Dev-Build keine Billing-API hat, gilt die „+ KI"-Wahl im Planwechsel als Kauf (`AISettings.devForcedManagedAi`), mit einem einmal gesetzten Abrechnungsende, das wie eine echte Verlängerung alle 30 Tage weiterläuft. `validate-env` verweigert den Start, wenn dabei `MANAGED_AI_POOL_MICROS` oder `MANAGED_AI_TASTER_POOL_MICROS` fehlt — jeder Cent hier ist Ausgabe ohne Umsatz. In jedem anderen Build ist die Variable wirkungslos (und `validate-env` warnt). |
 
 ### Env-Variablen des Cron-Service `Db Space Checker`
 

@@ -603,6 +603,50 @@ describe('checkAndSyncSubscription() – dev override short-circuit', () => {
     );
   });
 
+  describe('managed-AI TESTING opt-in (MANAGED_AI_ALLOW_DEV_BUILD)', () => {
+    let savedFlag: string | undefined;
+    beforeEach(() => {
+      savedFlag = process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
+    });
+    afterEach(() => {
+      if (savedFlag === undefined) delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      else process.env.MANAGED_AI_ALLOW_DEV_BUILD = savedFlag;
+    });
+
+    it('a forced "+ AI" plan stands in for the purchase, with a period end SET ONCE', async () => {
+      process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
+      mockAISettingsFindUnique.mockResolvedValue({
+        shop, subscriptionPlan: 'max', trialConsumedAt: null,
+        devForcedPlan: 'max', devForcedManagedAi: true, managedAiPeriodEnd: null,
+      });
+      await checkAndSyncSubscription(makeMockAdmin([]), shop);
+      const first = mockAISettingsUpsert.mock.calls.at(-1)![0].update;
+      expect(first).toMatchObject({ managedAiActive: true, subscriptionIsTest: false });
+      expect(first.managedAiPeriodEnd).toBeInstanceOf(Date);
+
+      // The next sync keeps that end — a fresh one per navigation would mint
+      // a new budget key every time.
+      const kept = new Date('2099-01-01T00:00:00Z');
+      mockAISettingsFindUnique.mockResolvedValue({
+        shop, subscriptionPlan: 'max', trialConsumedAt: null,
+        devForcedPlan: 'max', devForcedManagedAi: true, managedAiPeriodEnd: kept,
+      });
+      await checkAndSyncSubscription(makeMockAdmin([]), shop);
+      expect(mockAISettingsUpsert.mock.calls.at(-1)![0].update.managedAiPeriodEnd).toBe(kept);
+    });
+
+    it('without the opt-in the marker grants nothing', async () => {
+      delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      mockAISettingsFindUnique.mockResolvedValue({
+        shop, subscriptionPlan: 'max', trialConsumedAt: null,
+        devForcedPlan: 'max', devForcedManagedAi: true,
+      });
+      await checkAndSyncSubscription(makeMockAdmin([]), shop);
+      expect(mockAISettingsUpsert.mock.calls.at(-1)![0].update).toMatchObject({ managedAiActive: false });
+    });
+  });
+
   it('does NOT short-circuit when client_id is not the dev app id', async () => {
     process.env.SHOPIFY_API_KEY = '9e5abc8c0e9e03ed24d4a2a2b1174c88'; // public app
     mockAISettingsFindUnique.mockResolvedValue({

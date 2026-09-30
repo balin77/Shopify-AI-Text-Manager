@@ -78,6 +78,30 @@ export function isDevAppBuild(): boolean {
 }
 
 /**
+ * Managed AI may be TESTED on the dev/custom-app build — an explicit,
+ * per-deployment opt-in (`MANAGED_AI_ALLOW_DEV_BUILD=true`) that means nothing
+ * anywhere else.
+ *
+ * Two rules exist precisely for this build and are lifted together, because
+ * testing needs both: the operator key is refused on the dev build (§7a
+ * "belt and braces"), and a shop that pays nothing — a partner development
+ * store, a `test: true` subscription, a dev plan override, a trial — gets only
+ * the one-time taster. Every shop the dev app runs on is such a shop, so with
+ * the second rule standing, an "+ AI" test subscription could never show its
+ * period budget, the 80 % warning or the wall. What stays: consent, the kill
+ * switch, the per-shop budgets and the GLOBAL pools — validate-env refuses to
+ * start this build with the flag unless the pools are set, because every
+ * cent spent here is spent against no revenue.
+ *
+ * Lives here, beside `isDevAppBuild`, because both the credential resolver
+ * and the budget need it and this module is already imported by both —
+ * placing it in either of them would make the other one's import a cycle.
+ */
+export function managedDevTestingEnabled(): boolean {
+  return process.env.MANAGED_AI_ALLOW_DEV_BUILD === 'true' && isDevAppBuild();
+}
+
+/**
  * Decides which (if any) dev billing affordance applies for this shop.
  * Pure / synchronous — safe to call on every request.
  */
@@ -122,7 +146,12 @@ export async function getDevForcedPlan(shop: string): Promise<BillingPlan | null
  * 'override' mode so it can never run in the public production build even if
  * called by mistake.
  */
-export async function setDevForcedPlan(shop: string, plan: BillingPlan): Promise<void> {
+export async function setDevForcedPlan(
+  shop: string,
+  plan: BillingPlan,
+  /** The "+ AI" variant was chosen. Recorded only in managed-AI TESTING mode. */
+  managedAi = false,
+): Promise<void> {
   if (resolveDevPlanMode(shop) !== 'override') {
     throw new Error('[DevPlanOverride] setDevForcedPlan refused — not in override mode');
   }
@@ -130,10 +159,13 @@ export async function setDevForcedPlan(shop: string, plan: BillingPlan): Promise
     throw new Error(`[DevPlanOverride] setDevForcedPlan refused — invalid plan "${String(plan)}"`);
   }
 
+  // A free plan has no "+ AI" variant, and outside the testing opt-in the
+  // marker is never written — so it can never grant anything by itself.
+  const devForcedManagedAi = managedAi && plan !== 'free' && managedDevTestingEnabled();
   await prisma.aISettings.upsert({
     where: { shop },
-    update: { devForcedPlan: plan },
-    create: { shop, devForcedPlan: plan },
+    update: { devForcedPlan: plan, devForcedManagedAi },
+    create: { shop, devForcedPlan: plan, devForcedManagedAi },
   });
 
   logger.warn('[DevPlanOverride] devForcedPlan persisted (custom-app build only)', { shop, plan });

@@ -48,7 +48,7 @@ import { tasterActionsFor, tasterBudgetMicros } from "../../config/managed-ai-bu
 // `process.env.DEV_APP_CLIENT_ID`, which is not an environment variable
 // anywhere in this repo (the id is a constant in that module), so it was
 // always false and this guard never fired.
-import { isDevAppBuild } from "../dev-plan-override.server";
+import { isDevAppBuild, managedDevTestingEnabled } from "../dev-plan-override.server";
 import { AIService, toValidProvider, type AIServiceConfig } from "../../../src/services/ai.service";
 import { type AiCredentialSource } from "./usage-dimensions.shared";
 import {
@@ -210,7 +210,7 @@ function configFor(
  */
 export function managedAiAvailable(): boolean {
   if (!isManagedAiEnabled()) return false;
-  if (isDevAppBuild()) {
+  if (isDevAppBuild() && !managedDevTestingEnabled()) {
     logger.warn("[ManagedAI] Refusing to serve an operator key from a dev/custom app build.");
     return false;
   }

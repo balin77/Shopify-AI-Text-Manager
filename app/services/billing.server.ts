@@ -19,7 +19,11 @@ import {
 import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 import { cleanupCacheForPlan } from '~/utils/planCacheCleanup';
-import { resolveDevPlanMode, getDevForcedPlan } from '~/services/dev-plan-override.server';
+import {
+  resolveDevPlanMode,
+  getDevForcedPlan,
+  managedDevTestingEnabled,
+} from '~/services/dev-plan-override.server';
 import type { Plan } from '~/utils/planUtils';
 
 interface ShopifyAdminClient {
@@ -632,8 +636,28 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   if (forced) {
     // No subscription object exists on this path at all, so nothing can say
     // managed AI was bought: the custom-app build has no Billing API, and §7a
-    // caps such a shop anyway (signal 3).
-    await syncSubscriptionToDatabase(shop, forced, { active: false, currentPeriodEnd: null });
+    // caps such a shop anyway (signal 3). The one exception is the explicit
+    // TESTING opt-in (MANAGED_AI_ALLOW_DEV_BUILD), where the forced plan's
+    // "+ AI" choice stands in for the purchase so the paid flow — period
+    // budget, 80 % warning, wall, renewal — can be exercised before
+    // production. Its period end is SET ONCE and then walked forward in
+    // 30-day steps by `managedBudgetPeriod`, like a real renewal; a fresh
+    // end on every sync would mint a new budget key on every navigation.
+    const devManaged =
+      managedDevTestingEnabled() && forced !== 'free' && existing?.devForcedManagedAi === true;
+    const keptEnd =
+      devManaged && existing?.managedAiPeriodEnd ? existing.managedAiPeriodEnd : null;
+    await syncSubscriptionToDatabase(
+      shop,
+      forced,
+      devManaged
+        ? {
+            active: true,
+            currentPeriodEnd: keptEnd ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            isTest: false,
+          }
+        : { active: false, currentPeriodEnd: null },
+    );
     await reconcileCacheForVerifiedPlan(shop, previousPlan, forced);
     await maybeTriggerUpgradeResync(admin, shop, previousPlan, forced);
     return forced;

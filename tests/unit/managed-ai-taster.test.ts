@@ -338,3 +338,33 @@ describe('a plan switch does not mint a second period budget', () => {
     expect(status.usedMicros).toBe(5);
   });
 });
+
+describe('the dev build\'s TESTING opt-in', () => {
+  it('lets a "pays nothing" shop with a managed plan see its PERIOD budget — and only on the dev build', async () => {
+    const { DEV_APP_CLIENT_ID } = await import('~/services/dev-plan-override.server');
+    const saved = {
+      key: process.env.SHOPIFY_API_KEY, env: process.env.APP_ENV, flag: process.env.MANAGED_AI_ALLOW_DEV_BUILD,
+    };
+    const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+    try {
+      const settings = settingsFor({
+        managedAiActive: true, subscriptionPlan: 'max', partnerDevelopment: true, subscriptionIsTest: true,
+      });
+      process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
+      process.env.APP_ENV = 'development';
+      delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      expect(periodBudgetMicros(shop, settings, 'max')).toBe(0);
+
+      process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
+      expect(periodBudgetMicros(shop, settings, 'max')).toBe(MANAGED_BUDGET_MICROS.max);
+
+      // On any other build the flag means nothing.
+      process.env.SHOPIFY_API_KEY = 'some-public-client-id';
+      expect(periodBudgetMicros(shop, settings, 'max')).toBe(0);
+    } finally {
+      restore('SHOPIFY_API_KEY', saved.key);
+      restore('APP_ENV', saved.env);
+      restore('MANAGED_AI_ALLOW_DEV_BUILD', saved.flag);
+    }
+  });
+});

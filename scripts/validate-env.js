@@ -278,11 +278,30 @@ if (process.env.MANAGED_AI_ENABLED === 'true') {
   // app/services/dev-plan-override.server.ts (public, not a secret — it is in
   // every OAuth URL). It is NOT an environment variable: reading it as one
   // made this check, and the identical guard in the resolver, silently dead.
-  if (process.env.SHOPIFY_API_KEY === '433cf493223c0c6b95bdb91b0de5961a' &&
-      process.env.APP_ENV !== 'production') {
-    errors.push('❌ MANAGED_AI_ENABLED is true in a dev/custom-app build — an operator key must never be configured there');
+  const devBuild = process.env.SHOPIFY_API_KEY === '433cf493223c0c6b95bdb91b0de5961a' &&
+      process.env.APP_ENV !== 'production';
+  if (devBuild && process.env.MANAGED_AI_ALLOW_DEV_BUILD !== 'true') {
+    errors.push('❌ MANAGED_AI_ENABLED is true in a dev/custom-app build — an operator key must never be configured there (set MANAGED_AI_ALLOW_DEV_BUILD=true to TEST it on this build)');
+  } else if (devBuild) {
+    // The testing opt-in: every shop the dev app runs on pays nothing, so each
+    // cent spent here is spent against no revenue. It may only run under a
+    // hard global ceiling — a missing pool is an error here, not a warning.
+    for (const name of ['MANAGED_AI_POOL_MICROS', 'MANAGED_AI_TASTER_POOL_MICROS']) {
+      const n = Number(process.env[name]);
+      if (!process.env[name] || !Number.isFinite(n) || n <= 0) {
+        errors.push(`❌ MANAGED_AI_ALLOW_DEV_BUILD is true but ${name} is not set — testing managed AI on the dev build needs a global cap`);
+      }
+    }
+    warnings.push('⚠️  MANAGED_AI_ALLOW_DEV_BUILD is on — managed AI is being TESTED on the dev build (dev stores get period budgets here)');
   }
-} else if (process.env.MANAGED_AI_API_KEY) {
+}
+
+if (process.env.MANAGED_AI_ALLOW_DEV_BUILD === 'true' &&
+    !(process.env.SHOPIFY_API_KEY === '433cf493223c0c6b95bdb91b0de5961a' && process.env.APP_ENV !== 'production')) {
+  warnings.push('⚠️  MANAGED_AI_ALLOW_DEV_BUILD is set but this is not the dev build — it is ignored here; remove it');
+}
+
+if (process.env.MANAGED_AI_ENABLED !== 'true' && process.env.MANAGED_AI_API_KEY) {
   // Not an error: this is exactly what the kill switch is for. But a key
   // sitting in the environment of a deployment that ignores it is worth one
   // line, because "why is managed mode off" is otherwise a hunt.
