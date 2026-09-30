@@ -60,6 +60,18 @@ export interface MarketAddress {
    * can remove. `sharedWith` names the OTHER markets on the same presence.
    */
   own: { presenceId: string; url: string | null; subfolderSuffix: string | null; sharedWith: string[] } | null;
+  /**
+   * The market's BASE currency, shown for information. `null` = not read (the
+   * field is NOT measured, so it rides a document of its own and a refusal or
+   * a failure only leaves the currency out — never the market list).
+   */
+  currency: { code: string; name: string | null } | null;
+  /**
+   * Shopify admin's market graph for this market (`/markets/graph?market_id=`),
+   * or `null` where the shop or the numeric id cannot be told. A plain link
+   * OUT of the app — nothing here writes through it.
+   */
+  adminGraphUrl: string | null;
 }
 
 export interface MarketAddresses {
@@ -207,6 +219,80 @@ const MARKET_PRIMARY = `#graphql
 
 let marketHasPrimary: boolean | null = null;
 
+// `Market.currencySettings` is NOT measured (the probe introspects
+// `MarketCurrencySettings`/`CurrencySetting` so it can be). A document of its
+// own for the same reason as `primary`: an unknown field fails the WHOLE
+// document, and a currency is information, never a reason to lose the list.
+const MARKET_CURRENCIES = `#graphql
+  query appMarketCurrencies {
+    markets(first: 25) {
+      nodes {
+        id
+        currencySettings {
+          baseCurrency {
+            currencyCode
+            currencyName
+          }
+        }
+      }
+    }
+  }`;
+
+/** `Map<marketId, currency>`, or `null` = could not be read. Never throws. */
+async function loadMarketCurrencies(
+  admin: GraphqlClient,
+  shop?: string,
+): Promise<Map<string, { code: string; name: string | null }> | null> {
+  try {
+    const body = await json(admin, MARKET_CURRENCIES);
+    const nodes = (
+      body.data?.markets as
+        | {
+            nodes?: Array<{
+              id?: string;
+              currencySettings?: { baseCurrency?: { currencyCode?: unknown; currencyName?: unknown } | null } | null;
+            } | null>;
+          }
+        | undefined
+    )?.nodes;
+    if (body.errors?.length || !Array.isArray(nodes)) {
+      logger.info("[MarketAddress] Market currencies not read", {
+        context: "MarketAddress",
+        shop,
+        errors: (body.errors ?? []).map((e) => e?.message),
+      });
+      return null;
+    }
+    const out = new Map<string, { code: string; name: string | null }>();
+    for (const n of nodes) {
+      const code = n?.currencySettings?.baseCurrency?.currencyCode;
+      const name = n?.currencySettings?.baseCurrency?.currencyName;
+      if (n?.id && typeof code === "string" && code) out.set(n.id, { code, name: typeof name === "string" && name ? name : null });
+    }
+    return out;
+  } catch (error: unknown) {
+    logger.info("[MarketAddress] Market currencies not read", {
+      context: "MarketAddress",
+      shop,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * `https://admin.shopify.com/store/<handle>/markets/graph?market_id=<n>` — the
+ * handle is the myshopify subdomain, the id the GID's number. Anything else
+ * (a custom shop string, a non-numeric id) is `null` rather than a link that
+ * lands on the wrong store or on nothing.
+ */
+export function marketAdminGraphUrl(shop: string | undefined, marketId: string): string | null {
+  const handle = shop?.toLowerCase().match(/^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/)?.[1];
+  const id = marketId.match(/^gid:\/\/shopify\/Market\/(\d+)$/)?.[1];
+  if (!handle || !id) return null;
+  return `https://admin.shopify.com/store/${handle}/markets/graph?market_id=${id}`;
+}
+
 /** `Map<marketId, primary>`, or `null` = this version cannot tell. Never throws. */
 async function loadPrimaryFlags(admin: GraphqlClient): Promise<Map<string, boolean> | null> {
   try {
@@ -229,12 +315,19 @@ async function loadPrimaryFlags(admin: GraphqlClient): Promise<Map<string, boole
 }
 
 /** `null` on any failed or truncated read — "cannot tell" is never "shared". */
-export async function loadMarketAddresses(admin: GraphqlClient, shop?: string): Promise<MarketAddresses | null> {
+export async function loadMarketAddresses(
+  admin: GraphqlClient,
+  shop?: string,
+  // The write paths re-read to CONFIRM; a currency is display-only and would
+  // only cost them a query.
+  opts: { currencies?: boolean } = {},
+): Promise<MarketAddresses | null> {
   try {
-    const [presBody, marketBody, primaryFlags] = await Promise.all([
+    const [presBody, marketBody, primaryFlags, currencies] = await Promise.all([
       json(admin, ADDRESS_PRESENCES),
       json(admin, ADDRESS_MARKETS),
       loadPrimaryFlags(admin),
+      opts.currencies === false ? Promise.resolve(null) : loadMarketCurrencies(admin, shop),
     ]);
     const pres = presBody.data?.webPresences as { pageInfo?: { hasNextPage?: boolean }; nodes?: PresenceNode[] } | undefined;
     const mkts = marketBody.data?.markets as
@@ -318,6 +411,8 @@ export async function loadMarketAddresses(admin: GraphqlClient, shop?: string): 
                 .map((id) => nameOf.get(id) ?? id),
             }
           : null,
+        currency: currencies?.get(m.id) ?? null,
+        adminGraphUrl: marketAdminGraphUrl(shop, m.id),
       });
     }
     const takenSuffixes = pres!.nodes!.map((p) => p?.subfolderSuffix?.toLowerCase()).filter((x): x is string => !!x);
@@ -560,7 +655,7 @@ export async function createMarketSubfolder(
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
   // Confirmed only by a fresh read: the market carries a presence with it.
-  const after = await loadMarketAddresses(admin, shop);
+  const after = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!after) return { ok: false, error: "unverified" };
   const market = after.markets.find((m) => m.marketId === request.marketId);
   if (market?.own?.subfolderSuffix?.toLowerCase() !== request.suffix) return { ok: false, error: "notConfirmed" };
@@ -590,7 +685,7 @@ export async function removeMarketAddress(
   shop: string,
   marketId: string,
 ): Promise<WriteOutcome> {
-  const before = await loadMarketAddresses(admin, shop);
+  const before = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!before) return { ok: false, error: "unverified" };
   const market = before.markets.find((m) => m.marketId === marketId);
   if (!market) return { ok: false, error: "unknownMarket" };
@@ -617,7 +712,7 @@ export async function removeMarketAddress(
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-  const after = await loadMarketAddresses(admin, shop);
+  const after = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!after) return { ok: false, error: "unverified" };
   // Confirmed when THAT subfolder is gone from the shop's presences (the
   // market may legitimately keep another one, e.g. a domain).
@@ -631,7 +726,7 @@ export async function removeMarketAddress(
 
 /** Remove a subfolder presence NO market uses (see `orphans`), confirmed by a re-read. */
 export async function removeOrphanAddress(admin: GraphqlClient, shop: string, presenceId: string): Promise<WriteOutcome> {
-  const before = await loadMarketAddresses(admin, shop);
+  const before = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!before) return { ok: false, error: "unverified" };
   const orphan = before.orphans.find((o) => o.presenceId === presenceId);
   // Only an UNCLAIMED subfolder — never a presence some market still serves.
@@ -654,7 +749,7 @@ export async function removeOrphanAddress(admin: GraphqlClient, shop: string, pr
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-  const after = await loadMarketAddresses(admin, shop);
+  const after = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!after) return { ok: false, error: "unverified" };
   if (after.takenSuffixes.includes(orphan.subfolderSuffix.toLowerCase())) return { ok: false, error: "notConfirmed" };
   await clearLocaleCache(shop);
@@ -774,7 +869,7 @@ export async function createMarket(
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-  const after = await loadMarketAddresses(admin, shop);
+  const after = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!after) return { ok: false, error: "unverified" };
   const created = after.markets.find((m) => m.marketId === marketId);
   if (!created) return { ok: false, error: "notConfirmed" };
@@ -811,7 +906,7 @@ export async function setMarketStatus(
   marketId: string,
   status: "ACTIVE" | "DRAFT",
 ): Promise<WriteOutcome> {
-  const before = await loadMarketAddresses(admin, shop);
+  const before = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!before) return { ok: false, error: "unverified" };
   const market = before.markets.find((m) => m.marketId === marketId);
   if (!market) return { ok: false, error: "unknownMarket" };
@@ -845,7 +940,7 @@ export async function setMarketStatus(
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-  const after = await loadMarketAddresses(admin, shop);
+  const after = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!after) return { ok: false, error: "unverified" };
   if (after.markets.find((m) => m.marketId === marketId)?.status !== status) return { ok: false, error: "notConfirmed" };
   await clearLocaleCache(shop);
@@ -853,7 +948,7 @@ export async function setMarketStatus(
 }
 
 export async function deleteMarket(admin: GraphqlClient, shop: string, marketId: string): Promise<WriteOutcome> {
-  const before = await loadMarketAddresses(admin, shop);
+  const before = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!before) return { ok: false, error: "unverified" };
   const market = before.markets.find((m) => m.marketId === marketId);
   if (!market) return { ok: false, error: "unknownMarket" };
@@ -878,7 +973,7 @@ export async function deleteMarket(admin: GraphqlClient, shop: string, marketId:
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-  const after = await loadMarketAddresses(admin, shop);
+  const after = await loadMarketAddresses(admin, shop, { currencies: false });
   if (!after) return { ok: false, error: "unverified" };
   if (after.markets.some((m) => m.marketId === marketId)) return { ok: false, error: "notConfirmed" };
   // Measured to go with the market; should a version ever leave it behind,

@@ -13,6 +13,7 @@ vi.mock("~/utils/shop-locales-cache.server", () => ({ clearShopLocalesCache: vi.
 
 const {
   loadMarketAddresses,
+  marketAdminGraphUrl,
   validateSubfolderRequest,
   createMarketSubfolder,
   removeMarketAddress,
@@ -79,6 +80,8 @@ function shopAdmin(opts: {
   primary?: Record<string, boolean>;
   /** Portugal shares Spain's presence. */
   sharedWithPortugal?: boolean;
+  /** Per market: its base currency code; an Error makes the read throw. */
+  currencies?: Record<string, string> | Error;
 }) {
   let written = false;
   const graphql = vi.fn(async (query: string, _opts?: { variables?: Record<string, unknown> }) => {
@@ -95,6 +98,18 @@ function shopAdmin(opts: {
       body = { data: { __type: { fields: [{ name: "id" }, ...(opts.primary ? [{ name: "primary" }] : [])] } } };
     } else if (query.includes("appMarketPrimary")) {
       body = { data: { markets: { nodes: Object.entries(opts.primary ?? {}).map(([id, primary]) => ({ id, primary })) } } };
+    } else if (query.includes("appMarketCurrencies")) {
+      if (opts.currencies instanceof Error) throw opts.currencies;
+      body = {
+        data: {
+          markets: {
+            nodes: Object.entries(opts.currencies ?? {}).map(([id, code]) => ({
+              id,
+              currencySettings: { baseCurrency: { currencyCode: code, currencyName: code === "CHF" ? "Swiss Franc" : null } },
+            })),
+          },
+        },
+      };
     } else if (query.includes("appInputShape")) body = { data: { __type: { inputFields: [{ name: "webPresencesToAdd" }] } } };
     else {
       const name = query.match(/\b(webPresenceCreate|marketUpdate|marketWebPresenceCreate|webPresenceDelete|marketWebPresenceDelete)\(/)?.[1] ?? "x";
@@ -128,17 +143,47 @@ describe("loadMarketAddresses", () => {
       takenSuffixes: ["es"],
       orphans: [],
       markets: [
-        { marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null },
+        { marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null, currency: null, adminGraphUrl: null },
         {
           marketId: "mES",
           name: "Spanien",
           status: "ACTIVE",
           primary: null,
           own: { presenceId: "wpEs", url: "https://shop.example/es-es/", subfolderSuffix: "es", sharedWith: [] },
+          currency: null,
+          adminGraphUrl: null,
         },
-        { marketId: "mUS", name: "USA", status: "DRAFT", primary: null, own: null },
+        { marketId: "mUS", name: "USA", status: "DRAFT", primary: null, own: null, currency: null, adminGraphUrl: null },
       ],
     });
+  });
+
+  it("reads each market's currency in a document of its own, and builds the admin graph link", async () => {
+    const admin = shopAdmin({ mutations: [], afterWrite: false, startOwn: true, currencies: { mCH: "CHF", mES: "EUR" } });
+    const result = await loadMarketAddresses(admin, "patis-shop.myshopify.com");
+    expect(result?.markets.map((m) => [m.marketId, m.currency])).toEqual([
+      ["mCH", { code: "CHF", name: "Swiss Franc" }],
+      ["mES", { code: "EUR", name: null }],
+      ["mUS", null],
+    ]);
+    // The currency read never rides the address documents.
+    const docs = admin.graphql.mock.calls.map((c) => c[0] as string);
+    expect(docs.filter((q) => q.includes("currencySettings"))).toHaveLength(1);
+    expect(docs.find((q) => q.includes("appMarketCurrencies"))).not.toContain("webPresences");
+  });
+
+  it("a failed currency read leaves the currency out, never the market list", async () => {
+    const result = await loadMarketAddresses(
+      shopAdmin({ mutations: [], afterWrite: false, startOwn: true, currencies: graphqlQueryError("Field 'currencySettings' doesn't exist") }),
+    );
+    expect(result?.markets).toHaveLength(3);
+    expect(result?.markets.every((m) => m.currency === null)).toBe(true);
+  });
+
+  it("the confirming re-reads skip the currency", async () => {
+    const admin = shopAdmin({ mutations: [], afterWrite: false, startOwn: true, currencies: { mCH: "CHF" } });
+    await loadMarketAddresses(admin, undefined, { currencies: false });
+    expect(admin.graphql.mock.calls.some((c) => (c[0] as string).includes("appMarketCurrencies"))).toBe(false);
   });
 
   it("reads the primary flag where the version has one, and names who else uses a presence", async () => {
@@ -202,22 +247,35 @@ describe("loadMarketAddresses", () => {
   });
 });
 
+describe("marketAdminGraphUrl", () => {
+  it("links the myshopify handle and the numeric market id, nothing else", () => {
+    expect(marketAdminGraphUrl("patis-universe-test-shop.myshopify.com", "gid://shopify/Market/103679459656")).toBe(
+      "https://admin.shopify.com/store/patis-universe-test-shop/markets/graph?market_id=103679459656",
+    );
+    expect(marketAdminGraphUrl(undefined, "gid://shopify/Market/1")).toBeNull();
+    expect(marketAdminGraphUrl("shop.example.com", "gid://shopify/Market/1")).toBeNull();
+    expect(marketAdminGraphUrl("a.myshopify.com", "mCH")).toBeNull();
+  });
+});
+
 describe("validateSubfolderRequest", () => {
   const addresses = {
     sharedUrl: "https://shop.example/",
     takenSuffixes: ["es", "fr"],
     orphans: [],
     markets: [
-      { marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null },
+      { marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null, currency: null, adminGraphUrl: null },
       {
         marketId: "mES",
         name: "Spanien",
         status: "ACTIVE",
         primary: null,
         own: { presenceId: "wpEs", url: null, subfolderSuffix: "es", sharedWith: [] },
+        currency: null,
+        adminGraphUrl: null,
       },
-      { marketId: "mUS", name: "USA", status: "DRAFT", primary: null, own: null },
-      { marketId: "mDE", name: "Deutschland", status: "ACTIVE", primary: true, own: null },
+      { marketId: "mUS", name: "USA", status: "DRAFT", primary: null, own: null, currency: null, adminGraphUrl: null },
+      { marketId: "mDE", name: "Deutschland", status: "ACTIVE", primary: true, own: null, currency: null, adminGraphUrl: null },
     ],
   };
   it("normalises and drops the default from the alternates", () => {
@@ -361,7 +419,7 @@ describe("adding and deleting a market", () => {
     sharedUrl: null,
     takenSuffixes: [],
     orphans: [],
-    markets: [{ marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null }],
+    markets: [{ marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null, currency: null, adminGraphUrl: null }],
   };
 
   it("validates name and countries", () => {

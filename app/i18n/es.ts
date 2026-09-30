@@ -1271,6 +1271,8 @@ export const es: Translation = {
         errorPrimaryMarket: "Este es el mercado principal de la tienda: es la propia dirección principal y no se puede mover ni eliminar.",
         primaryAddress: "Mercado principal – dirección principal {url}",
         presenceSharedWith: "Esta dirección también la usan: {names}",
+        currency: "Moneda: {currency}",
+        showInGraph: "Ver en el diagrama",
         addMarketButton: "Añadir mercado",
         addMarketTitle: "Añadir un mercado nuevo",
         addMarketConfirm: "Crear mercado",
