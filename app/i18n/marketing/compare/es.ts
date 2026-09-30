@@ -143,57 +143,11 @@ export const compareEs: CompareCopy = {
     },
   },
   pricing: {
-    heading: "Qué incluye cada plan",
-    intro: "Todos los planes de todas las apps, uno al lado del otro. Lo que incluye cada plan es lo que indica el propio proveedor.",
     perMonth: "/ mes",
     perYear: "/ año",
     free: "Gratis",
     onRequest: "Precio a consultar",
     note: "Precios mensuales en la moneda de cada proveedor, sin impuestos. Varios proveedores son más baratos con pago anual. Con ContentPilot usa su propia clave de IA, así que el uso de IA lo factura aparte su proveedor de IA.",
-    summaries: {
-      contentpilot: "Precio según el tamaño del catálogo. Idiomas ilimitados en todos los planes.",
-      "translate-and-adapt": "Gratuita. Traducción automática para dos idiomas; los demás, a mano.",
-      weglot: "Precio según idiomas y palabras traducidas. Prueba gratuita de 14 días; algunos costes los factura Weglot fuera de la factura de Shopify.",
-      transcy: "Precio según idiomas, productos, monedas y tokens de IA. Prueba gratuita de 7 días en los planes de pago.",
-      langshop: "Precio según idiomas y número de productos. Prueba gratuita de 14 días en los planes de pago.",
-    },
-    plans: {
-      contentpilot: {
-        free: "50 productos, 5 colecciones, todos los idiomas",
-        basic: "100 productos, 50 colecciones, 20 páginas, políticas, imágenes de producto, opciones y metacampos",
-        pro: "500 productos, blogs, textos del tema y del checkout, menús, metaobjetos, instrucciones propias para la IA, galerías por variante",
-        max: "2.500 productos, textos de otras apps, retraducción automática cuando cambian los textos, revisión semanal del sitio",
-      },
-      "translate-and-adapt": {
-        free: "Traducción automática a dos idiomas; los demás idiomas, a mano",
-      },
-      weglot: {
-        free: "1 idioma, 2.000 palabras",
-        starter: "1 idioma, 10.000 palabras",
-        business: "3 idiomas, 50.000 palabras",
-        pro: "5 idiomas, 250.000 palabras",
-        advanced: "10 idiomas, 1.000.000 palabras, tono de voz, exportación e importación (web de Weglot, en euros)",
-        extended: "20 idiomas, 5.000.000 palabras, dominio propio, memoria de traducción (web de Weglot, en euros)",
-        enterprise: "Volumen a medida, soporte dedicado, SLA, inicio de sesión único",
-      },
-      transcy: {
-        free: "1 idioma (no editable), palabras ilimitadas con Google, 1 moneda, textos de otras apps",
-        localPlus: "1 idioma editable, 100 productos, motores de IA (OpenAI, Gemini y más), 150 tokens de IA al mes, SEO multilingüe",
-        regional: "3 idiomas (2 editables), 200 productos, 300 tokens de IA al mes, 3 monedas, 20 entradas de glosario, traducción de imágenes y automatización para 10 productos",
-        continental: "15 idiomas (10 editables), 300 productos, 500 tokens de IA al mes, clave propia de OpenAI/Gemini/DeepL, 15 monedas, 200 entradas de glosario, detección de ubicación",
-        crossBorder: "50 idiomas (20 editables), 1.500 productos, 1.000 tokens de IA al mes, 50 monedas, 500 entradas de glosario, sincronización en tiempo real",
-        global: "147 idiomas, productos ilimitados, 5.000 tokens de IA al mes, 168 monedas, glosario ilimitado, gestor de cuenta",
-      },
-      langshop: {
-        free: "1 idioma, 50 productos, palabras y monedas ilimitadas, checkout, SEO multilingüe",
-        basic: "1 idioma, 250 productos, 5 reglas de glosario, edición masiva, sin marca LangShop",
-        standard: "3 idiomas, 2.000 productos, 100 reglas de glosario, OpenAI/DeepL Pro/Google Cloud, metaobjetos, textos de otras apps, exportación e importación, 50 productos nuevos automáticos",
-        advanced: "5 idiomas, 5.000 productos, 250 reglas de glosario, reglas de exclusión, Shopify Flow, 125 productos nuevos automáticos",
-        pro: "10 idiomas, 10.000 productos, 500 reglas de glosario, 250 productos nuevos automáticos, acceso API",
-        enterprise: "20 idiomas, 50.000 productos, 1.000 reglas de glosario, gestor de cuenta",
-        unlimited: "20 idiomas, productos y reglas de glosario ilimitados, gestor de cuenta",
-      },
-    },
   },
   competitors: {
     "translate-and-adapt": {
@@ -228,7 +182,7 @@ export const compareEs: CompareCopy = {
       summary:
         "Weglot traduce sitios web en muchas plataformas y cobra por palabras traducidas. ContentPilot funciona dentro de Shopify, guarda las traducciones en su tienda y añade herramientas SEO y de contenido. Así se comparan.",
       about:
-        "Weglot es un servicio de traducción para muchas plataformas web, entre ellas Shopify. Detecta los textos de su tienda y sirve las páginas traducidas a través de su propio sistema. Los planes dependen del número de idiomas y de palabras traducidas.",
+        "Weglot es un servicio de traducción para muchas plataformas web, entre ellas Shopify. Detecta los textos de su tienda y sirve las páginas traducidas desde su propio sistema. Las traducciones se guardan en los servidores de Weglot, no en Shopify. Los planes dependen del número de idiomas y de palabras traducidas.",
       strengths: [
         "Producto maduro con un editor visual que muestra las traducciones en la página.",
         "Glosario y una IA que aprende la voz de su marca.",
@@ -244,6 +198,9 @@ export const compareEs: CompareCopy = {
       ],
       verdict:
         "Elija Weglot si tiene sitios en varias plataformas y quiere un único servicio de traducción para todos, o si necesita traductores profesionales. Elija ContentPilot si su tienda funciona con Shopify, quiere que las traducciones pertenezcan a su tienda y no quiere límites de palabras.",
+      notes: {
+        nativeStorage: "Guardadas en Weglot",
+      },
     },
     transcy: {
       kind: "App de traducción y moneda para Shopify",

@@ -86,18 +86,12 @@ export type CompareCopy = {
     };
   };
   pricing: {
-    heading: string;
-    intro: string;
     perMonth: string;
     perYear: string;
     free: string;
     onRequest: string;
     /** Currency, tax, annual discounts, AI costs — one sentence. */
     note: string;
-    /** One line per app under its name, e.g. "priced by languages and words". */
-    summaries: Record<PriceAppId, string>;
-    /** What each plan includes, keyed by the plan ids in `COMPARE_PRICES`. */
-    plans: Record<PriceAppId, Record<string, string>>;
   };
   /** Month the facts were last checked, written out ("September 2026"). */
   checkedAt: string;

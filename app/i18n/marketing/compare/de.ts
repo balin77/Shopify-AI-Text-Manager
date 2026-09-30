@@ -143,57 +143,11 @@ export const compareDe: CompareCopy = {
     },
   },
   pricing: {
-    heading: "Was die Pläne enthalten",
-    intro: "Alle Pläne aller Apps nebeneinander. Was ein Plan enthält, ist das, was der Anbieter selbst angibt.",
     perMonth: "/ Monat",
     perYear: "/ Jahr",
     free: "Kostenlos",
     onRequest: "Preis auf Anfrage",
     note: "Monatspreise in der Währung des Anbieters, ohne Steuern. Mehrere Anbieter sind bei jährlicher Zahlung günstiger. Bei ContentPilot nutzen Sie Ihren eigenen KI-Schlüssel; die KI-Nutzung rechnet Ihr KI-Anbieter separat ab.",
-    summaries: {
-      contentpilot: "Preis nach Katalog-Größe. Beliebig viele Sprachen in jedem Plan.",
-      "translate-and-adapt": "Kostenlos. Automatische Übersetzung für zwei Sprachen, weitere Sprachen von Hand.",
-      weglot: "Preis nach Sprachen und übersetzten Wörtern. 14 Tage kostenlos testbar; manche Kosten rechnet Weglot außerhalb der Shopify-Rechnung ab.",
-      transcy: "Preis nach Sprachen, Produkten, Währungen und KI-Tokens. Bezahlte Pläne 7 Tage kostenlos testbar.",
-      langshop: "Preis nach Sprachen und Anzahl Produkte. Bezahlte Pläne 14 Tage kostenlos testbar.",
-    },
-    plans: {
-      contentpilot: {
-        free: "50 Produkte, 5 Kollektionen, alle Sprachen",
-        basic: "100 Produkte, 50 Kollektionen, 20 Seiten, Richtlinien, Produktbilder, Optionen und Metafelder",
-        pro: "500 Produkte, Blogs, Theme- und Checkout-Texte, Menüs, Metaobjekte, eigene KI-Anweisungen, Bildergalerien pro Variante",
-        max: "2.500 Produkte, Texte anderer Apps, automatische Nachübersetzung bei Textänderungen, wöchentliche Website-Prüfung",
-      },
-      "translate-and-adapt": {
-        free: "Automatische Übersetzung in zwei Sprachen; jede weitere Sprache von Hand",
-      },
-      weglot: {
-        free: "1 Sprache, 2.000 Wörter",
-        starter: "1 Sprache, 10.000 Wörter",
-        business: "3 Sprachen, 50.000 Wörter",
-        pro: "5 Sprachen, 250.000 Wörter",
-        advanced: "10 Sprachen, 1.000.000 Wörter, Tonalität, Export & Import (Weglot-Website, in Euro)",
-        extended: "20 Sprachen, 5.000.000 Wörter, eigene Top-Level-Domain, Übersetzungsspeicher (Weglot-Website, in Euro)",
-        enterprise: "Volumen nach Vereinbarung, persönlicher Support, SLA, Single Sign-on",
-      },
-      transcy: {
-        free: "1 Sprache (nicht bearbeitbar), unbegrenzte Wörter über Google, 1 Währung, Texte anderer Apps",
-        localPlus: "1 bearbeitbare Sprache, 100 Produkte, KI-Dienste (OpenAI, Gemini und weitere), 150 KI-Tokens im Monat, mehrsprachiges SEO",
-        regional: "3 Sprachen (2 bearbeitbar), 200 Produkte, 300 KI-Tokens im Monat, 3 Währungen, 20 Glossareinträge, Bildübersetzung und Automatik für 10 Produkte",
-        continental: "15 Sprachen (10 bearbeitbar), 300 Produkte, 500 KI-Tokens im Monat, eigener OpenAI-/Gemini-/DeepL-Schlüssel, 15 Währungen, 200 Glossareinträge, Standorterkennung",
-        crossBorder: "50 Sprachen (20 bearbeitbar), 1.500 Produkte, 1.000 KI-Tokens im Monat, 50 Währungen, 500 Glossareinträge, Echtzeit-Synchronisierung",
-        global: "147 Sprachen, unbegrenzte Produkte, 5.000 KI-Tokens im Monat, 168 Währungen, unbegrenztes Glossar, persönlicher Ansprechpartner",
-      },
-      langshop: {
-        free: "1 Sprache, 50 Produkte, unbegrenzte Wörter und Währungen, Checkout, mehrsprachiges SEO",
-        basic: "1 Sprache, 250 Produkte, 5 Glossarregeln, Massenbearbeitung, ohne LangShop-Branding",
-        standard: "3 Sprachen, 2.000 Produkte, 100 Glossarregeln, OpenAI/DeepL Pro/Google Cloud, Metaobjekte, Texte anderer Apps, Export & Import, 50 neue Produkte automatisch",
-        advanced: "5 Sprachen, 5.000 Produkte, 250 Glossarregeln, Ausschlussregeln, Shopify Flow, 125 neue Produkte automatisch",
-        pro: "10 Sprachen, 10.000 Produkte, 500 Glossarregeln, 250 neue Produkte automatisch, API-Zugang",
-        enterprise: "20 Sprachen, 50.000 Produkte, 1.000 Glossarregeln, persönlicher Ansprechpartner",
-        unlimited: "20 Sprachen, unbegrenzte Produkte und Glossarregeln, persönlicher Ansprechpartner",
-      },
-    },
   },
   competitors: {
     "translate-and-adapt": {
@@ -228,7 +182,7 @@ export const compareDe: CompareCopy = {
       summary:
         "Weglot übersetzt Websites auf vielen Plattformen und rechnet nach übersetzten Wörtern ab. ContentPilot arbeitet in Shopify, speichert Übersetzungen in Ihrem Shop und bringt SEO- und Content-Werkzeuge mit. Der Vergleich.",
       about:
-        "Weglot ist ein Übersetzungsdienst für viele Website-Plattformen, darunter Shopify. Er erkennt die Texte Ihres Shops und liefert übersetzte Seiten über das eigene System aus. Die Pläne richten sich nach der Zahl der Sprachen und der übersetzten Wörter.",
+        "Weglot ist ein Übersetzungsdienst für viele Website-Plattformen, darunter Shopify. Er erkennt die Texte Ihres Shops und liefert übersetzte Seiten aus dem eigenen System aus. Die Übersetzungen liegen auf den Servern von Weglot, nicht in Shopify. Die Pläne richten sich nach der Zahl der Sprachen und der übersetzten Wörter.",
       strengths: [
         "Ausgereiftes Produkt mit visuellem Editor, der Übersetzungen direkt auf der Seite zeigt.",
         "Glossar und eine KI, die Ihre Markenstimme lernt.",
@@ -244,6 +198,9 @@ export const compareDe: CompareCopy = {
       ],
       verdict:
         "Wählen Sie Weglot, wenn Sie Websites auf mehreren Plattformen betreiben und einen Übersetzungsdienst für alle wollen, oder wenn Sie professionelle Übersetzer brauchen. Wählen Sie ContentPilot, wenn Ihr Shop auf Shopify läuft, die Übersetzungen Ihrem Shop gehören sollen und Sie keine Wortlimits wollen.",
+      notes: {
+        nativeStorage: "Liegen bei Weglot",
+      },
     },
     transcy: {
       kind: "Übersetzungs- und Währungs-App für Shopify",

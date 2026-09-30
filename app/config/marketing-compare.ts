@@ -85,13 +85,13 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "nativeStorage",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "yes", weglot: "unstated", transcy: "yes", langshop: "yes" },
+    them: { "translate-and-adapt": "yes", weglot: "no", transcy: "yes", langshop: "yes" },
   },
   {
     id: "brandVoice",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "unstated", langshop: "yes" },
+    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "no", langshop: "yes" },
     byPlan: {
       contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
       weglot: ["higherPlan", "higherPlan", "higherPlan", "higherPlan", "yes", "yes", "yes"],
@@ -140,7 +140,7 @@ export const COMPARE_ROWS: CompareRow[] = [
     id: "followChanges",
     group: "translation",
     ours: "yes",
-    them: { "translate-and-adapt": "unstated", weglot: "yes", transcy: "yes", langshop: "partial" },
+    them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "partial" },
     byPlan: {
       contentpilot: ["higherPlan", "higherPlan", "higherPlan", "yes"],
       transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
@@ -319,7 +319,7 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
       { id: "free", name: "Free", monthly: 0, languages: 1, products: null, volume: { kind: "words", amount: 2000 } },
       { id: "starter", name: "Starter", monthly: 17, languages: 1, products: null, volume: { kind: "words", amount: 10000 } },
       { id: "business", name: "Business", monthly: 32, languages: 3, products: null, volume: { kind: "words", amount: 50000 } },
-      { id: "pro", name: "Pro", monthly: 87, languages: 5, products: null, volume: { kind: "words", amount: 250000 } },
+      { id: "pro", name: "Pro", monthly: 87, languages: 5, products: null, volume: { kind: "words", amount: 200000 } },
       // Weglot's own website lists three larger plans the App Store does not,
       // priced in EUROS (owner's screenshot, 2026-09-30). Shown in the currency
       // Weglot states rather than converted.
@@ -333,7 +333,9 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
     trialDays: 7,
     // Transcy's own plan comparison, as the owner pasted it (2026-09-30).
     plans: [
-      { id: "free", name: "Free", monthly: 0, languages: 1, products: "unstated", volume: { kind: "unlimitedWords" } },
+      // Free: products left blank in Transcy's table; the owner reads it as
+      // "nothing can be translated on the free plan" (2026-09-30).
+      { id: "free", name: "Free", monthly: 0, languages: 1, products: 0, volume: { kind: "unlimitedWords" } },
       { id: "localPlus", name: "Local Plus", monthly: 14.9, languages: 1, products: 100, volume: { kind: "wordsPlusTokens", amount: 150 } },
       { id: "regional", name: "Regional", monthly: 29, languages: 3, products: 200, volume: { kind: "wordsPlusTokens", amount: 300 } },
       { id: "continental", name: "Continental", monthly: 69, languages: 15, products: 300, volume: { kind: "wordsPlusTokensOwnKey", amount: 500 } },

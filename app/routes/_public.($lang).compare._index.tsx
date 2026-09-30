@@ -13,7 +13,6 @@ import {
 } from "../utils/marketing-route.server";
 import { localizedPath } from "../services/marketing-locale.shared";
 import { CompareDisclaimer, CompareMatrix } from "../components/marketing/CompareTable";
-import { ComparePlanDetails } from "../components/marketing/ComparePricing";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -87,7 +86,6 @@ export default function MarketingCompare() {
 
       <section className="mk-section">
         <div className="mk-shell">
-          <ComparePlanDetails copy={copy} locale={locale} apps={PRICE_APPS} />
           <CompareDisclaimer copy={copy} />
         </div>
       </section>

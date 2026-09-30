@@ -1884,11 +1884,7 @@ a.mk-badge:hover {
   max-width: var(--mk-prose-width);
 }
 
-/* ── Price comparison ─────────────────────────────────────────────────── */
-
-.mk-compare-prices {
-  margin-top: 48px;
-}
+/* ── Price text shared by the plan-by-plan table ──────────────────────── */
 
 .mk-compare-prices__intro {
   color: var(--mk-text-muted);
@@ -1896,71 +1892,9 @@ a.mk-badge:hover {
   margin-bottom: 20px;
 }
 
-.mk-compare-prices__grid {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 16px;
-  /* 200px so all five apps share one row on a desktop: a fifth card
-     wrapping alone under the other four reads as an afterthought. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-  align-items: start;
-}
-
-.mk-compare-prices__card {
-  padding: 20px;
-  border: 1px solid var(--mk-border);
-  border-radius: var(--mk-radius);
-  background: var(--mk-surface);
-}
-
-.mk-compare-prices__card--ours {
-  border-color: var(--mk-brand);
-}
-
-.mk-compare-prices__card h3 {
-  font-size: 1.0625rem;
-  margin-bottom: 4px;
-}
-
-.mk-compare-prices__card dl {
-  margin: 14px 0 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.mk-compare-prices__plan {
-  padding: 10px 0;
-  border-top: 1px solid var(--mk-border);
-}
-
-/* Wraps: in a narrow card "Continental 69 US$ / Monat" is wider than the
-   card, and the price then moves under the name instead of spilling out. */
-.mk-compare-prices__plan dt {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  column-gap: 12px;
-  row-gap: 2px;
-  font-weight: 600;
-}
-
-.mk-compare-prices__price {
-  white-space: nowrap;
-}
-
 .mk-compare-prices__unit {
   font-weight: 400;
   font-size: 0.8125rem;
-  color: var(--mk-text-muted);
-}
-
-.mk-compare-prices__plan dd {
-  margin: 4px 0 0;
-  font-size: 0.875rem;
-  line-height: 1.5;
   color: var(--mk-text-muted);
 }
 

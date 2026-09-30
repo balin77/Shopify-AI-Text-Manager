@@ -1,5 +1,4 @@
 import {
-  COMPARE_PRICES,
   COMPETITOR_NAMES,
   formatCompareNumber,
   formatComparePrice,
@@ -81,56 +80,4 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
                 } as const
               )[v.kind].replace("{n}", n(v.amount));
   return { languages, products, volume };
-}
-
-/**
- * What each plan INCLUDES, one card per app, ours first — the detail behind
- * the table above. Each app is shown with its own plan ladder: listing only
- * which of OUR features need which plan read as if the others included
- * everything for free, which none of them does.
- */
-export function ComparePlanDetails({
-  copy,
-  locale,
-  apps,
-}: {
-  copy: CompareCopy;
-  locale: MarketingLocale;
-  apps: readonly PriceAppId[];
-}) {
-  return (
-    <section className="mk-compare-prices" aria-labelledby="compare-prices-heading">
-      <h2 id="compare-prices-heading" className="mk-compare__heading">
-        {copy.pricing.heading}
-      </h2>
-      <p className="mk-compare-prices__intro">{copy.pricing.intro}</p>
-      <ul className="mk-compare-prices__grid">
-        {apps.map((app) => {
-          const table = COMPARE_PRICES[app];
-          return (
-            <li
-              key={app}
-              className={`mk-compare-prices__card${app === "contentpilot" ? " mk-compare-prices__card--ours" : ""}`}
-            >
-              <h3>{appName(app)}</h3>
-              <p className="mk-note">{copy.pricing.summaries[app]}</p>
-              <dl>
-                {table.plans.map((plan) => (
-                  <div key={plan.id} className="mk-compare-prices__plan">
-                    <dt>
-                      <span>{plan.name}</span>
-                      <span className="mk-compare-prices__price">
-                        <PlanPrice plan={plan} table={table} copy={copy} locale={locale} />
-                      </span>
-                    </dt>
-                    <dd>{copy.pricing.plans[app][plan.id]}</dd>
-                  </div>
-                ))}
-              </dl>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
 }

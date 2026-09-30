@@ -58,21 +58,6 @@ describe("comparison pages", () => {
     }
   });
 
-  it("describes every plan of every app in every language", () => {
-    for (const locale of MARKETING_LOCALES) {
-      const copy = getCompareCopy(locale);
-      for (const app of PRICE_APPS) {
-        expect(copy.pricing.summaries[app]).toBeTruthy();
-        for (const plan of COMPARE_PRICES[app].plans) {
-          expect(copy.pricing.plans[app][plan.id], `${locale}/${app}/${plan.id}`).toBeTruthy();
-        }
-        expect(Object.keys(copy.pricing.plans[app]).sort()).toEqual(
-          COMPARE_PRICES[app].plans.map((p) => p.id).sort(),
-        );
-      }
-    }
-  });
-
   it("advertises exactly the prices the app bills", () => {
     const ours = Object.fromEntries(COMPARE_PRICES.contentpilot.plans.map((p) => [p.id, p.monthly]));
     expect(ours).toEqual({

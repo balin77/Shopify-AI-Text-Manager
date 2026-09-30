@@ -116,13 +116,13 @@ Legende: ✅ ja · ⚠️ teilweise · ❌ nein · ? keine klare Angabe (≠ nei
 | Funktion | ContentPilot | Translate & Adapt | Weglot | Transcy | LangShop |
 |---|---|---|---|---|---|
 | Automatische Übersetzung | ✅ alle Pläne (eigener KI-Key) | ⚠️ nur 2 Sprachen, Rest von Hand | ✅ alle | ✅ alle (Google gratis, KI ab Local Plus) | ✅ alle |
-| Übersetzungen in Shopify gespeichert | ✅ | ✅ | ? (Drittquellen: bei Weglot/Proxy; Seite zeigt „Keine Angabe“) | ✅ | ✅ |
-| Eigene Anweisungen / Tonalität | ✅ ab Pro | ❌ | ✅ „Tone of voice“ ab Advanced (€299) | ? | ✅ alle |
+| Übersetzungen in Shopify gespeichert | ✅ | ✅ | ❌ auf Weglots eigenen Servern (vom Inhaber bestätigt) | ✅ | ✅ |
+| Eigene Anweisungen / Tonalität | ✅ ab Pro | ❌ | ✅ „Tone of voice“ ab Advanced (€299) | ❌ (nicht auffindbar) | ✅ alle |
 | Wahl des KI-Anbieters | ✅ 6 Anbieter, alle Pläne | ❌ | ❌ | ✅ OpenAI, Gemini, Baidu, Yandex, Grok, DeepSeek ab Local Plus; eigener Key (OpenAI/Gemini/DeepL) ab Continental | ✅ OpenAI, DeepL Pro, Google Cloud ab Standard |
-| Glossar | ✅ alle Pläne | ❌ | ✅ alle | ✅ ab Regional (20 → 200 → 500 → ∞) | ✅ ab Basic (5 → 100 → 250 → 500 → 1000 → ∞) |
+| Glossar | ✅ alle Pläne | ❌ (vom Inhaber bestätigt) | ✅ alle | ✅ ab Regional (20 → 200 → 500 → ∞) | ✅ ab Basic (5 → 100 → 250 → 500 → 1000 → ∞) |
 | Theme, Checkout, E-Mails | ✅ ab Pro | ✅ | ✅ | ✅ | ✅ (Checkout alle Pläne) |
 | Texte anderer Apps | ✅ nur Max | ❌ | ✅ | ✅ alle (bearbeiten ab Local Plus) | ✅ ab Standard |
-| Übersetzungen folgen Textänderungen | ✅ nur Max | ? | ✅ (Proxy übersetzt live) | ✅ ab Regional (geplanter Sync; Echtzeit ab Cross-Border) | ⚠️ nur NEUE Produkte/Kollektionen, ab Standard (50/125/250/1250/∞) |
+| Übersetzungen folgen Textänderungen | ✅ nur Max | ❌ (vom Inhaber bestätigt) | ✅ (Proxy übersetzt live) | ✅ ab Regional (geplanter Sync; Echtzeit ab Cross-Border) | ⚠️ nur NEUE Produkte/Kollektionen, ab Standard (50/125/250/1250/∞) |
 | Texte schreiben/verbessern mit KI | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Tabellen-Editor für den Katalog | ✅ ab Basic | ❌ | ⚠️ Export/Import ab Advanced | ❌ (Suchen & Ersetzen ab Local Plus) | ⚠️ Massenbearbeitung von Übersetzungen ab Basic; Export/Import ab Standard |
 | SEO-Werkzeuge (Keywords, Crawl, GSC …) | ⚠️ Gratis/Basic teilweise, voll ab Pro | ❌ | ❌ (nur mehrsprachiges SEO) | ❌ (mehrsprachiges SEO ab Local Plus) | ❌ (mehrsprachiges SEO, Meta-Tags) |
@@ -155,7 +155,7 @@ Legende: ✅ ja · ⚠️ teilweise · ❌ nein · ? keine klare Angabe (≠ nei
 | Free | 0 | 1 | 2.000 | — („By Weglot“-Badge) |
 | Starter | $17 (Website €15) | 1 | 10.000 | Badge weg, Profi-Übersetzer |
 | Business | $32 (€29) | 3 | 50.000 | — |
-| Pro | $87 (€79) | 5 | App Store 250.000 / Website 200.000 | Statistiken, übersetzte URLs, 3 Projekte |
+| Pro | $87 (€79) | 5 | 200.000 (App Store nennt 250.000; Seite zeigt 200.000) | Statistiken, übersetzte URLs, 3 Projekte |
 | Advanced | €299 (nur Website) | 10 | 1.000.000 | Tone of voice, eigene Sprachen, Export/Import |
 | Extended | €699 (nur Website) | 20 | 5.000.000 | Top-Level-Domain, Übersetzungsspeicher |
 | Enterprise | auf Anfrage | — | — | SSO, SLA, eigener Reverse Proxy |
@@ -164,7 +164,7 @@ Legende: ✅ ja · ⚠️ teilweise · ❌ nein · ? keine klare Angabe (≠ nei
 
 | Plan | Preis/Monat | Sprachen (bearbeitbar) | Produkte | KI-Tokens/Monat | Neu in diesem Plan |
 |---|---|---|---|---|---|
-| Free | 0 | 1 (0) | — (Tabelle leer) | — | Drittanbieter-Apps übersetzen |
+| Free | 0 | 1 (0) | 0 (Tabelle leer — laut Inhaber lässt sich im Gratisplan nichts übersetzen) | — | Drittanbieter-Apps übersetzen |
 | Local Plus | $14.90 | 1 (1) | 100 | 150 | KI-Dienste, mehrsprachiges SEO, 1 Währung, Suchen & Ersetzen |
 | Regional | $29 | 3 (2) | 200 | 300 | Glossar 20, 3 Währungen, Automatik + Bilder für 10 Produkte, geplanter Sync |
 | Continental | $69 | 15 (10) | 300 | 500 | eigener KI-Key, Glossar 200, 15 Währungen, Geolocation |
@@ -194,7 +194,7 @@ Website zeigt zusätzlich Jahrespreise (z. B. Local Plus $11.90/Monat jährlich,
 | Gratis | 0 · ∞ Spr. · 50 Prod. | 0 · 1 Spr. · 2k Wörter | 0 · 1 Spr. (nicht bearbeitbar) | 0 · 1 Spr. · 50 Prod. |
 | Stufe 1 | €9.90 · ∞ · 100 | $17 · 1 · 10k W. | $14.90 · 1 · 100 | $10 · 1 · 250 |
 | Stufe 2 | €19.90 · ∞ · 500 | $32 · 3 · 50k W. | $29 · 3 · 200 | $40 · 3 · 2.000 |
-| Stufe 3 | €59.90 · ∞ · 2.500 | $87 · 5 · 250k W. | $69 · 15 · 300 | $75 · 5 · 5.000 |
+| Stufe 3 | €59.90 · ∞ · 2.500 | $87 · 5 · 200k W. | $69 · 15 · 300 | $75 · 5 · 5.000 |
 | Stufe 4 | (Max) | €299 · 10 · 1M W. | $99 · 50 · 1.500 | $120 · 10 · 10k |
 | Stufe 5 | (Max) | €699 · 20 · 5M W. | $599 · 147 · ∞ | $250 · 20 · 50k |
 | Stufe 6 | (Max) | auf Anfrage | (Global) | $500 · 20 · ∞ |
@@ -215,12 +215,14 @@ Website zeigt zusätzlich Jahrespreise (z. B. Local Plus $11.90/Monat jährlich,
 - **Währung, Geolocation, Bilder je Sprache, menschliche Übersetzer:** fehlen bei uns. Währung und Geolocation erledigt Shopify Markets nativ (kein echter Gap, siehe Fußnote ¹); **Bilder je Sprache** ist der einzige echte Funktions-Gap in der Übersetzung.
 
 **Offen / vor dem Livegang von `/compare` prüfen**
-- Weglot-Speicherort (JS/Proxy vs. Shopify) — nur Drittquellen, Seite sagt „Keine Angabe“.
-- Translate & Adapt: Glossar (nur Konkurrenz-Blogs), „folgt Textänderungen“ (?).
-- Transcy: eigene Anweisungen/Tonalität (?), Produkte im Gratisplan (Tabelle leer).
-- LangShop: Bilder je Sprache (?), Testzeit 14 vs. 7 Tage (App Store vs. Website — Seite zeigt 14).
-- Weglot Pro: 250.000 Wörter (App Store) vs. 200.000 (Website) — Seite zeigt den App Store.
+- LangShop: Bilder je Sprache — unbekannt, Seite zeigt „Keine Angabe“.
+- LangShop: Testzeit 14 (App Store) vs. 7 Tage (Website) — Seite zeigt 14.
 - langify und T Lab sind bewusst nicht auf der Vergleichsseite (kleinere Verbreitung); Kandidaten für eine Erweiterung.
+
+Vom Inhaber am 2026-09-30 geklärt: Weglot speichert auf eigenen Servern (nicht in
+Shopify); Translate & Adapt hat weder Glossar noch Nachübersetzung bei Textänderungen;
+Transcy hat keine eigenen KI-Anweisungen, und im Gratisplan lassen sich keine Produkte
+übersetzen; Weglot Pro wird mit 200.000 Wörtern geführt.
 
 **Fairness-Regel der Seite:** die Vergleichsseite zeigt EINE Tabelle, die sich per
 Planstufe umschalten lässt (Gratis, Stufe 1 …): jede Spalte ist der Plan dieser App auf
