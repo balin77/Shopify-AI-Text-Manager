@@ -349,7 +349,9 @@ const SHOP_LOCALES_PUBLISHED = `#graphql
 /**
  * The market write sends `marketWebPresenceIds` ALONE, after the publish step.
  * Whether Shopify ties presence membership to publication (auto-publishing on
- * assignment, or unpublishing on removal) is NOT measured — if it does, a
+ * assignment, or unpublishing on removal) is measured only HALF: on a
+ * PUBLISHED locale an add and a removal left it published (market probe,
+ * 2026-09-30); what an UNPUBLISHED one does is still open — if it moves, a
  * publish flip confirmed a moment earlier in the same save would be undone
  * silently. So every locale a market write touched is checked once against the
  * state this save meant to leave it in. A failed read reports nothing: it can
@@ -536,11 +538,12 @@ export async function applyLocaleChanges(
 // silently take the language off a draft market's presence — so a presence of
 // an inactive market that carries the locale is preserved in every set sent.
 // WRITE: `shopLocaleUpdate(locale, shopLocale: { marketWebPresenceIds })` — the
-// FULL set of presences the locale should be on. NOT measured (the schema proxy
-// is unreachable from the build sandbox): neither the input field nor whether it
-// replaces or adds. So the write is confirmed by RE-READING the presences, never
-// by its echo — a set that did not come out as requested is "notConfirmed",
-// which also catches an add-only reading of the field. A presence whose DEFAULT
+// FULL set of presences the locale should be on. MEASURED (market probe,
+// 2026-09-30, API 2026-07): `ShopLocaleInput.marketWebPresenceIds` exists and
+// REPLACES — sending the old set took an added presence away again — which is
+// exactly why every set sent here is complete and keeps an inactive market's
+// presence. The write is still confirmed by RE-READING the presences, never by
+// its echo — a set that did not come out as requested is "notConfirmed". A presence whose DEFAULT
 // language is this locale always keeps it (Shopify cannot drop a presence's
 // default language), so the plan forces those in rather than sending a removal
 // that must fail.

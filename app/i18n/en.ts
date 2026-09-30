@@ -1311,7 +1311,7 @@ export const en: Translation = {
           deleting: "Deleting …",
         },
         errorCreatedNotDraft: "The market was created, but Shopify did NOT store it as a draft – it may already be active. Check it now in the Shopify admin under Markets.",
-        errorRemoveAddressFirst: "Remove this market's own address first (an own domain in the Shopify admin) – otherwise it would be left behind orphaned.",
+        errorRemoveAddressFirst: "This market has its own domain or shares its address with other markets – change that in the Shopify admin under Markets first, or the others' address would go with it.",
         errorNotOrphan: "A market uses this address again by now – reload the page.",
         orphanTitle: "Unused address {url}",
         orphanHint: "No market uses this address. It blocks its code until it is removed.",

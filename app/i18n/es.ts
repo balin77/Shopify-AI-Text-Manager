@@ -1294,7 +1294,7 @@ export const es: Translation = {
           deleting: "Eliminando …",
         },
         errorCreatedNotDraft: "El mercado se creó, pero Shopify NO lo guardó como borrador: puede que ya esté activo. Revísalo ahora en el administrador de Shopify, en Mercados.",
-        errorRemoveAddressFirst: "Elimina primero la dirección propia de este mercado (un dominio propio, en el administrador de Shopify); si no, quedaría huérfana.",
+        errorRemoveAddressFirst: "Este mercado tiene un dominio propio o comparte su dirección con otros mercados: cámbialo primero en el administrador de Shopify, en Mercados, o la dirección de los demás se iría con él.",
         errorNotOrphan: "Un mercado ya vuelve a usar esta dirección: recarga la página.",
         orphanTitle: "Dirección sin usar {url}",
         orphanHint: "Ningún mercado usa esta dirección. Bloquea su código hasta que se elimine.",

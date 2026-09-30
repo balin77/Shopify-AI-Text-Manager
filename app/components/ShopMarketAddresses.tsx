@@ -265,12 +265,12 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
           )}
           {m.primary !== true && (
             <DisabledActionTooltip
-              hint={blocked ? s.removeBlockedByDraft : m.own ? a.errorRemoveAddressFirst : undefined}
+              hint={blocked ? s.removeBlockedByDraft : ownBlocksDelete(m) ? a.errorRemoveAddressFirst : undefined}
             >
               <Button
                 variant="plain"
                 tone="critical"
-                disabled={blocked || busy || !!m.own}
+                disabled={blocked || busy || ownBlocksDelete(m)}
                 onClick={() => {
                   setSubmittedFor(null);
                   setDeletingMarket({ marketId: m.marketId, name: m.name });
@@ -559,6 +559,14 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
       )}
     </BlockStack>
   );
+}
+
+/**
+ * A market's own unshared SUBFOLDER goes with it on delete (measured, see
+ * `deleteMarket`); a domain or a shared address is changed in Shopify first.
+ */
+function ownBlocksDelete(m: MarketAddressesView["markets"][number]): boolean {
+  return !!m.own && (!m.own.subfolderSuffix || m.own.sharedWith.length > 0);
 }
 
 function SectionHeading({ a }: { a: any }) {
