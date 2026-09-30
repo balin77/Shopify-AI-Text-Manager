@@ -482,10 +482,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           limitMicros: status.limitMicros,
           // A taster does not reset, so it has no reset date — and printing
           // the subscription's period end beside it would promise one.
-          resetsOn:
-            status.kind === "period" && settings.managedAiPeriodEnd
-              ? settings.managedAiPeriodEnd.toISOString()
-              : null,
+          resetsOn: status.kind === "period" ? periodEndFromKey(status.period) : null,
           estimatedShare: total > 0 ? estimated / total : 0,
           kind: status.kind,
           tasterActions: status.kind === "taster" ? managedTasterActions() : 0,
@@ -1460,8 +1457,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // render and the click would otherwise record agreement to wording
       // nobody read — which is the one property versioning exists to make
       // impossible. A mismatch refuses and asks them to look again.
+      // A grant WITHOUT a version is refused the same way: the page always
+      // sends one, so its absence is a direct POST that read nothing.
       const shownVersion = getFormString(formData, "consentVersion");
-      if (granted && shownVersion && shownVersion !== AI_PROCESSING_CONSENT_VERSION) {
+      if (granted && shownVersion !== AI_PROCESSING_CONSENT_VERSION) {
         logger.warn("[Settings] Consent posted against an outdated text version", {
           shop: session.shop,
           shown: shownVersion,
@@ -1556,15 +1555,40 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const data = validationResult.data;
 
+      // The key fields are only a statement about the keys when the form was
+      // SHOWN them. In managed mode the loader withholds them and the tab is
+      // seeded with "" for every key — and `encryptApiKey("")` is null, so
+      // writing that payload back would delete every stored merchant key
+      // (§8a rule 4: the stored keys survive managed mode). Two signals, both
+      // refusing: the form says it was rendered without them (a tab seeded
+      // before a switch back to BYO), or the shop is on managed AI right now.
+      const storedForKeys = await db.aISettings.findUnique({
+        where: { shop: session.shop },
+        select: { aiKeySource: true },
+      });
+      const keysWithheld =
+        formData.get("keysWithheld") === "true" ||
+        (storedForKeys != null && wantsManagedAi(storedForKeys) && managedAiAvailable());
+      const keyWrites = keysWithheld
+        ? {}
+        : {
+            huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
+            geminiApiKey: encryptApiKey(data.geminiApiKey),
+            claudeApiKey: encryptApiKey(data.claudeApiKey),
+            openaiApiKey: encryptApiKey(data.openaiApiKey),
+            grokApiKey: encryptApiKey(data.grokApiKey),
+            deepseekApiKey: encryptApiKey(data.deepseekApiKey),
+          };
+      if (keysWithheld) {
+        logger.info("[Settings] saveAiKeys without key fields — stored keys left untouched", {
+          shop: session.shop,
+        });
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
-          huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
-          geminiApiKey: encryptApiKey(data.geminiApiKey),
-          claudeApiKey: encryptApiKey(data.claudeApiKey),
-          openaiApiKey: encryptApiKey(data.openaiApiKey),
-          grokApiKey: encryptApiKey(data.grokApiKey),
-          deepseekApiKey: encryptApiKey(data.deepseekApiKey),
+          ...keyWrites,
           preferredProvider: data.preferredProvider,
           selectedModel: data.selectedModel || null,
           // appLanguage is NOT written here — it belongs to `saveAppLanguage`.
@@ -2014,6 +2038,11 @@ export default function SettingsPage() {
               {/* AI Settings */}
               {selectedSection === "ai" && (
                 <SettingsAITab
+                  // Remount when the key fields switch between withheld and
+                  // shown: the tab seeds its key state ONCE, so a switch back
+                  // to own-key would otherwise keep the "" it was seeded with
+                  // in managed mode and offer to save that over the real keys.
+                  key={settings.apiKeysWithheld ? "keys-withheld" : "keys-shown"}
                   settings={settings}
                   fetcher={fetcher}
                   t={t}

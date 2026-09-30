@@ -53,6 +53,7 @@ import { AIService, toValidProvider, type AIServiceConfig } from "../../../src/s
 import { type AiCredentialSource } from "./usage-dimensions.shared";
 import {
   boughtManagedAi,
+  CONSENTED_MANAGED_PROVIDERS,
   hasCurrentAiProcessingConsent,
   wantsManagedAi,
   type AiRefusalCode,
@@ -165,6 +166,14 @@ export function readManagedCredential(role: ManagedRole): ManagedCredential | nu
   if (UNPRICED_PROVIDERS.has(provider)) {
     logger.error(
       `[ManagedAI] ${prefix}PROVIDER is "${provider}", which this app cannot price — a managed budget over it could never be enforced. This credential is ignored.`,
+    );
+    return null;
+  }
+  // The consent names two sub-processors. A provider outside them is a
+  // company no merchant agreed to, however well it is priced.
+  if (!CONSENTED_MANAGED_PROVIDERS.includes(provider)) {
+    logger.error(
+      `[ManagedAI] ${prefix}PROVIDER is "${provider}", which the AI processing consent does not name — this credential is ignored.`,
     );
     return null;
   }

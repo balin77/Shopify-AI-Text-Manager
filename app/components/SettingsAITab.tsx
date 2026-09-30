@@ -56,6 +56,8 @@ interface Settings {
   grokMaxRequestsPerMinute: number;
   deepseekMaxTokensPerMinute: number;
   deepseekMaxRequestsPerMinute: number;
+  /** True when the loader did NOT send the key fields (managed mode). */
+  apiKeysWithheld?: boolean;
 }
 
 interface SettingsAITabProps {
@@ -95,6 +97,7 @@ export function SettingsAITab({
     { label: t.settings.providers.deepseek, value: "deepseek" },
   ];
 
+  const [keysWithheldAtMount] = useState(settings.apiKeysWithheld === true);
   const [huggingfaceKey, setHuggingfaceKey] = useState(settings.huggingfaceApiKey);
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey);
   const [claudeKey, setClaudeKey] = useState(settings.claudeApiKey);
@@ -267,6 +270,9 @@ export function SettingsAITab({
     fetcher.submit(
       {
         actionType: "saveAiKeys",
+        // Seeded at mount like the key state itself: "these key fields were
+        // withheld from me", so the server must not read their "" as delete.
+        keysWithheld: String(keysWithheldAtMount),
         huggingfaceApiKey: huggingfaceKey,
         geminiApiKey: geminiKey,
         claudeApiKey: claudeKey,

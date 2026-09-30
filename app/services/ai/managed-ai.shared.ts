@@ -35,6 +35,16 @@ export const AI_PROCESSING_CONSENT_VERSION = "2026-09-20.2";
 export const AI_SUB_PROCESSORS = ["OpenAI", "Anthropic"] as const;
 
 /**
+ * The provider ids the consent above covers — the SAME two companies, spelled
+ * the way `MANAGED_AI_PROVIDER` spells them. The resolver refuses any other
+ * provider for a managed credential: a config change to a "cheaper model"
+ * must not quietly send every consented merchant's content to a company the
+ * text they agreed to never named. Extending this list is a consent change
+ * and bumps `AI_PROCESSING_CONSENT_VERSION` (mirrored in validate-env.js).
+ */
+export const CONSENTED_MANAGED_PROVIDERS: readonly string[] = ["openai", "claude"];
+
+/**
  * Why a managed AI call was refused. These travel to the client as codes —
  * the app ships in three languages and the wording lives in the bundles.
  *

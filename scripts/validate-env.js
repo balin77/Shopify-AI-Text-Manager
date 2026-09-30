@@ -184,6 +184,10 @@ const KNOWN_AI_PROVIDERS = ['huggingface', 'gemini', 'claude', 'openai', 'grok',
 // meter would record EUR 0 for every call, the remaining budget would never
 // fall, and managed spend would be uncapped.
 const UNPRICEABLE_AI_PROVIDERS = ['huggingface'];
+// The providers the AI processing consent names (OpenAI, Anthropic), mirroring
+// CONSENTED_MANAGED_PROVIDERS in app/services/ai/managed-ai.shared.ts. The
+// resolver ignores any other managed credential; failing here is louder.
+const CONSENTED_MANAGED_PROVIDERS = ['openai', 'claude'];
 // Model ids app/config/ai-pricing.ts knows a real price for. An id outside
 // this list is metered at that provider's unknown-model CEILING — a guess,
 // and on the managed path a guess the budget is then enforced against.
@@ -232,6 +236,11 @@ function checkManagedCredential(prefix, label, required) {
 
   if (UNPRICEABLE_AI_PROVIDERS.includes(provider)) {
     errors.push(`❌ ${prefix}PROVIDER is "${provider}", which this app cannot price per token — a managed budget over it could never be enforced`);
+    return;
+  }
+
+  if (!CONSENTED_MANAGED_PROVIDERS.includes(provider)) {
+    errors.push(`❌ ${prefix}PROVIDER is "${provider}", which the AI processing consent does not name (${CONSENTED_MANAGED_PROVIDERS.join(', ')}) — adding a sub-processor is a consent change`);
     return;
   }
 

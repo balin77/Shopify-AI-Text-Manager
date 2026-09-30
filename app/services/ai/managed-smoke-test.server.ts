@@ -26,7 +26,7 @@
 
 import { logger } from "../../utils/logger.server";
 import {
-  isManagedAiEnabled,
+  managedAiAvailable,
   readManagedCredential,
   PROVIDER_KEY_FIELD,
   type ManagedRole,
@@ -86,7 +86,10 @@ async function probe(role: ManagedRole): Promise<SmokeResult | null> {
  * a caller (or a test) can assert on it.
  */
 export async function runManagedAiSmokeTest(): Promise<SmokeResult[]> {
-  if (!isManagedAiEnabled()) return [];
+  // `managedAiAvailable`, not the bare flag: it also refuses the dev/custom-
+  // app build, which must never spend the operator key (§7a) — not even once
+  // per boot for a probe.
+  if (!managedAiAvailable()) return [];
 
   const results: SmokeResult[] = [];
   for (const role of ["default", "failover"] as const) {

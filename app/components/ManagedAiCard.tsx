@@ -251,7 +251,7 @@ export function ManagedAiCard({
             <Text as="p" variant="bodySm">
               {m.consentBody}
             </Text>
-            <Link url="/app/privacy" removeUnderline>
+            <Link url="/privacy" target="_blank" removeUnderline>
               {m.privacyLink}
             </Link>
 
