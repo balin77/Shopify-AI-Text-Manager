@@ -127,6 +127,11 @@ export default function MarketingIndex() {
               {t.pillars.more}
             </Link>
           </p>
+          <p className="mk-section__more">
+            <Link to={localizedPath(locale, "/compare")} className="mk-arrow">
+              {t.pillars.compare}
+            </Link>
+          </p>
         </div>
       </section>
 

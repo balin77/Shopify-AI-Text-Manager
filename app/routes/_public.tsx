@@ -39,8 +39,13 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
   const navItems = [
     { path: "/features", to: localizedPath(locale, "/features"), label: t.nav.features },
     { path: "/guide", to: localizedPath(locale, "/guide"), label: t.nav.guide },
-    { path: "/videos", to: localizedPath(locale, "/videos"), label: t.nav.videos },
-    { path: "/roadmap", to: localizedPath(locale, "/roadmap"), label: t.nav.roadmap },
+    { path: "/compare", to: localizedPath(locale, "/compare"), label: t.nav.compare },
+    // Phones drop this one from the header (the footer keeps it): six items
+    // do not fit one row at 360px, and a nav that wraps to a third header row
+    // pushes every page's heading below the fold.
+    { path: "/videos", to: localizedPath(locale, "/videos"), label: t.nav.videos, wideOnly: true },
+    // …and the narrowest phones drop this one too, for the same reason.
+    { path: "/roadmap", to: localizedPath(locale, "/roadmap"), label: t.nav.roadmap, roomyOnly: true },
   ];
 
   return (
@@ -57,6 +62,9 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.to}
                 to={item.to}
+                className={
+                  "wideOnly" in item ? "mk-nav__wide-only" : "roomyOnly" in item ? "mk-nav__roomy-only" : undefined
+                }
                 // A guide TOPIC is still "in" the guide, so the section is
                 // marked on its sub-pages too — as `true`, not `page`, since
                 // the link does not point at the page being shown.

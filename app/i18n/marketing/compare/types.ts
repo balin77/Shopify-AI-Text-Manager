@@ -1,5 +1,6 @@
 import type {
   CompareGroupId,
+  PriceAppId,
   CompareRowId,
   CompetitorId,
   Support,
@@ -18,8 +19,6 @@ export type CompetitorCopy = {
   ourEdge: string[];
   /** "Which one fits you" — the closing verdict. */
   verdict: string;
-  /** How the other app charges, in words (prices move; the model does not). */
-  pricing: string;
   /** Short explanation for a cell, keyed by row. Optional per row. */
   notes?: Partial<Record<CompareRowId, string>>;
 };
@@ -41,8 +40,20 @@ export type CompareCopy = {
   strengthsHeading: string;
   ourEdgeHeading: string;
   verdictHeading: string;
-  pricingHeading: string;
-  ourPricing: string;
+  /** Under the table: it answers "can the app do this at all", never "on which plan". */
+  tableNote: string;
+  pricing: {
+    heading: string;
+    intro: string;
+    perMonth: string;
+    free: string;
+    /** Currency, tax, annual discounts, AI costs — one sentence. */
+    note: string;
+    /** One line per app under its name, e.g. "priced by languages and words". */
+    summaries: Record<PriceAppId, string>;
+    /** What each plan includes, keyed by the plan ids in `COMPARE_PRICES`. */
+    plans: Record<PriceAppId, Record<string, string>>;
+  };
   /** Month the facts were last checked, written out ("September 2026"). */
   checkedAt: string;
   /** `{date}` is `checkedAt`. */

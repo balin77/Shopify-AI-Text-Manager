@@ -89,12 +89,7 @@ export const compareDe: CompareCopy = {
   },
   ourNotes: {
     autoTranslate: "Mit eigenem KI-Schlüssel",
-    brandVoice: "Ab Pro-Plan",
-    themeCheckout: "Ab Pro-Plan",
-    thirdPartyApps: "Max-Plan",
-    imageManager: "Ab Pro-Plan",
     aiProvider: "Sechs Anbieter",
-    followChanges: "Max-Plan",
     imagesPerLanguage: "Noch nicht",
     currency: "Macht Shopify Markets",
   },
@@ -102,9 +97,6 @@ export const compareDe: CompareCopy = {
   strengthsHeading: "Wo {name} stark ist",
   ourEdgeHeading: "Was ContentPilot zusätzlich bietet",
   verdictHeading: "Was passt zu Ihnen?",
-  pricingHeading: "Preise",
-  ourPricing:
-    "ContentPilot hat einen kostenlosen Plan für bis zu 50 Produkte und bezahlte Pläne ab 9,90 € im Monat. Jeder Plan enthält beliebig viele Sprachen. Sie nutzen Ihren eigenen KI-Schlüssel, die KI-Nutzung rechnet also Ihr KI-Anbieter direkt zum Selbstkostenpreis ab.",
   checkedAt: "September 2026",
   disclaimer:
     "Grundlage sind die App-Store-Einträge und Hilfeseiten der Anbieter, Stand {date}. Apps ändern sich schnell – prüfen Sie vor Ihrer Entscheidung den aktuellen Eintrag. „Keine Angabe“ heißt, dass wir keine klare Aussage gefunden haben, nicht dass die Funktion fehlt.",
@@ -112,11 +104,56 @@ export const compareDe: CompareCopy = {
   detailLink: "Ganzer Vergleich",
   otherComparisons: "Weitere Vergleiche",
   allComparisons: "Alle Vergleiche",
+  tableNote:
+    "Die Tabelle zeigt, ob eine App eine Funktion überhaupt anbietet. Bei jedem Anbieter, auch bei uns, gibt es manche Funktionen erst in einem bezahlten Plan – was welcher Plan enthält, zeigt der Preisvergleich darunter.",
+  pricing: {
+    heading: "Preisvergleich",
+    intro: "Alle Pläne aller Apps nebeneinander. Was ein Plan enthält, ist das, was der Anbieter selbst angibt.",
+    perMonth: "/ Monat",
+    free: "Kostenlos",
+    note: "Monatspreise in der Währung des Anbieters, ohne Steuern. Mehrere Anbieter sind bei jährlicher Zahlung günstiger. Bei ContentPilot nutzen Sie Ihren eigenen KI-Schlüssel; die KI-Nutzung rechnet Ihr KI-Anbieter separat ab.",
+    summaries: {
+      contentpilot: "Preis nach Katalog-Größe. Beliebig viele Sprachen in jedem Plan.",
+      "translate-and-adapt": "Kostenlos. Automatische Übersetzung für zwei Sprachen, weitere Sprachen von Hand.",
+      weglot: "Preis nach Sprachen und übersetzten Wörtern.",
+      transcy: "Preis nach Sprachen und Funktionen. Größere Pläne bis 599 US$.",
+      langshop: "Preis nach Sprachen und Funktionen.",
+    },
+    plans: {
+      contentpilot: {
+        free: "50 Produkte, 5 Kollektionen, alle Sprachen",
+        basic: "100 Produkte, 50 Kollektionen, 20 Seiten, Richtlinien, Produktbilder, Optionen und Metafelder",
+        pro: "500 Produkte, Blogs, Theme- und Checkout-Texte, Menüs, Metaobjekte, eigene KI-Anweisungen, Bildergalerien pro Variante",
+        max: "2.500 Produkte, Texte anderer Apps, automatische Nachübersetzung bei Textänderungen, wöchentliche Website-Prüfung",
+      },
+      "translate-and-adapt": {
+        free: "Automatische Übersetzung in zwei Sprachen; jede weitere Sprache von Hand",
+      },
+      weglot: {
+        free: "1 Sprache, 2.000 Wörter",
+        starter: "1 Sprache, 10.000 Wörter",
+        business: "3 Sprachen, 50.000 Wörter",
+        pro: "5 Sprachen, 200.000 Wörter",
+      },
+      transcy: {
+        free: "Eingeschränkter Gratisplan",
+        localPlus: "1 bearbeitbare Sprache, Texte anderer Apps, Währungsumschalter",
+        regional: "3 Sprachen, Glossar mit 20 Einträgen, 3 Währungen, automatische Übersetzung",
+        continental: "15 Sprachen, Glossar mit 200 Einträgen, Standorterkennung, eigener KI-Schlüssel",
+      },
+      langshop: {
+        free: "50 Produkte, 1 Sprache",
+        basic: "Unbegrenzte maschinelle Übersetzung",
+        standard: "5 weitere Sprachen, Glossar",
+        advanced: "20 weitere Sprachen, automatische Übersetzung neuer Produkte",
+      },
+    },
+  },
   competitors: {
     "translate-and-adapt": {
       kind: "Shopifys eigene kostenlose Übersetzungs-App",
       summary:
-        "Translate & Adapt ist kostenlos und stammt von Shopify. ContentPilot ergänzt KI-Übersetzung in beliebig vielen Sprachen, ein Glossar, SEO-Werkzeuge und das Schreiben von Inhalten – in den größeren Plänen auch eigene KI-Anweisungen und Texte anderer Apps. Der Vergleich.",
+        "Translate & Adapt ist kostenlos und stammt von Shopify. ContentPilot ergänzt KI-Übersetzung in beliebig vielen Sprachen nach Ihren eigenen Anweisungen, ein Glossar, Texte anderer Apps, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
       about:
         "Translate & Adapt stammt von Shopify und kostet nichts. Zwei Sprachen übersetzt die App automatisch, jede weitere Sprache wird von Hand übersetzt. Ihre große Stärke ist das Anpassen von Inhalten pro Markt, etwa unterschiedliche Schreibweisen für Deutschland und die Schweiz.",
       strengths: [
@@ -126,16 +163,15 @@ export const compareDe: CompareCopy = {
         "Passt gut, wenn Sie nur eine oder zwei zusätzliche Sprachen brauchen und wenig übersetzen.",
       ],
       ourEdge: [
-        "KI-Übersetzung in beliebig vielen Sprachen; ab dem Pro-Plan nach Ihrer eigenen Tonalität und Ihren Regeln.",
+        "KI-Übersetzung in beliebig vielen Sprachen, nach Ihrer eigenen Tonalität und Ihren Regeln.",
         "Ein Glossar, damit Markennamen und feste Begriffe nie falsch übersetzt werden.",
-        "Übersetzt auch Texte anderer Apps, etwa Bewertungs-Widgets (Max-Plan).",
-        "Aktualisiert Übersetzungen automatisch, wenn Sie den Originaltext ändern (Max-Plan).",
+        "Übersetzt auch Texte anderer Apps, etwa Bewertungs-Widgets.",
+        "Aktualisiert Übersetzungen automatisch, wenn Sie den Originaltext ändern.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und ein Tabellen-Editor für den ganzen Katalog.",
       ],
       verdict:
         "Bleiben Sie bei Translate & Adapt, wenn Sie in einer oder zwei zusätzlichen Sprachen verkaufen und Ihre Texte selten ändern. Wählen Sie ContentPilot, wenn Sie mehr Sprachen wollen, einheitliche Begriffe brauchen oder eine App für Texte, SEO und Übersetzungen suchen. Beide speichern in Shopifys eigenem Übersetzungsspeicher – Sie können jederzeit wechseln und behalten alles.",
-      pricing: "Kostenlos. Automatische Übersetzung für zwei Sprachen, weitere Sprachen von Hand.",
       notes: {
         autoTranslate: "Zwei Sprachen",
         imagesPerLanguage: "Nur Theme-Bilder",
@@ -162,8 +198,6 @@ export const compareDe: CompareCopy = {
       ],
       verdict:
         "Wählen Sie Weglot, wenn Sie Websites auf mehreren Plattformen betreiben und einen Übersetzungsdienst für alle wollen, oder wenn Sie professionelle Übersetzer brauchen. Wählen Sie ContentPilot, wenn Ihr Shop auf Shopify läuft, die Übersetzungen Ihrem Shop gehören sollen und Sie keine Wortlimits wollen.",
-      pricing:
-        "Ein kleiner kostenloser Plan, danach Pläne nach Anzahl Sprachen und übersetzten Wörtern.",
     },
     transcy: {
       kind: "Übersetzungs- und Währungs-App für Shopify",
@@ -178,15 +212,14 @@ export const compareDe: CompareCopy = {
         "Übersetzt Texte anderer Apps.",
       ],
       ourEdge: [
-        "Eigene Anweisungen für die KI, damit Übersetzungen Ihre Tonalität treffen (ab Pro-Plan).",
+        "Eigene Anweisungen für die KI, damit Übersetzungen Ihre Tonalität treffen.",
         "Beliebig viele Sprachen in jedem Plan.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
-        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante (ab Pro-Plan).",
+        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
       ],
       verdict:
         "Wählen Sie Transcy, wenn Sie einen Währungsumrechner über Shopify Markets hinaus oder übersetzten Text in Bildern brauchen. Wählen Sie ContentPilot, wenn Übersetzungen in Ihrer eigenen Tonalität entstehen sollen und Sie eine App für Texte, SEO und Übersetzungen suchen.",
-      pricing: "Ein kostenloser Plan, danach Pläne nach Sprachen und Funktionen.",
       notes: {
         aiProvider: "Auswahl an Diensten",
       },
@@ -208,14 +241,13 @@ export const compareDe: CompareCopy = {
         "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
-        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante (ab Pro-Plan).",
+        "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
       ],
       verdict:
         "Wählen Sie LangShop, wenn Sie menschliche Übersetzer auf Abruf oder einen Währungsumrechner über Shopify Markets hinaus wollen. Wählen Sie ContentPilot, wenn Sie beliebig viele Sprachen und eine App für Texte, SEO und Übersetzungen wollen.",
-      pricing: "Ein kostenloser Plan für kleine Kataloge, danach Pläne nach Sprachen und Funktionen.",
       notes: {
         aiProvider: "Auswahl an Diensten",
-        followChanges: "Neue Produkte, höhere Pläne",
+        followChanges: "Nur neue Produkte",
       },
     },
   },

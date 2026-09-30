@@ -33,6 +33,7 @@ export const de: MarketingTranslation = {
 
   pillars: {
     more: "Alle Funktionen ansehen",
+    compare: "Mit anderen Übersetzungs-Apps vergleichen",
     title: "Drei Dinge, die die App gut kann",
     items: [
       {
@@ -52,6 +53,7 @@ export const de: MarketingTranslation = {
 
   features: {
     guideLink: "So geht es — zur Anleitung",
+    compareLink: "Wie schneidet die App gegenüber Translate & Adapt, Weglot und anderen ab?",
     title: "Funktionen",
     intro:
       "Die App ist eine Sammlung von Werkzeugen mit einer Gemeinsamkeit: Sie arbeiten alle an dem Text, aus dem Ihr Shop besteht. Das ist drin.",

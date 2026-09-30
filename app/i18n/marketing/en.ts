@@ -44,6 +44,7 @@ export const en = {
 
   pillars: {
     more: "See every feature",
+    compare: "Compare with other translation apps",
     title: "Three things it does well",
     items: [
       {
@@ -65,6 +66,7 @@ export const en = {
 
   features: {
     guideLink: "How it works in the guide",
+    compareLink: "How does it compare with Translate & Adapt, Weglot and others?",
     title: "Features",
     intro:
       "The app is a set of tools that share one thing: they all work on the text your shop is made of. Here is what is in it.",

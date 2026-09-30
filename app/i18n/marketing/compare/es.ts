@@ -89,12 +89,7 @@ export const compareEs: CompareCopy = {
   },
   ourNotes: {
     autoTranslate: "Con su propia clave de IA",
-    brandVoice: "Desde el plan Pro",
-    themeCheckout: "Desde el plan Pro",
-    thirdPartyApps: "Plan Max",
-    imageManager: "Desde el plan Pro",
     aiProvider: "Seis proveedores",
-    followChanges: "Plan Max",
     imagesPerLanguage: "Aún no",
     currency: "Lo hace Shopify Markets",
   },
@@ -102,9 +97,6 @@ export const compareEs: CompareCopy = {
   strengthsHeading: "Dónde destaca {name}",
   ourEdgeHeading: "Lo que añade ContentPilot",
   verdictHeading: "¿Cuál le conviene?",
-  pricingHeading: "Precios",
-  ourPricing:
-    "ContentPilot tiene un plan gratuito para hasta 50 productos y planes de pago desde 9,90 € al mes. Todos los planes incluyen idiomas ilimitados. Usted usa su propia clave de IA, así que el uso de IA lo factura su proveedor de IA a precio de coste.",
   checkedAt: "septiembre de 2026",
   disclaimer:
     "Basado en las fichas de la App Store y las páginas de ayuda de cada proveedor, a fecha de {date}. Las apps cambian rápido: consulte la ficha actual antes de decidir. «Sin datos» significa que no encontramos una respuesta clara, no que falte la función.",
@@ -112,11 +104,56 @@ export const compareEs: CompareCopy = {
   detailLink: "Comparación completa",
   otherComparisons: "Otras comparaciones",
   allComparisons: "Todas las comparaciones",
+  tableNote:
+    "La tabla muestra si una app ofrece una función. En todos los proveedores, incluido el nuestro, algunas funciones solo llegan con un plan de pago: la comparación de precios de abajo muestra qué incluye cada plan.",
+  pricing: {
+    heading: "Comparación de precios",
+    intro: "Todos los planes de todas las apps, uno al lado del otro. Lo que incluye cada plan es lo que indica el propio proveedor.",
+    perMonth: "/ mes",
+    free: "Gratis",
+    note: "Precios mensuales en la moneda de cada proveedor, sin impuestos. Varios proveedores son más baratos con pago anual. Con ContentPilot usa su propia clave de IA, así que el uso de IA lo factura aparte su proveedor de IA.",
+    summaries: {
+      contentpilot: "Precio según el tamaño del catálogo. Idiomas ilimitados en todos los planes.",
+      "translate-and-adapt": "Gratuita. Traducción automática para dos idiomas; los demás, a mano.",
+      weglot: "Precio según idiomas y palabras traducidas.",
+      transcy: "Precio según idiomas y funciones. Planes mayores hasta 599 US$.",
+      langshop: "Precio según idiomas y funciones.",
+    },
+    plans: {
+      contentpilot: {
+        free: "50 productos, 5 colecciones, todos los idiomas",
+        basic: "100 productos, 50 colecciones, 20 páginas, políticas, imágenes de producto, opciones y metacampos",
+        pro: "500 productos, blogs, textos del tema y del checkout, menús, metaobjetos, instrucciones propias para la IA, galerías por variante",
+        max: "2.500 productos, textos de otras apps, retraducción automática cuando cambian los textos, revisión semanal del sitio",
+      },
+      "translate-and-adapt": {
+        free: "Traducción automática a dos idiomas; los demás idiomas, a mano",
+      },
+      weglot: {
+        free: "1 idioma, 2.000 palabras",
+        starter: "1 idioma, 10.000 palabras",
+        business: "3 idiomas, 50.000 palabras",
+        pro: "5 idiomas, 200.000 palabras",
+      },
+      transcy: {
+        free: "Plan gratuito limitado",
+        localPlus: "1 idioma editable, textos de otras apps, selector de moneda",
+        regional: "3 idiomas, glosario de 20 entradas, 3 monedas, traducción automática",
+        continental: "15 idiomas, glosario de 200 entradas, detección de ubicación, clave de IA propia",
+      },
+      langshop: {
+        free: "50 productos, 1 idioma",
+        basic: "Traducción automática ilimitada",
+        standard: "5 idiomas más, glosario",
+        advanced: "20 idiomas más, traducción automática de productos nuevos",
+      },
+    },
+  },
   competitors: {
     "translate-and-adapt": {
       kind: "La app de traducción gratuita de Shopify",
       summary:
-        "Translate & Adapt es gratuita y la hace Shopify. ContentPilot añade traducción con IA en todos los idiomas, glosario, herramientas SEO y redacción de contenido; en los planes superiores, también instrucciones propias para la IA y textos de otras apps. Así se comparan.",
+        "Translate & Adapt es gratuita y la hace Shopify. ContentPilot añade traducción con IA en todos los idiomas según sus propias instrucciones, glosario, textos de otras apps, herramientas SEO y redacción de contenido. Así se comparan.",
       about:
         "Translate & Adapt es de Shopify y no cuesta nada. Traduce automáticamente hasta dos idiomas; cada idioma adicional se traduce a mano. Su gran punto fuerte es adaptar el contenido por mercado, por ejemplo distintas formas de escribir para España y México.",
       strengths: [
@@ -126,16 +163,15 @@ export const compareEs: CompareCopy = {
         "Encaja bien si solo necesita uno o dos idiomas más y traduce poco.",
       ],
       ourEdge: [
-        "Traducción con IA en todos los idiomas que quiera; desde el plan Pro, con su propio tono y sus reglas.",
+        "Traducción con IA en todos los idiomas que quiera, con su propio tono y sus reglas.",
         "Un glosario, para que los nombres de marca y términos fijos nunca se traduzcan mal.",
-        "Traduce textos de otras apps, como los widgets de reseñas (plan Max).",
-        "Actualiza las traducciones automáticamente cuando cambia el texto original (plan Max).",
+        "Traduce textos de otras apps, como los widgets de reseñas.",
+        "Actualiza las traducciones automáticamente cuando cambia el texto original.",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y un editor de hoja de cálculo para todo el catálogo.",
       ],
       verdict:
         "Quédese con Translate & Adapt si vende en uno o dos idiomas adicionales y cambia sus textos pocas veces. Elija ContentPilot si quiere más idiomas, términos coherentes o una sola app para textos, SEO y traducciones. Ambas guardan en el almacén de traducciones de Shopify, así que puede cambiar cuando quiera y conservar todo.",
-      pricing: "Gratuita. Traducción automática para dos idiomas; los demás, a mano.",
       notes: {
         autoTranslate: "Dos idiomas",
         imagesPerLanguage: "Solo imágenes del tema",
@@ -162,8 +198,6 @@ export const compareEs: CompareCopy = {
       ],
       verdict:
         "Elija Weglot si tiene sitios en varias plataformas y quiere un único servicio de traducción para todos, o si necesita traductores profesionales. Elija ContentPilot si su tienda funciona con Shopify, quiere que las traducciones pertenezcan a su tienda y no quiere límites de palabras.",
-      pricing:
-        "Un pequeño plan gratuito y después planes según el número de idiomas y de palabras traducidas.",
     },
     transcy: {
       kind: "App de traducción y moneda para Shopify",
@@ -178,15 +212,14 @@ export const compareEs: CompareCopy = {
         "Traduce textos de otras apps.",
       ],
       ourEdge: [
-        "Instrucciones propias para la IA, para que las traducciones sigan su tono (desde el plan Pro).",
+        "Instrucciones propias para la IA, para que las traducciones sigan su tono.",
         "Idiomas ilimitados en todos los planes.",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y visibilidad en búsquedas con IA.",
-        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante (desde el plan Pro).",
+        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante.",
       ],
       verdict:
         "Elija Transcy si necesita un conversor de moneda más allá de Shopify Markets o traducir el texto dentro de las imágenes. Elija ContentPilot si quiere traducciones con su propio tono y una sola app para textos, SEO y traducciones.",
-      pricing: "Un plan gratuito y después planes según idiomas y funciones.",
       notes: {
         aiProvider: "Varios motores",
       },
@@ -208,14 +241,13 @@ export const compareEs: CompareCopy = {
         "Usted elige el proveedor de IA y le paga directamente, a precio de coste.",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y visibilidad en búsquedas con IA.",
-        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante (desde el plan Pro).",
+        "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante.",
       ],
       verdict:
         "Elija LangShop si quiere traductores humanos a su disposición o un conversor de moneda más allá de Shopify Markets. Elija ContentPilot si quiere idiomas ilimitados y una sola app para textos, SEO y traducciones.",
-      pricing: "Un plan gratuito para catálogos pequeños y después planes según idiomas y funciones.",
       notes: {
         aiProvider: "Varios motores",
-        followChanges: "Productos nuevos, planes superiores",
+        followChanges: "Solo productos nuevos",
       },
     },
   },

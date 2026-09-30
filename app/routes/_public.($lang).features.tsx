@@ -59,6 +59,9 @@ export default function MarketingFeatures() {
           <div className="mk-section__head">
             <h1>{t.features.title}</h1>
             <p className="mk-lead">{t.features.intro}</p>
+            <Link className="mk-arrow" to={localizedPath(locale, "/compare")}>
+              {t.features.compareLink}
+            </Link>
           </div>
 
           {/* Anchor row: seven blocks are a lot to scroll blind through. */}

@@ -247,15 +247,26 @@ html {
   .mk-nav a:not(.mk-btn) {
     padding: 8px 10px;
   }
+
+  .mk-nav a.mk-nav__wide-only {
+    display: none;
+  }
 }
 
-/* Five items (four links and the language switcher) share the phone's nav
+/* Five items (four links and the language switcher — Videos is hidden here)
+   share the phone's nav
    row; on the narrowest screens the link padding gives way before the row
    wraps. */
 @media (max-width: 420px) {
   .mk-nav a:not(.mk-btn) {
-    padding: 8px 6px;
-    font-size: 0.875rem;
+    padding: 8px 4px;
+    font-size: 0.8125rem;
+  }
+}
+
+@media (max-width: 370px) {
+  .mk-nav a.mk-nav__roomy-only {
+    display: none;
   }
 }
 
@@ -1861,4 +1872,94 @@ a.mk-badge:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 28px;
+}
+
+.mk-note.mk-compare__table-note {
+  margin-top: 12px;
+  max-width: var(--mk-prose-width);
+}
+
+/* ── Price comparison ─────────────────────────────────────────────────── */
+
+.mk-compare-prices {
+  margin-top: 48px;
+}
+
+.mk-compare-prices__intro {
+  color: var(--mk-text-muted);
+  max-width: var(--mk-prose-width);
+  margin-bottom: 20px;
+}
+
+.mk-compare-prices__grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+  /* 200px so all five apps share one row on a desktop: a fifth card
+     wrapping alone under the other four reads as an afterthought. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  align-items: start;
+}
+
+.mk-compare-prices__card {
+  padding: 20px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface);
+}
+
+.mk-compare-prices__card--ours {
+  border-color: var(--mk-brand);
+}
+
+.mk-compare-prices__card h3 {
+  font-size: 1.0625rem;
+  margin-bottom: 4px;
+}
+
+.mk-compare-prices__card dl {
+  margin: 14px 0 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mk-compare-prices__plan {
+  padding: 10px 0;
+  border-top: 1px solid var(--mk-border);
+}
+
+/* Wraps: in a narrow card "Continental 69 US$ / Monat" is wider than the
+   card, and the price then moves under the name instead of spilling out. */
+.mk-compare-prices__plan dt {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  column-gap: 12px;
+  row-gap: 2px;
+  font-weight: 600;
+}
+
+.mk-compare-prices__price {
+  white-space: nowrap;
+}
+
+.mk-compare-prices__unit {
+  font-weight: 400;
+  font-size: 0.8125rem;
+  color: var(--mk-text-muted);
+}
+
+.mk-compare-prices__plan dd {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--mk-text-muted);
+}
+
+.mk-note.mk-compare-prices__note {
+  margin-top: 16px;
+  max-width: var(--mk-prose-width);
 }

@@ -119,12 +119,18 @@ kein ❌.
 | Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ | ✅ (auch Text im Bild) | ? |
 | Eigene Währungsumrechnung | ❌ (Markets) | ❌ (Markets) | ❌ | ✅ | ✅ |
 | Menschliche Übersetzer | ❌ | ❌ | ✅ | ? | ✅ |
-| Preismodell | Free 50 Prod.; ab €9.90, Sprachen ∞ | gratis | nach Wörtern + Sprachen: Free 1 Spr./2k Wörter, $17, $32 (3 Spr.), $87 (5 Spr.) | Free, $14.90, $29, $69, $99, $599 | Free, ~$9.90, ~$33.90 (+5 Spr.), ~$67.90 (+20 Spr.) |
+| Preismodell | Free 50 Prod.; Basic €9.90, Pro €19.90, Max €59.90 — Sprachen ∞ | gratis | Free 1 Spr./2k Wörter, Starter $17 (1 Spr./10k), Business $32 (3/50k), Pro $87 (5/200k) | Free, Local Plus $14.90 (1 Spr.), Regional $29 (3 Spr., Glossar 20), Continental $69 (15 Spr., Glossar 200, Geolocation, eigener Key), Cross-Border $99, Global $599 | Free (50 Prod., 1 Spr.), Basic $10, Standard $34 (+5 Spr., Glossar), Advanced $68 (+20 Spr., neue Produkte automatisch) |
 | Bewertung (09/2026) | — | 4.5 | 4.5 (≈790) | 4.4 (≈2.530) | 4.5 |
 
 **Offen / vor dem Livegang der Website prüfen:** Weglot-Speicherort, T&A-Glossar (Quelle nur Konkurrenz-Blogs), Transcy „eigene Anweisungen",
-T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"); die
-LangShop-Preise stammen aus Drittquellen. langify und T Lab sind bewusst nicht auf
+T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"). Planinhalte/Preise: Transcy aus der
+eigenen Hilfeseite, LangShop aus Drittquellen (Transcy-Review, Digismoothie),
+Weglot aus Fudge — alle in `COMPARE_PRICES` (marketing-compare.ts) gespiegelt.
+**Fairness-Regel der Seite:** die Funktionstabelle beantwortet nur „kann die App
+das überhaupt", nie „ab welchem Plan" — Planstufen stehen ausschließlich im
+Preisvergleich, für alle Anbieter gleich. **Offen:** die Managed-AI-Variante
+(„+ AI", €21.90/39.90/99.90, Branch `claude/provided-api-key-pricing-vq2tu6`)
+kommt als zweiter Preis in dieselben Zeilen, sobald sie auf `develop` ist. langify und T Lab sind bewusst nicht auf
 der Vergleichsseite (kleinere Verbreitung); Kandidaten für eine spätere Erweiterung.
 
 #### Historische Tabelle (Stand 01–08/2026)
@@ -945,6 +951,8 @@ laden + in `vars`-Objekt reichen).
 - [Fudge: Best Shopify apps for international selling (2026)](https://www.fudge.ai/blog/best-shopify-international-apps/) (Weglot-Pläne)
 - [Hextom: Best Shopify translation apps](https://hextom.com/blog/best-shopify-translation-apps/) (Weglot: Speicherung beim Anbieter)
 - [Digismoothie: LangShop](https://www.digismoothie.com/app/langshop)
+- [Transcy: Review LangShop 2026](https://transcy.io/blog/review-langshop-translation-app/) (LangShop-Pläne $10/$34/$68 — Konkurrenzquelle)
+- [Transcy: Overview of pricing plan](https://help.transcy.io/en/article/overview-of-transcy-pricing-plan-1q10jjn/)
 
 ### Tag-Übersetzung (Recherche 2026-08, Fußnote ⁶)
 - [Shopify: Manage translations of merchant-provided content](https://shopify.dev/docs/apps/build/markets/manage-translated-content)

@@ -3,7 +3,7 @@ import { Link, useLoaderData } from "react-router";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { getCompareCopy } from "../i18n/marketing/compare";
 import { MARKETING_SITE } from "../config/marketing-site";
-import { COMPETITORS, COMPETITOR_NAMES, comparePath } from "../config/marketing-compare";
+import { COMPETITORS, COMPETITOR_NAMES, PRICE_APPS, comparePath } from "../config/marketing-compare";
 import { breadcrumbLd } from "../utils/marketing-jsonld";
 import { buildMarketingMeta } from "../utils/marketing-meta";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../utils/marketing-route.server";
 import { localizedPath } from "../services/marketing-locale.shared";
 import { CompareDisclaimer, CompareTable } from "../components/marketing/CompareTable";
+import { ComparePricing } from "../components/marketing/ComparePricing";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -86,6 +87,9 @@ export default function MarketingCompare() {
         <div className="mk-shell">
           <h2 className="mk-compare__heading">{copy.tableHeading}</h2>
           <CompareTable copy={copy} competitors={COMPETITORS} />
+          <p className="mk-note mk-compare__table-note">{copy.tableNote}</p>
+
+          <ComparePricing copy={copy} locale={locale} apps={PRICE_APPS} />
           <CompareDisclaimer copy={copy} />
         </div>
       </section>
