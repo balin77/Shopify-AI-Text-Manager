@@ -47,8 +47,11 @@ export interface MarketAddress {
   status: string;
   /**
    * The shop's PRIMARY market: `true`/`false` where Shopify says so, `null`
-   * where this API version has no such field. A primary market is never
-   * offered an address of its own (it IS the root storefront) nor a delete.
+   * where this API version has no such field (deprecated fields included). A
+   * primary market is never offered an address of its own (it IS the root
+   * storefront) nor a delete. With `null` both stay offered and SHOPIFY is the
+   * guard — refusing them outright would switch the feature off on every
+   * version without the field; a refusal travels back in Shopify's words.
    */
   primary: boolean | null;
   /**
@@ -69,12 +72,14 @@ export interface MarketAddresses {
    * claims (an orphan) — so a new suffix is checked against all of them.
    */
   takenSuffixes: string[];
+  /** Subfolder presences NO market uses — each blocks its suffix until removed. */
+  orphans: Array<{ presenceId: string; url: string | null; subfolderSuffix: string }>;
 }
 
 // No comments or non-ASCII inside a #graphql document (CLAUDE.md).
 const ADDRESS_PRESENCES = `#graphql
   query appMarketAddressPresences {
-    webPresences(first: 25) {
+    webPresences(first: 10) {
       pageInfo {
         hasNextPage
       }
@@ -91,7 +96,10 @@ const ADDRESS_PRESENCES = `#graphql
         defaultLocale {
           locale
         }
-        markets(first: 25) {
+        markets(first: 10) {
+          pageInfo {
+            hasNextPage
+          }
           nodes {
             id
             name
@@ -104,7 +112,7 @@ const ADDRESS_PRESENCES = `#graphql
 
 const ADDRESS_MARKETS = `#graphql
   query appMarketAddressMarkets {
-    markets(first: 50) {
+    markets(first: 25) {
       pageInfo {
         hasNextPage
       }
@@ -112,7 +120,10 @@ const ADDRESS_MARKETS = `#graphql
         id
         name
         status
-        webPresences(first: 5) {
+        webPresences(first: 3) {
+          pageInfo {
+            hasNextPage
+          }
           nodes {
             id
           }
@@ -127,7 +138,10 @@ type PresenceNode = {
   domain?: { host?: string } | null;
   rootUrls?: Array<{ locale?: string; url?: string } | null> | null;
   defaultLocale?: { locale?: string } | null;
-  markets?: { nodes?: Array<{ id?: string; name?: string; status?: string } | null> } | null;
+  markets?: {
+    pageInfo?: { hasNextPage?: boolean };
+    nodes?: Array<{ id?: string; name?: string; status?: string } | null>;
+  } | null;
 };
 
 type Body = { errors?: Array<{ message?: string }>; data?: Record<string, unknown> | null };
@@ -165,11 +179,15 @@ function rootUrlOf(p: PresenceNode): string | null {
 
 // Whether `Market.primary` exists in this API version is not measured, and an
 // unknown field fails the WHOLE document — so it is introspected once and read
-// in a document of its own that the address read never depends on.
+// in a document of its own that the address read never depends on. Every
+// introspection here asks for DEPRECATED entries too: `primary` belongs to the
+// older markets model, a deprecated field still answers, and the default
+// `fields` list silently leaves it out — which would read as "no such field"
+// and switch this guard off on exactly the versions that still carry it.
 const MARKET_FIELDS = `#graphql
   query appMarketFields {
     __type(name: "Market") {
-      fields {
+      fields(includeDeprecated: true) {
         name
       }
     }
@@ -220,7 +238,12 @@ export async function loadMarketAddresses(admin: GraphqlClient, shop?: string): 
     const mkts = marketBody.data?.markets as
       | {
           pageInfo?: { hasNextPage?: boolean };
-          nodes?: Array<{ id?: string; name?: string; status?: string; webPresences?: { nodes?: Array<{ id?: string } | null> } | null } | null>;
+          nodes?: Array<{
+            id?: string;
+            name?: string;
+            status?: string;
+            webPresences?: { pageInfo?: { hasNextPage?: boolean }; nodes?: Array<{ id?: string } | null> } | null;
+          } | null>;
         }
       | undefined;
     if (
@@ -229,7 +252,11 @@ export async function loadMarketAddresses(admin: GraphqlClient, shop?: string): 
       !Array.isArray(pres?.nodes) ||
       !Array.isArray(mkts?.nodes) ||
       pres?.pageInfo?.hasNextPage !== false ||
-      mkts?.pageInfo?.hasNextPage !== false
+      mkts?.pageInfo?.hasNextPage !== false ||
+      // The NESTED lists decide which markets share a presence — the removal
+      // guard reads them — so a truncated one is "cannot tell" too.
+      pres!.nodes!.some((p) => p?.markets?.pageInfo?.hasNextPage !== false) ||
+      mkts!.nodes!.some((m) => m?.webPresences?.pageInfo?.hasNextPage !== false)
     ) {
       logger.warn("[MarketAddress] Addresses could not be read", {
         context: "MarketAddress",
@@ -259,7 +286,16 @@ export async function loadMarketAddresses(admin: GraphqlClient, shop?: string): 
     for (const m of mkts!.nodes!) if (m?.id && m.name) nameOf.set(m.id, m.name);
     // The shared address: the presence no market claims AND that is not a
     // subfolder — an unclaimed subfolder is an orphan, never the shop domain.
-    const shared = pres!.nodes!.find((p) => p?.id && !marketIdsOf.get(p.id)?.size && !p.subfolderSuffix);
+    // Older-model shops link the root domain presence to the primary market,
+    // so with nothing unclaimed the first non-subfolder presence is the label.
+    const shared =
+      pres!.nodes!.find((p) => p?.id && !marketIdsOf.get(p.id)?.size && !p.subfolderSuffix) ??
+      pres!.nodes!.find((p) => p?.id && !p.subfolderSuffix);
+    // A subfolder no market claims: left behind by an interrupted write (or a
+    // deleted market). It blocks its suffix, so it is listed and removable.
+    const orphans = pres!.nodes!
+      .filter((p) => p?.id && p.subfolderSuffix && !marketIdsOf.get(p.id)?.size)
+      .map((p) => ({ presenceId: p.id!, url: rootUrlOf(p), subfolderSuffix: p.subfolderSuffix! }));
     const markets: MarketAddress[] = [];
     for (const m of mkts!.nodes!) {
       if (!m?.id || !m.name || (m.status !== "ACTIVE" && m.status !== "DRAFT")) continue;
@@ -283,7 +319,7 @@ export async function loadMarketAddresses(admin: GraphqlClient, shop?: string): 
       });
     }
     const takenSuffixes = pres!.nodes!.map((p) => p?.subfolderSuffix?.toLowerCase()).filter((x): x is string => !!x);
-    return { markets, sharedUrl: shared ? rootUrlOf(shared) : null, takenSuffixes };
+    return { markets, sharedUrl: shared ? rootUrlOf(shared) : null, takenSuffixes, orphans };
   } catch (error: unknown) {
     logger.warn("[MarketAddress] Addresses could not be read", {
       context: "MarketAddress",
@@ -302,7 +338,7 @@ const MUTATION_NAMES = `#graphql
   query appMutationNames {
     __schema {
       mutationType {
-        fields {
+        fields(includeDeprecated: true) {
           name
         }
       }
@@ -330,7 +366,7 @@ async function logInputShapes(admin: GraphqlClient, shop: string | undefined, ty
   const shapes: Record<string, unknown> = {};
   for (const name of types) {
     try {
-      const body = await json(admin, `query appInputShape($name: String!) { __type(name: $name) { inputFields { name } } }`, {
+      const body = await json(admin, `query appInputShape($name: String!) { __type(name: $name) { inputFields(includeDeprecated: true) { name } } }`, {
         name,
       });
       shapes[name] = ((body.data?.__type as { inputFields?: Array<{ name?: string }> } | null)?.inputFields ?? []).map(
@@ -581,9 +617,44 @@ export async function removeMarketAddress(
   }
   const after = await loadMarketAddresses(admin, shop);
   if (!after) return { ok: false, error: "unverified" };
-  // Confirmed when no market carries THAT presence any more (the market may
-  // legitimately keep another one, e.g. a domain).
-  if (after.markets.some((m) => m.own?.presenceId === presenceId)) return { ok: false, error: "notConfirmed" };
+  // Confirmed when THAT subfolder is gone from the shop's presences (the
+  // market may legitimately keep another one, e.g. a domain).
+  const suffix = market.own.subfolderSuffix.toLowerCase();
+  if (after.takenSuffixes.includes(suffix) || after.markets.some((m) => m.own?.presenceId === presenceId)) {
+    return { ok: false, error: "notConfirmed" };
+  }
+  await clearLocaleCache(shop);
+  return { ok: true };
+}
+
+/** Remove a subfolder presence NO market uses (see `orphans`), confirmed by a re-read. */
+export async function removeOrphanAddress(admin: GraphqlClient, shop: string, presenceId: string): Promise<WriteOutcome> {
+  const before = await loadMarketAddresses(admin, shop);
+  if (!before) return { ok: false, error: "unverified" };
+  const orphan = before.orphans.find((o) => o.presenceId === presenceId);
+  // Only an UNCLAIMED subfolder — never a presence some market still serves.
+  if (!orphan) return { ok: false, error: "notOrphan" };
+  const names = await availableMutations(admin);
+  if (!names) return { ok: false, error: "schemaUnreadable" };
+  try {
+    if (names.has("webPresenceDelete")) {
+      const error = firstError(await json(admin, WEB_PRESENCE_DELETE, { id: presenceId }), "webPresenceDelete");
+      if (error) return { ok: false, error: error.message };
+    } else if (names.has("marketWebPresenceDelete")) {
+      const error = firstError(
+        await json(admin, MARKET_WEB_PRESENCE_DELETE, { webPresenceId: presenceId }),
+        "marketWebPresenceDelete",
+      );
+      if (error) return { ok: false, error: error.message };
+    } else {
+      return { ok: false, error: "notSupported" };
+    }
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const after = await loadMarketAddresses(admin, shop);
+  if (!after) return { ok: false, error: "unverified" };
+  if (after.takenSuffixes.includes(orphan.subfolderSuffix.toLowerCase())) return { ok: false, error: "notConfirmed" };
   await clearLocaleCache(shop);
   return { ok: true };
 }
@@ -640,7 +711,7 @@ const MARKET_DELETE = `#graphql
 
 async function inputFieldNames(admin: GraphqlClient, type: string): Promise<Set<string> | null> {
   try {
-    const body = await json(admin, `query appInputShape($name: String!) { __type(name: $name) { inputFields { name } } }`, {
+    const body = await json(admin, `query appInputShape($name: String!) { __type(name: $name) { inputFields(includeDeprecated: true) { name } } }`, {
       name: type,
     });
     const fields = (body.data?.__type as { inputFields?: Array<{ name?: string }> } | null)?.inputFields;
@@ -669,7 +740,7 @@ export async function createMarket(
   admin: GraphqlClient,
   shop: string,
   request: { name: string; countries: string[] },
-): Promise<WriteOutcome & { marketId?: string }> {
+): Promise<{ ok: true; marketId: string } | { ok: false; error: string; marketId?: string }> {
   const names = await availableMutations(admin);
   if (!names) return { ok: false, error: "schemaUnreadable" };
   if (!names.has("marketCreate")) return { ok: false, error: "notSupported" };
@@ -680,8 +751,11 @@ export async function createMarket(
   if (fields.has("conditions")) input.conditions = { regionsCondition: { regions } };
   else if (fields.has("regions")) input.regions = regions;
   else return { ok: false, error: "notSupported" };
+  // No way to SAY draft is no market at all: Shopify's default would decide,
+  // and an active market sells into those countries the moment it exists.
   if (fields.has("status")) input.status = "DRAFT";
   else if (fields.has("enabled")) input.enabled = false;
+  else return { ok: false, error: "notSupported" };
   let marketId: string | undefined;
   try {
     const body = await json(admin, MARKET_CREATE, { input });
@@ -697,7 +771,10 @@ export async function createMarket(
   }
   const after = await loadMarketAddresses(admin, shop);
   if (!after) return { ok: false, error: "unverified" };
-  if (!after.markets.some((m) => m.marketId === marketId)) return { ok: false, error: "notConfirmed" };
+  const created = after.markets.find((m) => m.marketId === marketId);
+  if (!created) return { ok: false, error: "notConfirmed" };
+  // Created, but not as a draft: say so — the merchant must look at it NOW.
+  if (created.status !== "DRAFT") return { ok: false, error: "createdNotDraft", marketId };
   return { ok: true, marketId };
 }
 
@@ -707,6 +784,9 @@ export async function deleteMarket(admin: GraphqlClient, shop: string, marketId:
   const market = before.markets.find((m) => m.marketId === marketId);
   if (!market) return { ok: false, error: "unknownMarket" };
   if (market.primary === true) return { ok: false, error: "primaryMarket" };
+  // Whether `marketDelete` takes the market's own presence with it is not
+  // measured; left behind it would block its suffix. The address goes first.
+  if (market.own) return { ok: false, error: "removeAddressFirst" };
   const names = await availableMutations(admin);
   if (!names) return { ok: false, error: "schemaUnreadable" };
   if (!names.has("marketDelete")) return { ok: false, error: "notSupported" };

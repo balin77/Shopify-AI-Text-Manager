@@ -37,6 +37,7 @@ export interface MarketAddressesView {
   }>;
   sharedUrl: string | null;
   takenSuffixes: string[];
+  orphans: Array<{ presenceId: string; url: string | null; subfolderSuffix: string }>;
 }
 
 interface Props {
@@ -54,6 +55,7 @@ const CREATE_ACTION = "createMarketAddress";
 const REMOVE_ACTION = "removeMarketAddress";
 const CREATE_MARKET_ACTION = "createMarket";
 const DELETE_MARKET_ACTION = "deleteMarket";
+const REMOVE_ORPHAN_ACTION = "removeOrphanAddress";
 /** The id the new-market form's answers are keyed on (it has no market yet). */
 const NEW_MARKET = "new";
 
@@ -79,6 +81,22 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
   const [defaultLocale, setDefaultLocale] = useState("");
   const [alternates, setAlternates] = useState<string[]>([]);
   const [submittedFor, setSubmittedFor] = useState<string | null>(null);
+  const [removingOrphan, setRemovingOrphan] = useState<{ presenceId: string; label: string } | null>(null);
+  /** The create-address form's starting values — "dirty" means changed from these. */
+  const [createInitial, setCreateInitial] = useState<{ suffix: string; defaultLocale: string } | null>(null);
+  /**
+   * Closing a form with input in it is confirmed by a second BUTTON (the app's
+   * rule, as in the create dialog): Cancel arms a red discard button beside
+   * itself and does not close. Any further input disarms it again.
+   */
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  useEffect(() => {
+    setConfirmingClose(false);
+  }, [newName, newCountries, suffix, defaultLocale, alternates]);
+  const addMarketDirty = newName.trim().length > 0 || newCountries.length > 0;
+  const createDirty =
+    !!createInitial &&
+    (suffix !== createInitial.suffix || defaultLocale !== createInitial.defaultLocale || alternates.length > 0);
 
   const langName = (code: string, fallback?: string) => getLocalizedLanguageName(code, appLocale, fallback);
   const marketName = (name: string) => localizedMarketName(name, appLocale);
@@ -95,18 +113,21 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
 
   useEffect(() => {
     if (fetcher.state !== "idle" || !response?.success) return;
-    const name = creating?.name ?? removing?.name ?? deletingMarket?.name ?? newName;
+    const name = creating?.name ?? removing?.name ?? deletingMarket?.name ?? removingOrphan?.label ?? newName;
     const message: Record<string, string | undefined> = {
       [CREATE_ACTION]: a.createdMessage,
       [REMOVE_ACTION]: a.removedMessage,
       [CREATE_MARKET_ACTION]: a.marketCreatedMessage,
       [DELETE_MARKET_ACTION]: a.marketDeletedMessage,
+      [REMOVE_ORPHAN_ACTION]: a.orphanRemovedMessage,
     };
     showInfoBox((message[response.actionType] || "").replace("{name}", marketName(name)), "success");
     setCreating(null);
     setRemoving(null);
     setAddingMarket(false);
     setDeletingMarket(null);
+    setRemovingOrphan(null);
+    setConfirmingClose(false);
     setSubmittedFor(null);
     // React Router revalidates the loaders after the action by itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,6 +147,9 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
       notSubfolder: a.errorNotSubfolder,
       presenceShared: a.errorPresenceShared,
       primaryMarket: a.errorPrimaryMarket,
+      createdNotDraft: a.errorCreatedNotDraft,
+      removeAddressFirst: a.errorRemoveAddressFirst,
+      notOrphan: a.errorNotOrphan,
       invalidChanges: s.errorInvalidChanges,
       invalidMarketName: a.errorInvalidMarketName,
       marketNameTaken: a.errorMarketNameTaken,
@@ -137,9 +161,12 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
   const openCreate = (marketId: string, name: string) => {
     // Shopify's subfolders are `/<language>-<suffix>`; the market's region code
     // is the natural suffix when its name is a standard region name.
-    setSuffix((regionCodeForName(name) ?? "").toLowerCase());
+    const initialSuffix = (regionCodeForName(name) ?? "").toLowerCase();
+    setSuffix(initialSuffix);
     setDefaultLocale(primaryLocale);
     setAlternates([]);
+    setCreateInitial({ suffix: initialSuffix, defaultLocale: primaryLocale });
+    setConfirmingClose(false);
     setSubmittedFor(null);
     setCreating({ marketId, name });
   };
@@ -176,6 +203,7 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
               setNewCountries([]);
               setCountryPick("");
               setSubmittedFor(null);
+              setConfirmingClose(false);
               setAddingMarket(true);
             }}
           >
@@ -236,11 +264,13 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
             </DisabledActionTooltip>
           )}
           {m.primary !== true && (
-            <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
+            <DisabledActionTooltip
+              hint={blocked ? s.removeBlockedByDraft : m.own ? a.errorRemoveAddressFirst : undefined}
+            >
               <Button
                 variant="plain"
                 tone="critical"
-                disabled={blocked || busy}
+                disabled={blocked || busy || !!m.own}
                 onClick={() => {
                   setSubmittedFor(null);
                   setDeletingMarket({ marketId: m.marketId, name: m.name });
@@ -253,11 +283,73 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
           </InlineStack>
         </InlineStack>
       ))}
+      {addresses.orphans.map((o) => {
+        // The PATH, not the full URL: it is what the confirmation asks the
+        // merchant to type, and the host is the same for every row.
+        const label = (() => {
+          try {
+            return o.url ? new URL(o.url).pathname.replace(/\/$/, "") || `/${o.subfolderSuffix}` : `/${o.subfolderSuffix}`;
+          } catch {
+            return `/${o.subfolderSuffix}`;
+          }
+        })();
+        return (
+          <InlineStack key={o.presenceId} align="space-between" blockAlign="center" gap="300">
+            <BlockStack gap="050">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                {(a.orphanTitle || "{url}").replace("{url}", label)}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {a.orphanHint}
+              </Text>
+            </BlockStack>
+            <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
+              <Button
+                variant="plain"
+                tone="critical"
+                disabled={blocked || busy}
+                onClick={() => {
+                  setSubmittedFor(null);
+                  setRemovingOrphan({ presenceId: o.presenceId, label });
+                }}
+              >
+                {a.removeButton}
+              </Button>
+            </DisabledActionTooltip>
+          </InlineStack>
+        );
+      })}
+
+      {removingOrphan && (
+        <DeleteItemModal
+          open
+          onClose={() => {
+            if (busy) return;
+            setRemovingOrphan(null);
+            setSubmittedFor(null);
+          }}
+          item={{ id: removingOrphan.presenceId, title: removingOrphan.label, resource: "marketAddress" }}
+          deleting={busy}
+          error={failure}
+          onConfirm={() => {
+            const form = new FormData();
+            form.append("actionType", REMOVE_ORPHAN_ACTION);
+            form.append("presenceId", removingOrphan.presenceId);
+            setSubmittedFor(removingOrphan.presenceId);
+            fetcher.submit(form, { method: "post" });
+          }}
+          t={{ ...(t.content?.deleteModal ?? {}), ...(a.removeModal ?? {}), ...(a.orphanRemoveModal ?? {}) }}
+        />
+      )}
 
       {addingMarket && (
         <Modal
           open
-          onClose={() => !busy && setAddingMarket(false)}
+          onClose={() => {
+            if (busy) return;
+            if (addMarketDirty) setConfirmingClose(true);
+            else setAddingMarket(false);
+          }}
           title={a.addMarketTitle}
           primaryAction={{
             content: a.addMarketConfirm,
@@ -272,7 +364,16 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
               fetcher.submit(form, { method: "post" });
             },
           }}
-          secondaryActions={[{ content: t.common?.cancel || "Cancel", onAction: () => setAddingMarket(false), disabled: busy }]}
+          secondaryActions={[
+            {
+              content: t.common?.cancel || "Cancel",
+              onAction: () => (addMarketDirty ? setConfirmingClose(true) : setAddingMarket(false)),
+              disabled: busy,
+            },
+            ...(confirmingClose
+              ? [{ content: a.discardInput || "Discard your input", destructive: true, disabled: busy, onAction: () => setAddingMarket(false) }]
+              : []),
+          ]}
         >
           <Modal.Section>
             <BlockStack gap="300">
@@ -348,7 +449,11 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
       {creating && (
         <Modal
           open
-          onClose={() => !busy && setCreating(null)}
+          onClose={() => {
+            if (busy) return;
+            if (createDirty) setConfirmingClose(true);
+            else setCreating(null);
+          }}
           title={(a.createTitle || "{name}").replace("{name}", marketName(creating.name))}
           primaryAction={{
             content: a.createConfirm,
@@ -365,7 +470,16 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
               fetcher.submit(form, { method: "post" });
             },
           }}
-          secondaryActions={[{ content: t.common?.cancel || "Cancel", onAction: () => setCreating(null), disabled: busy }]}
+          secondaryActions={[
+            {
+              content: t.common?.cancel || "Cancel",
+              onAction: () => (createDirty ? setConfirmingClose(true) : setCreating(null)),
+              disabled: busy,
+            },
+            ...(confirmingClose
+              ? [{ content: a.discardInput || "Discard your input", destructive: true, disabled: busy, onAction: () => setCreating(null) }]
+              : []),
+          ]}
         >
           <Modal.Section>
             <BlockStack gap="300">

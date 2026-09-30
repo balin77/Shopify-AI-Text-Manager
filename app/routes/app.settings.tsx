@@ -84,13 +84,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const availableShopLocalesPromise = import("../services/shop-locale-publish.server").then(
       ({ loadAvailableLocales }) => loadAvailableLocales(admin),
     );
-    // Which market web presences show each language — same parallel, `null`
-    // on failure ("could not load", never "in no market").
     // Which markets have an address of their own (Märkte und Adressen) — the
-    // same parallel, `null` on failure.
+    // same parallel, `null` on failure. Its page sizes are kept small (cost),
+    // because it runs on every settings load beside the query below.
     const marketAddressesPromise = import("../services/market-address.server").then(({ loadMarketAddresses }) =>
       loadMarketAddresses(admin, session.shop),
     );
+    // Which market web presences show each language — same parallel, `null`
+    // on failure ("could not load", never "in no market").
     const marketWebPresencesPromise = import("../services/shop-locale-publish.server").then(
       ({ loadMarketWebPresences }) => loadMarketWebPresences(admin, session.shop),
     );
@@ -1036,6 +1037,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!checked.ok) return json({ success: false, actionType, marketId: "new", error: checked.error }, { status: 400 });
       const outcome = await createMarket(admin, session.shop, { name: checked.name, countries: checked.countries });
       return json({ success: outcome.ok, actionType, marketId: "new", error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "removeOrphanAddress") {
+      // An address no market uses any more — removed only while the fresh
+      // read still shows it unclaimed (market-address.server.ts).
+      const { removeOrphanAddress } = await import("../services/market-address.server");
+      const presenceId = getFormString(formData, "presenceId");
+      if (!presenceId) return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+      const outcome = await removeOrphanAddress(admin, session.shop, presenceId);
+      return json({ success: outcome.ok, actionType, marketId: presenceId, error: outcome.ok ? undefined : outcome.error });
     } else if (actionType === "createMarketAddress" || actionType === "removeMarketAddress") {
       // Märkte und Adressen: give a market its own subfolder, or take it back
       // onto the shared address. Not a setting — it moves storefront URLs — so

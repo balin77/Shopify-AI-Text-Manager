@@ -1284,7 +1284,7 @@ export const es: Translation = {
         marketDeletedMessage: "El mercado «{name}» se eliminó.",
         errorInvalidMarketName: "El nombre no puede estar vacío y puede tener como máximo 60 caracteres.",
         errorMarketNameTaken: "Ya existe un mercado con este nombre.",
-        errorInvalidCountries: "Elige al menos un país.",
+        errorInvalidCountries: "Elige al menos un país válido.",
         deleteMarketModal: {
           step1Title: "¿Eliminar el mercado «{name}»?",
           step2Title: "Confirmar eliminación",
@@ -1293,6 +1293,17 @@ export const es: Translation = {
           confirm: "Eliminar mercado definitivamente",
           deleting: "Eliminando …",
         },
+        errorCreatedNotDraft: "El mercado se creó, pero Shopify NO lo guardó como borrador: puede que ya esté activo. Revísalo ahora en el administrador de Shopify, en Mercados.",
+        errorRemoveAddressFirst: "Elimina primero la dirección propia de este mercado (un dominio propio, en el administrador de Shopify); si no, quedaría huérfana.",
+        errorNotOrphan: "Un mercado ya vuelve a usar esta dirección: recarga la página.",
+        orphanTitle: "Dirección sin usar {url}",
+        orphanHint: "Ningún mercado usa esta dirección. Bloquea su código hasta que se elimine.",
+        orphanRemovedMessage: "Se eliminó la dirección sin usar {name}.",
+        orphanRemoveModal: {
+          step1Title: "¿Eliminar la dirección sin usar {name}?",
+          consequenceMarketAddress: "La dirección deja de existir y su código queda libre. Ningún mercado pierde su dirección.",
+        },
+        discardInput: "Descartar lo introducido",
         removeModal: {
           step1Title: "¿Eliminar la dirección propia de «{name}»?",
           step2Title: "Confirmar eliminación",

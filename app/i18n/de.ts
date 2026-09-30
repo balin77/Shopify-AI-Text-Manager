@@ -1305,7 +1305,7 @@ export const de = {
         marketDeletedMessage: "Der Markt „{name}“ wurde gelöscht.",
         errorInvalidMarketName: "Der Name darf nicht leer und höchstens 60 Zeichen lang sein.",
         errorMarketNameTaken: "Einen Markt mit diesem Namen gibt es schon.",
-        errorInvalidCountries: "Wähle mindestens ein Land aus.",
+        errorInvalidCountries: "Wähle mindestens ein gültiges Land aus.",
         deleteMarketModal: {
           step1Title: "Markt „{name}“ löschen?",
           step2Title: "Löschen bestätigen",
@@ -1314,6 +1314,17 @@ export const de = {
           confirm: "Markt endgültig löschen",
           deleting: "Wird gelöscht …",
         },
+        errorCreatedNotDraft: "Der Markt wurde angelegt, aber Shopify hat ihn NICHT als Entwurf gespeichert – er ist womöglich schon aktiv. Prüfe ihn jetzt im Shopify-Admin unter Märkte.",
+        errorRemoveAddressFirst: "Entferne zuerst die eigene Adresse dieses Markts (eine eigene Domain im Shopify-Admin) – sonst bliebe sie verwaist zurück.",
+        errorNotOrphan: "Diese Adresse nutzt inzwischen wieder ein Markt – lade die Seite neu.",
+        orphanTitle: "Unbenutzte Adresse {url}",
+        orphanHint: "Kein Markt nutzt diese Adresse. Sie blockiert ihr Kürzel, bis sie entfernt wird.",
+        orphanRemovedMessage: "Die unbenutzte Adresse {name} wurde entfernt.",
+        orphanRemoveModal: {
+          step1Title: "Unbenutzte Adresse {name} entfernen?",
+          consequenceMarketAddress: "Die Adresse gibt es danach nicht mehr; ihr Kürzel ist wieder frei. Kein Markt verliert dadurch seine Adresse.",
+        },
+        discardInput: "Eingaben verwerfen",
         removeModal: {
           step1Title: "Eigene Adresse von „{name}“ entfernen?",
           step2Title: "Entfernen bestätigen",

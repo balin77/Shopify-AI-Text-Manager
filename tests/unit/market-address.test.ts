@@ -16,11 +16,14 @@ const {
   validateSubfolderRequest,
   createMarketSubfolder,
   removeMarketAddress,
+  removeOrphanAddress,
   validateMarketRequest,
   createMarket,
   deleteMarket,
   __resetMarketAddressCache,
 } = await import("~/services/market-address.server");
+
+const done = { hasNextPage: false };
 
 /** The shape measured on the owner's shop, optionally with Spain on /es-es. */
 function state(spainOwn: boolean) {
@@ -30,7 +33,7 @@ function state(spainOwn: boolean) {
     domain: { host: "shop.example" },
     rootUrls: [{ locale: "de", url: "https://shop.example/" }],
     defaultLocale: { locale: "de" },
-    markets: { nodes: [] },
+    markets: { pageInfo: { hasNextPage: false }, nodes: [] },
   };
   const spain = {
     id: "wpEs",
@@ -38,7 +41,7 @@ function state(spainOwn: boolean) {
     domain: { host: "shop.example" },
     rootUrls: [{ locale: "es", url: "https://shop.example/es-es/" }],
     defaultLocale: { locale: "es" },
-    markets: { nodes: [{ id: "mES", name: "Spanien", status: "ACTIVE" }] },
+    markets: { pageInfo: { hasNextPage: false }, nodes: [{ id: "mES", name: "Spanien", status: "ACTIVE" }] },
   };
   return {
     presences: { data: { webPresences: { pageInfo: { hasNextPage: false }, nodes: spainOwn ? [shared, spain] : [shared] } } },
@@ -47,9 +50,9 @@ function state(spainOwn: boolean) {
         markets: {
           pageInfo: { hasNextPage: false },
           nodes: [
-            { id: "mCH", name: "Schweiz", status: "ACTIVE", webPresences: { nodes: [] } },
-            { id: "mES", name: "Spanien", status: "ACTIVE", webPresences: { nodes: spainOwn ? [{ id: "wpEs" }] : [] } },
-            { id: "mUS", name: "USA", status: "DRAFT", webPresences: { nodes: [] } },
+            { id: "mCH", name: "Schweiz", status: "ACTIVE", webPresences: { pageInfo: done, nodes: [] } },
+            { id: "mES", name: "Spanien", status: "ACTIVE", webPresences: { pageInfo: done, nodes: spainOwn ? [{ id: "wpEs" }] : [] } },
+            { id: "mUS", name: "USA", status: "DRAFT", webPresences: { pageInfo: done, nodes: [] } },
           ],
         },
       },
@@ -122,6 +125,7 @@ describe("loadMarketAddresses", () => {
     expect(result).toEqual({
       sharedUrl: "https://shop.example/",
       takenSuffixes: ["es"],
+      orphans: [],
       markets: [
         { marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null },
         {
@@ -155,13 +159,40 @@ describe("loadMarketAddresses", () => {
       const res = await graphql(query, o);
       if (!query.includes("appMarketAddressPresences")) return res;
       const body = await res.json();
-      const orphan = { id: "wpOrphan", subfolderSuffix: "fr", rootUrls: [{ locale: "fr", url: "https://shop.example/fr-fr/" }], defaultLocale: { locale: "fr" }, markets: { nodes: [] } };
+      const orphan = { id: "wpOrphan", subfolderSuffix: "fr", rootUrls: [{ locale: "fr", url: "https://shop.example/fr-fr/" }], defaultLocale: { locale: "fr" }, markets: { pageInfo: done, nodes: [] } };
       body.data.webPresences.nodes.unshift(orphan);
       return { json: async () => body } as unknown as Response;
     });
     const result = await loadMarketAddresses(admin);
     expect(result?.sharedUrl).toBe("https://shop.example/");
     expect(result?.takenSuffixes).toEqual(["fr", "es"]);
+    expect(result?.orphans).toEqual([{ presenceId: "wpOrphan", url: "https://shop.example/fr-fr/", subfolderSuffix: "fr" }]);
+  });
+
+  it("a truncated NESTED list is 'cannot tell' — it decides who shares a presence", async () => {
+    const admin = shopAdmin({ mutations: [], afterWrite: false, startOwn: true });
+    const graphql = admin.graphql.getMockImplementation()!;
+    admin.graphql.mockImplementation(async (query: string, o?: any) => {
+      const res = await graphql(query, o);
+      if (!query.includes("appMarketAddressPresences")) return res;
+      const body = await res.json();
+      body.data.webPresences.nodes[1].markets.pageInfo = { hasNextPage: true };
+      return { json: async () => body } as unknown as Response;
+    });
+    expect(await loadMarketAddresses(admin)).toBeNull();
+  });
+
+  it("introspection asks for deprecated fields too, so an old-model primary flag is seen", () => {
+    const calls: string[] = [];
+    const admin = shopAdmin({ mutations: [], afterWrite: false, primary: { mCH: true } });
+    const graphql = admin.graphql.getMockImplementation()!;
+    admin.graphql.mockImplementation(async (q: string, o?: any) => {
+      calls.push(q);
+      return graphql(q, o);
+    });
+    return loadMarketAddresses(admin).then(() => {
+      expect(calls.find((q) => q.includes("appMarketFields"))).toContain("fields(includeDeprecated: true)");
+    });
   });
 
   it("a failed read is null, never 'shared'", async () => {
@@ -174,6 +205,7 @@ describe("validateSubfolderRequest", () => {
   const addresses = {
     sharedUrl: "https://shop.example/",
     takenSuffixes: ["es", "fr"],
+    orphans: [],
     markets: [
       { marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null },
       {
@@ -291,10 +323,43 @@ describe("removeMarketAddress", () => {
   });
 });
 
+describe("removeOrphanAddress", () => {
+  function orphanAdmin(gone: boolean) {
+    let deleted = false;
+    return {
+      graphql: vi.fn(async (query: string, _opts?: { variables?: Record<string, unknown> }) => {
+        let body: unknown;
+        if (query.includes("appMarketAddressPresences")) {
+          body = state(true).presences;
+          if (!(deleted && gone)) {
+            (body as any).data.webPresences.nodes.push({ id: "wpOrphan", subfolderSuffix: "fr", rootUrls: [], defaultLocale: { locale: "fr" }, markets: { pageInfo: done, nodes: [] } });
+          }
+        } else if (query.includes("appMarketAddressMarkets")) body = state(true).markets;
+        else if (query.includes("appMutationNames")) body = { data: { __schema: { mutationType: { fields: [{ name: "webPresenceDelete" }] } } } };
+        else if (query.includes("appWebPresenceDelete")) {
+          deleted = true;
+          body = { data: { webPresenceDelete: { userErrors: [] } } };
+        } else body = { data: null };
+        return { json: async () => body } as unknown as Response;
+      }),
+    };
+  }
+  it("removes an unclaimed subfolder and confirms it is gone", async () => {
+    expect(await removeOrphanAddress(orphanAdmin(true), "s", "wpOrphan")).toEqual({ ok: true });
+    expect(await removeOrphanAddress(orphanAdmin(false), "s", "wpOrphan")).toEqual({ ok: false, error: "notConfirmed" });
+  });
+  it("never removes a presence a market still uses", async () => {
+    const admin = orphanAdmin(true);
+    expect(await removeOrphanAddress(admin, "s", "wpEs")).toEqual({ ok: false, error: "notOrphan" });
+    expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appWebPresenceDelete"))).toBe(false);
+  });
+});
+
 describe("adding and deleting a market", () => {
   const addresses = {
     sharedUrl: null,
     takenSuffixes: [],
+    orphans: [],
     markets: [{ marketId: "mCH", name: "Schweiz", status: "ACTIVE", primary: null, own: null }],
   };
 
@@ -308,7 +373,7 @@ describe("adding and deleting a market", () => {
     expect(validateMarketRequest({ name: "X", countries: [] }, addresses)).toEqual({ ok: false, error: "invalidCountries" });
   });
 
-  function marketAdmin(inputFields: string[], opts: { created?: boolean; deleted?: boolean } = {}) {
+  function marketAdmin(inputFields: string[], opts: { created?: boolean; deleted?: boolean; createdStatus?: string; spainOwn?: boolean } = {}) {
     let wrote = false;
     return {
       graphql: vi.fn(async (query: string, _opts?: { variables?: Record<string, unknown> }) => {
@@ -322,11 +387,11 @@ describe("adding and deleting a market", () => {
         } else if (query.includes("appInputShape")) {
           body = { data: { __type: { inputFields: inputFields.map((name) => ({ name })) } } };
         } else if (query.includes("appMarketAddressPresences")) {
-          body = state(false).presences;
+          body = state(!!opts.spainOwn).presences;
         } else if (query.includes("appMarketAddressMarkets")) {
-          const base = state(false).markets as any;
+          const base = state(!!opts.spainOwn).markets as any;
           const nodes = [...base.data.markets.nodes];
-          if (wrote && opts.created) nodes.push({ id: "mNEW", name: "Nordics", status: "DRAFT", webPresences: { nodes: [] } });
+          if (wrote && opts.created) nodes.push({ id: "mNEW", name: "Nordics", status: opts.createdStatus ?? "DRAFT", webPresences: { pageInfo: done, nodes: [] } });
           const filtered = wrote && opts.deleted ? nodes.filter((n: any) => n.id !== "mES") : nodes;
           body = { data: { markets: { pageInfo: { hasNextPage: false }, nodes: filtered } } };
         } else if (query.includes("appMarketCreate")) {
@@ -361,6 +426,27 @@ describe("adding and deleting a market", () => {
     await createMarket(admin, "s", { name: "Nordics", countries: ["SE"] });
     const call = admin.graphql.mock.calls.find(([q]) => String(q).includes("appMarketCreate"));
     expect(call?.[1]).toEqual({ variables: { input: { name: "Nordics", regions: [{ countryCode: "SE" }], enabled: false } } });
+  });
+
+  it("refuses to create where the input has no way to say DRAFT", async () => {
+    const admin = marketAdmin(["name", "conditions"], { created: true });
+    expect(await createMarket(admin, "s", { name: "Nordics", countries: ["SE"] })).toEqual({ ok: false, error: "notSupported" });
+    expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appMarketCreate"))).toBe(false);
+  });
+
+  it("a market that came back ACTIVE is reported, never as a draft", async () => {
+    const admin = marketAdmin(["name", "conditions", "status"], { created: true, createdStatus: "ACTIVE" });
+    expect(await createMarket(admin, "s", { name: "Nordics", countries: ["SE"] })).toEqual({
+      ok: false,
+      error: "createdNotDraft",
+      marketId: "mNEW",
+    });
+  });
+
+  it("a market with its own address is not deleted before the address is removed", async () => {
+    const admin = marketAdmin([], { deleted: true, spainOwn: true });
+    expect(await deleteMarket(admin, "s", "mES")).toEqual({ ok: false, error: "removeAddressFirst" });
+    expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appMarketDelete"))).toBe(false);
   });
 
   it("a create the re-read does not show is notConfirmed", async () => {
