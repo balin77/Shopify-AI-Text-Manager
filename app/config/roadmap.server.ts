@@ -199,6 +199,24 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "Ver lo que decía un campo antes de guardar — suyo o de la IA — y restaurarlo.",
     },
   },
+  {
+    id: "localized-images",
+    visibility: "public",
+    status: "planned",
+    area: "translations",
+    title: {
+      en: "Different images per language",
+      de: "Andere Bilder je Sprache",
+      es: "Imágenes distintas por idioma",
+    },
+    body: {
+      en: "A banner with French text for the French shop, a product photo with Spanish labels for the Spanish one. Theme images first, then the product gallery — including the image shared on social media and shown to search engines.",
+      de: "Ein Banner mit französischem Text für den französischen Shop, ein Produktfoto mit spanischer Beschriftung für den spanischen. Zuerst Theme-Bilder, dann die Produktgalerie — samt dem Bild, das beim Teilen und in Suchmaschinen erscheint.",
+      es: "Un banner con texto en francés para la tienda francesa, una foto de producto con etiquetas en español para la española. Primero las imágenes del tema, después la galería de producto — incluida la imagen que se muestra al compartir y en los buscadores.",
+    },
+    notes: "Added 2026-09-30 as the one real functional gap in translation (COMPETITIVE_ANALYSIS.md §1.2 and the compare page's imagesPerLanguage row, which stays 'Not yet' until this ships). Two halves with different platform support, see the plan. (A) THEME images: image_picker settings are translatable through translationsRegister (value shopify://shop_images/<file>), per locale AND per market — native, no storefront trick. Our theme sync already picks them up as ordinary text keys; the UI must render them as an image picker and they must NEVER reach the AI (templates-translate-all sends every non-empty value today — check with a probe first whether this is a live bug). (B) PRODUCT media: not translatable in Shopify at all (MediaImage carries only `alt`, measured). Competitors swap per language in the storefront. Our advantage: variant-gallery-embed already replaces the native gallery, so the locale is one more branch there, and og:image + JSON-LD come from OUR blocks, so the localized image reaches social previews and search engines server-side — which a JS-only swap cannot. Data model: app-owned metaobject (locale, optional market, source media, replacement file_reference) referenced from the product, so Liquid gets a real image object for image_url. Logic in assets/, not blocks/ (100 KiB Liquid budget). Stated limits: channel feeds (Google, Shop app, AI channels) keep the primary image; collection cards/cart need a fragile JS swap and are a separate decision. Carry origin (manual/ai) and a source stamp from day one so image-translation only fills the model. No new scopes needed. Phase 0 is a MEASUREMENT (probe), not code.",
+    ref: "docs/plans/PLAN_LOCALIZED_IMAGES.md",
+  },
 
   // ── Considering ───────────────────────────────────────────────────────
   {
@@ -373,7 +391,25 @@ export const ROADMAP: RoadmapEntry[] = [
       de: "Hintergründe und Szenen für Produkte, von denen es nur ein Freisteller-Foto gibt.",
       es: "Fondos y escenas para productos de los que solo hay un recorte.",
     },
-    notes: "CATALOGUE imagery — the picture on the product page. The ad-suite entry also generates images, but those are campaign creatives. If both are ever built, one image-generation plumbing serves both; decide that once, not twice.",
+    notes: "CATALOGUE imagery — the picture on the product page. The ad-suite entry also generates images, but those are campaign creatives. If both are ever built, one image-generation plumbing serves both; decide that once, not twice. image-translation is the third consumer of that plumbing (2026-09-30).",
+  },
+  {
+    id: "image-translation",
+    visibility: "public",
+    status: "considering",
+    area: "media",
+    title: {
+      en: "Translate the text inside an image",
+      de: "Text im Bild übersetzen",
+      es: "Traducir el texto dentro de una imagen",
+    },
+    body: {
+      en: "The AI reads the text in a picture and creates a copy with that text in another language. You check it before it goes live, and it becomes that language's image.",
+      de: "Die KI liest den Text in einem Bild und erstellt eine Kopie mit diesem Text in einer anderen Sprache. Sie prüfen sie, bevor sie live geht, und sie wird das Bild dieser Sprache.",
+      es: "La IA lee el texto de una imagen y crea una copia con ese texto en otro idioma. Usted la revisa antes de publicarla y pasa a ser la imagen de ese idioma.",
+    },
+    notes: "Stage 2 of localized-images (owner, 2026-09-30): comes with image generation, not before — it depends on BOTH that image-generation plumbing (merchant's own key, rotating providers, no vendor wired into the core) and the per-language image model localized-images builds; it only FILLS that model (origin: ai). Flow: vision pre-check whether the image carries text at all (the alt-text vision path exists) -> image edit with target locale + glossary -> preview -> merchant confirms -> staged upload -> assigned as the locale's replacement. Never unattended: prices, sizes, logos and legal text inside an image are exactly what a model gets wrong, and nothing in this app would ever re-read the result. Staleness from the source stamp (source file id + updatedAt) that localized-images stores from day one, same idea as the digest baselines. Competitor reference: one competitor offers OCR image translation (COMPETITIVE_ANALYSIS.md feature matrix).",
+    ref: "docs/plans/PLAN_LOCALIZED_IMAGES.md",
   },
   {
     id: "annual-plans",

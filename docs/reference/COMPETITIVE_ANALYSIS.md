@@ -46,7 +46,7 @@
 | Automatische Nachübersetzung bei Textänderungen | ✅ Max | In der App, im Shopify-Admin, durch Importe; Tageslimit + Wiederholungsliste |
 | Sprachen & Märkte verwalten | ✅ | Sprachen hinzufügen/entfernen/veröffentlichen, Märkte zuweisen, Markt-Adressen (Unterordner), Märkte anlegen/aktivieren |
 | Sprachumschalter | ✅ | Storefront-Embed |
-| Bilder je Sprache | ❌ | Offen |
+| Bilder je Sprache | ❌ | Geplant — Roadmap `localized-images`, Plan [PLAN_LOCALIZED_IMAGES.md](../plans/PLAN_LOCALIZED_IMAGES.md); KI-Bildübersetzung als Stufe 2 (`image-translation`) |
 | Eigene Währungsumrechnung | ❌ (bewusst) | Shopify Markets rechnet nativ um |
 
 ### 1.3 Massenbearbeitung
