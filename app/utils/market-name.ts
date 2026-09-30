@@ -78,9 +78,23 @@ export function countryOptions(appLocale: string): Array<{ code: string; name: s
     for (let b = 65; b <= 90; b++) {
       const code = String.fromCharCode(a, b);
       if (NON_COUNTRY_CODES.has(code)) continue;
+      // A RETIRED code (UK, DD, SU, YU, BU, …) is an alias of a current one and
+      // carries the same name — "Vereinigtes Königreich" twice in one list.
+      // CLDR's alias table says which is which; only the current code is kept.
+      if (!isCanonicalRegion(code)) continue;
       const name = names.of(code);
       if (name && name !== code) out.push({ code, name });
     }
   }
-  return out;
+  // Backstop for an engine without the alias table: one entry per NAME.
+  const seen = new Set<string>();
+  return out.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true)));
+}
+
+function isCanonicalRegion(code: string): boolean {
+  try {
+    return new Intl.Locale(`und-${code}`).region === code;
+  } catch {
+    return true;
+  }
 }

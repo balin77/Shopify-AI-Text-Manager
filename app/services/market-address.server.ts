@@ -783,6 +783,71 @@ export async function createMarket(
   return { ok: true, marketId };
 }
 
+// Activating a market is where the shop starts SELLING into its countries, and
+// deactivating one stops that — neither is a setting, both are confirmed
+// actions in the tab. `MarketUpdateInput.status` is MEASURED to exist on
+// 2026-07 (market probe); the WRITE itself is not measured (the probe will not
+// switch a market on, not even its own, because that opens a checkout), so it
+// is confirmed by a re-read of the status, never by the echo alone. Shopify's
+// own refusals (a country another active market already covers, a market it
+// considers incomplete) travel back in its words.
+const MARKET_SET_STATUS = `#graphql
+  mutation appMarketSetStatus($id: ID!, $input: MarketUpdateInput!) {
+    marketUpdate(id: $id, input: $input) {
+      market {
+        id
+        status
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
+export async function setMarketStatus(
+  admin: GraphqlClient,
+  shop: string,
+  marketId: string,
+  status: "ACTIVE" | "DRAFT",
+): Promise<WriteOutcome> {
+  const before = await loadMarketAddresses(admin, shop);
+  if (!before) return { ok: false, error: "unverified" };
+  const market = before.markets.find((m) => m.marketId === marketId);
+  if (!market) return { ok: false, error: "unknownMarket" };
+  // The primary market is the shop's own storefront; switching it off is not
+  // something to do from a language tab (Shopify refuses it too, unmeasured).
+  if (market.primary === true) return { ok: false, error: "primaryMarket" };
+  if (market.status === status) return { ok: true };
+  const names = await availableMutations(admin);
+  if (!names) return { ok: false, error: "schemaUnreadable" };
+  if (!names.has("marketUpdate")) return { ok: false, error: "notSupported" };
+  const fields = await inputFieldNames(admin, "MarketUpdateInput");
+  if (!fields) return { ok: false, error: "schemaUnreadable" };
+  const input: Record<string, unknown> = {};
+  if (fields.has("status")) input.status = status;
+  else if (fields.has("enabled")) input.enabled = status === "ACTIVE";
+  else return { ok: false, error: "notSupported" };
+  try {
+    const body = await json(admin, MARKET_SET_STATUS, { id: marketId, input });
+    const error = firstError(body, "marketUpdate");
+    if (error) {
+      if (error.schema) await logInputShapes(admin, shop, ["MarketUpdateInput"], error.message);
+      return { ok: false, error: error.message };
+    }
+    if (!(body.data?.marketUpdate as { market?: { id?: string } | null } | null)?.market?.id) {
+      return { ok: false, error: "notConfirmed" };
+    }
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const after = await loadMarketAddresses(admin, shop);
+  if (!after) return { ok: false, error: "unverified" };
+  if (after.markets.find((m) => m.marketId === marketId)?.status !== status) return { ok: false, error: "notConfirmed" };
+  await clearLocaleCache(shop);
+  return { ok: true };
+}
+
 export async function deleteMarket(admin: GraphqlClient, shop: string, marketId: string): Promise<WriteOutcome> {
   const before = await loadMarketAddresses(admin, shop);
   if (!before) return { ok: false, error: "unverified" };

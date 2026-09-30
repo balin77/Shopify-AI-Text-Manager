@@ -56,6 +56,7 @@ const REMOVE_ACTION = "removeMarketAddress";
 const CREATE_MARKET_ACTION = "createMarket";
 const DELETE_MARKET_ACTION = "deleteMarket";
 const REMOVE_ORPHAN_ACTION = "removeOrphanAddress";
+const SET_STATUS_ACTION = "setMarketStatus";
 /** The id the new-market form's answers are keyed on (it has no market yet). */
 const NEW_MARKET = "new";
 
@@ -69,6 +70,8 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
   const [removing, setRemoving] = useState<{ marketId: string; name: string } | null>(null);
   const [addingMarket, setAddingMarket] = useState(false);
   const [deletingMarket, setDeletingMarket] = useState<{ marketId: string; name: string } | null>(null);
+  /** Switching a market on or off — confirmed in its own dialog (it decides where the shop sells). */
+  const [switching, setSwitching] = useState<{ marketId: string; name: string; to: "ACTIVE" | "DRAFT" } | null>(null);
   const [newName, setNewName] = useState("");
   const [newCountries, setNewCountries] = useState<string[]>([]);
   const [countryPick, setCountryPick] = useState("");
@@ -113,13 +116,15 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
 
   useEffect(() => {
     if (fetcher.state !== "idle" || !response?.success) return;
-    const name = creating?.name ?? removing?.name ?? deletingMarket?.name ?? removingOrphan?.label ?? newName;
+    const name =
+      creating?.name ?? removing?.name ?? deletingMarket?.name ?? switching?.name ?? removingOrphan?.label ?? newName;
     const message: Record<string, string | undefined> = {
       [CREATE_ACTION]: a.createdMessage,
       [REMOVE_ACTION]: a.removedMessage,
       [CREATE_MARKET_ACTION]: a.marketCreatedMessage,
       [DELETE_MARKET_ACTION]: a.marketDeletedMessage,
       [REMOVE_ORPHAN_ACTION]: a.orphanRemovedMessage,
+      [SET_STATUS_ACTION]: response.status === "DRAFT" ? a.marketDeactivatedMessage : a.marketActivatedMessage,
     };
     showInfoBox((message[response.actionType] || "").replace("{name}", marketName(name)), "success");
     setCreating(null);
@@ -127,6 +132,7 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
     setAddingMarket(false);
     setDeletingMarket(null);
     setRemovingOrphan(null);
+    setSwitching(null);
     setConfirmingClose(false);
     setSubmittedFor(null);
     // React Router revalidates the loaders after the action by itself.
@@ -193,8 +199,8 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
   }
   return (
     <BlockStack gap="200">
-      <InlineStack align="space-between" blockAlign="center" gap="300">
-        <SectionHeading a={a} />
+      <SectionHeading a={a} />
+      <InlineStack align="start">
         <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
           <Button
             disabled={blocked || busy}
@@ -264,6 +270,20 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
             </DisabledActionTooltip>
           )}
           {m.primary !== true && (
+            <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
+              <Button
+                variant={m.status === "ACTIVE" ? "plain" : undefined}
+                disabled={blocked || busy}
+                onClick={() => {
+                  setSubmittedFor(null);
+                  setSwitching({ marketId: m.marketId, name: m.name, to: m.status === "ACTIVE" ? "DRAFT" : "ACTIVE" });
+                }}
+              >
+                {m.status === "ACTIVE" ? a.deactivateButton : a.activateButton}
+              </Button>
+            </DisabledActionTooltip>
+          )}
+          {m.primary !== true && (
             <DisabledActionTooltip
               hint={blocked ? s.removeBlockedByDraft : ownBlocksDelete(m) ? a.errorRemoveAddressFirst : undefined}
             >
@@ -319,6 +339,45 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
           </InlineStack>
         );
       })}
+
+      {switching && (
+        <Modal
+          open
+          onClose={() => !busy && setSwitching(null)}
+          title={((switching.to === "ACTIVE" ? a.activateTitle : a.deactivateTitle) || "{name}").replace(
+            "{name}",
+            marketName(switching.name),
+          )}
+          primaryAction={{
+            content: switching.to === "ACTIVE" ? a.activateConfirm : a.deactivateConfirm,
+            destructive: switching.to === "DRAFT",
+            loading: busy,
+            disabled: busy,
+            onAction: () => {
+              const form = new FormData();
+              form.append("actionType", SET_STATUS_ACTION);
+              form.append("marketId", switching.marketId);
+              form.append("status", switching.to);
+              setSubmittedFor(switching.marketId);
+              fetcher.submit(form, { method: "post" });
+            },
+          }}
+          secondaryActions={[{ content: t.common?.cancel || "Cancel", onAction: () => setSwitching(null), disabled: busy }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="300">
+              {failure && (
+                <Banner tone="critical">
+                  <p>{failure}</p>
+                </Banner>
+              )}
+              <Banner tone="warning">
+                <p>{switching.to === "ACTIVE" ? a.activateWarning : a.deactivateWarning}</p>
+              </Banner>
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
 
       {removingOrphan && (
         <DeleteItemModal

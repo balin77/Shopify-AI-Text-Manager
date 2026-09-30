@@ -20,6 +20,7 @@ const {
   validateMarketRequest,
   createMarket,
   deleteMarket,
+  setMarketStatus,
   __resetMarketAddressCache,
 } = await import("~/services/market-address.server");
 
@@ -473,5 +474,56 @@ describe("adding and deleting a market", () => {
   it("deletes on the echoed id AND the market's absence from a fresh read", async () => {
     expect(await deleteMarket(marketAdmin([], { deleted: true }), "s", "mES")).toEqual({ ok: true });
     expect(await deleteMarket(marketAdmin([], { deleted: false }), "s", "mES")).toEqual({ ok: false, error: "notConfirmed" });
+  });
+});
+
+describe("setMarketStatus", () => {
+  function statusAdmin(opts: { applies: boolean; primary?: string; userError?: string }) {
+    const status: Record<string, string> = { mCH: "ACTIVE", mES: "ACTIVE", mUS: "DRAFT" };
+    return {
+      graphql: vi.fn(async (query: string, o?: { variables?: Record<string, any> }) => {
+        let body: unknown;
+        if (query.includes("appMarketAddressPresences")) body = state(false).presences;
+        else if (query.includes("appMarketAddressMarkets")) {
+          const base = state(false).markets as any;
+          base.data.markets.nodes = base.data.markets.nodes.map((n: any) => ({ ...n, status: status[n.id] }));
+          body = base;
+        } else if (query.includes("appMarketFields")) body = { data: { __type: { fields: [{ name: "primary" }] } } };
+        else if (query.includes("appMarketPrimary")) {
+          body = { data: { markets: { nodes: opts.primary ? [{ id: opts.primary, primary: true }] : [] } } };
+        } else if (query.includes("appMutationNames")) body = { data: { __schema: { mutationType: { fields: [{ name: "marketUpdate" }] } } } };
+        else if (query.includes("appInputShape")) body = { data: { __type: { inputFields: [{ name: "status" }, { name: "enabled" }] } } };
+        else if (query.includes("appMarketSetStatus")) {
+          if (opts.userError) body = { data: { marketUpdate: { market: null, userErrors: [{ message: opts.userError }] } } };
+          else {
+            if (opts.applies) status[o!.variables!.id] = o!.variables!.input.status;
+            body = { data: { marketUpdate: { market: { id: o!.variables!.id, status: status[o!.variables!.id] }, userErrors: [] } } };
+          }
+        }
+        return { json: async () => body } as unknown as Response;
+      }),
+    };
+  }
+
+  it("activates a draft and confirms it by a re-read", async () => {
+    const admin = statusAdmin({ applies: true });
+    expect(await setMarketStatus(admin, "s", "mUS", "ACTIVE")).toEqual({ ok: true });
+    const call = admin.graphql.mock.calls.find(([q]) => String(q).includes("appMarketSetStatus"));
+    expect(call?.[1]).toEqual({ variables: { id: "mUS", input: { status: "ACTIVE" } } });
+  });
+
+  it("a write the re-read does not show is notConfirmed, and Shopify's refusal travels in its words", async () => {
+    expect(await setMarketStatus(statusAdmin({ applies: false }), "s", "mUS", "ACTIVE")).toEqual({ ok: false, error: "notConfirmed" });
+    expect(await setMarketStatus(statusAdmin({ applies: true, userError: "Region already in an active market" }), "s", "mUS", "ACTIVE")).toEqual({
+      ok: false,
+      error: "Region already in an active market",
+    });
+  });
+
+  it("never switches the primary market, and an unchanged status sends nothing", async () => {
+    const admin = statusAdmin({ applies: true, primary: "mCH" });
+    expect(await setMarketStatus(admin, "s", "mCH", "DRAFT")).toEqual({ ok: false, error: "primaryMarket" });
+    expect(await setMarketStatus(admin, "s", "mES", "ACTIVE")).toEqual({ ok: true });
+    expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appMarketSetStatus"))).toBe(false);
   });
 });
