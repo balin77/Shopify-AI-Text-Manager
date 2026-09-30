@@ -42,11 +42,49 @@ export type CompareCopy = {
   verdictHeading: string;
   /** Under the table: it answers "can the app do this at all", never "on which plan". */
   tableNote: string;
+  /** The price table at the top of both pages. */
+  glance: {
+    heading: string;
+    intro: string;
+    /** Header of the row-label column. */
+    planColumn: string;
+    /** Row label of the first row. */
+    freeLevel: string;
+    /** Row label of every further row; `{n}` is 1, 2, 3 … */
+    level: string;
+    languagesLabel: string;
+    productsLabel: string;
+    aiLabel: string;
+    trialRow: string;
+    values: {
+      unlimited: string;
+      twoAutomatic: string;
+      noProductLimit: string;
+      ownKey: string;
+      included: string;
+      unlimitedWords: string;
+      /** `{n}` is the number. */
+      words: string;
+      tokensMonth: string;
+      tokensMonthOwnKey: string;
+      wordsPlusTokens: string;
+      wordsPlusTokensOwnKey: string;
+      unstated: string;
+      trialDays: string;
+      noTrial: string;
+      notOffered: string;
+      onRequest: string;
+      oneLanguage: string;
+      languages: string;
+    };
+  };
   pricing: {
     heading: string;
     intro: string;
     perMonth: string;
+    perYear: string;
     free: string;
+    onRequest: string;
     /** Currency, tax, annual discounts, AI costs — one sentence. */
     note: string;
     /** One line per app under its name, e.g. "priced by languages and words". */

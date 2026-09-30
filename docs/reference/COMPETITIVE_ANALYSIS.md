@@ -105,11 +105,11 @@ kein ❌.
 | Automatische Übersetzung | ✅ (eigener KI-Key) | ⚠️ nur 2 Sprachen, Rest manuell; 100 Mio. Zeichen/Jahr | ✅ | ✅ | ✅ |
 | Übersetzungen in Shopify gespeichert | ✅ | ✅ | ? — Drittquellen sagen „bei Weglot (JS/Proxy)“, nicht in Weglots eigener Shopify-Doku verifiziert; Seite zeigt „Keine Angabe“ | ✅ | ✅ |
 | Eigene Anweisungen / Markenstimme | ✅ ab Pro | ❌ | ✅ (lernendes KI-Modell) | ? | ✅ |
-| Wahl des KI-Anbieters | ✅ 6 | ❌ | ❌ | ⚠️ Engine-Wahl (OpenAI, DeepL, Gemini, …) | ⚠️ Engine-Wahl (ChatGPT, DeepL, Google) |
+| Wahl des KI-Anbieters | ✅ 6 | ❌ | ❌ | ✅ OpenAI, Gemini, Baidu, Yandex, Grok, DeepSeek; eigener Key ab Continental | ✅ OpenAI, DeepL Pro, Google Cloud ab Standard |
 | Glossar | ✅ | ❌ | ✅ | ✅ (ab Regional) | ✅ (ab Basic) |
 | Theme, Checkout, E-Mails | ✅ ab Pro | ✅ | ✅ | ✅ | ✅ |
 | Texte anderer Apps | ✅ Max | ❌ | ✅ | ✅ | ✅ |
-| Übersetzungen folgen Textänderungen | ✅ Max | ? | ✅ | ✅ | ✅ Auto-Sync ab Standard |
+| Übersetzungen folgen Textänderungen | ✅ Max | ? | ✅ | ✅ (Sync geplant/Echtzeit, Automatik ab Regional) | ⚠️ nur neue Produkte/Kollektionen (50–∞ je Plan) |
 | Texte schreiben/verbessern mit KI | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Tabellen-Editor für den Katalog | ✅ | ❌ | ❌ | ❌ | ⚠️ nur Übersetzungen (Bulk-Bearbeitung) |
 | SEO-Werkzeuge (Keywords, Crawl, GSC) | ✅ | ❌ | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) |
@@ -119,13 +119,15 @@ kein ❌.
 | Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ | ✅ (auch Text im Bild) | ? |
 | Eigene Währungsumrechnung | ❌ (Markets) | ❌ (Markets) | ❌ | ✅ | ✅ |
 | Menschliche Übersetzer | ❌ | ❌ | ✅ | ? | ✅ |
-| Preismodell | Free 50 Prod.; Basic €9.90, Pro €19.90, Max €59.90 — Sprachen ∞ | gratis | Free 1 Spr./2k Wörter, Starter $17 (1 Spr./10k), Business $32 (3/50k), Pro $87 (5/250k); 14 Tage Test; externe Kosten ggf. separat von Weglot — laut App-Store-Screenshot des Inhabers 2026-09-30 | Free (1 Spr., 1 Währung, unbegr. Wörter, Drittanbieter-Apps), Local Plus $14.90 (1 Spr. bearbeitbar, 150 KI-Tokens), Regional $29 (3 Spr., 300 Tokens, 3 Währungen, Glossar 20, 10 Bilder), Continental $69 (15 Spr., 500 Tokens, 15 Währungen, Glossar 200, Geolocation, eigener DeepL/OpenAI/Gemini-Key); 7 Tage Test — laut App-Store-Screenshot des Inhabers 2026-09-30 | Free (1 Spr., 50 Prod.), Basic $10 (1 Spr., 250 Prod., Glossar 5), Standard $40 (3 Spr., 2000 Prod., Glossar 100, Auto-Sync, DeepL/OpenAI/Google, Drittanbieter-Apps), Advanced $75 (5 Spr., 5000 Prod., Glossar 250, Shopify Flow); 14 Tage Test — laut App-Store-Screenshot des Inhabers 2026-09-30 |
+| Preismodell | Free 50 Prod.; Basic €9.90 (100), Pro €19.90 (500), Max €59.90 (2500) — Sprachen ∞, KI über eigenen Key; 7 Tage Test | gratis, 2 Sprachen automatisch | App Store (USD): Free 1 Spr./2k Wörter, Starter $17 (1/10k), Business $32 (3/50k), Pro $87 (5/250k); Website (EUR): Advanced €299 (10/1M), Extended €699 (20/5M), Enterprise auf Anfrage; 14 Tage Test | Free (1 Spr. nicht bearbeitbar, Google unbegr.), Local Plus $14.90 (1 Spr., 100 Prod., 150 Tokens), Regional $29 (3/200/300), Continental $69 (15/300/500 + eigener Key), Cross-Border $99 (50/1500/1000), Global $599 (147/∞/5000); 7 Tage Test | Free (1 Spr., 50 Prod.), Basic $10 (1/250), Standard $40 (3/2000), Advanced $75 (5/5000), Pro $120 (10/10k), Enterprise $250 (20/50k), Unlimited $500 (20/∞) — Wörter und Währungen überall unbegrenzt; 14 Tage Test (App Store; Website sagt 7) |
 | Bewertung (09/2026) | — | 4.5 | 4.5 (≈790) | 4.4 (≈2.530) | 4.5 |
 
 **Offen / vor dem Livegang der Website prüfen:** Weglot-Speicherort, T&A-Glossar (Quelle nur Konkurrenz-Blogs), Transcy „eigene Anweisungen",
 T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"). Planinhalte/Preise: Transcy aus dem
 App-Store-Eintrag (Screenshot 2026-09-30), LangShop aus dem App-Store-Eintrag (Screenshot 2026-09-30; die Drittquellen mit $34/$68 waren falsch),
 Weglot aus dem App-Store-Eintrag (Screenshot 2026-09-30) — alle in `COMPARE_PRICES` (marketing-compare.ts) gespiegelt.
+Quellen der Planleitern: die Vergleichstabellen, die der Inhaber am 2026-09-30 von den
+Anbieter-Websites kopiert hat (Weglot, Transcy, LangShop), plus deren App-Store-Einträge.
 **Fairness-Regel der Seite:** die Funktionstabelle beantwortet nur „kann die App
 das überhaupt", nie „ab welchem Plan" — Planstufen stehen ausschließlich im
 Preisvergleich, für alle Anbieter gleich. **Offen:** die Managed-AI-Variante

@@ -18,7 +18,7 @@ import {
 } from "../utils/marketing-route.server";
 import { localizedPath } from "../services/marketing-locale.shared";
 import { CompareDisclaimer, CompareTable } from "../components/marketing/CompareTable";
-import { ComparePricing } from "../components/marketing/ComparePricing";
+import { ComparePlanDetails, ComparePriceTable } from "../components/marketing/ComparePricing";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -83,6 +83,8 @@ export default function MarketingCompareOne() {
             <p className="mk-lead">{them.summary}</p>
           </div>
 
+          <ComparePriceTable copy={copy} locale={locale} apps={["contentpilot", competitor]} />
+
           <div className="mk-compare-detail">
             <section>
               <h2>{fill(copy.aboutHeading)}</h2>
@@ -117,7 +119,7 @@ export default function MarketingCompareOne() {
           <CompareTable copy={copy} competitors={[competitor]} />
           <p className="mk-note mk-compare__table-note">{copy.tableNote}</p>
 
-          <ComparePricing copy={copy} locale={locale} apps={["contentpilot", competitor]} />
+          <ComparePlanDetails copy={copy} locale={locale} apps={["contentpilot", competitor]} />
 
           <div className="mk-compare-detail">
             <section className="mk-compare-detail__verdict">

@@ -1963,3 +1963,103 @@ a.mk-badge:hover {
   margin-top: 16px;
   max-width: var(--mk-prose-width);
 }
+
+/* ── Prices at a glance ───────────────────────────────────────────────── */
+
+.mk-compare-glance {
+  margin: 36px 0 40px;
+}
+
+.mk-compare-glance__plan {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--mk-text-muted);
+}
+
+.mk-compare-glance__price {
+  display: block;
+  font-weight: 700;
+  font-size: 1.0625rem;
+  white-space: nowrap;
+}
+
+.mk-compare-glance__cell dl {
+  margin: 8px 0 0;
+  display: grid;
+  gap: 2px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.mk-compare-glance__cell dt {
+  color: var(--mk-text-muted);
+  margin-top: 4px;
+}
+
+.mk-compare-glance__cell dd {
+  margin: 0;
+}
+
+.mk-compare-glance__empty {
+  color: var(--mk-text-muted);
+  font-size: 0.8125rem;
+}
+
+.mk-compare-glance__trial td {
+  font-weight: 600;
+}
+
+/* Five apps need room; the column labels ("Level 2") are short. */
+.mk-compare-glance__table th[scope="row"],
+.mk-compare-glance__table thead th:first-child {
+  min-width: 90px;
+  max-width: 120px;
+}
+
+.mk-compare-glance__table td {
+  min-width: 150px;
+}
+
+/* Two apps fit a phone without scrolling; five need the scroll box. Fixed
+   layout gives both apps the same width, so neither is squeezed into
+   breaking a word because the other happens to hold a longer sentence. */
+.mk-compare-glance__table.mk-compare-table--single {
+  table-layout: fixed;
+}
+
+.mk-compare-glance__table.mk-compare-table--single td {
+  min-width: 0;
+}
+
+.mk-compare-glance__table.mk-compare-table--single thead th:first-child {
+  width: 110px;
+}
+
+@media (max-width: 520px) {
+  .mk-compare-glance__table.mk-compare-table--single thead th:first-child {
+    width: 72px;
+  }
+}
+
+@media (max-width: 520px) {
+  .mk-compare-glance__table th[scope="row"],
+  .mk-compare-glance__table thead th:first-child {
+    min-width: 64px;
+    max-width: 80px;
+    padding-inline: 10px;
+  }
+
+  .mk-compare-glance__table td {
+    padding-inline: 10px;
+    /* "Übersetzungsvolumen" is wider than half a phone. */
+    hyphens: auto;
+    /* `anywhere`, not `break-word`: only it lowers a table cell's
+       min-content width, where a browser has no German hyphenation. */
+    overflow-wrap: anywhere;
+  }
+
+  .mk-compare-glance__price,
+  .mk-compare-glance__table thead th {
+    white-space: normal;
+  }
+}
