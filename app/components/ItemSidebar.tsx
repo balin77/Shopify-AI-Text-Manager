@@ -465,19 +465,18 @@ export function ItemSidebar({
   const getScoreLabel = (scoreValue: number): string =>
     t.seo.scoreLabels[scoreLabelKey(scoreValue)];
 
-  // Sub-tabs (Score / Keywords / JSON-LD). Hide a tab entirely when its data
+  // Sub-tabs (Score / Keywords / Attributes; JSON-LD renders UNDER the
+  // attribute checklist and is a tab of its own only without one). Hide a tab entirely when its data
   // isn't applicable to this caller (theme content has no JSON-LD, foreign
   // locales have no keyword tracking) — otherwise merchants would land on an
   // empty pane. With only "score" available, the tab bar is omitted.
   type SidebarTab = "attributes" | "score" | "keywords" | "jsonld";
-  // Attributes go FIRST when present (§2.1): it is the tab that answers "is
-  // this item actually finished", which is the question a merchant arrives
-  // with — the score answers "is it optimised", which comes after.
-  const availableTabs: SidebarTab[] = [];
-  if (attributes) availableTabs.push("attributes");
-  availableTabs.push("score");
+  // Order: Score, Keywords, Attributes (with JSON-LD beneath) — the owner's decision. The
+  // score is the default tab, so it leads; keywords feed straight into it.
+  const availableTabs: SidebarTab[] = ["score"];
   if (keywordTrackingEnabled) availableTabs.push("keywords");
-  if (structuredData) availableTabs.push("jsonld");
+  if (attributes) availableTabs.push("attributes");
+  if (structuredData && !attributes) availableTabs.push("jsonld");
   const [activeTab, setActiveTab] = useState<SidebarTab>("score");
   const currentTab = availableTabs.includes(activeTab) ? activeTab : availableTabs[0];
   const tabLabels = (t.seo as unknown as { sidebarTabs?: Record<string, string> }).sidebarTabs;
@@ -497,10 +496,83 @@ export function ItemSidebar({
     jsonld: "seoSidebarJsonLd",
   };
 
+  // The JSON-LD preview lives UNDER the attribute checklist rather than in a
+  // tab of its own: both answer "what does this item tell the outside world
+  // about itself", and a fourth tab in a sidebar this narrow cost more than it
+  // explained. It keeps its own heading and "?", like the readability block.
+  const jsonLdPanel = structuredData ? (
+          <BlockStack gap="200">
+                {jsonLdWarnings.length === 0 ? (
+                  <Badge tone="success">
+                    {t.seo?.structuredDataValid || "Schema looks valid"}
+                  </Badge>
+                ) : (
+                  <BlockStack gap="100">
+                    {jsonLdWarnings.map((w, i) => {
+                      // Prefer the localized copy via the stable warning code;
+                      // fall back to the validator's English default so a
+                      // future warning without a translation still renders.
+                      const localized =
+                        (t.seo?.structuredDataPage?.warnings as
+                          | Record<string, string>
+                          | undefined
+                        )?.[w.code];
+                      return (
+                        <InlineStack key={i} gap="100" blockAlign="center">
+                          <Badge
+                            tone={w.severity === "error" ? "critical" : "warning"}
+                          >
+                            {w.severity}
+                          </Badge>
+                          <Text as="span" variant="bodySm">
+                            {localized || w.message}
+                          </Text>
+                        </InlineStack>
+                      );
+                    })}
+                  </BlockStack>
+                )}
+                <pre
+                  style={{
+                    maxHeight: "260px",
+                    overflow: "auto",
+                    background: "#f6f6f7",
+                    padding: "8px",
+                    borderRadius: "4px",
+                    fontSize: "11px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {jsonLdString}
+                </pre>
+                <Button
+                  size="slim"
+                  onClick={() => {
+                    navigator.clipboard
+                      ?.writeText(
+                        `<script type="application/ld+json">\n${jsonLdString}\n</script>`,
+                      )
+                      .then(
+                        () => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        },
+                        () => setCopied(false),
+                      );
+                  }}
+                >
+                  {copied
+                    ? t.seo?.copied || "Copied!"
+                    : t.seo?.copyJsonLd || "Copy <script> tag"}
+                </Button>
+          </BlockStack>
+  ) : null;
+
   return (
     <Card>
       <BlockStack gap="400">
-        {/* Sub-tab bar (Score / Keywords / JSON-LD) + the current tab's help —
+        {/* Sub-tab bar (Score / Keywords / Attributes / JSON-LD) + the current tab's help —
             the same component the image-processing section uses one level
             over, so the two halves of the sidebar read as one thing. */}
         <SidebarTabBar
@@ -526,6 +598,26 @@ export function ItemSidebar({
               enumLabels: (t.content as { enumLabels?: Record<string, string> } | undefined)?.enumLabels,
             } as never}
           />
+        )}
+
+        {currentTab === "attributes" && attributes && jsonLdPanel && (
+          <Box
+            padding="300"
+            borderWidth="025"
+            borderColor="border"
+            borderRadius="200"
+            background="bg-surface-secondary"
+          >
+            <BlockStack gap="200">
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <Text as="p" variant="headingSm" fontWeight="semibold">
+                  {t.help?.seoSidebarJsonLd?.title || "JSON-LD"}
+                </Text>
+                <HelpTooltip helpKey="seoSidebarJsonLd" position="below" />
+              </InlineStack>
+              {jsonLdPanel}
+            </BlockStack>
+          </Box>
         )}
 
         {currentTab === "score" && (
@@ -793,75 +885,9 @@ export function ItemSidebar({
         </BlockStack>
         )}
 
-        {/* JSON-LD tab */}
-        {currentTab === "jsonld" && structuredData && (
-          <BlockStack gap="200">
-                {jsonLdWarnings.length === 0 ? (
-                  <Badge tone="success">
-                    {t.seo?.structuredDataValid || "Schema looks valid"}
-                  </Badge>
-                ) : (
-                  <BlockStack gap="100">
-                    {jsonLdWarnings.map((w, i) => {
-                      // Prefer the localized copy via the stable warning code;
-                      // fall back to the validator's English default so a
-                      // future warning without a translation still renders.
-                      const localized =
-                        (t.seo?.structuredDataPage?.warnings as
-                          | Record<string, string>
-                          | undefined
-                        )?.[w.code];
-                      return (
-                        <InlineStack key={i} gap="100" blockAlign="center">
-                          <Badge
-                            tone={w.severity === "error" ? "critical" : "warning"}
-                          >
-                            {w.severity}
-                          </Badge>
-                          <Text as="span" variant="bodySm">
-                            {localized || w.message}
-                          </Text>
-                        </InlineStack>
-                      );
-                    })}
-                  </BlockStack>
-                )}
-                <pre
-                  style={{
-                    maxHeight: "260px",
-                    overflow: "auto",
-                    background: "#f6f6f7",
-                    padding: "8px",
-                    borderRadius: "4px",
-                    fontSize: "11px",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {jsonLdString}
-                </pre>
-                <Button
-                  size="slim"
-                  onClick={() => {
-                    navigator.clipboard
-                      ?.writeText(
-                        `<script type="application/ld+json">\n${jsonLdString}\n</script>`,
-                      )
-                      .then(
-                        () => {
-                          setCopied(true);
-                          setTimeout(() => setCopied(false), 2000);
-                        },
-                        () => setCopied(false),
-                      );
-                  }}
-                >
-                  {copied
-                    ? t.seo?.copied || "Copied!"
-                    : t.seo?.copyJsonLd || "Copy <script> tag"}
-                </Button>
-          </BlockStack>
-        )}
+        {/* JSON-LD as its own tab only where there is no attribute tab to
+            carry it (defensive — every caller with structured data has one). */}
+        {currentTab === "jsonld" && jsonLdPanel}
 
         {/* Keywords tab */}
         {currentTab === "keywords" && keywordTrackingEnabled && (

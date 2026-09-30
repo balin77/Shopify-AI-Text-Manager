@@ -102,6 +102,11 @@ describe("taskErrorText — the runners' counted codes", () => {
     // the merchant sees an empty field, so the sentence has to reach them in
     // their own language rather than as a raw Prisma message.
     ["translations_not_mirrored:2", ["2"]],
+    ["handle_redirects_missing:3", ["3"]],
+    // The daily brake on first translations proven by the primary digest
+    // baseline alone: written from a webhook with no locale, and a brake the
+    // merchant cannot read is work silently swallowed.
+    ["auto_translate_daily_limit:7:100", ["7", "100"]],
   ];
 
   for (const [name, t] of BUNDLES) {

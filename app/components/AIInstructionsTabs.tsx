@@ -9,6 +9,7 @@ import {
   clampImagesPerRequest,
 } from "../services/ai/vision-policy.shared";
 import { HelpTooltip } from "./HelpTooltip";
+import { FieldLabel } from "./unified/FieldChrome";
 import { SettingsGlossaryTab, type GlossaryEntryDto, type GlossaryShopLocale } from "./SettingsGlossaryTab";
 import {
   getDefaultInstructions,
@@ -127,6 +128,17 @@ interface AIInstructionsTabsProps {
    * server ANDs the two on every read.
    */
   autoTranslateHandles: boolean;
+  /**
+   * AISettings.autoTranslateDailyLimit (Max) — the merchant's OPTIONAL daily
+   * limit on first automatic translations. `null` = no limit.
+   */
+  autoTranslateDailyLimit: number | null;
+  /** The retry list, summarised (translation-retry.server.ts). */
+  autoTranslateRetrySummary?: {
+    pending: number;
+    exhausted: number;
+    exhaustedItems: Array<{ resourceType: string; resourceTitle: string | null; resourceId: string; lastError: string | null }>;
+  } | null;
   /** Drives the Max gate on the auto-translate switch. */
   subscriptionPlan: Plan;
   /**
@@ -154,6 +166,8 @@ export function AIInstructionsTabs({
   translationPurgeOnPrimaryChange,
   autoTranslateExternalChanges,
   autoTranslateHandles,
+  autoTranslateDailyLimit,
+  autoTranslateRetrySummary,
   subscriptionPlan,
   sendImagesToAI,
   aiImagesPerRequest,
@@ -171,6 +185,10 @@ export function AIInstructionsTabs({
   const [localAutoTranslateHandles, setLocalAutoTranslateHandles] = useState(
     autoTranslateHandles,
   );
+  /** The limit as the merchant TYPES it: "" = no limit. A draft like every
+   *  other setting here — saved only by the Save button. */
+  const storedDailyLimit = autoTranslateDailyLimit == null ? "" : String(autoTranslateDailyLimit);
+  const [localDailyLimit, setLocalDailyLimit] = useState(storedDailyLimit);
   // The auto-translate switch stays VISIBLE on every plan (hiding it would
   // read as "this app cannot do that") and is greyed out below Max, with the
   // required tier named underneath.
@@ -300,6 +318,8 @@ export function AIInstructionsTabs({
   };
 
   const handleSave = () => {
+    // A limit the server would refuse is not sent — the field already says why.
+    if (dailyLimitChanged && dailyLimitInvalid) return;
     /**
      * A vision-only change goes out NARROW, on every plan.
      *
@@ -323,36 +343,46 @@ export function AIInstructionsTabs({
     formData.append("actionType", "saveInstructions");
     appendVisionIfChanged(formData);
 
-    // Add all instruction fields to FormData
-    Object.entries(localInstructions).forEach(([key, value]) => {
-      formData.append(key, value);
-    });
-
-    // Translation mode piggybacks on the same save so one button covers the
-    // entire Translations sub-section (radio + custom instructions).
-    formData.append("translationMode", localTranslationMode);
-    formData.append("keywordAwareTranslation", String(localKeywordAware));
+    // ONLY what changed, field by field. This card's state is seeded once at
+    // mount and never re-synced (CLAUDE.md, "Field chrome"), so sending every
+    // value wrote this tab's stale copies over anything a second tab stored
+    // since — a switch-only save reverted another tab's instruction edits and
+    // its switches with it. The server writes only the fields it is sent.
+    for (const key of changedInstructionKeys) {
+      formData.append(key, localInstructions[key] ?? "");
+    }
+    // Translation mode and the knobs of the Translations sub-section ride on
+    // the same save, so one button covers the whole sub-section — each only
+    // when it changed, for the same reason.
+    if (localTranslationMode !== translationMode) {
+      formData.append("translationMode", localTranslationMode);
+    }
+    if (localKeywordAware !== keywordAwareTranslation) {
+      formData.append("keywordAwareTranslation", String(localKeywordAware));
+    }
     // The merchant's OWN choice is stored, not the value the card currently
     // displays: while auto-translate is on the server resolves the deletion to
     // off anyway, and persisting that resolved `false` would silently discard
     // their preference — switching auto-translate back off later would leave
     // them with neither behaviour and no hint why.
-    formData.append("translationPurgeOnPrimaryChange", String(localPurgeOnChange));
-    // Never claim the Max feature from a plan that cannot have it: the server
-    // rejects a change it is not entitled to, and sending the STORED value
-    // keeps an unentitled save from tripping that gate.
-    formData.append(
-      "autoTranslateExternalChanges",
-      String(canAutoTranslateExternal ? localAutoTranslateExternal : autoTranslateExternalChanges),
-    );
-    // The sub-decision is stored as the merchant LEFT it, exactly like the
-    // deletion switch above: the server resolves it against the parent on every
-    // read, so persisting the resolved `false` of a moment when the parent is
-    // off would throw away an answer they gave on purpose.
-    formData.append(
-      "autoTranslateHandles",
-      String(canAutoTranslateExternal ? localAutoTranslateHandles : autoTranslateHandles),
-    );
+    if (localPurgeOnChange !== translationPurgeOnPrimaryChange) {
+      formData.append("translationPurgeOnPrimaryChange", String(localPurgeOnChange));
+    }
+    // Never claim the Max feature from a plan that cannot have it — the
+    // change flags are false there, so nothing is sent at all.
+    if (autoTranslateExternalChanged) {
+      formData.append("autoTranslateExternalChanges", String(localAutoTranslateExternal));
+    }
+    // The sub-decision is stored as the merchant LEFT it: the server resolves
+    // it against the parent on every read. Sent only while the parent is on in
+    // this draft — with it off the switch shows its resolved "off", and a save
+    // must not store an answer the screen does not show.
+    if (autoTranslateHandlesChanged) {
+      formData.append("autoTranslateHandles", String(localAutoTranslateHandles));
+    }
+    if (dailyLimitChanged) {
+      formData.append("autoTranslateDailyLimit", localDailyLimit.trim());
+    }
 
     fetcher.submit(formData, { method: "POST" });
   };
@@ -364,14 +394,33 @@ export function AIInstructionsTabs({
     }));
   };
 
-  // Check if there are unsaved changes (instructions OR translation mode)
+  // Check if there are unsaved changes (instructions OR translation mode).
+  // Per KEY, because the save sends exactly these and nothing else.
+  const changedInstructionKeys = Object.keys({ ...instructions, ...localInstructions }).filter(
+    (key) =>
+      ((localInstructions as unknown as Record<string, string | undefined>)[key] ?? "") !==
+      ((instructions as unknown as Record<string, string | undefined>)[key] ?? ""),
+  ) as Array<keyof typeof localInstructions>;
+  const autoTranslateExternalChanged =
+    canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges;
+  // Only while the parent is on in the draft: with it off the child renders
+  // its resolved "off", and a lit save bar over no visible difference is a
+  // change the merchant cannot see (and would store blind).
+  const autoTranslateHandlesChanged =
+    autoTranslateActive && localAutoTranslateHandles !== autoTranslateHandles;
+  // Same rule as the handle switch: only while the parent is on in the draft.
+  const dailyLimitChanged = autoTranslateActive && localDailyLimit.trim() !== storedDailyLimit;
+  // "" (no limit) or a whole number of at least 1 — the server refuses the
+  // rest, and the field says so before the merchant presses Save.
+  const dailyLimitInvalid = localDailyLimit.trim() !== "" && !(/^\d{1,7}$/.test(localDailyLimit.trim()) && Number(localDailyLimit.trim()) >= 1);
   const instructionsChanged =
-    JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
+    changedInstructionKeys.length > 0 ||
     localTranslationMode !== translationMode ||
     localKeywordAware !== keywordAwareTranslation ||
     localPurgeOnChange !== translationPurgeOnPrimaryChange ||
-    (canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges) ||
-    (canAutoTranslateExternal && localAutoTranslateHandles !== autoTranslateHandles);
+    autoTranslateExternalChanged ||
+    autoTranslateHandlesChanged ||
+    dailyLimitChanged;
   const hasChanges = instructionsChanged || visionChanged;
 
   // Propagate hasChanges to parent component
@@ -388,6 +437,7 @@ export function AIInstructionsTabs({
     setLocalPurgeOnChange(translationPurgeOnPrimaryChange);
     setLocalAutoTranslateExternal(autoTranslateExternalChanges);
     setLocalAutoTranslateHandles(autoTranslateHandles);
+    setLocalDailyLimit(storedDailyLimit);
     setLocalSendImages(sendImagesToAI);
     setLocalImagesPerRequest(clampImagesPerRequest(aiImagesPerRequest));
   };
@@ -741,6 +791,56 @@ export function AIInstructionsTabs({
                             'Nur möglich, wenn automatisch neu übersetzt wird.'}
                         </Text>
                       )}
+                    </div>
+                    {/* The OPTIONAL daily limit, directly under the handle
+                        switch and indented the same way: a sub-decision of
+                        the auto-translation. Empty = no limit. What it limits,
+                        and what happens to refused work (the retry list), is
+                        the ❓'s business. */}
+                    <div style={{ paddingInlineStart: "2.25rem", maxWidth: "28rem" }}>
+                      <TextField
+                        label={
+                          <FieldLabel
+                            label={t.settings.autoTranslateDailyLimit || 'Höchstens so viele Einträge pro Tag erstmals übersetzen'}
+                            helpKey="autoTranslateDailyLimit"
+                          />
+                        }
+                        type="number"
+                        min={1}
+                        autoComplete="off"
+                        value={autoTranslateActive ? localDailyLimit : storedDailyLimit}
+                        onChange={setLocalDailyLimit}
+                        placeholder={t.settings.autoTranslateDailyLimitPlaceholder || 'Keine Grenze'}
+                        disabled={readOnly || !canAutoTranslateExternal || !autoTranslateActive}
+                        error={
+                          autoTranslateActive && dailyLimitInvalid
+                            ? t.settings.autoTranslateDailyLimitInvalid || 'Eine ganze Zahl ab 1 — oder leer für keine Grenze.'
+                            : undefined
+                        }
+                      />
+                      {autoTranslateRetrySummary &&
+                        (autoTranslateRetrySummary.pending > 0 || autoTranslateRetrySummary.exhausted > 0) && (
+                          <BlockStack gap="100">
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {(t.settings.autoTranslateRetrySummary ||
+                                'Wiederholungsliste: {pending} wartend, {exhausted} endgültig fehlgeschlagen.')
+                                .replace('{pending}', String(autoTranslateRetrySummary.pending))
+                                .replace('{exhausted}', String(autoTranslateRetrySummary.exhausted))}
+                            </Text>
+                            {autoTranslateRetrySummary.exhaustedItems.map((item) => (
+                              <Text key={item.resourceId} as="p" variant="bodySm" tone="critical">
+                                {item.resourceTitle || item.resourceId}
+                                {item.lastError
+                                  ? ` — ${
+                                      (t.settings.autoTranslateRetryErrors as Record<string, string> | undefined)?.[item.lastError] ||
+                                      t.settings.autoTranslateRetryErrors?.run_failed ||
+                                      'Übersetzung fehlgeschlagen'
+                                    }`
+                                  : ''}
+                              </Text>
+                            ))}
+                          </BlockStack>
+                        )}
                     </div>
                   </BlockStack>
                 </BlockStack>

@@ -1137,7 +1137,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // §1.4b — the rule editor needs `sources[]`, which exists from API 2026-07.
   // Below that only manual collections are creatable, and the type choice says
   // so instead of offering an editor whose payload would be refused.
-  const appData = useRouteLoaderData("routes/app") as { shopifyApiVersion?: string } | undefined;
+  const appData = useRouteLoaderData("routes/app") as
+    | { shopifyApiVersion?: string; autoTranslateActive?: boolean }
+    | undefined;
   const rulesAvailable = rulesAvailableOn(appData?.shopifyApiVersion ?? "");
 
   const deleteItem = useDeleteItem({
@@ -1830,6 +1832,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   }}
                   t={{
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                    unpublishedLocaleSuffix: t.content?.unpublishedLanguageSuffix || "not published",
                     translateAll: t.content?.translateAll || "🌍 Translate All",
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
@@ -1876,6 +1879,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     validationVersion={helpers.validationVersion}
                     t={{
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                      unpublishedLocaleSuffix: t.content?.unpublishedLanguageSuffix || "not published",
                       translateAll: t.content?.translateAll || "🌍 Translate All",
                       translating: t.content?.translating || "Translating...",
                       allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
@@ -2087,6 +2091,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     "This product is not in the catalog of the market “{market}”, so nobody there can see it — translations for this market stay invisible until it is published there."
                   }
                 />
+              )}
+
+              {/* A save handed foreign languages to a DETACHED re-translation.
+                  The watch already knows (the task ids come back with the save
+                  response, before the run's row exists), so say so here —
+                  otherwise the translations simply appear seconds later with
+                  nothing on screen to explain it, and a fast run is gone before
+                  the shop-wide task badge's next poll ever sees it. */}
+              {helpers.pendingRetranslationCount > 0 && (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <InlineStack gap="200" blockAlign="center" wrap={false}>
+                    <Spinner size="small" accessibilityLabel={t.content?.backgroundRetranslationRunning || "Translations are being updated in the background"} />
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t.content?.backgroundRetranslationRunning ||
+                        "Translations are being updated in the background — the fields reload as soon as they are done."}
+                    </Text>
+                  </InlineStack>
+                </div>
               )}
 
               {/* Scrollable Content Area */}
@@ -2565,7 +2587,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 containerStyle={{ marginBottom: 4 }}
               />
             )}
-            <div style={{ flex: 1, overflowY: "auto" }}>
+            {/* `scrollbar-gutter: stable` — the tabs inside (score,
+                attributes, …) differ in height, so without a reserved gutter
+                the scrollbar appears and disappears while clicking through
+                them and the whole panel shifts sideways by its width. Same
+                rule as the page scroll containers in responsive.css. */}
+            <div style={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable" }}>
               {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
                 sidebarRenderer(selectedItem, state.editableValues)
               )}
@@ -2748,6 +2775,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       {createItem.openResource && (
         <CreateItemModal
           open={!!createItem.openResource}
+          defaultTranslateAfterwards={!!appData?.autoTranslateActive}
           onClose={createItem.close}
           resource={createItem.openResource}
           initialValues={createItem.initialValues}

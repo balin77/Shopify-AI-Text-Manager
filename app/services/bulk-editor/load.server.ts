@@ -9,7 +9,9 @@
  * apply.server.ts.
  */
 
+import { lookupLocalizedNames, scheduleTaxonomyImport } from "../taxonomy-localization.server";
 import type { PrismaClient, Prisma } from "@prisma/client";
+import { canonicalCollectionIds } from "../collection-picker.shared";
 import { isDefaultTitleOption } from "../../utils/shopify-product.utils";
 import { debugLog } from "../../utils/debug";
 import {
@@ -36,6 +38,13 @@ import {
   METAFIELD_TYPE_LIST_SINGLE_LINE,
   metafieldColumnId,
   metaobjectColumnId,
+  filterIdsForType,
+  selectedInGroup,
+  STATUS_FILTER_IDS,
+  STATUS_FILTER_VALUES,
+  VISIBILITY_FILTER_IDS,
+  COLLECTION_KIND_FILTER_IDS,
+  ATTRIBUTE_GATED_FILTER_IDS,
 } from "./columns.shared";
 
 /** Minimal admin-client surface the blog live-fetch needs — the same shape
@@ -91,6 +100,13 @@ export interface LoadBulkRowsOptions {
    * Passed by the caller (which already has the locales); absent ⇒ the flag is
    * skipped (no extra query), which the grid simply renders as no blue. */
   foreignLocales?: string[];
+  /** Product rows only: the shop's PRIMARY locale, to show the category name
+   * in it. The cached `categoryName` comes from the Admin API, which only
+   * speaks English, so without this the grid's category cells were the one
+   * English spot next to a picker whose list is localized. Absent ⇒ the
+   * cached name as it is (the CSV paths, which compare values and must not
+   * depend on an import having run). */
+  categoryLocale?: string;
 }
 
 export interface LoadBulkRowsResult {
@@ -122,6 +138,27 @@ const RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   metaobject: "Metaobject", // unused — metaobjects read MetaobjectTranslation instead
   image: "MediaImage", // unused — image rows read ProductImageAltTranslation instead
 };
+
+// ─── Category names in the shop's language ─────────────────────────────────
+
+/**
+ * Replaces each product row's cached (English) category path with the
+ * localized one, in ONE query for the page — the same source and the same
+ * fallback the picker's own route uses: no localized row (an English shop, no
+ * import yet, a category newer than the pinned release) keeps the cached
+ * name, and a failed lookup answers EMPTY rather than throwing. A locale whose
+ * import has not run yet is scheduled, like the route does.
+ */
+async function localizeCategoryNames(db: PrismaClient, locale: string, rows: BulkRow[]): Promise<void> {
+  const gids = [...new Set(rows.map((r) => r.category).filter((g): g is string => !!g))];
+  if (gids.length === 0) return;
+  const { byGid, missing, localized } = await lookupLocalizedNames(db, locale, gids);
+  if (localized && missing.length > 0) scheduleTaxonomyImport(db, locale);
+  for (const row of rows) {
+    const name = row.category ? byGid.get(row.category) : undefined;
+    if (name?.fullName) row.categoryName = name.fullName;
+  }
+}
 
 // ─── Shop currency (Phase 3 — Plan §5.2) ───────────────────────────────────
 
@@ -233,6 +270,47 @@ async function buildWhere(
   return { and, translationFilterApproximate };
 }
 
+/** Shopify status values selected by the status filter group (OR). Empty =
+ * no status restriction. */
+function selectedStatuses(filters: readonly BulkFilterId[]): string[] {
+  return selectedInGroup(filters, STATUS_FILTER_IDS).map((id) => STATUS_FILTER_VALUES[id] as string);
+}
+
+/**
+ * The type-specific filters of the four DB-backed content types (status,
+ * visibility, collection kind, content gaps). `opts.filters` is already
+ * pruned to `filterIdsForType(type)` by loadBulkRows, so every column named
+ * here exists on the type's model.
+ */
+function typeFilterConditions(type: BulkRowType, filters: readonly BulkFilterId[]): Record<string, unknown>[] {
+  const and: Record<string, unknown>[] = [];
+  const has = (id: BulkFilterId) => filters.includes(id);
+
+  // Merchandising attributes hold migration DEFAULTS until the row was
+  // attribute-synced — never read them without the discriminator.
+  if (ATTRIBUTE_GATED_FILTER_IDS.some(has)) and.push({ attributesSyncedAt: { not: null } });
+
+  const statuses = selectedStatuses(filters);
+  if (statuses.length > 0) and.push({ status: { in: statuses } });
+
+  const visibility = selectedInGroup(filters, VISIBILITY_FILTER_IDS);
+  if (visibility.length === 1) and.push({ isPublished: visibility[0] === "published" });
+
+  const kind = selectedInGroup(filters, COLLECTION_KIND_FILTER_IDS);
+  if (kind.length === 1) and.push({ isSmart: kind[0] === "smartCollection" });
+
+  if (has("missingDescription")) {
+    and.push(missingField(type === "product" || type === "collection" ? "descriptionHtml" : "body"));
+  }
+  if (has("missingSummary")) and.push(missingField("summary"));
+  if (has("missingImage")) and.push(missingField(type === "product" ? "featuredImageUrl" : "imageUrl"));
+  if (has("missingProductType")) and.push(missingField("productType"));
+  if (has("missingVendor")) and.push(missingField("vendor"));
+  if (has("missingCategory")) and.push({ categoryId: null });
+  if (has("missingTags")) and.push({ tags: { isEmpty: true } });
+  return and;
+}
+
 /** orderBy for a validated BulkSort — parseSortParam already guaranteed the
  * column is sortable for the type, so this just maps to the DB column.
  * Default stays title asc (the pre-rework behaviour). */
@@ -303,7 +381,15 @@ export async function loadBulkRows(
   shop: string,
   opts: LoadBulkRowsOptions,
 ): Promise<LoadBulkRowsResult> {
+  // A filter id the type does not speak (a hand-crafted URL, a stale id
+  // carried across a type switch) is dropped here, before any branch could
+  // turn it into a query on a column the type does not have.
+  const allowed = filterIdsForType(opts.type);
+  opts = { ...opts, filters: opts.filters.filter((f) => allowed.includes(f)) };
   const result = await loadBulkRowsInner(db, shop, opts);
+  if (opts.type === "product" && opts.categoryLocale) {
+    await localizeCategoryNames(db, opts.categoryLocale, result.rows);
+  }
   if (opts.locale !== "") {
     await attachForeignValues(db, shop, opts, result.rows);
   } else {
@@ -634,6 +720,7 @@ async function loadBulkRowsInner(
     return loadImageRows(db, shop, opts);
   }
   const { and, translationFilterApproximate } = await buildWhere(db, shop, opts);
+  and.push(...typeFilterConditions(type, opts.filters));
   const orderBy = buildOrderBy(type, opts.sort);
 
   switch (type) {
@@ -657,16 +744,18 @@ async function loadBulkRowsInner(
         vendor: true,
         tags: true,
         templateSuffix: true,
-        // Read-only context columns. `categoryName` mirrors the taxonomy's
-        // `fullName`, and the memberships carry their collection TITLE
-        // denormalised — so neither needs a join beyond the relation.
-        // `hasMoreCollections` is what keeps a truncated list from reading as a
-        // complete one.
+        // The two picker cells. The category's GID is the VALUE and its
+        // `fullName` path is what the picker shows; a membership carries its
+        // collection TITLE denormalised (so a collection the cache never
+        // stored still has a name) and its rule-based flag, which the picker
+        // needs to LOCK the row the server would refuse. `hasMoreCollections`
+        // keeps a truncated list from reading as a complete one.
+        categoryId: true,
         categoryName: true,
         hasMoreCollections: true,
         collections: {
           orderBy: { collectionTitle: "asc" as const },
-          select: { collectionTitle: true },
+          select: { collectionId: true, collectionTitle: true, automated: true },
         },
         attributesSyncedAt: true,
         featuredImageUrl: true,
@@ -718,7 +807,7 @@ async function loadBulkRowsInner(
               metafields?: { id: string; namespace: string; key: string; value: string; type: string }[];
               options?: { id: string; name: string; position: number; values: string; linkedMetafieldKey: string | null }[];
               images?: { mediaId: string | null; altText: string | null }[];
-              collections?: { collectionTitle: string }[];
+              collections?: { collectionId: string; collectionTitle: string; automated: boolean }[];
               variants?: {
                 shopifyGid: string;
                 price: Prisma.Decimal | null;
@@ -754,8 +843,16 @@ async function loadBulkRowsInner(
             // REPLACES the product's tags rather than adding to them.
             tags: Array.isArray(i.tags) ? (i.tags as string[]).join(", ") : "",
             templateSuffix: (i.templateSuffix as string | null) ?? "",
-            productCategory: (i.categoryName as string | null) ?? "",
-            productCollections: (i.collections ?? []).map((c) => c.collectionTitle).join(", "),
+            category: (i.categoryId as string | null) ?? "",
+            categoryName: (i.categoryName as string | null) ?? "",
+            // Canonical — sorted and de-duplicated — because the grid decides
+            // "dirty" by comparing strings, and the picker emits the same form.
+            collections: canonicalCollectionIds((i.collections ?? []).map((c) => c.collectionId)),
+            collectionMemberships: (i.collections ?? []).map((c) => ({
+              collectionId: c.collectionId,
+              collectionTitle: c.collectionTitle,
+              automated: c.automated,
+            })),
             hasMoreCollections: !!i.hasMoreCollections,
             attributesKnown: !!i.attributesSyncedAt,
             imageUrl: (i.featuredImageUrl as string | null) ?? undefined,
@@ -979,7 +1076,11 @@ async function loadVariantRows(
     });
   }
 
-  const where: Prisma.ProductVariantWhereInput = { product: { shop }, AND: and };
+  const statuses = selectedStatuses(opts.filters);
+  const where: Prisma.ProductVariantWhereInput = {
+    product: statuses.length > 0 ? { shop, status: { in: statuses } } : { shop },
+    AND: and,
+  };
 
   // DB-backed sorts only (§3.3): variant title/sku/price/compareAtPrice/
   // position plus the product title (nested). Default mirrors the Shopify

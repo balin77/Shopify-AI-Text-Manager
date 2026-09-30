@@ -80,7 +80,7 @@ describe("TranslationDriftAutoRunService.tick", () => {
     });
   });
 
-  it("sweeps a due shop with its PUBLISHED foreign locales and stamps it", async () => {
+  it("sweeps a due shop with ALL its foreign locales — unpublished ones included — and stamps it", async () => {
     findMany.mockResolvedValue([DUE_SHOP]);
     scan.mockResolvedValue({ changed: 2, handed: 2, failedTypes: [], truncatedTypes: [] });
     const service = await loadService();
@@ -89,13 +89,39 @@ describe("TranslationDriftAutoRunService.tick", () => {
     const stats = await service.tick(now);
 
     expect(stats).toMatchObject({ candidates: 1, handed: 2, errored: 0, incomplete: 0 });
-    // The primary locale never holds a translation row, and an unpublished one
-    // is not on any storefront.
-    expect(scan.mock.calls[0][0].foreignLocales).toEqual(["de"]);
+    // The primary locale never holds a translation row; an UNPUBLISHED one is a
+    // language being prepared and is swept like any other.
+    expect(scan.mock.calls[0][0].foreignLocales).toEqual(["de", "it"]);
     expect(update).toHaveBeenCalledWith({
       where: { shop: DUE_SHOP.shop },
       data: { lastTranslationScanAt: now },
     });
+  });
+
+  it("only RE-RECORDS baselines for a shop nobody has been sweeping", async () => {
+    // Switch off for months, pages edited in the admin meanwhile: comparing
+    // against the old baseline would replay every one of those edits as fresh
+    // evidence and translate them. Never swept, or swept long ago, both count.
+    scan.mockResolvedValue({ changed: 0, handed: 0, failedTypes: [], truncatedTypes: [] });
+    const service = await loadService();
+    const now = new Date("2026-08-24T12:00:00Z");
+
+    findMany.mockResolvedValue([DUE_SHOP]);
+    await service.tick(now);
+    expect(scan.mock.calls.at(-1)![0].baselineOnly).toBe(true);
+
+    findMany.mockResolvedValue([
+      { shop: DUE_SHOP.shop, lastTranslationScanAt: new Date("2026-06-01T00:00:00Z") },
+    ]);
+    await service.tick(now);
+    expect(scan.mock.calls.at(-1)![0].baselineOnly).toBe(true);
+
+    // Yesterday's sweep: the baselines are current, moves are real.
+    findMany.mockResolvedValue([
+      { shop: DUE_SHOP.shop, lastTranslationScanAt: new Date("2026-08-23T11:00:00Z") },
+    ]);
+    await service.tick(now);
+    expect(scan.mock.calls.at(-1)![0].baselineOnly).toBe(false);
   });
 
   it("stamps a shop whose sweep THREW — an unstamped shop is swept every tick", async () => {

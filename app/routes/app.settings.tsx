@@ -18,6 +18,7 @@ import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
 import { SettingsProbesTab } from "../components/SettingsProbesTab";
+import { SettingsShopLanguagesTab } from "../components/SettingsShopLanguagesTab";
 import type { ProbeSubTab } from "../components/SettingsProbesTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
@@ -76,6 +77,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       await checkAndSyncSubscription(admin, session.shop);
     }
 
+    // The languages Shopify lets this shop ADD (Settings → Shop-Sprachen) —
+    // its own query, started IN PARALLEL with the one below: a failure must not
+    // take the settings page down, and `null` tells the tab "could not load",
+    // never "nothing can be added".
+    const availableShopLocalesPromise = import("../services/shop-locale-publish.server").then(
+      ({ loadAvailableLocales }) => loadAvailableLocales(admin),
+    );
+    // Which markets have an address of their own (Märkte und Adressen) — the
+    // same parallel, `null` on failure. Its page sizes are kept small (cost),
+    // because it runs on every settings load beside the query below.
+    const marketAddressesPromise = import("../services/market-address.server").then(({ loadMarketAddresses }) =>
+      loadMarketAddresses(admin, session.shop),
+    );
+    // Which market web presences show each language — same parallel, `null`
+    // on failure ("could not load", never "in no market").
+    const marketWebPresencesPromise = import("../services/shop-locale-publish.server").then(
+      ({ loadMarketWebPresences }) => loadMarketWebPresences(admin, session.shop),
+    );
     // Fetch shop's locales (incl. name for the glossary locale bar) and display name
     const localesResponse = await admin.graphql(
       `#graphql
@@ -96,6 +115,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales: Array<{ locale: string; name?: string; primary: boolean; published: boolean }> =
       localesData.data.shopLocales || [];
     const primaryShopLocale = shopLocales.find((l) => l.primary)?.locale || "en";
+    const availableShopLocales = await availableShopLocalesPromise;
+    const marketWebPresences = await marketWebPresencesPromise;
+    const marketAddresses = await marketAddressesPromise;
     const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
@@ -476,6 +498,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       select: { metafieldsLastScanAt: true },
     });
 
+    // The auto-translation retry list, summarised for the Translations card.
+    const { loadRetrySummary } = await import("../services/translations/translation-retry.server");
+    const autoTranslateRetrySummary = await loadRetrySummary(session.shop, db);
+
     // Glossary tab: entries incl. per-locale fixed translations.
     const { listGlossaryEntries } = await import("../../src/services/glossary.service");
     const glossaryEntries = (await listGlossaryEntries(session.shop)).map((e) => ({
@@ -518,6 +544,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       optionValueMemory,
       primaryShopLocale,
       shopLocales,
+      availableShopLocales,
+      marketWebPresences,
+      marketAddresses,
       glossaryEntries,
       corruptedApiKeys,
       enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
@@ -526,6 +555,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         key: d.key,
         patchedTranslatable: d.patchedTranslatable,
       })),
+      autoTranslateRetrySummary,
       metafieldsLastScanAt: metafieldScanState?.metafieldsLastScanAt
         ? metafieldScanState.metafieldsLastScanAt.toISOString()
         : null,
@@ -561,6 +591,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         translationPurgeOnPrimaryChange: settings.translationPurgeOnPrimaryChange ?? true,
         autoTranslateExternalChanges: settings.autoTranslateExternalChanges ?? false,
         autoTranslateHandles: settings.autoTranslateHandles ?? false,
+        // Optional daily limit on FIRST automatic translations — null = none.
+        autoTranslateDailyLimit: settings.autoTranslateDailyLimit ?? null,
 
         // Nightly SEO audit (Max) — merchant switch, see
         // services/seo/audit-auto-run.service.ts. Shown on every plan but only
@@ -671,6 +703,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+/**
+ * The daily-limit field of the Translations card: absent (not in the payload),
+ * `null` (the merchant emptied it — no limit), a positive integer, or invalid.
+ * Exported for the tests.
+ */
+export function parseAutoTranslateDailyLimit(
+  raw: FormDataEntryValue | null,
+): number | null | "absent" | "invalid" {
+  if (raw === null) return "absent";
+  const text = String(raw).trim();
+  if (text === "") return null;
+  if (!/^\d{1,7}$/.test(text)) return "invalid";
+  const value = Number(text);
+  return value >= 1 ? value : "invalid";
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -705,23 +753,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // merchant may tick it before, or leave it ticked after, switching the
       // automation off without losing the answer.
       const rawAutoTranslateHandles = formData.get("autoTranslateHandles");
+      // The optional daily limit rides on the same gate: "" clears it (no
+      // limit), a positive integer sets it, anything else is refused BEFORE
+      // anything is written — never guessed into a number, and never 0, which
+      // would silently stop every first translation.
+      const rawDailyLimit = formData.get("autoTranslateDailyLimit");
+      const dailyLimit = parseAutoTranslateDailyLimit(rawDailyLimit);
+      if (dailyLimit === "invalid") {
+        return json(
+          { success: false, error: "The daily limit must be a whole number of at least 1, or empty.", actionType },
+          { status: 400 },
+        );
+      }
       let autoTranslateUpdate: {
         autoTranslateExternalChanges?: boolean;
         autoTranslateHandles?: boolean;
+        autoTranslateDailyLimit?: number | null;
       } = {};
-      if (rawAutoTranslate !== null || rawAutoTranslateHandles !== null) {
+      if (rawAutoTranslate !== null || rawAutoTranslateHandles !== null || dailyLimit !== "absent") {
         const row = await db.aISettings.findUnique({
           where: { shop: session.shop },
           select: {
             subscriptionPlan: true,
             autoTranslateExternalChanges: true,
             autoTranslateHandles: true,
+            autoTranslateDailyLimit: true,
           },
         });
-        const changes: Array<[
-          "autoTranslateExternalChanges" | "autoTranslateHandles",
-          boolean,
-        ]> = [];
+        const changes: Array<
+          | ["autoTranslateExternalChanges" | "autoTranslateHandles", boolean]
+          | ["autoTranslateDailyLimit", number | null]
+        > = [];
         if (
           rawAutoTranslate !== null &&
           (row?.autoTranslateExternalChanges ?? false) !== (rawAutoTranslate === "true")
@@ -733,6 +795,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           (row?.autoTranslateHandles ?? false) !== (rawAutoTranslateHandles === "true")
         ) {
           changes.push(["autoTranslateHandles", rawAutoTranslateHandles === "true"]);
+        }
+        if (dailyLimit !== "absent" && (row?.autoTranslateDailyLimit ?? null) !== dailyLimit) {
+          changes.push(["autoTranslateDailyLimit", dailyLimit]);
         }
         if (changes.length > 0) {
           const { meetsPlan } = await import("../utils/planUtils");
@@ -818,14 +883,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         policyDescriptionInstructions: data.policyDescriptionInstructions || null,
       };
 
-      await db.aIInstructions.upsert({
-        where: { shop: session.shop },
-        update: sanitizedData,
-        create: {
-          shop: session.shop,
-          ...sanitizedData,
-        },
-      });
+      // Only the fields this request CARRIES. The card sends what changed
+      // (its copy is seeded at mount and never re-synced), and writing the
+      // absent ones as NULL would erase every instruction a merchant did not
+      // touch in this save — the same absent-means-unchanged rule the switches
+      // below follow.
+      const sentInstructions = Object.fromEntries(
+        Object.entries(sanitizedData).filter(([key]) => formData.has(key)),
+      ) as Partial<typeof sanitizedData>;
+      if (Object.keys(sentInstructions).length > 0) {
+        await db.aIInstructions.upsert({
+          where: { shop: session.shop },
+          update: sentInstructions,
+          create: {
+            shop: session.shop,
+            ...sentInstructions,
+          },
+        });
+      }
 
       // Translation mode ("exact" | "seo_optimized") is stored on AISettings
       // and piggybacks on the same submit so the Translations sub-section has
@@ -936,6 +1011,199 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "createMarket" || actionType === "deleteMarket") {
+      // Märkte und Adressen: add a market (as a DRAFT) or delete one. Both are
+      // their own confirmed actions, replayed over a fresh read
+      // (market-address.server.ts).
+      const { loadMarketAddresses, validateMarketRequest, createMarket, deleteMarket } = await import(
+        "../services/market-address.server"
+      );
+      if (actionType === "deleteMarket") {
+        const marketId = getFormString(formData, "marketId");
+        if (!marketId) return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+        const outcome = await deleteMarket(admin, session.shop, marketId);
+        return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+      }
+      let countries: string[] = [];
+      try {
+        const parsed = JSON.parse(String(formData.get("countries") ?? "[]"));
+        countries = Array.isArray(parsed) ? parsed.filter((c): c is string => typeof c === "string") : [];
+      } catch {
+        return json({ success: false, actionType, marketId: "new", error: "invalidChanges" }, { status: 400 });
+      }
+      const addresses = await loadMarketAddresses(admin, session.shop);
+      if (!addresses) return json({ success: false, actionType, marketId: "new", error: "unverified" }, { status: 502 });
+      const checked = validateMarketRequest({ name: getFormString(formData, "name") ?? "", countries }, addresses);
+      if (!checked.ok) return json({ success: false, actionType, marketId: "new", error: checked.error }, { status: 400 });
+      const outcome = await createMarket(admin, session.shop, { name: checked.name, countries: checked.countries });
+      return json({ success: outcome.ok, actionType, marketId: "new", error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "removeOrphanAddress") {
+      // An address no market uses any more — removed only while the fresh
+      // read still shows it unclaimed (market-address.server.ts).
+      const { removeOrphanAddress } = await import("../services/market-address.server");
+      const presenceId = getFormString(formData, "presenceId");
+      if (!presenceId) return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+      const outcome = await removeOrphanAddress(admin, session.shop, presenceId);
+      return json({ success: outcome.ok, actionType, marketId: presenceId, error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "createMarketAddress" || actionType === "removeMarketAddress") {
+      // Märkte und Adressen: give a market its own subfolder, or take it back
+      // onto the shared address. Not a setting — it moves storefront URLs — so
+      // each is its own confirmed action, replayed over the addresses and shop
+      // locales read FRESH here (market-address.server.ts).
+      const {
+        loadMarketAddresses,
+        validateSubfolderRequest,
+        createMarketSubfolder,
+        removeMarketAddress,
+      } = await import("../services/market-address.server");
+      const marketId = getFormString(formData, "marketId");
+      if (!marketId) {
+        return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+      }
+      if (actionType === "removeMarketAddress") {
+        const outcome = await removeMarketAddress(admin, session.shop, marketId);
+        return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+      }
+      let alternates: string[] = [];
+      try {
+        const parsed = JSON.parse(String(formData.get("alternateLocales") ?? "[]"));
+        alternates = Array.isArray(parsed) ? parsed.filter((l): l is string => typeof l === "string") : [];
+      } catch {
+        return json({ success: false, actionType, marketId, error: "invalidChanges" }, { status: 400 });
+      }
+      const [addresses, localesJson] = await Promise.all([
+        loadMarketAddresses(admin, session.shop),
+        admin
+          .graphql(`#graphql
+            query settingsShopLocalesForAddress {
+              shopLocales {
+                locale
+              }
+            }`)
+          .then((r) => r.json() as Promise<{ data?: { shopLocales?: Array<{ locale: string }> } }>),
+      ]);
+      const locales = (localesJson.data?.shopLocales ?? []).map((l) => l.locale);
+      if (!addresses || locales.length === 0) {
+        return json({ success: false, actionType, marketId, error: "unverified" }, { status: 502 });
+      }
+      const checked = validateSubfolderRequest(
+        {
+          marketId,
+          suffix: getFormString(formData, "suffix") ?? "",
+          defaultLocale: getFormString(formData, "defaultLocale") ?? "",
+          alternateLocales: alternates,
+        },
+        addresses,
+        locales,
+      );
+      if (!checked.ok) return json({ success: false, actionType, marketId, error: checked.error }, { status: 400 });
+      const outcome = await createMarketSubfolder(admin, session.shop, checked.request);
+      return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "saveShopLocalePublication" || actionType === "removeShopLocale") {
+      // Settings → Shop-Sprachen. Everything submitted is replayed over the
+      // shop's CURRENT locales, read fresh here: the client's copy may be a
+      // minute old, and an unknown or primary locale is refused rather than
+      // sent (shop-locale-publish.server.ts). A REMOVAL is its own action,
+      // behind the two-step typed confirmation — it is irreversible, so it
+      // never rides along with a save of switches.
+      const parseList = <T,>(raw: FormDataEntryValue | null, pick: (c: any) => T | null): T[] | null => {
+        try {
+          const parsed = JSON.parse(String(raw || "[]"));
+          if (!Array.isArray(parsed)) return null;
+          return parsed.map(pick).filter((x): x is T => x !== null);
+        } catch {
+          return null;
+        }
+      };
+      const publish = parseList(formData.get("changes"), (c) =>
+        c && typeof c.locale === "string" && typeof c.published === "boolean"
+          ? { locale: c.locale as string, published: c.published as boolean }
+          : null,
+      );
+      const add = parseList(formData.get("add"), (c) =>
+        c && typeof c.locale === "string" ? { locale: c.locale as string, published: c.published === true } : null,
+      );
+      const markets = parseList(formData.get("markets"), (c) =>
+        c && typeof c.locale === "string" && Array.isArray(c.webPresenceIds)
+          ? {
+              locale: c.locale as string,
+              webPresenceIds: (c.webPresenceIds as unknown[]).filter((id): id is string => typeof id === "string"),
+            }
+          : null,
+      );
+      const removeLocale = actionType === "removeShopLocale" ? getFormString(formData, "locale") : null;
+      if (
+        publish === null ||
+        add === null ||
+        markets === null ||
+        (actionType === "removeShopLocale" && !removeLocale)
+      ) {
+        // A CODE, rendered by the tab — no `error` key, or the page's generic
+        // info box prints English text.
+        return json({ success: false, failed: [{ locale: "", error: "invalidChanges" }], actionType }, { status: 400 });
+      }
+      const localesResponse = await admin.graphql(`#graphql
+        query settingsShopLocalesForPublish {
+          shopLocales {
+            locale
+            primary
+            published
+          }
+        }`);
+      const localesJson = (await localesResponse.json()) as {
+        data?: { shopLocales?: Array<{ locale: string; primary: boolean; published: boolean }> };
+      };
+      const current = localesJson.data?.shopLocales ?? [];
+      if (current.length === 0) {
+        // A failed lookup is not "no languages": refuse rather than guess.
+        return json({ success: false, failed: [{ locale: "", error: "localesUnreadable" }], actionType }, { status: 502 });
+      }
+      const {
+        planLocaleChanges,
+        applyLocaleChanges,
+        loadAvailableLocales,
+        loadMarketWebPresences,
+        planMarketAssignments,
+      } = await import("../services/shop-locale-publish.server");
+      const isRemoval = actionType === "removeShopLocale";
+      const [available, presences] = await Promise.all([
+        add.length > 0 ? loadAvailableLocales(admin) : Promise.resolve([]),
+        // Re-read, never trusted from the client: the planner validates the
+        // ids against it and keeps what the tab does not show.
+        !isRemoval && markets.length > 0 ? loadMarketWebPresences(admin, session.shop) : Promise.resolve([]),
+      ]);
+      const plan = isRemoval
+        ? planLocaleChanges(current, [], { publish: [], add: [], remove: [removeLocale as string] })
+        : planLocaleChanges(current, available, { publish, add, remove: [] });
+      // A language whose addition was REFUSED already has its line; its
+      // markets would only add a second one ("unknown language").
+      const refusedLocales = new Set(plan.refused.map((r) => r.locale.toLowerCase()));
+      const marketPlan = isRemoval
+        ? { changes: [], refused: [] }
+        : planMarketAssignments(
+            current,
+            presences,
+            markets.filter((m) => !refusedLocales.has(m.locale.toLowerCase())),
+            { adding: plan.add.map((a) => a.locale) },
+          );
+      const outcome = await applyLocaleChanges(admin, db, session.shop, {
+        ...plan,
+        markets: marketPlan.changes,
+        publishedBefore: Object.fromEntries(current.map((l) => [l.locale, l.published])),
+      });
+      const failed = [...plan.refused, ...marketPlan.refused, ...outcome.failed];
+      return json({
+        success: failed.length === 0,
+        actionType,
+        confirmed: outcome.confirmed,
+        added: outcome.added,
+        removed: outcome.removed,
+        marketsConfirmed: outcome.marketsConfirmed,
+        // No `error` key on a failure: the page's generic info box would
+        // print the raw codes. The tab renders `failed` itself, in the
+        // merchant's language.
+        failed,
+      });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       // Nightly audit switch. Only written when the field is present, so a
@@ -1028,7 +1296,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             return json(
               {
                 success: false,
-                error: "The nightly SEO audit is available on the Max plan.",
+                error: "The daily SEO audit is available on the Max plan.",
                 actionType,
               },
               { status: 403 },
@@ -1412,7 +1680,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], availableShopLocales = null, marketWebPresences = null, marketAddresses = null, glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, autoTranslateRetrySummary = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1425,7 +1693,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "probes";
+  type Section = "setup" | "languages" | "ai" | "instructions" | "other" | "seo" | "plan" | "probes";
 
   // The three dev-only probes share ONE tab with a sub-tab strip. Their gates
   // stay per probe (unchanged), so the tab itself exists iff any of them is on.
@@ -1465,7 +1733,7 @@ export default function SettingsPage() {
     if (tabParam === "publicationprobe") return showPublicationProbeTab ? "probes" : "setup";
     if (tabParam === "taxonomyprobe") return showTaxonomyProbeTab ? "probes" : "setup";
     if (tabParam === "probes") return showProbesTab ? "probes" : "setup";
-    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
+    if (tabParam && ["setup", "languages", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
@@ -1506,8 +1774,9 @@ export default function SettingsPage() {
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
   const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
   const [hasGlossaryChanges, setHasGlossaryChanges] = useState(false);
+  const [hasShopLanguageChanges, setHasShopLanguageChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges || hasShopLanguageChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
@@ -1560,6 +1829,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const sections = [
       { id: "setup", title: t.settings.appSetup },
+      { id: "languages", title: t.settings.shopLanguages?.title || "Shop languages" },
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
@@ -1623,6 +1893,25 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "setup" ? "semibold" : "regular"}>
                   {t.settings.appSetup}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("languages")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "languages" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "languages" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "languages" ? "semibold" : "regular"}>
+                  {t.settings.shopLanguages?.title || "Shop languages"}
                 </Text>
               </button>
               <button
@@ -1802,11 +2091,27 @@ export default function SettingsPage() {
                     translationPurgeOnPrimaryChange={settings.translationPurgeOnPrimaryChange}
                     autoTranslateExternalChanges={settings.autoTranslateExternalChanges}
                     autoTranslateHandles={settings.autoTranslateHandles}
+                    autoTranslateDailyLimit={settings.autoTranslateDailyLimit}
+                    autoTranslateRetrySummary={autoTranslateRetrySummary}
                     subscriptionPlan={subscriptionPlan as Plan}
                     sendImagesToAI={settings.sendImagesToAI}
                     aiImagesPerRequest={settings.aiImagesPerRequest}
                   />
                 </>
+              )}
+
+              {/* Shop languages — publish / unpublish; an unpublished one is
+                  prepared here like any other (translationForeignLocales). */}
+              {selectedSection === "languages" && (
+                <SettingsShopLanguagesTab
+                  shopLocales={shopLocales}
+                  availableLocales={availableShopLocales}
+                  marketWebPresences={marketWebPresences}
+                  marketAddresses={marketAddresses}
+                  fetcher={fetcher}
+                  t={t}
+                  onHasChangesChange={setHasShopLanguageChanges}
+                />
               )}
 
               {/* SEO Settings */}

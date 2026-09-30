@@ -363,7 +363,7 @@ export function SettingsSEOTab({
             </DisabledActionTooltip>
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">
-                {t.settings.seoAutoAuditLabel || "Nächtlicher SEO-Audit"}
+                {t.settings.seoAutoAuditLabel || "Täglicher SEO-Audit"}
               </Text>
               <Text as="p" variant="bodySm" tone="subdued">
                 {t.settings.seoAutoAuditDescription ||

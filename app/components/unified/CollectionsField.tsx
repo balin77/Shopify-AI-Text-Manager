@@ -23,11 +23,12 @@
  * list as the whole truth.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useShopCollections } from "../../hooks/useShopCollections";
 import { ChipCombobox } from "./ChipCombobox";
 import { FieldLabel } from "./FieldChrome";
 import { BlockStack, Banner, Box, Button, Checkbox, Spinner, Text, TextField } from "@shopify/polaris";
-import { resolveMembershipAutomated } from "../../services/content-attributes.shared";
+import { collectionPickerRows } from "../../services/collection-picker.shared";
 import type { CollectionOption } from "../../routes/api.product-taxonomy";
 import { useI18n } from "../../contexts/I18nContext";
 import { compareStrings } from "../../utils/format";
@@ -87,34 +88,17 @@ export function CollectionsField({
   // server-rendered rows (`memberships` is loader data, so rows exist before
   // the client fetch fills `options`) — see compareStrings().
   const { locale: appLocale } = useI18n();
-  const [options, setOptions] = useState<CollectionOption[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  /** The cache holds more collections than one page — see the route's cap. */
-  const [listTruncated, setListTruncated] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/product-taxonomy?kind=collections")
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        // An empty list from a FAILED lookup would read as "this shop has no
-        // collections" and invite the merchant to untick everything.
-        if (!data?.success) {
-          setFailed(true);
-          return;
-        }
-        setOptions((data.collections ?? []) as CollectionOption[]);
-        // Said, not swallowed: a shop with more collections than the page gets
-        // the first N alphabetically, and a merchant looking for "Winter Sale"
-        // would otherwise conclude it does not exist.
-        setListTruncated(data.truncated === true);
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => { cancelled = true; };
-  }, []);
+  // The list is SHARED with the bulk grid's collections cell (one request per
+  // page, not per picker). A failed lookup is its own state: an empty list
+  // would read as "this shop has no collections" and invite the merchant to
+  // untick everything.
+  const loaded = useShopCollections();
+  const options: CollectionOption[] | null = loaded?.ok ? loaded.collections : null;
+  const failed = loaded !== null && !loaded.ok;
+  // Said, not swallowed: a shop with more collections than the page gets the
+  // first N alphabetically, and a merchant looking for "Winter Sale" would
+  // otherwise conclude it does not exist.
+  const listTruncated = loaded?.ok === true && loaded.truncated;
 
   const selected = useMemo(
     () => new Set(value.split(",").map((id) => id.trim()).filter(Boolean)),
@@ -122,29 +106,17 @@ export function CollectionsField({
   );
 
   /**
-   * The shop's collections UNION the product's own memberships.
-   *
-   * The union is the point: a membership whose collection the cache never
-   * stored (plan cap) would otherwise be invisible here — and invisible means
-   * unticked, which the diff reads as "remove it".
+   * The shop's collections UNION the product's own memberships — the rule
+   * lives in `collectionPickerRows`, shared with the bulk grid's collections
+   * cell so the two pickers cannot come to lock different rows.
    */
-  const rows = useMemo(() => {
-    const byId = new Map<string, CollectionOption>();
-    for (const option of options ?? []) byId.set(option.id, option);
-    for (const membership of memberships) {
-      const existing = byId.get(membership.collectionId);
-      byId.set(membership.collectionId, {
-        id: membership.collectionId,
-        title: existing?.title || membership.collectionTitle || membership.collectionId,
-        // The SAME ladder the server runs (`resolveMembershipAutomated`),
-        // called rather than restated: the two flags are stale in different
-        // directions, a positive from either wins, and a picker that decides
-        // it differently offers exactly the change the save then refuses.
-        automated: resolveMembershipAutomated(existing?.automated, membership.automated),
-      });
-    }
-    return [...byId.values()].sort((a, b) => compareStrings(a.title, b.title, appLocale));
-  }, [options, memberships, appLocale]);
+  const rows = useMemo(
+    () =>
+      collectionPickerRows(options, memberships).sort((a, b) =>
+        compareStrings(a.title, b.title, appLocale),
+      ),
+    [options, memberships, appLocale],
+  );
 
   if (!known) {
     return (

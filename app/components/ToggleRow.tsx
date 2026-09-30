@@ -26,7 +26,7 @@
  * direct-translations card uses. A new row on the Settings page takes `inline`.
  */
 
-import { InlineStack, Text } from "@shopify/polaris";
+import { InlineStack, Text, Tooltip } from "@shopify/polaris";
 import { HelpPopover } from "./HelpTrigger";
 import { HelpTooltip } from "./HelpTooltip";
 import { ToggleSwitch } from "./ToggleSwitch";
@@ -66,6 +66,13 @@ export interface ToggleRowProps {
    * standing among form fields.
    */
   layout?: "spread" | "inline";
+  /**
+   * A short hover text on the SWITCH itself — what its two positions mean,
+   * not the explanation (that is the ❓'s job). The switch is a `<label>`, so
+   * it keeps receiving pointer events even while its input is disabled and a
+   * plain Polaris `Tooltip` is enough here.
+   */
+  tooltip?: string;
 }
 
 export function ToggleRow({
@@ -77,6 +84,7 @@ export function ToggleRow({
   disabled = false,
   helpPosition = "below",
   layout = "spread",
+  tooltip,
 }: ToggleRowProps) {
   const words = (
     <InlineStack gap="100" blockAlign="center">
@@ -100,8 +108,17 @@ export function ToggleRow({
       )}
     </InlineStack>
   );
-  const control = (
+  const toggle = (
     <ToggleSwitch checked={checked} onChange={onChange} disabled={disabled} ariaLabel={label} />
+  );
+  const control = tooltip ? (
+    <Tooltip content={tooltip} preferredPosition="above">
+      {/* A flex box, so the inline-block switch does not sit on a text
+          baseline inside Polaris' activator span and grow the row. */}
+      <span style={{ display: "flex" }}>{toggle}</span>
+    </Tooltip>
+  ) : (
+    toggle
   );
 
   if (layout === "inline") {

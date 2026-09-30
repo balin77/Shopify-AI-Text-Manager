@@ -31,6 +31,7 @@ import {
 import { hasTaskDetails } from "~/services/tasks/task-details.shared";
 import { taskEditorDeepLink } from "~/services/tasks/task-deep-link.shared";
 import { useAppNavigation } from "~/hooks/useAppNavigation";
+import { useTaskCount } from "~/contexts/TaskCountContext";
 import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
 import { TaskDetailsPanel } from "~/components/tasks/TaskDetailsPanel";
 
@@ -295,6 +296,23 @@ export default function TasksPage() {
       return () => clearInterval(interval);
     }
   }, [tasks]);
+
+  // Follow the navigation badge. The 3s poll above only arms when the list
+  // ALREADY held a running task at load time, so a task started while this
+  // page was open — the weekly auto-crawl, a webhook-started repair, work from
+  // another tab — lit the badge ("1 running") while the list below never
+  // showed it. The badge's own poll is the signal: whenever its count moves,
+  // re-run the loader. Skips the mount (the loader just ran) and a revalidation
+  // already in flight.
+  const { runningTaskCount } = useTaskCount();
+  const lastRunningCountRef = useRef(runningTaskCount);
+  useEffect(() => {
+    if (lastRunningCountRef.current === runningTaskCount) return;
+    lastRunningCountRef.current = runningTaskCount;
+    if (revalidatorRef.current.state === "idle") {
+      revalidatorRef.current.revalidate();
+    }
+  }, [runningTaskCount]);
 
   // Handle filter changes
   const handleStatusFilterChange = useCallback((value: string) => {

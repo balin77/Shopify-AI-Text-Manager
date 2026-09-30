@@ -82,6 +82,7 @@ interface MobileToolbarProps {
 
   t?: {
     primaryLocaleSuffix?: string;
+    unpublishedLocaleSuffix?: string;
     translateAll?: string;
     translating?: string;
     clearAll?: string;
@@ -327,7 +328,10 @@ function MobileLocaleButton({
   const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
   const isPrimary = locale.primary;
   const isCurrentLanguage = currentLanguage === locale.locale;
-  const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
+  // "°" marks a language that is not published yet, as in the desktop bar.
+  const shortLabel = `${locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1)}${
+    !isPrimary && (locale as { published?: boolean }).published === false ? "°" : ""
+  }`;
 
   const buttonEl = (
     <div style={{ ...buttonStyle, flexShrink: 0 }}>

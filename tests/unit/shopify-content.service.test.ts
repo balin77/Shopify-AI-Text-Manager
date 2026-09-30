@@ -254,7 +254,7 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
                 { locale: 'de', primary: true, published: true },
                 { locale: 'fr', primary: false, published: true },
                 { locale: 'it', primary: false, published: true },
-                { locale: 'es', primary: false, published: false },
+                { locale: 'es', primary: false, published: false }, // unpublished: still translated, so still purged
               ],
             },
           };
@@ -305,7 +305,7 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
       resourceId: imageId,
       keys: ['alt'],
     });
-    expect(removeAcrossLocales.calls[0].locales.sort()).toEqual(['fr', 'it']);
+    expect(removeAcrossLocales.calls[0].locales.sort()).toEqual(['es', 'fr', 'it']);
   });
 
   it('deletes the mirror row on the PARENT under image_alt_text', async () => {
@@ -318,7 +318,7 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
       key: 'image_alt_text',
       marketId: '',
     });
-    expect(where.locale.in.sort()).toEqual(['fr', 'it']);
+    expect(where.locale.in.sort()).toEqual(['es', 'fr', 'it']);
   });
 
   it('keeps the local row for a locale Shopify did NOT confirm', async () => {
@@ -338,7 +338,7 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     removeAcrossLocales.confirms = ['it\u0000alt']; // only `it` really had one
     await save();
 
-    expect(removeAcrossLocales.calls[0].locales.sort()).toEqual(['fr', 'it']);
+    expect(removeAcrossLocales.calls[0].locales.sort()).toEqual(['es', 'fr', 'it']);
     // ...and only what Shopify confirmed is deleted locally.
     expect(db.contentTranslation.deleteMany.mock.calls.at(-1)[0].where.locale.in).toEqual(['it']);
   });
