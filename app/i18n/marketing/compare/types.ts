@@ -74,8 +74,10 @@ export type CompareCopy = {
       unstated: string;
     };
     trialRow: string;
-    /** Label of the app toggles above the table. */
-    appPicker: string;
+    /** `+` button at the end of the header row, and its menu's label. */
+    addApp: string;
+    /** Accessible name / tooltip of a column header that hides its app; `{name}` is the app. */
+    removeApp: string;
     /** Group heading of the last table section: where each app is strong. */
     strengthsGroup: string;
     strengthsRow: string;

@@ -97,10 +97,41 @@ export function CompareMatrix({
   const [level, setLevel] = useState(Math.min(DEFAULT_LEVEL, levelCount - 1));
   const [shown, setShown] = useState<readonly PriceAppId[]>(initialApps ?? apps);
   const visible = apps.filter((app) => app === "contentpilot" || shown.includes(app));
-  const toggleable = apps.filter((app) => app !== "contentpilot");
-  const shownCompetitors = toggleable.filter((app) => shown.includes(app));
-  const toggle = (app: PriceAppId) =>
-    setShown((current) => (current.includes(app) ? current.filter((a) => a !== app) : [...current, app]));
+  const hidden = apps.filter((app) => app !== "contentpilot" && !shown.includes(app));
+  const shownCompetitors = visible.filter((app) => app !== "contentpilot");
+  // The last competitor cannot be hidden: a table of ContentPilot alone
+  // compares nothing.
+  const canHide = shownCompetitors.length > 1;
+  const hide = (app: PriceAppId) => setShown((current) => current.filter((a) => a !== app));
+  const show = (app: PriceAppId) => {
+    setShown((current) => [...current, app]);
+    setAddOpen(false);
+  };
+  // The `+` column exists only while there is something to add back.
+  const addColumn = hidden.length > 0;
+  const columns = 1 + visible.length + (addColumn ? 1 : 0);
+  const [addOpen, setAddOpen] = useState(false);
+  const addRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!addOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!addRef.current?.contains(event.target as Node)) setAddOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAddOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [addOpen]);
+  useEffect(() => {
+    if (!addColumn) setAddOpen(false);
+  }, [addColumn]);
+  /** Filler cell of the `+` column in every body row. */
+  const addFiller = addColumn ? <td className="mk-compare-matrix__add-cell" aria-hidden="true" /> : null;
   const levelLabel = (i: number) => (i === 0 ? g.freeLevel : g.level.replace("{n}", String(i)));
 
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -187,31 +218,6 @@ export function CompareMatrix({
               </button>
             ))}
           </div>
-          {toggleable.length > 1 ? (
-            <div className="mk-compare-levels mk-compare-apps" role="group" aria-label={g.appPicker}>
-              {toggleable.map((app) => {
-                const on = shown.includes(app);
-                // The last competitor cannot be switched off: a table of
-                // ContentPilot alone compares nothing.
-                const locked = on && shownCompetitors.length === 1;
-                return (
-                  <button
-                    key={app}
-                    type="button"
-                    className="mk-compare-levels__button mk-compare-apps__button"
-                    aria-pressed={on}
-                    disabled={locked}
-                    onClick={() => toggle(app)}
-                  >
-                    <span className="mk-compare-apps__check" aria-hidden="true">
-                      {on ? "✓" : "+"}
-                    </span>
-                    {appName(app)}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
         </div>
 
       <div
@@ -228,25 +234,75 @@ export function CompareMatrix({
           <thead>
             <tr>
               <th scope="col">{copy.featureColumn}</th>
-              {visible.map((app) => (
-                <th scope="col" key={app} className={oursClass(app)}>
-                  <span className="mk-compare-matrix__app">
-                    {app === "contentpilot" ? MARKETING_SITE.appName : appName(app)}
-                  </span>
-                  <span className="mk-compare-matrix__plan">
-                    {stack((at) => {
-                      const { plan, isTop } = planAt(app, at);
-                      return `${plan.name}${isTop ? ` · ${g.topPlan}` : ""}`;
-                    })}
-                  </span>
+              {visible.map((app) => {
+                const name = app === "contentpilot" ? MARKETING_SITE.appName : appName(app);
+                const content = (
+                  <>
+                    <span className="mk-compare-matrix__app">{name}</span>
+                    <span className="mk-compare-matrix__plan">
+                      {stack((at) => {
+                        const { plan, isTop } = planAt(app, at);
+                        return `${plan.name}${isTop ? ` · ${g.topPlan}` : ""}`;
+                      })}
+                    </span>
+                  </>
+                );
+                const removable = app !== "contentpilot" && canHide;
+                return (
+                  <th scope="col" key={app} className={oursClass(app)}>
+                    {removable ? (
+                      <button
+                        type="button"
+                        className="mk-compare-matrix__remove"
+                        title={g.removeApp.replace("{name}", name)}
+                        aria-label={g.removeApp.replace("{name}", name)}
+                        onClick={() => hide(app)}
+                      >
+                        <span className="mk-compare-matrix__remove-body">{content}</span>
+                        <span className="mk-compare-matrix__remove-icon" aria-hidden="true">
+                          ×
+                        </span>
+                      </button>
+                    ) : (
+                      content
+                    )}
+                  </th>
+                );
+              })}
+              {addColumn ? (
+                <th scope="col" className="mk-compare-matrix__add-cell">
+                  <div className="mk-compare-matrix__add" ref={addRef}>
+                    <button
+                      type="button"
+                      className="mk-compare-matrix__add-button"
+                      title={g.addApp}
+                      aria-label={g.addApp}
+                      aria-expanded={addOpen}
+                      aria-haspopup="menu"
+                      onClick={() => setAddOpen((open) => !open)}
+                    >
+                      +
+                    </button>
+                    {addOpen ? (
+                      <ul className="mk-compare-matrix__add-menu" role="menu" aria-label={g.addApp}>
+                        {hidden.map((app) => (
+                          <li key={app} role="none">
+                            <button type="button" role="menuitem" onClick={() => show(app)}>
+                              {appName(app)}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
                 </th>
-              ))}
+              ) : null}
             </tr>
           </thead>
 
           <tbody>
             <tr className="mk-compare-table__group">
-              <th scope="rowgroup" colSpan={1 + visible.length}>
+              <th scope="rowgroup" colSpan={columns}>
                 {g.planGroup}
               </th>
             </tr>
@@ -263,6 +319,7 @@ export function CompareMatrix({
                   </span>
                 </td>
               ))}
+              {addFiller}
             </tr>
             {(["languages", "products", "volume"] as const).map((key) => (
               <tr key={key}>
@@ -276,6 +333,7 @@ export function CompareMatrix({
                     {stack((at) => planLimitTexts(planAt(app, at).plan, copy, locale)[key])}
                   </td>
                 ))}
+                {addFiller}
               </tr>
             ))}
             <tr>
@@ -290,6 +348,7 @@ export function CompareMatrix({
                   })}
                 </td>
               ))}
+              {addFiller}
             </tr>
             <tr>
               <th scope="row">
@@ -303,13 +362,14 @@ export function CompareMatrix({
                   </td>
                 );
               })}
+              {addFiller}
             </tr>
           </tbody>
 
           {COMPARE_GROUPS.map((group) => (
             <tbody key={group}>
               <tr className="mk-compare-table__group">
-                <th scope="rowgroup" colSpan={1 + visible.length}>
+                <th scope="rowgroup" colSpan={columns}>
                   {copy.groups[group]}
                 </th>
               </tr>
@@ -335,6 +395,7 @@ export function CompareMatrix({
                       })}
                     </td>
                   ))}
+                  {addFiller}
                 </tr>
               ))}
             </tbody>
@@ -342,7 +403,7 @@ export function CompareMatrix({
 
           <tbody>
             <tr className="mk-compare-table__group">
-              <th scope="rowgroup" colSpan={1 + visible.length}>
+              <th scope="rowgroup" colSpan={columns}>
                 {g.strengthsGroup}
               </th>
             </tr>
@@ -360,6 +421,7 @@ export function CompareMatrix({
                   </ul>
                 </td>
               ))}
+              {addFiller}
             </tr>
           </tbody>
         </table>

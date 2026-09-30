@@ -1934,33 +1934,115 @@ a.mk-badge:hover {
   gap: 6px;
 }
 
-.mk-compare-levels__button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+/* A competitor's column header is itself the button that hides it. */
+.mk-compare-matrix__remove {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  cursor: pointer;
 }
 
-.mk-compare-apps__button {
+.mk-compare-matrix__remove-body {
+  min-width: 0;
+}
+
+.mk-compare-matrix__remove-icon {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-weight: 500;
-}
-
-/* Several apps can be on at once, so a switched-on app is not drawn like the
-   one chosen level: light fill and a tick instead of the dark pill. */
-.mk-compare-apps .mk-compare-apps__button[aria-pressed="true"] {
-  background: var(--mk-brand-soft);
-  border-color: var(--mk-brand);
-  color: var(--mk-text);
-}
-
-.mk-compare-apps .mk-compare-apps__button[aria-pressed="false"] {
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  font-size: 1.05rem;
+  line-height: 1;
   color: var(--mk-text-muted);
-  border-style: dashed;
+  border: 1px solid var(--mk-border);
+  background: var(--mk-surface);
 }
 
-.mk-compare-apps__check {
-  font-weight: 700;
+.mk-compare-matrix__remove:hover .mk-compare-matrix__remove-icon {
+  color: var(--mk-text);
+  border-color: var(--mk-text-muted);
+}
+
+.mk-compare-matrix__remove:focus-visible {
+  outline: 2px solid var(--mk-brand);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+/* The `+` column: as narrow as its button, only there while an app is
+   hidden, its menu opening leftwards into the table. */
+.mk-compare-matrix__table .mk-compare-matrix__add-cell {
+  width: 56px;
+  min-width: 56px;
+  padding-inline: 8px;
+}
+
+.mk-compare-matrix__add {
+  position: relative;
+}
+
+.mk-compare-matrix__add-button {
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px dashed var(--mk-border-strong);
+  background: var(--mk-surface);
+  color: var(--mk-text);
+  cursor: pointer;
+}
+
+.mk-compare-matrix__add-button:hover,
+.mk-compare-matrix__add-button[aria-expanded="true"] {
+  border-style: solid;
+  border-color: var(--mk-text-muted);
+}
+
+.mk-compare-matrix__add-button:focus-visible {
+  outline: 2px solid var(--mk-brand);
+  outline-offset: 2px;
+}
+
+.mk-compare-matrix__add-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  min-width: 190px;
+  background: var(--mk-surface);
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+
+.mk-compare-matrix__add-menu button {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mk-compare-matrix__add-menu button:hover,
+.mk-compare-matrix__add-menu button:focus-visible {
+  background: var(--mk-surface-2);
 }
 
 /* Not fitting (the server's default, and five apps on a phone): the table
