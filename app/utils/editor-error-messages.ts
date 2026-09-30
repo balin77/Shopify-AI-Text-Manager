@@ -6,6 +6,7 @@
  */
 
 import type { TranslationStrings } from "../types/content-editor.types";
+import { taskErrorText } from "./task-error-text";
 
 /**
  * Translates server error messages to localized strings.
@@ -14,6 +15,17 @@ import type { TranslationStrings } from "../types/content-editor.types";
 export function translateErrorMessage(errorMessage: string, t: TranslationStrings): string {
   const errors = t.errors as Record<string, string> | undefined;
   if (!errorMessage) return errors?.unknownError || "Unknown error";
+
+  // A managed-AI refusal travels as its machine code
+  // (`managed_ai_refused:<reason>` — ManagedAiRefusedError's message), so a
+  // toast renders the same localized sentence the Tasks tab does. Delegated
+  // rather than restated: one refusal, one sentence, wherever it surfaces.
+  // Matched ANYWHERE in the text: a handler that prefixes its own context
+  // ("Translation failed: …") must not push the code back to raw English.
+  const refusal = /managed_ai_refused:([A-Za-z]+)/.exec(errorMessage);
+  if (refusal) {
+    return taskErrorText(refusal[0], t) ?? errorMessage;
+  }
 
   const lowerError = errorMessage.toLowerCase();
 

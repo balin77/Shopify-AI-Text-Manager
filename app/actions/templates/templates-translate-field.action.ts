@@ -1,7 +1,5 @@
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../../src/services/ai.service";
-import { getMissingPreferredKey, noAiKeyResponse } from "~/routes/api-ai-handlers/shared";
-import { tryDecryptApiKey } from "~/utils/encryption.server";
+import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
@@ -11,6 +9,7 @@ import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "~/services/ai/ai-credentials.server";
 
 export async function handleTranslateField(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
@@ -24,11 +23,12 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
     return json({ success: false, error: "No source text available" }, { status: 400 });
   }
 
-  // Compliance gate: require the shop's own AI key before creating a task.
+  // Compliance gate: whose key, consent, kill switch and budget — before a
+  // Task row exists.
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const missingKey = getMissingPreferredKey(settings);
-  if (missingKey) {
-    return noAiKeyResponse(settings, missingKey);
+  const refusal = await aiRefusalResponse(settings, session.shop);
+  if (refusal) {
+    return refusal;
   }
 
   const task = await db.task.create({
@@ -54,19 +54,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
 
     const primaryLocale = primaryLocaleFromForm || "en";
 
-    const aiService = new AIService(
-      toValidProvider(settings?.preferredProvider),
-      {
-        huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-        geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-        claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-        openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-        grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-        deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-      },
-      session.shop,
-      task.id
-    );
+    const aiService = aiServiceFor(settings, session.shop, task.id).service;
 
     const translatedValue = await aiService.translateContent(sourceText, primaryLocale, targetLocale);
 
@@ -173,11 +161,12 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
   }
 
-  // Compliance gate: require the shop's own AI key before creating a task.
+  // Compliance gate: whose key, consent, kill switch and budget — before a
+  // Task row exists.
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const missingKey = getMissingPreferredKey(settings);
-  if (missingKey) {
-    return noAiKeyResponse(settings, missingKey);
+  const refusal = await aiRefusalResponse(settings, session.shop);
+  if (refusal) {
+    return refusal;
   }
 
   const task = await db.task.create({
@@ -202,19 +191,7 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
 
     const primaryLocale = primaryLocaleFromForm || "en";
 
-    const aiService = new AIService(
-      toValidProvider(settings?.preferredProvider),
-      {
-        huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-        geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-        claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-        openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-        grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-        deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-      },
-      session.shop,
-      task.id
-    );
+    const aiService = aiServiceFor(settings, session.shop, task.id).service;
 
     const translations: Record<string, string> = {};
     const pendingUpserts: Array<{ locale: string; value: string }> = [];

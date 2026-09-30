@@ -56,7 +56,11 @@ import { marketOverrideKey } from "./market-layer-purge.server";
 import { TRANSLATION_BATCH } from "../../config/constants";
 import { sanitizeSlug } from "../../utils/slug.utils";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
+// §6a rule 1: a managed refusal must ABORT this repair, never look like a
+// translation the AI could not deliver — that fallback is a deletion.
+import { isManagedRefusal } from "../../../src/services/ai.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
+import type { AiRefusalCode } from "../ai/managed-ai.shared";
 import type {
   HandleRedirectResolver,
   TranslatedHandleContext,
@@ -76,6 +80,7 @@ import {
   removeDeliveredRetryPairs,
   settleTranslationRetry,
   RETRYABLE_RESOURCE_TYPES,
+  managedRefusalRetryError,
   type RetryErrorCode,
   type RetryPair,
 } from "./translation-retry.server";
@@ -929,6 +934,25 @@ export interface ReconcileResult {
    * a row it cannot tell the merchant anything about.
    */
   taskId?: string;
+  /**
+   * The repair stood down and touched NOTHING — it did not remove, did not
+   * re-translate, and left every stale row where it was.
+   *
+   * Only managed AI produces this today (PLAN_MANAGED_AI_KEY §6a rule 1): a
+   * refused call must never be recorded as "the AI could not deliver", because
+   * that answer is a deletion. It is deliberately distinct from
+   * `removed: 0, retranslating: 0`, which means the repair RAN and found
+   * nothing to do.
+   */
+  startFailed?: boolean;
+  /**
+   * Set together with `startFailed` when the stand-down was a MANAGED-AI
+   * refusal (the up-front gate). A caller that owns work of its own — the
+   * retry list above all — must read this as "not now", never as "nothing was
+   * owed": `retranslating: 0` alone would settle (delete) a retry row whose
+   * pairs were never even attempted.
+   */
+  managedStandDown?: AiRefusalCode;
 }
 
 const NOTHING: ReconcileResult = { removed: 0, retranslating: 0 };
@@ -1661,6 +1685,37 @@ async function reconcileDetected(params: ReconcileParams, baseline: BaselineStat
       await deferToRetryList(stale.filter((entry) => entry.baselineFill));
       stale = stale.filter((entry) => !entry.baselineFill);
       await reportFirstFillRefused(shop, resourceId, baseline.db, dailyLimit);
+    }
+    // MANAGED AI is asked before the brake spends anything. Everything below
+    // is irreversible for this move — a unit of the daily limit, the claim that
+    // advances the primary baseline — while the repair's own managed gate only
+    // runs after it, and its stand-down deletes nothing but also translates
+    // nothing: the unit was gone, the baseline had moved past the change, and a
+    // locale that never held a translation lost its only evidence for good.
+    // So a refusal is handled exactly like "the limit is already spent": the
+    // baseline row is left UNTOUCHED (no claim was made, and writing held keys
+    // could revert another webhook's won claim), the fills go on the retry list
+    // as "limit" work (they never spent their unit, so the retry does) with
+    // their attempt count left alone, and the stand-down is reported once per
+    // day. The first entrance's work still reaches the repair, whose own gate
+    // stands it down the same way.
+    if (stale.some((entry) => entry.baselineFill)) {
+      const refusal = await managedRepairRefusal(shop, resourceId);
+      if (refusal) {
+        baseline.skipWrite = true;
+        await deferManagedRefusal(
+          params,
+          stale.filter((entry) => entry.baselineFill),
+          refusal,
+          "limit",
+          baseline.db,
+        );
+        stale = stale.filter((entry) => !entry.baselineFill);
+        await recordManagedStandDown(params, refusal);
+        if (stale.length === 0) {
+          return { removed: 0, retranslating: 0, startFailed: true, managedStandDown: refusal };
+        }
+      }
     }
     if (stale.some((entry) => entry.baselineFill)) {
       const fills = stale.filter((entry) => entry.baselineFill);
@@ -2662,6 +2717,189 @@ async function reserveHandleRedirects(
   return { retranslate: kept, declined: [...declined], keptHandles, handleContexts };
 }
 
+/**
+ * Would a repair of this shop's translations be REFUSED by managed AI right now?
+ * The reason if so, `null` if not (BYO, allowed, or the lookup failed).
+ *
+ * This is the repair's up-front gate (`repairStaleTranslations`), factored out
+ * so the callers that SPEND something before the repair — a unit of the daily
+ * first-translation limit, a claim on the primary baseline, a retry attempt —
+ * can ask the same question first, and stand down with everything intact.
+ *
+ * The static credential decision cannot see MONEY: a spent period budget, a
+ * spent taster or an exhausted global pool are decided per call by the
+ * preflight, i.e. only once the detached run makes its first request. So the
+ * same two questions are asked here (one DB read each, and only for a managed
+ * shop). A spent TASTER is stamped here too, and a shop with a key of its own
+ * is handed back to it (§10) — the detached run resolves its credentials afresh
+ * and then spends the merchant's key, so the repair proceeds.
+ *
+ * `noKey` is BYO's own refusal and is NOT a managed stand-down: a shop with no
+ * key never had a re-translation coming, and the purge is the behaviour it has
+ * always had. A failing LOOKUP is not evidence of a refusal either — refusing
+ * on it would leave stale translations live on every shop the moment the
+ * database blinks — so it answers `null`.
+ */
+export async function managedRepairRefusal(
+  shop: string,
+  resourceId?: string,
+): Promise<AiRefusalCode | null> {
+  try {
+    const { db } = await import("../../db.server");
+    const { resolveAiCredentials } = await import("../ai/ai-credentials.server");
+    const settings = await db.aISettings.findUnique({ where: { shop } });
+    const decision = resolveAiCredentials({ shop, settings });
+    if (!decision.ok && decision.reason !== "noKey") {
+      logger.warn("[StaleTranslations] Managed AI refused — repair stood down, NOTHING deleted", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        reason: decision.reason,
+      });
+      return decision.reason;
+    }
+    if (decision.ok && decision.source === "managed") {
+      const plan = (settings?.subscriptionPlan ?? "free") as never;
+      const { managedBudgetStatus, managedPoolFor } = await import("../ai/managed-budget.server");
+      const { globalPoolStatus } = await import("../ai/managed-global-pool.server");
+      const { fallBackToOwnKeyIfTasterSpent } = await import("../ai/ai-credentials.server");
+      const budget = await managedBudgetStatus(shop, settings, plan);
+      const ownKey = budget.allowed ? null : await fallBackToOwnKeyIfTasterSpent(shop, budget);
+      const pool = budget.allowed
+        ? await globalPoolStatus(managedPoolFor(shop, settings, plan))
+        : null;
+      if ((!budget.allowed && !ownKey) || (pool && !pool.allowed)) {
+        const reason: AiRefusalCode = !budget.allowed
+          ? budget.unavailable
+            ? "managedUnavailable"
+            : budget.kind === "taster"
+              ? "tasterExhausted"
+              : "budgetExceeded"
+          : "managedUnavailable";
+        logger.warn("[StaleTranslations] Managed AI budget or pool spent — repair stood down, NOTHING deleted", {
+          context: "StaleTranslations",
+          shop,
+          resourceId,
+          reason: !budget.allowed ? "budget" : "globalPool",
+        });
+        return reason;
+      }
+    }
+    return null;
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not check the managed-AI gate — proceeding", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Put what a MANAGED refusal kept from being translated on the retry list —
+ * without resetting the attempt count (nothing was tried) and with the refusal
+ * code as `lastError`. Only what the retry can reproduce (`retryableTarget`),
+ * never handles. `reason` "limit" is for fills that never spent their unit of
+ * the daily limit (the retry then spends it); everything else is "failed".
+ * Never throws.
+ */
+async function deferManagedRefusal(
+  target: Pick<RepairTarget, "shop" | "resourceId" | "resourceType" | "contentKind" | "resourceTitle" | "translateAs" | "mirror">,
+  entries: readonly StaleTranslation[],
+  refusal: string,
+  reason: "limit" | "failed" = "failed",
+  dbClient?: typeof import("../../db.server").db | null,
+): Promise<void> {
+  const pairs = entries
+    .filter((entry) => entry.key !== "handle")
+    .map((entry) => ({ key: entry.key, locale: entry.locale }));
+  if (pairs.length === 0 || !retryableTarget(target, entries)) return;
+  await enqueueTranslationRetry(
+    {
+      shop: target.shop,
+      resourceId: target.resourceId,
+      resourceType: target.resourceType,
+      contentKind: target.contentKind,
+      ...(target.resourceTitle ? { resourceTitle: target.resourceTitle } : {}),
+      pairs,
+      reason,
+      error: managedRefusalRetryError(refusal),
+      preserveAttempts: true,
+    },
+    dbClient,
+  );
+}
+
+/**
+ * Make a pre-check STAND-DOWN visible (PLAN_MANAGED_AI_KEY §6a rule 3).
+ *
+ * The repair's up-front managed gate returns before any Task row exists, so
+ * without this auto-translate simply stopped: nothing translated, nothing
+ * deleted, and nothing on the Tasks tab to say why. One terminal row per
+ * (shop, reason) per UTC DAY — a webhook-heavy shop can hit this gate hundreds
+ * of times an hour, and a Tasks tab full of identical rows hides the one the
+ * merchant needs as surely as none. The status is `completed_with_errors`, not
+ * `failed`: nothing went wrong in the automation, and the error is the same
+ * machine code the in-run refusal writes, so `taskErrorText` renders it.
+ *
+ * Never throws: it runs on a path that has just decided to change nothing,
+ * and a bookkeeping failure must not turn that into an exception.
+ */
+export async function recordManagedStandDown(
+  target: Pick<
+    RepairTarget,
+    "shop" | "resourceId" | "contentKind" | "taskResourceType" | "resourceTitle"
+  >,
+  reason: string,
+  now: Date = new Date(),
+): Promise<void> {
+  try {
+    const { db } = await import("../../db.server");
+    const error = `managed_ai_refused:${reason}`;
+    const startOfUtcDay = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const existing = await db.task.findFirst({
+      where: {
+        shop: target.shop,
+        type: "translation",
+        fieldType: "autoTranslateExternalChange",
+        error,
+        createdAt: { gte: startOfUtcDay },
+      },
+      select: { id: true },
+    });
+    if (existing) return;
+    const { getTaskExpirationDate } = await import("../../config/constants");
+    await db.task.create({
+      data: {
+        shop: target.shop,
+        type: "translation",
+        status: "completed_with_errors",
+        resourceType: target.taskResourceType ?? target.contentKind,
+        resourceId: target.resourceId,
+        resourceTitle: target.resourceTitle || target.resourceId,
+        fieldType: "autoTranslateExternalChange",
+        progress: 100,
+        total: 0,
+        error,
+        completedAt: now,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Could not record the managed-AI stand-down", {
+      context: "StaleTranslations",
+      shop: target.shop,
+      resourceId: target.resourceId,
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function repairStaleTranslations(
   target: RepairTarget,
   stale: readonly StaleTranslation[],
@@ -2727,6 +2965,49 @@ async function repairStaleTranslations(
   // describing text that no longer exists. Only with BOTH switches off does
   // nothing get touched, and that case never reaches this line.
   const mayPurge = policy.purgeOnPrimaryChange || policy.autoTranslateExternalChanges;
+
+  // ── Managed AI: stand the WHOLE repair down before anything is deleted ─────
+  //
+  // §6a rule 1 says no managed refusal may produce a deletion, and the abort
+  // inside the detached run is not enough to keep that promise. Two deletions
+  // happen BEFORE the run is ever spawned — the market-override purge just
+  // below and the inline global purge after it — and both are conditioned on
+  // the INTENT to re-translate, never on the run having succeeded. A refusal
+  // discovered later therefore left the market wording of every changed key
+  // deleted with nothing that would ever write it back: the repair produces
+  // global rows only, by design.
+  //
+  // So the question is asked here, once, before the first destructive call.
+  // Note this is deliberately not the per-request preflight: that one bounds
+  // SPEND and belongs next to the call, while this one decides whether this
+  // repair may touch the merchant's data at all.
+  //
+  // Only where a re-translation is actually COMING. A refusal can cancel a
+  // deletion only because the deletion was going to be replaced by new text;
+  // with auto-translate off (or nothing left to re-translate) the purge is the
+  // merchant's own stored answer and involves no AI call at all — standing it
+  // down over an AI budget left the stale translation live for good, since
+  // the sync has already moved the digest baseline past it.
+  if (mayPurge && policy.autoTranslateExternalChanges && retranslate.length > 0) {
+    const refusal = await managedRepairRefusal(shop, resourceId);
+    if (refusal) {
+      await recordManagedStandDown(target, refusal);
+      // A RETRY's own row is the caller's business (`retryAutoTranslation`
+      // postpones it on `managedStandDown`). Anyone else: what this run would
+      // have FILLED goes on the retry list, attempts untouched — the baseline
+      // that proved it may already have advanced, and without the row a locale
+      // that never held a translation would stay empty until the text moves
+      // again. Nothing is deleted either way.
+      if (!target.retryId) {
+        await deferManagedRefusal(
+          target,
+          retranslate.filter((entry) => entry.filled),
+          refusal,
+        );
+      }
+      return { removed: 0, retranslating: 0, startFailed: true, managedStandDown: refusal };
+    }
+  }
 
   // The INLINE purge runs FIRST: one GraphQL call, so the storefront is
   // corrected immediately — and its `markTranslationSaved` then lands BEFORE
@@ -2895,6 +3176,26 @@ async function repairStaleTranslations(
           await purgeStaleEntries(gateway, target, mirror, outcome.failed);
         }
         if (outcome.registered.length > 0) markTranslationSaved(lockId);
+        // A MANAGED refusal is not "could not deliver": nothing was tried.
+        // A retry row is postponed (its attempt given back, never
+        // `exhausted` over a budget), a normal run's pairs are deferred
+        // without resetting the attempt count.
+        if (outcome.managedRefusal) {
+          if (target.retryId) {
+            const pairs = retranslate
+              .filter((entry) => entry.key !== "handle")
+              .map((entry) => ({ key: entry.key, locale: entry.locale }));
+            await settleTranslationRetry(target.retryId, {
+              handed: target.retryHanded ?? pairs,
+              remaining: target.retryHanded ?? pairs,
+              postponed: true,
+              error: managedRefusalRetryError(outcome.managedRefusal),
+            });
+          } else if (!supersededByMerchant()) {
+            await deferManagedRefusal(target, retranslate, outcome.managedRefusal);
+          }
+          return;
+        }
         // What this run could not deliver goes on the RETRY LIST (or settles
         // the retry this run was). Not when the merchant wrote in between:
         // their value is newer than anything decided here.
@@ -2958,7 +3259,10 @@ async function repairStaleTranslations(
  * prompt, no entries on other resources. Everything else keeps its previous
  * behaviour on failure (see translation-retry.server.ts).
  */
-function retryableTarget(target: RepairTarget, entries: readonly StaleTranslation[]): boolean {
+function retryableTarget(
+  target: Pick<RepairTarget, "resourceId" | "resourceType" | "translateAs" | "mirror">,
+  entries: readonly StaleTranslation[],
+): boolean {
   return (
     RETRYABLE_RESOURCE_TYPES.has(target.resourceType) &&
     !target.translateAs &&
@@ -3040,7 +3344,11 @@ async function recordUndelivered(
  *  - the merchant saved translations of it moments ago;
  *  - the merchant's daily limit is spent (only for rows the LIMIT put here: a
  *    FAILED first fill already spent its unit when it first ran, and a failed
- *    refresh was never a first translation).
+ *    refresh was never a first translation);
+ *  - MANAGED AI would refuse the run (`managedRepairRefusal`, asked before the
+ *    limit and the baseline advance, so neither is spent on work that cannot
+ *    happen — and asked again by the repair, whose stand-down is read the same
+ *    way). The refusal code goes into `lastError`.
  *
  * Before it starts it ADVANCES the resource's primary baseline for the keys it
  * retries: a limit refusal HELD that baseline so the move stayed provable, and
@@ -3067,12 +3375,13 @@ export async function retryAutoTranslation(params: {
   reason?: "limit" | "failed";
 }): Promise<"started" | "postponed" | "settled"> {
   const { shop, resourceId, retryId } = params;
-  const postpone = async (postponedBy?: "limit") => {
+  const postpone = async (postponedBy?: "limit", managedRefusal?: string) => {
     await settleTranslationRetry(retryId, {
       handed: params.pairs,
       remaining: params.pairs,
       postponed: true,
       ...(postponedBy ? { postponedBy } : {}),
+      ...(managedRefusal ? { error: managedRefusalRetryError(managedRefusal) } : {}),
     });
     return "postponed" as const;
   };
@@ -3150,6 +3459,25 @@ export async function retryAutoTranslation(params: {
     return "settled";
   }
 
+  // Managed AI is asked BEFORE anything is spent — the unit of the daily limit
+  // and the baseline advance below are both irreversible, and the repair's own
+  // gate (which would stand down the same way) only runs after them. A refusal
+  // is "not now", never "nothing owed": the row keeps every pair and gets its
+  // attempt back, so a spent budget can neither delete it nor exhaust it.
+  const refusal = await managedRepairRefusal(shop, resourceId);
+  if (refusal) {
+    await recordManagedStandDown(
+      {
+        shop,
+        resourceId,
+        contentKind: params.contentKind,
+        ...(params.resourceTitle ? { resourceTitle: params.resourceTitle } : {}),
+      },
+      refusal,
+    );
+    return postpone(undefined, refusal);
+  }
+
   // The daily limit applies to a limit-deferred first translation exactly as
   // on first sight — a retry is not a way around the merchant's cap.
   const dailyLimit = policy.autoTranslateDailyLimit;
@@ -3192,6 +3520,9 @@ export async function retryAutoTranslation(params: {
     // moment the text changed, not to a retry days later.
     { keys: [], locales },
   );
+  // The gate can still refuse between the ask above and the repair's own (a
+  // budget spent by a parallel run): the row stays, the attempt comes back.
+  if (result.managedStandDown) return postpone(undefined, result.managedStandDown);
   if (result.retranslating === 0) {
     await settleTranslationRetry(retryId, { handed: params.pairs, remaining: [] });
     return "settled";
@@ -3334,6 +3665,14 @@ interface RetranslateOutcome {
    * purge must be skipped — see the wrapper.
    */
   startFailed?: boolean;
+  /**
+   * Set with `startFailed` when what stopped the run was a MANAGED-AI refusal
+   * (the reason). The run's entries were never attempted, so they are deferred
+   * rather than counted as a failure: a retry row is postponed with its attempt
+   * given back, and a normal run's pairs go on the list without resetting the
+   * attempt count.
+   */
+  managedRefusal?: string;
 }
 
 /**
@@ -3384,6 +3723,10 @@ async function retranslateStaleEntries(
       entries: entries.length,
       error: error instanceof Error ? error.message : String(error),
     });
+    if (isManagedRefusal(error)) {
+      const managedRefusal = String((error as { reason?: string }).reason ?? "unknown");
+      return { registered: [], failed: [], kept: [], startFailed: true, managedRefusal };
+    }
     return { registered: [], failed: [], kept: [], startFailed: true };
   }
 }
@@ -3455,27 +3798,23 @@ async function runRetranslation(
   const keyToField = asValues ? {} : invertFieldMap(fieldTranslationKeyMap(resourceType));
 
   const { getTaskExpirationDate } = await import("../../config/constants");
-  const { toValidProvider } = await import("../../../src/services/ai.service");
   const { TranslationService } = await import("../../../src/services/translation.service");
-  const { tryDecryptApiKey } = await import("../../utils/encryption.server");
   const { getInstructionWithDefault } = await import("../../utils/ai-instructions.utils");
   const { buildTranslateInstructions } = await import("../../utils/character-limits");
   // The hybrid batching rule — how many languages of this payload fit one AI
   // response. Dynamic like the import above, to keep this module's static graph
   // as it is.
   const { planLocaleChunks } = await import("../ai/translation-budget.shared");
+  const { aiCredentialsFor } = await import("../ai/ai-credentials.server");
 
   const aiSettings = await db.aISettings.findUnique({ where: { shop } });
-  const provider = toValidProvider(aiSettings?.preferredProvider);
-  const aiConfig = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, shop);
+  const provider = aiCredentials.provider;
+  const aiConfig = aiCredentials.config;
 
   const task = await db.task.create({
     data: {
@@ -3655,6 +3994,9 @@ async function runRetranslation(
         }
       }
     } catch (prefetchError: unknown) {
+      // A refusal is the same answer on the per-locale path below; asking it
+      // again there only costs a second refused preflight.
+      if (isManagedRefusal(prefetchError)) throw prefetchError;
       // Never fatal: the loop below still has its per-locale path, which is
       // exactly what this replaced. An auth error surfaces there instead, on the
       // first locale, the way it always did.
@@ -3727,6 +4069,14 @@ async function runRetranslation(
                 valueInstructions,
               );
             } catch (chunkError: unknown) {
+              // A managed REFUSAL is not a chunk that failed — it is the whole
+              // run standing down, and it has to leave this function as a
+              // throw so `retranslateStaleEntries` reports `startFailed` and
+              // the caller skips the purge entirely (§6a rule 1). Falling
+              // through to "this chunk's entries route to the removal" would
+              // DELETE the merchant's translations because our prepaid budget
+              // ran out, unrecoverably.
+              if (isManagedRefusal(chunkError)) throw chunkError;
               // Caught PER CHUNK. `translateBatchValues` throws on a length
               // mismatch, and letting that reach the locale's own catch would
               // discard every chunk already translated and purge all of them —
@@ -3924,6 +4274,10 @@ async function runRetranslation(
           }
         }
       } catch (error: unknown) {
+        // Same rule as the chunk catch above, and this is the one that would
+        // have done the damage: "falling back to removal" is exactly what a
+        // budget refusal must never mean.
+        if (isManagedRefusal(error)) throw error;
         logger.warn("[StaleTranslations] Auto-translation failed — falling back to removal", {
           context: "StaleTranslations",
           shop,
@@ -4023,6 +4377,37 @@ async function runRetranslation(
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    if (isManagedRefusal(error)) {
+      // The run stood down rather than failing. The Task row says so with its
+      // own status — a red task blaming the automation for a budget the
+      // merchant can top up is a defect report about nothing — and the throw
+      // is re-raised so the wrapper answers `startFailed` and NOTHING is
+      // purged (§6a rule 1, §3a rule 5).
+      const refusedCode = `managed_ai_refused:${(error as { reason?: string }).reason ?? "unknown"}`;
+      await db.task
+        .update({
+          where: { id: task.id },
+          data: {
+            status: "completed_with_errors",
+            completedAt: new Date(),
+            error: refusedCode,
+          },
+        })
+        .catch(() => undefined);
+      // Folded only for a RETRY run: the nightly sweep is what can produce
+      // hundreds of these, and no client watches its Task ids. A run an
+      // in-app save started hands its id to the page's watcher, and a
+      // deleted row reads there as "not started yet" — a five-minute stall
+      // before the grid reloads — so that row is kept.
+      if (params.retryId) await foldManagedRefusalTask(db, shop, task.id, refusedCode);
+      logger.warn("[StaleTranslations] Auto-translation stood down — stale rows KEPT", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        reason: (error as { reason?: string }).reason,
+      });
+      throw error;
+    }
     await db.task
       .update({
         where: { id: task.id },
@@ -4048,6 +4433,49 @@ async function runRetranslation(
   }
 
   return { registered, failed, kept: keptHandles };
+}
+
+/**
+ * ONE refusal row per (shop, reason) per UTC day, the same rule as the
+ * pre-check stand-down (`recordManagedStandDown`): every resource a refused
+ * budget meets would otherwise leave its own identical row, and a Tasks tab
+ * full of them hides the one the merchant needs. The first row of the day stays
+ * (it is terminal, so a watcher holding its id gets its answer); a later one is
+ * removed — a watcher holding THAT id treats the missing row like a run that
+ * never started and gives up on its silence bound. Best-effort, never throws.
+ */
+async function foldManagedRefusalTask(
+  db: typeof import("../../db.server").db,
+  shop: string,
+  taskId: string,
+  code: string,
+): Promise<void> {
+  try {
+    const now = new Date();
+    const startOfUtcDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const own = await db.task.findUnique({ where: { id: taskId }, select: { createdAt: true } });
+    if (!own) return;
+    // Only a STRICTLY OLDER row (ties broken by id) lets this one go. "Any
+    // other row" let two runs refused in the same moment each find the other
+    // and each delete itself — the day then kept no refusal row at all.
+    const earlier = await db.task.findFirst({
+      where: {
+        shop,
+        type: "translation",
+        fieldType: "autoTranslateExternalChange",
+        error: code,
+        createdAt: { gte: startOfUtcDay },
+        OR: [
+          { createdAt: { lt: own.createdAt } },
+          { createdAt: own.createdAt, id: { lt: taskId } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (earlier) await db.task.delete({ where: { id: taskId } });
+  } catch {
+    // A duplicate row is noise, not harm.
+  }
 }
 
 /**

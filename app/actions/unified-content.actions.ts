@@ -7,11 +7,10 @@
 
 import { data as json } from "react-router";
 import type { ActionFunctionArgs } from "react-router";
-import { AIService, toValidProvider } from "../../src/services/ai.service";
+import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
-import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import type { ContentEditorConfig } from "../types/content-editor.types";
@@ -49,6 +48,8 @@ import { handleUpdateContent } from "./content/content-update.action";
 import { handleCreateContent } from "./content/create.actions";
 import { handleDeleteContent } from "./content/delete.actions";
 import { handleDuplicateContent } from "./content/duplicate.actions";
+import { aiCredentialsFor } from "~/services/ai/ai-credentials.server";
+import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -56,6 +57,26 @@ import {
   handleTranslateSubResourceToAllLocales,
   handleSavePrimarySubResources,
 } from "./content/sub-resources.action";
+
+/**
+ * The actions of this handler that spend an AI call. The rest (load, save,
+ * create, delete, SKU-based alt texts) never reach a provider and must not be
+ * refused over a spent AI budget.
+ */
+export const AI_CONTENT_ACTIONS: ReadonlySet<string> = new Set([
+  "translateField",
+  "translateAll",
+  "translateAllForLocale",
+  "translateFieldToAllLocales",
+  "generateAltText",
+  "generateAllAltTexts",
+  "translateAltText",
+  "translateAltTextToAllLocales",
+  "translateSubResources",
+  "translateSubResourceToAllLocales",
+  "generateAIText",
+  "formatAIText",
+]);
 
 interface UnifiedContentActionsConfig {
   admin: AdminApiContext;
@@ -85,19 +106,36 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     return json({ success: false, error: "Missing required itemId" }, { status: 400 });
   }
 
+  // ── Managed-AI compliance gate ──────────────────────────────────────────────
+  // Whose key, consent, kill switch and budget — asked once, BEFORE any Task
+  // row or AI call, and only for the actions that reach an AI. A refusal used
+  // to surface as a raw 500 or as every locale silently "failed". The body
+  // echoes `actionType`/`fieldType` so the editor lands it where that action's
+  // own error lands (a field error for the single-field translations).
+  //
+  // It runs BEFORE the credentials below are built, and that order matters:
+  // a spent taster falls back to the merchant's own key inside the gate,
+  // which refreshes `aiSettings` in place — credentials resolved earlier
+  // would still be the managed ones and the first request would be refused.
+  if (AI_CONTENT_ACTIONS.has(action)) {
+    const fieldType = getFormString(formData, "fieldType");
+    const refusal = await aiRefusalFor(aiSettings, session.shop, {
+      actionType: action,
+      ...(fieldType ? { fieldType } : {}),
+    });
+    if (refusal) return refusal;
+  }
+
   // Initialize services
-  const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, session.shop);
+  const provider = aiCredentials.provider;
   // Cast aiInstructions to indexable type for dynamic field access
   const instructions = aiInstructions as Record<string, string | null> | null;
-  const serviceConfig = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  const serviceConfig = aiCredentials.config;
 
   // Update queue rate limits from settings
   const { AIQueueService } = await import("../../src/services/ai-queue.service");
@@ -426,6 +464,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       } catch (updateErr) {
         console.error("Failed to update task status:", updateErr);
       }
+      const refused = managedRefusalResponseFromError(error, aiSettings, { actionType: action, fieldType });
+      if (refused) return refused;
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }
@@ -611,6 +651,8 @@ Allowed formatting changes:
       } catch (updateErr) {
         console.error("Failed to update task status:", updateErr);
       }
+      const refused = managedRefusalResponseFromError(error, aiSettings, { actionType: action, fieldType });
+      if (refused) return refused;
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }

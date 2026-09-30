@@ -511,11 +511,31 @@ export function useCreateItem({
     if (translateFetcher.data === translateDataAtSubmit.current) return;
     translateDataAtSubmit.current = translateFetcher.data;
     setTranslating(false);
-    const failed = translateFetcher.data.success !== true;
-    if (failed) {
-      // A CODE, phrased by the banner.
+    const data = translateFetcher.data as {
+      success?: unknown;
+      code?: unknown;
+      error?: unknown;
+      failedLocales?: unknown;
+    };
+    // A CODE, phrased by the banner — except for a coded AI REFUSAL (budget,
+    // taster, consent, availability), whose sentence the server has already
+    // localised and which says more than "did not finish": the banner renders
+    // `t.warnings[x] || x`, so it shows through verbatim. And a run that
+    // succeeded with some languages missing is still worth a word: success is
+    // per request, `failedLocales` is per language.
+    let warning: string | null = null;
+    if (data.success !== true) {
+      warning =
+        typeof data.code === "string" && data.code.startsWith("AI_") && typeof data.error === "string" && data.error
+          ? data.error
+          : "translateChainFailed";
+    } else if (Array.isArray(data.failedLocales) && data.failedLocales.length > 0) {
+      warning = "translateChainPartial";
+    }
+    if (warning) {
+      const code = warning;
       setCreated((prev) =>
-        prev ? { ...prev, warningCodes: [...(prev.warningCodes ?? []), "translateChainFailed"] } : prev,
+        prev ? { ...prev, warningCodes: [...(prev.warningCodes ?? []), code] } : prev,
       );
     }
     onTranslated?.();

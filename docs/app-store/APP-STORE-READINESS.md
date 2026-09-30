@@ -248,6 +248,31 @@ Dedicated support available via [support email]
 
 **Estimated Time:** 2-3 Stunden
 
+#### A2. Listing change owed by managed AI (PENDING — not yet live)
+
+The listing today says, correctly, that AI features need the merchant's own
+API key. Phases 0–4 of [PLAN_MANAGED_AI_KEY.md](../plans/PLAN_MANAGED_AI_KEY.md)
+are built and merged, so that sentence becomes wrong the day
+`MANAGED_AI_ENABLED` is switched on and the three AI-included subscription
+products exist. Two things change then, and NOT before — a listing that
+offers something a merchant cannot buy is worse than one that under-sells:
+
+- **"Bring your own API key" stops being the only way in.** The listing
+  should name the one-time free trial (~350 AI actions, no key, no plan
+  change, available on the free plan) as the first step, and the AI-included
+  plans as the second. BYO stays first-class and stays free and unlimited: a
+  heavy shop is cheaper on its own key and must never be pushed off it.
+- **Volume is worded as a work unit, never as a token quantity.** The
+  provider terms permit building an application for end users and not
+  reselling API access, so the offer is "a plan with AI included, fair-use
+  volume" — which is also the only unit this codebase can hold stable (the
+  app batches fields and locales, so the same work is a different number of
+  calls from one release to the next).
+
+The wording to start from is the public roadmap entry `managed-ai-key`
+(`app/config/roadmap.server.ts`), which carries it in all three languages and
+is what the /roadmap page already renders.
+
 #### B. Tagline (REQUIRED)
 - [x] Write catchy tagline (max 70 characters)
 

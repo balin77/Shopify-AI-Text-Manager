@@ -48,6 +48,63 @@ das Laufzeitverhalten.
 Environment-Variablen und Secrets, die Postgres-Datenbank, Volumes und deren Größe,
 Domains, sowie die Branch-Zuordnung eines Environments.
 
+### Der Web-Service läuft mit EINER Instanz — das ist eine Zusage, keine Einstellung
+
+`Replicas` steht oben in der Liste der Dashboard-Werte, und bei genau diesem
+Feld ist das Schweigen der Config-Datei gefährlich: **Production läuft heute
+mit einer einzigen Web-Instanz, und mehrere Teile der App sind darauf
+angewiesen.** Wer die Zahl im Dashboard erhöht, bekommt keine Fehlermeldung —
+sondern doppelte Arbeit, doppelte Kosten und gelegentlich eine überschriebene
+Übersetzung.
+
+Vier Zustände leben **im Prozess**, nicht in der Datenbank (mit Managed AI
+kommt der Breaker als fünfter dazu — siehe unten):
+
+| Was | Wo | Was bei zwei Instanzen passiert |
+|---|---|---|
+| AI-Queue: Singleton, Concurrency-Deckel, Rate-Limit-Fenster pro Provider | [src/services/ai-queue.service.ts](src/services/ai-queue.service.ts) | jede Instanz hält ihr eigenes Fenster und ihren eigenen `AI_QUEUE_CONCURRENCY`-Deckel → gegen dasselbe Provider-Limit läuft doppelt so viel, die Folge sind 429er statt eines sauberen Wartens |
+| „Merchant hat gerade gespeichert" (`recentSaves`) | [app/utils/translation-save-lock.server.ts](app/utils/translation-save-lock.server.ts) | der Schutz gilt nur in dem Prozess, der den Save bekam. Ein Webhook auf der anderen Instanz sieht die Markierung nicht und überschreibt die frisch gespeicherte Übersetzung mit dem, was Shopify wegen Eventual Consistency gerade noch liefert — **echter Datenverlust**, genau der Fall, für den das Modul existiert |
+| Deduplizierung der detached Re-Translation-Läufe (`retranslationsInFlight`) | [app/services/translations/stale-translation-sync.server.ts](app/services/translations/stale-translation-sync.server.ts) | derselbe Lauf startet zweimal: jede Sprache wird doppelt übersetzt und doppelt registriert — auf dem KI-Key des Merchants auch doppelt bezahlt |
+| Fünf `setInterval`-Sweeps (Audit, Crawl, Translation-Drift, llms.txt, IndexNow) | gestartet in [app/shopify.server.ts](app/shopify.server.ts) | sie laufen pro Prozess. Der DB-Stempel (`lastAutoRunAt` & Co.) fängt das meiste ab, aber nicht alles: zwischen „Shop als fällig lesen" und „Stempel schreiben" liegt ein Fenster, in dem beide Instanzen denselben Shop greifen |
+
+Ehrlichkeitshalber die Gegenliste — **nicht** betroffen ist alles, was seinen
+Zustand in Postgres hält: die Single-Flight-Logik des Crawls samt
+Orphan-Recovery, der atomare Verbrauch von `ImageOperationCounter`, und die
+`Task`-Zeilen.
+
+**Regel:** Soll horizontal skaliert werden, ziehen diese vier Zustände
+**vorher** nach Postgres oder Redis um, nicht danach. Alle Symptome sind still,
+also würde die Ursache erst Wochen später gesucht.
+
+Für das Managed-AI-Key-Modell
+([docs/plans/PLAN_MANAGED_AI_KEY.md](docs/plans/PLAN_MANAGED_AI_KEY.md)) kommen
+zwei weitere Gründe dazu, und sie sind nicht mehr geplant, sondern gebaut.
+Erstens ist die Instanzzahl direkt ein Kostenfaktor: die Obergrenze dafür, wie
+weit ein Shop sein Budget überziehen kann, ist `AI_QUEUE_CONCURRENCY ×
+Instanzen`. Zweitens ist der Circuit Breaker des Failovers ein **fünfter**
+prozesslokaler Zustand — zwei Instanzen probieren einen ausgefallenen Anbieter
+doppelt so oft und zahlen die Fehlversuche doppelt.
+
+### Env-Variablen für Managed AI
+
+Alle sind **optional**: ohne `MANAGED_AI_ENABLED=true` ist das Feature aus, und
+BYO funktioniert unverändert. `scripts/validate-env.js` prüft sie beim Start
+und verweigert eine halbe Konfiguration.
+
+| Variable | Bedeutung |
+|---|---|
+| `MANAGED_AI_ENABLED` | Der Kill-Switch, **opt-in**: nur `"true"` schaltet an. Alles andere (auch unset) ist AUS — die umgekehrte Lesart würde das Feature in jeder Umgebung anschalten, die einen Key hat und keine Meinung zum Flag, also auch in einer Staging-Box mit kopierter Production-Env. |
+| `MANAGED_AI_PROVIDER` / `_MODEL` / `_API_KEY` | Das Operator-Credential. Werden als EINHEIT gelesen: eine halbe Konfiguration ergibt gar keine, weil ein Modell oder Key des falschen Anbieters ein Request an den falschen Endpunkt mit fremdem Secret im Header ist. Das Modell muss in `app/config/ai-pricing.ts` bepreist sein, sonst wird das Budget gegen eine Schätzung durchgesetzt. |
+| `MANAGED_AI_FALLBACK_*` | Dasselbe für den Ausweichanbieter. Fehlt er, startet die App trotzdem — aber ein Ausfall des Default-Anbieters ist dann ein Ausfall. |
+| `MANAGED_AI_TPM` / `_RPM` (+ `_FALLBACK_`) | Das Rate-Limit-Fenster **unseres** Kontos. Ohne sie gelten die App-Defaults, die für EINEN Merchant-Account gedacht sind: Anthropics Default (5 RPM / 40 000 TPM) ließe app-weit etwa vier Calls pro Minute zu. |
+| `MANAGED_AI_POOL_MICROS` / `_TASTER_POOL_MICROS` | Die globale Monatsobergrenze in Mikro-Euro, **zwei Töpfe**. Pro-Shop-Budgets begrenzen, was ein Merchant kosten kann; diese begrenzen, was ein BUG kosten kann. Zwei Töpfe, weil ein Ansturm freier Installationen sonst am 18. den Deckel reißt und jedem ZAHLENDEN Merchant 503 antwortet. Unset heißt kein Deckel — eine Entscheidung, keine Voreinstellung, in die man hineinrutscht. Der Zähler läuft pro **Kalendermonat** und ist bewusst NICHT der Shop-Schlüssel: nach dem Abrechnungszeitraum des Shops gekeyed zerfiel er in eine Zeile pro Vertragsende, jede mit dem vollen Limit. |
+| `MANAGED_AI_FAILOVER_POOL_MICROS` | Das globale Ausfall-Budget (§3a Regel 4), ebenfalls pro Kalendermonat. Der Ausweichanbieter kostet ~14x und der Merchant zahlt den Preis des Default-Modells — die Differenz tragen wir, und das ist die Obergrenze dafür. Aufgebraucht, schlägt ein Call mit dem Fehler seines eigenen Anbieters fehl statt 14x zu kosten. Unset heißt kein Deckel; die Pro-Shop-Obergrenze bleibt davon unberührt. |
+
+Der Operator-Key wird von genau einem Modul gelesen
+(`app/services/ai/ai-credentials.server.ts`), das zugleich Einwilligung,
+Kill-Switch und Budget prüft; ein Test hält das fest. Im Dev-/Custom-App-Build
+wird er grundsätzlich nicht ausgeliefert.
+
 ### Env-Variablen des Cron-Service `Db Space Checker`
 
 [scripts/db-alert.mjs](scripts/db-alert.mjs) misst `pg_database_size` + WAL und

@@ -45,7 +45,7 @@ export type DevPlanMode = 'override' | 'test-billing' | null;
  * the public-facing API key embedded in every OAuth URL. Used as a positive
  * allowlist: only this exact id may enter 'override' mode.
  */
-const DEV_APP_CLIENT_ID = '433cf493223c0c6b95bdb91b0de5961a';
+export const DEV_APP_CLIENT_ID = '433cf493223c0c6b95bdb91b0de5961a';
 
 const VALID_PLANS: readonly BillingPlan[] = ['free', 'basic', 'pro', 'max'];
 
@@ -63,8 +63,14 @@ function testBillingAllowlist(): string[] {
 /**
  * True only when the running binary is the dev/custom app. Primary lock is the
  * Shopify-enforced client_id; APP_ENV is an additional, independent guard.
+ *
+ * EXPORTED because managed AI needs the same answer (§7a "belt and braces":
+ * an operator key must never be served from this build). It was re-derived
+ * there from `process.env.DEV_APP_CLIENT_ID`, which is not an environment
+ * variable anywhere in this repo — the id is the constant above — so the copy
+ * was always false and the guard it protected never fired.
  */
-function isDevAppBuild(): boolean {
+export function isDevAppBuild(): boolean {
   return (
     process.env.SHOPIFY_API_KEY === DEV_APP_CLIENT_ID &&
     process.env.APP_ENV !== 'production'

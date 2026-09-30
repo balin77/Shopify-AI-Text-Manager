@@ -91,17 +91,27 @@ export async function repairChangedProductAlts(params: ProductAltRepairParams): 
   try {
     // A cached image with no `mediaId` has no Shopify resource to address at
     // all, so it is a DECLINE, not a failure, and it follows the merchant's
-    // stored answer like every other declined entry.
+    // stored answer like every other declined entry. It is removed AFTER the
+    // repair below and only if that repair did not stand down: a managed-AI
+    // stand-down keeps EVERYTHING (the repair's own declined entries included),
+    // and deleting these first made this the one surface where it did not.
     const unaddressable = changes.filter((c) => !c.mediaId).map((c) => c.imageId);
-    if (unaddressable.length > 0 && policy.purgeUnreconciledSurfaces) {
-      await db.productImageAltTranslation.deleteMany({
-        where: { imageId: { in: unaddressable }, marketId: "", locale: { in: [...foreignLocales] } },
-      });
-    }
+    const removeUnaddressable = async () => {
+      if (unaddressable.length > 0 && policy.purgeUnreconciledSurfaces) {
+        await db.productImageAltTranslation.deleteMany({
+          where: { imageId: { in: unaddressable }, marketId: "", locale: { in: [...foreignLocales] } },
+        });
+      }
+    };
 
     const byMedia = new Map<string, string | undefined>();
     for (const change of changes) if (change.mediaId) byMedia.set(change.mediaId, change.alt);
-    if (byMedia.size === 0) return {};
+    // Nothing to re-translate ⇒ no AI call and no managed gate: the stored
+    // answer applies as it always has.
+    if (byMedia.size === 0) {
+      await removeUnaddressable();
+      return {};
+    }
 
     const { reconcileAfterPrimarySave, productImageAltMirror } = await import("./stale-translation-sync.server");
     const outcome = await reconcileAfterPrimarySave({
@@ -132,6 +142,11 @@ export async function repairChangedProductAlts(params: ProductAltRepairParams): 
       mirror: productImageAltMirror(shop, productId),
       translateAs: { kind: "values", context: "product image alt texts", sourceLocale: primaryLocale },
     });
+    // Only a MANAGED stand-down holds the local delete back — that is the
+    // refusal-never-deletes rule. Any other start failure (a DB blink on a
+    // shop using its own key) keeps the behaviour this had before: the
+    // unaddressable image's local rows go by the stored answer.
+    if (!outcome.managedStandDown) await removeUnaddressable();
     return outcome.taskId ? { taskId: outcome.taskId } : {};
   } catch (error: unknown) {
     logger.warn("[AltRepair] Alt-text re-translation failed — translations kept", {

@@ -22,6 +22,7 @@ import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 
 /**
  * The SOURCE language of a translate request, or `undefined` when the caller
@@ -376,6 +377,8 @@ export async function handleTranslateField(
     } catch (updateErr) {
       console.error("Failed to update task status:", updateErr);
     }
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateField", fieldType });
+    if (refused) return refused;
     return json({ actionType: "translateField", success: false, error: errorMsg, fieldType }, { status: 500 });
   }
 }
@@ -543,6 +546,8 @@ export async function handleTranslateAll(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAll" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -719,6 +724,8 @@ export async function handleTranslateAllForLocale(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAllForLocale" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -848,6 +855,8 @@ export async function handleTranslateFieldToAllLocales(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateFieldToAllLocales", fieldType });
+    if (refused) return refused;
     return json({ actionType: "translateFieldToAllLocales", success: false, error: errorMsg, fieldType }, { status: 500 });
   }
 }

@@ -1,7 +1,7 @@
 import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { createAIService, getMissingPreferredKey, noAiKeyResponse } from "./api-ai-handlers/shared";
+import { createAIService, aiRefusalResponse } from "./api-ai-handlers/shared";
 import { getTaskExpirationDate } from "../config/constants";
 import { taskTitleOrFallback } from "../services/tasks/resource-title.server";
 
@@ -31,11 +31,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: false, error: "templates, fromLocale, toLocales required" }, { status: 400 });
   }
 
-  // Compliance gate: require the shop's own AI key before doing any work.
+  // Compliance gate: whose key, consent, kill switch and budget — before any
+  // work and before a Task row exists.
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const missingKey = getMissingPreferredKey(settings);
-  if (missingKey) {
-    return noAiKeyResponse(settings, missingKey);
+  const refusal = await aiRefusalResponse(settings, session.shop);
+  if (refusal) {
+    return refusal;
   }
 
   const totalSteps = toLocales.length * templates.filter((t) => t.template).length;

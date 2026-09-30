@@ -66,6 +66,7 @@ import {
 } from "./translations/translation-change-policy.server";
 import { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } from "./bulk-editor/translations.server";
 import { logger } from "../utils/logger.server";
+import { isManagedRefusal } from "../../src/services/ai.service";
 import { collectRetranslationTaskIds } from "./translations/retranslation-tasks.shared";
 
 // No prose and no non-ASCII inside a #graphql literal (CLAUDE.md).
@@ -515,11 +516,21 @@ export async function saveMenuTree(
       // detection budget, a locale whose query failed. Menus have no webhook and
       // no sync, so "nothing happened" means the stale title stays live for
       // good; the deletion this branch replaces has to take over instead.
-      repairDidSomething = outcome.removed > 0 || outcome.retranslating > 0;
+      //
+      // A STAND-DOWN is not "nothing happened". `startFailed` is the repair
+      // refusing to run at all — managed AI out of budget, taster spent, no
+      // consent — and the rule is that a refusal never deletes: the merchant
+      // can top up or add a key, but a translation deleted in the meantime is
+      // gone. So it counts as handled and the stale titles are KEPT.
+      repairDidSomething =
+        outcome.startFailed === true || outcome.removed > 0 || outcome.retranslating > 0;
       if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
     } catch (error) {
       // Never fail the save over the repair: the tree write has already gone
-      // through, and a thrown error here would report it as broken.
+      // through, and a thrown error here would report it as broken. A managed
+      // refusal that surfaces as a throw is a stand-down like `startFailed`
+      // above, and must not fall through to the deletion below.
+      if (isManagedRefusal(error)) repairDidSomething = true;
       logger.warn("[MENU-TREE] Rename re-translation failed — translations kept", {
         context: "MenuTree",
         shop,

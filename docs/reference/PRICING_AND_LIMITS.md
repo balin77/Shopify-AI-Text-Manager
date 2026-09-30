@@ -159,3 +159,48 @@ Proof) statt dauerhaft niedriger Preise. Kein Grandfathering-Aufwand (noch
 keine Kunden).
 
 ---
+
+## Nachtrag 2026-09-17 — „AI kostet uns nichts" gilt nur noch für BYO
+
+Jeder Befund oben argumentiert aus einer Prämisse: *AI-Tokens sind BYO, also
+hat dieser App keine variablen AI-Kosten*. Diese Prämisse bleibt für den
+BYO-Modus wahr und wird für den **Managed-Key-Modus** falsch (gebaut
+2026-09-20, ausgeliefert hinter dem Schalter `MANAGED_AI_ENABLED`) —
+siehe [docs/plans/PLAN_MANAGED_AI_KEY.md](../plans/PLAN_MANAGED_AI_KEY.md) und
+die Roadmap-Einträge `managed-ai-key`, `ai-usage-metering`,
+`managed-ai-pricing`.
+
+Was davon berührt wird, und was nicht:
+
+- **Befund 2 (Locales unbegrenzt)** — die Begründung („Zusatzsprachen kosten
+  uns nichts") gilt weiter für BYO. Im Managed-Modus kosten sie etwas, aber
+  die Grenze ist dort das **Monatsbudget**, nicht eine Sprachzahl. Das USP
+  bleibt damit unveraendert formulierbar; `maxLocales: Infinity` bleibt.
+- **Preisstrategie-Entscheid 2026-05 („Preise nicht breit senken, Marge in
+  Leistung investieren")** — unveraendert. Der Managed-Modus senkt keinen
+  Preis, er ist ein **Aufpreis** auf denselben Tarif.
+- **Neu und nicht durch dieses Dokument gedeckt:** eine zweite Achse neben dem
+  Plan (Key-Quelle), ein Provider-Kosten-Budget pro Tarif, und ein
+  Margen-Guard als Test. Diese Zahlen stehen im Plan, nicht hier, weil sie erst
+  nach der Messung (`ai-usage-metering`) endgültig sind.
+- **Der Kostentreiber-Satz oben** („realer Kostentreiber ist DB-Storage &
+  Sync/Compute, nicht AI") ist ab dem Managed-Modus nur noch die halbe
+  Wahrheit: für Managed-Shops ist AI ein direkter, pro Shop messbarer
+  Rechnungsposten — der erste in dieser App, der mit der Nutzung mitwaechst und
+  nicht mit dem Katalog.
+
+Der Free-Tarif bekommt bewusst **kein monatliches** Managed-Budget, sondern
+eine einmalige Probe von rund 350 Aktionen (ein voller Durchlauf über das, was
+Free überhaupt freischaltet). Ein monatliches Freikontingent von 2 EUR wäre
+mehr AI-Volumen gewesen als der bezahlte Basic-Tarif bekommt, und es skaliert
+mit Installationen statt mit Kunden — Begründung mit Zahlen in §10 des Plans.
+
+Gebaut ist die Probe etwas weiter gefasst, als dieser Absatz sie beschreibt,
+und zwar aus einer Regel und nicht aus Großzügigkeit: sie bekommt **jeder
+Shop ohne Periodenbudget** — Free, Dev-Stores, Shops in der 7-Tage-Testphase
+und ein bezahlter Shop, der die Managed-Variante nicht gekauft hat und den
+Schalter trotzdem umlegt. Der Grund ist, dass genau das die Menge ist, die
+sonst gar nichts sehen würde, und dass die Obergrenze in allen vier Fällen
+dieselbe ist: einmalig, rund 12 Cent Anbieterkosten, mit einem eigenen,
+nicht zurücksetzbaren Zählerschlüssel. Das **Monatsvolumen** hängt
+unveraendert an der von Shopify bestaetigten Managed-Variante.

@@ -198,7 +198,7 @@ export async function redactCustomerData(
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
- *      ImageOperationCounter, EnabledMetafieldDefinition,
+ *      ImageOperationCounter, AiUsageCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
  *      DirectTranslationSettings, Seo404Hit, SeoAiReferral, SeoKeyword,
  *      SeoKeywordAssignment, SeoKeywordGroup, SeoKeywordGroupMembership,
@@ -430,6 +430,20 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${imageOperationCountersDeleted.count} image operation counters`);
+
+    // 24b. Delete AI usage counters — shop-identifying usage data (Art. 17),
+    //      the same reasoning as the image counter above. Both key sources
+    //      ("managed" and "byo") are shop-scoped rows and go together.
+    const aiUsageCountersDeleted = await tx.aiUsageCounter.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${aiUsageCountersDeleted.count} AI usage counters`);
+
+    // 24c. The AI processing consent log — shop-scoped, goes with the shop.
+    const aiConsentEventsDeleted = await tx.aiConsentEvent.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${aiConsentEventsDeleted.count} AI consent events`);
 
     // 25. Delete enabled metafield-definition selections — shop-scoped config
     //     (which product metafields the merchant enabled for translation).

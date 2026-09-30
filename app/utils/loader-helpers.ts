@@ -6,6 +6,20 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { tryDecryptApiKey } from "./encryption.server";
+import {
+  hasCurrentAiProcessingConsent,
+  wantsManagedAi,
+} from "../services/ai/managed-ai.shared";
+import { managedAiAvailable } from "../services/ai/ai-credentials.server";
+
+/** `managedAiAvailable`, never throwing — a loader must not fail over it. */
+function managedAiAvailableSafe(): boolean {
+  try {
+    return managedAiAvailable();
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Load AI settings for API key validation in loaders.
@@ -23,6 +37,11 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
       grokApiKey: true,
       deepseekApiKey: true,
       preferredProvider: true,
+      // The three that answer "has a working AI source" for a managed shop.
+      aiKeySource: true,
+      managedAiActive: true,
+      aiProcessingConsentAt: true,
+      aiProcessingConsentVersion: true,
     },
   });
 
@@ -37,6 +56,25 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
     hasOpenaiApiKey: !!tryDecryptApiKey(settings?.openaiApiKey, "openai"),
     hasGrokApiKey: !!tryDecryptApiKey(settings?.grokApiKey, "grok"),
     hasDeepseekApiKey: !!tryDecryptApiKey(settings?.deepseekApiKey, "deepseek"),
+    // §8a rule 6 — "has a working AI source", which for a managed shop is true
+    // with no key of its own. Every reader of the six booleans above must ask
+    // this first, or a merchant who paid for AI included is told the feature
+    // needs a key they do not have to give us.
+    //
+    // Since §10 this also covers a shop on the free TASTER, and the residual
+    // is stated rather than hidden: a shop whose taster is spent still reads
+    // as "working" here, because the alternative is an aggregate over the
+    // usage ledger on a loader that runs on every page. What it meets instead
+    // is the refusal at the point of use, which names both exits by name —
+    // which is where §10 puts that sentence anyway.
+    managedAiWorking:
+      wantsManagedAi(settings ?? null) && hasCurrentAiProcessingConsent(settings ?? null),
+    // Managed chosen + available in this deployment, consent missing: the
+    // merchant is to be sent to confirm AI processing, not to add a key.
+    managedAiConsentMissing:
+      managedAiAvailableSafe() &&
+      wantsManagedAi(settings ?? null) &&
+      !hasCurrentAiProcessingConsent(settings ?? null),
     preferredProvider: settings?.preferredProvider || null,
   };
 }

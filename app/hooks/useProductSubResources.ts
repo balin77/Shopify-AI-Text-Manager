@@ -136,6 +136,8 @@ export interface SubResourceHandlers {
 // have no reader and are gone rather than passed and dropped.
 interface UseProductSubResourcesStrings {
   optionsSavedSuccess?: string;
+  /** Fallback when a sub-resource translate fails without a server message. */
+  translateFailed?: string;
   saveFailedOptions?: string;
   saveFailedItems?: string;
   optionNameEmpty?: string;
@@ -1142,6 +1144,17 @@ export function useProductSubResources({
       if (data?.success && data.translations) {
         applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
       }
+      // A refused or failed translate used to be swallowed: the spinner
+      // stopped and nothing said why. The server's sentence is shown as is —
+      // for a managed-AI refusal (budget, taster, consent) it is already
+      // localised and names the way out.
+      if (!data || data.success === false) {
+        const message = typeof (data as { error?: unknown } | null)?.error === "string"
+          ? String((data as { error?: unknown }).error)
+          : "";
+        showInfoBox?.(message || strings.translateFailed || "Translation failed", "critical");
+        return;
+      }
       // Primary-locale translate saves to foreign locales server-side and returns
       // no translations — revalidate so locale-pulsing state refreshes.
       if (isPrimaryLocale && revalidator && revalidator.state === "idle") {
@@ -1153,7 +1166,7 @@ export function useProductSubResources({
     } finally {
       markSubResourceCompleted(resourceId, fieldId);
     }
-  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings.translateFailed]);
 
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);
