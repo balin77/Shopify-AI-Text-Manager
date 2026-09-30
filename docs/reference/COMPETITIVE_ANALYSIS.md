@@ -128,12 +128,12 @@ App-Store-Eintrag (Screenshot 2026-09-30), LangShop aus dem App-Store-Eintrag (S
 Weglot aus dem App-Store-Eintrag (Screenshot 2026-09-30) — alle in `COMPARE_PRICES` (marketing-compare.ts) gespiegelt.
 Quellen der Planleitern: die Vergleichstabellen, die der Inhaber am 2026-09-30 von den
 Anbieter-Websites kopiert hat (Weglot, Transcy, LangShop), plus deren App-Store-Einträge.
-**Fairness-Regel der Seite:** die Funktionstabelle beantwortet nur „kann die App
-das überhaupt", nie „ab welchem Plan" — Planstufen stehen ausschließlich im
-Preisvergleich, für alle Anbieter gleich. **Offen:** die Managed-AI-Variante
-(„+ AI", €21.90/39.90/99.90, Branch `claude/provided-api-key-pricing-vq2tu6`)
-kommt als zweiter Preis in dieselben Zeilen, sobald sie auf `develop` ist. langify und T Lab sind bewusst nicht auf
-der Vergleichsseite (kleinere Verbreitung); Kandidaten für eine spätere Erweiterung.
+**Fairness-Regel der Seite:** die Vergleichsseite zeigt EINE Tabelle, die sich per
+Planstufe umschalten lässt (Gratis, Stufe 1 …): jede Spalte ist der Plan dieser App auf
+dieser Stufe, mit Preis, Sprachen, Produkten, Übersetzungsvolumen, Testzeit und allen
+Funktionszeilen. Wo eine Antwort vom Plan abhängt, steht sie in `byPlan` — für ALLE
+Anbieter gleich, unsere eigenen Plangrenzen eingeschlossen („Höherer Plan“ statt
+„Nein“). Eine App mit weniger Plänen zeigt auf höheren Stufen ihren höchsten Plan.
 
 #### Historische Tabelle (Stand 01–08/2026)
 

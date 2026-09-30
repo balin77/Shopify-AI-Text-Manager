@@ -13,6 +13,7 @@ export const compareEs: CompareCopy = {
     partial: "En parte",
     no: "No",
     unstated: "Sin datos",
+    higherPlan: "Plan superior",
   },
   groups: {
     translation: "Traducción",
@@ -105,13 +106,17 @@ export const compareEs: CompareCopy = {
   otherComparisons: "Otras comparaciones",
   allComparisons: "Todas las comparaciones",
   tableNote:
-    "La tabla muestra si una app ofrece una función. En todos los proveedores, incluido el nuestro, algunas funciones solo llegan con un plan de pago: la comparación de precios de abajo muestra qué incluye cada plan.",
+    "«Plan superior» significa que la app ofrece la función, pero no en el plan mostrado. Una app con menos planes muestra su plan más alto en los niveles superiores.",
   glance: {
-    heading: "Precios de un vistazo",
-    intro: "Los planes de cada app uno al lado del otro, desde el gratuito. Lo que incluye cada plan en detalle está más abajo.",
+    heading: "Comparar plan por plan",
+    intro: "Elija un nivel de plan. Cada columna muestra entonces el plan de esa app en ese nivel: precio, límites y qué funciones incluye.",
     planColumn: "Plan",
+    levelPicker: "Nivel de plan",
+    topPlan: "plan más alto",
+    planGroup: "Plan",
     freeLevel: "Gratis",
     level: "Nivel {n}",
+    priceLabel: "Precio",
     languagesLabel: "Idiomas",
     productsLabel: "Productos",
     aiLabel: "Traducciones",

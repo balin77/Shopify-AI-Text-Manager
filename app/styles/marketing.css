@@ -1776,7 +1776,12 @@ a.mk-badge:hover {
 }
 
 .mk-compare-cell--partial .mk-compare-cell__symbol,
-.mk-compare-cell--unstated .mk-compare-cell__symbol {
+.mk-compare-cell--unstated .mk-compare-cell__symbol,
+.mk-compare-cell--higherPlan .mk-compare-cell__symbol {
+  color: var(--mk-text-muted);
+}
+
+.mk-compare-cell--higherPlan {
   color: var(--mk-text-muted);
 }
 
@@ -1964,16 +1969,56 @@ a.mk-badge:hover {
   max-width: var(--mk-prose-width);
 }
 
-/* ── Prices at a glance ───────────────────────────────────────────────── */
+/* ── Plan by plan ─────────────────────────────────────────────────────── */
 
-.mk-compare-glance {
+.mk-compare-matrix {
   margin: 36px 0 40px;
 }
 
-.mk-compare-glance__plan {
+.mk-compare-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 16px;
+}
+
+.mk-compare-levels__button {
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--mk-border-strong);
+  background: var(--mk-surface);
+  color: var(--mk-text);
+  cursor: pointer;
+}
+
+.mk-compare-levels__button:hover {
+  border-color: var(--mk-text-muted);
+}
+
+.mk-compare-levels__button[aria-pressed="true"] {
+  background: var(--mk-ink);
+  border-color: var(--mk-ink);
+  color: var(--mk-text-invert);
+}
+
+.mk-compare-levels__button:focus-visible {
+  outline: 2px solid var(--mk-brand);
+  outline-offset: 2px;
+}
+
+.mk-compare-matrix__app {
+  display: block;
+}
+
+.mk-compare-matrix__plan {
   display: block;
   font-size: 0.8125rem;
+  font-weight: 500;
   color: var(--mk-text-muted);
+  white-space: normal;
 }
 
 .mk-compare-glance__price {
@@ -1983,83 +2028,66 @@ a.mk-badge:hover {
   white-space: nowrap;
 }
 
-.mk-compare-glance__cell dl {
-  margin: 8px 0 0;
-  display: grid;
-  gap: 2px;
-  font-size: 0.8125rem;
-  line-height: 1.4;
+.mk-compare-matrix__table td {
+  min-width: 140px;
 }
 
-.mk-compare-glance__cell dt {
-  color: var(--mk-text-muted);
-  margin-top: 4px;
-}
-
-.mk-compare-glance__cell dd {
-  margin: 0;
-}
-
-.mk-compare-glance__empty {
-  color: var(--mk-text-muted);
-  font-size: 0.8125rem;
-}
-
-.mk-compare-glance__trial td {
-  font-weight: 600;
-}
-
-/* Five apps need room; the column labels ("Level 2") are short. */
-.mk-compare-glance__table th[scope="row"],
-.mk-compare-glance__table thead th:first-child {
-  min-width: 90px;
-  max-width: 120px;
-}
-
-.mk-compare-glance__table td {
-  min-width: 150px;
-}
-
-/* Two apps fit a phone without scrolling; five need the scroll box. Fixed
-   layout gives both apps the same width, so neither is squeezed into
-   breaking a word because the other happens to hold a longer sentence. */
-.mk-compare-glance__table.mk-compare-table--single {
+/* One app against ours: fixed layout, so both answer columns are the same
+   width and neither breaks a word because the other holds a longer text. */
+.mk-compare-matrix__table.mk-compare-table--single {
   table-layout: fixed;
 }
 
-.mk-compare-glance__table.mk-compare-table--single td {
+.mk-compare-matrix__table.mk-compare-table--single td {
   min-width: 0;
 }
 
-.mk-compare-glance__table.mk-compare-table--single thead th:first-child {
-  width: 110px;
+.mk-compare-matrix__table.mk-compare-table--single thead th:first-child {
+  width: 40%;
 }
 
 @media (max-width: 520px) {
-  .mk-compare-glance__table.mk-compare-table--single thead th:first-child {
-    width: 72px;
-  }
-}
-
-@media (max-width: 520px) {
-  .mk-compare-glance__table th[scope="row"],
-  .mk-compare-glance__table thead th:first-child {
-    min-width: 64px;
-    max-width: 80px;
-    padding-inline: 10px;
+  /* The answers are short ("✓ Ja"), the feature names are long German
+     compounds: the labels get the wider column on a phone. */
+  .mk-compare-matrix__table.mk-compare-table--single thead th:first-child {
+    width: 38%;
   }
 
-  .mk-compare-glance__table td {
-    padding-inline: 10px;
-    /* "Übersetzungsvolumen" is wider than half a phone. */
+  .mk-compare-matrix__table .mk-compare-table__label {
+    font-size: 0.875rem;
+  }
+
+  .mk-compare-matrix__table td {
+    font-size: 0.8125rem;
+  }
+
+  .mk-compare-matrix__table .mk-compare-glance__price {
+    font-size: 0.9375rem;
+  }
+
+  .mk-compare-matrix__table th,
+  .mk-compare-matrix__table td {
+    padding-inline: 8px;
+  }
+
+  .mk-compare-matrix__table th[scope="row"] {
+    min-width: 0;
+  }
+
+  .mk-compare-matrix__table td,
+  .mk-compare-matrix__table th {
     hyphens: auto;
     /* `anywhere`, not `break-word`: only it lowers a table cell's
-       min-content width, where a browser has no German hyphenation. */
+       min-content width, where a browser has no hyphenation dictionary. */
     overflow-wrap: anywhere;
+    white-space: normal;
   }
 
-  .mk-compare-glance__price,
-  .mk-compare-glance__table thead th {
+  .mk-compare-glance__price {
+    white-space: normal;
+  }
+
+  .mk-compare-cell__answer {
     white-space: normal;
   }
 }

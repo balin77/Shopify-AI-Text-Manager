@@ -48,10 +48,17 @@ export type CompareCopy = {
     intro: string;
     /** Header of the row-label column. */
     planColumn: string;
+    /** Label of the level buttons. */
+    levelPicker: string;
+    /** Marks a column showing an app's top plan at a level past its ladder. */
+    topPlan: string;
+    /** Group heading above price, limits and trial. */
+    planGroup: string;
     /** Row label of the first row. */
     freeLevel: string;
     /** Row label of every further row; `{n}` is 1, 2, 3 … */
     level: string;
+    priceLabel: string;
     languagesLabel: string;
     productsLabel: string;
     aiLabel: string;

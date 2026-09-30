@@ -31,7 +31,11 @@ export const COMPETITOR_NAMES: Record<CompetitorId, string> = {
   langshop: "LangShop",
 };
 
-export type Support = "yes" | "partial" | "no" | "unstated";
+/**
+ * `higherPlan` is the answer the per-level view needs and "no" must never
+ * stand in for: the app CAN do it, only not on the plan being looked at.
+ */
+export type Support = "yes" | "partial" | "no" | "unstated" | "higherPlan";
 
 export type CompareGroupId = "translation" | "content" | "seo" | "media" | "international";
 
@@ -58,8 +62,16 @@ export type CompareRowId =
 export type CompareRow = {
   id: CompareRowId;
   group: CompareGroupId;
+  /** Whether the app can do it on ANY plan. */
   ours: Support;
   them: Record<CompetitorId, Support>;
+  /**
+   * Per plan, in the order of `COMPARE_PRICES[app].plans`, where the answer
+   * depends on the plan. An app not listed here answers the same on every
+   * plan. Every provider is described the same way, ours included: naming
+   * only our own plan limits made the others look all-inclusive.
+   */
+  byPlan?: Partial<Record<PriceAppId, Support[]>>;
 };
 
 export const COMPARE_ROWS: CompareRow[] = [
@@ -80,36 +92,60 @@ export const COMPARE_ROWS: CompareRow[] = [
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "yes", transcy: "unstated", langshop: "yes" },
+    byPlan: {
+      contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
+      weglot: ["higherPlan", "higherPlan", "higherPlan", "higherPlan", "yes", "yes", "yes"],
+    },
   },
   {
     id: "aiProvider",
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "no", transcy: "yes", langshop: "yes" },
+    byPlan: {
+      transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
+      langshop: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes", "yes"],
+    },
   },
   {
     id: "glossary",
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes" },
+    byPlan: {
+      transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
+      langshop: ["higherPlan", "yes", "yes", "yes", "yes", "yes", "yes"],
+    },
   },
   {
     id: "themeCheckout",
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "yes", weglot: "yes", transcy: "yes", langshop: "yes" },
+    byPlan: {
+      contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
+    },
   },
   {
     id: "thirdPartyApps",
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "yes", transcy: "yes", langshop: "yes" },
+    byPlan: {
+      contentpilot: ["higherPlan", "higherPlan", "higherPlan", "yes"],
+      langshop: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes", "yes"],
+    },
   },
   {
     id: "followChanges",
     group: "translation",
     ours: "yes",
     them: { "translate-and-adapt": "unstated", weglot: "yes", transcy: "yes", langshop: "partial" },
+    byPlan: {
+      contentpilot: ["higherPlan", "higherPlan", "higherPlan", "yes"],
+      transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
+      langshop: ["higherPlan", "higherPlan", "partial", "partial", "partial", "partial", "partial"],
+    },
   },
   {
     id: "aiWriting",
@@ -122,18 +158,28 @@ export const COMPARE_ROWS: CompareRow[] = [
     group: "content",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "partial" },
+    byPlan: {
+      contentpilot: ["higherPlan", "yes", "yes", "yes"],
+      langshop: ["higherPlan", "partial", "partial", "partial", "partial", "partial", "partial"],
+    },
   },
   {
     id: "seoToolkit",
     group: "seo",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    byPlan: {
+      contentpilot: ["partial", "partial", "yes", "yes"],
+    },
   },
   {
     id: "aiVisibility",
     group: "seo",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    byPlan: {
+      contentpilot: ["partial", "yes", "yes", "yes"],
+    },
   },
   {
     id: "altText",
@@ -146,18 +192,27 @@ export const COMPARE_ROWS: CompareRow[] = [
     group: "media",
     ours: "yes",
     them: { "translate-and-adapt": "no", weglot: "no", transcy: "no", langshop: "no" },
+    byPlan: {
+      contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
+    },
   },
   {
     id: "imagesPerLanguage",
     group: "international",
     ours: "no",
     them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "unstated" },
+    byPlan: {
+      transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
+    },
   },
   {
     id: "currency",
     group: "international",
     ours: "no",
     them: { "translate-and-adapt": "no", weglot: "no", transcy: "yes", langshop: "yes" },
+    byPlan: {
+      transcy: ["higherPlan", "yes", "yes", "yes", "yes", "yes"],
+    },
   },
 ];
 
@@ -318,4 +373,17 @@ export function formatComparePrice(amount: number, currency: "EUR" | "USD", loca
 /** "10,000" / "10.000" without Intl, for the same reason as the price. */
 export function formatCompareNumber(amount: number, locale: "en" | "de" | "es"): string {
   return String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, locale === "en" ? "," : ".");
+}
+
+/**
+ * The answer for one app on ONE plan. A level past the app's own ladder reads
+ * its HIGHEST plan: "what does this app offer at most" is the fair answer when
+ * the other apps have more plans, and the table says so in the header.
+ */
+export function supportAtLevel(row: CompareRow, app: PriceAppId, level: number): Support {
+  const base = app === "contentpilot" ? row.ours : row.them[app];
+  const perPlan = row.byPlan?.[app];
+  if (!perPlan) return base;
+  const plans = COMPARE_PRICES[app].plans;
+  return perPlan[Math.min(level, plans.length - 1)] ?? base;
 }

@@ -13,6 +13,7 @@ export const compareDe: CompareCopy = {
     partial: "Teilweise",
     no: "Nein",
     unstated: "Keine Angabe",
+    higherPlan: "Höherer Plan",
   },
   groups: {
     translation: "Übersetzung",
@@ -105,13 +106,17 @@ export const compareDe: CompareCopy = {
   otherComparisons: "Weitere Vergleiche",
   allComparisons: "Alle Vergleiche",
   tableNote:
-    "Die Tabelle zeigt, ob eine App eine Funktion überhaupt anbietet. Bei jedem Anbieter, auch bei uns, gibt es manche Funktionen erst in einem bezahlten Plan – was welcher Plan enthält, zeigt der Preisvergleich darunter.",
+    "„Höherer Plan“ heißt: Die App bietet die Funktion, aber nicht im gezeigten Plan. Eine App mit weniger Plänen zeigt auf den oberen Stufen ihren höchsten Plan.",
   glance: {
-    heading: "Preise auf einen Blick",
-    intro: "Die Pläne jeder App nebeneinander, vom Gratisplan aufwärts. Was die Pläne im Einzelnen enthalten, steht weiter unten.",
+    heading: "Plan für Plan vergleichen",
+    intro: "Wählen Sie eine Planstufe. Jede Spalte zeigt dann den Plan der App auf dieser Stufe: Preis, Grenzen und welche Funktionen darin enthalten sind.",
     planColumn: "Plan",
+    levelPicker: "Planstufe",
+    topPlan: "höchster Plan",
+    planGroup: "Plan",
     freeLevel: "Gratis",
     level: "Stufe {n}",
+    priceLabel: "Preis",
     languagesLabel: "Sprachen",
     productsLabel: "Produkte",
     aiLabel: "Übersetzungen",
