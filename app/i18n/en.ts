@@ -1216,7 +1216,7 @@ export const en: Translation = {
     feedback: "Feedback",
     otherSettings: "More",
     shopLanguages: {
-      title: "Shop languages",
+      title: "Languages and markets",
       primaryBadge: "Primary language",
       publishedLabel: "Published in the online store",
       switchTooltip:
@@ -1322,6 +1322,9 @@ export const en: Translation = {
           consequenceMarketAddress: "The address stops existing and its code is free again. No market loses its address.",
         },
         discardInput: "Discard your input",
+        switchTooltipActive: "Active – the shop sells into this market's countries. Switching it off asks first.",
+        switchTooltipDraft: "Draft – switching it on asks first; after that the shop sells into these countries.",
+        switchTooltipPrimary: "Primary market – it is the shop's main address and always stays active.",
         activateButton: "Activate",
         deactivateButton: "Deactivate",
         activateTitle: "Activate the market “{name}”?",
@@ -4597,7 +4600,7 @@ export const en: Translation = {
         "The limit counts items (a product, a page …), not languages or fields, and resets every day at midnight UTC. Refreshing existing translations and changes you save in the app do not count. The retry list is worked through in the nightly check: an item gets at most two more attempts; being postponed only because of the limit does not count as an attempt. What is still missing after two attempts stays visible here as \"failed for good\" until the text changes again. The list covers products, collections, pages, articles, blogs and policies; metafields, options, alt texts, theme content and menus keep their previous behaviour.",
     },
     shopLanguages: {
-      title: "Shop languages",
+      title: "Languages and markets",
       summary:
         "Add languages here, publish them in the online store or take them out again. An unpublished language is one you prepare at your own pace: the app treats it exactly like an active one – it just does not appear in the online store yet.",
       tips: [

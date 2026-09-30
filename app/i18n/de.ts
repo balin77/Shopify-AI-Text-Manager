@@ -1220,7 +1220,7 @@ export const de = {
     feedback: "Feedback",
     otherSettings: "Weiteres",
     shopLanguages: {
-      title: "Shop-Sprachen",
+      title: "Sprachen und Märkte",
       primaryBadge: "Hauptsprache",
       publishedLabel: "Im Onlineshop veröffentlicht",
       switchTooltip:
@@ -1326,6 +1326,9 @@ export const de = {
           consequenceMarketAddress: "Die Adresse gibt es danach nicht mehr; ihr Kürzel ist wieder frei. Kein Markt verliert dadurch seine Adresse.",
         },
         discardInput: "Eingaben verwerfen",
+        switchTooltipActive: "Aktiv – der Shop verkauft in die Länder dieses Markts. Ausschalten fragt vorher nach.",
+        switchTooltipDraft: "Entwurf – einschalten fragt vorher nach; danach verkauft der Shop in diese Länder.",
+        switchTooltipPrimary: "Hauptmarkt – er ist die Hauptadresse des Shops und bleibt immer aktiv.",
         activateButton: "Aktivieren",
         deactivateButton: "Deaktivieren",
         activateTitle: "Markt „{name}“ aktivieren?",
@@ -4622,7 +4625,7 @@ export const de = {
         "Das Limit zählt Einträge (ein Produkt, eine Seite …), nicht Sprachen oder Felder, und setzt sich täglich um Mitternacht UTC zurück. Das Auffrischen bestehender Übersetzungen und Änderungen, die du in der App speicherst, zählt nicht mit. Die Wiederholungsliste wird im nächtlichen Abgleich abgearbeitet: Ein Eintrag bekommt höchstens zwei weitere Versuche; wird er nur wegen des Limits verschoben, zählt das nicht als Versuch. Was nach zwei Versuchen noch fehlt, bleibt als „endgültig fehlgeschlagen“ hier sichtbar, bis sich der Text erneut ändert. Die Liste gilt für Produkte, Kollektionen, Seiten, Artikel, Blogs und Richtlinien; Metafelder, Optionen, Alt-Texte, Theme-Inhalte und Menüs behalten ihr bisheriges Verhalten.",
     },
     shopLanguages: {
-      title: "Shop-Sprachen",
+      title: "Sprachen und Märkte",
       summary:
         "Hier fügst du Sprachen hinzu, veröffentlichst sie im Onlineshop oder nimmst sie wieder heraus. Eine unveröffentlichte Sprache bereitest du in Ruhe vor: Die App behandelt sie genau wie eine aktive – sie erscheint nur noch nicht im Onlineshop.",
       tips: [

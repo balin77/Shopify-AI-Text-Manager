@@ -2,7 +2,7 @@
  * Market probe — do the "Märkte und Adressen" writes do what the code assumes?
  *
  * ── Why this exists ─────────────────────────────────────────────────────────
- * Settings → Shop-Sprachen creates and deletes markets, gives a market its own
+ * Settings → Sprachen und Märkte creates and deletes markets, gives a market its own
  * subfolder, removes it again and assigns languages to web presences. EVERY
  * mutation shape behind that is unmeasured (market-address.server.ts says so
  * in its header): `webPresenceCreate` + `marketUpdate(webPresencesToAdd)` vs
@@ -660,7 +660,7 @@ export async function action({ request }: ActionFunctionArgs) {
     // 1. The real locale first: it is the one thing a storefront could show.
     if (localeTest && !localeTest.restored) {
       const problem = await restoreLocale();
-      if (problem) report.cleanup.leftovers.push(`${problem} — check it in Settings → Shop-Sprachen.`);
+      if (problem) report.cleanup.leftovers.push(`${problem} — check it in Settings → Sprachen und Märkte.`);
       else report.cleanup.notes.push(`Language "${localeTest.locale}" restored in the cleanup.`);
     }
     // 2. The market — adopted by its unique name if no id was ever confirmed.
@@ -702,7 +702,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const market = final.markets.find((m) => m.name === marketName);
       if (market) report.cleanup.leftovers.push(`Market "${marketName}" (${market.marketId}) — delete it in Shopify admin → Markets.`);
       if (suffix && final.takenSuffixes.includes(suffix)) {
-        report.cleanup.leftovers.push(`A presence with subfolder /${suffix} — it shows as "unused address" in Shop-Sprachen and can be removed there.`);
+        report.cleanup.leftovers.push(`A presence with subfolder /${suffix} — it shows as "unused address" in Sprachen und Märkte and can be removed there.`);
       }
     } else if (marketId || suffix || knownPresenceIds.size) {
       report.cleanup.leftovers.push(`Unknown — the final read failed. Check Shopify admin → Markets for a market named "${marketName}".`);

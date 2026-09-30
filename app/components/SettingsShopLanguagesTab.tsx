@@ -1,5 +1,5 @@
 /**
- * Settings → Shop-Sprachen: add, publish/unpublish and remove the shop's
+ * Settings → Sprachen und Märkte: add, publish/unpublish and remove the shop's
  * languages.
  *
  * An unpublished language is one the merchant is PREPARING — this app syncs,
@@ -335,7 +335,7 @@ export function SettingsShopLanguagesTab({
               hints that change with a row's state. */}
           <InlineStack gap="100" blockAlign="center" wrap={false}>
             <Text as="h2" variant="headingLg">
-              {s.title || "Shop languages"}
+              {s.title || "Languages and markets"}
             </Text>
             <HelpTooltip helpKey="shopLanguages" position="below" />
           </InlineStack>
