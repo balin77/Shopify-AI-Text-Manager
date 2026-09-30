@@ -56,3 +56,8 @@ export function localizedMarketName(name: string, appLocale: string): string {
   if (!code) return name;
   return displayNames(appLocale)?.of(code) || name;
 }
+
+/** The region code a standard market name stands for (`"Spanien"` → `"ES"`), if any. */
+export function regionCodeForName(name: string): string | undefined {
+  return regionCodeIndex().get(name.trim().toLowerCase());
+}

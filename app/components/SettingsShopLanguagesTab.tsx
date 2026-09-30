@@ -32,6 +32,7 @@ import { ToggleRow } from "./ToggleRow";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DeleteItemModal } from "./create/DeleteItemModal";
 import { HelpTooltip } from "./HelpTooltip";
+import { ShopMarketAddresses, type MarketAddressesView } from "./ShopMarketAddresses";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useI18n } from "../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
@@ -62,6 +63,8 @@ interface Props {
   availableLocales: Array<{ isoCode: string; name: string }> | null;
   /** The shop's market web presences; `null` = the lookup failed. */
   marketWebPresences?: MarketPresence[] | null;
+  /** Which markets have an address of their own; `null` = the lookup failed. */
+  marketAddresses?: MarketAddressesView | null;
   fetcher: FetcherWithComponents<any>;
   t: any;
   onHasChangesChange?: (hasChanges: boolean) => void;
@@ -96,6 +99,7 @@ export function SettingsShopLanguagesTab({
   shopLocales,
   availableLocales,
   marketWebPresences = null,
+  marketAddresses = null,
   fetcher,
   t,
   onHasChangesChange,
@@ -502,6 +506,15 @@ export function SettingsShopLanguagesTab({
             </InlineStack>
           )}
         </BlockStack>
+
+        <ShopMarketAddresses
+          addresses={marketAddresses}
+          locales={shopLocales.filter((l) => l.primary || l.published)}
+          appLocale={appLocale}
+          blocked={hasChanges}
+          s={s}
+          t={t}
+        />
       </BlockStack>
 
       {removing && (

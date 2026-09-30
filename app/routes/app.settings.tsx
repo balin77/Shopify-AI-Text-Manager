@@ -86,6 +86,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
     // Which market web presences show each language — same parallel, `null`
     // on failure ("could not load", never "in no market").
+    // Which markets have an address of their own (Märkte und Adressen) — the
+    // same parallel, `null` on failure.
+    const marketAddressesPromise = import("../services/market-address.server").then(({ loadMarketAddresses }) =>
+      loadMarketAddresses(admin, session.shop),
+    );
     const marketWebPresencesPromise = import("../services/shop-locale-publish.server").then(
       ({ loadMarketWebPresences }) => loadMarketWebPresences(admin, session.shop),
     );
@@ -111,6 +116,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryShopLocale = shopLocales.find((l) => l.primary)?.locale || "en";
     const availableShopLocales = await availableShopLocalesPromise;
     const marketWebPresences = await marketWebPresencesPromise;
+    const marketAddresses = await marketAddressesPromise;
     const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
@@ -539,6 +545,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopLocales,
       availableShopLocales,
       marketWebPresences,
+      marketAddresses,
       glossaryEntries,
       corruptedApiKeys,
       enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
@@ -1003,6 +1010,60 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "createMarketAddress" || actionType === "removeMarketAddress") {
+      // Märkte und Adressen: give a market its own subfolder, or take it back
+      // onto the shared address. Not a setting — it moves storefront URLs — so
+      // each is its own confirmed action, replayed over the addresses and shop
+      // locales read FRESH here (market-address.server.ts).
+      const {
+        loadMarketAddresses,
+        validateSubfolderRequest,
+        createMarketSubfolder,
+        removeMarketAddress,
+      } = await import("../services/market-address.server");
+      const marketId = getFormString(formData, "marketId");
+      if (!marketId) {
+        return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+      }
+      if (actionType === "removeMarketAddress") {
+        const outcome = await removeMarketAddress(admin, session.shop, marketId);
+        return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+      }
+      let alternates: string[] = [];
+      try {
+        const parsed = JSON.parse(String(formData.get("alternateLocales") ?? "[]"));
+        alternates = Array.isArray(parsed) ? parsed.filter((l): l is string => typeof l === "string") : [];
+      } catch {
+        return json({ success: false, actionType, marketId, error: "invalidChanges" }, { status: 400 });
+      }
+      const [addresses, localesJson] = await Promise.all([
+        loadMarketAddresses(admin, session.shop),
+        admin
+          .graphql(`#graphql
+            query settingsShopLocalesForAddress {
+              shopLocales {
+                locale
+              }
+            }`)
+          .then((r) => r.json() as Promise<{ data?: { shopLocales?: Array<{ locale: string }> } }>),
+      ]);
+      const locales = (localesJson.data?.shopLocales ?? []).map((l) => l.locale);
+      if (!addresses || locales.length === 0) {
+        return json({ success: false, actionType, marketId, error: "unverified" }, { status: 502 });
+      }
+      const checked = validateSubfolderRequest(
+        {
+          marketId,
+          suffix: getFormString(formData, "suffix") ?? "",
+          defaultLocale: getFormString(formData, "defaultLocale") ?? "",
+          alternateLocales: alternates,
+        },
+        addresses,
+        locales,
+      );
+      if (!checked.ok) return json({ success: false, actionType, marketId, error: checked.error }, { status: 400 });
+      const outcome = await createMarketSubfolder(admin, session.shop, checked.request);
+      return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
     } else if (actionType === "saveShopLocalePublication" || actionType === "removeShopLocale") {
       // Settings → Shop-Sprachen. Everything submitted is replayed over the
       // shop's CURRENT locales, read fresh here: the client's copy may be a
@@ -1584,7 +1645,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], availableShopLocales = null, marketWebPresences = null, glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, autoTranslateRetrySummary = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], availableShopLocales = null, marketWebPresences = null, marketAddresses = null, glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, autoTranslateRetrySummary = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -2011,6 +2072,7 @@ export default function SettingsPage() {
                   shopLocales={shopLocales}
                   availableLocales={availableShopLocales}
                   marketWebPresences={marketWebPresences}
+                  marketAddresses={marketAddresses}
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasShopLanguageChanges}
