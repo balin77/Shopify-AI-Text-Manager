@@ -373,7 +373,7 @@ describe("adding and deleting a market", () => {
     expect(validateMarketRequest({ name: "X", countries: [] }, addresses)).toEqual({ ok: false, error: "invalidCountries" });
   });
 
-  function marketAdmin(inputFields: string[], opts: { created?: boolean; deleted?: boolean; createdStatus?: string; spainOwn?: boolean } = {}) {
+  function marketAdmin(inputFields: string[], opts: { created?: boolean; deleted?: boolean; createdStatus?: string; spainOwn?: boolean; spainShared?: boolean } = {}) {
     let wrote = false;
     return {
       graphql: vi.fn(async (query: string, _opts?: { variables?: Record<string, unknown> }) => {
@@ -388,6 +388,11 @@ describe("adding and deleting a market", () => {
           body = { data: { __type: { inputFields: inputFields.map((name) => ({ name })) } } };
         } else if (query.includes("appMarketAddressPresences")) {
           body = state(!!opts.spainOwn).presences;
+          if (opts.spainShared) {
+            (body as any).data.webPresences.nodes
+              .find((n: any) => n.id === "wpEs")
+              ?.markets.nodes.push({ id: "mPT", name: "Portugal", status: "ACTIVE" });
+          }
         } else if (query.includes("appMarketAddressMarkets")) {
           const base = state(!!opts.spainOwn).markets as any;
           const nodes = [...base.data.markets.nodes];
@@ -443,8 +448,13 @@ describe("adding and deleting a market", () => {
     });
   });
 
-  it("a market with its own address is not deleted before the address is removed", async () => {
+  it("a market with its own unshared subfolder is deleted — the address goes with it (measured)", async () => {
     const admin = marketAdmin([], { deleted: true, spainOwn: true });
+    expect(await deleteMarket(admin, "s", "mES")).toEqual({ ok: true });
+  });
+
+  it("a market whose address other markets share is not deleted before that is changed", async () => {
+    const admin = marketAdmin([], { deleted: true, spainOwn: true, spainShared: true });
     expect(await deleteMarket(admin, "s", "mES")).toEqual({ ok: false, error: "removeAddressFirst" });
     expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appMarketDelete"))).toBe(false);
   });

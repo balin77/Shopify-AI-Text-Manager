@@ -1315,7 +1315,7 @@ export const de = {
           deleting: "Wird gelöscht …",
         },
         errorCreatedNotDraft: "Der Markt wurde angelegt, aber Shopify hat ihn NICHT als Entwurf gespeichert – er ist womöglich schon aktiv. Prüfe ihn jetzt im Shopify-Admin unter Märkte.",
-        errorRemoveAddressFirst: "Entferne zuerst die eigene Adresse dieses Markts (eine eigene Domain im Shopify-Admin) – sonst bliebe sie verwaist zurück.",
+        errorRemoveAddressFirst: "Dieser Markt hat eine eigene Domain oder teilt seine Adresse mit anderen Märkten – ändere das zuerst im Shopify-Admin unter Märkte, sonst ginge die Adresse der anderen mit.",
         errorNotOrphan: "Diese Adresse nutzt inzwischen wieder ein Markt – lade die Seite neu.",
         orphanTitle: "Unbenutzte Adresse {url}",
         orphanHint: "Kein Markt nutzt diese Adresse. Sie blockiert ihr Kürzel, bis sie entfernt wird.",

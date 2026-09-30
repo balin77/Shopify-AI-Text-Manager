@@ -15,18 +15,18 @@
  * both directions are their own confirmed actions — the removal behind the
  * type-the-name dialog like every destructive act in this app.
  *
- * NOT MEASURED, and built accordingly:
- *  - WHICH mutation this API version offers. Two shapes are known: the newer
- *    `webPresenceCreate` + `marketUpdate(webPresencesToAdd)` and the older
- *    `marketWebPresenceCreate(marketId, webPresence)` (likewise for delete).
- *    The mutation type is INTROSPECTED once per process and the shape that
- *    exists is used; neither existing is reported as `notSupported`, never
- *    guessed. A schema-level refusal of the chosen document is reported in
- *    Shopify's words, and the input type is introspected and LOGGED beside it,
- *    so a wrong field name costs one look at the log, not a blind round.
- *  - Whether it worked is never read off an echo: the addresses are RE-READ
- *    and the change counts only when the market really carries (or no longer
- *    carries) a presence with that subfolder.
+ * MEASURED end to end (2026-09-30, API 2026-07, the market probe —
+ * api.market-probe.tsx, Settings → Probes → Translation — on a DRAFT market of
+ * its own): `webPresenceCreate(input: { subfolderSuffix, defaultLocale,
+ * alternateLocales })` + `marketUpdate(id, input: { webPresencesToAdd })`
+ * creates and attaches the subfolder, which reads back IMMEDIATELY on the
+ * market (no lag seen) with the root url `/<defaultLocale>-<suffix>/` — the
+ * preview the create modal shows; `webPresenceDelete(id)` removes it, again
+ * visible at once. `marketWebPresenceCreate`/`…Delete` still exist but are
+ * DEPRECATED; they stay as the fallback the introspection picks only where the
+ * newer pair is missing. The introspection itself, the input-shape log on a
+ * schema refusal and the RE-READ confirmation stay: measured on one version is
+ * not measured on the next.
  *
  * MEASURED read shapes it relies on (2026-09-30, raw answers from the owner's
  * shop): top-level `webPresences { id subfolderSuffix domain { host }
@@ -177,9 +177,11 @@ function rootUrlOf(p: PresenceNode): string | null {
   return typeof hit?.url === "string" ? hit.url : null;
 }
 
-// Whether `Market.primary` exists in this API version is not measured, and an
-// unknown field fails the WHOLE document — so it is introspected once and read
-// in a document of its own that the address read never depends on. Every
+// `Market.primary` is MEASURED on 2026-07 (market probe, 2026-09-30):
+// `Boolean!`, DEPRECATED, and it answers — the owner's primary market reads
+// `true`. It may vanish in a later version, and an unknown field fails the
+// WHOLE document — so it is introspected once and read in a document of its
+// own that the address read never depends on. Every
 // introspection here asks for DEPRECATED entries too: `primary` belongs to the
 // older markets model, a deprecated field still answers, and the default
 // `fields` list silently leaves it out — which would read as "no such field"
@@ -679,11 +681,14 @@ export function __resetMarketAddressCache() {
 // ACTIVE market decides where the shop sells, and one whose shipping, prices
 // and duties nobody has looked at is not something to switch on from a
 // language settings tab — the merchant activates it in Shopify after checking.
-// NOT MEASURED: the input shape. `MarketCreateInput` is introspected and the
-// countries go where it has room for them (`conditions.regionsCondition` in the
-// current model, `regions` in the older one); the status field likewise. A
-// create is confirmed by a fresh read, a delete by its echoed `deletedId` AND
-// the market's absence from a fresh read.
+// MEASURED (market probe, 2026-09-30, API 2026-07): `MarketCreateInput` takes
+// `conditions: { regionsCondition: { regions: [{ countryCode }] } }` and
+// `status: DRAFT` (`regions` and `enabled` are there too, deprecated), and the
+// market reads back as DRAFT at once. `marketDelete` echoes `deletedId` and
+// takes the market's own SUBFOLDER presence WITH it — measured with one
+// attached. The input is still introspected (a later version may move it), a
+// create is confirmed by a fresh read, a delete by its echoed id AND the
+// market's absence from a fresh read.
 
 const MARKET_CREATE = `#graphql
   mutation appMarketCreate($input: MarketCreateInput!) {
@@ -784,9 +789,12 @@ export async function deleteMarket(admin: GraphqlClient, shop: string, marketId:
   const market = before.markets.find((m) => m.marketId === marketId);
   if (!market) return { ok: false, error: "unknownMarket" };
   if (market.primary === true) return { ok: false, error: "primaryMarket" };
-  // Whether `marketDelete` takes the market's own presence with it is not
-  // measured; left behind it would block its suffix. The address goes first.
-  if (market.own) return { ok: false, error: "removeAddressFirst" };
+  // A market's own unshared SUBFOLDER goes with it (measured). A DOMAIN
+  // presence or one other markets use too is unmeasured — deleting the market
+  // could take another market's address along — so those go first, in Shopify.
+  if (market.own && (!market.own.subfolderSuffix || market.own.sharedWith.length > 0)) {
+    return { ok: false, error: "removeAddressFirst" };
+  }
   const names = await availableMutations(admin);
   if (!names) return { ok: false, error: "schemaUnreadable" };
   if (!names.has("marketDelete")) return { ok: false, error: "notSupported" };
@@ -804,6 +812,21 @@ export async function deleteMarket(admin: GraphqlClient, shop: string, marketId:
   const after = await loadMarketAddresses(admin, shop);
   if (!after) return { ok: false, error: "unverified" };
   if (after.markets.some((m) => m.marketId === marketId)) return { ok: false, error: "notConfirmed" };
+  // Measured to go with the market; should a version ever leave it behind,
+  // it would block its suffix — so an orphan it left is removed here, and a
+  // failure there is only logged: the market itself is confirmed gone.
+  const ownId = market.own?.presenceId;
+  if (ownId && after.orphans.some((o) => o.presenceId === ownId)) {
+    const cleaned = await removeOrphanAddress(admin, shop, ownId);
+    if (!cleaned.ok) {
+      logger.warn("[MarketAddress] The deleted market's address stayed behind", {
+        context: "MarketAddress",
+        shop,
+        presenceId: ownId,
+        error: cleaned.error,
+      });
+    }
+  }
   await clearLocaleCache(shop);
   return { ok: true };
 }
