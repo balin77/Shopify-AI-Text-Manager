@@ -1,6 +1,6 @@
 # Wettbewerbsanalyse & Feature-Roadmap
 
-> Erstellt: 2026-01-27
+> Erstellt: 2026-01-27 · Übersetzungs-Wettbewerb (§2.1) zuletzt erhoben: 2026-09-30
 > Ziel: Identifikation fehlender Features im Vergleich zu Wettbewerbern
 
 ---
@@ -94,40 +94,134 @@
 
 #### Aktueller Stand (2026-09-30) — die vier großen Alternativen
 
-Grundlage der öffentlichen Vergleichsseite `/compare` (Fakten in
-[marketing-compare.ts](../../app/config/marketing-compare.ts) — **beide Stellen
-gemeinsam ändern**). Quellen: App-Store-Einträge und Hilfeseiten der Anbieter,
-Web-Recherche 2026-09 (Links §5). „?" = der Anbieter sagt es nicht klar; das ist
-kein ❌.
+Grundlage der öffentlichen Vergleichsseite `/compare` und `/compare/<app>`. Die Fakten
+stehen maschinenlesbar in [marketing-compare.ts](../../app/config/marketing-compare.ts)
+(`COMPARE_ROWS`, `COMPARE_PRICES`) — **dieses Kapitel und die Datei gemeinsam ändern**.
+
+**Quellen (Stand 2026-09-30):**
+- **Weglot:** App-Store-Preise (Screenshot des Inhabers) + Plan-Vergleichstabelle der
+  Weglot-Website (Screenshots des Inhabers).
+- **Transcy:** App-Store-Preise (Screenshot) + vollständige Plan-Vergleichsliste der
+  Transcy-Website (vom Inhaber kopiert) + Website-Planseiten (Screenshots).
+- **LangShop:** App-Store-Preise (Screenshot) + vollständige Plan-Vergleichsliste der
+  LangShop-Website (vom Inhaber kopiert) + Website-Planseiten (Screenshots).
+- **Translate & Adapt:** Shopify-Hilfe + Web-Recherche (kein Screenshot).
+- **ContentPilot:** aus dem Code (`app/config/plans.ts`, `app/config/billing.ts`,
+  `app/config/seo-sections.ts`, Plan-Gates in den Routen).
+
+Legende: ✅ ja · ⚠️ teilweise · ❌ nein · ? keine klare Angabe (≠ nein) · „ab X“ = erst ab Plan X.
+
+##### A. Funktionen — kann die App das überhaupt, und ab welchem Plan?
 
 | Funktion | ContentPilot | Translate & Adapt | Weglot | Transcy | LangShop |
 |---|---|---|---|---|---|
-| Automatische Übersetzung | ✅ (eigener KI-Key) | ⚠️ nur 2 Sprachen, Rest manuell; 100 Mio. Zeichen/Jahr | ✅ | ✅ | ✅ |
-| Übersetzungen in Shopify gespeichert | ✅ | ✅ | ? — Drittquellen sagen „bei Weglot (JS/Proxy)“, nicht in Weglots eigener Shopify-Doku verifiziert; Seite zeigt „Keine Angabe“ | ✅ | ✅ |
-| Eigene Anweisungen / Markenstimme | ✅ ab Pro | ❌ | ✅ (lernendes KI-Modell) | ? | ✅ |
-| Wahl des KI-Anbieters | ✅ 6 | ❌ | ❌ | ✅ OpenAI, Gemini, Baidu, Yandex, Grok, DeepSeek; eigener Key ab Continental | ✅ OpenAI, DeepL Pro, Google Cloud ab Standard |
-| Glossar | ✅ | ❌ | ✅ | ✅ (ab Regional) | ✅ (ab Basic) |
-| Theme, Checkout, E-Mails | ✅ ab Pro | ✅ | ✅ | ✅ | ✅ |
-| Texte anderer Apps | ✅ Max | ❌ | ✅ | ✅ | ✅ |
-| Übersetzungen folgen Textänderungen | ✅ Max | ? | ✅ | ✅ (Sync geplant/Echtzeit, Automatik ab Regional) | ⚠️ nur neue Produkte/Kollektionen (50–∞ je Plan) |
+| Automatische Übersetzung | ✅ alle Pläne (eigener KI-Key) | ⚠️ nur 2 Sprachen, Rest von Hand | ✅ alle | ✅ alle (Google gratis, KI ab Local Plus) | ✅ alle |
+| Übersetzungen in Shopify gespeichert | ✅ | ✅ | ? (Drittquellen: bei Weglot/Proxy; Seite zeigt „Keine Angabe“) | ✅ | ✅ |
+| Eigene Anweisungen / Tonalität | ✅ ab Pro | ❌ | ✅ „Tone of voice“ ab Advanced (€299) | ? | ✅ alle |
+| Wahl des KI-Anbieters | ✅ 6 Anbieter, alle Pläne | ❌ | ❌ | ✅ OpenAI, Gemini, Baidu, Yandex, Grok, DeepSeek ab Local Plus; eigener Key (OpenAI/Gemini/DeepL) ab Continental | ✅ OpenAI, DeepL Pro, Google Cloud ab Standard |
+| Glossar | ✅ alle Pläne | ❌ | ✅ alle | ✅ ab Regional (20 → 200 → 500 → ∞) | ✅ ab Basic (5 → 100 → 250 → 500 → 1000 → ∞) |
+| Theme, Checkout, E-Mails | ✅ ab Pro | ✅ | ✅ | ✅ | ✅ (Checkout alle Pläne) |
+| Texte anderer Apps | ✅ nur Max | ❌ | ✅ | ✅ alle (bearbeiten ab Local Plus) | ✅ ab Standard |
+| Übersetzungen folgen Textänderungen | ✅ nur Max | ? | ✅ (Proxy übersetzt live) | ✅ ab Regional (geplanter Sync; Echtzeit ab Cross-Border) | ⚠️ nur NEUE Produkte/Kollektionen, ab Standard (50/125/250/1250/∞) |
 | Texte schreiben/verbessern mit KI | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Tabellen-Editor für den Katalog | ✅ | ❌ | ❌ | ❌ | ⚠️ nur Übersetzungen (Bulk-Bearbeitung) |
-| SEO-Werkzeuge (Keywords, Crawl, GSC) | ✅ | ❌ | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) | ❌ (nur mehrsprachiges SEO) |
-| KI-Sichtbarkeit (Schema, agents.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Tabellen-Editor für den Katalog | ✅ ab Basic | ❌ | ⚠️ Export/Import ab Advanced | ❌ (Suchen & Ersetzen ab Local Plus) | ⚠️ Massenbearbeitung von Übersetzungen ab Basic; Export/Import ab Standard |
+| SEO-Werkzeuge (Keywords, Crawl, GSC …) | ⚠️ Gratis/Basic teilweise, voll ab Pro | ❌ | ❌ (nur mehrsprachiges SEO) | ❌ (mehrsprachiges SEO ab Local Plus) | ❌ (mehrsprachiges SEO, Meta-Tags) |
+| KI-Sichtbarkeit (Schema, agents.md) | ⚠️ Gratis teilweise, voll ab Basic | ❌ | ❌ | ❌ | ❌ |
 | KI-Alt-Texte | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Variantengalerien | ✅ ab Pro | ❌ | ❌ | ❌ | ❌ |
-| Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ | ✅ (auch Text im Bild) | ? |
-| Eigene Währungsumrechnung | ❌ (Markets) | ❌ (Markets) | ❌ | ✅ | ✅ |
-| Menschliche Übersetzer | ❌ | ❌ | ✅ | ? | ✅ |
-| Preismodell | Free 50 Prod.; Basic €9.90 (100), Pro €19.90 (500), Max €59.90 (2500) — Sprachen ∞, KI über eigenen Key; 7 Tage Test | gratis, 2 Sprachen automatisch | App Store (USD): Free 1 Spr./2k Wörter, Starter $17 (1/10k), Business $32 (3/50k), Pro $87 (5/250k); Website (EUR): Advanced €299 (10/1M), Extended €699 (20/5M), Enterprise auf Anfrage; 14 Tage Test | Free (1 Spr. nicht bearbeitbar, Google unbegr.), Local Plus $14.90 (1 Spr., 100 Prod., 150 Tokens), Regional $29 (3/200/300), Continental $69 (15/300/500 + eigener Key), Cross-Border $99 (50/1500/1000), Global $599 (147/∞/5000); 7 Tage Test | Free (1 Spr., 50 Prod.), Basic $10 (1/250), Standard $40 (3/2000), Advanced $75 (5/5000), Pro $120 (10/10k), Enterprise $250 (20/50k), Unlimited $500 (20/∞) — Wörter und Währungen überall unbegrenzt; 14 Tage Test (App Store; Website sagt 7) |
-| Bewertung (09/2026) | — | 4.5 | 4.5 (≈790) | 4.4 (≈2.530) | 4.5 |
+| Variantengalerien / Bild-Manager | ✅ ab Pro | ❌ | ❌ | ❌ | ❌ |
+| Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ alle („Media translation“) | ✅ ab Regional (10 → 50 → 100 → ∞ Produkte) | ? |
+| Eigene Währungsumrechnung | ❌ (Shopify Markets) | ❌ (Markets) | ❌ | ✅ ab Local Plus (1 → 3 → 15 → 50 → 168) | ✅ alle (156 Währungen) |
+| Standorterkennung / Geolocation | ❌ | ✅ (Markets) | ✅ alle | ✅ ab Continental | ✅ ab Standard |
+| Menschliche Übersetzer | ❌ | ❌ | ✅ ab Starter | ? | ✅ alle („Agency translation“) |
+| Übersetzungs-Versionen / Verlauf | ❌ | ? | ⚠️ Übersetzungsspeicher ab Extended | ✅ ab Local Plus (1 → 10 Versionen) | ✅ ab Standard |
+| API / Shopify Flow | ❌ | ❌ | ? | ❌ | Flow ab Advanced, API ab Pro |
+| Bewertung (App Store, 09/2026) | — | 4.5 | 4.5 (≈790) | 4.4 (≈2.530) | 4.5 |
 
-**Offen / vor dem Livegang der Website prüfen:** Weglot-Speicherort, T&A-Glossar (Quelle nur Konkurrenz-Blogs), Transcy „eigene Anweisungen",
-T&A „folgt Textänderungen", LangShop „Bilder je Sprache" (alle „?"). Planinhalte/Preise: Transcy aus dem
-App-Store-Eintrag (Screenshot 2026-09-30), LangShop aus dem App-Store-Eintrag (Screenshot 2026-09-30; die Drittquellen mit $34/$68 waren falsch),
-Weglot aus dem App-Store-Eintrag (Screenshot 2026-09-30) — alle in `COMPARE_PRICES` (marketing-compare.ts) gespiegelt.
-Quellen der Planleitern: die Vergleichstabellen, die der Inhaber am 2026-09-30 von den
-Anbieter-Websites kopiert hat (Weglot, Transcy, LangShop), plus deren App-Store-Einträge.
+##### B. Planleitern im Detail
+
+**ContentPilot** (EUR, 7 Tage Test, Sprachen immer unbegrenzt, KI über eigenen Key):
+
+| Plan | Preis/Monat | Produkte | Wesentliches |
+|---|---|---|---|
+| Free | 0 | 50 | 5 Kollektionen, Produkte + Kollektionen, Glossar, KI-Texte |
+| Basic | €9.90 | 100 | 50 Kollektionen, 20 Seiten, Richtlinien, Bilder/Optionen/Metafelder, Bulk-Editor, 25 Keywords, KI-Sichtbarkeit |
+| Pro | €19.90 | 500 | Blogs/Artikel, Theme & Checkout, Menüs, Metaobjekte, eigene KI-Anweisungen, Bild-Manager, Crawl, GSC, Sitemap, IndexNow, CSV-Import |
+| Max | €59.90 | 2.500 | Texte anderer Apps, automatische Nachübersetzung, wöchentlicher Crawl/Audit, 1.000 Keywords |
+
+**Weglot** (App Store USD bzw. Website EUR, 14 Tage Test, Preis nach Wörtern/Sprachen, alle Pläne mit KI-Übersetzung, Glossar, Media-Übersetzung, Weiterleitung nach Besuchersprache):
+
+| Plan | Preis/Monat | Sprachen | Wörter | Neu in diesem Plan |
+|---|---|---|---|---|
+| Free | 0 | 1 | 2.000 | — („By Weglot“-Badge) |
+| Starter | $17 (Website €15) | 1 | 10.000 | Badge weg, Profi-Übersetzer |
+| Business | $32 (€29) | 3 | 50.000 | — |
+| Pro | $87 (€79) | 5 | App Store 250.000 / Website 200.000 | Statistiken, übersetzte URLs, 3 Projekte |
+| Advanced | €299 (nur Website) | 10 | 1.000.000 | Tone of voice, eigene Sprachen, Export/Import |
+| Extended | €699 (nur Website) | 20 | 5.000.000 | Top-Level-Domain, Übersetzungsspeicher |
+| Enterprise | auf Anfrage | — | — | SSO, SLA, eigener Reverse Proxy |
+
+**Transcy** (USD, 7 Tage Test, Wörter überall unbegrenzt über Google, KI-Tokens zusätzlich):
+
+| Plan | Preis/Monat | Sprachen (bearbeitbar) | Produkte | KI-Tokens/Monat | Neu in diesem Plan |
+|---|---|---|---|---|---|
+| Free | 0 | 1 (0) | — (Tabelle leer) | — | Drittanbieter-Apps übersetzen |
+| Local Plus | $14.90 | 1 (1) | 100 | 150 | KI-Dienste, mehrsprachiges SEO, 1 Währung, Suchen & Ersetzen |
+| Regional | $29 | 3 (2) | 200 | 300 | Glossar 20, 3 Währungen, Automatik + Bilder für 10 Produkte, geplanter Sync |
+| Continental | $69 | 15 (10) | 300 | 500 | eigener KI-Key, Glossar 200, 15 Währungen, Geolocation |
+| Cross-Border | $99 | 50 (20) | 1.500 | 1.000 | Echtzeit-Sync, Glossar 500, 50 Währungen, Onboarding |
+| Global | $599 | 147 | ∞ | 5.000 | Glossar ∞, 168 Währungen, Customer Success Manager |
+
+Website zeigt zusätzlich Jahrespreise (z. B. Local Plus $11.90/Monat jährlich, Cross-Border $79, Global $479).
+
+**LangShop** (USD, 14 Tage Test laut App Store / 7 laut Website, Wörter und Währungen überall unbegrenzt):
+
+| Plan | Preis/Monat | Sprachen | Produkte | Neu in diesem Plan |
+|---|---|---|---|---|
+| Free | 0 | 1 | 50 | Checkout, mehrsprachiges SEO, Agentur-Übersetzung |
+| Basic | $10 | 1 | 250 | Glossar 5, Massenbearbeitung, Branding weg |
+| Standard | $40 | 3 | 2.000 | OpenAI/DeepL Pro/Google Cloud, Glossar 100, Drittanbieter-Apps, Metaobjekte, Export/Import, Verlauf, Geolocation, Auto-Sync 50 neue Produkte |
+| Advanced | $75 | 5 | 5.000 | Glossar 250, Ausschlussregeln, Shopify Flow, Auto-Sync 125 |
+| Pro | $120 | 10 | 10.000 | Glossar 500, API, Auto-Sync 250 |
+| Enterprise | $250 | 20 | 50.000 | Glossar 1.000, Customer Success Manager |
+| Unlimited | $500 | 20 | ∞ | alles unbegrenzt |
+
+**Translate & Adapt:** gratis, automatische Übersetzung für 2 Sprachen, weitere Sprachen von Hand, Anpassung pro Markt.
+
+##### C. Stufe für Stufe (so wie `/compare` es zeigt)
+
+| Stufe | ContentPilot | Weglot | Transcy | LangShop |
+|---|---|---|---|---|
+| Gratis | 0 · ∞ Spr. · 50 Prod. | 0 · 1 Spr. · 2k Wörter | 0 · 1 Spr. (nicht bearbeitbar) | 0 · 1 Spr. · 50 Prod. |
+| Stufe 1 | €9.90 · ∞ · 100 | $17 · 1 · 10k W. | $14.90 · 1 · 100 | $10 · 1 · 250 |
+| Stufe 2 | €19.90 · ∞ · 500 | $32 · 3 · 50k W. | $29 · 3 · 200 | $40 · 3 · 2.000 |
+| Stufe 3 | €59.90 · ∞ · 2.500 | $87 · 5 · 250k W. | $69 · 15 · 300 | $75 · 5 · 5.000 |
+| Stufe 4 | (Max) | €299 · 10 · 1M W. | $99 · 50 · 1.500 | $120 · 10 · 10k |
+| Stufe 5 | (Max) | €699 · 20 · 5M W. | $599 · 147 · ∞ | $250 · 20 · 50k |
+| Stufe 6 | (Max) | auf Anfrage | (Global) | $500 · 20 · ∞ |
+
+##### D. Was wir daraus lernen
+
+**Wo wir klar vorne liegen**
+- **Sprachen:** unbegrenzt ab dem Gratisplan. Alle anderen staffeln genau danach (Weglot 1/1/3/5, LangShop 1/1/3/5, Transcy 1/1/3/15). Für einen Shop mit 3+ Sprachen sind wir ab €9.90 dabei, die anderen ab $29–40.
+- **Alles außer Übersetzung:** KI-Texte, Tabellen-Editor, SEO-Werkzeuge, KI-Sichtbarkeit, Alt-Texte und Bild-Manager hat kein Konkurrent. Das ist das Argument „eine App statt drei“.
+- **Wahl des KI-Anbieters auf allen Plänen** — Transcy erst ab $14.90 (eigener Key erst ab $69), LangShop ab $40.
+- **Glossar auf allen Plänen** — Transcy ab $29, LangShop ab $10.
+
+**Wo die anderen vorne liegen (und ob es zählt)**
+- **Produkte pro Euro:** LangShop gibt 2.000 Produkte für $40 und 5.000 für $75, wir 500 für €19.90 und 2.500 für €59.90. Große Kataloge (>2.500 Produkte) haben bei uns **gar keinen Plan** — LangShop geht bis ∞, Transcy auch. **Offene Lücke im Pricing.**
+- **Texte anderer Apps nur im Max (€59.90):** Transcy übersetzt sie schon im Gratisplan, LangShop ab $40, Weglot immer. Auf der Stufen-Ansicht zeigt das bei uns bis Stufe 2 „Höherer Plan“. **Kandidat, um die Funktion in Pro zu verschieben.**
+- **Automatische Nachübersetzung nur im Max:** Transcy ab $29, Weglot immer (Proxy). Gleiches Argument.
+- **KI-Kosten:** Bei uns kommt der eigene KI-Key dazu (für den Händler ein zweiter Vertrag). Transcy (Tokens), Weglot und LangShop rechnen alles in einer Rechnung ab. Die geplante „+ AI“-Variante (Branch `claude/provided-api-key-pricing-vq2tu6`, €21.90/€39.90/€99.90) schließt das — sobald auf `develop`, als zweiter Preis in `COMPARE_PRICES` nachtragen.
+- **Währung, Geolocation, Bilder je Sprache, menschliche Übersetzer:** fehlen bei uns. Währung und Geolocation erledigt Shopify Markets nativ (kein echter Gap, siehe Fußnote ¹); **Bilder je Sprache** ist der einzige echte Funktions-Gap in der Übersetzung.
+
+**Offen / vor dem Livegang von `/compare` prüfen**
+- Weglot-Speicherort (JS/Proxy vs. Shopify) — nur Drittquellen, Seite sagt „Keine Angabe“.
+- Translate & Adapt: Glossar (nur Konkurrenz-Blogs), „folgt Textänderungen“ (?).
+- Transcy: eigene Anweisungen/Tonalität (?), Produkte im Gratisplan (Tabelle leer).
+- LangShop: Bilder je Sprache (?), Testzeit 14 vs. 7 Tage (App Store vs. Website — Seite zeigt 14).
+- Weglot Pro: 250.000 Wörter (App Store) vs. 200.000 (Website) — Seite zeigt den App Store.
+- langify und T Lab sind bewusst nicht auf der Vergleichsseite (kleinere Verbreitung); Kandidaten für eine Erweiterung.
+
 **Fairness-Regel der Seite:** die Vergleichsseite zeigt EINE Tabelle, die sich per
 Planstufe umschalten lässt (Gratis, Stufe 1 …): jede Spalte ist der Plan dieser App auf
 dieser Stufe, mit Preis, Sprachen, Produkten, Übersetzungsvolumen, Testzeit und allen
@@ -271,27 +365,23 @@ Shopifys hauseigene App kann sie nicht übersetzen, wir schon (konditional
 eingeblendet, wenn der Shop sie besitzt). Kombiniert mit AI-Markenstimme und
 Direct Translations ist das die breiteste Abdeckung am Markt.
 
-**Preise der Wettbewerber (aktualisiert Mai 2026, USD/Monat — Shopify App Store):**
+**Preise der Wettbewerber:** aktuelle, vollständige Planleitern (Stand 2026-09-30) stehen
+oben in §2.1 „B. Planleitern im Detail“. Die frühere Tabelle (Mai 2026, nur drei Preisstufen
+je App) ist dadurch ersetzt; ihre Werte für T Lab, langify, GTranslate und Hextom
+(nicht neu erhoben) bleiben hier als Stand Mai 2026:
 
 | App | Free | Einstieg | Mitte | Top | Rating (Reviews) |
 |-----|------|----------|-------|-----|------------------|
-| Transcy | ✅ | $14.90 | $29 | $69 | 4.4 (2.480) |
-| Weglot | ✅ (2k Wörter) | $17 | $32 | $87 | 4.5 (816) |
-| LangShop | ✅ (50 Prod.) | $10 | $40 | $75 | 4.5 (451) |
 | T Lab | ✅ | $11.99 | $29.99 | $59.99 | 4.9 (933) |
 | langify | ✅ (manuell) | $17.50 | $29.95 | $59.95 | 4.7 (712) |
 | GTranslate | ✅ | $9.99 | $19.99 | $29.99 | 4.7 (659) |
 | Hextom | ✅ | $9.99 | ~$19.99 | $49.99 | 4.7 (1.184) |
-| Shopify Translate & Adapt | ✅ vollständig gratis | — | — | — | 4.5 (1.424) |
-| **ContentPilot (wir)** | ✅ (50 Prod., ∞ Spr.) | €9.90 | €19.90 | €59.90 | — |
 
 > Markt: ~150 Apps in *Currency & Translation* (inkl. Währung/Geolocation),
 > davon ~40–60 reine Übersetzungs-Apps. Wettbewerber staffeln nach **Sprachen**
-> bzw. **Wörtern** (Weglot); wir nach **Produkten**. Da unser AI-Token-Kosten
-> beim Merchant liegen (BYO-Key), ist unsere Locale-Großzügigkeit (**unbegrenzt
-> Sprachen ab €0/€9.90** vs. LangShop $40 / Weglot $32 für nur 3) ein echter,
-> bislang unkommunizierter USP. Detaillierte Limit-Kritik → `PRICING_AND_LIMITS.md`
-> §Limit-Review.
+> bzw. **Wörtern** (Weglot); wir nach **Produkten**. Detaillierte Limit-Kritik →
+> `PRICING_AND_LIMITS.md` §Limit-Review; die Lehren aus dem Vergleich 09/2026 stehen
+> oben in §2.1 „D. Was wir daraus lernen“.
 
 ### 2.2 SEO-Apps
 
@@ -1015,3 +1105,4 @@ laden + in `vars`-Objekt reichen).
 | 2026-07-19 | **Content-Templates ⛔ zurückgezogen** nach 2-Tages-Test auf `develop` (Merge `266b00a` → Rollback `69e7b8b`). Kritischer Nutzer-Review ergab: die `{{title}}`/`{{description}}`/`{{language}}`/`{{current_value}}`/`{{field_label}}`-Substitution lieferte der KI keine Info, die sie nicht bereits über die Handler-Prompt-Zeilen (`Context - Title:`, `Language:` etc.) bekam. Templates duplizierten damit die bestehenden per-Field-Custom-Instructions mit rein textueller Umpositionierung. Reverse-Migration `20260719130000_drop_content_template` räumt die DB-Tabelle beim nächsten Deploy weg. §2.3 Fußnote ⁵, §3.1 Punkt 5, §3.5 „Big Picture", §4 Phase 1.3 alle aktualisiert. **Bedingung für einen späteren Wiedereinstieg:** Variablen müssen Zusatz-Info liefern, die die KI heute nicht bekommt (`{{brand}}`/`{{price}}`/`{{tags}}`/`{{vendor}}`/`{{product_type}}`/`{{similar_products}}` aus Shopify). Ohne diese Bedingung deckt Custom-Instructions denselben Bedarf ohne zweite Konfigurationsfläche ab. |
 | 2026-08-20 | **§2.1 Tag-Übersetzung ergänzt** (Web-Recherche): neue Tabellenzeile + Fußnote ⁶. Kernbefund — **keine** App übersetzt Tags als Tags; `tags` ist kein `translatableResource`-Key der Admin API, und tag-/vendor-basierte Filterwerte sind auch in Search & Discovery ausgenommen. Die ⚠️ der Konkurrenz sind drei Umgehungen: LangShops Theme-Duplikat (für Neukunden seit 08.08.2023 abgeschafft, Storefront-Suche kaputt), langifys Polyfill im Theme-Code, Weglot/GTranslates Proxy — alle ersetzen nur die HTML-Ausgabe, alle lassen die Filter-URL (`?filter.p.tag=…`) unübersetzt. Transcy und T Lab sagen es gar nicht erst zu. **Kein Gap für uns:** die Direktübersetzungen sind derselbe DOM-Mechanismus ohne Theme-Eingriff (shop-weites Wörterbuch, für Tags die richtige Granularität), und `field.tags` als `translatable: false` ist die korrekte Modellierung der Plattform-Grenze. Shopifys eigene Empfehlung für übersetzbare Filter bleibt: Metafelder statt Tags. Offen/ungemessen: ob unser Embed Tag-Chips in einem konkreten Theme trifft, und ob Transcy still einen eigenen DOM-Layer hat. |
 | 2026-09-30 | **§1 komplett nachgeführt** (Stand `develop`: Bulk-Editor, SEO-Bereich, KI-Sichtbarkeit, Sprachen & Märkte, automatische Nachübersetzung, Inhalte anlegen, Metaobjekte). **§2.1 neue Vergleichstabelle** ContentPilot vs. Translate & Adapt, Weglot, Transcy, LangShop (Web-Recherche 09/2026), Grundlage der neuen öffentlichen Vergleichsseiten `/compare` und `/compare/<app>`. Eigene Lücken bewusst aufgeführt (Bilder je Sprache, eigene Währungsumrechnung, menschliche Übersetzer). |
+| 2026-09-30 | **§2.1 komplett neu erhoben** mit den Plan-Vergleichstabellen von Weglot, Transcy und LangShop (Website + App Store, vom Inhaber geliefert): (A) Funktionen mit „ab welchem Plan“ für alle fünf Apps, (B) vollständige Planleitern, (C) Stufen-Vergleich wie auf `/compare`, (D) Lehren. Wichtigste Befunde: unbegrenzte Sprachen ab Gratis sind unser stärkster Preisvorteil; **kein Plan über 2.500 Produkte** und **Texte anderer Apps / Nachübersetzung erst im Max** sind unsere Schwachstellen gegenüber LangShop ($40–$75) und Transcy (ab Gratis bzw. $29). Alte Preistabelle (Mai 2026) auf die nicht neu erhobenen Apps reduziert. |
