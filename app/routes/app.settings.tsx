@@ -1010,6 +1010,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "createMarket" || actionType === "deleteMarket") {
+      // Märkte und Adressen: add a market (as a DRAFT) or delete one. Both are
+      // their own confirmed actions, replayed over a fresh read
+      // (market-address.server.ts).
+      const { loadMarketAddresses, validateMarketRequest, createMarket, deleteMarket } = await import(
+        "../services/market-address.server"
+      );
+      if (actionType === "deleteMarket") {
+        const marketId = getFormString(formData, "marketId");
+        if (!marketId) return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+        const outcome = await deleteMarket(admin, session.shop, marketId);
+        return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+      }
+      let countries: string[] = [];
+      try {
+        const parsed = JSON.parse(String(formData.get("countries") ?? "[]"));
+        countries = Array.isArray(parsed) ? parsed.filter((c): c is string => typeof c === "string") : [];
+      } catch {
+        return json({ success: false, actionType, marketId: "new", error: "invalidChanges" }, { status: 400 });
+      }
+      const addresses = await loadMarketAddresses(admin, session.shop);
+      if (!addresses) return json({ success: false, actionType, marketId: "new", error: "unverified" }, { status: 502 });
+      const checked = validateMarketRequest({ name: getFormString(formData, "name") ?? "", countries }, addresses);
+      if (!checked.ok) return json({ success: false, actionType, marketId: "new", error: checked.error }, { status: 400 });
+      const outcome = await createMarket(admin, session.shop, { name: checked.name, countries: checked.countries });
+      return json({ success: outcome.ok, actionType, marketId: "new", error: outcome.ok ? undefined : outcome.error });
     } else if (actionType === "createMarketAddress" || actionType === "removeMarketAddress") {
       // Märkte und Adressen: give a market its own subfolder, or take it back
       // onto the shared address. Not a setting — it moves storefront URLs — so

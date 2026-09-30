@@ -15,24 +15,28 @@
  * fetcher, and the server replays every request over a FRESH read.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useFetcher } from "react-router";
-import { Banner, BlockStack, Button, Checkbox, InlineStack, Modal, Select, Text, TextField } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Button, Checkbox, InlineStack, Modal, Select, Tag, Text, TextField } from "@shopify/polaris";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DeleteItemModal } from "./create/DeleteItemModal";
 import { HelpTooltip } from "./HelpTooltip";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
-import { localizedMarketName, regionCodeForName } from "../utils/market-name";
+import { countryOptions, localizedMarketName, regionCodeForName } from "../utils/market-name";
+import { compareStrings } from "../utils/format";
 
 /** Mirrors `MarketAddresses` in market-address.server.ts. */
 export interface MarketAddressesView {
   markets: Array<{
     marketId: string;
     name: string;
-    own: { presenceId: string; url: string | null; subfolderSuffix: string | null } | null;
+    status: string;
+    primary: boolean | null;
+    own: { presenceId: string; url: string | null; subfolderSuffix: string | null; sharedWith: string[] } | null;
   }>;
   sharedUrl: string | null;
+  takenSuffixes: string[];
 }
 
 interface Props {
@@ -48,6 +52,10 @@ interface Props {
 
 const CREATE_ACTION = "createMarketAddress";
 const REMOVE_ACTION = "removeMarketAddress";
+const CREATE_MARKET_ACTION = "createMarket";
+const DELETE_MARKET_ACTION = "deleteMarket";
+/** The id the new-market form's answers are keyed on (it has no market yet). */
+const NEW_MARKET = "new";
 
 export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s, t }: Props) {
   const a = s.addresses ?? {};
@@ -57,6 +65,16 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
 
   const [creating, setCreating] = useState<{ marketId: string; name: string } | null>(null);
   const [removing, setRemoving] = useState<{ marketId: string; name: string } | null>(null);
+  const [addingMarket, setAddingMarket] = useState(false);
+  const [deletingMarket, setDeletingMarket] = useState<{ marketId: string; name: string } | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newCountries, setNewCountries] = useState<string[]>([]);
+  const [countryPick, setCountryPick] = useState("");
+  const countries = useMemo(
+    () => countryOptions(appLocale).sort((x, y) => compareStrings(x.name, y.name, appLocale)),
+    [appLocale],
+  );
+  const countryName = (code: string) => countries.find((c) => c.code === code)?.name ?? code;
   const [suffix, setSuffix] = useState("");
   const [defaultLocale, setDefaultLocale] = useState("");
   const [alternates, setAlternates] = useState<string[]>([]);
@@ -66,22 +84,29 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
   const marketName = (name: string) => localizedMarketName(name, appLocale);
   const primaryLocale = locales.find((l) => l.primary)?.locale ?? locales[0]?.locale ?? "";
 
-  const response = fetcher.data && submittedFor && fetcher.data.marketId === submittedFor ? fetcher.data : null;
+  // This fetcher is the section's own, so an answer WITHOUT a `marketId` (the
+  // action's outer catch) is still the answer to what was just submitted.
+  const response =
+    fetcher.data && submittedFor && (fetcher.data.marketId === submittedFor || fetcher.data.marketId == null)
+      ? fetcher.data
+      : null;
   const failure: string | null =
     response && !response.success && fetcher.state === "idle" ? errorText(String(response.error ?? "")) : null;
 
   useEffect(() => {
     if (fetcher.state !== "idle" || !response?.success) return;
-    const name = creating?.name ?? removing?.name ?? "";
-    showInfoBox(
-      (response.actionType === CREATE_ACTION ? a.createdMessage : a.removedMessage || "").replace(
-        "{name}",
-        marketName(name),
-      ),
-      "success",
-    );
+    const name = creating?.name ?? removing?.name ?? deletingMarket?.name ?? newName;
+    const message: Record<string, string | undefined> = {
+      [CREATE_ACTION]: a.createdMessage,
+      [REMOVE_ACTION]: a.removedMessage,
+      [CREATE_MARKET_ACTION]: a.marketCreatedMessage,
+      [DELETE_MARKET_ACTION]: a.marketDeletedMessage,
+    };
+    showInfoBox((message[response.actionType] || "").replace("{name}", marketName(name)), "success");
     setCreating(null);
     setRemoving(null);
+    setAddingMarket(false);
+    setDeletingMarket(null);
     setSubmittedFor(null);
     // React Router revalidates the loaders after the action by itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -99,7 +124,12 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
       notSupported: a.errorNotSupported,
       schemaUnreadable: a.errorNotSupported,
       notSubfolder: a.errorNotSubfolder,
+      presenceShared: a.errorPresenceShared,
+      primaryMarket: a.errorPrimaryMarket,
       invalidChanges: s.errorInvalidChanges,
+      invalidMarketName: a.errorInvalidMarketName,
+      marketNameTaken: a.errorMarketNameTaken,
+      invalidCountries: a.errorInvalidCountries,
     };
     return known[code] || code;
   }
@@ -134,26 +164,57 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
       </BlockStack>
     );
   }
-  if (addresses.markets.length === 0) return null;
-
   return (
     <BlockStack gap="200">
-      <SectionHeading a={a} />
+      <InlineStack align="space-between" blockAlign="center" gap="300">
+        <SectionHeading a={a} />
+        <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
+          <Button
+            disabled={blocked || busy}
+            onClick={() => {
+              setNewName("");
+              setNewCountries([]);
+              setCountryPick("");
+              setSubmittedFor(null);
+              setAddingMarket(true);
+            }}
+          >
+            {a.addMarketButton}
+          </Button>
+        </DisabledActionTooltip>
+      </InlineStack>
       {addresses.markets.map((m) => (
         <InlineStack key={m.marketId} align="space-between" blockAlign="center" gap="300">
           <BlockStack gap="050">
-            <Text as="p" variant="bodyMd" fontWeight="semibold">
-              {marketName(m.name)}
-            </Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                {marketName(m.name)}
+              </Text>
+              {m.status !== "ACTIVE" && <Badge>{a.draftBadge}</Badge>}
+            </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
-              {m.own
-                ? (a.ownAddress || "{url}").replace("{url}", m.own.url ?? m.own.subfolderSuffix ?? "")
-                : (a.sharedAddress || "{url}").replace("{url}", addresses.sharedUrl ?? "")}
+              {m.status !== "ACTIVE"
+                ? a.draftHint
+                : m.primary === true
+                  ? (a.primaryAddress || "{url}").replace("{url}", addresses.sharedUrl ?? "")
+                  : m.own
+                    ? (a.ownAddress || "{url}").replace("{url}", m.own.url ?? m.own.subfolderSuffix ?? "")
+                    : (a.sharedAddress || "{url}").replace("{url}", addresses.sharedUrl ?? "")}
             </Text>
+            {m.own && m.own.sharedWith.length > 0 && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(a.presenceSharedWith || "{names}").replace("{names}", m.own.sharedWith.map(marketName).join(", "))}
+              </Text>
+            )}
           </BlockStack>
+          <InlineStack gap="300" blockAlign="center">
           {/* A DOMAIN presence carries a domain the merchant connected in
-              Shopify; only a subfolder is removed from here. */}
-          {(!m.own || m.own.subfolderSuffix) && (
+              Shopify; only a subfolder is removed from here, and only one no
+              other market uses. A draft market has no storefront to address,
+              and the primary market IS the root storefront. */}
+          {m.status === "ACTIVE" &&
+            m.primary !== true &&
+            (!m.own || (m.own.subfolderSuffix && m.own.sharedWith.length === 0)) && (
             <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
               {m.own ? (
                 <Button
@@ -174,8 +235,115 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
               )}
             </DisabledActionTooltip>
           )}
+          {m.primary !== true && (
+            <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
+              <Button
+                variant="plain"
+                tone="critical"
+                disabled={blocked || busy}
+                onClick={() => {
+                  setSubmittedFor(null);
+                  setDeletingMarket({ marketId: m.marketId, name: m.name });
+                }}
+              >
+                {a.deleteMarketButton}
+              </Button>
+            </DisabledActionTooltip>
+          )}
+          </InlineStack>
         </InlineStack>
       ))}
+
+      {addingMarket && (
+        <Modal
+          open
+          onClose={() => !busy && setAddingMarket(false)}
+          title={a.addMarketTitle}
+          primaryAction={{
+            content: a.addMarketConfirm,
+            loading: busy,
+            disabled: busy || newName.trim().length === 0 || newCountries.length === 0,
+            onAction: () => {
+              const form = new FormData();
+              form.append("actionType", CREATE_MARKET_ACTION);
+              form.append("name", newName.trim());
+              form.append("countries", JSON.stringify(newCountries));
+              setSubmittedFor(NEW_MARKET);
+              fetcher.submit(form, { method: "post" });
+            },
+          }}
+          secondaryActions={[{ content: t.common?.cancel || "Cancel", onAction: () => setAddingMarket(false), disabled: busy }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="300">
+              {failure && (
+                <Banner tone="critical">
+                  <p>{failure}</p>
+                </Banner>
+              )}
+              <TextField label={a.marketNameLabel} value={newName} onChange={setNewName} autoComplete="off" maxLength={60} />
+              <InlineStack gap="200" blockAlign="end" wrap={false}>
+                <div style={{ flex: 1 }}>
+                  <Select
+                    label={a.countriesLabel}
+                    options={[
+                      { label: a.countryPlaceholder || "…", value: "" },
+                      ...countries.filter((c) => !newCountries.includes(c.code)).map((c) => ({ label: c.name, value: c.code })),
+                    ]}
+                    value={countryPick}
+                    onChange={setCountryPick}
+                  />
+                </div>
+                <Button
+                  disabled={!countryPick}
+                  onClick={() => {
+                    setNewCountries((prev) => [...prev, countryPick]);
+                    // A one-country market is named after its country until the merchant types otherwise.
+                    if (!newName.trim() && newCountries.length === 0) setNewName(countryName(countryPick));
+                    setCountryPick("");
+                  }}
+                >
+                  {s.addButton || "Add"}
+                </Button>
+              </InlineStack>
+              {newCountries.length > 0 && (
+                <InlineStack gap="200" wrap>
+                  {newCountries.map((code) => (
+                    <Tag key={code} onRemove={() => setNewCountries((prev) => prev.filter((c) => c !== code))}>
+                      {countryName(code)}
+                    </Tag>
+                  ))}
+                </InlineStack>
+              )}
+              <Banner tone="info">
+                <p>{a.addMarketHint}</p>
+              </Banner>
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
+
+      {deletingMarket && (
+        <DeleteItemModal
+          open
+          onClose={() => {
+            if (busy) return;
+            setDeletingMarket(null);
+            setSubmittedFor(null);
+          }}
+          item={{ id: deletingMarket.marketId, title: marketName(deletingMarket.name), resource: "market" }}
+          deleting={busy}
+          error={failure}
+          onConfirm={() => {
+            const form = new FormData();
+            form.append("actionType", DELETE_MARKET_ACTION);
+            form.append("marketId", deletingMarket.marketId);
+            setSubmittedFor(deletingMarket.marketId);
+            fetcher.submit(form, { method: "post" });
+          }}
+          t={{ ...(t.content?.deleteModal ?? {}), ...(a.deleteMarketModal ?? {}) }}
+        />
+      )}
 
       {creating && (
         <Modal
