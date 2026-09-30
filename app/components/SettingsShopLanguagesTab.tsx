@@ -351,6 +351,16 @@ export function SettingsShopLanguagesTab({
             {s.marketsUnavailable}
           </Text>
         )}
+        {/* Several markets on one checkbox is a platform fact, not a choice of
+            this tab: Shopify keeps the languages on the web presence, and
+            markets without a domain or subfolder of their own share one.
+            Said once, or the merchant reads the shared box as a missing
+            feature. */}
+        {offered.some((p) => p.marketNames.length > 1) && (
+          <Text as="p" variant="bodySm" tone="subdued">
+            {s.sharedMarketsHint}
+          </Text>
+        )}
         {/* Read fine, nothing to offer — said, never rendered as silence. */}
         {marketWebPresences !== null && offered.length === 0 && (
           <Text as="p" variant="bodySm" tone="caution">

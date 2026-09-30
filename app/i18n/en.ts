@@ -1246,6 +1246,8 @@ export const en: Translation = {
       errorInvalidChanges: "The changes could not be read – reload the page.",
       errorLocalesUnreadable: "The shop's languages could not be read just now – try again.",
       marketsLabel: "Markets:",
+      sharedMarketsHint:
+        "Markets without a domain or subfolder of their own share one language list – which is why they can only be ticked together here.",
       noMarketWarning: "Published, but in no market – the online store's language picker does not offer this language. Tick at least one market.",
       marketsUnavailable: "The markets could not be loaded – assigning languages to markets is unavailable right now. Reload the page.",
       noActiveMarkets:
@@ -4515,6 +4517,7 @@ export const en: Translation = {
       summary:
         "Add languages here, publish them in the online store or take them out again. An unpublished language is one you prepare at your own pace: the app treats it exactly like an active one – it just does not appear in the online store yet.",
       tips: [
+        "Markets without a domain or subfolder of their own (e.g. /de-ch) share one language list and can only be ticked together",
         "Unpublished languages are synced, edited and auto-translated like active ones",
         "The “Published in the online store” switch is the launch – it takes effect when you press Save",
         "A language appears in the online store's language picker only in the markets you tick for it",

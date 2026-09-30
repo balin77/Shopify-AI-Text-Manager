@@ -1229,6 +1229,8 @@ export const es: Translation = {
       errorInvalidChanges: "No se pudieron leer los cambios: recarga la página.",
       errorLocalesUnreadable: "Ahora mismo no se pudieron leer los idiomas de la tienda: inténtalo de nuevo.",
       marketsLabel: "Mercados:",
+      sharedMarketsHint:
+        "Los mercados sin dominio ni subcarpeta propios comparten una lista de idiomas; por eso aquí solo se pueden marcar juntos.",
       noMarketWarning: "Publicado, pero en ningún mercado: el selector de idioma de la tienda online no ofrece este idioma. Marca al menos un mercado.",
       marketsUnavailable: "No se pudieron cargar los mercados: ahora mismo no se pueden asignar idiomas a mercados. Recarga la página.",
       noActiveMarkets:
@@ -4503,6 +4505,7 @@ export const es: Translation = {
       summary:
         "Aquí añades idiomas, los publicas en la tienda online o los vuelves a quitar. Un idioma no publicado es uno que preparas con calma: la app lo trata exactamente igual que uno activo; solo que aún no aparece en la tienda online.",
       tips: [
+        "Los mercados sin dominio ni subcarpeta propios (p. ej. /de-ch) comparten una lista de idiomas y solo se pueden marcar juntos",
         "Los idiomas no publicados se sincronizan, se editan y se traducen automáticamente como los activos",
         "El interruptor «Publicado en la tienda online» es el lanzamiento; se aplica al pulsar Guardar",
         "Un idioma aparece en el selector de idioma de la tienda online solo en los mercados que marques para él",
