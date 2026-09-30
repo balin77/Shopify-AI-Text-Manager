@@ -15,7 +15,7 @@
  * fetcher, and the server replays every request over a FRESH read.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type SVGProps } from "react";
 import { useFetcher } from "react-router";
 import { Badge, Banner, BlockStack, Button, Checkbox, InlineStack, Modal, Select, Tag, Text, TextField } from "@shopify/polaris";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
@@ -26,6 +26,23 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { countryOptions, localizedMarketName, regionCodeForName } from "../utils/market-name";
 import { compareStrings } from "../utils/format";
+import { useHydrated } from "../hooks/useHydrated";
+
+/**
+ * Shopify admin's "Im Diagramm anzeigen" glyph — two nodes joined by a
+ * stepped line. Polaris Icons (9.3.1, the latest) has no such icon, so it is
+ * drawn here in the same 20×20 grid and 1.5 stroke; `currentColor` lets the
+ * Button tint it like any Polaris icon.
+ */
+function MarketGraphIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" {...props}>
+      <rect x="3.25" y="3.25" width="6" height="4.5" rx="1.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="10.75" y="12.25" width="6" height="4.5" rx="1.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6.25 7.75v4.5c0 1.1.9 2.25 2 2.25h2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 /** Mirrors `MarketAddresses` in market-address.server.ts. */
 export interface MarketAddressesView {
@@ -35,6 +52,8 @@ export interface MarketAddressesView {
     status: string;
     primary: boolean | null;
     own: { presenceId: string; url: string | null; subfolderSuffix: string | null; sharedWith: string[] } | null;
+    currency: { code: string; name: string | null } | null;
+    adminGraphUrl: string | null;
   }>;
   sharedUrl: string | null;
   takenSuffixes: string[];
@@ -63,6 +82,7 @@ const NEW_MARKET = "new";
 
 export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s, t }: Props) {
   const a = s.addresses ?? {};
+  const hydrated = useHydrated();
   const { showInfoBox } = useInfoBox();
   const fetcher = useFetcher<any>();
   const busy = fetcher.state !== "idle";
@@ -270,6 +290,11 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
                 {(a.presenceSharedWith || "{names}").replace("{names}", m.own.sharedWith.map(marketName).join(", "))}
               </Text>
             )}
+            {m.currency && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(a.currency || "{currency}").replace("{currency}", currencyLabel(m.currency, appLocale, hydrated))}
+              </Text>
+            )}
           </BlockStack>
           <InlineStack gap="300" blockAlign="center">
           {/* A DOMAIN presence carries a domain the merchant connected in
@@ -298,6 +323,14 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
                 </Button>
               )}
             </DisabledActionTooltip>
+          )}
+          {/* A link OUT to Shopify admin (new tab): the graph of this
+              market's languages, currency and address. It changes nothing,
+              so neither an open draft nor a running request blocks it. */}
+          {m.adminGraphUrl && (
+            <Button variant="plain" icon={MarketGraphIcon} url={m.adminGraphUrl} target="_blank">
+              {a.showInGraph}
+            </Button>
           )}
           {m.primary !== true && (
             <DisabledActionTooltip
@@ -640,6 +673,25 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
  * A market's own unshared SUBFOLDER goes with it on delete (measured, see
  * `deleteMarket`); a domain or a shared address is changed in Shopify first.
  */
+/**
+ * "CHF · Schweizer Franken". The NAME comes from `Intl` in the app's own
+ * language only after hydration — server and browser may ship different
+ * display-name data, so the first render shows what both agree on: the code
+ * and Shopify's own name (#418, CLAUDE.md §Hydration).
+ */
+function currencyLabel(c: { code: string; name: string | null }, appLocale: string, hydrated: boolean): string {
+  let name = c.name;
+  if (hydrated) {
+    try {
+      const local = new Intl.DisplayNames([appLocale], { type: "currency" }).of(c.code);
+      if (local && local !== c.code) name = local;
+    } catch {
+      // keep Shopify's name
+    }
+  }
+  return name && name !== c.code ? `${c.code} · ${name}` : c.code;
+}
+
 function ownBlocksDelete(m: MarketAddressesView["markets"][number]): boolean {
   return !!m.own && (!m.own.subfolderSuffix || m.own.sharedWith.length > 0);
 }

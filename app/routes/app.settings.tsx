@@ -1031,7 +1031,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch {
         return json({ success: false, actionType, marketId: "new", error: "invalidChanges" }, { status: 400 });
       }
-      const addresses = await loadMarketAddresses(admin, session.shop);
+      const addresses = await loadMarketAddresses(admin, session.shop, { currencies: false });
       if (!addresses) return json({ success: false, actionType, marketId: "new", error: "unverified" }, { status: 502 });
       const checked = validateMarketRequest({ name: getFormString(formData, "name") ?? "", countries }, addresses);
       if (!checked.ok) return json({ success: false, actionType, marketId: "new", error: checked.error }, { status: 400 });
@@ -1083,7 +1083,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: false, actionType, marketId, error: "invalidChanges" }, { status: 400 });
       }
       const [addresses, localesJson] = await Promise.all([
-        loadMarketAddresses(admin, session.shop),
+        loadMarketAddresses(admin, session.shop, { currencies: false }),
         admin
           .graphql(`#graphql
             query settingsShopLocalesForAddress {

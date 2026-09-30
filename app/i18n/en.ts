@@ -1288,6 +1288,8 @@ export const en: Translation = {
         errorPrimaryMarket: "This is the shop's primary market – it is the main address itself and can be neither moved nor deleted.",
         primaryAddress: "Primary market – main address {url}",
         presenceSharedWith: "This address is also used by: {names}",
+        currency: "Currency: {currency}",
+        showInGraph: "Show in graph",
         addMarketButton: "Add market",
         addMarketTitle: "Add a new market",
         addMarketConfirm: "Create market",

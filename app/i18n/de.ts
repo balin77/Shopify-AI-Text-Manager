@@ -1292,6 +1292,8 @@ export const de = {
         errorPrimaryMarket: "Das ist der Hauptmarkt des Shops – er ist die Hauptadresse selbst und lässt sich weder umziehen noch löschen.",
         primaryAddress: "Hauptmarkt – Hauptadresse {url}",
         presenceSharedWith: "Diese Adresse nutzen auch: {names}",
+        currency: "Währung: {currency}",
+        showInGraph: "Im Diagramm anzeigen",
         addMarketButton: "Markt hinzufügen",
         addMarketTitle: "Neuen Markt hinzufügen",
         addMarketConfirm: "Markt anlegen",

@@ -197,6 +197,8 @@ const SHAPE_TYPES = [
   "Market",
   "MarketWebPresence",
   "MarketStatus",
+  "MarketCurrencySettings",
+  "CurrencySetting",
 ];
 
 const RELEVANT_MUTATIONS = [
