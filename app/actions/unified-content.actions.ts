@@ -106,6 +106,26 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     return json({ success: false, error: "Missing required itemId" }, { status: 400 });
   }
 
+  // ── Managed-AI compliance gate ──────────────────────────────────────────────
+  // Whose key, consent, kill switch and budget — asked once, BEFORE any Task
+  // row or AI call, and only for the actions that reach an AI. A refusal used
+  // to surface as a raw 500 or as every locale silently "failed". The body
+  // echoes `actionType`/`fieldType` so the editor lands it where that action's
+  // own error lands (a field error for the single-field translations).
+  //
+  // It runs BEFORE the credentials below are built, and that order matters:
+  // a spent taster falls back to the merchant's own key inside the gate,
+  // which refreshes `aiSettings` in place — credentials resolved earlier
+  // would still be the managed ones and the first request would be refused.
+  if (AI_CONTENT_ACTIONS.has(action)) {
+    const fieldType = getFormString(formData, "fieldType");
+    const refusal = await aiRefusalFor(aiSettings, session.shop, {
+      actionType: action,
+      ...(fieldType ? { fieldType } : {}),
+    });
+    if (refusal) return refusal;
+  }
+
   // Initialize services
   // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
   // answer, not a config literal built here. Ten copies of those six
@@ -145,21 +165,6 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     provider,
     serviceConfig,
   };
-
-  // ── Managed-AI compliance gate ──────────────────────────────────────────────
-  // Whose key, consent, kill switch and budget — asked once, BEFORE any Task
-  // row or AI call, and only for the actions that reach an AI. A refusal used
-  // to surface as a raw 500 or as every locale silently "failed". The body
-  // echoes `actionType`/`fieldType` so the editor lands it where that action's
-  // own error lands (a field error for the single-field translations).
-  if (AI_CONTENT_ACTIONS.has(action)) {
-    const fieldType = getFormString(formData, "fieldType");
-    const refusal = await aiRefusalFor(aiSettings, session.shop, {
-      actionType: action,
-      ...(fieldType ? { fieldType } : {}),
-    });
-    if (refusal) return refusal;
-  }
 
   // ── Delegate to extracted handlers ──────────────────────────────────────────
   switch (action) {

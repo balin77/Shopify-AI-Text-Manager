@@ -522,6 +522,7 @@ export default function ProductsPage() {
     enabledLanguages: editor.state.enabledLanguages,
     strings: {
       optionsSavedSuccess: t.products.optionsSavedSuccess,
+      translateFailed: t.errors.translationFailed,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
       optionNameEmpty: t.products.optionNameEmpty,

@@ -487,13 +487,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       db.aIInstructions.findUnique({ where: { shop } }),
     ]);
 
-    // PLAN_MANAGED_AI_KEY §5 — the eleventh copy of that assembly, and the one
-    // that was missed by hand and found by the isolation guard. Whose key this
-    // spends is the resolver's answer.
-    const { aiCredentialsFor } = await import("../services/ai/ai-credentials.server");
-    const aiCredentials = aiCredentialsFor(aiSettings, shop);
-    const provider = aiCredentials.provider;
-    const serviceConfig = aiCredentials.config;
     // Same language source the PSI call already uses (AISettings.appLanguage,
     // see getShopLanguage) — what handleGenerateAltText receives as
     // `mainLanguage` from its clients.
@@ -521,6 +514,15 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       const { error, code, status } = refusalPayload(refusal);
       return json<GenerateAltTextResult>({ ok: false, error, code }, { status });
     }
+
+    // PLAN_MANAGED_AI_KEY §5 — the eleventh copy of that assembly, and the one
+    // that was missed by hand and found by the isolation guard. Whose key this
+    // spends is the resolver's answer. Resolved AFTER the gate: a spent taster
+    // falls back to the merchant's own key there, refreshing `aiSettings`.
+    const { aiCredentialsFor } = await import("../services/ai/ai-credentials.server");
+    const aiCredentials = aiCredentialsFor(aiSettings, shop);
+    const provider = aiCredentials.provider;
+    const serviceConfig = aiCredentials.config;
 
     const task = await db.task.create({
       data: {

@@ -297,6 +297,9 @@ export async function handleGenerateAllAltTexts(
     const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
     const writtenLocale = await resolveWrittenLocale(admin, session.shop, formData);
 
+    // A refusal part-way through: the alt texts generated before it are paid
+    // for and still valid, so they are returned rather than thrown away.
+    let stoppedBy: unknown = null;
     for (let i = 0; i < imagesData.length; i++) {
       const image = imagesData[i];
       try {
@@ -318,9 +321,15 @@ export async function handleGenerateAllAltTexts(
           data: { progress: progressPercent, processed: i + 1 },
         });
       } catch (error: unknown) {
-        // A managed refusal refuses every remaining image identically — abort
-        // the run so the merchant sees why, instead of N empty alt texts.
-        if (isManagedRefusal(error)) throw error;
+        // A managed refusal refuses every remaining image identically — stop
+        // the run so the merchant sees why, instead of N empty alt texts. With
+        // nothing generated yet it fails the request with the refusal; after
+        // the first success it ends the loop and keeps what was delivered.
+        if (isManagedRefusal(error)) {
+          if (Object.keys(generatedAltTexts).length === 0) throw error;
+          stoppedBy = error;
+          break;
+        }
         logger.error("Failed to generate alt-text for image", {
           context: "UnifiedContent",
           imageIndex: i,
@@ -332,14 +341,22 @@ export async function handleGenerateAllAltTexts(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: stoppedBy ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({ generatedAltTexts }),
+        ...(stoppedBy ? { error: getFullErrorMessage(stoppedBy) } : {}),
       },
     });
 
-    return json({ actionType: "generateAllAltTexts", success: true, generatedAltTexts });
+    return json({
+      actionType: "generateAllAltTexts",
+      success: true,
+      generatedAltTexts,
+      // The machine code (`managed_ai_refused:<reason>`); the client's error
+      // translator phrases it in the merchant's language.
+      ...(stoppedBy ? { warning: getFullErrorMessage(stoppedBy) } : {}),
+    });
   } catch (error: unknown) {
     const errorMsg = getFullErrorMessage(error);
     await db.task.update({

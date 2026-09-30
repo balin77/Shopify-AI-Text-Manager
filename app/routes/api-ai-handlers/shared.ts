@@ -343,7 +343,15 @@ export async function aiRefusalResponse(
       // their own is handed straight back to it. Without this, only the
       // per-request preflight stamped — and it is never reached behind this
       // refusal, so a shop that had added its own key stayed refused for ever.
-      if (await fallBackToOwnKeyIfTasterSpent(shop, status)) return null;
+      const fallback = await fallBackToOwnKeyIfTasterSpent(shop, status);
+      if (fallback) {
+        // The caller builds its AI service from THIS settings object after the
+        // gate. Refresh it in place, or it would still resolve to the managed
+        // key and the preflight would refuse the very request this lets
+        // through ("left managed mode mid-run" → temporarily unavailable).
+        if (settings && fallback.settings) Object.assign(settings, fallback.settings);
+        return null;
+      }
       return managedRefusalResponse(
         status.kind === "taster" ? "tasterExhausted" : "budgetExceeded",
         settings,

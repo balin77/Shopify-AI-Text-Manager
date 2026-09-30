@@ -549,13 +549,27 @@ async function stampTaster(
  */
 export async function markTasterSpentIfExhausted(
   shop: string,
-  status: { kind: string; allowed: boolean; unavailable?: boolean; readFailed?: boolean },
+  status: {
+    kind: string;
+    allowed: boolean;
+    unavailable?: boolean;
+    readFailed?: boolean;
+    usedMicros?: number;
+    limitMicros?: number;
+  },
 ): Promise<boolean> {
   // A ledger that could not be READ is no evidence the taster is spent, and
   // the stamp is permanent — so a database blink must not write it.
   if (status.kind !== "taster" || status.allowed || status.unavailable || status.readFailed) {
     return false;
   }
+  // Nor is a limit of ZERO: the budget answers that when the taster cannot be
+  // SIZED (an unpriced managed model, a lookup that threw) — a deployment
+  // fault, not a merchant who used their grant. Stamping on it would burn the
+  // one-time taster of every free shop that clicked anything while the
+  // configuration was wrong. Only a real spend past a real limit is evidence.
+  const limit = status.limitMicros ?? 0;
+  if (!(limit > 0 && (status.usedMicros ?? 0) >= limit)) return false;
   await stampTaster(shop, { managedAiTasterSpentAt: new Date() }, { managedAiTasterSpentAt: null });
   return true;
 }
@@ -569,7 +583,7 @@ export async function markTasterSpentIfExhausted(
  */
 export async function fallBackToOwnKeyIfTasterSpent(
   shop: string,
-  status: { kind: string; allowed: boolean; unavailable?: boolean; readFailed?: boolean },
+  status: Parameters<typeof markTasterSpentIfExhausted>[1],
 ): Promise<{ settings: AISettings | null; decision: AiCredentialDecision } | null> {
   if (!(await markTasterSpentIfExhausted(shop, status))) return null;
   try {

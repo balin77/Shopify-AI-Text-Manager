@@ -120,6 +120,10 @@ describe('markTasterSpentIfExhausted', () => {
     ['a taster with budget left', { ...spentTaster, allowed: true }],
     ['a ledger that could not be read', { ...spentTaster, readFailed: true }],
     ['a refusal that is ours to fix', { ...spentTaster, unavailable: true }],
+    // A limit of zero is a taster that could not be SIZED (unpriced model, a
+    // lookup that threw) — a deployment fault, never proof of a spent grant.
+    ['a taster that could not be sized', { ...spentTaster, usedMicros: 0, limitMicros: 0 }],
+    ['a limit not yet reached', { ...spentTaster, usedMicros: 50 }],
   ])('never stamps %s', async (_label, status) => {
     expect(await markTasterSpentIfExhausted(SHOP, status)).toBe(false);
     expect(db.aISettings.updateMany).not.toHaveBeenCalled();
@@ -132,10 +136,18 @@ describe('aiRefusalResponse — a spent taster', () => {
     // The re-read after the stamp sees the stamp.
     db.aISettings.findUnique.mockResolvedValue(tasterShop({ managedAiTasterSpentAt: new Date() }));
 
-    const response = await aiRefusalResponse(tasterShop(), SHOP);
+    const settings = tasterShop() as { managedAiTasterSpentAt: Date | null };
+    const response = await aiRefusalResponse(settings as never, SHOP);
 
     expect(response).toBeNull();
     expect(db.aISettings.updateMany).toHaveBeenCalledTimes(1);
+    // The caller builds its service from THIS object after the gate — it must
+    // now resolve to the merchant's key, or the first request is refused by
+    // the managed preflight as "left managed mode".
+    expect(settings.managedAiTasterSpentAt).toBeInstanceOf(Date);
+    const { resolveAiCredentials } = await import('~/services/ai/ai-credentials.server');
+    const decision = resolveAiCredentials({ shop: SHOP, settings: settings as never });
+    expect(decision.ok && decision.source).toBe('byo');
   });
 
   it('stamps and still refuses a shop with NO key of its own', async () => {
