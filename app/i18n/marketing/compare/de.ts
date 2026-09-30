@@ -90,7 +90,7 @@ export const compareDe: CompareCopy = {
   },
   ourStrengths: [
     "Übersetzungen werden in Ihrem Shopify-Shop gespeichert und bleiben, wenn Sie die App entfernen.",
-    "KI-Übersetzung in beliebig vielen Sprachen, nach Ihrer Tonalität, Ihren Regeln und Ihrem Glossar.",
+    "KI-Übersetzung in alle Sprachen Ihres Shops, nach Ihrer Tonalität, Ihren Regeln und Ihrem Glossar.",
     "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis — oder nehmen einen Plan mit enthaltener KI.",
     "Übersetzt Texte anderer Apps und aktualisiert Übersetzungen, wenn sich der Originaltext ändert.",
     "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
@@ -156,6 +156,7 @@ export const compareDe: CompareCopy = {
     strengthsHelp: "Nach den Angaben des Anbieters, von uns zusammengefasst.",
     values: {
       unlimited: "Unbegrenzt",
+      shopifyMax: "Alle, die Shopify erlaubt (bis 20)",
       someAutomatic: "2 automatisch, weitere von Hand",
       automaticOf: "{auto} per KI, bis {total} insgesamt",
       manualOnly: "Nur von Hand übersetzen",
@@ -191,7 +192,7 @@ export const compareDe: CompareCopy = {
     "translate-and-adapt": {
       kind: "Shopifys eigene kostenlose Übersetzungs-App",
       summary:
-        "Translate & Adapt ist kostenlos und stammt von Shopify. ContentPilot ergänzt KI-Übersetzung in beliebig vielen Sprachen nach Ihren eigenen Anweisungen, ein Glossar, Texte anderer Apps, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
+        "Translate & Adapt ist kostenlos und stammt von Shopify. ContentPilot ergänzt KI-Übersetzung in alle Sprachen Ihres Shops nach Ihren eigenen Anweisungen, ein Glossar, Texte anderer Apps, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
       about:
         "Translate & Adapt stammt von Shopify und kostet nichts. Zwei Sprachen übersetzt die App automatisch, jede weitere Sprache wird von Hand übersetzt. Ihre große Stärke ist das Anpassen von Inhalten pro Markt, etwa unterschiedliche Schreibweisen für Deutschland und die Schweiz.",
       strengths: [
@@ -201,7 +202,7 @@ export const compareDe: CompareCopy = {
         "Passt gut, wenn Sie eine oder zwei zusätzliche Sprachen brauchen und Ihnen einfache maschinelle Übersetzung genügt.",
       ],
       ourEdge: [
-        "KI-Übersetzung in beliebig vielen Sprachen, nach Ihrer eigenen Tonalität und Ihren Regeln.",
+        "KI-Übersetzung in alle Sprachen Ihres Shops, nach Ihrer eigenen Tonalität und Ihren Regeln.",
         "Ein Glossar, damit Markennamen und feste Begriffe nie falsch übersetzt werden.",
         "Übersetzt auch Texte anderer Apps, etwa Bewertungs-Widgets.",
         "Aktualisiert Übersetzungen automatisch, wenn Sie den Originaltext ändern.",
@@ -230,7 +231,7 @@ export const compareDe: CompareCopy = {
       ],
       ourEdge: [
         "Übersetzungen werden in Ihrem Shopify-Shop gespeichert und bleiben, wenn Sie die App entfernen.",
-        "Beliebig viele Sprachen in jedem Plan und keine Wortlimits – die Pläne richten sich nach der Zahl der Produkte.",
+        "Alle Sprachen, die Shopify erlaubt, in jedem Plan und keine Wortlimits – die Pläne richten sich nach der Zahl der Produkte.",
         "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge, Sichtbarkeit in KI-Suchen und ein Tabellen-Editor für den ganzen Katalog.",
@@ -256,7 +257,7 @@ export const compareDe: CompareCopy = {
       ],
       ourEdge: [
         "Eigene Anweisungen für die KI, damit Übersetzungen Ihre Tonalität treffen.",
-        "Beliebig viele Sprachen in jedem Plan.",
+        "Alle Sprachen, die Shopify erlaubt, in jedem Plan.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
         "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
@@ -270,7 +271,7 @@ export const compareDe: CompareCopy = {
     langshop: {
       kind: "Übersetzungs-App für Shopify",
       summary:
-        "LangShop übersetzt Shopify-Shops mit mehreren KI-Diensten und bietet Währungsumrechnung. ContentPilot ergänzt SEO-Werkzeuge, das Schreiben von Inhalten und beliebig viele Sprachen in jedem Plan. Der Vergleich.",
+        "LangShop übersetzt Shopify-Shops mit mehreren KI-Diensten und bietet Währungsumrechnung. ContentPilot ergänzt SEO-Werkzeuge, das Schreiben von Inhalten und alle Sprachen, die Shopify erlaubt, in jedem Plan. Der Vergleich.",
       about:
         "LangShop ist eine Shopify-Übersetzungs-App, die mit mehreren KI-Diensten oder menschlichen Übersetzern arbeitet. Sie deckt Shop, Checkout und Texte anderer Apps ab und bringt einen Währungsumrechner und einen Sprachumschalter mit.",
       strengths: [
@@ -280,14 +281,14 @@ export const compareDe: CompareCopy = {
         "Währungsumrechnung und Sprachumschalter.",
       ],
       ourEdge: [
-        "Beliebig viele Sprachen in jedem Plan.",
+        "Alle Sprachen, die Shopify erlaubt, in jedem Plan.",
         "Sie wählen den KI-Anbieter und bezahlen ihn direkt, zum Selbstkostenpreis.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
         "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
       ],
       verdict:
-        "Wählen Sie LangShop, wenn Sie menschliche Übersetzer auf Abruf oder einen Währungsumrechner über Shopify Markets hinaus wollen. Wählen Sie ContentPilot, wenn Sie beliebig viele Sprachen und eine App für Texte, SEO und Übersetzungen wollen.",
+        "Wählen Sie LangShop, wenn Sie menschliche Übersetzer auf Abruf oder einen Währungsumrechner über Shopify Markets hinaus wollen. Wählen Sie ContentPilot, wenn Sie alle Sprachen Ihres Shops und eine App für Texte, SEO und Übersetzungen wollen.",
       notes: {
         aiProvider: "Mehrere KI-Dienste",
         bulkEditor: "Nur Übersetzungen",
@@ -297,7 +298,7 @@ export const compareDe: CompareCopy = {
     "t-lab": {
       kind: "KI-Übersetzungs-App für Shopify",
       summary:
-        "T Lab übersetzt Shopify-Shops mit KI, gestaffelt nach Sprachen und Produktzahl. ContentPilot ergänzt beliebig viele KI-Sprachen, eigene Anweisungen für die KI, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
+        "T Lab übersetzt Shopify-Shops mit KI, gestaffelt nach Sprachen und Produktzahl. ContentPilot ergänzt KI-Übersetzung in alle Sprachen Ihres Shops in jedem Plan, eigene Anweisungen für die KI, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
       about:
         "T Lab ist eine Übersetzungs-App für Shopify, die in Shopifys eigenen Übersetzungsspeicher schreibt. Übersetzt wird von Hand oder mit einer KI auf Basis von OpenAI; wie viele Sprachen die KI übersetzt und für wie viele Produkte, hängt vom Plan ab. Diese Kontingente gelten einmalig pro Sprache und erneuern sich nicht monatlich. Was Shopify selbst nicht übersetzen kann – Bilder, Texte anderer Apps, fest eingebaute Texte – ersetzt die App per Skript im Shop.",
       strengths: [
@@ -307,14 +308,14 @@ export const compareDe: CompareCopy = {
         "Autopilot im Premium-Plan übersetzt neue und geänderte Inhalte automatisch; eigener Schlüssel für OpenAI, Anthropic, DeepL, DeepSeek oder Google.",
       ],
       ourEdge: [
-        "KI-Übersetzung in beliebig vielen Sprachen, ohne einmaliges Kontingent pro Sprache.",
+        "KI-Übersetzung in alle Sprachen Ihres Shops, ohne einmaliges Kontingent pro Sprache.",
         "Eigene Anweisungen und ein Glossar, damit die KI in Ihrer Tonalität übersetzt.",
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
         "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
       ],
       verdict:
-        "Wählen Sie T Lab, wenn Sie wenige Sprachen günstig mit KI übersetzen wollen und Bilder, Texte anderer Apps oder Währungen übersetzen müssen. Wählen Sie ContentPilot, wenn Sie beliebig viele Sprachen in Ihrer eigenen Tonalität, ohne einmaliges Kontingent pro Sprache, und eine App für Texte, SEO und Übersetzungen wollen.",
+        "Wählen Sie T Lab, wenn Sie wenige Sprachen günstig mit KI übersetzen wollen und Bilder, Texte anderer Apps oder Währungen übersetzen müssen. Wählen Sie ContentPilot, wenn Sie alle Sprachen Ihres Shops in Ihrer eigenen Tonalität, ohne einmaliges Kontingent pro Sprache, und eine App für Texte, SEO und Übersetzungen wollen.",
       notes: {
         nativeStorage: "Bilder und eigene Ersetzungen über die App",
         brandVoice: "Shop-Kontext; Tonalität nur mit eigenem Key",
@@ -327,7 +328,7 @@ export const compareDe: CompareCopy = {
     langify: {
       kind: "Übersetzungs-App für Shopify",
       summary:
-        "Langify übersetzt Shopify-Shops von Hand oder maschinell, mit einem Wortkontingent pro Plan. ContentPilot ergänzt KI-Übersetzung mit eigenen Anweisungen, beliebig viele Sprachen, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
+        "Langify übersetzt Shopify-Shops von Hand oder maschinell, mit einem Wortkontingent pro Plan. ContentPilot ergänzt KI-Übersetzung mit eigenen Anweisungen, alle Sprachen Ihres Shops, SEO-Werkzeuge und das Schreiben von Inhalten. Der Vergleich.",
       about:
         "Langify ist eine langjährige Übersetzungs-App für Shopify, die in Shopifys eigenen Übersetzungsspeicher schreibt. Im kostenlosen Plan übersetzen Sie bis zu fünf Sprachen von Hand. Die Bezahlpläne übersetzen maschinell mit DeepL und Google; ihr Wortkontingent wird einmalig beim Abschluss gutgeschrieben, weitere Wörter gibt es als Wortpakete. Eine KI-Übersetzung ist in einer geschlossenen Beta ab Growth.",
       strengths: [

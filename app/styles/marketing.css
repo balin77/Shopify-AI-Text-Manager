@@ -2062,6 +2062,27 @@ a.mk-badge:hover {
   z-index: 3;
 }
 
+/* Scrolling sideways, two things stay put: ContentPilot's column right after
+   the feature column (it is what every other column is compared against),
+   and the group titles, whose label sticks to the left edge while their
+   full-width row slides underneath. */
+.mk-compare-matrix__table .mk-compare-table__ours {
+  position: sticky;
+  left: var(--mk-compare-first-col, 200px);
+  z-index: 1;
+  box-shadow: 1px 0 0 var(--mk-border);
+}
+
+.mk-compare-matrix__table thead th.mk-compare-table__ours {
+  z-index: 3;
+}
+
+.mk-compare-table__group-label {
+  position: sticky;
+  left: 14px;
+  display: inline-block;
+}
+
 /* Fitting: no scroll box at all (`clip` is not a scroll container, so
    `sticky` works against the page), headers below the controls. */
 .mk-compare-matrix__body[data-fits] .mk-compare-table__scroll {

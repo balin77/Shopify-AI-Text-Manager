@@ -90,7 +90,7 @@ export const compareEn: CompareCopy = {
   },
   ourStrengths: [
     "Translations saved in your Shopify store — they stay if you uninstall.",
-    "AI translation in any number of languages, following your own tone, rules and glossary.",
+    "AI translation in every language your shop has, following your own tone, rules and glossary.",
     "You choose the AI provider and pay it directly, at cost — or pick a plan with AI included.",
     "Translates texts from other apps and updates translations when the original changes.",
     "Writes and improves product texts, SEO titles and alt texts.",
@@ -156,6 +156,7 @@ export const compareEn: CompareCopy = {
     strengthsHelp: "Based on the provider's own listing, summarised by us.",
     values: {
       unlimited: "Unlimited",
+      shopifyMax: "All that Shopify allows (up to 20)",
       someAutomatic: "2 automatic, more by hand",
       automaticOf: "{auto} by AI, up to {total} in total",
       manualOnly: "Manual translation only",
@@ -191,7 +192,7 @@ export const compareEn: CompareCopy = {
     "translate-and-adapt": {
       kind: "Shopify's own free translation app",
       summary:
-        "Translate & Adapt is free and built by Shopify. ContentPilot adds AI translation in any number of languages with your own instructions, a glossary, texts from other apps, SEO tools and content writing. Here is how they compare.",
+        "Translate & Adapt is free and built by Shopify. ContentPilot adds AI translation in every language your shop has with your own instructions, a glossary, texts from other apps, SEO tools and content writing. Here is how they compare.",
       about:
         "Translate & Adapt is made by Shopify and costs nothing. It translates up to two languages automatically; every further language is translated by hand. Its big strength is adapting content per market, for example different spellings for the UK and the US.",
       strengths: [
@@ -201,7 +202,7 @@ export const compareEn: CompareCopy = {
         "A good fit if you need one or two extra languages and standard machine translation is enough.",
       ],
       ourEdge: [
-        "AI translation in any number of languages, following your own tone and rules.",
+        "AI translation in every language your shop has, following your own tone and rules.",
         "A glossary, so brand names and fixed terms are never mistranslated.",
         "Translates texts from other apps, such as review widgets ",
         "Updates translations automatically when you change the original text ",
@@ -230,7 +231,7 @@ export const compareEn: CompareCopy = {
       ],
       ourEdge: [
         "Translations are saved in your Shopify store and stay if you uninstall.",
-        "Unlimited languages on every plan and no word limits — plans are sized by number of products.",
+        "Every language Shopify allows, on every plan, and no word limits — plans are sized by number of products.",
         "You choose the AI provider and pay it directly, at cost.",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit, AI-search visibility and a spreadsheet editor for the whole catalogue.",
@@ -256,7 +257,7 @@ export const compareEn: CompareCopy = {
       ],
       ourEdge: [
         "Your own instructions for the AI, so translations follow your tone",
-        "Unlimited languages on every plan.",
+        "Every language Shopify allows, on every plan.",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and AI-search visibility.",
         "A spreadsheet editor for the whole catalogue, plus variant image galleries",
@@ -270,7 +271,7 @@ export const compareEn: CompareCopy = {
     langshop: {
       kind: "Translation app for Shopify",
       summary:
-        "LangShop translates Shopify stores with several AI engines and offers currency conversion. ContentPilot adds SEO tools, content writing and unlimited languages on every plan. Here is how they compare.",
+        "LangShop translates Shopify stores with several AI engines and offers currency conversion. ContentPilot adds SEO tools, content writing and every language Shopify allows, on every plan. Here is how they compare.",
       about:
         "LangShop is a Shopify translation app that works with several AI engines or human translators. It covers the store, checkout and other apps' texts, and adds a currency converter and a language switcher.",
       strengths: [
@@ -280,14 +281,14 @@ export const compareEn: CompareCopy = {
         "Currency conversion and a language switcher.",
       ],
       ourEdge: [
-        "Unlimited languages on every plan.",
+        "Every language Shopify allows, on every plan.",
         "You choose the AI provider and pay it directly, at cost.",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and AI-search visibility.",
         "A spreadsheet editor for the whole catalogue, plus variant image galleries",
       ],
       verdict:
-        "Choose LangShop if you want human translators on call or a currency converter beyond Shopify Markets. Choose ContentPilot if you want unlimited languages and one app for texts, SEO and translations.",
+        "Choose LangShop if you want human translators on call or a currency converter beyond Shopify Markets. Choose ContentPilot if you want every language your shop has and one app for texts, SEO and translations.",
       notes: {
         aiProvider: "Several AI engines",
         bulkEditor: "Translations only",
@@ -297,7 +298,7 @@ export const compareEn: CompareCopy = {
     "t-lab": {
       kind: "AI translation app for Shopify",
       summary:
-        "T Lab translates Shopify stores with AI, tiered by languages and number of products. ContentPilot adds AI translation in any number of languages, your own instructions for the AI, SEO tools and content writing. Here is how they compare.",
+        "T Lab translates Shopify stores with AI, tiered by languages and number of products. ContentPilot adds AI translation in every language your shop has, your own instructions for the AI, SEO tools and content writing. Here is how they compare.",
       about:
         "T Lab is a translation app for Shopify that writes into Shopify's own translation storage. It translates by hand or with an AI based on OpenAI; how many languages the AI translates, and for how many products, depends on the plan. Those allowances are one-time per language and do not renew monthly. What Shopify cannot translate itself — images, other apps' texts, hard-coded texts — the app replaces with a script in the store.",
       strengths: [
@@ -307,14 +308,14 @@ export const compareEn: CompareCopy = {
         "Autopilot on Premium translates new and changed content automatically; own key for OpenAI, Anthropic, DeepL, DeepSeek or Google.",
       ],
       ourEdge: [
-        "AI translation in any number of languages, without a one-time allowance per language.",
+        "AI translation in every language your shop has, without a one-time allowance per language.",
         "Your own instructions and a glossary, so the AI translates in your tone.",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and visibility in AI search.",
         "A spreadsheet editor for the whole catalogue and variant image galleries.",
       ],
       verdict:
-        "Choose T Lab if you want a few languages translated by AI at a low price and need images, other apps' texts or currencies handled. Choose ContentPilot if you want any number of languages in your own voice, without a one-time allowance per language, and one app for texts, SEO and translations.",
+        "Choose T Lab if you want a few languages translated by AI at a low price and need images, other apps' texts or currencies handled. Choose ContentPilot if you want every language your shop has in your own voice, without a one-time allowance per language, and one app for texts, SEO and translations.",
       notes: {
         nativeStorage: "Images and custom replacements via the app",
         brandVoice: "Store context; tone only with your own key",
@@ -327,7 +328,7 @@ export const compareEn: CompareCopy = {
     langify: {
       kind: "Translation app for Shopify",
       summary:
-        "Langify translates Shopify stores by hand or by machine, with a word allowance per plan. ContentPilot adds AI translation with your own instructions, any number of languages, SEO tools and content writing. Here is how they compare.",
+        "Langify translates Shopify stores by hand or by machine, with a word allowance per plan. ContentPilot adds AI translation with your own instructions, every language your shop has, SEO tools and content writing. Here is how they compare.",
       about:
         "Langify is a long-standing translation app for Shopify that writes into Shopify's own translation storage. On the free plan you translate up to five languages by hand. The paid plans machine-translate with DeepL and Google; their word allowance is credited once at sign-up, with more words sold as word packs. AI translation is in a closed beta from Growth.",
       strengths: [

@@ -51,7 +51,9 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
       ? g.values.onRequest
       : plan.languages === "unlimited"
         ? g.values.unlimited
-        : plan.languages === "someAutomatic"
+        : plan.languages === "shopifyMax"
+          ? g.values.shopifyMax
+          : plan.languages === "someAutomatic"
           ? g.values.someAutomatic
           : typeof plan.languages === "object"
             ? g.values.automaticOf

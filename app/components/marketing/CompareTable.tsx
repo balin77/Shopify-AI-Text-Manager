@@ -168,6 +168,10 @@ export function CompareMatrix({
       const headerHeight = header?.offsetHeight ?? 0;
       body.style.setProperty("--mk-compare-header", `${headerHeight}px`);
       body.style.setProperty("--mk-compare-controls", `${controls.offsetHeight}px`);
+      // Our column sticks right after the feature column, whose width the
+      // browser decides, so its offset is read rather than restated.
+      const firstColumn = table.tHead?.rows[0]?.cells[0];
+      if (firstColumn) body.style.setProperty("--mk-compare-first-col", `${firstColumn.offsetWidth}px`);
       setFits(table.offsetWidth <= box.clientWidth + 1);
       follow();
     };
@@ -303,7 +307,7 @@ export function CompareMatrix({
           <tbody>
             <tr className="mk-compare-table__group">
               <th scope="rowgroup" colSpan={columns}>
-                {g.planGroup}
+                <span className="mk-compare-table__group-label">{g.planGroup}</span>
               </th>
             </tr>
             <tr className="mk-compare-matrix__price-row">
@@ -396,7 +400,7 @@ export function CompareMatrix({
             <tbody key={group}>
               <tr className="mk-compare-table__group">
                 <th scope="rowgroup" colSpan={columns}>
-                  {copy.groups[group]}
+                  <span className="mk-compare-table__group-label">{copy.groups[group]}</span>
                 </th>
               </tr>
               {COMPARE_ROWS.filter((row) => row.group === group).map((row) => (
@@ -430,7 +434,7 @@ export function CompareMatrix({
           <tbody>
             <tr className="mk-compare-table__group">
               <th scope="rowgroup" colSpan={columns}>
-                {g.strengthsGroup}
+                <span className="mk-compare-table__group-label">{g.strengthsGroup}</span>
               </th>
             </tr>
             <tr>

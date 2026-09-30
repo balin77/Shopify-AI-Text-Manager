@@ -271,6 +271,8 @@ export const PRICE_APPS: PriceAppId[] = ["contentpilot", ...COMPETITORS];
 export type PlanLanguages =
   | number
   | "unlimited"
+  /** Ours: every language the shop has — the ceiling is Shopify's, not the plan's. */
+  | "shopifyMax"
   | "someAutomatic"
   | "onRequest"
   /** Some languages translated by AI, more addable by hand (T Lab). */
@@ -354,10 +356,10 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
     currency: "EUR",
     trialDays: BILLING_PLANS.basic.trialDays ?? null,
     plans: [
-      { id: "free", name: "Free", monthly: 0, languages: "unlimited", products: PLAN_CONFIG.free.maxProducts, volume: OWN_KEY, includedAi: { kind: "taster", actions: MANAGED_AI_TASTER_ACTIONS } },
-      { id: "basic", name: "Basic", monthly: BILLING_PLANS.basic.price, languages: "unlimited", products: PLAN_CONFIG.basic.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.basic.price, tier: "basic" } },
-      { id: "pro", name: "Pro", monthly: BILLING_PLANS.pro.price, languages: "unlimited", products: PLAN_CONFIG.pro.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.pro.price, tier: "pro" } },
-      { id: "max", name: "Max", monthly: BILLING_PLANS.max.price, languages: "unlimited", products: PLAN_CONFIG.max.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.max.price, tier: "max" } },
+      { id: "free", name: "Free", monthly: 0, languages: "shopifyMax", products: PLAN_CONFIG.free.maxProducts, volume: OWN_KEY, includedAi: { kind: "taster", actions: MANAGED_AI_TASTER_ACTIONS } },
+      { id: "basic", name: "Basic", monthly: BILLING_PLANS.basic.price, languages: "shopifyMax", products: PLAN_CONFIG.basic.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.basic.price, tier: "basic" } },
+      { id: "pro", name: "Pro", monthly: BILLING_PLANS.pro.price, languages: "shopifyMax", products: PLAN_CONFIG.pro.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.pro.price, tier: "pro" } },
+      { id: "max", name: "Max", monthly: BILLING_PLANS.max.price, languages: "shopifyMax", products: PLAN_CONFIG.max.maxProducts, volume: OWN_KEY, includedAi: { kind: "plan", monthly: MANAGED_BILLING_PLANS.max.price, tier: "max" } },
     ],
   },
   "translate-and-adapt": {
@@ -445,17 +447,18 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
   // GTranslate, its own plan table (2026-09-30). Free is a language widget
   // that translates in the visitor's browser (not indexed, not editable, no
   // commercial use); the paid plans serve translated pages from GTranslate's
-  // "Translation Delivery Network". "Bilingual Startup" is one extra language;
+  // "Translation Delivery Network". "All languages" is up to 103 per its help
+  // centre. "Bilingual Startup" is one extra language;
   // Enterprise is listed only on gtranslate.io. 15-day trial.
   gtranslate: {
     currency: "USD",
     trialDays: 15,
     plans: [
-      { id: "free", name: "Free", monthly: 0, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "free", name: "Free", monthly: 0, languages: 103, products: "unstated", volume: { kind: "unlimitedWords" } },
       { id: "bilingual", name: "Bilingual Startup", monthly: 12, languages: 1, products: "unstated", volume: { kind: "unlimitedWords" } },
-      { id: "startup", name: "Startup", monthly: 25, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
-      { id: "business", name: "Business", monthly: 35, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
-      { id: "enterprise", name: "Enterprise", monthly: 50, languages: "unlimited", products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "startup", name: "Startup", monthly: 25, languages: 103, products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "business", name: "Business", monthly: 35, languages: 103, products: "unstated", volume: { kind: "unlimitedWords" } },
+      { id: "enterprise", name: "Enterprise", monthly: 50, languages: 103, products: "unstated", volume: { kind: "unlimitedWords" } },
     ],
   },
 };

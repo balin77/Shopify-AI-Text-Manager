@@ -96,6 +96,8 @@ export type CompareCopy = {
     strengthsHelp: string;
     values: {
       unlimited: string;
+      /** Ours: every language Shopify lets the shop have. */
+      shopifyMax: string;
       someAutomatic: string;
       /** `{auto}` translated by AI out of `{total}` addable. */
       automaticOf: string;
