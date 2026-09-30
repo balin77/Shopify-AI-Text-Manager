@@ -19,6 +19,7 @@ import {
 } from "../constants/aiInstructionsDefaults";
 import type { FetcherWithComponents } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
+import { taskErrorText } from "../utils/task-error-text";
 import { meetsPlan, type Plan } from "../utils/planUtils";
 import { PLAN_DISPLAY_NAMES } from "../config/plans";
 import { AUTO_TRANSLATE_MIN_PLAN } from "../services/translations/translation-change-policy.shared";
@@ -832,6 +833,11 @@ export function AIInstructionsTabs({
                                 {item.resourceTitle || item.resourceId}
                                 {item.lastError
                                   ? ` — ${
+                                      // A managed-AI refusal carries its reason (`managed_ai_refused:<reason>`),
+                                      // rendered by the same function the Tasks tab uses.
+                                      (item.lastError.startsWith('managed_ai_refused:')
+                                        ? taskErrorText(item.lastError, t)
+                                        : null) ||
                                       (t.settings.autoTranslateRetryErrors as Record<string, string> | undefined)?.[item.lastError] ||
                                       t.settings.autoTranslateRetryErrors?.run_failed ||
                                       'Übersetzung fehlgeschlagen'

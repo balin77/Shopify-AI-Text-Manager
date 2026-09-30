@@ -313,10 +313,20 @@ describe('the repair pre-check (source shape — its harness is the full sync)',
     expect(gate).toMatch(/\(!budget\.allowed && !ownKey\) \|\| \(pool && !pool\.allowed\)/);
   });
 
-  it('records BOTH stand-downs before returning startFailed', () => {
-    const returns = gate.split('return { removed: 0, retranslating: 0, startFailed: true }');
-    expect(returns).toHaveLength(3);
-    expect(returns[0]).toMatch(/await recordManagedStandDown\(target, decision\.reason\);\s*$/);
-    expect(returns[1]).toMatch(/await recordManagedStandDown\(target, reason\);\s*$/);
+  it('answers BOTH refusals with their reason (`managedRepairRefusal`)', () => {
+    expect(gate).toMatch(/return decision\.reason;/);
+    expect(gate).toMatch(/return reason;/);
+  });
+
+  it('the repair records the stand-down before returning startFailed + managedStandDown', () => {
+    // The gate itself only answers; the repair is where it is RECORDED, and the
+    // stand-down travels out distinctly so the retry list does not read it as
+    // "nothing owed" (which settled — deleted — its row).
+    expect(src).toMatch(
+      /const refusal = await managedRepairRefusal\(shop, resourceId\);\s*if \(refusal\) \{\s*await recordManagedStandDown\(target, refusal\);/,
+    );
+    expect(src).toMatch(
+      /return \{ removed: 0, retranslating: 0, startFailed: true, managedStandDown: refusal \}/,
+    );
   });
 });

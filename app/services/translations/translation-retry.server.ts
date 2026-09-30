@@ -56,6 +56,21 @@ export function retriesPerSweep(dailyLimit: number | null): number {
 export const RETRY_ERROR_CODES = ["not_delivered", "could_not_start", "unreadable", "run_failed"] as const;
 export type RetryErrorCode = (typeof RETRY_ERROR_CODES)[number];
 
+/**
+ * A MANAGED-AI refusal (`managed_ai_refused:<reason>`, the same code the Task
+ * rows carry). Not a failure: the work was never attempted, so a row carrying
+ * it keeps its attempt count (see `preserveAttempts` / `postponed`).
+ */
+export type ManagedRefusalRetryError = `managed_ai_refused:${string}`;
+
+/** What `lastError` may hold. */
+export type RetryLastError = RetryErrorCode | ManagedRefusalRetryError;
+
+/** The `lastError` code for a managed-AI refusal. */
+export function managedRefusalRetryError(reason: string): ManagedRefusalRetryError {
+  return `managed_ai_refused:${reason}`;
+}
+
 /** A row left `running` longer than this belongs to a run whose process died
  *  (a redeploy) and is picked up again. */
 const RUNNING_STALE_MS = 2 * 60 * 60 * 1000;
@@ -129,7 +144,14 @@ export async function enqueueTranslationRetry(
     pairs: readonly RetryPair[];
     reason: RetryReason;
     /** A CODE (see `RETRY_ERROR_CODES`), never a raw message. */
-    error?: RetryErrorCode;
+    error?: RetryLastError;
+    /**
+     * Do NOT reset the attempt count even for a `failed` entry. A managed-AI
+     * stand-down is not a failure of the translation — nothing was tried — so
+     * it must neither burn an attempt nor hand a row that keeps failing for a
+     * real reason a fresh pair of them.
+     */
+    preserveAttempts?: boolean;
   },
   dbClient?: Db | null,
 ): Promise<void> {
@@ -148,7 +170,7 @@ export async function enqueueTranslationRetry(
     // real reason (a bad key) dodge `exhausted` forever. And a RUNNING row's
     // count belongs to its running retry; the new pairs get their own count
     // when that retry settles (`settleTranslationRetry`, "new work").
-    const resetCount = entry.reason === "failed" && !running;
+    const resetCount = entry.reason === "failed" && !running && !entry.preserveAttempts;
     const data = {
       resourceType: entry.resourceType,
       contentKind: entry.contentKind,
@@ -233,8 +255,8 @@ export function subtractRetryPairs(a: readonly RetryPair[], b: readonly RetryPai
  *  - Nothing left ⇒ the row goes. Otherwise pending, or `exhausted` once the
  *    attempts are used up.
  *  - `postponed`: the retry did not really run (the daily limit, the switch is
- *    off, a run or a merchant save is in the way). The attempt the processor
- *    counted is given back, the pairs stay as they are.
+ *    off, a run or a merchant save is in the way, managed AI refused). The
+ *    attempt the processor counted is given back, the pairs stay as they are.
  *
  * One interactive transaction, so two settles cannot interleave.
  */
@@ -243,7 +265,7 @@ export async function settleTranslationRetry(
   outcome: {
     handed: readonly RetryPair[];
     remaining: readonly RetryPair[];
-    error?: RetryErrorCode;
+    error?: RetryLastError;
     postponed?: boolean;
     /** Set the row's reason while postponing (only the daily limit does). */
     postponedBy?: RetryReason;
@@ -267,6 +289,9 @@ export async function settleTranslationRetry(
             status: "pending",
             startedAt: null,
             ...(outcome.postponedBy ? { reason: outcome.postponedBy } : {}),
+            // A postponement can say WHY (a managed-AI stand-down does); the
+            // pairs and the count stay as they are either way.
+            ...(outcome.error ? { lastError: outcome.error } : {}),
           },
         });
         return;
@@ -305,7 +330,7 @@ export interface RetrySummary {
   exhausted: number;
   /** The exhausted rows themselves, newest first, for the settings card. */
   exhaustedItems: Array<{ resourceType: string; resourceTitle: string | null; resourceId: string; lastError: string | null }>;
-  /* `lastError` is a RetryErrorCode (or null). */
+  /* `lastError` is a RetryLastError (or null). */
 }
 
 export async function loadRetrySummary(shop: string, dbClient?: Db | null): Promise<RetrySummary> {

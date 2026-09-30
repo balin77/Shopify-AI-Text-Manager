@@ -92,6 +92,40 @@ describe("repairChangedProductAlts", () => {
     expect(gateway.graphql).not.toHaveBeenCalled();
   });
 
+  it("a MANAGED stand-down keeps the local rows of an image with no mediaId too", async () => {
+    // The repair stood down (nothing deleted anywhere); deleting the
+    // unaddressable image's rows first made this the one surface where it did.
+    reconcileAfterPrimarySave.mockResolvedValueOnce({
+      removed: 0,
+      retranslating: 0,
+      startFailed: true,
+      managedStandDown: "budgetExceeded",
+    } as never);
+    const run = async () => {
+      const { gateway, db } = deps();
+      await repairChangedProductAlts({
+        gateway: gateway as never,
+        db: db as never,
+        shop: "s",
+        productId: "gid://shopify/Product/1",
+        productTitle: "Box",
+        changes: [
+          { imageId: "a", mediaId: "gid://shopify/MediaImage/1", alt: "Eins" },
+          { imageId: "b", mediaId: null },
+        ],
+        policy: { ...base, autoTranslateExternalChanges: true, purgeUnreconciledSurfaces: true } as never,
+        foreignLocales: ["en"],
+        primaryLocale: "de",
+      });
+      return db.productImageAltTranslation.deleteMany;
+    };
+    expect(await run()).not.toHaveBeenCalled();
+    // …and without the stand-down the stored answer still applies.
+    expect(await run()).toHaveBeenCalledWith({
+      where: { imageId: { in: ["b"] }, marketId: "", locale: { in: ["en"] } },
+    });
+  });
+
   it("auto-translate off + deletion on: removes on Shopify and locally, global layer", async () => {
     const { gateway, db } = deps();
     await repairChangedProductAlts({

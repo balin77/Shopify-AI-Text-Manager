@@ -84,6 +84,9 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       create: vi.fn(async (args?: { data?: { id?: string } }) => ({ id: args?.data?.id ?? "task-1" })),
       update: vi.fn(async () => ({})),
       upsert: vi.fn(async (_args?: unknown) => ({})),
+      // The per-day de-duplication of managed-AI stand-down rows.
+      findFirst: vi.fn(async (_args?: unknown): Promise<{ id: string } | null> => null),
+      delete: vi.fn(async (_args?: unknown) => ({})),
     },
   };
   const shopify = {
@@ -120,6 +123,19 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
 });
 
 vi.mock("../../app/db.server", () => ({ db, default: db }));
+
+// The managed-AI gate's static decision. `null` = the real resolver (which, for
+// the fake settings above, answers BYO `noKey` — no stand-down).
+const gate = vi.hoisted(() => ({ refusal: null as null | string }));
+vi.mock("../../app/services/ai/ai-credentials.server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../app/services/ai/ai-credentials.server")>();
+  return {
+    ...actual,
+    resolveAiCredentials: vi.fn((args: Parameters<typeof actual.resolveAiCredentials>[0]) =>
+      gate.refusal ? ({ ok: false, reason: gate.refusal } as never) : actual.resolveAiCredentials(args),
+    ),
+  };
+});
 
 vi.mock("../../app/services/bulk-editor/translations.server", () => ({
   LOCALE_KEY_SEP: "\u0000",
@@ -229,6 +245,7 @@ import {
   IN_APP_RETRANSLATED_RESOURCE_TYPES,
 } from "../../app/services/translations/stale-translation-sync.server";
 import { digestBaselineKey } from "../../app/services/translations/stale-translations.shared";
+import { ManagedAiRefusedError } from "../../src/services/ai.service";
 import {
   markTranslationSaved,
   isTranslationRecentlySaved,
@@ -307,6 +324,10 @@ beforeEach(() => {
   }));
   db.task.update.mockClear();
   db.task.upsert.mockClear();
+  db.task.findFirst.mockReset();
+  db.task.findFirst.mockResolvedValue(null);
+  db.task.delete.mockClear();
+  gate.refusal = null;
   db.primaryDigestBaseline.findUnique.mockReset();
   db.primaryDigestBaseline.findUnique.mockResolvedValue(null);
   db.primaryDigestBaseline.upsert.mockClear();
@@ -2812,3 +2833,155 @@ describe("retryAutoTranslation — one row of the retry list", () => {
     expect(update.data.lastError).toMatch(/^(not_delivered|could_not_start|run_failed)$/);
   });
 });
+
+describe("a MANAGED-AI stand-down never costs the retry list, the daily limit or the baseline", () => {
+  // The gate's refusal used to come back as `retranslating: 0` — which the retry
+  // read as "nothing owed" and DELETED its row, after spending a unit of the
+  // daily limit and advancing the primary baseline. And the sync-side brake
+  // spent both before the repair's gate ever ran, with nothing put on the list.
+  beforeEach(() => {
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) =>
+      Object.fromEntries(
+        locales.map((locale) => [
+          locale,
+          Object.fromEntries(Object.keys(fields).map((k) => [k, `${locale}-${k}`])),
+        ]),
+      ),
+    );
+  });
+
+  function shopifyNow() {
+    return {
+      graphql: vi.fn(async (_query: string, opts?: { variables?: Record<string, unknown> }) => {
+        const resource: Record<string, unknown> = {
+          translatableContent: [
+            { key: "title", value: "Box", digest: NEW },
+            { key: "body_html", value: "<p>Box</p>", digest: NEW },
+          ],
+        };
+        for (const name of Object.keys(opts?.variables ?? {})) {
+          if (name.startsWith("loc")) resource[`l${name.slice(3)}`] = [];
+        }
+        return { json: async () => ({ data: { translatableResource: resource } }) };
+      }),
+    } as never;
+  }
+
+  const retryParams = (reason: "limit" | "failed" = "limit") => ({
+    client: shopifyNow(),
+    shop: SHOP,
+    retryId: "retry-m",
+    resourceId: freshProduct(),
+    resourceType: "Product",
+    contentKind: "product" as const,
+    pairs: ["de", "fr"].map((locale) => ({ key: "title", locale })),
+    reason,
+  });
+
+  it("retry: the row is KEPT, the limit NOT spent and the baseline NOT advanced", async () => {
+    gate.refusal = "consentMissing";
+    policy.autoTranslateDailyLimit = 5;
+    db.autoTranslateRetry.findUnique.mockResolvedValue({ attempts: 1, pairs: retryParams().pairs });
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD } });
+
+    const outcome = await retryAutoTranslation(retryParams("limit"));
+    await awaitDetachedRetranslations();
+
+    expect(outcome).toBe("postponed");
+    expect(ai.translate).not.toHaveBeenCalled();
+    expect(db.autoTranslateRetry.delete).not.toHaveBeenCalled();
+    expect(db.autoTranslateFillBudget.updateMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    const update = (db.autoTranslateRetry.update.mock.calls[0] as any[])[0];
+    // The attempt the processor counted is given back; the reason says why.
+    expect(update.data).toMatchObject({
+      attempts: 0,
+      status: "pending",
+      lastError: "managed_ai_refused:consentMissing",
+    });
+  });
+
+  it("retry: a refusal INSIDE the run postpones the row — never counted, never exhausted", async () => {
+    // Attempt two of two: counted as a failure this would be `exhausted`.
+    db.autoTranslateRetry.findUnique.mockResolvedValue({ attempts: 2, pairs: retryParams().pairs });
+    ai.translate = vi.fn(async () => {
+      throw new ManagedAiRefusedError("budgetExceeded");
+    });
+
+    const outcome = await retryAutoTranslation(retryParams("failed"));
+    await awaitDetachedRetranslations();
+
+    expect(outcome).toBe("started");
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.removeCalls).toEqual([]);
+    expect(db.autoTranslateRetry.delete).not.toHaveBeenCalled();
+    const update = (db.autoTranslateRetry.update.mock.calls[0] as any[])[0];
+    expect(update.where).toEqual({ id: "retry-m" });
+    expect(update.data).toMatchObject({
+      attempts: 1,
+      status: "pending",
+      lastError: "managed_ai_refused:budgetExceeded",
+    });
+    expect(update.data.status).not.toBe("exhausted");
+  });
+
+  it("sync: a first fill is DEFERRED — no unit, no claim, no baseline write, and it is on the list", async () => {
+    gate.refusal = "managedUnavailable";
+    policy.autoTranslateDailyLimit = 100;
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    const client = shopifyNow();
+    const graphql = (client as unknown as { graphql: ReturnType<typeof vi.fn> }).graphql;
+
+    const result = await reconcileStaleTranslations(
+      baseParams({ client, translations: [], previousDigests: {}, foreignLocales: ["de", "fr"] }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result).toMatchObject({ retranslating: 0, startFailed: true, managedStandDown: "managedUnavailable" });
+    expect(ai.translate).not.toHaveBeenCalled();
+    expect(graphql).not.toHaveBeenCalled();
+    expect(db.autoTranslateFillBudget.updateMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.updateMany).not.toHaveBeenCalled();
+    expect(db.primaryDigestBaseline.upsert).not.toHaveBeenCalled();
+    expect(shopify.removeCalls).toEqual([]);
+
+    const enqueued = (db.autoTranslateRetry.upsert.mock.calls[0] as any[])[0];
+    expect((enqueued.create.pairs as Array<{ key: string; locale: string }>).map((p) => `${p.locale}:${p.key}`).sort()).toEqual([
+      "de:body_html",
+      "de:title",
+      "fr:body_html",
+      "fr:title",
+    ]);
+    // Never spent its unit, so the retry spends it; the count is not reset.
+    expect(enqueued.update.reason).toBe("limit");
+    expect(enqueued.update.attempts).toBeUndefined();
+    expect(enqueued.update.lastError).toBe("managed_ai_refused:managedUnavailable");
+  });
+
+  it("sync: a refusal INSIDE a normal run defers its pairs without resetting the attempt count", async () => {
+    db.primaryDigestBaseline.findUnique.mockResolvedValue({ digests: { title: OLD, body_html: OLD } });
+    // An earlier refusal row exists today: this run's own Task row is folded into it.
+    db.task.findFirst.mockResolvedValue({ id: "earlier-stand-down" });
+    ai.translate = vi.fn(async () => {
+      throw new ManagedAiRefusedError("tasterExhausted");
+    });
+
+    const result = await reconcileStaleTranslations(
+      baseParams({ client: shopifyNow(), translations: [], previousDigests: {}, foreignLocales: ["de"] }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(2);
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.removeCalls).toEqual([]);
+    const enqueued = (db.autoTranslateRetry.upsert.mock.calls.at(-1) as any[])[0];
+    expect(enqueued.update.reason).toBe("failed");
+    expect(enqueued.update.attempts).toBeUndefined();
+    expect(enqueued.update.lastError).toBe("managed_ai_refused:tasterExhausted");
+    // One refusal row per shop and day, not one per resource.
+    expect(db.task.delete).toHaveBeenCalledWith({ where: { id: result.taskId } });
+  });
+});
+
