@@ -205,7 +205,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Campos",
           paragraphs: [
-            "Los campos de texto (título, descripción, título SEO, meta descripción, handle) llevan debajo una fila de acciones de IA: generar, mejorar, formatear, traducir. Cada campo tiene un signo de interrogación que explica para qué sirve y un botón para vaciarlo.",
+            "Los campos de texto (título, descripción, título SEO, meta descripción, handle) llevan debajo una fila de botones de IA: generar (con el campo vacío) o mejorar, formatear y traducir. Cada campo tiene un signo de interrogación que explica para qué sirve y un botón para vaciarlo.",
             "En el área Detalles están los atributos que no se traducen: proveedor, etiquetas, categoría, colecciones, plantilla del tema, visibilidad — y en los productos también precios, inventario y canales de venta.",
           ],
         },
@@ -220,18 +220,14 @@ export const guideEs: GuideCopy = {
 
     "ai-generate": {
       title: "Generar, mejorar y formatear textos",
-      summary: "Las tres acciones de IA de cada campo de texto — y qué hace cada una con tu texto.",
+      summary: "Los botones de IA de cada campo de texto — y qué hace cada uno con tu texto.",
       sections: [
         {
-          heading: "Generar",
+          heading: "Generar o mejorar — un solo botón",
           paragraphs: [
-            "Escribe un texto nuevo para el campo. La IA recibe el contexto de la entrada — título, descripción existente, tipo de producto, etiquetas y, si lo permites, la imagen — y tus instrucciones para ese campo.",
-          ],
-        },
-        {
-          heading: "Mejorar",
-          paragraphs: [
-            "Reelabora el texto existente: más claro, mejor estructurado, más cerca de tus reglas de estilo y de las palabras clave asignadas.",
+            "Bajo cada campo de texto hay un botón de IA cuya etiqueta depende del campo. Si el campo está vacío, se llama «Generar con IA» y escribe un texto nuevo. La IA recibe el contexto de la entrada — título, tipo de producto, etiquetas y, si lo permites, la imagen — y tus instrucciones para ese campo.",
+            "Si el campo ya tiene texto, el mismo botón se llama «Mejorar con IA» y reescribe libremente el texto existente: más claro, mejor estructurado, más cerca de tus reglas de estilo y de las palabras clave asignadas.",
+            "Antes de empezar puedes darle a la IA una instrucción solo para esta ejecución, por ejemplo «Destaca la calidad de la lana». Tiene prioridad sobre todas las demás reglas.",
           ],
         },
         {

@@ -205,7 +205,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "Fields",
           paragraphs: [
-            "Text fields (title, description, SEO title, meta description, handle) carry a row of AI actions underneath: generate, improve, format, translate. Every field has a question mark explaining what it is for, and a button to clear it.",
+            "Text fields (title, description, SEO title, meta description, handle) carry a row of AI buttons underneath: generate (on an empty field) or improve, format and translate. Every field has a question mark explaining what it is for, and a button to clear it.",
             "The Details area holds the attributes that are not translated: vendor, tags, category, collections, theme template, visibility — and for products also prices, stock and sales channels.",
           ],
         },
@@ -220,18 +220,14 @@ export const guideEn: GuideCopy = {
 
     "ai-generate": {
       title: "Generating, improving and formatting text",
-      summary: "The three AI actions on every text field — and what each one does to your text.",
+      summary: "The AI buttons on every text field — and what each one does to your text.",
       sections: [
         {
-          heading: "Generate",
+          heading: "Generate or improve — one button",
           paragraphs: [
-            "Writes a new text for the field. The AI receives the entry's context — title, existing description, product type, tags and, if allowed, the image — plus your instructions for this field.",
-          ],
-        },
-        {
-          heading: "Improve",
-          paragraphs: [
-            "Reworks the existing text: clearer, better structured, closer to your style rules and to the keywords assigned to the entry.",
+            "Under every text field sits an AI button whose label depends on the field. When the field is empty it reads “Generate with AI” and writes a new text. The AI receives the entry's context — title, product type, tags and, if allowed, the image — plus your instructions for this field.",
+            "When the field already holds text, the same button reads “Improve with AI” and rewrites the existing text freely: clearer, better structured, closer to your style rules and to the keywords assigned to the entry.",
+            "Before it starts, you can give the AI an instruction for this one run, such as “Highlight the wool quality”. It takes precedence over every other rule.",
           ],
         },
         {

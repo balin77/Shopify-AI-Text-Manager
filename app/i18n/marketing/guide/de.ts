@@ -208,7 +208,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Felder",
           paragraphs: [
-            "Textfelder (Titel, Beschreibung, SEO-Titel, Meta-Beschreibung, Handle) haben unter sich eine Leiste mit KI-Aktionen: generieren, verbessern, formatieren, übersetzen. Jedes Feld hat ein Fragezeichen, das erklärt, wofür es gut ist, und einen Knopf zum Leeren.",
+            "Textfelder (Titel, Beschreibung, SEO-Titel, Meta-Beschreibung, Handle) haben unter sich eine Leiste mit KI-Knöpfen: generieren (bei leerem Feld) bzw. verbessern, formatieren und übersetzen. Jedes Feld hat ein Fragezeichen, das erklärt, wofür es gut ist, und einen Knopf zum Leeren.",
             "Im Bereich „Details“ stehen die Angaben, die nicht übersetzt werden: Hersteller, Tags, Kategorie, Kollektionen, Theme-Vorlage, Sichtbarkeit — bei Produkten zusätzlich Preise, Lager und Vertriebskanäle.",
           ],
         },
@@ -223,18 +223,14 @@ export const guideDe: GuideCopy = {
 
     "ai-generate": {
       title: "Texte generieren, verbessern und formatieren",
-      summary: "Die drei KI-Aktionen an jedem Textfeld — und was sie jeweils mit Ihrem Text machen.",
+      summary: "Die KI-Knöpfe an jedem Textfeld — und was sie jeweils mit Ihrem Text machen.",
       sections: [
         {
-          heading: "Generieren",
+          heading: "Generieren oder verbessern — ein Knopf",
           paragraphs: [
-            "Schreibt einen neuen Text für das Feld. Die KI bekommt dafür den Kontext des Eintrags — Titel, vorhandene Beschreibung, Produkttyp, Tags und, wenn erlaubt, das Bild — sowie Ihre Anweisungen für dieses Feld.",
-          ],
-        },
-        {
-          heading: "Verbessern",
-          paragraphs: [
-            "Überarbeitet den vorhandenen Text: klarer, besser strukturiert, näher an Ihren Stilvorgaben und an den zugewiesenen Keywords.",
+            "Unter jedem Textfeld sitzt ein KI-Knopf, dessen Beschriftung sich nach dem Feld richtet. Ist das Feld leer, heisst er „Mit KI generieren“ und schreibt einen neuen Text. Die KI bekommt dafür den Kontext des Eintrags — Titel, Produkttyp, Tags und, wenn erlaubt, das Bild — sowie Ihre Anweisungen für dieses Feld.",
+            "Steht schon Text im Feld, heisst derselbe Knopf „Mit KI verbessern“ und formuliert den vorhandenen Text frei neu: klarer, besser strukturiert, näher an Ihren Stilvorgaben und an den zugewiesenen Keywords.",
+            "Vor dem Start können Sie der KI eine eigene Anweisung für genau diesen Durchgang mitgeben, etwa „Die Wollqualität hervorheben“. Sie hat Vorrang vor allen anderen Regeln.",
           ],
         },
         {
