@@ -153,6 +153,7 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
       notSubfolder: a.errorNotSubfolder,
       presenceShared: a.errorPresenceShared,
       primaryMarket: a.errorPrimaryMarket,
+      primaryUnknown: a.errorPrimaryUnknown,
       createdNotDraft: a.errorCreatedNotDraft,
       removeAddressFirst: a.errorRemoveAddressFirst,
       notOrphan: a.errorNotOrphan,
@@ -227,7 +228,7 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
               {m.status !== "ACTIVE" && <Badge>{a.draftBadge}</Badge>}
             </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
-              {m.status !== "ACTIVE"
+              {m.status !== "ACTIVE" && !m.own
                 ? a.draftHint
                 : m.primary === true
                   ? (a.primaryAddress || "{url}").replace("{url}", addresses.sharedUrl ?? "")
@@ -269,7 +270,10 @@ export function ShopMarketAddresses({ addresses, locales, appLocale, blocked, s,
               )}
             </DisabledActionTooltip>
           )}
-          {m.primary !== true && (
+          {/* Activating is offered for any draft; DEACTIVATING only where the
+              market is KNOWN not to be the primary one — switching the shop's
+              own storefront off is the one outcome not left to Shopify. */}
+          {(m.status === "ACTIVE" ? m.primary === false : m.primary !== true) && (
             <DisabledActionTooltip hint={blocked ? s.removeBlockedByDraft : undefined}>
               <Button
                 variant={m.status === "ACTIVE" ? "plain" : undefined}

@@ -67,7 +67,16 @@ export function regionCodeForName(name: string): string | undefined {
  * `CountryCode` is ISO 3166-1 plus Kosovo): territories without their own
  * country code, the EU/eurozone, the UN, pseudo-locales and the unknown region.
  */
-const NON_COUNTRY_CODES = new Set(["AC", "CP", "CQ", "DG", "EA", "EU", "EZ", "IC", "QO", "TA", "UN", "XA", "XB", "ZR", "ZZ"]);
+// Reserved and non-country codes, plus the RETIRED country codes CLDR aliases
+// to a current one (UK→GB, DD→DE, SU→RU, YU/CS→RS, BU→MM, AN→CW, …). The
+// retired ones are listed statically, not only detected at runtime: an engine
+// whose `Intl.Locale` does not canonicalize would otherwise keep whichever of
+// the pair comes first alphabetically — DD before DE — and Shopify's
+// CountryCode enum refuses the retired one at schema level.
+const NON_COUNTRY_CODES = new Set([
+  "AC", "CP", "CQ", "DG", "EA", "EU", "EZ", "IC", "QO", "TA", "UN", "XA", "XB", "ZR", "ZZ",
+  "AN", "BU", "CS", "DD", "DY", "FX", "HV", "NH", "RH", "SU", "TP", "UK", "VD", "YD", "YU",
+]);
 
 /** Every country, named in the app's language — the market editor's picker. */
 export function countryOptions(appLocale: string): Array<{ code: string; name: string }> {

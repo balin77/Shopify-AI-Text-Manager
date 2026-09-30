@@ -818,6 +818,10 @@ export async function setMarketStatus(
   // The primary market is the shop's own storefront; switching it off is not
   // something to do from a language tab (Shopify refuses it too, unmeasured).
   if (market.primary === true) return { ok: false, error: "primaryMarket" };
+  // Switching OFF needs proof it is not the primary one: where this version
+  // cannot say (`primary` unreadable), the storefront's own market is not
+  // something to hand to an unmeasured Shopify guard.
+  if (status === "DRAFT" && market.primary !== false) return { ok: false, error: "primaryUnknown" };
   if (market.status === status) return { ok: true };
   const names = await availableMutations(admin);
   if (!names) return { ok: false, error: "schemaUnreadable" };

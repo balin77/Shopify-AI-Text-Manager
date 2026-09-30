@@ -478,7 +478,7 @@ describe("adding and deleting a market", () => {
 });
 
 describe("setMarketStatus", () => {
-  function statusAdmin(opts: { applies: boolean; primary?: string; userError?: string }) {
+  function statusAdmin(opts: { applies: boolean; primary?: string; notPrimary?: string[]; userError?: string; legacyInput?: boolean }) {
     const status: Record<string, string> = { mCH: "ACTIVE", mES: "ACTIVE", mUS: "DRAFT" };
     return {
       graphql: vi.fn(async (query: string, o?: { variables?: Record<string, any> }) => {
@@ -490,13 +490,25 @@ describe("setMarketStatus", () => {
           body = base;
         } else if (query.includes("appMarketFields")) body = { data: { __type: { fields: [{ name: "primary" }] } } };
         else if (query.includes("appMarketPrimary")) {
-          body = { data: { markets: { nodes: opts.primary ? [{ id: opts.primary, primary: true }] : [] } } };
+          body = {
+            data: {
+              markets: {
+                nodes: [
+                  ...(opts.primary ? [{ id: opts.primary, primary: true }] : []),
+                  ...(opts.notPrimary ?? []).map((id) => ({ id, primary: false })),
+                ],
+              },
+            },
+          };
         } else if (query.includes("appMutationNames")) body = { data: { __schema: { mutationType: { fields: [{ name: "marketUpdate" }] } } } };
-        else if (query.includes("appInputShape")) body = { data: { __type: { inputFields: [{ name: "status" }, { name: "enabled" }] } } };
+        else if (query.includes("appInputShape")) {
+          body = { data: { __type: { inputFields: (opts.legacyInput ? ["enabled"] : ["status", "enabled"]).map((name) => ({ name })) } } };
+        }
         else if (query.includes("appMarketSetStatus")) {
           if (opts.userError) body = { data: { marketUpdate: { market: null, userErrors: [{ message: opts.userError }] } } };
           else {
-            if (opts.applies) status[o!.variables!.id] = o!.variables!.input.status;
+            const input = o!.variables!.input;
+            if (opts.applies) status[o!.variables!.id] = input.status ?? (input.enabled ? "ACTIVE" : "DRAFT");
             body = { data: { marketUpdate: { market: { id: o!.variables!.id, status: status[o!.variables!.id] }, userErrors: [] } } };
           }
         }
@@ -524,6 +536,24 @@ describe("setMarketStatus", () => {
     const admin = statusAdmin({ applies: true, primary: "mCH" });
     expect(await setMarketStatus(admin, "s", "mCH", "DRAFT")).toEqual({ ok: false, error: "primaryMarket" });
     expect(await setMarketStatus(admin, "s", "mES", "ACTIVE")).toEqual({ ok: true });
+    expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appMarketSetStatus"))).toBe(false);
+  });
+
+  it("switches OFF only a market KNOWN not to be the primary one", async () => {
+    expect(await setMarketStatus(statusAdmin({ applies: true }), "s", "mES", "DRAFT")).toEqual({ ok: false, error: "primaryUnknown" });
+    expect(await setMarketStatus(statusAdmin({ applies: true, notPrimary: ["mES"] }), "s", "mES", "DRAFT")).toEqual({ ok: true });
+  });
+
+  it("uses the deprecated enabled flag where the input has no status", async () => {
+    const admin = statusAdmin({ applies: true, legacyInput: true });
+    expect(await setMarketStatus(admin, "s", "mUS", "ACTIVE")).toEqual({ ok: true });
+    const call = admin.graphql.mock.calls.find(([q]) => String(q).includes("appMarketSetStatus"));
+    expect(call?.[1]).toEqual({ variables: { id: "mUS", input: { enabled: true } } });
+  });
+
+  it("a failed read before sending sends nothing", async () => {
+    const admin = { graphql: vi.fn(async (_q: string, _o?: unknown) => ({ json: async () => ({ errors: [{ message: "Throttled" }] }) }) as unknown as Response) };
+    expect(await setMarketStatus(admin, "s", "mUS", "ACTIVE")).toEqual({ ok: false, error: "unverified" });
     expect(admin.graphql.mock.calls.some(([q]) => String(q).includes("appMarketSetStatus"))).toBe(false);
   });
 });
