@@ -201,6 +201,32 @@ export interface DeleteTranslationsResult {
 /** `${locale}\0${key}` -- the pair spelling `removeAndVerify*` confirms by. */
 const localeKeyPair = (locale: string, key: string): string => `${locale}${ECHO_PAIR_SEP}${key}`;
 
+/**
+ * The echo rule for a collection's / article's FEATURED-IMAGE alt: the mutation
+ * answers `userErrors: []` for a call it accepted, and only the echoed
+ * `image.altText` says what Shopify STORED. Returns the problem (or null when
+ * the echo confirms the value) instead of throwing: the same mutation carries
+ * the title, body and SEO fields, which Shopify has already written by the
+ * time the echo is read, so throwing would fail a save that mostly succeeded
+ * and skip those fields' mirror, purge and repair. The caller leaves the ALT
+ * half unmirrored and unrepaired, so the cache never claims an alt Shopify
+ * does not hold and no translation repair runs for a primary that did not
+ * change. `""` and null are the same "no alt".
+ */
+function featuredAltEchoProblem(
+  resource: { image?: { altText?: string | null } | null } | null | undefined,
+  sent: string,
+): string | null {
+  if (!resource || !('image' in resource)) {
+    return 'Shopify did not confirm the image alt text (no echo) - please try again.';
+  }
+  const stored = (resource.image?.altText ?? '').trim();
+  if (stored !== (sent ?? '').trim()) {
+    return 'Shopify did not confirm the image alt text (it stored a different value) - please try again.';
+  }
+  return null;
+}
+
 export class ShopifyContentService {
   private admin: ShopifyAdminClient;
 
@@ -1125,6 +1151,16 @@ export class ShopifyContentService {
      * always global (Shopify forbids market-specific primary content).
      */
     marketId?: string;
+    /**
+     * A bulk caller's budget of detached re-translation runs (the SEO "Fix with
+     * AI" task - repair-budget.server.ts). Absent for the editor: one save, one
+     * run. When the budget is spent a group starts NO run and the save follows
+     * the deletion answer the bulk editor uses for a refused group: a
+     * Collection's own fields keep their translations
+     * (`purgeOnPrimaryChange`, forced off by auto-translate), every other
+     * surface the merchant's stored answer (`purgeUnreconciledSurfaces`).
+     */
+    repairBudget?: { take(kind: string, ownerId: string, variant?: string): boolean };
   }) {
     const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType, changedFields, changedAltTextIndices } = params;
     const marketId = params.marketId || "";
@@ -1139,6 +1175,8 @@ export class ShopifyContentService {
       const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
       /** Shopify translation key -> the FIELD key that carried it, for reporting. */
       const fieldOfTranslationKey: Record<string, string> = {};
+      /** FIELD keys the save deliberately did not write (a handle equal to the primary one). */
+      const skippedFields: string[] = [];
 
       // Map UI field names to Shopify translatable content keys — the ONE
       // canonical map (see FIELD_TO_TRANSLATION_KEY at the top of this file
@@ -1148,11 +1186,15 @@ export class ShopifyContentService {
       for (const [field, value] of Object.entries(updates)) {
         const translationKey = keyMapping[field];
         if (!translationKey) continue;
+        fieldOfTranslationKey[translationKey] = field;
 
         // Reject handle translations that are identical to the primary locale handle —
         // duplicate slugs across locales cause Shopify routing conflicts.
         if (field === 'handle' && value && valueMap['handle'] && value.trim() === valueMap['handle'].trim()) {
           loggers.translation('warn', `[updateContent] Skipping handle for locale '${locale}' — same as primary locale handle`);
+          // Reported, not swallowed: the field stays dirty on the page and the
+          // merchant is told why (localized there, from this field key).
+          skippedFields.push(field);
           continue;
         }
 
@@ -1184,7 +1226,6 @@ export class ShopifyContentService {
         } else if (value === "") {
           // Empty string means user cleared the translation — mark for deletion
           translationsToDelete.push(translationKey);
-          fieldOfTranslationKey[translationKey] = field;
         }
       }
 
@@ -1432,7 +1473,7 @@ export class ShopifyContentService {
 
       // Article/Collection image alt-text translations live on a separate translatable
       // resource (ArticleImage / CollectionImage). Best-effort: failures don't fail the save.
-      let featuredAltWarning: string | undefined;
+      let featuredAltFailed = false;
       if (updates.imageAltText !== undefined && (resourceType === 'Collection' || resourceType === 'Article')) {
         const altResult = await this.saveImageAltTextTranslation({
           resourceId,
@@ -1446,7 +1487,10 @@ export class ShopifyContentService {
         // but a register Shopify did not echo (or a clear it did not confirm)
         // is never reported as a clean save.
         if (!altResult.saved) {
-          featuredAltWarning = `The image alt text translation was NOT saved in Shopify (${altResult.reason ?? 'unknown'}) — please try again.`;
+          // Reported through the SAME channel a product's failed alt uses
+          // (`failedAltTextIndices`, index 0 = the featured image): the page
+          // words it in the merchant's language and keeps that alt dirty.
+          featuredAltFailed = true;
           loggers.translation('warn', '[updateContent] Featured image alt translation not saved', { resourceId, locale, reason: altResult.reason });
         }
       }
@@ -1467,14 +1511,23 @@ export class ShopifyContentService {
       // live. A cleared field (`translationsToDelete`) is a removal with its
       // own confirmation path and does not make an unconfirmed write partial.
       const warnings: string[] = [];
-      if (featuredAltWarning) warnings.push(featuredAltWarning);
       if (dbOnlyTranslations.length > 0) {
         const fieldNames = dbOnlyTranslations.map((t) => t.key).join(", ");
         warnings.push(`Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`);
       }
 
+      // FIELD keys of the writes Shopify did not echo, mapped back from the
+      // translation keys through the canonical map. The page keeps exactly
+      // these dirty with the typed text and words the message in the
+      // merchant's language from its own field labels; a key that maps to no
+      // field falls back to the English text below.
+      const unconfirmedFields = [
+        ...new Set(unconfirmedKeys.map((key) => fieldOfTranslationKey[key]).filter((f): f is string => !!f)),
+      ];
+      const unmappedUnconfirmedKeys = unconfirmedKeys.filter((key) => !fieldOfTranslationKey[key]);
+
       if (unconfirmedKeys.length > 0) {
-        const names = unconfirmedKeys.join(", ");
+        const names = (unmappedUnconfirmedKeys.length > 0 ? unmappedUnconfirmedKeys : unconfirmedKeys).join(", ");
         const message = `Shopify accepted the save but did not confirm storing (${names}). Those fields were NOT saved and were not cached locally — please try again.`;
         if (confirmedTranslations.length === 0) {
           // A digest-less local row on the same save is not evidence that
@@ -1482,9 +1535,11 @@ export class ShopifyContentService {
           // never went there — so it does not soften this verdict. It is
           // carried into the message rather than dropped, because the merchant
           // is about to re-save and needs to know which half went where.
-          return { success: false, error: [message, ...warnings].join(" ") };
+          return { success: false, error: [message, ...warnings].join(" "), ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}) };
         }
-        warnings.unshift(message);
+        // Fully mapped ⇒ the page words it (localized); the English text is
+        // only the fallback for keys no field owns.
+        if (unmappedUnconfirmedKeys.length > 0) warnings.unshift(message);
       }
 
       // A removal Shopify did not confirm: the local row was KEPT, so the field
@@ -1499,7 +1554,7 @@ export class ShopifyContentService {
         warnings.unshift(message);
       }
 
-      if (warnings.length > 0) {
+      if (warnings.length > 0 || unconfirmedFields.length > 0 || skippedFields.length > 0 || featuredAltFailed) {
         // FIELD keys whose clear Shopify did not confirm: the page keeps them
         // dirty instead of caching them as saved-empty.
         const unconfirmedClearedFields = unconfirmedRemovals
@@ -1507,8 +1562,11 @@ export class ShopifyContentService {
           .filter((field): field is string => !!field);
         return {
           success: true,
-          warning: warnings.join(" "),
+          ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
           ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
+          ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}),
+          ...(skippedFields.length > 0 ? { skippedFields } : {}),
+          ...(featuredAltFailed ? { failedAltTextIndices: [0] } : {}),
         };
       }
 
@@ -1516,6 +1574,9 @@ export class ShopifyContentService {
     } else {
       // Update primary locale
       let updatedResource;
+      // Set when Shopify's echo did not confirm the featured-image alt (see
+      // featuredAltEchoProblem). The rest of the save stands.
+      let featuredAltEchoError: string | null = null;
 
       // ── PLAN §Phase 3 merchandising attributes ──────────────────────────
       // Built ONCE, from the same flat update map as everything else, and
@@ -1619,6 +1680,9 @@ export class ShopifyContentService {
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
           ...attributeInput,
         });
+        if (updates.imageAltText !== undefined) {
+          featuredAltEchoError = featuredAltEchoProblem(updatedResource, updates.imageAltText);
+        }
 
         // Update database
         await db.article.update({
@@ -1632,7 +1696,7 @@ export class ShopifyContentService {
             summary: updates.summary,
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
-            ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
+            ...(updates.imageAltText !== undefined && !featuredAltEchoError ? { imageAltText: updates.imageAltText || null } : {}),
             ...attributeMirror(updatedResource),
             lastSyncedAt: new Date(),
           },
@@ -1648,6 +1712,9 @@ export class ShopifyContentService {
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
           ...attributeInput,
         });
+        if (updates.imageAltText !== undefined) {
+          featuredAltEchoError = featuredAltEchoProblem(updatedResource, updates.imageAltText);
+        }
 
         // Update database
         await db.collection.update({
@@ -1660,7 +1727,7 @@ export class ShopifyContentService {
             descriptionHtml: updates.description,
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
-            ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
+            ...(updates.imageAltText !== undefined && !featuredAltEchoError ? { imageAltText: updates.imageAltText || null } : {}),
             ...attributeMirror(updatedResource),
             lastSyncedAt: new Date(),
           },
@@ -1716,6 +1783,7 @@ export class ShopifyContentService {
       // reason `changedFields` exists beside it.
       const featuredAltChanged =
         updates.imageAltText !== undefined &&
+        !featuredAltEchoError &&
         !!changedAltTextIndices?.includes(0) &&
         (resourceType === 'Collection' || resourceType === 'Article');
       const changePolicy =
@@ -1746,16 +1814,26 @@ export class ShopifyContentService {
       const { IN_APP_RETRANSLATED_RESOURCE_TYPES } = await import(
         "../../app/services/translations/stale-translation-sync.server"
       );
+      const repairWanted =
+        !!changePolicy?.autoTranslateExternalChanges &&
+        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType) &&
+        fieldsChanged;
+      // The bulk caller's budget is asked only where a run would really start.
+      const contentBudgetRefused =
+        repairWanted && !!params.repairBudget && !params.repairBudget.take('content', resourceId);
       const selfRetranslated =
         !!changePolicy?.autoTranslateExternalChanges &&
-        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType);
+        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType) &&
+        !contentBudgetRefused;
       // With the repair in force the stored deletion answer is superseded by
       // `purgeOnPrimaryChange` (which that switch forces off); without it the
       // resource is unreconciled and the merchant's own answer stands. The
       // `|| resourceType === 'Collection'` this used to carry is gone with the
       // exclusion it belonged to — a collection is `selfRetranslated` now.
       const purgeChangedFields = !!changePolicy && (
-        selfRetranslated
+        selfRetranslated ||
+        // A refused collection group loses nothing (see `repairBudget`).
+        (contentBudgetRefused && resourceType === 'Collection')
           ? changePolicy.purgeOnPrimaryChange
           : changePolicy.purgeUnreconciledSurfaces
       );
@@ -1919,7 +1997,8 @@ export class ShopifyContentService {
         featuredAltChanged &&
         !!changePolicy?.autoTranslateExternalChanges &&
         foreignLocales.length > 0 &&
-        !!primaryLocale;
+        !!primaryLocale &&
+        (!params.repairBudget || params.repairBudget.take('featuredAlt', resourceId));
       const purgeFeaturedAlt = retranslateFeaturedAlt
         ? !!changePolicy?.purgeOnPrimaryChange
         : !!changePolicy?.purgeUnreconciledSurfaces;
@@ -2056,11 +2135,18 @@ export class ShopifyContentService {
         primaryWarnings.push(`Saved, but these details could not be applied because their value was not recognised: ${rejectedAttributes.join(", ")}.`);
       }
       if (purgeWarning) primaryWarnings.push(purgeWarning);
+      if (featuredAltEchoError) {
+        primaryWarnings.push(`Saved, but the image alt text was not: ${featuredAltEchoError}`);
+      }
+      // The featured alt is index 0 - the same channel a product's failed alt
+      // uses, so the page keeps it dirty and words it in the merchant's language.
+      const failedAltTextIndices = featuredAltEchoError ? { failedAltTextIndices: [0] } : {};
       if (primaryWarnings.length > 0) {
         return {
           success: true,
           item: updatedResource,
           warning: primaryWarnings.join(" "),
+          ...failedAltTextIndices,
           retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
         };
       }

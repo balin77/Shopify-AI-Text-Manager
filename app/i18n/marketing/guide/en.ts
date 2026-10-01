@@ -822,6 +822,7 @@ export const guideEn: GuideCopy = {
           heading: "Overview",
           paragraphs: [
             "SEO → Overview shows the distribution of scores across the whole shop and the most common problems — with a jump straight into the affected entry and the option to fix problems with AI.",
+            "When the AI fixes a text in the main language, the app handles its translations exactly as it does when you save in the editor: depending on your setting under Settings → Translations, the old translations are removed or, with automatic translation on, translated again. The app also checks that Shopify really stored the text — otherwise the entry counts as failed.",
           ],
         },
       ],

@@ -56,6 +56,7 @@ import { isValidLocale, safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
 import type { DataResponse } from "~/types/data-response";
 import { readDataPayload, readDataStatus } from "~/utils/data-response";
+import type { RepairBudget } from "~/services/translations/repair-budget.server";
 
 /**
  * Shopify translation key -> the editor's FIELD key, for the keys a foreign
@@ -112,7 +113,10 @@ interface UpdateProductParams {
 export async function handleUpdateProduct(
   context: ActionContext,
   formData: FormData,
-  productId: string
+  productId: string,
+  /** A bulk caller's budget of detached re-translation runs — see
+   *  repair-budget.server.ts. Absent for the editor (one save, one run). */
+  options?: { repairBudget?: RepairBudget },
 ): Promise<DataResponse> {
   const { db } = await import("~/db.server");
 
@@ -235,7 +239,7 @@ export async function handleUpdateProduct(
       const savedAltTextIndices = changedAltTextIndices.filter(
         (index) => !failedAltTextIndices.includes(index),
       );
-      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, savedAltTextIndices, context.session.shop, changedAttributeFields);
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, savedAltTextIndices, context.session.shop, changedAttributeFields, options?.repairBudget);
     }
 
     // If alt-text saves failed, merge warning into the response
@@ -854,12 +858,24 @@ async function updateTranslatedProduct(
       `Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`,
     );
   }
+  // FIELD keys of the writes Shopify did not echo: the page keeps them dirty
+  // with the typed text and words the message itself, in the merchant's
+  // language, from its own field labels. A key no field owns keeps the English
+  // text below as the fallback.
+  const unconfirmedFields = [
+    ...new Set(unconfirmedKeys.map((key) => FIELD_OF_PRODUCT_TRANSLATION_KEY[key]).filter((f): f is string => !!f)),
+  ];
+  const unmappedUnconfirmedKeys = unconfirmedKeys.filter((key) => !FIELD_OF_PRODUCT_TRANSLATION_KEY[key]);
   if (unconfirmedKeys.length > 0) {
-    const message = `Shopify accepted the save but did not confirm storing (${unconfirmedKeys.join(", ")}). Those fields were NOT saved and were not cached locally — please try again.${registerError ? ` (${registerError})` : ""}`;
+    const named = unmappedUnconfirmedKeys.length > 0 ? unmappedUnconfirmedKeys : unconfirmedKeys;
+    const message = `Shopify accepted the save but did not confirm storing (${named.join(", ")}). Those fields were NOT saved and were not cached locally — please try again.${registerError ? ` (${registerError})` : ""}`;
     if (confirmedInputs.length === 0) {
-      return json({ success: false, error: [message, ...warnings].join(" ") }, { status: 500 });
+      return json(
+        { success: false, error: [message, ...warnings].join(" "), ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}) },
+        { status: 500 },
+      );
     }
-    warnings.unshift(message);
+    if (unmappedUnconfirmedKeys.length > 0 || registerError) warnings.unshift(message);
   }
   if (unconfirmedRemovals.length > 0) {
     const message = `Shopify did not confirm removing the translation of (${unconfirmedRemovals.join(", ")}). It was kept — please try again.${removalError ? ` (${removalError})` : ""}`;
@@ -868,7 +884,7 @@ async function updateTranslatedProduct(
     }
     warnings.unshift(message);
   }
-  if (warnings.length > 0) {
+  if (warnings.length > 0 || unconfirmedFields.length > 0) {
     // FIELD keys whose clear Shopify did not confirm: the page keeps them dirty
     // instead of caching them as saved-empty.
     const unconfirmedClearedFields = unconfirmedRemovals
@@ -876,8 +892,9 @@ async function updateTranslatedProduct(
       .filter((field): field is string => !!field);
     return json({
       success: true,
-      warning: warnings.join(" "),
+      ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
       ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
+      ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}),
     });
   }
 
@@ -899,6 +916,7 @@ async function updatePrimaryProduct(
   /** §Phase 3 — the attributes the merchant actually touched. Empty ⇒ write
    *  none of them; see the gate below for why that is the safe default. */
   changedAttributeFields: string[] = [],
+  repairBudget?: RepairBudget,
 ): Promise<DataResponse> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
@@ -1185,6 +1203,18 @@ async function updatePrimaryProduct(
     );
   }
 
+  // The echo rule: `userErrors: []` describes a call Shopify accepted, and a
+  // throttled or partial answer carries an empty list too. Only a product that
+  // comes BACK says something was written - without it the cache would be
+  // mirrored and the translation repair started for a primary that never moved.
+  if (!data.data.productUpdate.product?.id) {
+    logger.error("Shopify product update returned no product", { context: "UpdateProduct", productId });
+    return json(
+      { success: false, error: "Shopify did not confirm the product update - please try again." },
+      { status: 500 },
+    );
+  }
+
   // Update local database
   try {
     // `string[]` is in the union for `tags` — a Prisma scalar list column.
@@ -1322,8 +1352,16 @@ async function updatePrimaryProduct(
   // The product's OWN fields need the same list when the auto-translation is on
   // — the repair below translates into every published foreign locale — so the
   // one lookup serves both. It stays gated on there being something to do.
+  //
+  // A bulk caller (the SEO "Fix with AI" task) hands in a budget of detached
+  // runs: past it the product's own fields start no run and keep what they
+  // have - the deletion answer here is `purgeOnPrimaryChange`, which the
+  // auto-translation forces off, exactly the bulk editor's refused content
+  // group - and the `products/update` webhook is the only reconciler left.
   const contentRepairPossible =
-    changedFields.length > 0 && !!changePolicy?.autoTranslateExternalChanges;
+    changedFields.length > 0 &&
+    !!changePolicy?.autoTranslateExternalChanges &&
+    (!repairBudget || repairBudget.take("content", productId));
   if ((changedAltTextIndices.length > 0 || contentRepairPossible) && changePolicy) {
     try {
       const { fetchShopLocales } = await import("~/services/sync-utils");

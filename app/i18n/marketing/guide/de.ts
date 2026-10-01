@@ -835,6 +835,7 @@ export const guideDe: GuideCopy = {
           heading: "Übersicht",
           paragraphs: [
             "Unter SEO → Übersicht sehen Sie die Verteilung der Scores im ganzen Shop und die häufigsten Probleme — mit Sprung direkt in den betroffenen Eintrag und der Möglichkeit, Probleme per KI zu beheben.",
+            "Behebt die KI einen Text in der Hauptsprache, behandelt die App die Übersetzungen davon genauso wie beim Speichern im Editor: Je nach Ihrer Einstellung unter Einstellungen → Übersetzungen werden die alten Übersetzungen entfernt oder, bei aktiver automatischer Übersetzung, neu übersetzt. Ob ein Text wirklich bei Shopify angekommen ist, wird dabei geprüft — andernfalls gilt der Eintrag als fehlgeschlagen.",
           ],
         },
       ],

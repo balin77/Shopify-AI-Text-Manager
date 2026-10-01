@@ -822,6 +822,7 @@ export const guideEs: GuideCopy = {
           heading: "Resumen",
           paragraphs: [
             "SEO → Resumen muestra la distribución de puntuaciones en toda la tienda y los problemas más frecuentes — con acceso directo a la entrada afectada y la opción de corregirlos con IA.",
+            "Cuando la IA corrige un texto en el idioma principal, la app trata sus traducciones igual que al guardar en el editor: según tu ajuste en Ajustes → Traducciones, las traducciones antiguas se eliminan o, con la traducción automática activada, se traducen de nuevo. La app también comprueba que Shopify haya guardado realmente el texto; si no, la entrada cuenta como fallida.",
           ],
         },
       ],

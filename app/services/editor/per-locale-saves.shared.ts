@@ -95,7 +95,8 @@ export function copyOutcomeMessage(
  * Whether a JSON save answer says the save did NOT fully land: unreadable,
  * `success: false`, or a non-empty `failed*` list (`failedAltTextIndices`,
  * `failedResources`, `failedOptions`, ...) on an answer that is otherwise
- * `success: true` because the rest of the save went through, or a non-empty
+ * `success: true` because the rest of the save went through, a non-empty
+ * `unconfirmedFields` / `unconfirmedClearedFields` / `skippedFields` list, or a non-empty
  * `warning` (a foreign save that stored a field "locally only" because Shopify
  * had no digest for it answers `{ success: true, warning }`: the storefront
  * does not have the value, so a copy must not report it as landed).
@@ -107,6 +108,15 @@ export function saveAnswerFailed(body: unknown): boolean {
   if (typeof record.warning === "string" && record.warning.trim() !== "") return true;
   for (const [key, value] of Object.entries(record)) {
     if (/^failed[A-Z]/.test(key) && Array.isArray(value) && value.length > 0) return true;
+  }
+  // Fields a foreign save left unwritten on an otherwise `success: true`
+  // answer: Shopify did not echo them (`unconfirmedFields`, and a clear it did
+  // not confirm, `unconfirmedClearedFields`) or the save deliberately skipped
+  // them (`skippedFields`, e.g. a handle equal to the primary one). Either way
+  // the value is NOT on the storefront, so a copy must not report it landed.
+  for (const key of ["unconfirmedFields", "unconfirmedClearedFields", "skippedFields"]) {
+    const value = record[key];
+    if (Array.isArray(value) && value.length > 0) return true;
   }
   return false;
 }

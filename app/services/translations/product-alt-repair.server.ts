@@ -59,6 +59,13 @@ export interface ProductAltRepairParams {
    * `mediaAltLockId`, or each save's claim aborts the previous image's run.
    */
   lockId?: string;
+  /**
+   * `false` = start NO re-translation even where the policy would: the caller's
+   * budget of detached runs is spent (repair-budget.server.ts), so the save
+   * follows the merchant's stored deletion answer, as it did before
+   * auto-translate reached it.
+   */
+  allowRetranslate?: boolean;
 }
 
 /** Whether this policy + locale state re-translates rather than purges. */
@@ -75,7 +82,8 @@ export async function repairChangedProductAlts(params: ProductAltRepairParams): 
   const changes = params.changes;
   if (changes.length === 0) return {};
 
-  const retranslate = altRepairRetranslates(policy, foreignLocales, primaryLocale);
+  const retranslate =
+    params.allowRetranslate !== false && altRepairRetranslates(policy, foreignLocales, primaryLocale);
   const purge = retranslate ? policy.purgeOnPrimaryChange : policy.purgeUnreconciledSurfaces;
   if (!retranslate && !purge) return {};
   // The product sync's shield — watched by no repair, so marking it never
@@ -312,6 +320,8 @@ export async function repairAltsAfterWrite(params: {
   snapshot: ReadonlyMap<string, ProductAltSnapshotEntry>;
   /** What was WRITTEN (Shopify's echo where the mutation returns one). */
   written: ReadonlyArray<{ mediaId: string; alt: string }>;
+  /** A bulk caller's budget of detached runs (one group per product / medium). */
+  repairBudget?: { take(kind: string, ownerId: string, variant?: string): boolean };
 }): Promise<string[]> {
   const { gateway, db, shop, snapshot } = params;
   try {
@@ -340,6 +350,12 @@ export async function repairAltsAfterWrite(params: {
     const taskIds: string[] = [];
     for (const [productId, group] of groups) {
       const only = group.changes.length === 1 ? group.changes[0].mediaId : null;
+      // One run per (product, medium-or-whole-product) - the budget counts the
+      // runs this call would really start, and only where one would start.
+      const allowRetranslate =
+        !params.repairBudget ||
+        !altRepairRetranslates(policy, foreignLocales, primaryLocale) ||
+        params.repairBudget.take("productAlt", productId, only ?? "");
       const outcome = await repairChangedProductAlts({
         gateway,
         db,
@@ -350,6 +366,7 @@ export async function repairAltsAfterWrite(params: {
         policy,
         foreignLocales,
         primaryLocale,
+        ...(allowRetranslate ? {} : { allowRetranslate: false }),
         ...(only ? { lockId: mediaAltLockId(productId, only) } : {}),
       });
       if (outcome.taskId) taskIds.push(outcome.taskId);

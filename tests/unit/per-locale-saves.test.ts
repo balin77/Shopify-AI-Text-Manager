@@ -77,6 +77,13 @@ describe("saveAnswerFailed", () => {
     expect(saveAnswerFailed({ success: true, failedAltTextIndices: [0] })).toBe(true);
     expect(saveAnswerFailed({ success: true, failedResources: ["gid://x"] })).toBe(true);
   });
+  it("treats unconfirmed and skipped foreign fields as failures (a copy must not report 'copied')", () => {
+    expect(saveAnswerFailed({ success: true, unconfirmedFields: ["title"] })).toBe(true);
+    expect(saveAnswerFailed({ success: true, unconfirmedClearedFields: ["metaDescription"] })).toBe(true);
+    // A handle equal to the primary one is skipped, never written.
+    expect(saveAnswerFailed({ success: true, skippedFields: ["handle"] })).toBe(true);
+    expect(saveAnswerFailed({ success: true, unconfirmedFields: [], skippedFields: [] })).toBe(false);
+  });
   it("accepts a clean answer, including empty failed lists", () => {
     expect(saveAnswerFailed({ success: true })).toBe(false);
     expect(saveAnswerFailed({ success: true, failedResources: [], failedAltTextIndices: [] })).toBe(false);

@@ -707,6 +707,16 @@ describe("summariseTaskResult — seoBulkFix carries two failure shapes", () => 
     expect(summary?.failures).toEqual([]);
   });
 
+  it("reports the rows whose re-translation the task budget refused (non-zero only)", () => {
+    const capped = summariseTaskResult(
+      "seoBulkFix",
+      json({ succeeded: [], failed: [], retranslation: { capped: 5 } }),
+    );
+    expect(capped?.lines).toContainEqual({ labelKey: "retranslationsCapped", value: "5", tone: "warning" });
+    const none = summariseTaskResult("seoBulkFix", json({ succeeded: [], failed: [], retranslation: { capped: 0 } }));
+    expect(none?.lines.map((l) => l.labelKey)).not.toContain("retranslationsCapped");
+  });
+
   it("skips entries that are not objects instead of throwing", () => {
     const summary = summariseTaskResult(
       "seoBulkFix",

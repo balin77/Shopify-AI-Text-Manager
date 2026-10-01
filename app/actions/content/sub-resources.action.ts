@@ -43,7 +43,7 @@ export async function handleLoadSubResourceTranslations(
 
   const locale = getFormString(formData, "locale");
   if (!locale || !isValidLocale(locale)) {
-    return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+    return json({ success: false, actionType: "loadSubResourceTranslations", error: "Invalid locale format" }, { status: 400 });
   }
 
   try {
@@ -61,7 +61,7 @@ export async function handleLoadSubResourceTranslations(
     // Validate all GIDs
     for (const rid of resourceIds) {
       if (!isValidShopifyGID(rid)) {
-        return json({ success: false, error: `Invalid resource ID: ${rid}` }, { status: 400 });
+        return json({ success: false, actionType: "loadSubResourceTranslations", error: `Invalid resource ID: ${rid}` }, { status: 400 });
       }
     }
 
@@ -175,7 +175,7 @@ export async function handleLoadSubResourceTranslations(
     });
   } catch (error: unknown) {
     const msg = getFullErrorMessage(error);
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, actionType: "loadSubResourceTranslations", error: msg }, { status: 500 });
   }
 }
 
@@ -192,7 +192,7 @@ export async function handleSaveSubResourceTranslations(
 
   const locale = getFormString(formData, "locale");
   if (!locale || !isValidLocale(locale)) {
-    return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+    return json({ success: false, actionType: "saveSubResourceTranslations", error: "Invalid locale format" }, { status: 400 });
   }
 
   // Market GID for a market-specific override; "" = global (all markets).
@@ -364,7 +364,7 @@ export async function handleSaveSubResourceTranslations(
     });
   } catch (error: unknown) {
     const msg = getFullErrorMessage(error);
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, actionType: "saveSubResourceTranslations", error: msg }, { status: 500 });
   }
 }
 
@@ -380,7 +380,10 @@ export async function handleTranslateSubResources(
 
   const targetLocale = getFormString(formData, "targetLocale");
   if (!targetLocale || !isValidLocale(targetLocale)) {
-    return json({ success: false, error: "Invalid target locale" }, { status: 400 });
+    return json(
+      { success: false, actionType: "translateSubResources", fieldId: getFormString(formData, "fieldId"), error: "Invalid target locale" },
+      { status: 400 },
+    );
   }
 
   const sourceDataJson = getFormString(formData, "sourceData");
@@ -571,7 +574,7 @@ export async function handleTranslateSubResources(
     });
     const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateSubResources", fieldId: getFormString(formData, "fieldId") });
     if (refused) return refused;
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, actionType: "translateSubResources", fieldId: getFormString(formData, "fieldId"), error: msg }, { status: 500 });
   }
 }
 
@@ -843,7 +846,7 @@ export async function handleTranslateSubResourceToAllLocales(
     });
     const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateSubResourceToAllLocales", fieldId: getFormString(formData, "fieldId") });
     if (refused) return refused;
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, actionType: "translateSubResourceToAllLocales", fieldId: getFormString(formData, "fieldId"), error: msg }, { status: 500 });
   }
 }
 
@@ -897,9 +900,12 @@ export async function handleSavePrimarySubResources(
   const productId = getFormString(formData, "productId");
 
   if (!productId || !isValidShopifyGID(productId)) {
-    return json({ success: false, error: "Invalid product ID" }, { status: 400 });
+    return json({ success: false, actionType: "savePrimarySubResources", error: "Invalid product ID" }, { status: 400 });
   }
 
+  // Hoisted out of the try: a save that fails half way has still started the
+  // repairs of the resources it had finished, and the catch hands those ids on.
+  const retranslationTaskIds: string[] = [];
   try {
     const optionsChangesJson = getFormString(formData, "optionsChanges");
     const metafieldChangesJson = getFormString(formData, "metafieldChanges");
@@ -936,7 +942,6 @@ export async function handleSavePrimarySubResources(
      *  for the whole product, so at most one) — on its way back to the page so
      *  it can reload once the AI is through instead of leaving the merchant in
      *  front of empty translations that are merely in flight. */
-    const retranslationTaskIds: string[] = [];
     /** Create / delete / reorder failures. They have no option id to report
      *  under, so they are counted here -- see the response below. */
     let structuralFailures = 0;
@@ -1475,6 +1480,6 @@ export async function handleSavePrimarySubResources(
     logger.error("[UnifiedContent] savePrimarySubResources error", {
       context: "UnifiedContent", error: msg,
     });
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, actionType: "savePrimarySubResources", error: msg, ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds) } : {}) }, { status: 500 });
   }
 }
