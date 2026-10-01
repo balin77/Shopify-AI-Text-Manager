@@ -1,5 +1,8 @@
 import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { db } from "../db.server";
+import { type Plan } from "../config/plans";
+import { consumeImageOperations } from "../utils/imageOperations.server";
 
 /**
  * Materializes a staging-area asset (returned by /api/staged-upload + a
@@ -18,7 +21,7 @@ import { authenticate } from "../shopify.server";
  * it in the generic Files section, out of sight.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const body = (await request.json()) as {
     resourceUrl?: string;
     alt?: string;
@@ -32,6 +35,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (!resourceUrl || !resourceUrl.startsWith("https://")) {
     return json({ error: "resourceUrl required" }, { status: 400 });
+  }
+
+  // Same gate as /api/staged-upload: each materialised file is one billable
+  // image operation, and this route is directly POST-reachable.
+  const settings = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  const quota = await consumeImageOperations(session.shop, plan, 1);
+  if (!quota.allowed) {
+    return json(
+      { error: "Monthly image-operation limit reached", code: "IMAGE_QUOTA_EXCEEDED", limit: quota.limit },
+      { status: 422 },
+    );
   }
 
   const createRes = await admin.graphql(

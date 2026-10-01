@@ -21,11 +21,12 @@ export interface StagedUploadTarget {
   parameters?: Array<{ name: string; value: string }> | null;
 }
 
-/** Rejects with the HTTP status in the message on a non-2xx answer, and on a network error. */
+/** Rejects with the HTTP status in the message on a non-2xx answer, and on a network error, abort or timeout. */
 export function uploadToStagedTarget(
   target: StagedUploadTarget,
-  file: File,
+  file: Blob,
   onProgress?: (percent: number) => void,
+  filename?: string,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -42,10 +43,13 @@ export function uploadToStagedTarget(
       }
     };
     xhr.onerror = () => reject(new Error("Upload network error"));
+    xhr.onabort = () => reject(new Error("Upload aborted"));
+    xhr.ontimeout = () => reject(new Error("Upload timed out"));
     if (target.httpMethod === "POST") {
       const form = new FormData();
       for (const p of target.parameters ?? []) form.append(p.name, p.value);
-      form.append("file", file);
+      if (filename) form.append("file", file, filename);
+      else form.append("file", file);
       xhr.open("POST", target.url);
       xhr.send(form);
     } else {

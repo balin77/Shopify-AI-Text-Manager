@@ -20,3 +20,11 @@ describe("delete rollback", () => {
     expect(deleteOutcome(true, null)).toBe("ok");
   });
 });
+
+import { removePendingNewMedia } from "~/components/image-manager/delete-rollback";
+describe("removePendingNewMedia", () => {
+  it("drops queued entries by previewUrl and keeps the rest", () => {
+    const list = [{ previewUrl: "blob:a" }, { previewUrl: "blob:b" }, {}];
+    expect(removePendingNewMedia(list, ["blob:a"])).toEqual([{ previewUrl: "blob:b" }, {}]);
+  });
+});

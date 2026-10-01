@@ -1,5 +1,5 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { captureRemoved, reinsertRemoved, deleteOutcome, type RemovedEntry } from "./delete-rollback";
+import { captureRemoved, reinsertRemoved, deleteOutcome, removePendingNewMedia, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
@@ -137,6 +137,11 @@ interface VariantImageManagerProps {
   /** Reports the settling media that has since shown up (or belongs to another
    *  product) so the hook can drop it from its list. */
   onSettlingMediaResolved?: (mediaIds: string[]) => void;
+  /** Reports whether a product-image delete is in flight. The parent blocks
+   *  the editor's Save meanwhile: the optimistic exclusion is already emitted,
+   *  so a save during a delete that then fails would clear variant main images
+   *  on Shopify for media that still exists. */
+  onDeletingChange?: (deleting: boolean) => void;
   resetKey?: number;
   variantReloadKey?: number;
   currentLanguage?: string;
@@ -197,6 +202,7 @@ export function VariantImageManager({
   settlingMedia,
   onSettlingMediaResolved,
   resetKey,
+  onDeletingChange,
   variantReloadKey,
   currentLanguage,
   primaryLocale,
@@ -285,6 +291,11 @@ export function VariantImageManager({
   const prevUnsettledKeyRef = useRef("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ urls: string[]; affectedVariantCount: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  useEffect(() => {
+    onDeletingChange?.(isDeleting);
+  }, [isDeleting]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Never leave the parent's save blocked if this component goes away mid-delete.
+  useEffect(() => () => onDeletingChange?.(false), []); // eslint-disable-line react-hooks/exhaustive-deps
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentImagesRef = useRef<ProductImageRef[]>([]);
   const isConvertingWebPRef = useRef(false);
@@ -387,6 +398,8 @@ export function VariantImageManager({
     setPendingGalleryOrder({});
     pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
+    setMediaError(null);
+    setWebpError(null);
     dirtyUrlsRef.current.clear();
     onDirtyChange?.(false);
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2122,8 +2135,10 @@ export function VariantImageManager({
       const key = `product::${url}`;
       if (selectedGalleryItems.has(key)) removedSelection.push([key, selectedGalleryItems.get(key) ?? null]);
     }
-    const removedFromOrder = captureRemoved(originalOrder, url => urlSet.has(url));
-    const removedFromRefreshed = captureRemoved(effectiveProductImages, img => urlSet.has(img.url));
+    // Queued tiles are removed for good (never restored by a failed Shopify delete).
+    const queuedUrls = new Set(pendingProductNewMedia.map(m => m.previewUrl).filter((u): u is string => !!u));
+    const removedFromOrder = captureRemoved(originalOrder, url => urlSet.has(url) && !queuedUrls.has(url));
+    const removedFromRefreshed = captureRemoved(effectiveProductImages, img => urlSet.has(img.url) && !queuedUrls.has(img.url));
     const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
     const addedExcludedIds = variantsWithDeletedMainImage.map(v => v.id).filter(id => !locallyExcludedMainGids.has(id));
 
@@ -2154,6 +2169,9 @@ export function VariantImageManager({
       urls.forEach(url => next.delete(`product::${url}`));
       return next;
     });
+    // Queued (not yet uploaded) tiles: deleting one removes it from the upload queue.
+    const removedQueued = pendingProductNewMedia.filter(m => m.previewUrl && urlSet.has(m.previewUrl));
+    if (removedQueued.length > 0) setPendingProductNewMedia(list => removePendingNewMedia(list, urls));
 
     let deleteOk = false;
     let clearOk: boolean | null = null;
@@ -2175,7 +2193,7 @@ export function VariantImageManager({
       // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,
       // so a refused delete changes nothing on Shopify.
       const clearMainImageIds = variantsWithDeletedMainImage.map(v => v.id);
-      if (deleteOk && clearMainImageIds.length > 0 && !switchedAway()) {
+      if (deleteOk && clearMainImageIds.length > 0) {
         try {
           const clearRes = await fetch("/api/update-variant-galleries", {
             method: "POST",
@@ -2226,16 +2244,20 @@ export function VariantImageManager({
         return next;
       });
       setRefreshedProductImages(curr => (curr ? reinsertRemoved(curr, removedFromRefreshed, (a, b) => a.url === b.url) : curr));
+      // A queued tile is removed for good even when the Shopify delete failed.
       setMediaError(t.imageManager.mediaDeleteFailed);
     } else {
       // A deleted node can never turn up in shopifyMediaMap, so a settling
       // entry for it would keep its tile on screen forever. Retire it only now
       // that the delete is confirmed.
-      if (gids.length > 0) onSettlingMediaResolved?.(gids);
+      if (gids.length > 0) {
+        onSettlingMediaResolved?.(gids);
+        pendingMediaOrderRef.current = pendingMediaOrderRef.current.filter(o => !gidSet.has(o.mediaId));
+      }
       if (outcome === "clearFailed") setMediaError(t.imageManager.mediaClearMainFailed);
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, t]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;

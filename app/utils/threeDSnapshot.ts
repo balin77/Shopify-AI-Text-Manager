@@ -14,6 +14,7 @@
  * or copy manually after upgrading). Loaded once per session and
  * cached on window so subsequent calls reuse the import.
  */
+import { uploadToStagedTarget } from "./staged-upload.client";
 
 const MODEL_VIEWER_SCRIPT_URL = "/model-viewer.min.js";
 
@@ -209,17 +210,12 @@ export async function snapshotAndPersist(
   }
 
   // The IMAGE resource is a signed-PUT GCS target — no multipart parameters.
-  await new Promise<void>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", stagedJson.url);
-    xhr.setRequestHeader("Content-Type", "image/jpeg");
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`preview PUT HTTP ${xhr.status}`));
-    xhr.onerror = () => reject(new Error("preview PUT network error"));
-    xhr.send(blob);
-  });
+  await uploadToStagedTarget(
+    { url: stagedJson.url, httpMethod: stagedJson.httpMethod ?? "PUT", parameters: stagedJson.parameters },
+    blob.type === "image/jpeg" ? blob : new Blob([blob], { type: "image/jpeg" }),
+    undefined,
+    previewFileName,
+  );
 
   const createRes = await fetch("/api/create-shopify-file", {
     method: "POST",
