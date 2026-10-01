@@ -323,6 +323,11 @@ export function VariantImageManager({
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
+  // True once the sync effect has emitted a non-empty pending state to the parent.
+  const emittedPendingRef = useRef(false);
+  // Always the CURRENT product, so an in-flight delete can tell the merchant switched away.
+  const productIdRef = useRef(productId);
+  productIdRef.current = productId;
   // Monotonic token guarding against out-of-order /api/product-variants responses:
   // a fast product switch can leave an earlier request in flight that resolves AFTER
   // the newer one, overwriting the current product's variants with stale data.
@@ -602,7 +607,18 @@ export function VariantImageManager({
     // change but immediately returns early, so onPendingChange is never
     // called → the hook never sees the new media → hasPendingImageChanges
     // stays false → Save button stays disabled.
-    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) return;
+    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) {
+      // Everything went back to "no change" (e.g. a refused delete rolled the
+      // optimistic exclusion back). The parent still holds what we emitted
+      // last, so re-sync it explicitly or the next Save replays stale pending
+      // state (clearing a variant main image that was never deleted).
+      if (emittedPendingRef.current) {
+        emittedPendingRef.current = false;
+        onPendingChange?.([], pendingMediaOrderRef.current, [], []);
+      }
+      return;
+    }
+    emittedPendingRef.current = true;
 
     // Track variants with no featured image so backend keeps all GIDs in the metafield
     // and never promotes fileGids[0] to become mediaId on Shopify.
@@ -2083,6 +2099,8 @@ export function VariantImageManager({
     const gids = urls.map(url => urlToGid[url]).filter(Boolean) as string[];
     const urlSet = new Set(urls);
     const gidSet = new Set(gids);
+    const startedProductId = productId;
+    const switchedAway = () => productIdRef.current !== startedProductId;
 
     setIsDeleting(true);
     setDeleteConfirm(null);
@@ -2095,10 +2113,16 @@ export function VariantImageManager({
       const removed = captureRemoved(pendingVariantGalleries[v.id] ?? v.galleryFileGids, gid => gidSet.has(gid));
       if (removed.length > 0) removedFromGalleries[v.id] = removed;
     }
-    const removedFromOrder = captureRemoved(
-      pendingProductImageOrder ?? effectiveProductImages.map(i => i.url),
-      url => urlSet.has(url),
-    );
+    const originalOrder = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
+    const orderWasUnset = pendingProductImageOrder === null;
+    const originalGalleries: Record<string, string[] | undefined> = {};
+    for (const v of variants) originalGalleries[v.id] = pendingVariantGalleries[v.id];
+    const removedSelection: Array<[string, string | null]> = [];
+    for (const url of urls) {
+      const key = `product::${url}`;
+      if (selectedGalleryItems.has(key)) removedSelection.push([key, selectedGalleryItems.get(key) ?? null]);
+    }
+    const removedFromOrder = captureRemoved(originalOrder, url => urlSet.has(url));
     const removedFromRefreshed = captureRemoved(effectiveProductImages, img => urlSet.has(img.url));
     const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
     const addedExcludedIds = variantsWithDeletedMainImage.map(v => v.id).filter(id => !locallyExcludedMainGids.has(id));
@@ -2134,23 +2158,29 @@ export function VariantImageManager({
     let deleteOk = false;
     let clearOk: boolean | null = null;
     try {
-      const deleteRes = await fetch("/api/delete-product-images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, mediaIds: gids }),
-      });
-      const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
-      deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false;
+      if (gids.length === 0) {
+        // Only queued (not yet uploaded) ghost tiles: nothing exists on Shopify
+        // to delete, and the route answers 400 for an empty list.
+        deleteOk = true;
+      } else {
+        const deleteRes = await fetch("/api/delete-product-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productId: startedProductId, mediaIds: gids }),
+        });
+        const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
+        deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false;
+      }
       // Shopify does not automatically clear a variant's image when the referenced media is
       // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,
       // so a refused delete changes nothing on Shopify.
       const clearMainImageIds = variantsWithDeletedMainImage.map(v => v.id);
-      if (deleteOk && clearMainImageIds.length > 0) {
+      if (deleteOk && clearMainImageIds.length > 0 && !switchedAway()) {
         try {
           const clearRes = await fetch("/api/update-variant-galleries", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ productId, clearVariantMainImages: clearMainImageIds }),
+            body: JSON.stringify({ productId: startedProductId, clearVariantMainImages: clearMainImageIds }),
           });
           const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
           clearOk = clearRes.ok && !!clearBody && clearBody.success !== false;
@@ -2161,13 +2191,21 @@ export function VariantImageManager({
     } catch {
       deleteOk = false;
     }
+    if (switchedAway()) { setIsDeleting(false); return; }
     const outcome = deleteOutcome(deleteOk, clearOk);
     if (outcome === "deleteFailed") {
       setPendingVariantGalleries(p => {
         const next = { ...p };
         for (const v of variants) {
           const removed = removedFromGalleries[v.id];
-          if (removed) next[v.id] = reinsertRemoved(p[v.id] ?? v.galleryFileGids, removed);
+          if (!removed) continue;
+          const restored = reinsertRemoved(p[v.id] ?? v.galleryFileGids, removed);
+          const base = originalGalleries[v.id] ?? v.galleryFileGids;
+          const unchanged = restored.length === base.length && restored.every((g, i) => g === base[i]);
+          // Back to the pre-delete list: restore the prior presence/absence so
+          // a no-op does not light up the Save button.
+          if (unchanged && originalGalleries[v.id] === undefined) delete next[v.id];
+          else next[v.id] = restored;
         }
         return next;
       });
@@ -2176,7 +2214,17 @@ export function VariantImageManager({
         addedExcludedIds.forEach(id => next.delete(id));
         return next;
       });
-      setPendingProductImageOrder(curr => (curr ? reinsertRemoved(curr, removedFromOrder) : curr));
+      setPendingProductImageOrder(curr => {
+        if (!curr) return curr;
+        const restored = reinsertRemoved(curr, removedFromOrder);
+        if (orderWasUnset && restored.length === originalOrder.length && restored.every((u, i) => u === originalOrder[i])) return null;
+        return restored;
+      });
+      setSelectedGalleryItems(m => {
+        const next = new Map(m);
+        for (const [k, v] of removedSelection) if (!next.has(k)) next.set(k, v);
+        return next;
+      });
       setRefreshedProductImages(curr => (curr ? reinsertRemoved(curr, removedFromRefreshed, (a, b) => a.url === b.url) : curr));
       setMediaError(t.imageManager.mediaDeleteFailed);
     } else {
@@ -2187,7 +2235,7 @@ export function VariantImageManager({
       if (outcome === "clearFailed") setMediaError(t.imageManager.mediaClearMainFailed);
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, t]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
