@@ -293,14 +293,14 @@ export function SettingsSetupTab({
           <Divider />
 
           <EmbedActivateBox
-            title={ts.themeSetupLocalizedImagesTitle ?? "Images per language (app embed)"}
+            title={ts.themeSetupLocalizedImagesTitle ?? "Images and videos per language (app embed)"}
             description={
               ts.themeSetupLocalizedImagesDescription ??
-              "Shows the product images you replaced per language or market (product page → Images per language) to visitors in that language or market. Without the embed enabled, the gallery keeps the original images."
+              "Shows the product images and videos you replaced per language or market (product page → Images and videos per language) to visitors in that language or market. Without the embed enabled, the gallery keeps the originals."
             }
             url={localizedMediaEmbedUrl}
             {...detailLabels}
-            buttonLabel={ts.themeSetupLocalizedImagesButton ?? "Activate images per language"}
+            buttonLabel={ts.themeSetupLocalizedImagesButton ?? "Activate images and videos per language"}
             requiredPlan="pro"
             currentPlan={subscriptionPlan}
             requiresPlanText={ts.themeSetupOptionRequiresPlan}

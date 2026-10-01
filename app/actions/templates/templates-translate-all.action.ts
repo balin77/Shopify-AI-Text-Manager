@@ -4,7 +4,7 @@ import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
-import { isThemeImageReference } from "~/utils/theme-image-reference.shared";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
@@ -33,7 +33,7 @@ export async function handleTranslateAll(
   for (const item of allContent) {
     // An image reference is a file choice, not text: the AI's answer would be
     // a broken reference written to the storefront (theme-image-reference.shared.ts).
-    if (!uniqueContent.has(item.key) && item.value && !isThemeImageReference(item.value)) {
+    if (!uniqueContent.has(item.key) && item.value && !isThemeMediaValue(item.value)) {
       uniqueContent.set(item.key, item);
     }
   }

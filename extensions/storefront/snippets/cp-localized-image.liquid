@@ -26,7 +26,7 @@
   assign loc = request.locale.iso_code | downcase
   assign mk = localization.market.id | append: ''
   for e in product.metafields.custom.localized_media.value.e
-    if e.o == fn and e.l == loc
+    if e.o == fn and e.l == loc and e.x == blank
       if e.k == mk
         assign h = e.u
         break

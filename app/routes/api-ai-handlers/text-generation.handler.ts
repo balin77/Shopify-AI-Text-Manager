@@ -2,7 +2,7 @@ import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
-import { isThemeImageReference } from "~/utils/theme-image-reference.shared";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import {
   getCharacterCeilingRequirement,
   getCharacterLimitRequirement,
@@ -154,7 +154,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
 
   const fieldType = getFormString(formData, "fieldType");
   const currentValue = getFormString(formData, "currentValue");
-  if (isThemeImageReference(currentValue)) {
+  if (isThemeMediaValue(currentValue)) {
     return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
   }
   const contextTitle = getFormString(formData, "contextTitle") || "";
@@ -433,7 +433,7 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
 
   const fieldType = getFormString(formData, "fieldType");
   const currentValue = getFormString(formData, "currentValue");
-  if (isThemeImageReference(currentValue)) {
+  if (isThemeMediaValue(currentValue)) {
     return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
   }
   const contextTitle = getFormString(formData, "contextTitle") || "";

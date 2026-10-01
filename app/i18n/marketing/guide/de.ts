@@ -147,7 +147,7 @@ export const guideDe: GuideCopy = {
             "Varianten-Galerie — zeigt pro Variante die passenden Bilder.",
             "Sprach- und Länderauswahl — ein Umschalter auf Basis von Shopifys eigener Lokalisierung.",
             "Direktübersetzungen — übersetzt Texte anderer Apps.",
-            "Bilder je Sprache — zeigt die Produktbilder, die Sie pro Sprache oder Markt ersetzt haben.",
+            "Bilder und Videos je Sprache — zeigt die Produktbilder und -videos, die Sie pro Sprache oder Markt ersetzt haben.",
             "Web Vitals — misst die Ladezeit bei echten Besuchern.",
           ],
         },
@@ -458,19 +458,19 @@ export const guideDe: GuideCopy = {
       ],
       tips: [
         "Ändern Sie einen Theme-Text in der Hauptsprache, werden seine Übersetzungen nach Ihrer Einstellung gelöscht oder neu übersetzt — genau wie bei Produkten.",
-        "Bilder im Theme erscheinen als Bildvorschau. Pro Sprache und Markt können Sie ein anderes Bild wählen — siehe „Andere Bilder je Sprache“.",
+        "Bilder im Theme erscheinen als Bildvorschau. Pro Sprache und Markt können Sie ein anderes Bild wählen — siehe „Andere Bilder und Videos je Sprache“.",
       ],
     },
 
     "images-per-language": {
-      title: "Andere Bilder je Sprache",
+      title: "Andere Bilder und Videos je Sprache",
       summary:
         "Zeigen Sie Kundinnen und Kunden in einer Sprache oder einem Markt ein anderes Bild — zum Beispiel ein Banner oder Produktfoto mit übersetzter Beschriftung.",
       sections: [
         {
           heading: "Wofür",
           paragraphs: [
-            "Texte lassen sich übersetzen, Text in einem Bild nicht. Ein Banner mit „Sale“ oder ein Produktfoto mit deutscher Beschriftung sieht in jeder Sprache gleich aus. Mit „Bilder je Sprache“ legen Sie für eine Sprache — und auf Wunsch nur für einen bestimmten Markt — ein anderes Bild fest. Es ersetzt das Original 1:1; alle anderen Sprachen sehen weiterhin das Originalbild.",
+            "Texte lassen sich übersetzen, Text in einem Bild nicht. Ein Banner mit „Sale“ oder ein Produktfoto mit deutscher Beschriftung sieht in jeder Sprache gleich aus. Mit „Bilder und Videos je Sprache“ legen Sie für eine Sprache — und auf Wunsch nur für einen bestimmten Markt — ein anderes Bild fest. Es ersetzt das Original 1:1; alle anderen Sprachen sehen weiterhin das Originalbild.",
           ],
         },
         {
@@ -487,8 +487,8 @@ export const guideDe: GuideCopy = {
         {
           heading: "Produktbilder",
           paragraphs: [
-            "Auf der Produktseite finden Sie unter den Produktbildern die Karte „Bilder je Sprache“ — auch wenn der Bild-Manager ausgeschaltet ist. Ersatzbilder wählen Sie aus Ihren Dateien oder laden sie neu hoch; angeboten werden dabei nur Bilder. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert.",
-            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images per language“ (die Karte verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
+            "Auf der Produktseite finden Sie unter den Produktbildern die Karte „Bilder und Videos je Sprache“ — auch wenn der Bild-Manager ausgeschaltet ist. Ersatzbilder wählen Sie aus Ihren Dateien oder laden sie neu hoch; angeboten wird dabei nur, was das Original ersetzen kann. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert.",
+            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images and videos per language“ (die Karte verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
           ],
           list: [
             "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
@@ -497,9 +497,17 @@ export const guideDe: GuideCopy = {
           ],
         },
         {
+          heading: "Videos",
+          paragraphs: [
+            "In derselben Karte ersetzen Sie auch die Videos eines Produkts pro Sprache und Markt — zum Beispiel durch eine vertonte Fassung. Ein in Shopify hochgeladenes Video ersetzen Sie durch ein anderes hochgeladenes Video (aus Ihren Dateien oder neu hochgeladen), ein YouTube- oder Vimeo-Video durch einen anderen YouTube- oder Vimeo-Link. Ein Bild lässt sich nicht durch ein Video ersetzen und umgekehrt; 3D-Modelle werden nicht ersetzt.",
+            "Neu hochgeladene Videos verarbeitet Shopify einige Minuten lang. Erscheint ein Hinweis dazu, wählen Sie das Video kurz danach aus Ihren Dateien.",
+            "Videos in den Theme-Einstellungen (zum Beispiel ein Video-Abschnitt auf der Startseite) tragen Sie pro Sprache als anderen Link ein; die KI verändert sie nicht.",
+          ],
+        },
+        {
           heading: "Was nicht ersetzt wird",
           paragraphs: [
-            "Produktkacheln in Kollektionen, der Warenkorb sowie Feeds für Google Shopping, die Shop-App und andere Verkaufskanäle zeigen weiterhin das Originalbild. Für Kollektions- und Blogbilder gibt es diese Funktion noch nicht.",
+            "Produktkacheln in Kollektionen, der Warenkorb sowie Feeds für Google Shopping, die Shop-App und andere Verkaufskanäle zeigen weiterhin das Original. Bei Videos bleibt die Beschreibung des Videos für Suchmaschinen beim Original. Für Kollektions- und Blogbilder gibt es diese Funktion noch nicht.",
           ],
         },
       ],

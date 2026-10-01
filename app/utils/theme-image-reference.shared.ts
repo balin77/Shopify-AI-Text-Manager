@@ -43,6 +43,32 @@ export function filenameFromCdnUrl(url: string | null | undefined): string | nul
   return last && /^[^\s/?#]+$/.test(last) ? last : null;
 }
 
+// A theme VIDEO setting holds either a Shopify file reference (the `video`
+// setting type) or a YouTube/Vimeo link (`video_url`). The reference SHAPE of
+// the first is not measured, so both spellings it plausibly takes are
+// accepted (shopify://files/videos/<file>, shopify://shop_videos/<file>) and
+// the theme-image probe reports what a shop really holds; the link is matched
+// by host. Neither is a parser — nothing is extracted, the
+// only question is "is this whole value a video choice rather than text".
+const THEME_VIDEO_FILE = /^shopify:\/\/(?:files\/videos|shop_videos)\/[^\s?#]+$/i;
+const VIDEO_LINK = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|player\.vimeo\.com)\/\S+$/i;
+
+/** True for a whole value that is one video choice: a Shopify video reference or a YouTube/Vimeo link. */
+export function isThemeVideoValue(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  return THEME_VIDEO_FILE.test(v) || VIDEO_LINK.test(v);
+}
+
+/**
+ * THE predicate every AI path asks: an image OR a video choice. Either is a
+ * file or a link per language, never text — an AI answer to it is a broken
+ * reference or a rewritten URL, written with an echo that confirms it.
+ */
+export function isThemeMediaValue(value: unknown): boolean {
+  return isThemeImageReference(value) || isThemeVideoValue(value);
+}
+
 /** Builds the reference for a Files filename. */
 export function themeImageReferenceFor(filename: string): string {
   return `${PREFIX}${filename}`;

@@ -46,6 +46,31 @@ export const MAX_LOCALIZED_MEDIA_ENTRIES = 200;
 
 export type LocalizedMediaOrigin = "manual" | "ai";
 
+/**
+ * What an entry replaces. ABSENT means an image (every entry written before
+ * videos existed reads as one). A replacement is always of the SAME kind as
+ * its original, because the storefront swap rewrites ADDRESSES inside an
+ * element the theme already rendered: an `<img>` stays an `<img>`, a
+ * `<video>` gets other sources, an `<iframe>` another embed address. Turning
+ * one element into another would mean rebuilding the theme's own markup.
+ *   "v"  a Shopify-hosted video: `o` is the video KEY (the hash directory of
+ *        its CDN sources, `videoKeyFromUrl`), `w` the replacement's sources,
+ *        `u` the replacement's poster ("" = none), `f` its Video GID
+ *   "e"  a YouTube/Vimeo video: `o` is "<host>.<id>" (`externalVideoKey`),
+ *        `r` the replacement's embed address, `u` its thumbnail ("" for
+ *        Vimeo, which publishes none without an API call), `f` ""
+ * Both carry `p`, the ORIGINAL's poster filename ("" = unknown), so the poster
+ * image the theme shows before playback is swapped with the video.
+ */
+export type LocalizedMediaKind = "v" | "e";
+
+export interface LocalizedVideoSource {
+  /** Source URL on Shopify's CDN. */
+  u: string;
+  /** MIME type as Shopify reports it (video/mp4, application/x-mpegURL, …). */
+  t: string;
+}
+
 export interface LocalizedMediaEntry {
   o: string;
   m: string;
@@ -56,6 +81,48 @@ export interface LocalizedMediaEntry {
   a: LocalizedMediaOrigin;
   s: string;
   t: string;
+  x?: LocalizedMediaKind;
+  p?: string;
+  w?: LocalizedVideoSource[];
+  r?: string;
+}
+
+const VIDEO_KEY = /\/videos\/c\/(?:vp|o\/v)\/([A-Za-z0-9]{8,64})/;
+
+/**
+ * The stable part of a Shopify-hosted video's URL: the hash directory every
+ * rendition (HLS, each mp4 size) and the original share. NOT measured on a
+ * live storefront — read off the Admin API's `Video.sources` shape
+ * (`/videos/c/vp/<hash>/<hash>.HD-1080p….mp4`, `/videos/c/o/v/<hash>.mp4`);
+ * an original whose sources carry no such segment is REFUSED rather than
+ * guessed, so a wrong assumption costs a refusal, never a wrong swap.
+ */
+export function videoKeyFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const m = VIDEO_KEY.exec(url.split("?")[0]);
+  return m ? m[1] : null;
+}
+
+/** "youtube.<id>" / "vimeo.<id>" — the storefront's key for an external video. */
+export function externalVideoKey(host: string, id: string): string | null {
+  if (host === "youtube" && /^[A-Za-z0-9_-]{11}$/.test(id)) return `youtube.${id}`;
+  if (host === "vimeo" && /^\d{6,12}$/.test(id)) return `vimeo.${id}`;
+  return null;
+}
+
+const VIDEO_MIME = /^(video\/[a-z0-9.+-]+|application\/x-mpegurl|application\/vnd\.apple\.mpegurl)$/i;
+
+/** The only two embed shapes the storefront swap writes into an iframe. */
+export function isSafeEmbedUrl(url: unknown): url is string {
+  return typeof url === "string" && (
+    /^https:\/\/www\.youtube\.com\/embed\/[A-Za-z0-9_-]{11}$/.test(url) ||
+    /^https:\/\/player\.vimeo\.com\/video\/\d{6,12}$/.test(url)
+  );
+}
+
+/** A poster for an external replacement: YouTube's own thumbnail host only. */
+export function isSafeExternalThumbnail(url: unknown): url is string {
+  return typeof url === "string" && /^https:\/\/img\.youtube\.com\/vi\/[A-Za-z0-9_-]{11}\/hqdefault\.jpg$/.test(url);
 }
 
 const SAFE_FILENAME = /^[A-Za-z0-9._~%+-]{1,255}$/;
@@ -123,18 +190,34 @@ export function parseLocalizedMediaValue(raw: unknown): LocalizedMediaEntry[] {
     if (!e || typeof e !== "object") continue;
     if (!isSafeFilename(e.o) || typeof e.m !== "string" || !e.m) continue;
     if (typeof e.l !== "string" || !e.l || typeof e.k !== "string") continue;
-    if (!isShopifyCdnUrl(e.u) || typeof e.f !== "string") continue;
-    out.push({
+    if (typeof e.f !== "string") continue;
+    const base: LocalizedMediaEntry = {
       o: e.o,
       m: e.m,
       l: normalizeLocale(e.l),
       k: e.k,
-      u: e.u,
+      u: typeof e.u === "string" ? e.u : "",
       f: e.f,
       a: e.a === "ai" ? "ai" : "manual",
       s: typeof e.s === "string" ? e.s : "",
       t: typeof e.t === "string" ? e.t : "",
-    });
+    };
+    const poster = e.p === undefined || e.p === "" || isSafeFilename(e.p) ? (e.p ?? "") : null;
+    if (e.x === undefined) {
+      if (!isShopifyCdnUrl(base.u)) continue;
+      out.push(base);
+    } else if (e.x === "v") {
+      const sources = Array.isArray(e.w)
+        ? e.w.filter((s): s is LocalizedVideoSource => !!s && isShopifyCdnUrl(s.u) && typeof s.t === "string" && VIDEO_MIME.test(s.t))
+        : [];
+      if (poster === null || sources.length === 0) continue;
+      if (base.u !== "" && !isShopifyCdnUrl(base.u)) continue;
+      out.push({ ...base, x: "v", p: poster, w: sources });
+    } else if (e.x === "e") {
+      if (poster === null || !isSafeEmbedUrl(e.r)) continue;
+      if (base.u !== "" && !isSafeExternalThumbnail(base.u)) continue;
+      out.push({ ...base, x: "e", p: poster, r: e.r });
+    }
   }
   return out;
 }

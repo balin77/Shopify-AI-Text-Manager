@@ -144,7 +144,7 @@ export const guideEs: GuideCopy = {
             "Galería de variantes — muestra las imágenes de cada variante.",
             "Selector de idioma y país — un selector basado en la localización propia de Shopify.",
             "Traducciones directas — traduce textos de otras apps.",
-            "Imágenes por idioma — muestra las imágenes de producto que reemplazaste por idioma o mercado.",
+            "Imágenes y vídeos por idioma — muestra las imágenes y vídeos de producto que reemplazaste por idioma o mercado.",
             "Web Vitals — mide la velocidad para visitantes reales.",
           ],
         },
@@ -452,20 +452,20 @@ export const guideEs: GuideCopy = {
         },
       ],
       tips: [
-        "Las imágenes del tema aparecen como vista previa. Puedes elegir otra imagen por idioma y mercado; consulta «Imágenes distintas por idioma».",
+        "Las imágenes del tema aparecen como vista previa. Puedes elegir otra imagen por idioma y mercado; consulta «Imágenes y vídeos distintos por idioma».",
         "Si cambias un texto del tema en el idioma principal, sus traducciones se borran o se retraducen según tu ajuste — igual que en los productos.",
       ],
     },
 
     "images-per-language": {
-      title: "Imágenes distintas por idioma",
+      title: "Imágenes y vídeos distintos por idioma",
       summary:
         "Muestra a los clientes de un idioma o mercado otra imagen, por ejemplo un banner o una foto de producto con el texto traducido.",
       sections: [
         {
           heading: "Para qué sirve",
           paragraphs: [
-            "El texto se puede traducir; el texto dentro de una imagen, no. Un banner que dice «Sale» o una foto de producto con etiquetas en alemán se ve igual en todos los idiomas. Con «Imágenes por idioma» eliges otra imagen para un idioma y, si quieres, solo para un mercado. Reemplaza al original uno a uno; los demás idiomas siguen viendo la imagen original.",
+            "El texto se puede traducir; el texto dentro de una imagen, no. Un banner que dice «Sale» o una foto de producto con etiquetas en alemán se ve igual en todos los idiomas. Con «Imágenes y vídeos por idioma» eliges otra imagen para un idioma y, si quieres, solo para un mercado. Reemplaza al original uno a uno; los demás idiomas siguen viendo la imagen original.",
           ],
         },
         {
@@ -482,8 +482,8 @@ export const guideEs: GuideCopy = {
         {
           heading: "Imágenes de producto",
           paragraphs: [
-            "En la página de producto, debajo de las imágenes del producto, encontrarás la tarjeta «Imágenes por idioma», también si el gestor de imágenes está desactivado. Elige los reemplazos de tus archivos o sube otros nuevos; solo se ofrecen imágenes. Allí eliges idioma y mercado y defines un reemplazo para cada imagen del producto. El cambio se guarda al instante.",
-            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Images per language» (la tarjeta enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
+            "En la página de producto, debajo de las imágenes del producto, encontrarás la tarjeta «Imágenes y vídeos por idioma», también si el gestor de imágenes está desactivado. Elige los reemplazos de tus archivos o sube otros nuevos; solo se ofrece lo que puede reemplazar al original. Allí eliges idioma y mercado y defines un reemplazo para cada imagen del producto. El cambio se guarda al instante.",
+            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Images and videos per language» (la tarjeta enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
           ],
           list: [
             "Un reemplazo para un mercado concreto tiene prioridad sobre el reemplazo para «Todos los mercados».",
@@ -492,9 +492,17 @@ export const guideEs: GuideCopy = {
           ],
         },
         {
+          heading: "Vídeos",
+          paragraphs: [
+            "En la misma tarjeta también reemplazas los vídeos de un producto por idioma y mercado, por ejemplo por una versión doblada. Un vídeo subido a Shopify se reemplaza por otro vídeo subido (de tus archivos o subido nuevo), un vídeo de YouTube o Vimeo por otro enlace de YouTube o Vimeo. Una imagen no se puede reemplazar por un vídeo ni al revés; los modelos 3D no se reemplazan.",
+            "Shopify procesa un vídeo recién subido durante unos minutos. Si aparece un aviso, elige el vídeo de tus archivos un poco más tarde.",
+            "Los vídeos de los ajustes del tema (por ejemplo una sección de vídeo en la página de inicio) se introducen por idioma como otro enlace; la IA no los modifica.",
+          ],
+        },
+        {
           heading: "Qué no se reemplaza",
           paragraphs: [
-            "Las tarjetas de producto en las colecciones, el carrito y los feeds de Google Shopping, la app Shop y otros canales de venta siguen mostrando la imagen original. Las imágenes de colecciones y blogs aún no están incluidas.",
+            "Las tarjetas de producto en las colecciones, el carrito y los feeds de Google Shopping, la app Shop y otros canales de venta siguen mostrando el original. En los vídeos, la descripción del vídeo para los buscadores sigue siendo la del original. Las imágenes de colecciones y blogs aún no están incluidas.",
           ],
         },
       ],

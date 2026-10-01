@@ -2,7 +2,7 @@ import { data as json } from "react-router";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
 import { errorMessage, errorStack, createAIService, isAuthError } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
-import { isThemeImageReference } from "~/utils/theme-image-reference.shared";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
@@ -88,7 +88,7 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<DataRe
   }
   // A theme image reference is a file choice: translating it writes a broken
   // reference. Any content type — the value decides, not the surface.
-  if (isThemeImageReference(sourceText)) {
+  if (isThemeMediaValue(sourceText)) {
     return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
   }
 
@@ -289,7 +289,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
   }
   // A theme image reference is a file choice: translating it writes a broken
   // reference. Any content type — the value decides, not the surface.
-  if (isThemeImageReference(sourceText)) {
+  if (isThemeMediaValue(sourceText)) {
     return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
   }
 

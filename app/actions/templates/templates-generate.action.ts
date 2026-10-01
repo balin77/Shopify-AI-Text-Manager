@@ -1,4 +1,4 @@
-import { isThemeImageReference } from "~/utils/theme-image-reference.shared";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import { data as json } from "react-router";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
@@ -16,7 +16,7 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
   const currentValue = getFormString(formData, "currentValue");
   const mainLanguage = getFormString(formData, "mainLanguage");
   const fieldLabel = extractReadableName(fieldType);
-  if (isThemeImageReference(currentValue)) {
+  if (isThemeMediaValue(currentValue)) {
     return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
   }
 

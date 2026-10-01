@@ -88,6 +88,8 @@ Die Konkurrenz (EZ Product Image Translate, LangShop, Transcy) tauscht Produktbi
 
 ## 4. Nicht abgedeckte Fälle (bewusst, Stand 2026-10-01)
 
+Videos: die Punkte 21–26 am Ende gelten zusätzlich nur für Videos.
+
 Damit niemand annimmt, was nicht gebaut ist. Jeder Punkt sagt, was der Händler sieht.
 
 **Wo das Ersatzbild NICHT erscheint**
@@ -101,7 +103,7 @@ Damit niemand annimmt, was nicht gebaut ist. Jeder Punkt sagt, was der Händler 
 6. **Nur 1:1-Ersatz.** Kein Ausblenden eines Bildes in einer Sprache, keine zusätzlichen Bilder, keine andere Reihenfolge.
 7. **Nur Produkte und Theme.** Kollektionsbild, Artikel-/Blogbild, Seitenbilder, Varianten-Galeriebilder als eigene Einheit (sie werden nur getauscht, wenn sie dieselbe Datei wie ein ersetztes Produktbild sind), Metaobjekt-Dateifelder und Bilder in Rich-Text-Beschreibungen sind nicht abgedeckt.
 8. **Kein Ersatzbild, das selbst ein Bild desselben Produkts ist** (keine Ketten/Zyklen).
-9. **Keine Videos und 3D-Modelle** als Ersatz — der Auswahldialog bietet in diesem Modus nur Bilder an. Shopifys native Galerie KANN Videos (eigene und YouTube/Vimeo) und 3D-Modelle zeigen; der Grund ist ein anderer: der Tausch ersetzt die Adresse in einem vorhandenen `<img>`. Ein Video oder 3D-Modell ist ein anderes Element (`<video>`, `<iframe>`, `<model-viewer>`, je Theme in eigener Hülle mit Abspiel-Knopf), das sich nicht per Adresse in ein Bild verwandeln lässt; `og:image` und das JSON-LD-Bild nehmen ohnehin nur Bilder, und eine Theme-Bildeinstellung speichert nur Bilder. Ein späteres „Videos je Sprache“ wäre ein eigenes Feature (Video → Video: die Quelle eines Shopify-Videos ließe sich analog tauschen, ein YouTube-Link wäre eine andere Einbettung).
+9. **Videos nur Art für Art, 3D-Modelle gar nicht** (§7). Ein Bild ersetzt ein Bild, ein in Shopify hochgeladenes Video ein hochgeladenes Video, ein YouTube-/Vimeo-Video ein YouTube-/Vimeo-Video (YouTube ↔ Vimeo geht). Ein Bild durch ein Video oder ein hochgeladenes Video durch YouTube zu ersetzen geht NICHT: der Tausch schreibt Adressen in das Element, das das Theme gezeichnet hat (`<img>`, `<video>`, `<iframe>`), und kann aus dem einen nicht das andere machen. 3D-Modelle werden nicht ersetzt (`<model-viewer>`, eigene Hülle je Theme).
 10. **Keine Massenpflege**: keine Spalte im Bulk-Editor, kein CSV-Import/-Export der Ersatzbilder, kein „für alle Sprachen dasselbe Bild“.
 11. **Höchstens 200 Ersatzbild-Einträge pro Produkt** (alle Sprachen × Märkte zusammen), weil alle Einträge im Seitenkopf mitgeliefert werden.
 
@@ -118,7 +120,26 @@ Damit niemand annimmt, was nicht gebaut ist. Jeder Punkt sagt, was der Händler 
 19. Das Original wird vom Browser geladen, bevor es ersetzt wird (Bandbreite, nicht sichtbar dank Vorab-Ausblendung; nach spätestens 3 s wird die Ausblendung in jedem Fall aufgehoben).
 20. Ein Upload, den Shopify nicht innerhalb von ~9 s verarbeitet, wird nicht doppelt hochgeladen; der Händler wählt die Datei kurz danach aus der Bibliothek.
 
+**Nur Videos**
+21. **Strukturierte Daten**: das `VideoObject` im JSON-LD beschreibt weiter das Original-Video (Inhalt, Vorschaubild, Datum). Nur der Spieler und sein Vorschaubild auf der Seite werden getauscht.
+22. **Vimeo-Ersatz ohne Vorschaubild**: Vimeo liefert ohne API-Aufruf kein Vorschaubild; vor dem Abspielen bleibt das Vorschaubild des Originals stehen.
+23. **Schlüssel eines hochgeladenen Videos NICHT gemessen**: das Video wird im Shop am Hash-Verzeichnis seiner Adressen erkannt (`/videos/c/vp/<hash>/`), abgelesen an der Admin-API, nicht an einem echten Storefront gemessen. Ein Video ohne erkennbaren Schlüssel wird in der Karte gelistet, aber nicht zum Ersetzen angeboten — eine falsche Annahme kostet eine Verweigerung, nie einen falschen Tausch.
+24. **Spieler, die ihre Adresse nicht im DOM tragen** (Themes, die Videos per JavaScript-Objekt oder eigenem Player-Skript laden, Vimeo-/YouTube-Widgets anderer Apps): werden nicht erkannt.
+25. **Videos in Varianten-Galerien als eigene Einträge** (`custom.variant_external_videos`): nicht abgedeckt; nur Produktmedien.
+26. **Hochgeladenes Ersatzvideo**: Shopify verarbeitet Videos länger als die Anlage wartet; der Händler wählt es kurz danach aus der Bibliothek. Theme-Videoeinstellungen (Video-Datei oder YouTube-/Vimeo-Link) bekommen keine Auswahl wie die Bilder, nur ein Textfeld ohne KI — die Schreibweise der Video-Referenz im Theme ist nicht gemessen (die Probe listet sie).
+
 **Behoben (2026-10-01):** Die Karte „Bilder je Sprache“ hing am Bild-Manager und verschwand, wenn dieser in den Einstellungen ausgeschaltet war, während der Shop die Ersatzbilder weiter zeigte. Sie hängt jetzt nur am Tarif und erscheint unter der Bildergalerie des Produkts — mit oder ohne Bild-Manager. Der Storefront-Tausch war nie vom Varianten-Galerie-Embed abhängig: er arbeitet auch auf der nativen Theme-Galerie. Hochladen geht dort über denselben Datei-Dialog wie im Bild-Manager, im Modus „nur Bilder“.
+
+## 7. Videos je Sprache (Owner-Entscheid 2026-10-01, umgesetzt)
+
+Gleiches Modell wie die Bilder: ein Eintrag im Metafeld `custom.localized_media`, 1:1, pro Sprache und optional pro Markt, Markt schlägt „alle Märkte“.
+
+- **Arten:** ein Eintrag trägt `x`: fehlt = Bild, `"v"` = in Shopify hochgeladenes Video, `"e"` = YouTube/Vimeo. Ersetzt wird nur innerhalb derselben Art (Begründung §4.9); der Server prüft das (`kindMismatch`).
+- **Erkennung im Shop:** hochgeladenes Video am Hash-Verzeichnis seiner Quell-Adressen (`o`), YouTube/Vimeo als `youtube.<id>`/`vimeo.<id>` aus der Einbettungsadresse; das Vorschaubild des Originals (`p`) wird wie ein Bild getauscht, wenn der Ersatz eines hat (`u`).
+- **Tausch:** `<video>` bekommt die Quellen des Ersatzes (`w`), ein `<iframe>` die Einbettungsadresse des Ersatzes (`r`) mit der Abfrage des Themes (autoplay, controls …). Spieler, die das Theme erst beim Klick aus einem `<template>` einsetzt, werden schon im Template umgeschrieben — das Original lädt nie.
+- **Auswahl in der Karte:** hochgeladenes Video über denselben Datei-Dialog wie im Bild-Manager (nur Videos), YouTube/Vimeo über ein Link-Feld; Upload eines Videos legt die Datei in Shopify „Dateien“ an.
+- **Theme:** Videoeinstellungen (Datei oder YouTube-/Vimeo-Link) werden von der KI ausgenommen und zählen nicht als fehlende Übersetzung; pro Sprache trägt der Händler im Textfeld einen anderen Link bzw. eine andere Referenz ein.
+- **Nicht abgedeckt:** §4.21–26.
 
 ## 5. Offene Punkte
 

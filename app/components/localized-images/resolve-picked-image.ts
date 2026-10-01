@@ -19,10 +19,13 @@ export type PickedImage = { fileId: string; url: string };
 
 export type PickFailure = { error: string; code?: "stillProcessing" };
 
-export async function resolvePickedImage(item: AddedItem | undefined): Promise<PickedImage | PickFailure> {
-  if (!item) return { error: "No image selected" };
-  if (item.source === "external_url") return { error: "A link is not an image file" };
-  if (item.kind !== "image") return { error: "Only images can replace an image" };
+export async function resolvePickedMedia(
+  item: AddedItem | undefined,
+  kind: "image" | "video",
+): Promise<PickedImage | PickFailure> {
+  if (!item) return { error: kind === "image" ? "No image selected" : "No video selected" };
+  if (item.source === "external_url") return { error: "A link is not a file" };
+  if (item.kind !== kind) return { error: kind === "image" ? "Only images can replace an image" : "Only videos can replace a video" };
   if (item.source === "library") {
     if (!item.gid || !item.assetUrl) return { error: "The file has no URL yet" };
     return { fileId: item.gid, url: item.assetUrl };
@@ -31,16 +34,21 @@ export async function resolvePickedImage(item: AddedItem | undefined): Promise<P
     const res = await fetch("/api/create-shopify-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ resourceUrl: item.resourceUrl }),
+      body: JSON.stringify({ resourceUrl: item.resourceUrl, contentType: kind === "video" ? "VIDEO" : "IMAGE" }),
     });
     const body = (await res.json().catch(() => ({}))) as { fileId?: string; url?: string; error?: string };
-    // 504 = the file EXISTS in Files but Shopify is still processing it. It is
-    // not an upload failure: re-uploading would create a duplicate, while the
-    // same file can be picked from the library a moment later.
+    // 504 = the file EXISTS in Files but Shopify is still processing it (a
+    // video nearly always is, for longer than the route waits). Not an upload
+    // failure: re-uploading would create a duplicate, while the same file can
+    // be picked from the library once Shopify has finished.
     if (res.status === 504 && body.fileId) return { error: body.error || "processing", code: "stillProcessing" };
     if (!res.ok || !body.fileId || !body.url) return { error: body.error || `HTTP ${res.status}` };
     return { fileId: body.fileId, url: body.url };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+export function resolvePickedImage(item: AddedItem | undefined): Promise<PickedImage | PickFailure> {
+  return resolvePickedMedia(item, "image");
 }

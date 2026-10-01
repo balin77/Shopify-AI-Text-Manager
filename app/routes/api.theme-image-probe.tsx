@@ -32,7 +32,7 @@ import { authenticate } from "../shopify.server";
 import { db } from "~/db.server";
 import { logger } from "~/utils/logger.server";
 import { REMOVE_TRANSLATIONS, TRANSLATE_CONTENT_VERIFIED } from "~/graphql/content.mutations";
-import { isThemeImageReference } from "~/utils/theme-image-reference.shared";
+import { isThemeImageReference, isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 
 interface ImageSample {
   resourceId: string;
@@ -162,7 +162,10 @@ export async function action({ request }: ActionFunctionArgs) {
   for (const row of rows) {
     const items = Array.isArray(row.translatableContent) ? (row.translatableContent as Array<{ key?: string; value?: string }>) : [];
     for (const item of items) {
-      if (!item?.key || !isThemeImageReference(item.value)) continue;
+      // Images AND video choices (a video reference or a YouTube/Vimeo link):
+      // the sample list shows which spelling a shop's video settings use,
+      // which is the one thing about them that is not measured.
+      if (!item?.key || !isThemeMediaValue(item.value)) continue;
       byType[row.resourceType] = (byType[row.resourceType] ?? 0) + 1;
       if (samples.length < 5) samples.push({ resourceId: row.resourceId, resourceType: row.resourceType, key: item.key, value: String(item.value) });
     }
@@ -189,7 +192,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ report });
   }
 
-  const sample = samples[0];
+  const sample = samples.find((x) => isThemeImageReference(x.value)) ?? samples[0];
   const live = await gql<{ translatableResource: { translatableContent: { key: string; value: string | null; digest: string | null }[] } | null }>(
     graphql, READ_RESOURCE, { id: sample.resourceId },
   );

@@ -16,7 +16,7 @@ import {
 import { TIMING } from "~/constants/timing";
 import { PULSE_SYNC_EPOCH } from "~/utils/contentEditor.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
-import { isThemeImageReference } from "~/utils/theme-image-reference.shared";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 
 // ============================================================================
 // Overlay Types
@@ -384,7 +384,7 @@ export function hasLocaleMissingTranslations(
       if (isFieldEmpty(primaryValue)) return false;
       // An image setting shows the original in every language unless the merchant
       // CHOSE another one: keeping it is not a missing translation.
-      if (isThemeImageReference(primaryValue)) return false;
+      if (isThemeMediaValue(primaryValue)) return false;
       return !hasTranslationForField(selectedItem, item.key, locale, overlays);
     });
   }
@@ -565,7 +565,7 @@ export function getMissingLocaleTranslationFields(
         if (isFieldEmpty(primaryValue)) return false;
         // An image setting shows the original in every language unless the merchant
         // CHOSE another one: keeping it is not a missing translation.
-        if (isThemeImageReference(primaryValue)) return false;
+        if (isThemeMediaValue(primaryValue)) return false;
         return !hasTranslationForField(selectedItem, item.key, locale, overlays);
       })
       .map((item: { key: string; value: string }) => item.key);
@@ -847,7 +847,7 @@ export function hasFieldMissingTranslations(
     if (!primaryValue || isFieldEmpty(primaryValue)) return false;
     // An image setting shows the original in every language unless the merchant
     // CHOSE another one: keeping it is not a missing translation.
-    if (isThemeImageReference(primaryValue)) return false;
+    if (isThemeMediaValue(primaryValue)) return false;
     return foreignLocales.some(locale =>
       !hasTranslationForField(selectedItem, translationKey, locale.locale, overlays)
     );

@@ -3,7 +3,9 @@
  * (PLAN_LOCALIZED_IMAGES Phase 1b).
  *
  *   GET  ?productId=<GID>   → { entries, media }   the stored replacements + the product's images, LIVE
- *   POST { intent: "set", productId, sourceMediaId, locale, marketId, fileId }
+ *   POST { intent: "set", productId, sourceMediaId, locale, marketId, fileId | externalUrl }
+ *        (fileId: a MediaImage for an image original, a Video for a Shopify
+ *         video; externalUrl: a YouTube/Vimeo link for an external video)
  *   POST { intent: "remove", productId, sourceMediaId, locale, marketId }
  *
  * Directly reachable, so the plan gate lives HERE (the image manager's own
@@ -21,13 +23,14 @@ import { ShopifyContentService } from "../../src/services/shopify-content.servic
 import {
   readProductLocalizedMedia,
   removeLocalizedImage,
-  setLocalizedImage,
+  setLocalizedMedia,
 } from "../services/localized-media/localized-media.server";
 
 type Graphql = Parameters<typeof readProductLocalizedMedia>[0];
 
 const PRODUCT_GID = /^gid:\/\/shopify\/Product\/\d+$/;
-const MEDIA_GID = /^gid:\/\/shopify\/MediaImage\/\d+$/;
+// The ORIGINAL may be any of the three media kinds the card offers.
+const MEDIA_GID = /^gid:\/\/shopify\/(MediaImage|Video|ExternalVideo)\/\d+$/;
 
 async function gate(shop: string): Promise<boolean> {
   const settings = await db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } });
@@ -65,6 +68,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent !== "set") return json({ ok: false, code: "badRequest" }, { status: 400 });
 
   const fileId = String(body?.fileId ?? "");
+  const externalUrl = String(body?.externalUrl ?? "").slice(0, 2048);
   // Locale and market are validated against the shop, never against the
   // client's list. `getCachedShopLocales` answers [] on a failed lookup, which
   // the service reads as "cannot confirm" and refuses.
@@ -72,13 +76,14 @@ export async function action({ request }: ActionFunctionArgs) {
     getCachedShopLocales(admin, session.shop),
     new ShopifyContentService(admin as never).loadMarkets(),
   ]);
-  const result = await setLocalizedImage({
+  const result = await setLocalizedMedia({
     graphql,
     productId,
     sourceMediaId,
     locale,
     marketId,
     fileId,
+    externalUrl,
     origin: "manual",
     scope: {
       shopLocales: shopLocales.map((l) => ({ locale: l.locale, primary: l.primary })),

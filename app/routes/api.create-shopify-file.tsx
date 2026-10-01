@@ -22,7 +22,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const body = (await request.json()) as {
     resourceUrl?: string;
     alt?: string;
+    /** "VIDEO" materialises a staged VIDEO upload (videos per language);
+     *  anything else keeps the historic IMAGE behaviour. */
+    contentType?: string;
   };
+  const contentType = body.contentType === "VIDEO" ? "VIDEO" : "IMAGE";
   const resourceUrl = String(body.resourceUrl ?? "").trim();
   const alt = String(body.alt ?? "").slice(0, 255);
 
@@ -47,7 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   `,
     {
       variables: {
-        files: [{ originalSource: resourceUrl, contentType: "IMAGE", alt }],
+        files: [{ originalSource: resourceUrl, contentType, alt }],
       },
     },
   );
@@ -81,6 +85,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             fileStatus
             image { url }
           }
+          ... on Video {
+            id
+            fileStatus
+            sources { url }
+          }
         }
       }
     `,
@@ -88,8 +97,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
     const pollData = await pollRes.json();
     const node = pollData.data?.node;
-    if (node?.fileStatus === "READY" && node?.image?.url) {
-      cdnUrl = node.image.url;
+    // A video counts as ready once Shopify has produced a playable source.
+    const readyUrl = node?.image?.url ?? node?.sources?.[0]?.url;
+    if (node?.fileStatus === "READY" && readyUrl) {
+      cdnUrl = readyUrl;
       break;
     }
     if (node?.fileStatus === "FAILED") {

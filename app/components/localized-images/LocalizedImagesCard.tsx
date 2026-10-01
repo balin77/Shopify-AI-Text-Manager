@@ -22,15 +22,17 @@ import {
   Card,
   InlineGrid,
   InlineStack,
+  Modal,
   Select,
   Spinner,
   Text,
+  TextField,
 } from "@shopify/polaris";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
-import { resolvePickedImage } from "./resolve-picked-image";
+import { resolvePickedMedia } from "./resolve-picked-image";
 import {
   marketNumericId,
   normalizeLocale,
@@ -39,10 +41,16 @@ import {
 } from "../../services/localized-media/localized-media.shared";
 import type { MarketInfo, ShopLocale } from "../../types/content-editor.types";
 
-interface MediaImage {
+/** One product medium as /api/localized-images reports it (ProductMediaItem). */
+interface MediaItem {
   id: string;
+  kind: "image" | "video" | "external";
   url: string;
   alt: string | null;
+  /** Null = the storefront key could not be derived; such a medium is listed but not replaceable. */
+  key: string | null;
+  poster: string;
+  stamp: string;
 }
 
 export interface LocalizedImagesCardProps {
@@ -67,13 +75,16 @@ const thumbBox: React.CSSProperties = {
   background: "var(--p-color-bg-surface-secondary)",
 };
 
-function Thumb({ url, label }: { url: string | null; label: string }) {
+function Thumb({ url, label, video = false }: { url: string | null; label: string; video?: boolean }) {
   return (
-    <div style={thumbBox}>
+    <div style={{ ...thumbBox, position: "relative" }}>
       {url ? (
         <img src={`${url}${url.includes("?") ? "&" : "?"}width=160`} alt={label} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
       ) : (
-        <Text as="span" variant="bodySm" tone="subdued">—</Text>
+        <Text as="span" variant="bodySm" tone="subdued">{video ? "▶" : "—"}</Text>
+      )}
+      {video && url && (
+        <span style={{ position: "absolute", right: 4, bottom: 2, fontSize: 12, color: "#fff", textShadow: "0 0 3px #000" }}>▶</span>
       )}
     </div>
   );
@@ -106,17 +117,21 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [entries, setEntries] = useState<LocalizedMediaEntry[]>([]);
-  const [media, setMedia] = useState<MediaImage[]>([]);
+  const [media, setMedia] = useState<MediaItem[]>([]);
   const [busySlot, setBusySlot] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "critical"; text: string } | null>(null);
-  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  // Which original the file picker (an image or a Shopify video) or the link
+  // dialog (a YouTube/Vimeo video) is open for.
+  const [pickerFor, setPickerFor] = useState<{ id: string; kind: "image" | "video" } | null>(null);
+  const [linkFor, setLinkFor] = useState<string | null>(null);
+  const [linkValue, setLinkValue] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
       const res = await fetch(`/api/localized-images?productId=${encodeURIComponent(productId)}`);
-      const body = (await res.json()) as { ok?: boolean; entries?: LocalizedMediaEntry[]; media?: MediaImage[] };
+      const body = (await res.json()) as { ok?: boolean; entries?: LocalizedMediaEntry[]; media?: MediaItem[] };
       if (!res.ok || !body.ok) throw new Error("load");
       setEntries(body.entries ?? []);
       setMedia(body.media ?? []);
@@ -147,7 +162,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, ...payload }),
       });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; entries?: LocalizedMediaEntry[]; media?: MediaImage[]; code?: string; message?: string };
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; entries?: LocalizedMediaEntry[]; media?: MediaItem[]; code?: string; message?: string };
       if (!res.ok || !body.ok) {
         setNotice({ tone: "critical", text: errorText(body.code, body.message || `HTTP ${res.status}`) });
         return;
@@ -163,11 +178,12 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
   }, [productId, tx, errorText]);
 
   const handlePicked = useCallback(async (items: AddedItem[]) => {
-    const sourceMediaId = pickerFor;
+    const target = pickerFor;
     setPickerFor(null);
-    if (!sourceMediaId) return;
+    if (!target) return;
+    const sourceMediaId = target.id;
     setBusySlot(sourceMediaId);
-    const picked = await resolvePickedImage(items.find((i) => i.source !== "external_url") ?? items[0]);
+    const picked = await resolvePickedMedia(items.find((i) => i.source !== "external_url") ?? items[0], target.kind);
     if ("error" in picked) {
       setBusySlot(null);
       setNotice({ tone: "critical", text: errorText(picked.code, picked.error) });
@@ -175,6 +191,24 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
     }
     await post({ intent: "set", sourceMediaId, locale, marketId, fileId: picked.fileId }, sourceMediaId, tx.saved);
   }, [pickerFor, post, locale, marketId, errorText]);
+
+  const handleLinkSave = useCallback(async () => {
+    const sourceMediaId = linkFor;
+    const externalUrl = linkValue.trim();
+    setLinkFor(null);
+    setLinkValue("");
+    if (!sourceMediaId || !externalUrl) return;
+    await post({ intent: "set", sourceMediaId, locale, marketId, externalUrl }, sourceMediaId, tx.saved);
+  }, [linkFor, linkValue, post, locale, marketId, tx]);
+
+  const openReplace = useCallback((m: MediaItem) => {
+    if (m.kind === "external") {
+      setLinkValue("");
+      setLinkFor(m.id);
+    } else {
+      setPickerFor({ id: m.id, kind: m.kind });
+    }
+  }, []);
 
   const mediaIds = useMemo(() => new Set(media.map((m) => m.id)), [media]);
   const orphans = useMemo(() => entries.filter((e) => !mediaIds.has(e.m)), [entries, mediaIds]);
@@ -225,28 +259,34 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
             <Text as="p">{tx.loadFailed}</Text>
           </Banner>
         ) : media.length === 0 ? (
-          <Text as="p" tone="subdued">{tx.noImages}</Text>
+          <Text as="p" tone="subdued">{tx.noMedia}</Text>
         ) : (
           <BlockStack gap="200">
             {media.map((m) => {
               const hit = locale ? resolveLocalizedMedia(entries, m.id, locale, marketNumeric) : null;
               const ownSlot = hit && !hit.inherited;
-              const stale = !!hit && !!hit.entry.s && hit.entry.s !== m.url;
+              const stale = !!hit && !!hit.entry.s && hit.entry.s !== m.stamp;
               const busy = busySlot === m.id;
+              const isVideo = m.kind !== "image";
+              // A medium whose storefront key could not be derived cannot be
+              // swapped on the storefront, so it is not offered — said, not hidden.
+              const blockedHint = singleLocaleHint ?? (m.key ? undefined : tx.cannotReplace);
               return (
                 <InlineStack key={m.id} gap="300" blockAlign="center" wrap={false}>
-                  <Thumb url={m.url} label={m.alt ?? ""} />
+                  <Thumb url={m.url || null} label={m.alt ?? ""} video={isVideo} />
                   <Text as="span" tone="subdued">→</Text>
-                  <Thumb url={hit?.entry.u ?? null} label="" />
+                  <Thumb url={hit ? hit.entry.u || null : null} label="" video={isVideo && !!hit} />
                   <BlockStack gap="100">
                     <InlineStack gap="100">
+                      {m.kind === "video" && <Badge>{tx.badgeVideo}</Badge>}
+                      {m.kind === "external" && <Badge>{tx.badgeExternal}</Badge>}
                       {hit?.inherited && <Badge>{tx.inherited}</Badge>}
                       {hit?.entry.a === "ai" && <Badge tone="info">{tx.aiOrigin}</Badge>}
                     </InlineStack>
                     {stale && <Text as="p" variant="bodySm" tone="caution">{tx.staleOriginal}</Text>}
                     <InlineStack gap="200">
-                      <DisabledActionTooltip hint={singleLocaleHint}>
-                        <Button size="slim" onClick={() => setPickerFor(m.id)} disabled={disabled || busySlot !== null} loading={busy}>
+                      <DisabledActionTooltip hint={blockedHint}>
+                        <Button size="slim" onClick={() => openReplace(m)} disabled={disabled || !m.key || busySlot !== null} loading={busy}>
                           {ownSlot ? tx.change : tx.replace}
                         </Button>
                       </DisabledActionTooltip>
@@ -278,7 +318,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
                 const marketName = e.k ? markets.find((mk) => marketNumericId(mk.id) === e.k)?.name ?? e.k : tx.allMarkets;
                 return (
                   <InlineStack key={slot} gap="200" blockAlign="center">
-                    <Thumb url={e.u} label="" />
+                    <Thumb url={e.u || null} label="" video={!!e.x} />
                     <Text as="span" variant="bodySm">
                       {getLocalizedLanguageName(e.l, appLocale)} · {marketName}
                     </Text>
@@ -308,12 +348,35 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
           onClose={() => setPickerFor(null)}
           onAdd={handlePicked}
           uploadCommitMode="queue"
-          initialKind="image"
-          imagesOnly
+          initialKind={pickerFor.kind}
+          imagesOnly={pickerFor.kind === "image"}
+          videosOnly={pickerFor.kind === "video"}
           currentProductId={productId}
-          title={tx.pickerTitle.replace("{locale}", getLocalizedLanguageName(locale, appLocale))}
+          title={(pickerFor.kind === "video" ? tx.videoPickerTitle : tx.pickerTitle).replace("{locale}", getLocalizedLanguageName(locale, appLocale))}
         />
       )}
+
+      {/* A YouTube/Vimeo original is replaced by another YouTube/Vimeo LINK —
+          the storefront rewrites the player's embed address, so a file
+          cannot stand in for it. Validated on the server (the one parser). */}
+      <Modal
+        open={linkFor !== null}
+        onClose={() => { setLinkFor(null); setLinkValue(""); }}
+        title={tx.linkTitle.replace("{locale}", getLocalizedLanguageName(locale, appLocale))}
+        primaryAction={{ content: tx.linkSave, onAction: () => void handleLinkSave(), disabled: !linkValue.trim() }}
+        secondaryActions={[{ content: tx.linkCancel, onAction: () => { setLinkFor(null); setLinkValue(""); } }]}
+      >
+        <Modal.Section>
+          <TextField
+            label={tx.linkLabel}
+            value={linkValue}
+            onChange={setLinkValue}
+            autoComplete="off"
+            placeholder="https://www.youtube.com/watch?v=…"
+            helpText={tx.linkHelp}
+          />
+        </Modal.Section>
+      </Modal>
     </Card>
   );
 }

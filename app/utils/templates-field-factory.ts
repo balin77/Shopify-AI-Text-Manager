@@ -5,7 +5,7 @@
  */
 
 import type { FieldDefinition, FieldType } from "../types/content-editor.types";
-import { isThemeImageReference } from "./theme-image-reference.shared";
+import { isThemeImageReference, isThemeMediaValue } from "./theme-image-reference.shared";
 
 interface TranslatableContentItem {
   key: string;
@@ -27,7 +27,10 @@ export function createTemplateFieldDefinitions(
     // An image setting is a file choice per language, not text: no AI and no
     // translate/copy buttons (both would hand a reference to the AI or copy
     // the original over a chosen image). It still saves like any theme value.
-    const isImage = isThemeImageReference(item.value);
+    // A VIDEO setting (a Shopify video reference or a YouTube/Vimeo link) is a
+    // choice per language too: no AI and no translate/copy, but it keeps its
+    // text box — a different link per language is typed or pasted there.
+    const isImage = isThemeMediaValue(item.value);
     return {
       key: item.key,
       type: detectFieldType(item.value),

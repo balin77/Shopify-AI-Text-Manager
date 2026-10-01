@@ -19,11 +19,18 @@
  *    a fresh read of the chosen file (READY, a MediaImage, on Shopify's CDN),
  *    the locale must be a non-primary shop locale and the market an active one.
  *
- * `setLocalizedImage` takes `origin` so stage 2 (the AI translating the text
+ * VIDEOS ride the same list (PLAN_LOCALIZED_IMAGES §7): a Shopify-hosted video
+ * is replaced by another Shopify-hosted video (a Video file), a YouTube/Vimeo
+ * video by another YouTube/Vimeo link — never across the two, because the
+ * storefront swap rewrites addresses inside the element the theme rendered
+ * (`<video>` sources, an `<iframe>` src) and cannot turn one into the other.
+ *
+ * `setLocalizedMedia` takes `origin` so stage 2 (the AI translating the text
  * inside an image) writes through this same function with `origin: "ai"`.
  */
 import { METAFIELDS_DELETE, METAFIELDS_SET } from "~/graphql/content.mutations";
 import { logger } from "~/utils/logger.server";
+import { parseExternalVideoUrl } from "~/utils/mediaKind";
 import {
   LOCALIZED_MEDIA_KEY,
   LOCALIZED_MEDIA_NAMESPACE,
@@ -38,17 +45,40 @@ import {
   serializeLocalizedMedia,
   storefrontFilename,
   upsertLocalizedMediaEntry,
+  externalVideoKey,
+  isSafeEmbedUrl,
+  isSafeExternalThumbnail,
+  videoKeyFromUrl,
+  type LocalizedVideoSource,
   type LocalizedMediaEntry,
   type LocalizedMediaOrigin,
 } from "./localized-media.shared";
 
 type Graphql = (query: string, opts?: { variables?: Record<string, unknown> }) => Promise<Response>;
 
-export interface ProductMediaImage {
+export type ProductMediaKind = "image" | "video" | "external";
+
+/**
+ * One medium of the product as the card shows it and the write path checks
+ * it. `key` is what the storefront matches on (an image's filename, a video's
+ * hash directory, "<host>.<id>" for YouTube/Vimeo) and is NULL where it could
+ * not be derived — such a medium is listed but cannot be replaced. `stamp` is
+ * the value an entry's source stamp is compared with ("the original changed").
+ */
+export interface ProductMediaItem {
   id: string;
+  kind: ProductMediaKind;
+  /** Thumbnail to show: the image itself, or the video's preview image ("" = none). */
   url: string;
   alt: string | null;
+  key: string | null;
+  /** Filename of the poster the theme shows before a video plays ("" = none / not a video). */
+  poster: string;
+  stamp: string;
 }
+
+/** @deprecated kept for the image-only callers; every medium is a ProductMediaItem now. */
+export type ProductMediaImage = ProductMediaItem;
 
 export type LocalizedMediaErrorCode =
   | "notFound"
@@ -61,7 +91,9 @@ export type LocalizedMediaErrorCode =
   | "fileNotReady"
   | "sameFile"
   | "replacementIsOriginal"
-  | "tooManyEntries";
+  | "tooManyEntries"
+  | "invalidExternalUrl"
+  | "kindMismatch";
 
 export type LocalizedMediaResult<T> = ({ ok: true } & T) | { ok: false; code: LocalizedMediaErrorCode; message?: string };
 
@@ -76,6 +108,8 @@ const READ_PRODUCT = `#graphql
           id
           mediaContentType
           ... on MediaImage { alt image { url } }
+          ... on Video { alt sources { url mimeType } preview { image { url } } }
+          ... on ExternalVideo { alt originUrl preview { image { url } } }
         }
       }
     }
@@ -87,6 +121,7 @@ const READ_FILE = `#graphql
     node(id: $id) {
       id
       ... on MediaImage { fileStatus image { url } }
+      ... on Video { fileStatus sources { url mimeType } preview { image { url } } }
     }
   }
 `;
@@ -102,21 +137,58 @@ async function gqlData<T>(graphql: Graphql, query: string, variables: Record<str
   }
 }
 
+interface RawMediaNode {
+  id: string;
+  mediaContentType: string;
+  alt?: string | null;
+  image?: { url: string } | null;
+  sources?: Array<{ url: string; mimeType: string }> | null;
+  preview?: { image?: { url: string } | null } | null;
+  originUrl?: string | null;
+}
+
+function safePoster(url: string | null | undefined): string {
+  const name = storefrontFilename(url ?? "");
+  return isSafeFilename(name) ? name : "";
+}
+
+/** Exported for tests: how a raw media node becomes what the card and the write path see. */
+export function toProductMediaItem(n: RawMediaNode): ProductMediaItem | null {
+  if (n.mediaContentType === "IMAGE") {
+    if (!n.image?.url) return null;
+    const name = storefrontFilename(n.image.url);
+    return { id: n.id, kind: "image", url: n.image.url, alt: n.alt ?? null, key: isSafeFilename(name) ? name : null, poster: "", stamp: n.image.url };
+  }
+  if (n.mediaContentType === "VIDEO") {
+    const sources = n.sources ?? [];
+    const key = sources.map((src) => videoKeyFromUrl(src.url)).find((k): k is string => !!k) ?? null;
+    const preview = n.preview?.image?.url ?? "";
+    return { id: n.id, kind: "video", url: preview, alt: n.alt ?? null, key, poster: safePoster(preview), stamp: sources[0]?.url ?? "" };
+  }
+  if (n.mediaContentType === "EXTERNAL_VIDEO") {
+    const parsed = n.originUrl ? parseExternalVideoUrl(n.originUrl) : null;
+    const key = parsed ? externalVideoKey(parsed.host, parsed.externalId) : null;
+    const preview = n.preview?.image?.url ?? "";
+    return { id: n.id, kind: "external", url: preview, alt: n.alt ?? null, key, poster: safePoster(preview), stamp: n.originUrl ?? "" };
+  }
+  return null;
+}
+
 export async function readProductLocalizedMedia(
   graphql: Graphql,
   productId: string,
-): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaImage[]; hasMetafield: boolean }>> {
+): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaItem[]; hasMetafield: boolean }>> {
   const data = await gqlData<{
     product: {
       metafield: { id: string; value: string } | null;
-      media: { nodes: Array<{ id: string; mediaContentType: string; alt?: string | null; image?: { url: string } | null }> };
+      media: { nodes: RawMediaNode[] };
     } | null;
   }>(graphql, READ_PRODUCT, { id: productId, namespace: LOCALIZED_MEDIA_NAMESPACE, key: LOCALIZED_MEDIA_KEY });
   if (!data) return { ok: false, code: "readFailed" };
   if (!data.product) return { ok: false, code: "notFound" };
   const media = (data.product.media?.nodes ?? [])
-    .filter((n) => n.mediaContentType === "IMAGE" && n.image?.url)
-    .map((n) => ({ id: n.id, url: n.image!.url, alt: n.alt ?? null }));
+    .map(toProductMediaItem)
+    .filter((m): m is ProductMediaItem => m !== null);
   return {
     ok: true,
     entries: parseLocalizedMediaValue(data.product.metafield?.value ?? null),
@@ -191,54 +263,97 @@ function validateScope(locale: string, marketId: string, scope: LocaleMarketScop
   return null;
 }
 
-export async function setLocalizedImage(args: {
+type ReplacementResult = { ok: true; entry: Omit<LocalizedMediaEntry, "m" | "l" | "k" | "a" | "s" | "t" | "o"> } | { ok: false; code: LocalizedMediaErrorCode };
+
+async function imageReplacement(graphql: Graphql, source: ProductMediaItem, media: ProductMediaItem[], fileId: string): Promise<ReplacementResult> {
+  if (!/^gid:\/\/shopify\/MediaImage\/\d+$/.test(fileId)) return { ok: false, code: "kindMismatch" };
+  const file = await gqlData<{ node: { id: string; fileStatus?: string; image?: { url: string } | null } | null }>(graphql, READ_FILE, { id: fileId });
+  if (!file) return { ok: false, code: "readFailed" };
+  if (!file.node) return { ok: false, code: "invalidFile" };
+  if (file.node.fileStatus && file.node.fileStatus !== "READY") return { ok: false, code: "fileNotReady" };
+  const url = file.node.image?.url;
+  if (!url) return { ok: false, code: "fileNotReady" };
+  const replacementName = storefrontFilename(url);
+  if (!isShopifyCdnUrl(url) || !isSafeFilename(replacementName)) return { ok: false, code: "invalidFile" };
+  // Same filename would make the storefront swap a no-op (and the pre-paint
+  // hide would then fall to its fail-safe) — refuse it as the pointless edit it is.
+  if (replacementName.toLowerCase() === source.key!.toLowerCase()) return { ok: false, code: "sameFile" };
+  // A replacement that is itself one of this product's images would chain
+  // (A→B while B→C shows C in the gallery but B in og:image) or cycle (A→B,
+  // B→A). The storefront guards against the loop, but the only honest answer
+  // is one level of replacement, so it is refused here.
+  if (media.some((mm) => mm.kind === "image" && (mm.key ?? "").toLowerCase() === replacementName.toLowerCase())) {
+    return { ok: false, code: "replacementIsOriginal" };
+  }
+  return { ok: true, entry: { u: url, f: fileId } };
+}
+
+async function videoReplacement(graphql: Graphql, source: ProductMediaItem, media: ProductMediaItem[], fileId: string): Promise<ReplacementResult> {
+  if (!/^gid:\/\/shopify\/Video\/\d+$/.test(fileId)) return { ok: false, code: "kindMismatch" };
+  const file = await gqlData<{
+    node: { id: string; fileStatus?: string; sources?: Array<{ url: string; mimeType: string }> | null; preview?: { image?: { url: string } | null } | null } | null;
+  }>(graphql, READ_FILE, { id: fileId });
+  if (!file) return { ok: false, code: "readFailed" };
+  if (!file.node) return { ok: false, code: "invalidFile" };
+  if (file.node.fileStatus && file.node.fileStatus !== "READY") return { ok: false, code: "fileNotReady" };
+  const sources: LocalizedVideoSource[] = (file.node.sources ?? [])
+    .filter((src) => isShopifyCdnUrl(src.url) && typeof src.mimeType === "string")
+    .map((src) => ({ u: src.url, t: src.mimeType }));
+  if (sources.length === 0) return { ok: false, code: "fileNotReady" };
+  const key = sources.map((src) => videoKeyFromUrl(src.u)).find((k): k is string => !!k);
+  if (!key) return { ok: false, code: "invalidFile" };
+  if (key === source.key) return { ok: false, code: "sameFile" };
+  if (media.some((mm) => mm.kind === "video" && mm.key === key)) return { ok: false, code: "replacementIsOriginal" };
+  const poster = file.node.preview?.image?.url ?? "";
+  return { ok: true, entry: { x: "v", u: isShopifyCdnUrl(poster) ? poster : "", f: fileId, p: source.poster, w: sources } };
+}
+
+function externalReplacement(source: ProductMediaItem, media: ProductMediaItem[], externalUrl: string): ReplacementResult {
+  const parsed = parseExternalVideoUrl(externalUrl);
+  const key = parsed ? externalVideoKey(parsed.host, parsed.externalId) : null;
+  if (!parsed || !key || !isSafeEmbedUrl(parsed.embedUrl)) return { ok: false, code: "invalidExternalUrl" };
+  if (key === source.key) return { ok: false, code: "sameFile" };
+  if (media.some((mm) => mm.kind === "external" && mm.key === key)) return { ok: false, code: "replacementIsOriginal" };
+  const thumb = parsed.thumbnailUrl && isSafeExternalThumbnail(parsed.thumbnailUrl) ? parsed.thumbnailUrl : "";
+  return { ok: true, entry: { x: "e", u: thumb, f: "", p: source.poster, r: parsed.embedUrl } };
+}
+
+export async function setLocalizedMedia(args: {
   graphql: Graphql;
   productId: string;
   sourceMediaId: string;
   locale: string;
   marketId: string;
-  fileId: string;
+  /** A MediaImage GID (image original) or a Video GID (Shopify-video original). */
+  fileId?: string;
+  /** A YouTube/Vimeo link (external-video original). */
+  externalUrl?: string;
   origin: LocalizedMediaOrigin;
   scope: LocaleMarketScope;
-}): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaImage[] }>> {
-  const { graphql, productId, sourceMediaId, locale, marketId, fileId, origin, scope } = args;
+}): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaItem[] }>> {
+  const { graphql, productId, sourceMediaId, locale, marketId, fileId = "", externalUrl = "", origin, scope } = args;
   const scopeError = validateScope(locale, marketId, scope);
   if (scopeError) return { ok: false, code: scopeError };
 
   const current = await readProductLocalizedMedia(graphql, productId);
   if (!current.ok) return current;
   const source = current.media.find((m) => m.id === sourceMediaId);
-  const o = source ? storefrontFilename(source.url) : null;
-  if (!source || !isSafeFilename(o)) return { ok: false, code: "invalidSource" };
+  if (!source || !isSafeFilename(source.key)) return { ok: false, code: "invalidSource" };
 
-  if (!/^gid:\/\/shopify\/MediaImage\/\d+$/.test(fileId)) return { ok: false, code: "invalidFile" };
-  const file = await gqlData<{ node: { id: string; fileStatus?: string; image?: { url: string } | null } | null }>(graphql, READ_FILE, { id: fileId });
-  if (!file) return { ok: false, code: "readFailed" };
-  const url = file.node?.image?.url;
-  if (!file.node || !url) return { ok: false, code: file.node && file.node.fileStatus !== "READY" ? "fileNotReady" : "invalidFile" };
-  if (file.node.fileStatus && file.node.fileStatus !== "READY") return { ok: false, code: "fileNotReady" };
-  const replacementName = storefrontFilename(url);
-  if (!isShopifyCdnUrl(url) || !isSafeFilename(replacementName)) return { ok: false, code: "invalidFile" };
-  // Same filename would make the storefront swap a no-op (and the pre-paint
-  // hide would then fall to its fail-safe) — refuse it as the pointless edit it is.
-  if (replacementName.toLowerCase() === o.toLowerCase()) return { ok: false, code: "sameFile" };
-  // A replacement that is itself one of this product's images would chain
-  // (A→B while B→C shows C in the gallery but B in og:image) or cycle (A→B,
-  // B→A). The storefront guards against the loop, but the only honest answer
-  // is one level of replacement, so it is refused here.
-  if (current.media.some((mm) => (storefrontFilename(mm.url) ?? "").toLowerCase() === replacementName.toLowerCase())) {
-    return { ok: false, code: "replacementIsOriginal" };
-  }
+  const replacement =
+    source.kind === "image" ? await imageReplacement(graphql, source, current.media, fileId)
+    : source.kind === "video" ? await videoReplacement(graphql, source, current.media, fileId)
+    : externalReplacement(source, current.media, externalUrl);
+  if (!replacement.ok) return { ok: false, code: replacement.code };
 
   const entry: LocalizedMediaEntry = {
-    o,
+    ...replacement.entry,
+    o: source.key,
     m: sourceMediaId,
     l: normalizeLocale(locale),
     k: marketNumericId(marketId) ?? "",
-    u: url,
-    f: fileId,
     a: origin,
-    s: source.url,
+    s: source.stamp,
     t: new Date().toISOString(),
   };
   const next = upsertLocalizedMediaEntry(current.entries, entry);
@@ -247,13 +362,16 @@ export async function setLocalizedImage(args: {
   return { ok: true, entries: next, media: current.media };
 }
 
+/** The image-only name the first cut shipped with; same function. */
+export const setLocalizedImage = setLocalizedMedia;
+
 export async function removeLocalizedImage(args: {
   graphql: Graphql;
   productId: string;
   sourceMediaId: string;
   locale: string;
   marketId: string;
-}): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaImage[] }>> {
+}): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaItem[] }>> {
   const { graphql, productId, sourceMediaId, locale, marketId } = args;
   const k = marketNumericId(marketId);
   if (k === null) return { ok: false, code: "invalidMarket" };

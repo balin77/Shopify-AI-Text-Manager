@@ -235,3 +235,74 @@ describe("localized media — Shopify write path", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("videos per language", () => {
+  const VID = "gid://shopify/Video/20";
+  const EXT = "gid://shopify/ExternalVideo/30";
+  const KEY = "abcdef0123456789";
+  const KEY2 = "fedcba9876543210";
+  const videoRead = () => ({
+    product: {
+      metafield: null,
+      media: { nodes: [
+        { id: MEDIA, mediaContentType: "IMAGE", alt: null, image: { url: ORIG_URL } },
+        { id: VID, mediaContentType: "VIDEO", alt: null, sources: [{ url: `https://cdn.shopify.com/videos/c/vp/${KEY}/${KEY}.HD-1080p.mp4`, mimeType: "video/mp4" }], preview: { image: { url: "https://cdn.shopify.com/s/files/1/files/preview_images/poster.jpg?v=1" } } },
+        { id: EXT, mediaContentType: "EXTERNAL_VIDEO", alt: null, originUrl: "https://www.youtube.com/watch?v=AAAAAAAAAAA", preview: { image: { url: "https://cdn.shopify.com/s/files/1/files/preview_images/yt.jpg" } } },
+      ] },
+    },
+  });
+
+  it("derives the storefront key of every kind", async () => {
+    const { toProductMediaItem } = await import("../../app/services/localized-media/localized-media.server");
+    const nodes = videoRead().product.media.nodes;
+    expect(toProductMediaItem(nodes[1] as never)).toMatchObject({ kind: "video", key: KEY, poster: "poster.jpg" });
+    expect(toProductMediaItem(nodes[2] as never)).toMatchObject({ kind: "external", key: "youtube.AAAAAAAAAAA", poster: "yt.jpg" });
+  });
+
+  it("replaces a Shopify video with another Shopify video only", async () => {
+    const replacementVideo = () => ({ node: { id: "gid://shopify/Video/99", fileStatus: "READY", sources: [{ url: `https://cdn.shopify.com/videos/c/vp/${KEY2}/${KEY2}.HD-720p.mp4`, mimeType: "video/mp4" }], preview: { image: { url: "https://cdn.shopify.com/s/files/1/files/preview_images/new.jpg" } } } });
+    const { fn, calls } = fakeGraphql([videoRead, replacementVideo, echoSet()]);
+    const res = await setLocalizedImage({ graphql: fn as never, productId: PRODUCT, sourceMediaId: VID, locale: "fr", marketId: "", fileId: "gid://shopify/Video/99", origin: "manual", scope });
+    expect(res.ok).toBe(true);
+    const written = JSON.parse((calls[2].variables.metafields as Array<{ value: string }>)[0].value).e[0];
+    expect(written).toMatchObject({ x: "v", o: KEY, p: "poster.jpg", f: "gid://shopify/Video/99" });
+    expect(written.w[0].u).toContain(KEY2);
+
+    const mismatch = fakeGraphql([videoRead]);
+    expect(await setLocalizedImage({ graphql: mismatch.fn as never, productId: PRODUCT, sourceMediaId: VID, locale: "fr", marketId: "", fileId: FILE, origin: "manual", scope }))
+      .toMatchObject({ ok: false, code: "kindMismatch" });
+  });
+
+  it("replaces a YouTube video with a YouTube/Vimeo link, never with the same video", async () => {
+    const { fn, calls } = fakeGraphql([videoRead, echoSet()]);
+    const res = await setLocalizedImage({ graphql: fn as never, productId: PRODUCT, sourceMediaId: EXT, locale: "fr", marketId: "", externalUrl: "https://vimeo.com/123456789", origin: "manual", scope });
+    expect(res.ok).toBe(true);
+    const written = JSON.parse((calls[1].variables.metafields as Array<{ value: string }>)[0].value).e[0];
+    expect(written).toMatchObject({ x: "e", o: "youtube.AAAAAAAAAAA", r: "https://player.vimeo.com/video/123456789", u: "", p: "yt.jpg" });
+
+    for (const [url, code] of [["https://example.com/x", "invalidExternalUrl"], ["https://youtu.be/AAAAAAAAAAA", "sameFile"]] as const) {
+      const g = fakeGraphql([videoRead]);
+      expect(await setLocalizedImage({ graphql: g.fn as never, productId: PRODUCT, sourceMediaId: EXT, locale: "fr", marketId: "", externalUrl: url, origin: "manual", scope }))
+        .toMatchObject({ ok: false, code });
+    }
+  });
+
+  it("drops a stored video entry whose embed or sources are not safe", () => {
+    const raw = JSON.stringify({ v: 1, e: [
+      { o: "youtube.AAAAAAAAAAA", m: EXT, l: "fr", k: "", u: "", f: "", x: "e", p: "", r: "javascript:alert(1)" },
+      { o: KEY, m: VID, l: "fr", k: "", u: "", f: "x", x: "v", p: "", w: [{ u: "https://evil.example/v.mp4", t: "video/mp4" }] },
+      { o: "youtube.AAAAAAAAAAA", m: EXT, l: "fr", k: "", u: "", f: "", x: "e", p: "", r: "https://www.youtube.com/embed/BBBBBBBBBBB" },
+    ] });
+    const parsed = parseLocalizedMediaValue(raw);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].r).toBe("https://www.youtube.com/embed/BBBBBBBBBBB");
+  });
+
+  it("keeps theme video choices away from the AI", async () => {
+    const { isThemeMediaValue } = await import("../../app/utils/theme-image-reference.shared");
+    expect(isThemeMediaValue("https://www.youtube.com/watch?v=AAAAAAAAAAA")).toBe(true);
+    expect(isThemeMediaValue("shopify://files/videos/intro.mp4")).toBe(true);
+    expect(isThemeMediaValue("Watch our video on YouTube")).toBe(false);
+    expect(survivesValuePrompt("https://vimeo.com/123456789")).toBe(false);
+  });
+});
