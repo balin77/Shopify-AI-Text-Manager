@@ -68,6 +68,8 @@ export interface AltTextTranslation {
 
 export interface ContentImage {
   url: string;
+  /** Shopify media GID (products). */
+  mediaId?: string | null;
   altText?: string;
   altTextTranslations?: AltTextTranslation[];
 }

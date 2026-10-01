@@ -492,19 +492,19 @@ export const guideEs: GuideCopy = {
         {
           heading: "Imágenes de producto",
           paragraphs: [
-            "En la página de producto, debajo de las imágenes del producto, encontrarás la tarjeta «Imágenes y vídeos por idioma», también si el gestor de imágenes está desactivado. Elige los reemplazos de tus archivos o sube otros nuevos; solo se ofrece lo que puede reemplazar al original. Allí eliges idioma y mercado y defines un reemplazo para cada imagen del producto. El cambio se guarda al instante. Usa una imagen con las mismas proporciones que la original: la tienda mantiene el marco de la original, así que otro formato se recorta o deja huecos.",
-            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Images and videos per language» (la tarjeta enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
+            "Defines un reemplazo directamente en la galería de imágenes del producto, también si el gestor de imágenes está desactivado. En el idioma principal no hay nada especial. Cambia a un idioma extranjero (y, si quieres, a un mercado), selecciona una imagen de la galería y pulsa «Elegir o subir reemplazo» debajo de ella. Elige el reemplazo de tus archivos o sube uno nuevo; solo se ofrece lo que puede reemplazar al original. El cambio se guarda al instante. Con «Cambiar» eliges otro reemplazo y con «Eliminar» vuelve a valer el original. La galería sigue mostrando los originales; una imagen reemplazada en este idioma se reconoce por el pequeño símbolo redondo de su esquina superior izquierda. Usa una imagen con las mismas proporciones que la original: la tienda mantiene el marco de la original, así que otro formato se recorta o deja huecos.",
+            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Images and videos per language» (el aviso debajo de la galería enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
           ],
           list: [
             "Un reemplazo para un mercado concreto tiene prioridad sobre el reemplazo para «Todos los mercados».",
-            "Si más adelante cambias la imagen original, la tarjeta te avisa para que compruebes si el reemplazo sigue siendo adecuado.",
-            "Si se elimina una imagen original del producto, la tarjeta muestra sus reemplazos aparte para que puedas borrarlos. Lo mismo ocurre con los reemplazos de un mercado o idioma que ya no existe en tu tienda o ya no está activo.",
+            "Si más adelante cambias la imagen original, la zona bajo la galería te avisa para que compruebes si el reemplazo sigue siendo adecuado.",
+            "Si se elimina una imagen original del producto, la galería muestra sus reemplazos aparte para que puedas borrarlos. Lo mismo ocurre con los reemplazos de un mercado o idioma que ya no existe en tu tienda o ya no está activo.",
           ],
         },
         {
           heading: "Vídeos",
           paragraphs: [
-            "En la misma tarjeta también reemplazas los vídeos de un producto por idioma y mercado, por ejemplo por una versión doblada. Un vídeo subido a Shopify se reemplaza por otro vídeo subido (de tus archivos o subido nuevo), un vídeo de YouTube o Vimeo por otro enlace de YouTube o Vimeo. Una imagen no se puede reemplazar por un vídeo ni al revés; los modelos 3D no se reemplazan.",
+            "Del mismo modo también reemplazas los vídeos de un producto por idioma y mercado, por ejemplo por una versión doblada. Un vídeo subido a Shopify se reemplaza por otro vídeo subido (de tus archivos o subido nuevo), un vídeo de YouTube o Vimeo por otro enlace de YouTube o Vimeo. Una imagen no se puede reemplazar por un vídeo ni al revés; los modelos 3D no se reemplazan.",
             "Shopify procesa un vídeo recién subido durante unos minutos. Si aparece un aviso, elige el vídeo de tus archivos un poco más tarde.",
             "Los vídeos de los ajustes del tema (por ejemplo una sección de vídeo en la página de inicio) se introducen por idioma como otro enlace; la IA no los modifica.",
           ],
