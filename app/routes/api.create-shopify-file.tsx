@@ -22,7 +22,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const body = (await request.json()) as {
     resourceUrl?: string;
     alt?: string;
+    /** "VIDEO" materialises a staged VIDEO upload (videos per language);
+     *  anything else keeps the historic IMAGE behaviour. */
+    contentType?: string;
   };
+  const contentType = body.contentType === "VIDEO" ? "VIDEO" : "IMAGE";
   const resourceUrl = String(body.resourceUrl ?? "").trim();
   const alt = String(body.alt ?? "").slice(0, 255);
 
@@ -47,7 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   `,
     {
       variables: {
-        files: [{ originalSource: resourceUrl, contentType: "IMAGE", alt }],
+        files: [{ originalSource: resourceUrl, contentType, alt }],
       },
     },
   );
@@ -68,7 +72,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // JPEGs are tiny (<100KB), so processing is usually done within a few
   // seconds — but a busy ingestion queue can take longer. Bail with a
   // 504 after ~9s; the client retries on next save.
-  const waits = [0, 600, 1200, 2000, 3000, 4000];
+  // A VIDEO is transcoded before it has a playable source and routinely takes
+  // longer than an image; waiting ~30s instead of ~11s turns most small clips
+  // into a direct success instead of a "pick it from the library later".
+  const waits = contentType === "VIDEO"
+    ? [0, 1000, 2000, 3000, 4000, 5000, 5000, 5000, 5000]
+    : [0, 600, 1200, 2000, 3000, 4000];
   let cdnUrl: string | null = null;
   for (const ms of waits) {
     if (ms > 0) await new Promise((r) => setTimeout(r, ms));
@@ -81,6 +90,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             fileStatus
             image { url }
           }
+          ... on Video {
+            id
+            fileStatus
+            sources { url }
+          }
         }
       }
     `,
@@ -88,8 +102,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
     const pollData = await pollRes.json();
     const node = pollData.data?.node;
-    if (node?.fileStatus === "READY" && node?.image?.url) {
-      cdnUrl = node.image.url;
+    // A video counts as ready once Shopify has produced a playable source.
+    const readyUrl = node?.image?.url ?? node?.sources?.[0]?.url;
+    if (node?.fileStatus === "READY" && readyUrl) {
+      cdnUrl = readyUrl;
       break;
     }
     if (node?.fileStatus === "FAILED") {

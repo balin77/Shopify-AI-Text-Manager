@@ -15,7 +15,7 @@ import {
   Select,
 } from "@shopify/polaris";
 import { useI18n } from "../../contexts/I18nContext";
-import { classifyFile, parseExternalVideoUrl, ALL_UPLOADABLE_MIME_TYPES } from "../../utils/mediaKind";
+import { classifyFile, parseExternalVideoUrl, ALL_UPLOADABLE_MIME_TYPES, IMAGE_MIME_TYPES, VIDEO_MIME_TYPES } from "../../utils/mediaKind";
 import type { MediaKind } from "./types";
 
 /**
@@ -110,6 +110,15 @@ interface FilePickerModalProps {
    *  rows are filtered out of the library grid, and model uploads are
    *  rejected with a banner pointing the merchant at the product gallery. */
   disallowModel?: boolean;
+  /** Images per language (a 1:1 replacement of one image, or a theme image
+   *  setting) can only ever hold an IMAGE. When true the modal is an image
+   *  picker: no kind filter, the library shows images only, the upload accepts
+   *  image files only (others are refused with a banner rather than uploaded
+   *  and then rejected), and no link row is offered. Implies `disallowModel`. */
+  imagesOnly?: boolean;
+  /** The video twin of `imagesOnly` (videos per language: a Shopify-hosted
+   *  video is replaced by another one): library and upload offer videos only. */
+  videosOnly?: boolean;
   /** Product GID currently in focus — drives the "in this product" toggle
    *  and lets the dropdown skip itself in the "other product" list. */
   currentProductId?: string;
@@ -158,17 +167,22 @@ export function FilePickerModal({
   onAddExternalUrl,
   uploadCommitMode,
   initialKind = "all",
-  disallowModel = false,
+  disallowModel: disallowModelProp = false,
+  imagesOnly = false,
+  videosOnly = false,
   currentProductId,
   title,
 }: FilePickerModalProps) {
   const { t } = useI18n();
+  const onlyKind: "image" | "video" | null = imagesOnly ? "image" : videosOnly ? "video" : null;
+  const disallowModel = disallowModelProp || onlyKind !== null;
+  const effectiveInitialKind: KindFilter = onlyKind ?? initialKind;
 
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<KindFilter>(
     // A `disallowModel` caller passing initialKind="model" would otherwise
     // open the modal with an instantly-empty (and uncloseable) filter.
-    disallowModel && initialKind === "model" ? "all" : initialKind
+    disallowModel && effectiveInitialKind === "model" ? "all" : effectiveInitialKind
   );
   // Product filter: "all" = library-wide; any other value = the product GID
   // to scope to. Includes the current product as just another option in the
@@ -217,7 +231,7 @@ export function FilePickerModal({
   useEffect(() => {
     if (open) {
       setQuery("");
-      setKind(disallowModel && initialKind === "model" ? "all" : initialKind);
+      setKind(disallowModel && effectiveInitialKind === "model" ? "all" : effectiveInitialKind);
       setProductScope("all");
       setProductList([]);
       setSelected(new Set());
@@ -232,7 +246,7 @@ export function FilePickerModal({
       setUrlInput("");
       setUrlError(null);
     }
-  }, [open, initialKind, disallowModel]);
+  }, [open, effectiveInitialKind, disallowModel]);
 
   // ------------------------------------------------------------------------
   // File-list fetching
@@ -312,7 +326,15 @@ export function FilePickerModal({
     // stagedUploadsCreate, and surface a clear banner so the merchant knows
     // to use the product gallery instead.
     let accepted = classified.map(x => x.file);
-    if (disallowModel) {
+    if (onlyKind) {
+      const others = classified.filter(x => x.kind !== onlyKind);
+      accepted = classified.filter(x => x.kind === onlyKind).map(x => x.file);
+      if (others.length > 0) {
+        setError(onlyKind === "image"
+          ? (t.imageManager.browseFilesImagesOnly ?? "Only images can be used here.")
+          : (t.imageManager.browseFilesVideosOnly ?? "Only videos can be used here."));
+      }
+    } else if (disallowModel) {
       const models = classified.filter(x => x.kind === "model");
       accepted = classified.filter(x => x.kind !== "model").map(x => x.file);
       if (models.length > 0) {
@@ -437,7 +459,7 @@ export function FilePickerModal({
         setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
       }
     }));
-  }, [uploadCommitMode, onAdd, t, disallowModel]);
+  }, [uploadCommitMode, onAdd, t, disallowModel, onlyKind]);
 
   /** An <img> in the grid failed to load. Mark the tile so it renders a
    *  labelled placeholder instead of the browser's broken-link icon, and —
@@ -712,12 +734,12 @@ export function FilePickerModal({
             placeholder={t.imageManager.browseFilesSearchPlaceholder ?? "Search by filename…"}
           />
 
-          <ButtonGroup variant="segmented">
+          {!onlyKind && <ButtonGroup variant="segmented">
             {filterButton("all", t.imageManager.browseFilesFilterAll ?? "All")}
             {filterButton("image", t.imageManager.browseFilesFilterImages ?? "Images")}
             {filterButton("video", t.imageManager.browseFilesFilterVideos ?? "Videos")}
             {!disallowModel && filterButton("model", t.imageManager.browseFilesFilterModels ?? "3D models")}
-          </ButtonGroup>
+          </ButtonGroup>}
 
           {/* Product filter — one dropdown, default "All products", every
               product (including the currently focused one) is just another
@@ -765,7 +787,9 @@ export function FilePickerModal({
                 // the merchant should never even see a pickable 3D tile in a
                 // variant picker. The kind=image|video|all server filter
                 // already covers most rows; this catches the "All" branch.
-                const visible = disallowModel ? files.filter(f => f.kind !== "model") : files;
+                const visible = onlyKind
+                  ? files.filter(f => f.kind === onlyKind)
+                  : disallowModel ? files.filter(f => f.kind !== "model") : files;
                 if (visible.length === 0 && pendingUploads.length === 0) {
                   return (
                     <div style={{ gridColumn: "1 / -1", padding: "24px 0", textAlign: "center", color: "#6d7175" }}>
@@ -827,12 +851,12 @@ export function FilePickerModal({
               {t.imageManager.uploadMediaTitle ?? "Upload images, videos, or 3D models"}
             </Button>
             <Text as="span" tone="subdued" variant="bodySm">
-              JPG · PNG · WebP · MP4 · MOV · WebM · GLB
+              {onlyKind === "image" ? "JPG · PNG · WebP" : onlyKind === "video" ? "MP4 · MOV · WebM" : "JPG · PNG · WebP · MP4 · MOV · WebM · GLB"}
             </Text>
             <input
               ref={fileInputRef}
               type="file"
-              accept={UPLOAD_ACCEPT}
+              accept={onlyKind === "image" ? IMAGE_MIME_TYPES.join(",") : onlyKind === "video" ? VIDEO_MIME_TYPES.join(",") : UPLOAD_ACCEPT}
               multiple
               style={{ display: "none" }}
               onChange={(e) => {
