@@ -45,3 +45,12 @@ export function deleteOutcome(deleteOk: boolean, clearOk: boolean | null): Delet
   if (clearOk === false) return "clearFailed";
   return "ok";
 }
+
+/** Drops queued (not yet uploaded) media whose local preview is among `previewUrls`. */
+export function removePendingNewMedia<T extends { previewUrl?: string }>(
+  list: T[],
+  previewUrls: Iterable<string>,
+): T[] {
+  const set = new Set(previewUrls);
+  return list.filter(m => !(m.previewUrl && set.has(m.previewUrl)));
+}

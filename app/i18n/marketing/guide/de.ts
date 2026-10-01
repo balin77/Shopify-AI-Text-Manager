@@ -729,7 +729,7 @@ export const guideDe: GuideCopy = {
           ],
         },
       ],
-      tips: [
+      tips: ["Lässt sich eine Datei nicht hochladen, wird sie in einer Meldung genannt und nicht hinzugefügt — laden Sie sie danach erneut hoch.", 
         "Die Zuordnung passiert beim Hochladen. Spätere Umbenennungen der Dateien ändern an der Zuordnung nichts.",
       ],
     },

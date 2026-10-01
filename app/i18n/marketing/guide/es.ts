@@ -721,7 +721,7 @@ export const guideEs: GuideCopy = {
           ],
         },
       ],
-      tips: ["La asignación se hace al subir. Cambiar después el nombre de los archivos no la altera."],
+      tips: ["Si un archivo no se puede subir, se nombra en un aviso y no se añade — vuelve a subirlo después.", "La asignación se hace al subir. Cambiar después el nombre de los archivos no la altera."],
     },
 
     "alt-texts": {

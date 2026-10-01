@@ -721,7 +721,7 @@ export const guideEn: GuideCopy = {
           ],
         },
       ],
-      tips: ["The assignment happens at upload. Renaming the files later changes nothing about it."],
+      tips: ["If a file cannot be uploaded, it is named in a message and is not added — upload it again afterwards.", "The assignment happens at upload. Renaming the files later changes nothing about it."],
     },
 
     "alt-texts": {

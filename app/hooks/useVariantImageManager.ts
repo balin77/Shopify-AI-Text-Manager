@@ -31,6 +31,8 @@ export function useVariantImageManager() {
   const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(new Set());
   const [activeAction, setActiveAction] = useState<"copy" | "move" | null>(null);
   const [isApplying, setIsApplying] = useState(false);
+  // A product-image delete is in flight in VariantImageManager; the editor's Save is blocked meanwhile.
+  const [isDeletingImages, setIsDeletingImages] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<"seo" | "images">("seo");
   const [activeImageSubTab, setActiveImageSubTab] = useState<"bulkUpload" | "bulkAltText">("bulkUpload");
   const [variantReloadCounter, setVariantReloadCounter] = useState(0);
@@ -469,6 +471,8 @@ export function useVariantImageManager() {
     activeAction,
     setActiveAction,
     isApplying,
+    isDeletingImages,
+    setIsDeletingImages,
     activeRightTab,
     setActiveRightTab,
     activeImageSubTab,

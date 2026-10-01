@@ -734,12 +734,15 @@ export default function ProductsPage() {
     // active during the wait, the merchant double-clicked, and the second
     // POST hit /api/update-variant-galleries with the same staging URL
     // (duplicate productCreateMedia → Shopify 422).
-    isSaving: subResources.state.isSaving || imageManagerState.isApplying,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying]);
+    isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
     saveSubResources: () => {
+      // A product-image delete is in flight: saving now could clear variant
+      // main images for media that survives a failed delete.
+      if (imageManagerStateRef.current.isDeletingImages) return;
       subResources.handlers.saveSubResources();
       if (hasPendingImageChanges && editor.selectedItem) {
         const productId = editor.selectedItem.id;
@@ -1110,6 +1113,7 @@ export default function ProductsPage() {
               onSetAction={imageManagerState.setActiveAction}
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
+              onDeletingChange={imageManagerState.setIsDeletingImages}
               onExternalVideosChange={imageManagerState.setPendingExternalVideos}
               onThreeDModelsChange={imageManagerState.setPendingVariant3dModels}
               onThreeDPreviewsChange={imageManagerState.setPendingVariant3dPreviews}
