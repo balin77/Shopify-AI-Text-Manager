@@ -50,6 +50,7 @@ export interface FieldHandlerProps {
   shopLocales: ShopLocale[];
   t: TranslationStrings;
   onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
+  onCopyToAllLocalesFailed?: (fieldKey: string, locales: string[]) => void;
 
   // State values
   selectedItemId: string | null;
@@ -142,6 +143,7 @@ export interface FieldHandlerProps {
       translations: Record<string, string>,
       currentLocale: string
     ) => void;
+    onCopyToLocalesFailed: (translationKey: string, locales: string[], copiedValue: string) => void;
   };
 
   // State setters
@@ -212,6 +214,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     shopLocales,
     t,
     onTranslateToAllLocalesComplete,
+    onCopyToAllLocalesFailed,
     selectedItemId,
     selectedItem,
     currentLanguage,
@@ -1998,6 +2001,12 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
     }
     markOperationFailed(capturedItemId, fieldKey);
     if (failed.length > 0) {
+      // Take back what the copy showed up front for those locales: the
+      // overlay (it outranks the loaded data in resolve()) and whatever a
+      // page cached through onTranslateToAllLocalesComplete. Left in place,
+      // the editor went on showing a value that was never saved.
+      dataLoader.onCopyToLocalesFailed(field.translationKey, failed, primaryValue);
+      onCopyToAllLocalesFailed?.(fieldKey, failed);
       showInfoBox(
         String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
           "{locales}",

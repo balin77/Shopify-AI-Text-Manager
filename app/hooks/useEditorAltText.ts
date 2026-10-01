@@ -366,6 +366,16 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     Promise.all(saves).then((results) => {
       const failed = results.filter((l): l is string => l !== null);
       if (failed.length > 0) {
+        // Take back what the copy wrote up front for those locales: the
+        // overlay outranks the loaded alt texts, so left in place the editor
+        // went on showing a value that was never saved. Only the copy's own
+        // value -- anything written there since is not ours to remove.
+        for (const locale of failed) {
+          const forLocale = localAltTextOverlayRef.current[locale];
+          if (forLocale && forLocale[imageIndex] === sourceAltText) {
+            delete forLocale[imageIndex];
+          }
+        }
         showInfoBox(
           String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
             "{locales}",

@@ -73,7 +73,7 @@ interface TaskData {
 }
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
-  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId, initialLocale } = props;
+  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, onCopyToAllLocalesFailed, initialItemId, initialLocale } = props;
   // Markets for the "Translate & Adapt" market selector. Empty when the shop has
   // no extra markets or the read_markets scope is missing → selector stays hidden.
   const markets = props.markets ?? [];
@@ -2573,6 +2573,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     shopLocales,
     t,
     onTranslateToAllLocalesComplete,
+    onCopyToAllLocalesFailed,
     selectedItemId,
     selectedItem,
     currentLanguage,

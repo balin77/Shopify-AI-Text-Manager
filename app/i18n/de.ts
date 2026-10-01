@@ -2056,7 +2056,7 @@ export const de = {
     close: "Schließen",
     clear: "Leeren",
     copied: "Übertragen",
-    copyFailedLocales: "Übertragen fehlgeschlagen für: {locales}. Bitte Seite neu laden und erneut versuchen.",
+    copyFailedLocales: "Übertragen fehlgeschlagen für: {locales}. Bitte erneut versuchen.",
     copiedToShopify: "Korrekt auf Shopify übertragen",
     loadMore: "Mehr laden",
     loading: "Lädt...",

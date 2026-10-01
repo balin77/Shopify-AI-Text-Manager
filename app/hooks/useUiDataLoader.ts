@@ -174,6 +174,11 @@ export interface UseUiDataLoaderReturn {
     currentLocale: string
   ) => TransitionResult;
 
+  /** A "copy to all languages" save did NOT land for these locales: drop the
+   *  value the copy wrote into the overlay for them, so the editor shows what
+   *  Shopify holds again instead of a value that was never saved. */
+  onCopyToLocalesFailed: (translationKey: string, locales: string[], copiedValue: string) => void;
+
   /** When switching to a different item */
   onItemSwitch: () => void;
 
@@ -1005,6 +1010,23 @@ export function useUiDataLoader(
     []
   );
 
+  const onCopyToLocalesFailed = useCallback(
+    (translationKey: string, locales: string[], copiedValue: string) => {
+      const overlay = localTranslationsRef.current[translationKey];
+      if (!overlay) return;
+      for (const locale of locales) {
+        // Only the copy's OWN value: anything written there since (the
+        // merchant typing in that locale) is not ours to take back. The copy
+        // writes the GLOBAL layer, i.e. the bare locale key.
+        if (overlay[locale] === copiedValue) delete overlay[locale];
+      }
+      debugLog.transition(
+        `onCopyToLocalesFailed: key=${translationKey} dropped ${locales.join(", ")}`
+      );
+    },
+    []
+  );
+
   /** When switching to a different item */
   const onItemSwitch = useCallback(() => {
     debugLog.transition("onItemSwitch: clearing all caches");
@@ -1089,6 +1111,7 @@ export function useUiDataLoader(
     onTranslateAllForLocaleComplete,
     onSaveComplete,
     onTranslateFieldToAllLocalesComplete,
+    onCopyToLocalesFailed,
     onItemSwitch,
     onRefresh,
     onBackgroundRetranslation,

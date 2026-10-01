@@ -428,6 +428,24 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     });
   }, [selectedGroupId]);
 
+  // A copy that did not save for some locales: forget those locales' cached
+  // translations so the next visit re-reads them from Shopify instead of
+  // showing the copied value handleTranslateToAllLocalesComplete put there.
+  // Every group, not only the selected one: the answer arrives after the
+  // saves, and the merchant may have moved on to another group by then --
+  // re-reading a locale costs one request, a stale one lies.
+  const handleCopyToAllLocalesFailed = useCallback((_fieldKey: string, locales: string[]) => {
+    setLoadedTranslations(prev => {
+      const next: typeof prev = {};
+      for (const [groupId, groupCache] of Object.entries(prev)) {
+        const kept = { ...groupCache };
+        for (const locale of locales) delete kept[locale];
+        next[groupId] = kept;
+      }
+      return next;
+    });
+  }, []);
+
   // Create editor with dynamic config
   const editor = useUnifiedContentEditor({
     config: config,
@@ -439,6 +457,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     showInfoBox,
     t,
     onTranslateToAllLocalesComplete: handleTranslateToAllLocalesComplete,
+    onCopyToAllLocalesFailed: handleCopyToAllLocalesFailed,
   });
 
   // Ref to store editor helpers to avoid triggering effects on every render

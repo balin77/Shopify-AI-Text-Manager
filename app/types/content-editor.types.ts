@@ -621,6 +621,11 @@ export interface UseContentEditorProps {
   /** Optional callback when translateFieldToAllLocales completes successfully */
   onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
 
+  /** A "copy to all languages" that `onTranslateToAllLocalesComplete` was told
+   *  about up front did NOT save for these locales: a page that cached the
+   *  copied values has to take them back. */
+  onCopyToAllLocalesFailed?: (fieldKey: string, locales: string[]) => void;
+
   /** Optional initial item ID to select on mount (e.g. from URL params) */
   initialItemId?: string;
 
