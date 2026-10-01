@@ -7,13 +7,16 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useBackgroundTaskRefresh } from "./useBackgroundTaskRefresh";
+import { readRetranslationTaskIds } from "../services/translations/retranslation-tasks.shared";
 import { useRevalidator } from "react-router";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { useEditorImageManagement } from "./useEditorImageManagement";
 import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
-import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
+import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, preserveUnsavedEdits } from "./useUiDataLoader";
+import type { PartialSave } from "./useUiDataLoader";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -35,6 +38,7 @@ import type {
   AltTextResponse,
   TranslatedAltTextResponse,
   TranslatedAltTextsResponse,
+  InfoBoxTone,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import type { ValidationOverlays } from "../utils/field-validation.utils";
@@ -43,6 +47,9 @@ import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { readLastSelectedId } from "../utils/last-selected-item";
+import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
+import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
+import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -53,6 +60,12 @@ import {
   useCompletedResults,
   consumeCompletedResult,
 } from "./useAIOperationsStore";
+import {
+  setFieldSuggestion,
+  setAltTextSuggestion,
+  useFieldSuggestions,
+  type SuggestionScope,
+} from "./useAISuggestionStore";
 
 interface TaskData {
   fieldType?: string | null;
@@ -60,7 +73,7 @@ interface TaskData {
 }
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
-  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId, initialLocale } = props;
+  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, onCopyToAllLocalesFailed, initialItemId, initialLocale } = props;
   // Markets for the "Translate & Adapt" market selector. Empty when the shop has
   // no extra markets or the read_markets scope is missing → selector stays hidden.
   const markets = props.markets ?? [];
@@ -94,16 +107,31 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // `shopLocales` comes from the route loader, so it is already populated on
   // mount — the deep-linked locale can be validated right here instead of via
   // a late-resolution effect (which would fight the user's first click).
-  const [currentLanguage, setCurrentLanguage] = useState(() => {
-    if (!initialLocale || initialLocale === primaryLocale) return primaryLocale;
-    const known = shopLocales.find((l) => l.locale === initialLocale && !l.primary);
-    return known ? initialLocale : primaryLocale;
-  });
+  const [currentLanguage, setCurrentLanguage] = useState(() =>
+    resolveInitialLocale(initialLocale, primaryLocale, shopLocales),
+  );
   const currentLanguageRef = useLatestRef(currentLanguage);
   // Selected market for market-specific translations ("" = all markets / global).
   const [selectedMarketId, setSelectedMarketId] = useState<string>("");
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
-  const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
+  // AI suggestions live OUTSIDE this component (useAISuggestionStore): they
+  // used to be `useState` here, so leaving the page — a main-nav tab, another
+  // item — threw away an answer the merchant had already paid for and never
+  // decided on. The scope is what makes that safe: a suggestion belongs to one
+  // field of one item in one locale under one market, so coming back shows
+  // exactly the ones that were pending, and no others.
+  const suggestionScope = useMemo<SuggestionScope>(
+    () => ({ resourceId: selectedItemId || "", locale: currentLanguage, marketId: selectedMarketId }),
+    [selectedItemId, currentLanguage, selectedMarketId],
+  );
+  const suggestionScopeRef = useLatestRef(suggestionScope);
+  // The scope the route-action fetcher was LAST submitted in. The handlers
+  // below capture their own request scope in a closure; a fetcher response
+  // has no closure to capture, so the scope is taken at submit time — the
+  // merchant may have switched language while it was in flight, and the
+  // answer belongs to the language they asked from.
+  const fetcherScopeRef = useRef<SuggestionScope | null>(null);
+  const aiSuggestions = useFieldSuggestions(suggestionScope);
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
@@ -283,6 +311,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (!result) continue;
 
       const data = result.result;
+      // The locale/market the request was made from. Missing only for an
+      // operation started before this was carried through — the scope the
+      // merchant is in now is the best answer there, and the wrong one is
+      // simply not shown rather than written anywhere.
+      const resultScope: SuggestionScope = {
+        resourceId: completed.resourceId,
+        locale: result.scope?.locale ?? suggestionScopeRef.current.locale,
+        marketId: result.scope?.marketId ?? suggestionScopeRef.current.marketId,
+      };
 
       // Apply based on action type
       if (completed.action === "generateAIText" || completed.action === "formatAIText") {
@@ -290,10 +327,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const generatedContent = data.generatedContent as string;
         const fieldType = data.fieldType as string;
         if (generatedContent && fieldType) {
-          setAiSuggestions((prev) => ({
-            ...prev,
-            [fieldType]: generatedContent,
-          }));
+          setFieldSuggestion(resultScope, fieldType, generatedContent);
+        }
+      }
+      // The keyword pass answers per field under `value`, and the alt-text
+      // generator per image index. Both used to be consumed here and then
+      // dropped on the floor — the merchant navigated away mid-request and the
+      // answer they had paid for never appeared anywhere.
+      if (completed.action === "insertKeyword") {
+        const value = data.value as string;
+        const fieldType = (data.fieldType as string) || completed.fieldKey;
+        if (value && fieldType && !data.skipped) {
+          setFieldSuggestion(resultScope, fieldType, value);
+        }
+      }
+      if (completed.action === "generateAltText") {
+        const altText = data.altText as string;
+        const imageIndex = data.imageIndex as number | undefined;
+        if (altText && typeof imageIndex === "number") {
+          setAltTextSuggestion(resultScope, imageIndex, altText);
         }
       }
       // For translate actions, the server saved the translation to DB.
@@ -380,6 +432,38 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [hasRestored, items, initialItemId, config.contentType]);
 
   // ============================================================================
+  // RESTORE THE WORKING LANGUAGE ON MOUNT (client-only, once)
+  // Priority: ?locale= (handled in the useState initializer above) > the last
+  // language the merchant SWITCHED to > the primary locale.
+  //
+  // Why an effect and not that initializer: localStorage does not exist during
+  // the server render, so a value read there would be `null` on the server and
+  // a locale on the client — a hydration mismatch. The item restore above
+  // solves the same problem the same way.
+  //
+  // Only a locale the shop still PUBLISHES is restored. An empty `shopLocales`
+  // means the lookup failed rather than "one language" (see CLAUDE.md), so it
+  // restores nothing: opening in a language that may no longer be served is
+  // the more expensive of the two errors. Nothing is written back here — the
+  // language bar's own handler is the only writer.
+  // ============================================================================
+
+  const restoredLocaleRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredLocaleRef.current) return;
+    restoredLocaleRef.current = true;
+
+    const restored = pickRestoredLocale({
+      initialLocale,
+      stored: readLastContentLocale(),
+      primaryLocale,
+      shopLocales,
+    });
+    if (restored) setCurrentLanguage(restored);
+  }, [initialLocale, primaryLocale, shopLocales]);
+
+  // ============================================================================
   // AUTO-SELECT FIRST ITEM if the selected one disappears (e.g. deleted, or
   // temporarily missing during a revalidation). Only runs after restoration
   // is complete. Does NOT touch localStorage — the saved id stays intact so
@@ -420,12 +504,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   } = useEditorImageManagement({ config, selectedItemId, baseSelectedItem });
 
   // Compute effective field definitions (supports dynamic fields for templates)
+  // `t` reaches the builder because a DYNAMIC field's label and help text are
+  // built here and nowhere else — the metaobject list hint used to be an
+  // English literal in the config for exactly that reason, with no other place
+  // to put it. Same optional-`t` shape `getSubtitle` / `getPrimaryField`
+  // already carry, so a config that does not need it stays unchanged.
   const effectiveFieldDefinitions = useMemo(() => {
     if (config.dynamicFields && config.getFieldDefinitions && selectedItem) {
-      return config.getFieldDefinitions(selectedItem);
+      return config.getFieldDefinitions(selectedItem, t);
     }
     return config.fieldDefinitions;
-  }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem]);
+  }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem, t]);
 
   const effectiveFieldDefinitionsRef = useLatestRef(effectiveFieldDefinitions);
 
@@ -497,6 +586,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedLocale: string | null;
     savedMarketId: string;
     savedItemId: string | null;
+    partial: PartialSave | null;
   }>>([]);
 
   const editableValuesRef = useLatestRef(editableValues);
@@ -505,13 +595,44 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const isSavePendingRef = useRef(false);
   // Ref to suppress the generic "Changes saved" toast when triggered by translate action
   const isSaveFromTranslateRef = useRef(false);
+  /** The fields a PARTIAL save carried (a single-field translate / Accept &
+   *  Translate). The response handling then treats only these as saved: the
+   *  overlay and the baseline must not absorb unsaved input in other fields. */
+  const partialSaveRef = useRef<PartialSave | null>(null);
+  /** The partial description of the save IN FLIGHT — bound per request by
+   *  `safeSubmit` and the queue drain, consumed by that request's response. */
+  const inFlightPartialRef = useRef<PartialSave | null>(null);
+  /** After a partial save the re-read that follows must keep unsaved input in
+   *  the fields it did not carry (they were not sent, so the server has only
+   *  their old values). Time-boxed, and dropped on any switch. */
+  const preserveEditsUntilRef = useRef(0);
   // Ref to track the fieldKey of a pending copy save so we can clear its loading state on response
   const pendingCopyFieldKeyRef = useRef<string | null>(null);
 
   // Forwarding-Refs for functions defined later (Ref-Forwarding-Pattern for circular dep)
   const buildFieldsForSaveRef = useRef<(v: Record<string, string>, l: string) => Record<string, string>>(() => ({}));
   const safeSubmitRef = useRef<(data: Record<string, any>, opts?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void>(() => {});
-  const submitAIActionRef = useRef<(data: Record<string, string>, fieldKey: string, onSuccess?: (r: Record<string, unknown>) => void, onError?: (e: string) => void) => void>(async () => {});
+  const submitAIActionRef = useRef<(data: Record<string, string>, fieldKey: string, onSuccess?: (r: Record<string, unknown>) => void, onError?: (e: string) => void, options?: { suppressErrorBox?: boolean }) => void>(async () => {});
+
+  /**
+   * Bumped once per completed background refresh, for the parts of a page the
+   * field resolver does not reach: the alt texts below (their own effect, keyed
+   * on language/market/item) and the product page's options and metafields
+   * (`useProductSubResources`, keyed on `itemId::locale::market`). None of those
+   * keys moves on a revalidation, so without this the refreshed translations
+   * would be fetched and never shown. Declared above the alt-text hook because
+   * that hook reads it.
+   */
+  const [backgroundRefreshVersion, setBackgroundRefreshVersion] = useState(0);
+  /**
+   * Unsaved work this hook cannot see — the product page's option/metafield
+   * edits and pending image-manager changes live in their own hooks, and
+   * `hasChanges` below knows nothing of them. The page reports it here so the
+   * background refresh waits for those too: a revalidation re-runs the loaders
+   * those cards render from, and re-reading under an unsaved edit is exactly
+   * the automation eating merchant input.
+   */
+  const [externalUnsavedChanges, setExternalUnsavedChanges] = useState(false);
 
   // ============================================================================
   // SUB-HOOK: useEditorAltText
@@ -520,11 +641,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const {
     imageAltTexts, setImageAltTexts,
     fallbackAltTextIndices,
-    altTextSuggestions, setAltTextSuggestions,
+    altTextSuggestions,
     originalAltTexts, setOriginalAltTexts,
     imageAltTextsRef, originalAltTextsRef,
-    pendingAltTextAutoSaveRef,
-    sendImageToAI, setSendImageToAI,
+    pendingAltTextAutoSaveRef, localAltTextOverlayRef,
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
@@ -532,7 +652,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
-    handleRejectAltTextSuggestion, handleToggleSendImageToAI,
+    handleRejectAltTextSuggestion,
   } = useEditorAltText({
     selectedItem,
     selectedItemId,
@@ -546,6 +666,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     enabledLanguages,
     editableValues,
     editableValuesRef,
+    backgroundRefreshVersion,
     buildFieldsForSave: (v, l) => buildFieldsForSaveRef.current(v, l),
     safeSubmit: (data, opts) => safeSubmitRef.current(data, opts),
     savedLocaleRef,
@@ -556,7 +677,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     submitAIAction: (data, fieldKey, onSuccess, onError) => submitAIActionRef.current(data, fieldKey, onSuccess, onError),
     showInfoBox,
     t,
-    setAiSuggestions,
+    suggestionScope,
   });
 
   // Change detection — unified across standard, template, and metaobject content types
@@ -573,6 +694,157 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     baselineValuesRef,
     baselineVersion,
   });
+
+  // ============================================================================
+  // BACKGROUND RE-TRANSLATION — the detached run this save started
+  // ============================================================================
+  //
+  // With `autoTranslateExternalChanges` on, a primary save hands the foreign
+  // languages to an AI run that takes seconds to minutes and finishes long
+  // after the response (`reconcileAfterPrimarySave`). Nothing told this page
+  // when, so the merchant sat in front of empty foreign fields for translations
+  // that were already on their way. The save response carries the run's Task
+  // id; `useBackgroundTaskRefresh` watches it and asks for ONE reload.
+  //
+  // It READS ONLY. No form is submitted, no value is written, and no comparison
+  // baseline or undo history is touched — the whole mechanism is a revalidation
+  // plus a re-resolve of the fields from the fresh loader data.
+
+  /** A reload has been asked for and the revalidation is under way; the
+   *  re-resolve happens once the loader data has actually landed. */
+  const backgroundRefreshPendingRef = useRef(false);
+  /** Read by the data-loading effect: every pass while this is set is a
+   *  background refresh, not a ReloadButton press, and must not discard the
+   *  merchant's caches wholesale or overwrite a field they are typing in. */
+  const backgroundRefreshActiveRef = useRef(false);
+  /** The `dataRefreshTrigger` value this refresh will bump to. A ReloadButton
+   *  press bumps to a different one and keeps its own, wider semantics. */
+  const backgroundRefreshTriggerRef = useRef<number | null>(null);
+  /**
+   * The runs this SESSION started that have not been seen finished — a union
+   * across saves, exactly like the grid's. A merchant saves again while the
+   * first run is still working, and the second save may start none at all; a
+   * watch over only the newest list would drop the first one's ids and its
+   * translations would land with nothing reloading the editor.
+   */
+  const [watchedTaskIds, setWatchedTaskIds] = useState<string[]>([]);
+  const pendingRetranslationCount = watchedTaskIds.length;
+  /**
+   * Every response this editor's fetcher sees is offered here — one call rather
+   * than one per action type, because a response with no task ids adds nothing
+   * and a surface that started no run must not poll at all.
+   */
+  const trackRetranslationTasks = useCallback((response: unknown) => {
+    const ids = readRetranslationTaskIds(response);
+    if (ids.length === 0) return;
+    setWatchedTaskIds((prev) => [...new Set([...prev, ...ids])]);
+    // The shop-wide task badge polls on its own clock; a short run (one field
+    // into a couple of languages) can start and finish between two polls and
+    // never show as running at all. Ask now.
+    refreshTaskCount();
+  }, [refreshTaskCount]);
+
+  // EVERY response this editor's fetcher sees is offered to the watcher — one
+  // call rather than one per action type, because a response carrying no task
+  // ids adds nothing and a surface that started no run must not poll at all.
+  // Without this line the ids the save actions now return are simply discarded
+  // and no reload ever happens, which is the whole mechanism.
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    trackRetranslationTasks(fetcher.data);
+  }, [fetcher.state, fetcher.data, trackRetranslationTasks]);
+
+  /**
+   * A reload the editor was not ready for is REMEMBERED, not dropped: the watch
+   * reports every id exactly once, so a refusal that forgot it would lose the
+   * reload for good.
+   */
+  const refreshOwedRef = useRef(false);
+  const [refreshAttempt, setRefreshAttempt] = useState(0);
+  useBackgroundTaskRefresh(watchedTaskIds, ({ settled, follow }) => {
+    const done = new Set(settled);
+    setWatchedTaskIds((prev) => [
+      ...new Set([...prev.filter((id) => !done.has(id)), ...follow]),
+    ]);
+    // Per batch, not once at the end: a product's three repair groups finish
+    // minutes apart, and holding the reload for the slowest would keep showing
+    // empty fields for translations that landed long ago.
+    if (settled.length > 0) {
+      refreshOwedRef.current = true;
+      setRefreshAttempt((n) => n + 1);
+    }
+  });
+
+  /**
+   * While the merchant has UNSAVED work the page may not be re-read at all.
+   * This is the one rule that holds under every circumstance, and it is wider
+   * than the dirty-field merge below on purpose: a staged translation for a
+   * language that is not on screen lives only in the overlay refs, where no
+   * merge can see it, so the safe answer is to wait until the editor is clean.
+   * A save in flight is the same question one moment earlier — re-reading the
+   * server mid-write shows the state before it.
+   */
+  // `isLoadingData` is in here because `hasChanges` is forced to FALSE while it
+  // is true (useEditorChangeDetection) — so without it the deferral would read
+  // a genuinely dirty editor as clean during exactly the window a reload is
+  // most likely to be asked for.
+  const canBackgroundRefresh =
+    !hasChanges &&
+    !externalUnsavedChanges &&
+    !isLoadingData &&
+    fetcher.state === "idle" &&
+    revalidator.state === "idle";
+  useEffect(() => {
+    if (!refreshOwedRef.current) return;
+    if (!canBackgroundRefresh) return;
+    refreshOwedRef.current = false;
+    backgroundRefreshPendingRef.current = true;
+    // Armed HERE, not when the revalidation lands. Its fresh data re-runs the
+    // data-loading effect on its own (the translation signal moves), and that
+    // pass would otherwise run in normal mode: it would overwrite a keystroke
+    // and install its own baseline, after which the merge below could only ever
+    // find everything clean. Every pass from this moment until the trigger's
+    // own preserves unsaved input.
+    backgroundRefreshActiveRef.current = true;
+    try {
+      revalidatorRef.current.revalidate();
+    } catch {
+      // An AbortError from the Shopify admin interfering is not a failure of
+      // this refresh — put the debt back and let the next change re-run this.
+      backgroundRefreshPendingRef.current = false;
+      backgroundRefreshActiveRef.current = false;
+      refreshOwedRef.current = true;
+    }
+    // `canBackgroundRefresh` is what re-runs this once the merchant saves or
+    // discards; the attempt counter is what re-runs it when a second batch
+    // settles while the editor was already clean.
+  }, [canBackgroundRefresh, refreshAttempt]);
+
+  // The revalidation has landed. Force a re-resolve even on a surface whose
+  // `item.translations` fingerprint did not move — a metaobject field, a theme
+  // key, an option name and an alt text all live outside it, so the signals the
+  // data-loading effect normally watches would never notice that the AI wrote
+  // anything at all.
+  useEffect(() => {
+    if (revalidator.state !== "idle") return;
+    if (!backgroundRefreshPendingRef.current) return;
+    backgroundRefreshPendingRef.current = false;
+    // The trigger value this refresh owns, taken from the setter itself so it
+    // cannot disagree with what React stores. It is what tells the run this
+    // causes apart from a ReloadButton press landing in the same window — the
+    // two want opposite things from the caches.
+    // The revalidation's own fresh translations may already have re-run the
+    // data-loading effect once, in normal mode and with the stale overlays
+    // still in place. That run settles at whatever the overlays say and this
+    // one then corrects it — the visible cost is at most one frame, and both
+    // runs start from an editor with nothing unsaved (the refresh is deferred
+    // otherwise), so nothing of the merchant's is at stake in between.
+    setDataRefreshTrigger((prev) => {
+      backgroundRefreshTriggerRef.current = prev + 1;
+      return prev + 1;
+    });
+    setBackgroundRefreshVersion((v) => v + 1);
+  }, [revalidator.state]);
 
   // ============================================================================
   // SUB-HOOK: useEditorAutoSave
@@ -611,6 +883,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     saveQueueRef,
     justSubmittedRef,
     fetcherRef,
+    partialSaveRef,
+    inFlightPartialRef,
+    preserveEditsUntilRef,
   });
 
   // Stable signal that changes when translations arrive for the selected item.
@@ -682,7 +957,29 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
     prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
 
-    if (refreshTriggered) {
+    // A refresh this page asked for AFTER a background re-translation finished
+    // is not a ReloadButton press, and the two differ in both directions.
+    //
+    // EVERY pass while the flag is set counts, not only the one the trigger
+    // causes: the revalidation re-runs this effect on its own (its fresh
+    // `item.translations` move the signal), and letting that pass run in normal
+    // mode overwrote an unsaved keystroke and installed its own baseline —
+    // after which the merge below could only ever find everything clean.
+    //
+    // The one pass that must NOT be reclassified is a ReloadButton press
+    // landing in the same window: it bumps the trigger to a different value and
+    // keeps its own, wider reset. The flag is retired by the trigger this
+    // refresh owns.
+    const isOwnTrigger =
+      refreshTriggered && dataRefreshTrigger === backgroundRefreshTriggerRef.current;
+    const isBackgroundRefresh =
+      backgroundRefreshActiveRef.current && (isOwnTrigger || !refreshTriggered);
+    if (isOwnTrigger || (refreshTriggered && !isBackgroundRefresh)) {
+      backgroundRefreshActiveRef.current = false;
+      backgroundRefreshTriggerRef.current = null;
+    }
+
+    if (refreshTriggered && !isBackgroundRefresh) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
       dataLoader.onRefresh(selectedItemId);
 
@@ -694,6 +991,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         debugLog.dataLoad(' Templates refresh - skip stale data load, page-level effect handles update');
         return;
       }
+    } else if (isBackgroundRefresh) {
+      // Its OWN, narrower reset: the foreign overlays go (the server has just
+      // rewritten those languages and would otherwise lose to a stale entry —
+      // see `onBackgroundRetranslation`), the primary cache stays. Nothing was
+      // reloaded from an API here either, so the theme early return above does
+      // not apply: the loader data this re-resolves from IS the fresh data.
+      debugLog.dataLoad(' Data refresh after a background re-translation');
+      dataLoader.onBackgroundRetranslation();
     }
 
     // Mark as loading immediately
@@ -711,6 +1016,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       dataLoader.onItemSwitch();
       processedSaveResponseRef.current = null;
       isSavePendingRef.current = false;
+      // Its response will never be applied here (the pending flag is gone), so
+      // its partial description must not survive to be read by the next save.
+      inFlightPartialRef.current = null;
       processedTranslateFieldRef.current = null;
       processedTranslateAltTextAllRef.current = null;
       processedTranslateAllRef.current = null;
@@ -733,7 +1041,56 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update the unified baseline and legacy refs via onDataLoaded.
     // This is the single authoritative update point — never update these refs
     // directly in save-response handlers (see "DO NOT REMOVE" comments below).
+    //
+    // The BASELINE is always the resolved SERVER values, even where a field on
+    // screen keeps a different one below: the baseline is what change detection
+    // compares against, so writing a preserved edit into it would mark that
+    // edit as saved and the merchant could never save it again.
+    // Captured BEFORE onDataLoaded overwrites it — it is the baseline the
+    // merchant's current input is dirty against, and comparing against the one
+    // this very call installs would find every field clean.
+    // Only a pass that re-reads the SAME item/locale/market may carry input
+    // over. A pass caused by a switch landing inside the refresh window is a
+    // different set of fields: the merchant already answered the leave dialog
+    // for what they typed, and merging it here would copy the old locale's (or
+    // item's) text into the new one's fields as an unsaved edit the next save
+    // writes.
+    const switchedDuringRefresh = itemIdChanged || languageChanged || marketChanged;
+    // A switch ends the window: the fields on screen now belong elsewhere.
+    if (switchedDuringRefresh) preserveEditsUntilRef.current = 0;
+    // The re-read that follows a PARTIAL save (a single-field translate):
+    // the fields that save did not carry may hold unsaved input, and the
+    // server only has their old values — resolving in normal mode would
+    // overwrite what the merchant typed. A ReloadButton press is excluded: it
+    // is the merchant asking for exactly that reset.
+    const preserveAfterPartialSave =
+      !switchedDuringRefresh &&
+      !(refreshTriggered && !isBackgroundRefresh) &&
+      Date.now() < preserveEditsUntilRef.current;
+    const previousBaseline =
+      (isBackgroundRefresh || preserveAfterPartialSave) && !switchedDuringRefresh
+        ? { ...baselineValuesRef.current }
+        : null;
     dataLoader.onDataLoaded(newValues);
+
+    if (previousBaseline) {
+      // Defence in depth for the one rule that holds under all circumstances:
+      // a field the merchant has typed in and not saved keeps what they typed.
+      // The refresh only runs while the editor is clean (see the deferral in
+      // the background-refresh callback), so this normally changes nothing —
+      // but a keystroke can land between that decision and this effect, and
+      // losing it would be the automation quietly eating merchant input.
+      const { values: merged, preservedKeys } = preserveUnsavedEdits(
+        newValues,
+        editableValuesRef.current,
+        previousBaseline,
+      );
+      if (preservedKeys.length > 0) {
+        debugLog.dataLoad(` Background refresh preserved ${preservedKeys.length} unsaved field(s)`);
+      }
+      setEditableValues(merged);
+      return;
+    }
 
     setEditableValues(newValues);
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
@@ -905,15 +1262,30 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     data: Record<string, string>,
     fieldKey: string,
     onSuccess?: (result: Record<string, unknown>) => void,
-    onError?: (error: string) => void
+    onError?: (error: string) => void,
+    /**
+     * `suppressErrorBox` hands the failure to `onError` ALONE, without the red
+     * banner. For an action the merchant TRIGGERED the banner is right — they
+     * are waiting for an answer. For one the app started by itself, a critical
+     * error appearing on top of a save they just watched succeed reads as "the
+     * save broke", which it did not. The caller then says what actually failed,
+     * in its own words and its own tone. Default off: every existing call site
+     * keeps the banner it has today.
+     */
+    options?: { suppressErrorBox?: boolean }
   ) => {
     const itemId = selectedItemIdRef.current;
     if (!itemId) return;
 
     const action = data.action || "unknown";
 
-    // Mark in global store (spinner visible immediately, survives navigation)
-    markOperationActive(itemId, fieldKey, action, data.targetLocale);
+    // Mark in global store (spinner visible immediately, survives navigation).
+    // The scope goes in with it so an answer parked while the merchant is
+    // elsewhere is applied to the locale/market it was ASKED from.
+    markOperationActive(itemId, fieldKey, action, data.targetLocale, {
+      locale: suggestionScopeRef.current.locale,
+      marketId: suggestionScopeRef.current.marketId,
+    });
 
     try {
       const formData = new FormData();
@@ -980,8 +1352,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Only show error if user is still on the same item
         if (selectedItemIdRef.current === itemId) {
           onError?.(errorMsg);
-          const translatedError = translateErrorMessage(errorMsg, t);
-          showInfoBox(translatedError, "critical", t.common?.error || "Error");
+          if (!options?.suppressErrorBox) {
+            const translatedError = translateErrorMessage(errorMsg, t);
+            showInfoBox(translatedError, "critical");
+          }
         }
       }
     } catch (error) {
@@ -989,8 +1363,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (selectedItemIdRef.current === itemId) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         onError?.(errorMessage);
-        const translatedError = translateErrorMessage(errorMessage, t);
-        showInfoBox(translatedError, "critical", t.common?.error || "Error");
+        if (!options?.suppressErrorBox) {
+          const translatedError = translateErrorMessage(errorMessage, t);
+          showInfoBox(translatedError, "critical");
+        }
       }
     }
   }, [showInfoBox, t, pollTaskUntilDone]);
@@ -1009,10 +1385,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.data?.success && (fetcher.data.actionType === "generateAIText" || fetcher.data.actionType === "formatAIText")) {
       const { fieldType, generatedContent } = fetcher.data as GeneratedContentResponse;
       if (generatedContent && generatedContent.trim()) {
-        setAiSuggestions((prev) => ({
-          ...prev,
-          [fieldType]: generatedContent,
-        }));
+        setFieldSuggestion(fetcherScopeRef.current ?? suggestionScopeRef.current, fieldType, generatedContent);
       }
       // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2). NOTE: the PRIMARY
       // generate path is the raw-fetch submitAIAction flow — its warning
@@ -1023,8 +1396,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(
           (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
             "The generated text still over-uses a tracked keyword — review it before accepting.",
-          "warning",
-          t.common?.warning || "Warning",
+          "warning"
         );
       }
     }
@@ -1148,6 +1520,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         savedLocaleRef.current = targetLocale;
         // Legacy translateField auto-save carries marketId when foreign (see above).
         savedMarketIdRef.current = targetLocale !== primaryLocale ? selectedMarketIdRef.current : "";
+        // Claim the item, or both save-response effects fail their
+        // `isSavedItemCurrent` guard and early-return: no onSaveComplete
+        // overlay write, no revalidation (so the loader would keep serving the
+        // pre-translation row), and every message that effect owns swallowed.
+        // This legacy path is not reached today — `handleTranslateField` posts
+        // through submitAIAction's own fetch, so this route-fetcher response
+        // never fires — so the claim buys nothing until something posts
+        // `translateField` here again. It is set anyway because the omission
+        // is exactly what made the same code in useFieldHandlers a bug.
+        savedItemIdRef.current = selectedItemId;
         isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
       }
@@ -1158,10 +1540,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (fetcher.data?.success && fetcher.data.actionType === "generateAltText") {
       const { altText, imageIndex } = fetcher.data as AltTextResponse;
-      setAltTextSuggestions(prev => ({
-        ...prev,
-        [imageIndex]: altText
-      }));
+      setAltTextSuggestion(fetcherScopeRef.current ?? suggestionScopeRef.current, imageIndex, altText);
     }
   }, [fetcher.data]);
 
@@ -1207,16 +1586,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync.")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{failedLocales}", failedList),
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       } else {
         showInfoBox(
           String(t.content?.altTextTranslatedToAllLocales || "Alt-text for image {imageNumber} translated to {count} language(s)")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{count}", String(targetLocales.length)),
-          "success",
-          t.common?.success || "Success"
+          "success"
         );
       }
 
@@ -1274,6 +1651,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // This bulk alt auto-save (generate-all) writes globally — see formDataObj above
     // (no marketId) — so the mirror must tag the saved alt as global too.
     savedMarketIdRef.current = "";
+    // Claim the item — see the identical note on the translateField auto-save
+    // above. It matters most here: this path carries alt texts, so the
+    // `failedAltTextIndices` warning is the one message a merchant must not
+    // miss, and without the claim it never reaches them.
+    savedItemIdRef.current = selectedItemId;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
   }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
@@ -1335,10 +1717,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           if (failed.length > 0) {
             const failedList = failed.join(", ");
-            const totalLocales = Object.keys(translations).length + failed.length;
-            const successCount = Object.keys(translations).filter(
-              (l: string) => Object.keys((translations as Record<string, Record<string, string>>)[l] || {}).length > 0
-            ).length;
+            // One rule, one module: the map is SEEDED with every target locale,
+            // so adding the failed list to its key count counted failures twice.
+            const { succeeded: successCount, total: totalLocales } = partialLocaleCounts(
+              translations as Record<string, unknown>,
+              failed,
+            );
             messages.push(
               String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
                 .replace("{successCount}", String(successCount))
@@ -1369,16 +1753,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           showInfoBox(
             messages.join(" "),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           const localeCount = Object.keys(translations).length;
           showInfoBox(
             String(t.content?.translateAllSuccess || "Successfully translated to {count} language(s).")
               .replace("{count}", String(localeCount)),
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
       }
@@ -1442,8 +1824,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           showInfoBox(
             String(t.content?.translateLocaleError || "Translation to {locale} failed. Please try again.")
               .replace("{locale}", targetLocale),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else if ((rejectedForLocale && rejectedForLocale.length > 0) || (skippedForLocale && skippedForLocale.length > 0)) {
           const messages: string[] = [];
@@ -1462,14 +1843,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
           showInfoBox(
             messages.join(" "),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
-            t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
-            "success",
-            t.common?.success || "Success"
+            // `t.common.translatedSuccessfully` existed in no bundle at all, so
+            // this always rendered its English literal. Its three siblings
+            // above are content/translateLocale* with a {locale} placeholder.
+            String(t.content?.translateLocaleSuccess || "Successfully translated to {locale}.")
+              .replace("{locale}", targetLocale),
+            "success"
           );
         }
       }
@@ -1508,11 +1891,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       debugLog.response(' Processing save response for locale:', savedLocale);
 
       // Delegate ref mutations to transition method
+      // A partial save overlays exactly what it SENT — from its own values,
+      // not the live view, which may meanwhile show another locale.
+      const partial = inFlightPartialRef.current;
       const result = dataLoader.onSaveComplete(
         savedLocale,
-        editableValues,
+        partial ? { ...editableValues, ...partial.values } : editableValues,
         effectiveFieldDefinitions,
-        fallbackFieldsRef.current
+        fallbackFieldsRef.current,
+        partial ? new Set(Object.keys(partial.values)) : null,
+        savedMarketIdRef.current
       );
 
       // Image alt-text updates (not managed by dataLoader — separate concern)
@@ -1583,6 +1971,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       setIsSaving(false);
+      // Consumed by exactly one response, whatever happens below — a stale set
+      // would make the NEXT full save count as partial.
+      const partial = inFlightPartialRef.current;
+      inFlightPartialRef.current = null;
 
       // Guard: check if the item that was saved is still the currently-selected item.
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
@@ -1617,6 +2009,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           ) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
+          } else if (partial) {
+            // A partial save: only the fields it carried are now saved, and
+            // only if their locale is still the one on screen; the rest keep
+            // the baseline they are dirty against.
+            if (
+              currentLanguageRef.current === partial.locale &&
+              selectedMarketIdRef.current === partial.marketId
+            ) {
+              baselineValuesRef.current = { ...baselineValuesRef.current, ...partial.values };
+              setBaselineVersion(v => v + 1);
+            }
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
@@ -1624,8 +2027,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
 
+      // PLAN §Phase 3.3 — computed BEFORE the branch below, because that branch
+      // returns early. It is a primary save like any other, so it can carry a
+      // handle change; leaving the note behind the return meant a FAILED
+      // redirect after "Accept & Translate" was swallowed and the merchant went
+      // on believing the old URL still resolved.
+      const pendingRedirectMessage = buildRedirectMessage(redirectNoteOf(fetcher.data), t);
+
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
+        if (pendingRedirectMessage) {
+          showInfoBox(
+            pendingRedirectMessage.text,
+            pendingRedirectMessage.tone
+          );
+        }
         const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
         pendingTranslationAfterSaveRef.current = null;
 
@@ -1719,10 +2135,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               if (failedFieldLocales.length > 0) {
                 const failedList = failedFieldLocales.join(", ");
+                const counts = partialLocaleCounts(
+                  translations as Record<string, unknown>,
+                  failedFieldLocales,
+                );
                 messages.push(
                   String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-                    .replace("{successCount}", String(Object.keys(translations).length))
-                    .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales.length))
+                    .replace("{successCount}", String(counts.succeeded))
+                    .replace("{totalCount}", String(counts.total))
                     .replace("{failedLocales}", failedList)
                 );
               }
@@ -1749,8 +2169,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               showInfoBox(
                 messages.join(" "),
-                "warning",
-                t.common?.warning || "Warning"
+                "warning"
               );
             } else {
               const fieldLabel = resolveFieldLabel(fieldKey);
@@ -1759,8 +2178,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                   ?.replace("{fieldType}", fieldLabel)
                   .replace("{count}", String(Object.keys(translations).length))
                   || `${fieldLabel} translated to ${Object.keys(translations).length} language(s)`,
-                "success",
-                t.common?.success || "Success"
+                "success"
               );
             }
 
@@ -1824,33 +2242,79 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const wasTranslateSave = isSaveFromTranslateRef.current;
       isSaveFromTranslateRef.current = false;
 
+      // PLAN §Phase 3.3 — the handle changed, so the old URL either got a
+      // redirect or did not. Both outcomes are news: the merchant cannot see
+      // from the editor whether their existing links still work. The wording
+      // lives in ONE helper because this response is handled in two places.
+      const redirectMessage = pendingRedirectMessage;
+
+      // One box, one outcome — the redirect line is APPENDED to whichever
+      // message the save itself produced instead of competing with it, so a
+      // failed alt-text write is never replaced by redirect news.
+      const withRedirect = (text: string, tone: InfoBoxTone): [string, InfoBoxTone] => {
+        if (!redirectMessage) return [text, tone];
+        // A failed redirect outranks a plain success: something the merchant
+        // has to act on beats "saved".
+        const merged = redirectMessage.tone === "warning" || tone === "warning" ? "warning" : tone;
+        return [`${text} ${redirectMessage.text}`, merged];
+      };
+
+      // A server warning (a collection rule the server kept, a DB mirror that
+      // failed) is APPENDED rather than replaced by the alt-text message: a
+      // merchant who edits attributes and alt-text in one save would otherwise
+      // hear only about the images and never learn the rest did not land.
+      const ruleWarnings = (t.content?.ruleWarnings ?? {}) as Record<string, string>;
+      const ruleWarningCode =
+        "ruleWarning" in fetcher.data ? String(fetcher.data.ruleWarning ?? "") : "";
+      // §Phase 3.1 — codes from the attribute path (today: a rule-based
+      // membership the picker asked to remove and the server kept). A LIST,
+      // because more than one can be true of the same save.
+      const attributeWarnings = (t.content?.attributeWarnings ?? {}) as Record<string, string>;
+      const rawAttributeWarnings = (fetcher.data as unknown as Record<string, unknown>).attributeWarnings;
+      const attributeWarningCodes: string[] = Array.isArray(rawAttributeWarnings)
+        ? (rawAttributeWarnings as string[])
+        : [];
+      const serverWarning =
+        // A CODE from the rule or attribute path (localized here), or a plain
+        // string from the older warning paths. All end up in the same box, and
+        // codes are joined rather than one silently winning.
+        [
+          ruleWarningCode && (ruleWarnings[ruleWarningCode] || ruleWarningCode),
+          ...attributeWarningCodes.map((code) => attributeWarnings[code] || code),
+          "warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
-        showInfoBox(
-          String(t.content?.altTextSavePartialImages || "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
-            .replace("{failedImages}", failedList),
-          "warning",
-          t.common?.warning || "Warning"
-        );
-      } else if ("warning" in fetcher.data && fetcher.data.warning) {
+        const altMessage = String(
+          t.content?.altTextSavePartialImages ||
+            "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
+        ).replace("{failedImages}", failedList);
+        showInfoBox(...withRedirect(serverWarning ? `${altMessage} ${serverWarning}` : altMessage, "warning"));
+      } else if (serverWarning) {
         // Server returned success but with a warning (e.g. Shopify saved, DB cache failed)
-        showInfoBox(
-          String(fetcher.data.warning),
-          "warning",
-          t.common?.warning || "Warning"
-        );
+        showInfoBox(...withRedirect(serverWarning, "warning"));
       } else if (wasCopySave) {
         // Copy ("Übertragen") confirmed persisted to Shopify.
-        showInfoBox(
-          t.common?.copiedToShopify || "Successfully transferred to Shopify",
+        const [text, tone] = withRedirect(
+          String(t.common?.copiedToShopify || "Successfully transferred to Shopify"),
           "success",
-          t.common?.success || "Success"
         );
+        showInfoBox(text, tone);
       } else if (!wasTranslateSave) {
-        showInfoBox(
-          t.common?.changesSaved || "Changes saved successfully!",
+        const [text, tone] = withRedirect(
+          String(t.common?.changesSaved || "Changes saved successfully!"),
           "success",
-          t.common?.success || "Success"
+        );
+        showInfoBox(text, tone);
+      } else if (redirectMessage) {
+        // A translate-triggered save shows no message of its own — but the
+        // redirect outcome still has to reach the merchant.
+        showInfoBox(
+          redirectMessage.text,
+          redirectMessage.tone
         );
       }
 
@@ -1918,6 +2382,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
+      inFlightPartialRef.current = null;
       setIsSaving(false);
 
       // Clear a copy ("Übertragen") spinner on failure too — otherwise the field's
@@ -1932,7 +2397,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       if (isSavedItemCurrent) {
         const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
-        showInfoBox(translatedError, "critical", t.common?.error || "Error");
+        showInfoBox(translatedError, "critical");
       }
     } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {
       // ─── Handle i18n error-key responses (e.g. emptyPrimaryFieldsError) ───
@@ -1946,6 +2411,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+      inFlightPartialRef.current = null;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
 
@@ -1957,7 +2423,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const errorMessage =
           (t.content as Record<string, string>)?.[errorKey] ||
           errorKey;
-        showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
+        showInfoBox(errorMessage, "critical");
 
         // Auto-restore empty fields to their original values (discard empty edits)
         if (isThemeContentType(config.contentType) && originalTemplateValuesRef.current) {
@@ -2013,7 +2479,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     const translatedError = translateErrorMessage(errorMsg, t);
-    showInfoBox(translatedError, "critical", t.common?.error || "Error");
+    showInfoBox(translatedError, "critical");
   }, [fetcher.data, showInfoBox, t]);
 
   // Clear justSubmittedRef when fetcher picks up the request (state leaves 'idle')
@@ -2021,7 +2487,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // double-submit guard in safeSubmit only blocks within the same tick.
   useEffect(() => {
     justSubmittedRef.current = false;
-  }, [fetcher.state]);
+    // A submission going out IS the request scope for whatever comes back on
+    // this fetcher — read here rather than when the answer lands, since the
+    // merchant can switch item or language in between.
+    if (fetcher.state === "submitting") fetcherScopeRef.current = suggestionScopeRef.current;
+  }, [fetcher.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Process queued saves when the fetcher becomes idle.
   // IMPORTANT: This effect MUST run AFTER the response handler effects above,
@@ -2037,6 +2507,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedLocaleRef.current = next.savedLocale;
       savedMarketIdRef.current = next.savedMarketId;
       savedItemIdRef.current = next.savedItemId;
+      inFlightPartialRef.current = next.partial;
       isSavePendingRef.current = true;
 
       try {
@@ -2102,6 +2573,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     shopLocales,
     t,
     onTranslateToAllLocalesComplete,
+    onCopyToAllLocalesFailed,
     selectedItemId,
     selectedItem,
     currentLanguage,
@@ -2111,9 +2583,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     enabledLanguages,
     editableValues,
     aiSuggestions,
+    suggestionScope,
     imageAltTexts,
     originalAltTexts,
-    sendImageToAI,
     selectedImageIndex,
     fallbackFields,
     selectedItemIdRef,
@@ -2121,6 +2593,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     editableValuesRef,
     imageAltTextsRef,
     originalAltTextsRef,
+    localAltTextOverlayRef,
     fallbackFieldsRef,
     isAcceptAndTranslateFlowRef,
     deletedTranslationKeysRef,
@@ -2136,6 +2609,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isSavePendingRef,
     isSavingCurrentItem,
     isSaveFromTranslateRef,
+    partialSaveRef,
+    currentLanguageRef,
+    selectedMarketIdRef,
     pendingCopyFieldKeyRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
@@ -2155,14 +2631,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setSelectedMarketId,
     markets,
     setEditableValues,
-    setAiSuggestions,
     setHtmlModes,
     setEnabledLanguages,
     setIsAcceptAndTranslateFlow,
     setIsLoadingData,
     setIsClearAllModalOpen,
     setImageAltTexts,
-    setAltTextSuggestions,
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
@@ -2313,7 +2787,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isLoadingImages,
     fallbackFields,
     loadingFieldKeys,
-    sendImageToAI,
     selectedImageIndex,
     images: selectedItem?.images || [],
     featuredImage: selectedItem?.featuredImage || null,
@@ -2361,7 +2834,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptAltTextSuggestion,
     handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
-    handleToggleSendImageToAI,
     setSelectedImageIndex,
   };
 
@@ -2394,6 +2866,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isFieldLoading,
       getValidationOverlays,
       validationVersion: baselineVersion,
+      /**
+       * Hand a save response from a fetcher this hook does NOT own to the ONE
+       * background-task watcher. The product page's sub-resource save is the
+       * case that needs it: it runs on its own fetcher (deliberately — a shared
+       * one would let one response prune the other's bookkeeping), so its
+       * re-translation task ids would otherwise never be watched by anything.
+       * A response without ids is ignored, so it is always safe to call.
+       */
+      trackRetranslationTasks,
+      /** Watched runs that have not finished — for a quiet "still writing the
+       *  translations" hint. Nothing is required to render it. */
+      pendingRetranslationCount,
+      /** Bumped once per completed background refresh — for a card this hook
+       *  does not resolve and that has to re-read on its own. */
+      backgroundRefreshVersion,
+      /** Report unsaved work held OUTSIDE this hook (see `externalUnsavedChanges`). */
+      setExternalUnsavedChanges,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

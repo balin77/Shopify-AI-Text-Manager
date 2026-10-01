@@ -11,8 +11,15 @@ import {
   translationKeysByColumnId,
 } from "~/services/bulk-editor/translations.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
+import { translationSavedAt } from "~/utils/translation-save-lock.server";
+import {
+  featuredAltLockId,
+  marketLayerLockId,
+  subResourceLockId,
+} from "~/services/translations/translation-locks.shared";
 import {
   estimateCalls,
+  FEATURED_IMAGE_ALT_COLUMN_ID,
   metafieldColumnId,
   optionColumnId,
   buildColumnsForType,
@@ -272,6 +279,98 @@ describe("removeAndVerify", () => {
     expect(calls[0].variables?.marketIds).toEqual(["gid://shopify/Market/3"]);
   });
 
+  it("confirms an unechoed key when a fresh read shows it is GONE", async () => {
+    // `translationsRemove` echoes what it DELETED, so a key that carried no
+    // translation on Shopify comes back empty — and the merchant was told
+    // "the translation was kept" about a field they had just cleared, with no
+    // way to clear it. The re-read is the stronger form of the echo rule: it
+    // asks for the state the rule exists to protect.
+    const { gateway, calls } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: { translations: [{ key: "body_html", value: "x", market: null }] } } },
+    );
+
+    const { confirmedKeys, confirmedByRead } = await removeAndVerify(
+      gateway,
+      PRODUCT_ID,
+      ["title", "body_html"],
+      LOCALE,
+      "",
+    );
+
+    expect(confirmedKeys.has("title")).toBe(true);
+    expect(confirmedByRead?.has("title")).toBe(true);
+    // Still there on Shopify ⇒ still not confirmed ⇒ the local row stays.
+    expect(confirmedKeys.has("body_html")).toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("treats an ABSENT translatableResource as inconclusive, never as removed", async () => {
+    // A query that answered about nothing is not evidence that a key is gone
+    // — the `translatableContent` trap wearing a different hat.
+    const { gateway } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: null } },
+    );
+    const { confirmedKeys } = await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
+    expect(confirmedKeys.size).toBe(0);
+  });
+
+  it("asks the re-read in the SAME market layer it removed from", async () => {
+    // The whole correctness of the re-read. `translations(marketId: null)`
+    // returns the GLOBAL layer only, so filtering a global-only result against
+    // a non-empty marketId discards every row and reports "nothing present" —
+    // which confirmed EVERY unechoed market key and deleted the local row
+    // while the storefront kept serving the override.
+    const { gateway, calls } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : {
+            data: {
+              translatableResource: {
+                translations: [
+                  { key: "title", value: "still here", market: { id: "gid://shopify/Market/3" } },
+                ],
+              },
+            },
+          },
+    );
+    const { confirmedKeys } = await removeAndVerify(
+      gateway,
+      PRODUCT_ID,
+      ["title"],
+      LOCALE,
+      "gid://shopify/Market/3",
+    );
+    // The override survived on Shopify ⇒ NOT confirmed ⇒ the local row stays.
+    expect(confirmedKeys.has("title")).toBe(false);
+    const reread = calls.find((c) => c.variables?.translationKeys === undefined);
+    expect(reread?.variables?.marketId).toBe("gid://shopify/Market/3");
+  });
+
+  it("asks the GLOBAL layer with marketId null", async () => {
+    const { gateway, calls } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: { translations: [] } } },
+    );
+    await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
+    const reread = calls.find((c) => c.variables?.translationKeys === undefined);
+    expect(reread?.variables?.marketId).toBeNull();
+  });
+
+  it("treats a NULL translations list as inconclusive, like an absent resource", async () => {
+    const { gateway } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: { translations: null } } },
+    );
+    const { confirmedKeys } = await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
+    expect(confirmedKeys.size).toBe(0);
+  });
+
   it("passes marketIds: null for a global removal", async () => {
     const { gateway, calls } = fakeGateway(() => ({
       data: { translationsRemove: { translations: [], userErrors: [] } },
@@ -309,7 +408,10 @@ describe("removeAndVerifyAcrossLocales (Phase 4b invalidation)", () => {
     // Not echoed → not confirmed → the caller keeps those local rows.
     expect(confirmedPairs.has(`fr${LOCALE_KEY_SEP}title`)).toBe(false);
     expect(confirmedPairs.has(`de${LOCALE_KEY_SEP}body_html`)).toBe(false);
-    // One call, all locales at once.
+    // ONE call, all locales at once, and NO verification re-read: this sweep
+    // runs per row and per sub-resource, so a re-read per locale would
+    // multiply into thousands of queries for a stale local row the next sync
+    // corrects anyway. The asymmetry with `removeAndVerify` is deliberate.
     expect(calls).toHaveLength(1);
     expect(calls[0].variables?.locales).toEqual(["de", "fr"]);
     expect(calls[0].variables?.marketIds).toBeNull();
@@ -640,14 +742,16 @@ describe("estimateCalls", () => {
     expect(estimateCalls(diff, productColumns)).toBe(2);
   });
 
-  it("foreign group: register + remove + one digest batch", () => {
+  it("foreign group: register + remove + its re-read + one digest batch", () => {
     const diff = [
       foreignEntry("field.title", "Titre"),
       foreignEntry("field.descriptionHtml", "<p>Corps</p>"),
       foreignEntry("field.handle", ""), // clear
     ];
-    // 1 register + 1 remove + 1 digest batch.
-    expect(estimateCalls(diff, productColumns)).toBe(3);
+    // 1 register + (1 remove + 1 verification re-read) + 1 digest batch. The
+    // re-read only fires when Shopify echoes nothing, so this over-estimates
+    // the common case — the only direction this guard may err in.
+    expect(estimateCalls(diff, productColumns)).toBe(4);
   });
 
   it("digest batches scale with unique foreign resources at DIGEST_BATCH_CHUNK", () => {
@@ -670,5 +774,522 @@ describe("estimateCalls", () => {
       { rowId: "gid://shopify/Page/2", rowType: "page", locale: "", marketId: "", columnId: "field.title", value: "z" },
     ];
     expect(estimateCalls(diff, BULK_COLUMNS_BY_TYPE.page)).toBe(2);
+  });
+});
+
+/**
+ * §3.3, foreign half — a TRANSLATED handle is a real storefront URL, and
+ * editing it in the grid breaks that URL exactly as a primary rename does.
+ *
+ * The measurement behind it (see handle-redirect.shared.ts) says one UNPREFIXED
+ * row covers every locale, which is what these tests check for: the write path
+ * must not invent a `/fr/` row, and it must not fire at all in the case that
+ * looks the most like a rename but is not one — a translation being FILLED,
+ * which is every row bulk-translate ever writes.
+ */
+describe("applyBulkDiff — redirect on a TRANSLATED handle change", () => {
+  const HANDLE_COL = "field.handle";
+
+  /** The db double plus the two reads the capture makes. `handleRows` is what
+   *  ContentTranslation holds for this product before the write. */
+  function redirectDb(handleRows: Array<{ locale: string; value: string }>) {
+    return {
+      ...mockDb(),
+      contentTranslation: {
+        upsert: vi.fn(async (_args: unknown) => ({})),
+        deleteMany: vi.fn(async (_args: unknown) => ({ count: 1 })),
+        findMany: vi.fn(async (_args: unknown) => handleRows),
+        findFirst: vi.fn(async (_args: unknown): Promise<{ id: string } | null> => null),
+      },
+      product: {
+        findUnique: vi.fn(async (_args: unknown) => ({ handle: "kumikobox", status: "ACTIVE" })),
+        // The cross-resource collision check: no OTHER product answers the old
+        // translated handle as its primary one.
+        findFirst: vi.fn(async (_args: unknown): Promise<{ id: string } | null> => null),
+      },
+      aISettings: { findUnique: vi.fn(async (_args: unknown) => ({ seoAutoHandleRedirect: true })) },
+    };
+  }
+
+  /** Responds to the digest + register calls and records redirect mutations. */
+  function redirectAdmin(created: Array<Record<string, unknown>>) {
+    return mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "handle", locale: LOCALE, value: "boite-neuve", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return {
+          data: { urlRedirectCreate: { urlRedirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] } },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+  }
+
+  it("redirects the OLD translated URL to the new one, with no locale prefix", async () => {
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(result.failures).toHaveLength(0);
+    expect(created).toEqual([{ path: "/products/boite-ancienne", target: "/products/boite-neuve" }]);
+  });
+
+  it("creates NOTHING when the translation is being filled for the first time", async () => {
+    // Every row bulk-translate writes. The locale was served under the PRIMARY
+    // handle, which stays live — nothing broke, and a redirect here would sit
+    // on the shop's own primary product URL.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(created).toEqual([]);
+  });
+
+  it("creates nothing when Shopify did not echo the handle back", async () => {
+    // The echo rule reaches the redirect too: an unconfirmed write leaves the
+    // OLD translated handle in place, so its URL is not dead.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRegister")) {
+        return { data: { translationsRegister: { translations: [], userErrors: [] } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return { data: { urlRedirectCreate: { urlRedirect: null, userErrors: [] } } };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(created).toEqual([]);
+  });
+
+  it("sends a CLEARED handle translation back to the primary handle", async () => {
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRemove")) {
+        return {
+          data: {
+            translationsRemove: {
+              translations: [{ key: "handle", locale: LOCALE, value: null, market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return {
+          data: { urlRedirectCreate: { urlRedirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] } },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "")],
+    );
+
+    // Without the translation the locale is served under the primary handle
+    // again — the only address the dead URL can point at.
+    expect(created).toEqual([{ path: "/products/boite-ancienne", target: "/products/kumikobox" }]);
+  });
+
+  it("refuses when another product already answers the old handle", async () => {
+    // The collision the primary path cannot have: Shopify enforces uniqueness
+    // among PRIMARY handles, so a renamed-away one is free — a translated one
+    // can be another product's live address, and the row would 301 it away in
+    // every locale, permanently.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+    db.product.findFirst = vi.fn(async (_args: unknown) => ({ id: "gid://shopify/Product/2" }));
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(created).toEqual([]);
+  });
+
+  it("builds the redirect from the value Shopify ECHOED, not the one sent", async () => {
+    // The repo's echo rule reaches the target, not just the decision to act:
+    // this column is not slug-sanitised, so what Shopify stores is the only
+    // honest basis for a URL. The DB mirror follows the same value.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "handle", locale: LOCALE, value: "boite-neuve", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return {
+          data: { urlRedirectCreate: { urlRedirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] } },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      // What the merchant typed differs from what Shopify stored.
+      [foreignEntry(HANDLE_COL, "Boite Neuve")],
+    );
+
+    expect(created).toEqual([{ path: "/products/boite-ancienne", target: "/products/boite-neuve" }]);
+    expect(db.contentTranslation.upsert.mock.calls[0][0]).toMatchObject({
+      create: { value: "boite-neuve" },
+    });
+  });
+
+  it("leaves a market-scoped translation alone", async () => {
+    // A redirect row is shop-wide; a market override is not.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve", "gid://shopify/Market/7")],
+    );
+
+    expect(created).toEqual([]);
+    // Not even the lookup: the market case is refused before the reads.
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyBulkDiff — the primary half of a save invalidates its own digests", () => {
+  it("registers a foreign value against the RE-FETCHED digest, not the prefetched one", async () => {
+    // The failure this pins: the digests are prefetched in one batched pass
+    // BEFORE the first write, so a save that changes a row's title AND writes a
+    // translation of it held a hash describing the text as it was. Shopify
+    // refuses that — "Translatable content hash is invalid" — and the merchant
+    // loses the whole foreign cell while the primary half saved fine.
+    const registerInputs: Array<{ key: string; translatableContentDigest: string }> = [];
+    const { admin, calls } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) {
+        return batchDigestResponse(variables, { title: "stale-digest" });
+      }
+      if (query.includes("productUpdate(")) {
+        return { data: { productUpdate: { product: { id: PRODUCT_ID }, userErrors: [] } } };
+      }
+      if (query.includes("bulkEditorTranslatableContent")) {
+        return {
+          data: { translatableResource: { translatableContent: [{ key: "title", digest: "fresh-digest" }] } },
+        };
+      }
+      if (query.includes("translationsRegister")) {
+        for (const input of (variables?.translations ?? []) as typeof registerInputs) {
+          registerInputs.push(input);
+        }
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "title", locale: LOCALE, value: "Titre", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+
+    const result = await applyBulkDiff(
+      {
+        db: {
+          ...mockDb(),
+          product: { update: vi.fn(async () => ({})), findUnique: vi.fn(async () => null) },
+          aISettings: { findUnique: vi.fn(async () => null) },
+        } as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsByType(),
+        foreignLocales: [LOCALE],
+        autoHandleRedirect: false,
+      },
+      [
+        // Deliberately FOREIGN first, the order that used to break it.
+        foreignEntry("field.title", "Titre"),
+        { rowId: PRODUCT_ID, rowType: "product", locale: "", marketId: "", columnId: "field.title", value: "New title" },
+      ],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(registerInputs).toHaveLength(1);
+    expect(registerInputs[0].translatableContentDigest).toBe("fresh-digest");
+    // …and the primary write really did go first.
+    const order = calls.map((c) => c.query).filter((q) => q.includes("productUpdate(") || q.includes("translationsRegister"));
+    expect(order[0]).toContain("productUpdate(");
+  });
+});
+
+// ─── Which lock a foreign write CLAIMS (translation-locks.shared.ts) ───────
+
+/**
+ * A claim says "the merchant just wrote this surface, do not overwrite it".
+ * Claiming the ROW for a write that did not touch the row's own translations
+ * protects nothing and BLOCKS: `reconcileStaleTranslations` bails wholesale on
+ * `isTranslationRecentlySaved(resourceId)`, so a products/update webhook
+ * arriving from the same save skipped the row's field reconciliation for 30
+ * seconds — and with auto-translate on the purge is off, so those translations
+ * were then neither refreshed nor removed, permanently.
+ *
+ * Ids are unique per test: the lock store is module state shared across the
+ * file, and there is no reset export.
+ */
+describe("applyBulkDiff — foreign writes claim their OWN lock, never the row", () => {
+  it("a sub-resource cell claims the metafield GID and the private product key, not the product", async () => {
+    const PRODUCT = "gid://shopify/Product/lock-sub";
+    const METAFIELD = "gid://shopify/Metafield/lock-sub-1";
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) {
+        return batchDigestResponse(variables, { value: "d-value" });
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "value", locale: LOCALE, value: "Soie", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = {
+      ...mockDb(),
+      productMetafield: {
+        findMany: vi.fn(async () => [
+          { id: METAFIELD, productId: PRODUCT, namespace: "custom", key: "care" },
+        ]),
+      },
+      productOption: { findMany: vi.fn(async () => []) },
+    };
+    const columns = columnsByType();
+    columns.product = buildColumnsForType(
+      "product",
+      [{ namespace: "custom", key: "care", type: "single_line_text_field" }],
+      fullCaps,
+    );
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columns },
+      [
+        {
+          rowId: PRODUCT,
+          rowType: "product",
+          locale: LOCALE,
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Soie",
+        },
+      ],
+    );
+
+    expect(translationSavedAt(METAFIELD)).not.toBeNull();
+    expect(translationSavedAt(subResourceLockId(PRODUCT))).not.toBeNull();
+    expect(translationSavedAt(PRODUCT)).toBeNull();
+  });
+
+  it("a featured-alt cell claims the featured-alt key, not the collection", async () => {
+    const COLLECTION = "gid://shopify/Collection/lock-alt";
+    const IMAGE = "gid://shopify/CollectionImage/lock-alt-1";
+    const { admin } = mockAdmin((query) => {
+      if (query.includes("bulkFeaturedImageId")) {
+        return { data: { collection: { image: { id: IMAGE } } } };
+      }
+      if (query.includes("translatableContent")) {
+        return { data: { translatableResource: { translatableContent: [{ key: "alt", digest: "d-alt" }] } } };
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "alt", locale: LOCALE, value: "Vase bleu", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [
+        {
+          rowId: COLLECTION,
+          rowType: "collection",
+          locale: LOCALE,
+          marketId: "",
+          columnId: FEATURED_IMAGE_ALT_COLUMN_ID,
+          value: "Vase bleu",
+        },
+      ],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(translationSavedAt(featuredAltLockId(COLLECTION))).not.toBeNull();
+    expect(translationSavedAt(COLLECTION)).toBeNull();
+  });
+
+  it("a MARKET-layer write claims the market key — invisible to the repair, visible to the sync", async () => {
+    const COLLECTION = "gid://shopify/Collection/lock-alt-market";
+    const IMAGE = "gid://shopify/CollectionImage/lock-alt-market-1";
+    const MARKET = "gid://shopify/Market/9";
+    const { admin } = mockAdmin((query) => {
+      if (query.includes("bulkFeaturedImageId")) {
+        return { data: { collection: { image: { id: IMAGE } } } };
+      }
+      if (query.includes("translatableContent")) {
+        return { data: { translatableResource: { translatableContent: [{ key: "alt", digest: "d-alt" }] } } };
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "alt", locale: LOCALE, value: "Vase bleu", market: { id: MARKET } }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+
+    const result = await applyBulkDiff(
+      { db: mockDb() as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [
+        {
+          rowId: COLLECTION,
+          rowType: "collection",
+          locale: LOCALE,
+          marketId: MARKET,
+          columnId: FEATURED_IMAGE_ALT_COLUMN_ID,
+          value: "Vase bleu",
+        },
+      ],
+    );
+
+    // Without this the whole test passes vacuously: a refused write claims
+    // nothing either, and every assertion below would still be green.
+    expect(result.failures).toEqual([]);
+    expect(translationSavedAt(marketLayerLockId(featuredAltLockId(COLLECTION)))).not.toBeNull();
+    // The repair writes GLOBAL rows and must not stand down over a layer it
+    // can never collide with.
+    expect(translationSavedAt(featuredAltLockId(COLLECTION))).toBeNull();
+    expect(translationSavedAt(COLLECTION)).toBeNull();
+  });
+
+  it("a MARKET-layer sub-resource write claims the market key only", async () => {
+    const PRODUCT = "gid://shopify/Product/lock-sub-market";
+    const METAFIELD = "gid://shopify/Metafield/lock-sub-market-1";
+    const MARKET = "gid://shopify/Market/11";
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) {
+        return batchDigestResponse(variables, { value: "d-value" });
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "value", locale: LOCALE, value: "Soie", market: { id: MARKET } }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = {
+      ...mockDb(),
+      productMetafield: {
+        findMany: vi.fn(async () => [
+          { id: METAFIELD, productId: PRODUCT, namespace: "custom", key: "care" },
+        ]),
+      },
+      productOption: { findMany: vi.fn(async () => []) },
+    };
+    const columns = columnsByType();
+    columns.product = buildColumnsForType(
+      "product",
+      [{ namespace: "custom", key: "care", type: "single_line_text_field" }],
+      fullCaps,
+    );
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columns },
+      [
+        {
+          rowId: PRODUCT,
+          rowType: "product",
+          locale: LOCALE,
+          marketId: MARKET,
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Soie",
+        },
+      ],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(translationSavedAt(marketLayerLockId(subResourceLockId(PRODUCT)))).not.toBeNull();
+    expect(translationSavedAt(subResourceLockId(PRODUCT))).toBeNull();
+    expect(translationSavedAt(METAFIELD)).toBeNull();
+    expect(translationSavedAt(PRODUCT)).toBeNull();
   });
 });

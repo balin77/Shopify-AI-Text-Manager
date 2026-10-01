@@ -42,6 +42,104 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // ── Managed AI (PLAN_MANAGED_AI_KEY Phase 1) ───────────────────────────────
+  //
+  // The key source is a SECOND AXIS beside the plan, never a fifth plan value:
+  // every `Record<Plan, …>` in the app keeps working, and a merchant on any
+  // tier can be on either side of it.
+  //
+  // `aiKeySource` is the merchant's STORED CHOICE ("byo" | "managed"). It may
+  // only be set to "managed" while the verified subscription says so, and
+  // switching to managed NEVER deletes a stored key — the way back has to stay
+  // one click, or "I hit the cap" becomes a support ticket.
+  aiKeySource String @default("byo")
+
+  // Mirrored from the SHOPIFY-VERIFIED subscription by checkAndSyncSubscription,
+  // exactly like `subscriptionPlan` — never from a form field and never from
+  // the client. A merchant cannot grant themselves managed AI by posting.
+  managedAiActive Boolean @default(false)
+
+  // When the current BILLING period ends, mirrored from the same subscription.
+  //
+  // The budget is per BILLING period, not per calendar month (§7 rule 3), and
+  // the difference is money: plans bill EVERY_30_DAYS with APPLY_IMMEDIATELY
+  // proration on switches, so a calendar key hands a sign-up on the 31st two
+  // full budgets in one period — on Max that is a 29.4 % cost share, 1.47x the
+  // guard the whole pricing rests on — and makes upgrade-spend-cancel a
+  // repeatable ~EUR 3.87 loop. NULL means the period is unknown, and the
+  // budget key then falls back to the calendar month, which is the honest
+  // answer rather than a guessed period boundary.
+  managedAiPeriodEnd DateTime?
+
+  // Explicit, logged, versioned consent to processing content through the
+  // OPERATOR's AI account (compliance audit §B4's second acceptable fix, which
+  // is the only thing that makes managed mode buildable). Never pre-ticked,
+  // never bundled into the plan purchase, and re-asked when the version
+  // changes — which it does the day a managed sub-processor changes.
+  aiProcessingConsentAt      DateTime?
+  aiProcessingConsentVersion String?
+
+  // The one-time managed-AI TASTER (PLAN_MANAGED_AI_KEY §10) — the grant that
+  // lets an evaluating merchant see the feature before buying anything.
+  //
+  // Once per shop, EVER: a shop that spent it on Free gets nothing extra
+  // during the paid trial it later starts, and nothing extra as a dev store.
+  // Tracked exactly like `trialConsumedAt`, with the same stated residual — an
+  // uninstall plus a GDPR redact clears it, so a determined merchant can
+  // re-grant by reinstalling. Accepted: the grant is worth cents, and
+  // retaining a record of an uninstalled shop is a GDPR conversation not worth
+  // having at this price.
+  managedAiTasterGrantedAt DateTime?
+
+  /**
+   * What the taster was WORTH when it was granted, in micro-euro — frozen.
+   *
+   * The limit is derived from the price of the managed default model, and the
+   * used figure never resets. Re-deriving it on every read made "once, ever"
+   * false in both directions: moving `MANAGED_AI_MODEL` to a dearer model
+   * silently re-granted a second taster to every shop that had spent its
+   * first, and moving to a cheaper one retroactively exhausted shops in the
+   * middle of theirs. An ops action nobody would associate with a grant is
+   * exactly the kind that must not be one.
+   *
+   * Null means "not granted yet", and then the current derivation applies —
+   * which is what makes a model change move the cost for NEW shops, as §10
+   * intends, and leave settled ones alone.
+   */
+  managedAiTasterMicros Int?
+
+  /**
+   * When the taster was found SPENT — a stamp, not the enforcement.
+   *
+   * The ledger row under the `taster` key is what refuses a second grant.
+   * This exists because `resolveAiCredentials` is synchronous and runs on
+   * every detached path: without a column it cannot know, and a shop whose
+   * AI-included plan ENDED would stay in managed mode with a spent taster
+   * and a perfectly good API key of its own that nothing ever reached.
+   */
+  managedAiTasterSpentAt DateTime?
+
+  // Is this a Shopify PARTNER DEVELOPMENT store? Three-valued on purpose
+  // (null = never determined), written at subscription-sync time where an
+  // admin client exists. `isDevStore`'s catch returns false, so a lookup that
+  // FAILED and a shop that is genuinely not a dev store are the same boolean —
+  // the `attributesSyncedAt` trap again. The credential resolver runs per AI
+  // request, including on detached paths that hold no admin client at all, so
+  // looking it up there would permanently answer "not a dev store" (= uncapped)
+  // on exactly the unattended paths the cap exists for.
+  partnerDevelopment Boolean?
+
+  /**
+   * The verified subscription carries `test: true`, i.e. it charges nothing —
+   * §7a's second signal, mirrored because the credential resolver runs on
+   * detached paths that hold no admin client and cannot ask Shopify.
+   *
+   * Three-valued like `partnerDevelopment` beside it: null means no sync has
+   * established it, and an unknown answer must not cost a paying merchant
+   * their budget. Written only where a subscription was really read.
+   */
+  subscriptionIsTest Boolean?
+
   // How to handle Shopify's richtext rule ("all top level nodes must be
   // <p>/<ul>/<ol>/<h1>-<h6>") when saving primary theme-settings values
   // (e.g. Brand information → brand_description). Merchant-selectable in Settings.
@@ -51,6 +149,41 @@ model AISettings {
   //               pushing, no retry round-trip.
   //   "error"     — never rewrite merchant HTML; surface a clear instruction.
   themeRichtextMode String @default("autofix")
+
+  // May the AI LOOK at the shop's images, and at how many per request?
+  //
+  // ONE answer for the whole app (AI instructions → General). It used to be a
+  // checkbox in the content editor's toolbar that reset to off on every page
+  // load, was absent from the create dialog until recently, and was hardcoded
+  // to FALSE in the alt-text action the image manager posts to — so the same
+  // merchant got three different behaviours depending on which button they
+  // pressed. The client no longer sends the flag at all: it sends the image
+  // URLs it has and the SERVER decides, which is also the only way to gate it
+  // (every AI route takes a direct POST).
+  //
+  // Off by default: vision costs more per call than text, two of the six
+  // providers cannot do it at all, and nobody should pay for a feature they
+  // did not ask for.
+  sendImagesToAI Boolean @default(false)
+
+  // How many images one generation may carry. 1 keeps the historic behaviour
+  // (the selected image, or the featured one). Clamped to
+  // AI_IMAGES_PER_REQUEST_MAX on both sides — each image is a separate cost,
+  // and for Gemini a separate download inside the request. Alt text ignores
+  // this entirely: it describes ONE image, and sending its siblings along
+  // would only invite the model to describe the wrong one.
+  aiImagesPerRequest Int @default(1)
+
+  // PLAN_CONTENT_CREATION §Phase 3.3 / §A1 — create a URL redirect when a
+  // handle changes.
+  //
+  // Default ON, deliberately: changing a handle silently 404s every existing
+  // link to the old address (search results, the merchant's own newsletter,
+  // other sites), and this app changed handles in three places while creating
+  // a redirect in none of them. A stray redirect is untidy; a broken URL costs
+  // traffic. Off is for merchants still shaping their handles, where the
+  // redirects would only be noise.
+  seoAutoHandleRedirect Boolean @default(true)
 
   // Theme selected by the merchant for theme-bezogene Inhalte (Templates /
   // Theme-Settings / Locale-Content). Stored as the Shopify Theme-GID
@@ -74,6 +207,17 @@ model AISettings {
   // through the in-app path skip the sweep entirely.
   llmsTxtLastAutoRunAt DateTime?
 
+  // Merchant-authored opening paragraph of the two AI-discovery files
+  // (SEO → AI search, step 2). Everything else in those documents is generated
+  // from the catalog and MUST stay generated — a hand-edited product list goes
+  // stale the moment a price or a handle changes, and the auto-refresh would
+  // overwrite it anyway. The intro is the one part no catalog query can know:
+  // who is behind the shop, where it ships, what it wants an agent to say
+  // about it. NULL means "use the generated default", which is what every shop
+  // starts with.
+  aiDiscoveryIntroAgents String?
+  aiDiscoveryIntroLlms   String?
+
   // "Übersetzungen mitführen" on SEO → interne Verlinkung. Accepting a
   // suggestion only wraps an existing word in an <a>, so the wording is
   // unchanged and the primary save's stale-translation purge would throw away
@@ -92,6 +236,10 @@ model AISettings {
   // this column is provably never consulted by the public App-Store build.
   // null = no override (normal Shopify-derived plan).
   devForcedPlan String? // "free" | "basic" | "pro" | "max" | null
+  // Dev build only, and only with MANAGED_AI_ALLOW_DEV_BUILD: the forced plan
+  // was chosen as its "+ AI" variant. The custom-app build has no Billing API,
+  // so nothing else can record that a managed plan was "bought" there.
+  devForcedManagedAi Boolean @default(false)
 
   // Persistent per-shop trial-consumption marker. Set ONCE when a trial-bearing
   // subscription is verified ACTIVE (never optimistically at the mutation call,
@@ -136,20 +284,20 @@ model AISettings {
   deepseekMaxRequestsPerMinute Int? @default(60)
 
   // SEO Title suffix (shop name appended by Shopify theme)
-  seoTitleSuffixEnabled Boolean @default(false)
+  seoTitleSuffixEnabled Boolean   @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
   // Merchant switch for the nightly audit (Settings → SEO). Default ON so an
   // entitled shop gets the trend without hunting for a checkbox; the sweep
   // filters on it IN THE QUERY, so switching it off costs nothing per tick.
   // Independent of the plan gate: both must hold for a scan to happen.
-  seoAutoAuditEnabled Boolean @default(true)
+  seoAutoAuditEnabled   Boolean   @default(true)
   // Last automatic (nightly) SEO audit run for this shop — see
   // services/seo/audit-auto-run.service.ts. Null = never auto-scanned. Drives
   // the sweep's "is this shop due" query and is stamped on every path
   // (success, skip, error) so a broken shop cannot win it forever. Backoff
   // stamp, NOT a lock. Only shops on a plan with seo.scheduledAudit are ever
   // selected.
-  lastAutoAuditAt DateTime?
+  lastAutoAuditAt       DateTime?
 
   // PLAN_SEO_CRAWL_EXPANSION §6.5 — check outbound links to OTHER domains
   // after the storefront crawl. Default ON (the report is worth little
@@ -158,6 +306,23 @@ model AISettings {
   // crawl take longer.
   seoCrawlExternalLinks Boolean @default(true)
 
+  // Merchant switch for the weekly automatic storefront crawl (Settings → SEO).
+  // Default ON for the same reason as seoAutoAuditEnabled — an entitled shop
+  // should get the delivery report without hunting for a checkbox — and ANDed
+  // into the sweep's due-query, so switching it off costs nothing per tick.
+  seoAutoCrawlEnabled   Boolean   @default(true)
+  // Last automatic storefront crawl for this shop — see
+  // services/seo/crawl-auto-run.service.ts. Null = never auto-crawled. Same
+  // backoff-stamp rules as lastAutoAuditAt: written on every path, never a
+  // lock, and only shops on a plan with seo.scheduledCrawl are selected.
+  // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
+  // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
+  lastAutoCrawlAt       DateTime?
+  // Backoff stamp for the translation-drift sweep — the change event Shopify
+  // does not send for pages, articles, blogs and policies. Its own column
+  // because it has its own cadence; one stamp cannot express two.
+  lastTranslationScanAt DateTime?
+
   // Keyword-aware translation: a translation into a foreign locale is
   // phrased so THAT locale's own tracked keyword survives, instead of being
   // a literal rendering of the primary text. Default on — it is what a
@@ -165,6 +330,46 @@ model AISettings {
   // exists for shops whose translations must stay strictly faithful
   // (legal copy, regulated product text).
   keywordAwareTranslation Boolean @default(true)
+
+  // Stale-translation purge switch ("Übersetzungen bei Änderung löschen").
+  // When a PRIMARY value changes (or is cleared), its foreign translations no
+  // longer describe the source text, so every write path in this app removes
+  // them on Shopify AND locally. That is the historic, hard-coded behaviour —
+  // this column makes it a merchant decision. Default TRUE = unchanged
+  // behaviour; FALSE keeps the old translations in place (Shopify then shows
+  // them flagged "outdated" in its own translation editor).
+  // Read through services/translations/translation-change-policy.server.ts,
+  // which fails OPEN (true) so a lookup error can never silently start
+  // preserving stale translations.
+  translationPurgeOnPrimaryChange Boolean @default(true)
+
+  // Max plan: when a sync sees that a primary text moved, do not just delete
+  // the now-stale translation — re-translate the NEW value into that locale.
+  // The name says "External" for historic reasons and the column is NOT
+  // renamed for a label: it SUPERSEDES translationPurgeOnPrimaryChange (the two
+  // are alternatives, resolved in translation-change-policy.server.ts), so it
+  // covers a change made in the Shopify admin, another app, an import AND one
+  // made in this app. Off by default: it spends the merchant's AI budget
+  // without them being present. Plan-gated to "max" at every read (the column
+  // may hold `true` from a period on a higher plan).
+  autoTranslateExternalChanges Boolean @default(false)
+
+  // The sub-decision under autoTranslateExternalChanges: may the automatic
+  // re-translation also rewrite a URL HANDLE? Off by default, and deliberately
+  // its own column rather than part of the switch above — a slug is a URL, so
+  // rewriting one unattended moves a storefront page. With it on, a handle
+  // translation is REFRESHED (never created where none existed) and only where
+  // the app can put a redirect on the old foreign URL first; see
+  // services/translations/handle-retranslation.server.ts.
+  // Read through translation-change-policy.server.ts, which ANDs it with the
+  // parent switch AND the plan on every read — the stored value survives both
+  // a downgrade and a merchant switching the parent off to try something.
+  autoTranslateHandles Boolean @default(false)
+  // Optional daily limit on FIRST automatic translations (resources whose
+  // auto-translation rests on PrimaryDigestBaseline alone). NULL = no limit.
+  // Settings -> KI-Anweisungen -> Übersetzungen, under the handle switch.
+  // Plan-gated with autoTranslateExternalChanges; only read while that is on.
+  autoTranslateDailyLimit Int?
 
   // Translation length policy. "exact" (default) preserves source length —
   // legal/rechts pages must not shrink. "seo_optimized" appends per-field
@@ -197,11 +402,20 @@ model AISettings {
   // ["Product:gid://shopify/Product/123"]. null/absent = nothing dismissed.
   seoFreshnessDismissed Json?
 
+  /// UNUSED. Backed an in-app banner explaining the Phase 4 re-consent, which
+  /// was removed as unwanted. Kept because its migration may already be
+  /// applied, and a drop-migration for a column that might not exist is the
+  /// riskier error than a dead nullable one. Safe to drop deliberately.
+  commerceNoticeDismissedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Backs the nightly-audit sweep's due-query (audit-auto-run.service.ts).
   @@index([subscriptionPlan, lastAutoAuditAt])
+  // Same, for the weekly crawl sweep (crawl-auto-run.service.ts).
+  @@index([subscriptionPlan, lastAutoCrawlAt])
+  @@index([subscriptionPlan, lastTranslationScanAt])
 }
 
 // Product metafield definitions a merchant has explicitly enabled for the
@@ -413,6 +627,20 @@ model Task {
   provider        String? // AI provider used (huggingface, gemini, claude, openai, grok, deepseek) - for recovery
   aiModel         String? // AI model name used (e.g., gpt-4o, claude-3-5-sonnet-20241022)
 
+  // What this run really consumed (PLAN_MANAGED_AI_KEY §4.3). `estimatedTokens`
+  // above is the QUEUE's guess, taken before the call and charging a flat 8192
+  // output tokens; these three are the measured aftermath, summed over every
+  // provider call the task made. Task rows expire after 3 days, so this is the
+  // cheapest possible per-run cost record — the durable one is AiUsageCounter.
+  //
+  // A 0 here means "nothing recorded", never a measured zero: a row written
+  // before the meter shipped reads the same as a run that made no AI call. The
+  // ambiguity is bounded by `expiresAt` (3 days) and is the reason these are
+  // per-run convenience columns rather than a source anything bills from.
+  inputTokens  Int @default(0)
+  outputTokens Int @default(0)
+  costMicros   Int @default(0) // micro-EUR, priced per model (app/config/ai-pricing.ts)
+
   startedAt   DateTime  @default(now())
   completedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -458,21 +686,92 @@ model Product {
   // does NOT paginate variants (§5.1).
   hasMoreVariants Boolean @default(false)
 
+  // Mirror of the product-video upload dates this app last wrote to the
+  // `custom.video_upload_dates` metafield (services/seo/video-schema.*).
+  // Liquid cannot know when a video was uploaded, and `uploadDate` is one of
+  // Google's required VideoObject properties — so the sync carries the Admin
+  // API's `File.createdAt` into a metafield the storefront block reads back.
+  // This column exists to make that write DIFF-driven: null means "nothing
+  // written / no videos", and a value equal to the freshly built one means no
+  // Shopify call at all. It mirrors what was PUSHED (and echoed), never what
+  // was merely intended.
+  videoSchemaJson String? @db.Text
+
+  // ── PLAN_CONTENT_CREATION Phase 0 — merchandising attributes ──────────────
+  // Everything below is fetched by the product sync from Phase 0 on. Rows
+  // written by an OLDER sync carry the column defaults, which for `vendor`
+  // (null), `tags` ([]) and `isSmart`-style booleans is INDISTINGUISHABLE from
+  // "the merchant left it empty" — the same trap as SeoCrawlPage.metaRobots.
+  // `attributesSyncedAt` is the discriminator and the ONLY thing that tells
+  // them apart: null ⇒ every column in this block is UNKNOWN, not "missing".
+  // The attribute sidebar (§Phase 2) must gate on it before it shows a red dot.
+  vendor             String?
+  // Shopify product tags, verbatim and in Shopify's order. A scalar list can
+  // never be null in Prisma, so [] alone says nothing — read it together with
+  // `attributesSyncedAt`. The explicit @default([]) is what the migration's
+  // `DEFAULT ARRAY[]::TEXT[]` needs to be declared as, or `migrate diff` reports
+  // permanent drift against every deployed database.
+  tags               String[]  @default([])
+  // Shopify's product taxonomy. `categoryName` mirrors `fullName`
+  // ("Apparel & Accessories > Clothing"), so the UI can label the category
+  // without a second lookup.
+  categoryId         String?
+  categoryName       String?
+  templateSuffix     String?
+  publishedAt        DateTime?
+  // Collection membership window of the sync: true when the product belongs to
+  // MORE collections than `collections(first: N)` fetched. Same reason as
+  // hasMoreVariants — "N memberships" must not read as complete when it is a
+  // truncation.
+  hasMoreCollections Boolean   @default(false)
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
 
   // Relations
   // NOTE: Translations are now stored in ContentTranslation table (polymorphic)
-  images     ProductImage[]
-  options    ProductOption[]
-  metafields ProductMetafield[]
-  variants   ProductVariant[]
+  images       ProductImage[]
+  options      ProductOption[]
+  metafields   ProductMetafield[]
+  variants     ProductVariant[]
+  collections  ProductCollection[]
+  publications ProductPublication[]
 
   @@unique([shop, id])
   @@index([shop])
   @@index([shop, status])
   @@index([lastSyncedAt])
+}
+
+/// Collection membership of a product (PLAN_CONTENT_CREATION Phase 0).
+///
+/// Deliberately NOT a foreign key to `Collection`: the collection cache is
+/// capped by the merchant's plan (`maxCollections`), so a membership can point
+/// at a collection this shop never cached. `collectionTitle` is mirrored for
+/// exactly that case — without it a capped-out membership would render as a
+/// bare GID. Rows are rebuilt per product on every sync (delete-by-product +
+/// createMany), so they never accumulate.
+model ProductCollection {
+  id        String  @id @default(cuid())
+  shop      String
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  collectionId    String
+  collectionTitle String
+
+  // True for a collection whose membership is rule-based on Shopify's side —
+  // Phase 3's membership picker must not offer to "remove" such a row, the
+  // rule would just re-add it.
+  automated Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, collectionId])
+  @@index([productId])
+  @@index([shop, collectionId])
 }
 
 model ProductImage {
@@ -576,7 +875,132 @@ model ProductVariant {
   compareAtPrice Decimal? @db.Decimal(12, 2)
   barcode        String?
 
+  // ── PLAN_CONTENT_CREATION Phase 4 — the commerce block ────────────────────
+  //
+  // `inventoryItemId` is the KEY to all of it: quantities, cost and the
+  // shipping fields live on InventoryItem, not on the variant, and every write
+  // below addresses that GID. A variant without one cannot have its stock
+  // edited — which is a fact to SHOW, not to guess around.
+  inventoryItemId      String?
+  // Cost per item (`InventoryItem.unitCost`). Decimal for the same reason
+  // `price` is: money as Float is a rounding error waiting to happen.
+  cost                 Decimal?  @db.Decimal(12, 2)
+  // These four are `InventoryItem` fields, not variant fields. Nullable
+  // because "not fetched" and "the merchant left it empty" must stay
+  // distinguishable — `commerceSyncedAt` is the discriminator.
+  taxable              Boolean?
+  requiresShipping     Boolean?
+  weight               Decimal?  @db.Decimal(12, 3)
+  weightUnit           String?
+  harmonizedSystemCode String?
+  countryCodeOfOrigin  String?
+  // `tracked` on InventoryItem; `inventoryPolicy` on the variant. Together
+  // they decide whether a quantity means anything at all — an untracked
+  // variant has no stock to show, and showing 0 for one is a lie.
+  inventoryTracked     Boolean?
+  inventoryPolicy      String?
+  /// THE discriminator for the block above (same rule as
+  /// `Product.attributesSyncedAt`): unset ⇒ every field in it is UNKNOWN, not
+  /// "empty". Without it a variant row written by an older sync would report
+  /// cost 0, untaxed and untracked — confident and wrong.
+  commerceSyncedAt     DateTime?
+
+  inventoryLevels InventoryLevel[]
+
   @@index([productId])
+}
+
+/// A location that can hold stock (PLAN_CONTENT_CREATION Phase 4).
+///
+/// Cached for LABELS and ordering only. Stock itself is volatile and the truth
+/// is always Shopify's — this table exists so the inventory UI can say
+/// "Warehouse Berlin" instead of a GID, and so the location list survives a
+/// throttled lookup.
+model Location {
+  id       String  @id // gid://shopify/Location/...
+  shop     String
+  name     String
+  /// A deactivated location keeps its stock but accepts no writes. Shown
+  /// greyed rather than hidden: its quantity is still part of the total, and a
+  /// location that silently vanishes reads as stock that disappeared.
+  isActive Boolean @default(true)
+  /// Shopify's own primary/fulfilment ordering, mirrored so the UI does not
+  /// have to invent one.
+  position Int     @default(0)
+
+  syncedAt DateTime @default(now())
+
+  levels InventoryLevel[]
+
+  @@unique([shop, id])
+  @@index([shop])
+}
+
+/// On-hand and available stock of ONE variant at ONE location.
+///
+/// ── This cache is a DISPLAY, never a base for arithmetic ────────────────────
+/// Stock changes from orders, returns and other apps between two page loads.
+/// Computing `new = cached + delta` and writing that back is the classic
+/// source of inventory drift, and it is why the write path uses
+/// `inventorySetQuantities` with an ABSOLUTE value and a compareQuantity —
+/// never a delta over anything stored here.
+model InventoryLevel {
+  id              String         @id @default(cuid())
+  shop            String
+  /// gid://shopify/InventoryItem/... — the address every write uses.
+  inventoryItemId String
+  variantId       String
+  variant         ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId      String
+  location        Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  /// Physically present. The number a merchant counts in the room.
+  onHand    Int?
+  /// On hand minus what is committed to unfulfilled orders. The number a
+  /// storefront sells against. Both nullable: an untracked item reports
+  /// neither, and 0 would be a different claim.
+  available Int?
+
+  syncedAt DateTime @default(now())
+
+  @@unique([variantId, locationId])
+  @@index([shop])
+  @@index([inventoryItemId])
+}
+
+/// A sales channel a product is published to (PLAN_CONTENT_CREATION Phase 4).
+///
+/// §2.3's trap made concrete: `status: ACTIVE` is NOT visibility. A product
+/// that is active but published to no channel is invisible everywhere, and
+/// nothing in the Shopify admin says so on the product page either. This table
+/// is what lets the editor say it.
+model ProductPublication {
+  id        String  @id @default(cuid())
+  shop      String
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// gid://shopify/Publication/...
+  publicationId   String
+  /// Mirrored so a publication the shop later loses still renders as a name.
+  publicationName String
+  /// Which KIND of catalog this publication belongs to: "app" (a sales
+  /// channel), "market" (a region), "companyLocation" (B2B) — or "" for
+  /// UNKNOWN, which is what a row written before this column existed and a
+  /// publication whose catalog Shopify did not deliver both carry. Unknown is
+  /// never read as "app": it renders where it always did, but it is not
+  /// evidence for the "on no channel — invisible" alarm.
+  catalogType     String    @default("")
+  /// Published AND its publish date has passed. A future date is `false` with
+  /// `publishDate` set — "scheduled" is not "live", and collapsing the two
+  /// makes a scheduled launch look like a mistake.
+  isPublished     Boolean   @default(false)
+  publishDate     DateTime?
+
+  syncedAt DateTime @default(now())
+
+  @@unique([productId, publicationId])
+  @@index([shop])
 }
 
 model OptionValueMemory {
@@ -608,6 +1032,44 @@ model GroupedFieldTranslation {
 
   @@unique([shop, fieldKey, sourceLocale, sourceValueNorm, targetLocale])
   @@index([shop, fieldKey, sourceLocale])
+}
+
+/// Shopify's product taxonomy, in the merchant's language.
+///
+/// The Admin API answers `taxonomy.categories` in ENGLISH and offers no way to
+/// ask otherwise -- measured twice on a live shop (Settings -> Probes ->
+/// Taxonomy): `@inContext` is not defined in the Admin schema at all, and an
+/// `Accept-Language` header is accepted and changes nothing, for every locale
+/// of the shop including its primary one. The German names the admin renders
+/// come from Shopify's OPEN DATA instead, keyed by the very same GIDs, and
+/// this table is that file after import.
+///
+/// NOT scoped by shop, and that is the one deliberate exception to the
+/// multi-tenant rule: these rows are Shopify's public taxonomy, identical for
+/// every merchant on the platform, and hold nothing a shop owns. Scoping them
+/// would store 14 608 rows per locale PER SHOP for data that cannot differ.
+model TaxonomyCategoryName {
+  id        String   @id @default(cuid())
+  /// The dist folder of Shopify's taxonomy repo: "de", "pt-BR".
+  locale    String
+  /// "gid://shopify/TaxonomyCategory/hg-3-72" -- the id the Admin API returns.
+  gid       String
+  /// The whole path, which is what identifies a category to a human.
+  fullName  String
+  /// The last segment, split at import so no read has to do it. This is what a
+  /// derived product type is built from.
+  name      String
+  /// Has no children. DERIVED from the GID hierarchy at import (the file does
+  /// not carry it) — the picker marks a non-leaf "(broad)", and a search hit
+  /// with no answer here would be marked broad whether it is or not.
+  isLeaf    Boolean
+  /// The taxonomy release these rows came from ("2026-05"). Diagnostic: the
+  /// import is triggered by an unknown GID, not by comparing versions.
+  version   String   @default("")
+  updatedAt DateTime @updatedAt
+
+  @@unique([locale, gid])
+  @@index([locale])
 }
 
 model ImageManagerSettings {
@@ -669,6 +1131,28 @@ model Collection {
   seoTitle        String?
   seoDescription  String? @db.Text
 
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  sortOrder      String? // Shopify CollectionSortOrder, verbatim (e.g. "BEST_SELLING")
+  templateSuffix String?
+  // True when membership is rule-based rather than hand-picked. Derived from
+  // whatever the pinned API version exposes (2025-10: `ruleSet`; 2026-07 on:
+  // a non-empty `sources[]`), never from a client claim.
+  isSmart        Boolean @default(false)
+  /// The FULL rule tree, never flattened (PLAN §2.4): the editor must be able
+  /// to hand back structures it cannot render instead of silently simplifying
+  /// them, which would change a collection's membership unnoticed.
+  ///
+  /// Stored as a DISCRIMINATED envelope, because the shape depends on the API
+  /// version the sync ran against and the two are not interchangeable:
+  ///   { "shape": "ruleSet", "apiVersion": "2025-10", "data": { … } }
+  ///   { "shape": "sources", "apiVersion": "2026-07", "data": [ … ] }
+  /// A bare tree would leave a reader guessing which model it is looking at —
+  /// exactly the "empty column is never evidence" trap. null = never synced.
+  sourcesJson    Json?
+
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
@@ -692,6 +1176,18 @@ model Article {
   seoTitle       String?
   seoDescription String? @db.Text
 
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  // `author` is the one field here that is not merely a gap: ArticleCreateInput
+  // requires it, so article creation is impossible without it (§1.4).
+  author         String?
+  tags           String[]  @default([]) // see Product.tags for why the default is explicit
+  templateSuffix String?
+  isPublished    Boolean   @default(true)
+  publishedAt    DateTime?
+
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
@@ -712,6 +1208,14 @@ model Page {
   // SEO fields (optional — only present if set in Shopify admin)
   seoTitle       String?
   seoDescription String? @db.Text
+
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  templateSuffix String?
+  isPublished    Boolean   @default(true)
+  publishedAt    DateTime?
+
+  attributesSyncedAt DateTime?
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -795,6 +1299,79 @@ model ContentTranslation {
   @@index([locale])
   @@index([shop, resourceType])
   @@index([shop, resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
+}
+
+// The PRIMARY text's digest per resource — the stale-translation gate's second
+// baseline, independent of translation rows (CLAUDE.md: "A sync repairs
+// translations whose primary text changed where no editor of ours saw it").
+//
+// The first baseline lives ON ContentTranslation rows, so a resource nobody has
+// translated yet carried none, and an edit made in the Shopify admin could never
+// be proven for it. This row is what Shopify reported in `translatableContent`
+// the last time a change-event sync (or the nightly drift sweep) looked:
+// `digests` is a JSON map key -> digest over MANAGED_TRANSLATION_KEYS only.
+//
+// No row, or no entry for a key, is NO EVIDENCE — the first sync after the
+// deploy only writes baselines and translates nothing.
+//
+// Polymorphic like ContentTranslation (Product/Collection/Page/Article/Blog/
+// ShopPolicy), so there is no FK: redactShopData() deletes by `shop`, and
+// purgeContentFromCache() deletes by (shop, resourceId).
+model PrimaryDigestBaseline {
+  id           String   @id @default(cuid())
+  shop         String
+  resourceId   String
+  resourceType String
+  digests      Json
+  updatedAt    DateTime @updatedAt
+
+  @@unique([shop, resourceId])
+  @@index([shop, resourceType])
+}
+
+// The brake on first translations proven only by PrimaryDigestBaseline: one row
+// per (shop, UTC day) counting the resources whose auto-translation rested on
+// that evidence alone. Past AUTO_TRANSLATE_FIRST_FILL_DAILY_CAP the rest are
+// REFUSED — reported in a Task row, their baseline NOT advanced, so the work is
+// deferred rather than swallowed. Shop-scoped: redactShopData() deletes it.
+model AutoTranslateFillBudget {
+  shop    String
+  day     String // "YYYY-MM-DD", UTC
+  used       Int      @default(0)
+  // Resources refused today — DISTINCT ids, not events: a held resource is
+  // refused again on every later change event that day.
+  refusedIds String[] @default([])
+
+  @@id([shop, day])
+}
+
+// The retry list for automatic translations: resources whose run FAILED or
+// that the daily limit REFUSED. One row per (shop, resource); `pairs` is the
+// JSON list of {key, locale} still owed. The nightly drift sweep retries
+// pending rows; MAX two attempts (a limit postponement does not count), after
+// which the row stays as "exhausted" so the merchant can see it. Shop-scoped
+// and FK-less: redactShopData deletes by shop, purgeContentFromCache and the
+// sync delete helpers by (shop, resourceId).
+model AutoTranslateRetry {
+  id            String   @id @default(cuid())
+  shop          String
+  resourceId    String
+  resourceType  String // "Product" | "Collection" | "Page" | "Article" | "Blog" | "ShopPolicy"
+  contentKind   String // "product" | "collection" | "page" | "blog"
+  resourceTitle String?
+  pairs         Json
+  reason        String // "limit" | "failed"
+  attempts      Int      @default(0)
+  status        String   @default("pending") // "pending" | "running" | "exhausted"
+  lastError     String? // a CODE (not_delivered | could_not_start | unreadable | run_failed), rendered in settings
+  // When the current attempt started — the stale-"running" check reads this,
+  // never updatedAt, which every enqueue bumps.
+  startedAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, resourceId])
+  @@index([shop, status])
 }
 
 // ============================================
@@ -888,7 +1465,35 @@ model MetaobjectDefinition {
   type             String // Metaobject type identifier (e.g., "size_guide", "product_spec")
   name             String // Display name
   description      String? @db.Text
-  fieldDefinitions Json // Array of field definitions with keys and types
+  /// Array of field definitions. Shape (PLAN_CONTENT_CREATION Phase 0):
+  ///   { key, name, type: { name }, required, validations: [{ name, value }] }
+  ///
+  /// `required` and `validations` were added in Phase 0 — WITHOUT them the
+  /// create form cannot mark a field as mandatory, and it would offer entries
+  /// Shopify then rejects (§1.5). Rows synced before Phase 0 carry entries
+  /// with `required` ABSENT: absent ≠ false. A reader that needs the flag must
+  /// treat `undefined` as "unknown" and re-sync, not as "optional".
+  fieldDefinitions Json
+
+  /// PLAN_METAOBJECTS_EDITOR §7.2 — Shopify's `MetaobjectAccess.admin` for this
+  /// definition ("MERCHANT_READ_WRITE", "MERCHANT_READ", "PRIVATE", ...).
+  ///
+  /// NULL means UNKNOWN — the row predates the column or the sync could not
+  /// read it — and is NEVER read as "writable" or as "read-only". Only a value
+  /// this app KNOWS excludes writes locks the entry editor; unknown behaves as
+  /// it always did and offers a resync. Same discriminator rule as
+  /// `attributesSyncedAt`.
+  adminAccess String?
+
+  /// Shopify's `capabilities.translatable.enabled` for this definition.
+  ///
+  /// NULL means UNKNOWN — the row predates the column, or a narrower query did
+  /// not carry it — and is NEVER read as "does not translate". Only a KNOWN
+  /// false takes a type out of the "this locale still needs work" count, which
+  /// is what keeps the language buttons from pulsing forever on a type whose
+  /// Translations capability is simply switched off. Same rule as
+  /// `adminAccess` above.
+  translatableCapability Boolean?
 
   lastSyncedAt DateTime @default(now())
 
@@ -1063,6 +1668,116 @@ model ImageOperationCounter {
   @@index([shop])
 }
 
+// What the AI really consumed (PLAN_MANAGED_AI_KEY §4.3).
+//
+// Usage data, not entitlement data — the same rule ImageOperationCounter above
+// follows, so it is deliberately absent from getSyncScope / planCacheCleanup.
+//
+// The KEY is the whole design, and the first cut got it wrong in a way that
+// made the feature pointless: it was (shop, period, source) alone, one row per
+// shop per month, which blends every feature, provider and model into a single
+// average that describes none of them. Phase 0 exists to answer "what does one
+// operation cost, per feature" and that key cannot be asked it. The only store
+// carrying the feature dimension was `Task`, which the reaper deletes after 3
+// days — so a 4-week measurement window would have kept its last three days.
+// Every dimension below is therefore part of the key:
+//   • `source`    — the merchant's own key ("byo") or the operator's
+//                   ("managed"). BYO is metered too, uncapped: it is where this
+//                   app's price numbers come from, and it is the "what is this
+//                   costing me" answer no provider API gives uniformly.
+//   • `provider` + `model` — because they are what the price depends on. They
+//                   also make "was this row priced at the unknown-model
+//                   ceiling / not priced at all" DERIVABLE at read time from
+//                   app/config/ai-pricing.ts, which is why no column says so.
+//   • `feature`   — `Task.type` (bulkTranslation, aiGeneration, seoBulkFix …),
+//                   or "adhoc" for a call that belongs to no task.
+//   • `estimated` — whether the provider reported the token counts or we
+//                   counted characters. Its own key column rather than a
+//                   counter, so the measured average can be computed WITHOUT
+//                   the estimates in it; mixing them in one row made the one
+//                   number §7's price ladder stands on uncleanable.
+// Row count stays trivial: a few dozen per shop-month.
+//
+// `costMicros` is what WE pay the provider, `billedMicros` what is charged
+// against the merchant's budget. Equal today; they diverge on a failover,
+// where the merchant is billed at the default model's price and we carry the
+// difference (§3a rules 1-2). One column could not express that afterwards.
+//
+// The four volume columns are BIGINT, and that is a correction rather than
+// caution: Int32 holds 2.1e9 TOKENS, which on the pinned managed default is
+// about EUR 99 of input spend — and Postgres RAISES on an integer overflow
+// rather than clamping, so the row would simply stop advancing mid-period,
+// silently, including the very column enforcement reads. They are read back as
+// Number at the one boundary that exposes them (`getAiUsage`), so no BigInt
+// ever reaches a `JSON.stringify`.
+model AiUsageCounter {
+  id            String   @id @default(cuid())
+  shop          String
+  period        String // "m:YYYY-MM" (UTC). Phase 2's billing period is "b:<start>" — prefixed so the two schemes can never be read as one.
+  source        String // "managed" | "byo"
+  provider      String // "openai" | "claude" | "gemini" | "grok" | "deepseek" | "huggingface"
+  model         String // the model id the call actually ran on
+  feature       String // Task.type, or "adhoc"
+  estimated     Boolean // true = token counts were counted, not reported
+  calls         Int      @default(0)
+  failoverCalls Int      @default(0) // calls served by the fallback provider
+  inputTokens   BigInt   @default(0)
+  outputTokens  BigInt   @default(0)
+  costMicros    BigInt   @default(0) // micro-EUR we really paid
+  billedMicros  BigInt   @default(0) // micro-EUR charged against the merchant's budget
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, period, source, provider, model, feature, estimated])
+  @@index([shop, period])
+}
+
+// Every grant and withdrawal of the AI processing consent, append-only.
+//
+// `AISettings.aiProcessingConsentAt/Version` hold the CURRENT answer and are
+// cleared on withdrawal — which also erased the only durable proof that
+// consent existed for the managed calls made before it (GDPR Art. 7(1): the
+// controller must be able to DEMONSTRATE consent; audit §B4 asks for it to be
+// logged). This table is that proof. Deleted with the shop on redact.
+model AiConsentEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  granted   Boolean
+  version   String? // the consent text version agreed to; null on withdrawal
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+}
+
+// The GLOBAL monthly cap on managed AI spend (PLAN_MANAGED_AI_KEY §9.3).
+//
+// Its own table, deliberately NOT a sentinel row in the shop-scoped counter
+// above. Not because the GDPR guard would fail — that guard checks every
+// shop-scoped MODEL is purged, and a `shop: "__global__"` row would simply
+// survive redactShopData's exact-match delete — but because a global counter
+// has no tenant and therefore no business in a per-shop unique key, and a
+// surviving row that LOOKS like a shop is worse than a separate table in
+// every later audit.
+//
+// TWO POOLS, not one. A paid pool sized from the subscriptions actually sold,
+// and a smaller taster pool. With one pool, a listing spike of free installs
+// spending their tasters trips the cap on the 18th and 503s every PAYING
+// merchant for the rest of the month — the plan names free shops as the least
+// accountable population and must not then let them refuse the revenue.
+//
+// `failoverMicros` is what §3a rule 4's budget is measured against: the part
+// of a failover we absorb, which is the gap between what we paid and what the
+// merchant was billed.
+model ManagedAiGlobalCounter {
+  id             String   @id @default(cuid())
+  period         String // same key scheme as AiUsageCounter
+  pool           String // "paid" | "taster"
+  costMicros     BigInt   @default(0)
+  failoverMicros BigInt   @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([period, pool])
+}
+
 // SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon
 // through the /apps/contentpilot/seo-404 app-proxy. Shopify exposes no 404 logs
 // via API, so we collect them ourselves. Mirrors DirectTranslationCandidate:
@@ -1230,21 +1945,55 @@ model GoogleSearchConsoleConnection {
   lastKeywordSyncAt DateTime?
 }
 
+// Visits that arrived from an AI assistant (ChatGPT, Perplexity, Claude, …).
+//
+// Aggregate ONLY: one row per (shop, source, UTC day, landing path) with a
+// counter. No visitor identifier, no cookie, no session, no IP — the beacon
+// sends the referrer's classified SOURCE, never the referrer itself, so a
+// referrer carrying a conversation id or a search term cannot land in the
+// database at all. That is what makes this reportable without a consent
+// dialog, and it is also why the report can never answer "which visitor".
+//
+// Day bucketing rather than raw hits keeps the table bounded (sources ×
+// paths × days) and is the granularity the report actually draws.
+model SeoAiReferral {
+  id       String   @id @default(cuid())
+  shop     String
+  // Normalized source key from classifyAiReferral (e.g. "chatgpt"), never the
+  // raw referrer.
+  source   String
+  // UTC day bucket. Date, not DateTime: the report groups by day and a
+  // timestamp would fragment every bucket by the millisecond.
+  day      DateTime @db.Date
+  // Landing path, query stripped (same rule as Seo404Hit).
+  path     String
+  pathHash String
+  count    Int      @default(1)
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, source, day, pathHash])
+  @@index([shop, day])
+  @@index([shop, source, day])
+}
+
 // SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
 // design (it is served at keyLocation for verification), so it is intentionally
 // stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
+
 model SeoIndexNowConfig {
-  shop        String @id
-  key         String // public IndexNow token (plaintext by design)
+  shop             String    @id
+  key              String // public IndexNow token (plaintext by design)
   // URL where the key file is served: `https://<host>/<key>.txt` — the ROOT of
   // the storefront, because a key under a sub-path only verifies that sub-path
   // (measured; see the service header). A Shopify URL redirect maps that root
   // path onto the app proxy, which does the actual serving.
-  keyLocation String
+  keyLocation      String
   // GID of that `urlRedirect`, so it can be updated/removed instead of
   // orphaned in the merchant's admin. null = not created yet (every row the
   // migration backfilled) — the section loader and the sweep repair it.
-  keyRedirectId String?
+  keyRedirectId    String?
   // Storefront host every submission uses for `host`, `urlList` AND
   // `keyLocation` — the shop's PRIMARY domain, not `*.myshopify.com`. Shopify
   // 301s the myshopify host to the primary domain, which would make both the
@@ -1253,31 +2002,31 @@ model SeoIndexNowConfig {
   // from the config row they already loaded; `syncIndexNowHost` refreshes it
   // whenever the merchant opens the section, so adding a custom domain later
   // fixes itself WITHOUT minting a new key.
-  host        String
+  host             String
   // Last time `host` was checked against the shop's actual primary domain.
   // null = never verified (the migration backfill, or a provision whose lookup
   // failed) — the background sweep refreshes those first, so a shop that never
   // reopens the section still stops submitting myshopify URLs.
-  hostCheckedAt DateTime?
-  enabled       Boolean   @default(true)
+  hostCheckedAt    DateTime?
+  enabled          Boolean   @default(true)
   // Last successful submission of ANY kind (queue drain or full catalog).
-  lastSubmittedAt DateTime?
+  lastSubmittedAt  DateTime?
   // Last successful FULL-catalog submit — separate from lastSubmittedAt so the
   // "submit everything" cooldown isn't reset by every queue drain.
   lastFullSubmitAt DateTime?
   // Stamped by the background sweep on EVERY path (success, skip, error) so an
   // ineligible shop can't win the "due" query forever — same guard the
   // llms/GSC sweeps document. NOT a lock.
-  lastAutoRunAt DateTime?
+  lastAutoRunAt    DateTime?
   // Rolling monthly submission quota (PlanLimits.seo.monthlyIndexNowSubmissions).
   // `submitPeriod` is the UTC "YYYY-MM" key the counter belongs to — the same
   // convention as the image-operation quota, so a new month resets the counter
   // lazily on the next write instead of needing a cron. Usage data, not
   // entitlement data: never touched by planCacheCleanup.
-  submitPeriod  String?
-  submitCount   Int       @default(0)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  submitPeriod     String?
+  submitCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // Drives the sweep's due-query (index-now-auto-submit.service.ts).
   @@index([enabled, lastAutoRunAt])
@@ -1414,32 +2163,32 @@ model SeoCrawlSnapshot {
 // `resolvePathsToResources` (seo/url-resolver.server.ts) — null when the path
 // doesn't map to a known content type (theme/metaobject pages, §3.8).
 model SeoCrawlPage {
-  id            String  @id @default(cuid())
-  shop          String
-  snapshotId    String
-  url           String // normalized URL (query params stripped, §3.2)
-  statusCode    Int
-  redirectedTo  String? // final URL, if a 3xx chain was followed
-  responseMs    Int
-  title         String? // <title> from the rendered HTML
-  metaDesc      String?
-  canonical     String?
-  h1Count       Int     @default(0)
-  wordCount     Int     @default(0)
-  resourceType  String? // "product" | "collection" | "article" | "page" | "unknown"
-  resourceId    String? // Shopify GID, when resolvable (editor deep-link)
-  locale        String  @default("") // from the URL prefix (/fr/...) — "" = primary
-  inboundCount  Int     @default(0) // internal links pointing HERE
-  outboundCount Int     @default(0)
+  id             String  @id @default(cuid())
+  shop           String
+  snapshotId     String
+  url            String // normalized URL (query params stripped, §3.2)
+  statusCode     Int
+  redirectedTo   String? // final URL, if a 3xx chain was followed
+  responseMs     Int
+  title          String? // <title> from the rendered HTML
+  metaDesc       String?
+  canonical      String?
+  h1Count        Int     @default(0)
+  wordCount      Int     @default(0)
+  resourceType   String? // "product" | "collection" | "article" | "page" | "unknown"
+  resourceId     String? // Shopify GID, when resolvable (editor deep-link)
+  locale         String  @default("") // from the URL prefix (/fr/...) — "" = primary
+  inboundCount   Int     @default(0) // internal links pointing HERE
+  outboundCount  Int     @default(0)
   // schema.org @type values found in the page's <script type="application/ld+json">
   // blocks, comma-separated, REPEATS PRESERVED ("Product,Product" = two blocks,
   // which is what makes duplicate markup detectable). "" = none found, which is
   // also what every row written before this column existed reports.
-  jsonLdTypes   String  @default("")
+  jsonLdTypes    String  @default("")
   // Subset of jsonLdTypes emitted by THIS app's storefront block, identified by
   // its data-contentpilot attribute. Lets the report say which copy of a
   // duplicated type is ours — the delivered HTML tells nobody otherwise.
-  jsonLdAppTypes String @default("")
+  jsonLdAppTypes String  @default("")
 
   // PLAN_SEO_CRAWL_EXPANSION §1.1 / §2.1-§2.2 — indexability, stored RAW and
   // never pre-interpreted: `deriveIndexability` (onpage.service.ts) is a pure
@@ -1468,6 +2217,25 @@ model SeoCrawlPage {
   // §2.4 — observed redirect chain length (0 = no redirect). `redirectedTo`
   // above holds the end of the chain; the hop count is the report value.
   redirectHops Int @default(0)
+
+  // PLAN_MARKUP_ACTIVATION §2.1 — Open Graph / Twitter Cards, measured exactly
+  // like jsonLdTypes above and for the same reason: most themes set og:title
+  // and og:image themselves, and two og:image tags on one page are for
+  // Facebook/LinkedIn what two Product nodes are for Google.
+  //
+  // Full property names, comma-separated, REPEATS PRESERVED ("og:image,
+  // og:image" = two tags, which is what makes duplication detectable).
+  ogTags      String  @default("")
+  twitterTags String  @default("")
+  // The subset THIS app's social-meta block emitted, identified by its
+  // data-contentpilot attribute — holds both namespaces, since the names carry
+  // their own prefix. Same purpose as jsonLdAppTypes: the delivered HTML tells
+  // nobody otherwise which of two copies is ours.
+  ogAppTags   String  @default("")
+  // The discriminator, same shape as indexabilityKnown: "" above means EITHER
+  // "nothing served" OR "row written before these columns existed". Only ever
+  // true when this crawl actually parsed a body and looked.
+  socialKnown Boolean @default(false)
 
   snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 

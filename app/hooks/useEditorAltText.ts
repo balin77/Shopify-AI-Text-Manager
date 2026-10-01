@@ -4,7 +4,9 @@
  * Encapsulates all alt-text state and handlers extracted from useUnifiedContentEditor.
  * Includes:
  *   - Alt-text state (imageAltTexts, altTextSuggestions, originalAltTexts, etc.)
- *   - sendImageToAI / selectedImageIndex state
+ *   - selectedImageIndex state (whether the AI may LOOK at an image is a
+ *     shop-wide setting now, resolved server-side — see
+ *     [vision-policy.shared.ts](../services/ai/vision-policy.shared.ts))
  *   - ALT-TEXT HANDLERS section
  *   - SEND IMAGE TO AI HANDLERS section (including reset effects)
  */
@@ -13,6 +15,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
+import {
+  setAltTextSuggestion,
+  clearAltTextSuggestion,
+  useAltTextSuggestions,
+  type SuggestionScope,
+} from "./useAISuggestionStore";
 import type {
   ShopLocale,
   ContentImage,
@@ -20,6 +28,7 @@ import type {
   TranslationStrings,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
+import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 
 // ---------------------------------------------------------------------------
 // Prop / return types
@@ -39,6 +48,15 @@ interface UseEditorAltTextProps {
   enabledLanguages: string[];
   editableValues: Record<string, string>;
   editableValuesRef: React.MutableRefObject<Record<string, string>>;
+  /**
+   * Bumped by the editor once a finished background re-translation has been
+   * reloaded. The foreign alt texts are resolved by an effect of their own,
+   * keyed on language/market/item, and a revalidation moves none of those —
+   * so without this the AI's new alt texts reach the loader and never the
+   * screen. Optional: a caller that never refreshes in the background simply
+   * leaves it at 0.
+   */
+  backgroundRefreshVersion?: number;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
   savedLocaleRef: React.MutableRefObject<string | null>;
@@ -52,9 +70,10 @@ interface UseEditorAltTextProps {
     onSuccess?: (result: Record<string, unknown>) => void,
     onError?: (error: string) => void
   ) => void;
-  showInfoBox: (message: string, tone?: import("../types/content-editor.types").InfoBoxTone, title?: string) => void;
+  showInfoBox: (message: string, tone?: import("../types/content-editor.types").InfoBoxTone) => void;
   t: TranslationStrings;
-  setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  /** Item + locale + market this editor is showing — the key AI suggestions are stored under. */
+  suggestionScope: SuggestionScope;
 }
 
 interface UseEditorAltTextReturn {
@@ -64,14 +83,16 @@ interface UseEditorAltTextReturn {
   fallbackAltTextIndices: Set<number>;
   setImageAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   altTextSuggestions: Record<number, string>;
-  setAltTextSuggestions: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   originalAltTexts: Record<number, string>;
   setOriginalAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   imageAltTextsRef: React.MutableRefObject<Record<number, string>>;
   originalAltTextsRef: React.MutableRefObject<Record<number, string>>;
   pendingAltTextAutoSaveRef: React.MutableRefObject<Record<number, string> | null>;
-  sendImageToAI: boolean;
-  setSendImageToAI: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Locale (or `locale@@market`, see LOCALE_MARKET_SEP) → index → alt text.
+   *  Exposed so a PRIMARY save can drop what the server just deleted — the
+   *  overlay is read before the loaded item, so a stale entry survives the
+   *  purge and gets written back. */
+  localAltTextOverlayRef: React.MutableRefObject<Record<string, Record<number, string>>>;
   selectedImageIndex: number;
   setSelectedImageIndex: React.Dispatch<React.SetStateAction<number>>;
   // Handlers
@@ -91,7 +112,6 @@ interface UseEditorAltTextReturn {
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
   handleRejectAltTextSuggestion: (imageIndex: number) => void;
-  handleToggleSendImageToAI: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +132,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     enabledLanguages,
     editableValues,
     editableValuesRef,
+    backgroundRefreshVersion = 0,
     buildFieldsForSave,
     safeSubmit,
     savedLocaleRef,
@@ -122,7 +143,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     submitAIAction,
     showInfoBox,
     t,
-    setAiSuggestions,
+    suggestionScope,
   } = props;
 
   // ============================================================================
@@ -131,7 +152,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   // Alt-text state for images (indexed by image position)
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
-  const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
+  // Suggestions live in the global store, not in this component: an answer the
+  // merchant has not decided on must survive them leaving the page and coming
+  // back (see useAISuggestionStore).
+  const altTextSuggestions = useAltTextSuggestions(suggestionScope);
   // Track original alt-texts to detect changes (using state to trigger re-renders)
   const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
   const imageAltTextsRef = useLatestRef(imageAltTexts);
@@ -151,7 +175,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const [fallbackAltTextIndices, setFallbackAltTextIndices] = useState<Set<number>>(new Set());
 
   // Send Image to AI feature state
-  const [sendImageToAI, setSendImageToAI] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   // ============================================================================
@@ -184,7 +207,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
-    const requestItemId = selectedItem.id;
+    // Captured now, not read when the answer lands: the suggestion belongs to
+    // the item, locale and market it was requested from.
+    const requestScope: SuggestionScope = { ...suggestionScope, resourceId: selectedItem.id };
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
@@ -197,18 +222,16 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         imageUrl: image.url,
         productTitle,
         mainLanguage,
-        sendImageToAI: sendImageToAI.toString(),
         ...(userInstruction?.trim() && { userInstruction: userInstruction.trim() }),
       },
       `altText_${imageIndex}`,
       (result) => {
-        // Guard: discard if user switched to a different item during the request.
-        if (selectedItemIdRef.current !== requestItemId) return;
+        // Stored under the scope the request was MADE in, so navigating away
+        // mid-request no longer throws the answer away — it is waiting on the
+        // image when the merchant comes back. (`requestScope` carries the item
+        // id, which is what the old `selectedItemIdRef` guard checked for.)
         if (result.altText) {
-          setAltTextSuggestions((prev) => ({
-            ...prev,
-            [imageIndex]: result.altText as string,
-          }));
+          setAltTextSuggestion(requestScope, imageIndex, result.altText as string);
         }
       }
     );
@@ -233,7 +256,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         productTitle,
         mainLanguage,
         imagesData: JSON.stringify(imagesData),
-        sendImageToAI: sendImageToAI.toString(),
       },
       "allAltTextsGenerate",
       (result) => {
@@ -261,8 +283,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -313,8 +334,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -338,17 +358,40 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       fd.set("locale", locale);
       fd.set("primaryLocale", primaryLocale);
       fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
-      return fetch(window.location.pathname, { method: "POST", body: fd });
+      // The answer is READ now (content-action-endpoint.shared.ts), so a
+      // locale that did not save is named instead of reported as copied.
+      return postContentEditorSave(fd).then((ok) => (ok === false ? locale : null));
     });
 
-    Promise.all(saves).finally(() => {
+    Promise.all(saves).then((results) => {
+      const failed = results.filter((l): l is string => l !== null);
+      if (failed.length > 0) {
+        // Take back what the copy wrote up front for those locales: the
+        // overlay outranks the loaded alt texts, so left in place the editor
+        // went on showing a value that was never saved. Only the copy's own
+        // value -- anything written there since is not ours to remove.
+        for (const locale of failed) {
+          const forLocale = localAltTextOverlayRef.current[locale];
+          if (forLocale && forLocale[imageIndex] === sourceAltText) {
+            delete forLocale[imageIndex];
+          }
+        }
+        showInfoBox(
+          String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
+            "{locales}",
+            failed.map((l) => l.toUpperCase()).join(", "),
+          ),
+          "critical",
+        );
+      } else {
+        showInfoBox(t.common?.copied ?? "Copied", "success");
+      }
+    }).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);
       if (revalidatorRef.current.state === 'idle') {
         try { revalidatorRef.current.revalidate(); } catch {}
       }
     });
-
-    showInfoBox(t.common?.copied ?? "Copied", "success");
   };
 
   const handleTranslateAltText = (imageIndex: number) => {
@@ -361,8 +404,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -422,8 +464,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             t.common?.fieldTranslatedAndSaved
               ?.replace("{fieldType}", "Alt-Text")
               || "Alt-Text translated and saved successfully",
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
       }
@@ -440,8 +481,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (targetLocales.length === 0) {
       showInfoBox(
         t.common?.noTargetLanguagesSelected || "No target languages selected",
-        "warning",
-        t.common?.warning || "Warning"
+        "warning"
       );
       return;
     }
@@ -451,8 +491,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -482,15 +521,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync.")
               .replace("{imageNumber}", String(imageIndex + 1))
               .replace("{failedLocales}", failedList),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
             String(t.content?.altTextTranslatedToLanguages || "Alt-text translated to {count} language(s)")
               .replace("{count}", String(successCount)),
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
 
@@ -517,8 +554,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (targetLocales.length === 0) {
       showInfoBox(
         t.common?.noTargetLanguagesSelected || "No target languages selected",
-        "warning",
-        t.common?.warning || "Warning"
+        "warning"
       );
       return;
     }
@@ -537,8 +573,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!hasAnyAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -567,16 +602,14 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
               .replace("{totalCount}", String(imageCount))
               .replace("{languageCount}", String(translatedCount))
               .replace("{failedImages}", failedList),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
             String(t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)")
               .replace("{totalCount}", String(imageCount))
               .replace("{languageCount}", String(translatedCount)),
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
 
@@ -630,8 +663,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!hasAnyAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -675,8 +707,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           showInfoBox(
             String(t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
               .replace("{failedImages}", failedList),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         }
       }
@@ -708,11 +739,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       }
     }
 
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
+    clearAltTextSuggestion(suggestionScope, imageIndex);
 
 
 
@@ -759,11 +786,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Update the UI state
     setImageAltTexts(newAltTexts);
 
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
+    clearAltTextSuggestion(suggestionScope, imageIndex);
 
     // ========================================================================
     // FOREIGN LOCALE PATH
@@ -817,7 +840,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           // 1. Save the accepted foreign alt-text exactly in `L`.
           saveForeignExact();
 
-          // 2. Save the primary base alt-text (this image only, no deletion trigger).
+          // 2. Save the primary base alt-text (this image only). It carries NO
+          //    `changedAltTextIndices`, which is what keeps it out of the
+          //    featured-alt §6.6 purge — that save would otherwise delete the
+          //    foreign alt saved one line above and the ones step 3 is about to
+          //    write (shopify-content.service.ts, `featuredAltChanged`).
           if (primaryTranslated) {
             const primaryForm: Record<string, string> = {
               action: "updateContent",
@@ -889,8 +916,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (targetLocales.length === 0) {
       showInfoBox(
         t.common?.noTargetLanguagesEnabled || "No target languages enabled",
-        "warning",
-        t.common?.warning || "Warning"
+        "warning"
       );
       // No translations needed, just save the primary text directly
 
@@ -940,33 +966,43 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   };
 
   const handleRejectAltTextSuggestion = useCallback((imageIndex: number) => {
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
-  }, []);
+    clearAltTextSuggestion(suggestionScope, imageIndex);
+  }, [suggestionScope]);
 
-  // ============================================================================
-  // SEND IMAGE TO AI HANDLERS
-  // ============================================================================
-
-  const handleToggleSendImageToAI = useCallback(() => {
-    setSendImageToAI(prev => !prev);
-  }, []);
-
-  // Reset alt-text and AI suggestion state when selected item changes
+  // Reset alt-text state when the selected item changes. AI suggestions are
+  // NOT reset here any more: they are keyed by item + locale + market in the
+  // global store, so another item's suggestions are simply out of scope —
+  // and clearing on arrival would delete the very ones the merchant came back
+  // for.
   useEffect(() => {
     setImageAltTexts({});
-    setAltTextSuggestions({});
     setOriginalAltTexts({});
-    setAiSuggestions({});
     localAltTextOverlayRef.current = {};
   }, [selectedItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load translated alt-texts when language changes
+  // Load translated alt-texts when language changes — and once more after a
+  // background re-translation was reloaded (`backgroundRefreshVersion`).
+  const lastAltRefreshVersionRef = useRef(backgroundRefreshVersion);
   useEffect(() => {
     const item = selectedItemRef.current;
+    const isBackgroundRefresh = lastAltRefreshVersionRef.current !== backgroundRefreshVersion;
+    lastAltRefreshVersionRef.current = backgroundRefreshVersion;
+    // What the merchant typed and has not saved, captured BEFORE the reset
+    // below: the refresh only starts on a clean editor, but a keystroke can
+    // land between that decision and this pass, and it must survive.
+    const unsavedAltEdits: Record<number, string> = {};
+    if (isBackgroundRefresh) {
+      const current = imageAltTextsRef.current;
+      const original = originalAltTextsRef.current;
+      for (const [index, value] of Object.entries(current)) {
+        if (value !== (original[Number(index)] ?? "")) unsavedAltEdits[Number(index)] = value;
+      }
+      // The server has just rewritten these languages; a staged overlay entry
+      // would otherwise keep winning over the fresh loader value. The overlay
+      // only ever holds values that were already saved (the refresh waits for
+      // an idle fetcher), so the loader data carries them too.
+      localAltTextOverlayRef.current = {};
+    }
     if (!item) return;
 
     const allImages: ContentImage[] = item.images?.length > 0
@@ -975,6 +1011,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (allImages.length === 0) return;
 
     if (currentLanguage === primaryLocale) {
+      // A background refresh re-translated FOREIGN languages only; the primary
+      // view resolves from the item itself and its state holds nothing but the
+      // merchant's own edits, which a reset here would throw away.
+      if (isBackgroundRefresh) return;
       // Reset to primary locale alt-texts - fallback will use images[i].altText
       setImageAltTexts({});
       setOriginalAltTexts({});
@@ -1022,11 +1062,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           if (selectedMarketId && globalVal.trim() !== "") fallbackIndices.add(index);
         }
       });
-      setImageAltTexts(translatedAltTexts);
+      // The BASELINE is the server value; a preserved edit stays dirty against
+      // it, so it can still be saved.
       setOriginalAltTexts({ ...translatedAltTexts });
+      setImageAltTexts({ ...translatedAltTexts, ...unsavedAltEdits });
       setFallbackAltTextIndices(fallbackIndices);
     }
-  }, [currentLanguage, selectedMarketId, selectedItemId, primaryLocale]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, selectedMarketId, selectedItemId, primaryLocale, backgroundRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     // State
@@ -1034,14 +1076,16 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     setImageAltTexts,
     fallbackAltTextIndices,
     altTextSuggestions,
-    setAltTextSuggestions,
     originalAltTexts,
     setOriginalAltTexts,
     imageAltTextsRef,
     originalAltTextsRef,
     pendingAltTextAutoSaveRef,
-    sendImageToAI,
-    setSendImageToAI,
+    // Exposed so a PRIMARY save can drop what the server just deleted: the
+    // overlay is checked BEFORE the loaded item, so without this it keeps
+    // rendering a foreign alt text that no longer exists for the rest of the
+    // session — and a save from that view writes it back.
+    localAltTextOverlayRef,
     selectedImageIndex,
     setSelectedImageIndex,
     // Handlers
@@ -1060,6 +1104,5 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleAcceptAltTextSuggestion,
     handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
-    handleToggleSendImageToAI,
   };
 }

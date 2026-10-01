@@ -39,6 +39,7 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { meetsPlan } from "../utils/planUtils";
 import { type Plan } from "../config/plans";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { taskErrorText } from "../utils/task-error-text";
 import { bulkColumnHeading } from "../services/bulk-editor/labels.shared";
 import {
   BULK_FILTER_IDS,
@@ -157,7 +158,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // non-401 errors (CLAUDE.md), which is "lookup failed", not "one language".
   const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
   const foreign = shopLocales
-    .filter((l) => l.published && !l.primary)
+    // Published or not — preparing a language before launch is filling it.
+    .filter((l) => !l.primary)
     .map((l) => ({ locale: l.locale, name: l.name || l.locale }));
 
   // Metaobject rows are only schema-homogeneous per definition type (Plan §7) —
@@ -402,7 +404,11 @@ export default function BulkTranslateMissingPage() {
 
         setTaskId(null);
         if (task.status === "failed" && !task.result) {
-          setBanner({ kind: "failed", message: task.error ?? undefined });
+          // `Task.error` is a machine code for everything a detached runner
+          // writes (task-error-text.ts) — rendering it raw is how a merchant
+          // reads `rows_failed:3`. A genuine provider message still passes
+          // through verbatim.
+          setBanner({ kind: "failed", message: taskErrorText(task.error, t) ?? undefined });
           return;
         }
         let parsed: TranslateTaskResult | null = null;

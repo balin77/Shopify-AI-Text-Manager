@@ -337,7 +337,7 @@ type MatchAltImagesResult =
 /** Response of the `generateAltText` intent (alt-text bridge, plan §7). */
 type GenerateAltTextResult =
   | { ok: true; altText: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: string };
 
 /**
  * PROBE (accessibility plan §3.3): response of the `debugRawPsi` intent — the
@@ -487,18 +487,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       db.aIInstructions.findUnique({ where: { shop } }),
     ]);
 
-    // Same provider/serviceConfig assembly as handleUnifiedContentActions
-    // (unified-content.actions.ts) — the merchant's configured AI setup.
-    const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
-    const serviceConfig = {
-      huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-      geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-      claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-      openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-      grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-      deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-      selectedModel: aiSettings?.selectedModel || undefined,
-    };
     // Same language source the PSI call already uses (AISettings.appLanguage,
     // see getShopLanguage) — what handleGenerateAltText receives as
     // `mainLanguage` from its clients.
@@ -515,6 +503,27 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       language: mainLanguage,
     });
 
+    // Compliance gate (managed AI: consent, kill switch, budget; BYO: key) —
+    // before a Task row exists, like every other AI entry point.
+    const { aiRefusalResponse } = await import("./api-ai-handlers/shared");
+    const { refusalPayload, managedRefusalResponseFromError } = await import(
+      "../utils/ai-refusal-response.server"
+    );
+    const refusal = await aiRefusalResponse(aiSettings, shop);
+    if (refusal) {
+      const { error, code, status } = refusalPayload(refusal);
+      return json<GenerateAltTextResult>({ ok: false, error, code }, { status });
+    }
+
+    // PLAN_MANAGED_AI_KEY §5 — the eleventh copy of that assembly, and the one
+    // that was missed by hand and found by the isolation guard. Whose key this
+    // spends is the resolver's answer. Resolved AFTER the gate: a spent taster
+    // falls back to the merchant's own key there, refreshing `aiSettings`.
+    const { aiCredentialsFor } = await import("../services/ai/ai-credentials.server");
+    const aiCredentials = aiCredentialsFor(aiSettings, shop);
+    const provider = aiCredentials.provider;
+    const serviceConfig = aiCredentials.config;
+
     const task = await db.task.create({
       data: {
         shop,
@@ -522,7 +531,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
         status: "pending",
         resourceType: "Product",
         resourceId: image.productId,
-        resourceTitle: image.product?.title || "",
+        // `undefined`, never `""`: an empty string used to blank the Tasks
+        // card's whole resource row — the deep link included — while a null
+        // column lets the card fall back to the id it can still link.
+        resourceTitle: image.product?.title || undefined,
         fieldType: "altText",
         progress: 0,
         expiresAt: getTaskExpirationDate(),
@@ -541,6 +553,11 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     } catch (err: unknown) {
       const message = getFullErrorMessage(err);
       await failTask(message);
+      const refused = managedRefusalResponseFromError(err, aiSettings);
+      if (refused) {
+        const { error, code, status } = refusalPayload(refused);
+        return json<GenerateAltTextResult>({ ok: false, error, code }, { status });
+      }
       return json<GenerateAltTextResult>({ ok: false, error: message }, { status: 500 });
     }
     if (!altText) {

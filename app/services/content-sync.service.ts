@@ -10,12 +10,26 @@
 import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
-import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback } from './sync-types';
+import { featuredAltLockId, marketLayerLockId } from '~/services/translations/translation-locks.shared';
+import { translationForeignLocales } from '~/services/translations/stale-translations.shared';
+import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
-import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers } from './sync-utils';
+import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, translationWriteScope } from './sync-utils';
+// NOT `apiVersion` from shopify.server: importing that module boots the whole
+// embedded app (session storage, Prisma, billing) as a side effect. This
+// service only needs to KNOW the version it is talking to.
+import { resolveApiVersionString } from '../utils/api-version';
+import {
+  ARTICLE_ATTRIBUTE_SELECTION,
+  collectionAttributeSelection,
+  articleAttributeColumns,
+  collectionAttributeColumns,
+  type ShopifyArticleAttributes,
+  type ShopifyCollectionAttributes,
+} from './attribute-sync.shared';
 
 /** Collection data from Shopify GraphQL */
-interface ShopifyCollectionData {
+interface ShopifyCollectionData extends ShopifyCollectionAttributes {
   id: string;
   title: string;
   handle: string;
@@ -33,7 +47,7 @@ interface ShopifyCollectionData {
 }
 
 /** Article data from Shopify GraphQL */
-interface ShopifyArticleData {
+interface ShopifyArticleData extends ShopifyArticleAttributes {
   id: string;
   title: string;
   handle: string;
@@ -55,12 +69,53 @@ interface ShopifyArticleData {
   };
 }
 
-/** Menu data from Shopify GraphQL */
-interface ShopifyMenuData {
-  id: string;
-  title: string;
-  handle: string;
-  items: unknown[];
+/**
+ * What a bulk sync ACHIEVED — never what it attempted.
+ *
+ * Every bulk loop here catches per item, so one unsyncable resource cannot
+ * stop the run. The cost of that is a count that means nothing: a run in which
+ * all 37 collections failed used to return 37, and the route, the setup wizard
+ * and the "sync from Shopify" button all reported it as a success. The
+ * merchant then stands in front of an editor still saying "sync the
+ * Collections tab" with no way to learn that the sync did exactly nothing.
+ */
+export interface BulkSyncResult {
+  synced: number;
+  failed: number;
+  /** The FIRST failure's message — one summary line beats 37 log entries the
+   *  merchant never sees, and it is what the UI can actually show. */
+  firstError?: string;
+}
+
+/** The per-item bookkeeping behind `BulkSyncResult`, so no loop counts its own. */
+class BulkSyncTally {
+  private ok = 0;
+  private bad = 0;
+  private first?: string;
+
+  succeeded(): void {
+    this.ok += 1;
+  }
+
+  failed(error: unknown): void {
+    this.bad += 1;
+    if (this.first === undefined) {
+      this.first = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  report(kind: string, shop: string): BulkSyncResult {
+    if (this.bad > 0) {
+      logger.warn(`[ContentSync] ${kind} sync finished with failures`, {
+        context: "ContentSync",
+        shop,
+        synced: this.ok,
+        failed: this.bad,
+        error: this.first,
+      });
+    }
+    return { synced: this.ok, failed: this.bad, ...(this.first !== undefined ? { firstError: this.first } : {}) };
+  }
 }
 
 export class ContentSyncService {
@@ -86,8 +141,17 @@ export class ContentSyncService {
 
   /**
    * Sync a single collection with all its translations
+   *
+   * @param options.reconcileTranslations  Opt-in: after the cache is written,
+   *   repair foreign translations whose PRIMARY text changed outside this app
+   *   (see services/translations/stale-translation-sync.server.ts). Only change
+   *   events pass `true` — a full sync (syncAll*) must never mass-purge.
    */
-  async syncCollection(collectionId: string, forceSync = false): Promise<void> {
+  async syncCollection(
+    collectionId: string,
+    forceSync = false,
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ContentSync] Starting sync for collection: ${collectionId}`);
 
     try {
@@ -106,13 +170,25 @@ export class ContentSyncService {
 
       // 3. Fetch translations for all non-primary locales (global + market layers)
       const failedMarketIds = new Set<string>();
+      // Locales whose GLOBAL read failed: their rows survive the rewrite and
+      // they are left out of the fill below (sync-utils translationWriteScope).
+      const failedGlobalLocales = new Set<string>();
+      const imageAltFailedLocales = new Set<string>();
+      const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         collectionId,
         locales.filter((l) => !l.primary),
         "Collection",
         markets,
-        failedMarketIds
+        failedMarketIds,
+        primaryContent,
+        failedGlobalLocales
       );
+      // The collection's OWN translations — captured before the image block
+      // below appends the remapped `image_alt_text` rows, which live on the
+      // CollectionImage resource and must not be removed from (or looked up
+      // on) the collection's translatableResource.
+      const ownTranslations = [...allTranslations];
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
       // 3b. Fetch collection image alt-text translations (separate Shopify resource type).
@@ -125,7 +201,12 @@ export class ContentSyncService {
             locales.filter((l) => !l.primary),
             "Collection", // Store under Collection resourceType with the parent's resourceId
             markets,
-            failedMarketIds
+            failedMarketIds,
+            undefined,
+            // Its OWN set: a failed alt read keeps only that locale's
+            // `image_alt_text` rows — the parent's own fields were read fine
+            // and are refreshed as usual.
+            imageAltFailedLocales
           );
           // Remap: store with key "image_alt_text" and use the collection's resourceId
           for (const t of imageTranslations) {
@@ -145,8 +226,39 @@ export class ContentSyncService {
       // 4. Save to database. Markets whose fetch failed are excluded so their
       // rows are neither deleted nor partially recreated (avoids data loss AND
       // unique-key collisions with the un-deleted rows).
+      // The stale-translation baseline is read BEFORE the save — see
+      // syncProduct: the save overwrites the digests it is compared against.
+      const previousDigests = options.reconcileTranslations
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
+            this.shop,
+            collectionId,
+            "Collection",
+          )
+        : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
-      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets);
+      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales, imageAltFailedLocales);
+
+      // 5. Stale-translation reconciliation (change events only) — best-effort.
+      if (options.reconcileTranslations) {
+        const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+        await reconcileStaleTranslations({
+          client: this.admin,
+          shop: this.shop,
+          resourceId: collectionId,
+          resourceType: "Collection",
+          contentKind: "collection",
+          resourceTitle: collectionData.title,
+          translations: ownTranslations,
+          primaryContent,
+          previousDigests,
+          // The FILL: a key this sync proved moved is translated into every
+          // published language, not only into the ones that already carried a
+          // translation (stale-translations.shared.ts).
+          // A locale whose read FAILED is not an empty one — see unreadLocales.
+          foreignLocales: translationForeignLocales(locales),
+          unreadLocales: [...failedGlobalLocales],
+        });
+      }
 
       logger.debug(`[ContentSync] Successfully synced collection: ${collectionId}`);
     } catch (error) {
@@ -169,6 +281,13 @@ export class ContentSyncService {
       db.contentTranslation.deleteMany({
         where: { shop: this.shop, resourceId: collectionId },
       }),
+      // The stale-translation gate's primary baseline — polymorphic, no FK.
+      db.primaryDigestBaseline.deleteMany({
+        where: { shop: this.shop, resourceId: collectionId },
+      }),
+      db.autoTranslateRetry.deleteMany({
+        where: { shop: this.shop, resourceId: collectionId },
+      }),
       db.collection.deleteMany({
         where: { shop: this.shop, id: collectionId },
       }),
@@ -183,8 +302,17 @@ export class ContentSyncService {
 
   /**
    * Sync a single article with all its translations
+   *
+   * @param options.reconcileTranslations  Opt-in: after the cache is written,
+   *   repair foreign translations whose PRIMARY text changed outside this app
+   *   (see services/translations/stale-translation-sync.server.ts). Only change
+   *   events pass `true` — a full sync (syncAll*) must never mass-purge.
    */
-  async syncArticle(articleId: string, forceSync = false): Promise<void> {
+  async syncArticle(
+    articleId: string,
+    forceSync = false,
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ContentSync] Starting sync for article: ${articleId}`);
 
     try {
@@ -202,13 +330,23 @@ export class ContentSyncService {
 
       // 3. Fetch translations (global + market layers)
       const failedMarketIds = new Set<string>();
+      // Locales whose GLOBAL read failed: their rows survive the rewrite and
+      // they are left out of the fill below (sync-utils translationWriteScope).
+      const failedGlobalLocales = new Set<string>();
+      const imageAltFailedLocales = new Set<string>();
+      const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         articleId,
         locales.filter((l) => !l.primary),
         "Article",
         markets,
-        failedMarketIds
+        failedMarketIds,
+        primaryContent,
+        failedGlobalLocales
       );
+      // See syncCollection: the article's own rows, before the ArticleImage
+      // alt-text rows are remapped into the list below.
+      const ownTranslations = [...allTranslations];
 
       // 3b. Fetch article image alt-text translations (separate Shopify resource type).
       // The ArticleImage GID uses the image's OWN id, not the parent article id.
@@ -220,7 +358,12 @@ export class ContentSyncService {
             locales.filter((l) => !l.primary),
             "Article",
             markets,
-            failedMarketIds
+            failedMarketIds,
+            undefined,
+            // Its OWN set: a failed alt read keeps only that locale's
+            // `image_alt_text` rows — the parent's own fields were read fine
+            // and are refreshed as usual.
+            imageAltFailedLocales
           );
           for (const t of imageTranslations) {
             if (t.key === 'alt') {
@@ -237,8 +380,40 @@ export class ContentSyncService {
       }
 
       // 4. Save to database — failed markets excluded (see syncCollection).
+      // Baseline read before the save, same reason as syncCollection.
+      const previousDigests = options.reconcileTranslations
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
+            this.shop,
+            articleId,
+            "Article",
+          )
+        : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
-      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets);
+      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets, failedGlobalLocales, imageAltFailedLocales);
+
+      // 5. Stale-translation reconciliation (change events only) — best-effort.
+      if (options.reconcileTranslations) {
+        const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+        await reconcileStaleTranslations({
+          client: this.admin,
+          shop: this.shop,
+          resourceId: articleId,
+          resourceType: "Article",
+          // "blog" — an article IS a blog post to both the AI prompt and the
+          // Tasks tab; "article" matches neither vocabulary.
+          contentKind: "blog",
+          resourceTitle: articleData.title,
+          translations: ownTranslations,
+          primaryContent,
+          previousDigests,
+          // The FILL: a key this sync proved moved is translated into every
+          // published language, not only into the ones that already carried a
+          // translation (stale-translations.shared.ts).
+          // A locale whose read FAILED is not an empty one — see unreadLocales.
+          foreignLocales: translationForeignLocales(locales),
+          unreadLocales: [...failedGlobalLocales],
+        });
+      }
 
       logger.debug(`[ContentSync] Successfully synced article: ${articleId}`);
     } catch (error) {
@@ -261,6 +436,13 @@ export class ContentSyncService {
       db.contentTranslation.deleteMany({
         where: { shop: this.shop, resourceId: articleId },
       }),
+      // The stale-translation gate's primary baseline — polymorphic, no FK.
+      db.primaryDigestBaseline.deleteMany({
+        where: { shop: this.shop, resourceId: articleId },
+      }),
+      db.autoTranslateRetry.deleteMany({
+        where: { shop: this.shop, resourceId: articleId },
+      }),
       db.article.deleteMany({
         where: { shop: this.shop, id: articleId },
       }),
@@ -268,56 +450,6 @@ export class ContentSyncService {
 
     logger.debug(`[ContentSync] Successfully deleted article: ${articleId}`);
   }
-
-  // ============================================
-  // MENU SYNC
-  // ============================================
-
-  /**
-   * Sync a single menu with its items structure
-   */
-  async syncMenu(menuId: string): Promise<void> {
-    logger.debug(`[ContentSync] Starting sync for menu: ${menuId}`);
-
-    try {
-      // 1. Fetch menu data
-      const menuData = await this.fetchMenuData(menuId);
-
-      if (!menuData) {
-        logger.warn(`[ContentSync] Menu not found: ${menuId}`);
-        return;
-      }
-
-      // 2. Save to database (menus don't have translations via API)
-      await this.saveMenuToDatabase(menuData);
-
-      logger.debug(`[ContentSync] Successfully synced menu: ${menuId}`);
-    } catch (error) {
-      logger.error(`[ContentSync] Error syncing menu ${menuId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete a menu from the database
-   */
-  async deleteMenu(menuId: string): Promise<void> {
-    logger.debug(`[ContentSync] Deleting menu: ${menuId}`);
-
-    const { db } = await import("../db.server");
-
-    await db.menu.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: menuId,
-        },
-      },
-    });
-
-    logger.debug(`[ContentSync] Successfully deleted menu: ${menuId}`);
-  }
-
 
   // ============================================
   // FETCH DATA FROM SHOPIFY
@@ -332,7 +464,7 @@ export class ContentSyncService {
             title
             handle
             descriptionHtml
-            updatedAt
+            updatedAt${collectionAttributeSelection(resolveApiVersionString())}
             image {
               id
               url
@@ -365,7 +497,7 @@ export class ContentSyncService {
             handle
             body
             summary
-            updatedAt
+            updatedAt${ARTICLE_ATTRIBUTE_SELECTION}
             image {
               id
               url
@@ -422,51 +554,6 @@ export class ContentSyncService {
     return article;
   }
 
-  private async fetchMenuData(menuId: string): Promise<ShopifyMenuData | null> {
-    const response = await this.admin.graphql(
-      `#graphql
-        query getMenu($id: ID!) {
-          menu(id: $id) {
-            id
-            title
-            handle
-            items {
-              id
-              title
-              url
-              type
-              items {
-                id
-                title
-                url
-                type
-                items {
-                  id
-                  title
-                  url
-                  type
-                  items {
-                    id
-                    title
-                    url
-                    type
-                  }
-                }
-              }
-            }
-          }
-        }`,
-      { variables: { id: menuId } }
-    );
-
-    const data = await response.json();
-    if (data.errors?.length > 0) {
-      throw new Error(`GraphQL error in fetchMenuData: ${data.errors[0].message}`);
-    }
-    return data.data?.menu || null;
-  }
-
-
   private graphqlFn() {
     return this.admin.graphql.bind(this.admin);
   }
@@ -475,7 +562,7 @@ export class ContentSyncService {
   // SAVE TO DATABASE
   // ============================================
 
-  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = []) {
+  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>, imageAltFailedLocales?: ReadonlySet<string>) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
@@ -484,13 +571,25 @@ export class ContentSyncService {
     // Rows of layers outside the (successfully fetched) delete scope are
     // dropped: their old rows stay untouched and a partial insert would
     // collide with them on the composite unique key.
-    const layers = fetchedMarketLayers(markets);
+    // A locale whose global read failed is out of scope too
+    // (`translationWriteScope`): its old rows are kept, not emptied.
+    const scope = translationWriteScope(markets, failedGlobalLocales);
+    // The featured image's alt is a separate read: where it failed, only the
+    // `image_alt_text` rows of that locale are kept (and not re-inserted).
+    const altKept = [...(imageAltFailedLocales ?? [])];
+    const keepsAlt = (t: { key: string; locale: string; marketId?: string | null }) =>
+      t.key === "image_alt_text" && !(t.marketId || "") && altKept.includes(t.locale);
     const validTranslations = translations.filter(t =>
-      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
+      t.value != null && t.value !== undefined && scope.covers(t) && !keepsAlt(t));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
+
+    // PLAN_CONTENT_CREATION Phase 0. `{}` when the response did not carry the
+    // attribute block — the stored values (and attributesSyncedAt) then stay
+    // untouched instead of being overwritten with the migration defaults.
+    const attributes = collectionAttributeColumns(collectionData, resolveApiVersionString());
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -512,6 +611,7 @@ export class ContentSyncService {
           imageAltText: collectionData.image?.altText || null,
           seoTitle: collectionData.seo?.title || null,
           seoDescription: collectionData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(collectionData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -523,6 +623,7 @@ export class ContentSyncService {
           imageAltText: collectionData.image?.altText || null,
           seoTitle: collectionData.seo?.title || null,
           seoDescription: collectionData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(collectionData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -530,7 +631,23 @@ export class ContentSyncService {
 
       // Check if user recently saved translations for this collection
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
-      if (!forceSync && isTranslationRecentlySaved(collectionData.id)) {
+      //
+      // The FEATURED-ALT keys are asked for BY NAME, exactly like the product
+      // sync asks for its two private product keys: an `image_alt_text` row
+      // lives on the collection but is written under its own lock (a claim on
+      // the collection itself would make the collections/update webhook's
+      // field reconciliation bail), so without this the rewrite below would
+      // delete a row the merchant saved a second ago and restore it only if
+      // Shopify's read has already caught up. BOTH keys: the delete below is
+      // scoped to every layer this run fetched, so a MARKET write needs the
+      // shield as much as a global one — and it carries its own key because
+      // the repair must not see it.
+      if (
+        !forceSync &&
+        (isTranslationRecentlySaved(collectionData.id) ||
+          isTranslationRecentlySaved(featuredAltLockId(collectionData.id)) ||
+          isTranslationRecentlySaved(marketLayerLockId(featuredAltLockId(collectionData.id))))
+      ) {
         logger.info(`[ContentSync] Skipping translation sync for collection - recently saved by user`, { collectionId: collectionData.id });
       } else {
         // Delete old translations — SCOPED to the layers this run actually
@@ -541,7 +658,10 @@ export class ContentSyncService {
             shop: this.shop,
             resourceId: collectionData.id,
             resourceType: "Collection",
-            marketId: { in: fetchedMarketLayers(markets) },
+            ...scope.where,
+            ...(altKept.length > 0
+              ? { AND: [{ NOT: { marketId: "", key: "image_alt_text", locale: { in: altKept } } }] }
+              : {}),
           },
         });
 
@@ -567,7 +687,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
-  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = []) {
+  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = [], failedGlobalLocales?: ReadonlySet<string>, imageAltFailedLocales?: ReadonlySet<string>) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
@@ -576,13 +696,23 @@ export class ContentSyncService {
     // Rows of layers outside the (successfully fetched) delete scope are
     // dropped: their old rows stay untouched and a partial insert would
     // collide with them on the composite unique key.
-    const layers = fetchedMarketLayers(markets);
+    // A locale whose global read failed is out of scope too
+    // (`translationWriteScope`): its old rows are kept, not emptied.
+    const scope = translationWriteScope(markets, failedGlobalLocales);
+    // The featured image's alt is a separate read: where it failed, only the
+    // `image_alt_text` rows of that locale are kept (and not re-inserted).
+    const altKept = [...(imageAltFailedLocales ?? [])];
+    const keepsAlt = (t: { key: string; locale: string; marketId?: string | null }) =>
+      t.key === "image_alt_text" && !(t.marketId || "") && altKept.includes(t.locale);
     const validTranslations = translations.filter(t =>
-      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
+      t.value != null && t.value !== undefined && scope.covers(t) && !keepsAlt(t));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
+
+    // PLAN_CONTENT_CREATION Phase 0 — see saveCollectionToDatabase.
+    const attributes = articleAttributeColumns(articleData);
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -607,6 +737,7 @@ export class ContentSyncService {
           imageAltText: articleData.image?.altText || null,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(articleData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -621,6 +752,7 @@ export class ContentSyncService {
           imageAltText: articleData.image?.altText || null,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(articleData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -628,7 +760,13 @@ export class ContentSyncService {
 
       // Check if user recently saved translations for this article
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
-      if (!forceSync && isTranslationRecentlySaved(articleData.id)) {
+      // The featured-alt keys are asked for BY NAME; see saveCollectionToDatabase.
+      if (
+        !forceSync &&
+        (isTranslationRecentlySaved(articleData.id) ||
+          isTranslationRecentlySaved(featuredAltLockId(articleData.id)) ||
+          isTranslationRecentlySaved(marketLayerLockId(featuredAltLockId(articleData.id))))
+      ) {
         logger.info(`[ContentSync] Skipping translation sync for article - recently saved by user`, { articleId: articleData.id });
       } else {
         // Delete old translations — SCOPED to the layers this run actually
@@ -638,7 +776,10 @@ export class ContentSyncService {
             shop: this.shop,
             resourceId: articleData.id,
             resourceType: "Article",
-            marketId: { in: fetchedMarketLayers(markets) },
+            ...scope.where,
+            ...(altKept.length > 0
+              ? { AND: [{ NOT: { marketId: "", key: "image_alt_text", locale: { in: altKept } } }] }
+              : {}),
           },
         });
 
@@ -664,47 +805,23 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for article ${articleData.id}`);
   }
 
-  private async saveMenuToDatabase(menuData: ShopifyMenuData) {
-    const { db } = await import("../db.server");
-
-    logger.debug(`[ContentSync] Saving menu to database: ${menuData.id}`);
-
-    // Upsert menu
-    await db.menu.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: menuData.id,
-        },
-      },
-      create: {
-        id: menuData.id,
-        shop: this.shop,
-        title: menuData.title,
-        handle: menuData.handle,
-        items: (menuData.items || []) as Prisma.InputJsonValue,
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        title: menuData.title,
-        handle: menuData.handle,
-        items: (menuData.items || []) as Prisma.InputJsonValue,
-        lastSyncedAt: new Date(),
-      },
-    });
-
-    logger.debug(`[ContentSync] ✓ Menu saved successfully`);
-  }
-
-
   // ============================================
   // BULK SYNC
   // ============================================
 
   /**
-   * Sync all collections (respects plan limit if provided)
+   * Sync all collections (respects plan limit if provided).
+   *
+   * Returns what the run ACHIEVED, not what it attempted. The per-item loop
+   * catches so one bad collection cannot stop the rest — and reporting the
+   * number of items it tried then describes a run in which every single one
+   * failed as "37 synced". That false success is what makes "I synced and
+   * nothing changed" impossible to diagnose: the merchant is told the thing
+   * they were asked to do has been done, while `attributesSyncedAt` stays
+   * NULL and the editor keeps saying "unknown whether this collection picks
+   * its members by rule — sync the Collections tab".
    */
-  async syncAllCollections(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
+  async syncAllCollections(maxCount?: number, onProgress?: ProgressCallback): Promise<BulkSyncResult> {
     logger.debug(`[ContentSync] Syncing all collections...`);
     if (maxCount !== undefined) {
       logger.debug(`[ContentSync] Plan limit: ${maxCount} collections`);
@@ -738,6 +855,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] Syncing ${collections.length} collections`);
 
     let index = 0;
+    const outcome = new BulkSyncTally();
     for (const collection of collections) {
       index++;
       if (onProgress) {
@@ -745,18 +863,20 @@ export class ContentSyncService {
       }
       try {
         await this.syncCollection(collection.id);
+        outcome.succeeded();
       } catch (error) {
+        outcome.failed(error);
         logger.error(`[ContentSync] Failed to sync collection ${collection.id}, continuing with next`, { error });
       }
     }
 
-    return collections.length;
+    return outcome.report("collections", this.shop);
   }
 
   /**
    * Sync all articles (respects plan limit if provided)
    */
-  async syncAllArticles(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
+  async syncAllArticles(maxCount?: number, onProgress?: ProgressCallback): Promise<BulkSyncResult> {
     logger.debug(`[ContentSync] Syncing all articles...`);
     if (maxCount !== undefined) {
       logger.debug(`[ContentSync] Plan limit: ${maxCount} articles`);
@@ -765,7 +885,7 @@ export class ContentSyncService {
     // If limit is 0, skip articles entirely
     if (maxCount === 0) {
       logger.debug(`[ContentSync] Articles disabled for this plan, skipping`);
-      return 0;
+      return { synced: 0, failed: 0 };
     }
 
     // First, get all blogs
@@ -836,6 +956,13 @@ export class ContentSyncService {
           await tx.contentTranslation.deleteMany({
             where: { shop: this.shop, resourceType: "Article", resourceId: { in: staleIds } },
           });
+          // FK-less like the translations (CLAUDE.md, PrimaryDigestBaseline).
+          await tx.primaryDigestBaseline.deleteMany({
+            where: { shop: this.shop, resourceId: { in: staleIds } },
+          });
+          await tx.autoTranslateRetry.deleteMany({
+            where: { shop: this.shop, resourceId: { in: staleIds } },
+          });
         }
         return { deleted: del.count };
       });
@@ -854,6 +981,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] Syncing ${allArticles.length} articles`);
 
     let index = 0;
+    const outcome = new BulkSyncTally();
     for (const article of allArticles) {
       index++;
       if (onProgress) {
@@ -861,71 +989,54 @@ export class ContentSyncService {
       }
       try {
         await this.syncArticle(article.id);
+        outcome.succeeded();
       } catch (error) {
+        outcome.failed(error);
         logger.error(`[ContentSync] Failed to sync article ${article.id}, continuing with next`, { error });
       }
     }
 
-    return allArticles.length;
+    return outcome.report("articles", this.shop);
   }
 
   /**
-   * Sync all menus
+   * Sync all menus.
+   *
+   * Delegates to `refreshMenuCache`, which is THE writer of `Menu.items`.
+   * This used to be a second one: it read `id/title/url/type` per menu where
+   * the cache writer reads those plus `resourceId`, and both replaced the
+   * whole `items` column — so whichever ran last decided whether `resourceId`
+   * was in the row. This path runs on the 60s scheduler and the cache writer
+   * only when someone opens /app/menus, so this one usually won, and a tree
+   * served from that row failed `validateMenuTree` with `missingTarget` on
+   * every COLLECTION/PRODUCT/PAGE/BLOG/ARTICLE/SHOP_POLICY/METAOBJECT item.
+   *
+   * Delegating also brings two things this path never had: the whole shop in
+   * ONE query instead of 1 + N, and the orphan cleanup of `Link` translations
+   * whose menu item is gone — which until now only ever ran on a page visit.
    */
   async syncAllMenus(): Promise<number> {
     logger.debug(`[ContentSync] Syncing all menus...`);
 
-    const response = await this.admin.graphql(
-      `#graphql
-        query getMenus {
-          menus(first: 250) {
-            edges {
-              node {
-                id
-              }
-            }
-          }
-        }`
-    );
-
-    const data = await response.json();
-    if (data.errors?.length > 0) {
-      throw new Error(`GraphQL error in syncAllMenus: ${data.errors[0].message}`);
-    }
-    const menuEdges = data.data?.menus?.edges || [];
-    const menus: Array<{ id: string }> = menuEdges.map((e: GraphQLEdge<{ id: string }>) => e.node);
-
-    logger.debug(`[ContentSync] Found ${menus.length} menus to sync`);
-
-    // Stale-delete: menus deleted in Shopify have no webhook. Skip when the
-    // query may be truncated (>=250) to avoid deleting unseen menus.
     const { db } = await import("../db.server");
-    if (menuEdges.length >= 250) {
-      logger.warn(`[ContentSync] Skipping menu stale-delete: Shopify result possibly truncated (>=250)`);
-    } else if (menus.length === 0) {
-      const localCount = await db.menu.count({ where: { shop: this.shop } });
-      if (localCount > 0) {
-        throw new Error(`Shopify returned 0 menus but ${localCount} exist locally - aborting to prevent data loss`);
-      }
-    } else {
-      const shopifyMenuIds = menus.map((m) => m.id);
-      const del = await db.menu.deleteMany({
-        where: { shop: this.shop, id: { notIn: shopifyMenuIds } },
-      });
-      if (del.count > 0) {
-        logger.debug(`[ContentSync] 🗑️ Deleted ${del.count} menus that no longer exist in Shopify`);
-      }
-    }
+    const { ShopifyApiGateway } = await import("./shopify-api-gateway.service");
+    const { refreshMenuCache } = await import("./menu-translations.server");
 
-    for (const menu of menus) {
-      try {
-        await this.syncMenu(menu.id);
-      } catch (error) {
-        logger.error(`[ContentSync] Failed to sync menu ${menu.id}, continuing with next`, { error });
-      }
-    }
+    // Wrap only if the caller did not already hand us a gateway.
+    // BackgroundSyncService constructs us with ITS gateway
+    // (`new ContentSyncService(this.gateway, …)`), and a gateway around a
+    // gateway is not a no-op: each keeps its own queue and its own 3 retries,
+    // so one throttled query becomes up to 16 admin calls with a second of
+    // sleep between them, all of it blocking the sync phase behind it.
+    const gateway =
+      this.admin instanceof ShopifyApiGateway
+        ? this.admin
+        : new ShopifyApiGateway(this.admin, this.shop);
 
-    return menus.length;
+    const count = await refreshMenuCache(gateway, db, this.shop);
+
+    logger.debug(`[ContentSync] Synced ${count} menus`);
+    return count;
   }
 
   // ============================================
@@ -940,7 +1051,7 @@ export class ContentSyncService {
       ? collectionId
       : `gid://shopify/Collection/${collectionId}`;
 
-    await this.syncCollection(gid, /* forceSync */ true);
+    await this.syncCollection(gid, /* forceSync */ true, { reconcileTranslations: true });
 
     const { db } = await import("../db.server");
     const collection = await db.collection.findUnique({
@@ -974,7 +1085,7 @@ export class ContentSyncService {
       ? articleId
       : `gid://shopify/Article/${articleId}`;
 
-    await this.syncArticle(gid, /* forceSync */ true);
+    await this.syncArticle(gid, /* forceSync */ true, { reconcileTranslations: true });
 
     const { db } = await import("../db.server");
     const article = await db.article.findUnique({
@@ -996,6 +1107,154 @@ export class ContentSyncService {
 
     return {
       ...article,
+      translations,
+    };
+  }
+
+  /**
+   * Sync a single BLOG CONTAINER (wrapper for manual reload).
+   *
+   * PLAN_CONTENT_CREATION Phase 0, step 4 — the explicit decision this step
+   * asked for: blogs get NO Prisma model. Their primary fields are already
+   * fetched live by the blog route's loader on every visit, so a cache row
+   * would be a second source of truth for data that is never stale; only the
+   * TRANSLATIONS need a store, and those already live in ContentTranslation
+   * with `resourceType: "Blog"`.
+   *
+   * What this fixes: the loader backfills blog translations only when a blog
+   * has NONE at all, so an edited translation could never be refreshed from
+   * Shopify — the reload button was simply missing for this one type. This is
+   * a real refresh (delete + recreate, scoped to the market layers that were
+   * successfully fetched, exactly like the article path).
+   *
+   * Returns null when the blog does not exist, so the route can answer 404-ish
+   * instead of reporting a successful no-op.
+   */
+  async syncSingleBlog(blogId: string): Promise<Record<string, unknown> | null> {
+    const gid = blogId.startsWith("gid://")
+      ? blogId
+      : `gid://shopify/Blog/${blogId}`;
+
+    const response = await this.admin.graphql(
+      `#graphql
+        query getBlog($id: ID!) {
+          blog(id: $id) {
+            id
+            title
+            handle
+            templateSuffix
+            commentPolicy
+            updatedAt
+          }
+        }`,
+      { variables: { id: gid } }
+    );
+
+    const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in syncSingleBlog: ${data.errors[0].message}`);
+    }
+
+    const blog = data.data?.blog as
+      | { id: string; title: string; handle: string; templateSuffix: string | null; commentPolicy: string | null; updatedAt: string }
+      | null
+      | undefined;
+
+    if (!blog) {
+      logger.warn(`[ContentSync] Blog not found: ${gid}`);
+      return null;
+    }
+
+    const locales = await fetchShopLocales(this.graphqlFn());
+    const markets = await this.getMarkets();
+    const failedMarketIds = new Set<string>();
+    // Global twin of failedMarketIds (sync-utils translationWriteScope).
+    const failedGlobalLocales = new Set<string>();
+
+    const primaryContent: PrimaryContentMap = {};
+    const allTranslations = await fetchAllTranslations(
+      this.graphqlFn(),
+      gid,
+      locales.filter((l) => !l.primary),
+      "Blog",
+      markets,
+      failedMarketIds,
+      primaryContent,
+      failedGlobalLocales
+    );
+
+    // Blogs have NO Shopify webhook, so this explicit reload is the only event
+    // that can ever notice a primary text changed in the Shopify admin — the
+    // webhook and reconcile sweeps cannot cover them. Baseline read before the
+    // transaction below rewrites the digests (see syncCollection).
+    const previousDigests = await (
+      await import("./translations/stale-translation-sync.server")
+    ).loadPreviousTranslationDigests(this.shop, gid, "Blog");
+
+    // Delete scope stays conservative: only the layers this run actually
+    // fetched. A market whose fetch errored keeps its existing rows rather
+    // than losing them to a partial refresh (same rule as collections).
+    const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
+    // …and so does a locale whose global read failed.
+    const scope = translationWriteScope(effectiveMarkets, failedGlobalLocales);
+    const validTranslations = allTranslations.filter(
+      (t) => t.value != null && scope.covers(t)
+    );
+
+    const { db } = await import("../db.server");
+    await db.$transaction(async (tx) => {
+      await tx.contentTranslation.deleteMany({
+        where: {
+          shop: this.shop,
+          resourceId: gid,
+          resourceType: "Blog",
+          ...scope.where,
+        },
+      });
+
+      if (validTranslations.length > 0) {
+        await tx.contentTranslation.createMany({
+          data: validTranslations.map((t) => ({
+            shop: this.shop,
+            resourceId: gid,
+            resourceType: "Blog",
+            key: t.key,
+            value: t.value as string,
+            locale: t.locale,
+            digest: t.digest || null,
+            marketId: t.marketId || "",
+          })),
+        });
+      }
+    });
+
+    // Stale-translation reconciliation — best-effort, never fails the reload.
+    const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+    await reconcileStaleTranslations({
+      client: this.admin,
+      shop: this.shop,
+      resourceId: gid,
+      resourceType: "Blog",
+      contentKind: "blog",
+      resourceTitle: blog.title,
+      translations: allTranslations,
+      primaryContent,
+      previousDigests,
+      // A locale nobody could read is not an empty one (see syncCollection).
+      foreignLocales: translationForeignLocales(locales),
+      unreadLocales: [...failedGlobalLocales],
+    });
+
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        shop: this.shop,
+        resourceId: gid,
+        resourceType: "Blog",
+      },
+    });
+
+    return {
+      ...blog,
       translations,
     };
   }

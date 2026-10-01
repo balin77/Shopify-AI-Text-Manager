@@ -9,8 +9,9 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
-import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
+import { parseMetaobjectFieldKey } from "~/services/metaobject-fields.shared";
 import { getTaskExpirationDate } from "~/config/constants";
+import { resolveTaskResourceTitle } from "~/services/tasks/resource-title.server";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { GroupedFieldTranslationService } from "../../../src/services/grouped-field-translation.service";
@@ -94,6 +95,18 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<DataRe
 
   // Create task entry (prompt is saved by AI service via savePromptToTask)
   const taskFieldLabel = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -101,7 +114,7 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<DataRe
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel,
+      resourceTitle: taskResourceTitle,
       fieldType: taskFieldLabel,
       targetLocale,
       progress: 0,
@@ -209,7 +222,9 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<DataRe
           data: {
             status: "failed",
             completedAt: new Date(),
-            error: `Slug for locale ${targetLocale} collapsed to an empty/unusable handle after sanitization`,
+            // A machine code for the Tasks card (`taskErrorText`); the HTTP
+            // body below stays an English message for our own client.
+            error: `slug_empty:${targetLocale}`,
           },
         });
         return json(
@@ -307,6 +322,18 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
   // Create task entry (prompts will be saved by AI service via savePromptToTask)
   const taskFieldLabel2 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle2 =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel2 : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -314,7 +341,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel2,
+      resourceTitle: taskResourceTitle2,
       fieldType: taskFieldLabel2,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -818,26 +845,29 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               });
             }
           }
-          // Save to Shopify for metaobjects
-          // fieldType is the metaobject GID (e.g., gid://shopify/Metaobject/123)
+          // Save to Shopify for metaobjects.
+          // `fieldType` is the editor's compound key `<Metaobject GID>#<field
+          // key>` (PLAN_METAOBJECTS_EDITOR §6.1). It used to be the bare entry
+          // GID, which is why this branch hunted for "the label field": there
+          // was no other field the key could have named. Now it names one.
           else if (contentType === 'metaobjects' && fieldType) {
-            const metaobjectGid = fieldType;
+            const parsedMetaKey = parseMetaobjectFieldKey(fieldType);
+            const metaobjectGid = parsedMetaKey?.metaobjectId ?? '';
             let batchMetaAccepted = false;
-            let metaLabelKey = '';
+            let metaLabelKey = parsedMetaKey?.fieldKey ?? '';
 
             try {
-              // Populate digest cache for this metaobject
-              await getCachedDigest(metaobjectGid, 'display_name');
-              const metaDigests = digestCache.get(metaobjectGid);
+              // Populate the digest cache for this entry.
+              await getCachedDigest(metaobjectGid, metaLabelKey || 'display_name');
+              const metaDigests = metaobjectGid ? digestCache.get(metaobjectGid) : undefined;
 
-              // Find the label field key (display_name, name, or label)
-              metaLabelKey = (metaDigests
-                ? METAOBJECT_LABEL_FIELD_KEYS.find(k => metaDigests.has(k))
-                : null) || '';
-
-              if (!metaLabelKey) {
-                logger.warn("[API-AI] Batch: No label field digest found for metaobject", {
+              // A key with no digest has no PRIMARY value, so there is nothing
+              // to translate — reported, never guessed around by falling back
+              // to a different field.
+              if (!metaLabelKey || !metaDigests?.has(metaLabelKey)) {
+                logger.warn("[API-AI] Batch: No digest for this metaobject field", {
                   context: "AI",
+                  fieldKey: fieldType,
                   metaobjectGid,
                   locale,
                   availableKeys: metaDigests ? Array.from(metaDigests.keys()) : []
@@ -1311,25 +1341,25 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               });
             }
           }
-          // For metaobjects: fieldType is the metaobject GID, use it as resourceId
+          // For metaobjects `fieldType` is the compound key `<GID>#<field key>`
+          // — see the batch branch above for why it is no longer a bare GID.
           else if (contentType === 'metaobjects' && fieldType) {
-            const metaobjectGid = fieldType;
+            const parsedMetaKey = parseMetaobjectFieldKey(fieldType);
+            const metaobjectGid = parsedMetaKey?.metaobjectId ?? '';
             let seqMetaAccepted = false;
-            let metaLabelKey = '';
+            let metaLabelKey = parsedMetaKey?.fieldKey ?? '';
 
             try {
-              // Populate digest cache for this metaobject
-              await getCachedDigest(metaobjectGid, 'display_name');
-              const metaDigests = digestCache.get(metaobjectGid);
+              // Populate the digest cache for this entry.
+              await getCachedDigest(metaobjectGid, metaLabelKey || 'display_name');
+              const metaDigests = metaobjectGid ? digestCache.get(metaobjectGid) : undefined;
 
-              // Find the label field key (display_name, name, or label)
-              metaLabelKey = (metaDigests
-                ? METAOBJECT_LABEL_FIELD_KEYS.find(k => metaDigests.has(k))
-                : null) || '';
-
-              if (!metaLabelKey) {
-                logger.warn("[API-AI] No label field digest found for metaobject", {
+              // No digest ⇒ no primary value ⇒ nothing to translate. Reported,
+              // never worked around by translating a different field.
+              if (!metaLabelKey || !metaDigests?.has(metaLabelKey)) {
+                logger.warn("[API-AI] No digest for this metaobject field", {
                   context: "AI",
+                  fieldKey: fieldType,
                   metaobjectGid,
                   locale,
                   availableKeys: metaDigests ? Array.from(metaDigests.keys()) : []

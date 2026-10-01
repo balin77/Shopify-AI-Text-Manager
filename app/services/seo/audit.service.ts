@@ -4,7 +4,7 @@
  * Reads the DB content cache (Product / Collection / Article / Page + the
  * ProductImage alt-coverage) — never a live Admin-API catalog sweep — and scores
  * every item with the shared pure `computeSeoScore`, so the Dashboard and the
- * per-item SeoSidebar can never disagree on a saved item.
+ * per-item ItemSidebar can never disagree on a saved item.
  *
  * Scale guard: queries are `select`-minimized and capped per type; alt coverage
  * is read with a single `groupBy` (no per-product include → no N+1 / OOM). When a

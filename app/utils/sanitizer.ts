@@ -32,8 +32,16 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const LIQUID_TOKEN = /\{\{|\{%/;
+/** `Node.ELEMENT_NODE`, spelled out: the constant lives on a DOM global too. */
+const ELEMENT_NODE = 1;
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (!(node instanceof Element)) return;
+  // NOT `node instanceof Element`. This module runs on the SERVER (every
+  // settings save, the theme richtext autofix), where isomorphic-dompurify
+  // works through jsdom and jsdom does NOT put `Element` on globalThis — so
+  // that guard threw `ReferenceError: Element is not defined` for any input
+  // containing a single tag, taking the whole request down. It was defensive
+  // to begin with: `afterSanitizeAttributes` only ever fires for elements.
+  if (!node || (node as { nodeType?: number }).nodeType !== ELEMENT_NODE) return;
   const src = node.getAttribute('src');
   if (src && LIQUID_TOKEN.test(src)) {
     node.setAttribute('src', TRANSPARENT_PIXEL);

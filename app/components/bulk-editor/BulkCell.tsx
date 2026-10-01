@@ -19,18 +19,59 @@ import {
   type ReactNode,
 } from "react";
 import { ActionList, Button, Icon, InlineStack, Popover, Select, Spinner, Text, Tooltip } from "@shopify/polaris";
-import { MenuVerticalIcon } from "@shopify/polaris-icons";
-import type { ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
+import { InfoIcon, MenuVerticalIcon } from "@shopify/polaris-icons";
+import {
+  isPickerColumn,
+  pickerDisplayValue,
+  type BulkRow,
+  type ColumnDescriptor,
+} from "../../services/bulk-editor/columns.shared";
+import { TaxonomyField, type TaxonomyFieldProps } from "../unified/TaxonomyField";
+import { BulkCollectionsCell, type BulkCollectionsCellTexts } from "./BulkCollectionsCell";
 
 /** Keyboard navigation directions (Plan §8.4): Tab/Shift-Tab walk the
  * editable cells, Enter goes one row down in the same column. */
 export type CellNavDirection = "next" | "prev" | "down";
 
-export interface BulkCellStatusOptions {
-  active: string;
-  draft: string;
-  archived: string;
-  unlisted: string;
+/**
+ * Labels for every select column, keyed `<column.label>.<value>`.
+ *
+ * This IS `t.content.enumLabels`, the map the create modal and the single
+ * editor already render their `status`, `sortOrder` and `weightUnit` options
+ * from — the grid used to carry a second copy of the four status words, which
+ * that map's own comment had been asking someone to merge.
+ *
+ * Keyed by the column and not by the value alone because "true" is "Sichtbar"
+ * on `isPublished` and "Ja" on `taxable` — the same two strings carry the whole
+ * boolean vocabulary and the wording is what tells a merchant which question
+ * they are answering. A key the bundle does not carry falls back to the raw
+ * value, so a new enum shows something honest rather than an empty option.
+ */
+export type BulkCellEnumLabels = Record<string, string>;
+
+/**
+ * The options a select cell offers.
+ *
+ * `field.templateSuffix` is the one column whose vocabulary is not in the
+ * descriptor: the values are the PUBLISHED theme's template files, so they are
+ * per shop and per resource and are looked up at runtime. The grid hands them
+ * down; `undefined` means the lookup has not answered (or failed), and the
+ * cell then falls back to a TEXT box exactly as `ThemeTemplateField` does —
+ * an empty dropdown is a control whose next save clears a working value.
+ */
+export const TEMPLATE_SUFFIX_COLUMN_ID = "field.templateSuffix";
+
+function selectOptionsFor(
+  column: ColumnDescriptor,
+  templateSuffixes: string[] | undefined,
+): string[] | undefined {
+  if (column.id === TEMPLATE_SUFFIX_COLUMN_ID) {
+    // "" is a real, selectable value here — it IS the theme's default
+    // template — so it leads the list rather than becoming the disabled
+    // placeholder the other enums get for an unknown value.
+    return templateSuffixes ? ["", ...templateSuffixes] : undefined;
+  }
+  return column.selectOptions;
 }
 
 interface BulkCellProps {
@@ -56,7 +97,28 @@ interface BulkCellProps {
    * cell so it stays visible what needs translating. Typing over it creates
    * the translation; the ghost itself is never part of the value. */
   ghost?: string;
-  statusOptions: BulkCellStatusOptions;
+  /** Labels for the select columns (see BulkCellEnumLabels). */
+  enumLabels: BulkCellEnumLabels;
+  /** Suffixes offered by the published theme for this row type, or undefined
+   *  while the lookup is pending or after it failed. */
+  templateSuffixes?: string[];
+  /**
+   * What an EMPTY read-only cell says in place of its value.
+   *
+   * The tooltip that explains a read-only cell is anchored to what the cell
+   * SHOWS — and a cell showing "" gives the pointer nothing to rest on, so the
+   * explanation was there and unreachable. The price of a product with several
+   * variants was exactly that: a blank cell nobody could ask about. The grid
+   * sets this per reason; a cell without one keeps rendering nothing.
+   */
+  readOnlyPlaceholder?: string;
+  /** The row the cell belongs to — the picker cells need more of it than one
+   *  value (the category's path, the memberships with their rule flags). */
+  row?: BulkRow;
+  /** Texts for the category picker (the single editor's `t.content.taxonomy`). */
+  categoryTexts?: TaxonomyFieldProps["t"];
+  /** Texts for the collections picker (`t.content.collectionsField`). */
+  collectionsTexts?: BulkCollectionsCellTexts;
   onChange: (value: string) => void;
   /** Grid coordinate "row:col" — stamped as data-cp-cell on the focusable
    * element so BulkGrid can move focus for Tab/Enter navigation (§8.4). Text
@@ -120,7 +182,12 @@ export function BulkCell({
   error,
   errorId,
   ghost,
-  statusOptions,
+  enumLabels,
+  templateSuffixes,
+  readOnlyPlaceholder,
+  row,
+  categoryTexts,
+  collectionsTexts,
   onChange,
   cellCoord,
   onNavigate,
@@ -132,12 +199,27 @@ export function BulkCell({
   // grey text + tooltip explaining why; rich-text cells additionally offer
   // the "open in editor" jump.
   if (readOnly) {
+    // An empty value with a placeholder shows the placeholder and an info icon
+    // — the icon is what tells a merchant this blank has a reason worth
+    // hovering for, rather than being simply empty.
+    const placeholder = value === "" ? readOnlyPlaceholder : undefined;
+    // A picker cell's value is GIDs; read-only it shows the names instead.
+    const shown = row && isPickerColumn(column) ? pickerDisplayValue(row, column, value) : value;
     return (
       <Tooltip content={readOnlyTooltip}>
         <InlineStack gap="100" blockAlign="center" wrap={false}>
-          <Text as="span" variant="bodySm" tone="subdued" truncate>
-            {value}
-          </Text>
+          {placeholder ? (
+            <InlineStack gap="050" blockAlign="center" wrap={false}>
+              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                {placeholder}
+              </Text>
+              <Icon source={InfoIcon} tone="subdued" />
+            </InlineStack>
+          ) : (
+            <Text as="span" variant="bodySm" tone="subdued" truncate>
+              {shown}
+            </Text>
+          )}
           {showOpenInEditor && onOpenInEditor && (
             <Button variant="plain" size="micro" onClick={onOpenInEditor}>
               {openInEditorLabel ?? ""}
@@ -148,38 +230,123 @@ export function BulkCell({
     );
   }
 
-  if (column.inputType === "select") {
-    // Product status. Non-null in the schema, but a partial sync could leave
-    // it "" — show a placeholder row instead of silently defaulting the
-    // display to ACTIVE (which would cause a no-op click to write ACTIVE
-    // where the DB had "").
-    // UNLISTED is a real Shopify status (confirmed against live shop data) and
-    // IS settable: the 2025-10 ProductStatus enum lists UNLISTED and the docs
-    // name `ProductInput` (the input `productUpdate` takes, which is what
-    // apply.server.ts sends) among the inputs that accept it. The docs' one
-    // restriction — "can't be changed from unlisted in older versions" — is
-    // scoped to pre-2025-10 versions, where the value is translated to active
-    // and is not part of the enum at all. The app pins 2025-10 by default
-    // (shopify.server.ts), so it is offered as a normal choice here; the
-    // matching server-side gate is PRODUCT_STATUSES in apply.server.ts, which
-    // must list exactly these four values. Source:
-    // https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus
-    const hasStatus =
-      value === "ACTIVE" || value === "DRAFT" || value === "UNLISTED" || value === "ARCHIVED";
+  // ── Picker cells (COL_CATEGORY / COL_COLLECTIONS) ────────────────────────
+  // The value is a GID no merchant types, so the cell is the same picker the
+  // single editor uses — never a text box. Paste skips these cells for the
+  // same reason (see the grid's paste handler).
+  if (column.inputType === "category") {
     return (
-      <Select
-        label=""
-        labelHidden
-        options={[
-          ...(hasStatus ? [] : [{ label: "—", value: "", disabled: true } as const]),
-          { label: statusOptions.active, value: "ACTIVE" },
-          { label: statusOptions.draft, value: "DRAFT" },
-          { label: statusOptions.unlisted, value: "UNLISTED" },
-          { label: statusOptions.archived, value: "ARCHIVED" },
-        ]}
-        value={hasStatus ? value : ""}
+      <span
+        className={`cp-bulk-select${isDirty ? " cp-bulk-cell-dirty" : ""}${error ? " cp-bulk-cell-error" : ""}`}
+      >
+        <TaxonomyField
+          compact
+          value={value}
+          onChange={onChange}
+          // The cached path names the CACHED category only. A dirty value must
+          // not borrow it — that is how a cell showed the old category while
+          // its save wrote the new one.
+          currentLabel={value === row?.category ? row?.categoryName ?? "" : ""}
+          label=""
+          t={categoryTexts ?? {}}
+        />
+        {error && errorId && (
+          <span id={errorId} className="cp-bulk-visually-hidden">
+            {error}
+          </span>
+        )}
+      </span>
+    );
+  }
+  if (column.inputType === "collections") {
+    return (
+      <BulkCollectionsCell
+        value={value}
         onChange={onChange}
+        memberships={row?.collectionMemberships ?? []}
+        truncated={row?.hasMoreCollections === true}
+        isDirty={isDirty}
+        error={error}
+        errorId={errorId}
+        texts={collectionsTexts ?? {}}
       />
+    );
+  }
+
+  if (column.inputType === "select") {
+    const options = selectOptionsFor(column, templateSuffixes);
+    // A select with no known vocabulary is NOT an empty dropdown — that is a
+    // control whose next save clears a working value. Only the theme template
+    // can reach this (its list is looked up at runtime), and the fallback is
+    // the single editor's: put the plain text box back.
+    if (!options) {
+      return (
+        <LazyTextCell
+          value={value}
+          isDirty={isDirty}
+          error={error}
+          errorId={errorId}
+          ghost={ghost}
+          onChange={onChange}
+          cellCoord={cellCoord}
+          onNavigate={onNavigate}
+          onEscape={onEscape}
+          onPasteText={onPasteText}
+        />
+      );
+    }
+    // A stored value the offered list does not contain keeps its own DISABLED
+    // row at the top rather than disappearing.
+    //
+    // Two different situations, one rule: a page on a template the published
+    // theme no longer has, and a product whose `status` a partial sync left ""
+    // — in BOTH a Polaris `Select` whose value matches none of its options
+    // renders the FIRST one, so the cell would read "Default" / "Active" and
+    // the next save would make that true.
+    //
+    // UNLISTED is a real Shopify status (confirmed against live shop data) and
+    // IS settable: the 2025-10 ProductStatus enum lists it and the docs name
+    // `ProductInput` — which is what apply.server.ts sends — among the inputs
+    // that accept it. The docs' one restriction ("can't be changed from
+    // unlisted in older versions") is scoped to pre-2025-10 versions, where
+    // the value is translated to active and is not in the enum at all. The app
+    // pins 2025-10 by default (shopify.server.ts). The matching server-side
+    // gate is PRODUCT_STATUSES in apply.server.ts.
+    // https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus
+    const known = options.includes(value);
+    // A select cell carries the same three states as a text one — unchanged,
+    // dirty, failed — and shipped with none of them: the ten select columns
+    // showed no unsaved-edit highlight and no red on a save failure, so a cell
+    // Shopify had refused looked exactly like one that had saved. The wrapper
+    // holds the state classes (the grid's own stylesheet paints Polaris'
+    // Backdrop through them, the same element responsive.css already owns),
+    // and `error` gives the control its `aria-invalid`.
+    return (
+      <span className={`cp-bulk-select${isDirty ? " cp-bulk-cell-dirty" : ""}${error ? " cp-bulk-cell-error" : ""}`}>
+        <Select
+          label=""
+          labelHidden
+          error={error ? true : undefined}
+          options={[
+            ...(known ? [] : [{ label: value || "\u2014", value, disabled: true } as const]),
+            ...options.map((option) => ({
+              label: enumLabels[`${column.label}.${option}`] ?? option,
+              value: option,
+            })),
+          ]}
+          value={value}
+          onChange={onChange}
+        />
+        {/* Polaris' Select takes no `ariaDescribedBy`, and its own string-error
+            form would add a message LINE inside a grid cell and break the row
+            height. The message rides here instead, where a screen reader
+            reaching the cell still meets it. */}
+        {error && errorId && (
+          <span id={errorId} className="cp-bulk-visually-hidden">
+            {error}
+          </span>
+        )}
+      </span>
     );
   }
 

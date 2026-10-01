@@ -72,7 +72,7 @@ async function fetchOpenAICompatibleModels(
 
 /** Fetch models from Anthropic REST API */
 async function fetchClaudeModels(apiKey: string): Promise<ModelInfo[]> {
-  const response = await fetch('https://api.anthropic.com/v1/models', {
+  const response = await fetch('https://api.anthropic.com/v1/models?limit=1000', {
     headers: {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
@@ -87,6 +87,36 @@ async function fetchClaudeModels(apiKey: string): Promise<ModelInfo[]> {
   }
   return data.data
     .map((m: any) => ({ id: m.id, name: m.display_name || m.id }))
+    .sort((a: ModelInfo, b: ModelInfo) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Fetch models from the Gemini REST API — only those that can generate text
+ * (`generateContent`), named without the `models/` prefix the API puts on
+ * every id, because that prefix-less form is what the SDK is called with.
+ */
+async function fetchGeminiModels(apiKey: string): Promise<ModelInfo[]> {
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', {
+    headers: { 'x-goog-api-key': apiKey },
+  });
+  if (!response.ok) {
+    throw new Error(`Gemini API returned ${response.status}`);
+  }
+  const data = await response.json();
+  if (!Array.isArray(data?.models)) {
+    throw new Error('Unexpected Gemini API response format');
+  }
+  return data.models
+    .filter((m: any) =>
+      typeof m?.name === 'string' &&
+      m.name.startsWith('models/gemini') &&
+      Array.isArray(m.supportedGenerationMethods) &&
+      m.supportedGenerationMethods.includes('generateContent'),
+    )
+    .map((m: any) => {
+      const id = m.name.slice('models/'.length);
+      return { id, name: m.displayName || id };
+    })
     .sort((a: ModelInfo, b: ModelInfo) => a.id.localeCompare(b.id));
 }
 
@@ -168,8 +198,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         break;
 
       case 'gemini':
-        // Google Generative AI SDK listModels is not reliable, use curated list
-        models = CURATED_MODELS[provider];
+        models = await fetchGeminiModels(apiKey);
         break;
 
       case 'huggingface':

@@ -11,8 +11,33 @@
 import { data as json } from "react-router";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
+// One rule per attribute, shared with the generic content path — the previous
+// generation of this code kept a per-resource copy of each and they drifted.
+import {
+  PRODUCT_COLLECTIONS_SELECTION,
+  productCollectionRows,
+  type ShopifyProductCollections,
+} from "~/services/attribute-sync.shared";
+import {
+  diffCollectionMembership,
+  collectionAutomation,
+  isValidProductStatus,
+  parseCategoryId,
+  parseCollectionIds,
+  parseTagList,
+} from "~/services/content-attributes.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { altTextLockId, marketLayerLockId } from "~/services/translations/translation-locks.shared";
+import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
+import {
+  altRepairRetranslates,
+  repairChangedProductAlts,
+  type ProductAltChange,
+} from "~/services/translations/product-alt-repair.server";
+// THE field to translation-key map (CLAUDE.md: never re-declare it — the
+// historic local copies drifted).
+import { FIELD_TO_TRANSLATION_KEY } from "../../../src/services/shopify-content.service";
 import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormStringOrNull, getFormJSON } from "~/utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "~/utils/validation";
@@ -29,7 +54,26 @@ interface UpdateProductParams {
   seoTitle?: string;
   metaDescription?: string;
   productType?: string;
+  // ── PLAN_CONTENT_CREATION §Phase 3 merchandising attributes ──────────────
+  // Not translatable (Shopify stores one value per product), so these only
+  // ever arrive on a PRIMARY-locale save — the editor renders them read-only
+  // in every other locale and the write below refuses them anyway.
+  status?: string;
+  vendor?: string;
+  /** Comma-joined on the wire, split into Shopify's array before the write. */
+  tags?: string;
+  templateSuffix?: string;
+  /** Shopify taxonomy GID, or "" to clear. §Phase 3.1. */
+  category?: string;
+  /** Comma-joined collection GIDs — the membership the picker now shows. It is
+   *  turned into a JOIN/LEAVE diff against the CACHE, never written as a list
+   *  (see `diffCollectionMembership`). */
+  collections?: string;
   imageAltTexts?: Record<number, string>;
+  /** Filled by the primary alt write: the alt Shopify ECHOED per index. The
+   *  repair checks its read-back against what Shopify STORED, never against
+   *  what was submitted (the rule the handle redirect follows too). */
+  confirmedAltTexts?: Record<number, string>;
   productId: string;
   /** Market scope ("" = global). Only applies to foreign-locale text saves. */
   marketId?: string;
@@ -69,6 +113,12 @@ export async function handleUpdateProduct(
   const changedFields: string[] = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
 
   // Parse changedAltTextIndices if present (for alt-text translation deletion when primary locale changes)
+  // §Phase 3 — a separate list from `changedFields`: see content-update.action.
+  const changedAttributesStr = getFormString(formData, "changedAttributeFields");
+  const changedAttributeFields: string[] = changedAttributesStr
+    ? safeJsonParse<string[]>(changedAttributesStr, [])
+    : [];
+
   const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
   const changedAltTextIndices: number[] = changedAltTextIndicesStr ? safeJsonParse<number[]>(changedAltTextIndicesStr, []) : [];
 
@@ -95,6 +145,19 @@ export async function handleUpdateProduct(
     seoTitle: getFormStringOrNull(formData, "seoTitle") ?? undefined,
     metaDescription: getFormStringOrNull(formData, "metaDescription") ?? undefined,
     productType: getFormStringOrNull(formData, "productType") ?? undefined,
+    // §Phase 3 attributes. Read on EVERY save and filtered by locale at the
+    // write, not here: an attribute arriving on a foreign-locale save is a
+    // client bug, and dropping it silently at parse time would hide it.
+    // `|| undefined`, not `?? undefined`: `getFormStringOrNull` returns "" for
+    // a present-but-empty field, and "" is not a status. Kept as "" it would
+    // fail the enum check and 400 the ENTIRE save — title, description and SEO
+    // with it — over a field the merchant never touched.
+    status: getFormStringOrNull(formData, "status") || undefined,
+    vendor: getFormStringOrNull(formData, "vendor") ?? undefined,
+    tags: getFormStringOrNull(formData, "tags") ?? undefined,
+    templateSuffix: getFormStringOrNull(formData, "templateSuffix") ?? undefined,
+    category: getFormStringOrNull(formData, "category") ?? undefined,
+    collections: getFormStringOrNull(formData, "collections") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
     // Primary-locale saves are always global; only foreign locales carry a market.
@@ -138,7 +201,14 @@ export async function handleUpdateProduct(
     if (params.locale !== params.primaryLocale) {
       response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
-      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop);
+      // Only indices whose primary alt actually LANDED: a failed write leaves
+      // the primary text unchanged, so its foreign alts are still correct and
+      // must be neither purged nor re-translated. Same rule the sub-resource
+      // path follows — act on what was SAVED, never on what was requested.
+      const savedAltTextIndices = changedAltTextIndices.filter(
+        (index) => !failedAltTextIndices.includes(index),
+      );
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, savedAltTextIndices, context.session.shop, changedAttributeFields);
     }
 
     // If alt-text saves failed, merge warning into the response
@@ -297,6 +367,9 @@ async function updateImageAltTexts(
         const updateMediaData = await updateMediaResponse.json() as any;
         const mediaUserErrors = updateMediaData.data?.productUpdateMedia?.mediaUserErrors || [];
         const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
+        if (typeof returnedAlt === "string") {
+          params.confirmedAltTexts = { ...(params.confirmedAltTexts ?? {}), [index]: returnedAlt };
+        }
         logger.debug(`[ProductUpdate] [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
 
         if (mediaUserErrors.length > 0) {
@@ -427,6 +500,18 @@ async function updateImageAltTexts(
           }
         }
       }
+    }
+
+    // Claim the alt-text lock the moment Shopify holds the value, so a detached
+    // alt re-translation from an earlier primary save abandons the rest of its
+    // work instead of overwriting what the merchant just wrote. Under the SAME
+    // key that repair runs on (translation-locks.shared.ts) — the product's own
+    // lock belongs to its field reconciliation.
+    // GLOBAL layer only: the repair writes global rows, so a market override
+    // edit can never collide with it, and aborting the run over one would leave
+    // its remaining entries in neither list.
+    if (shopifySaved && params.locale !== params.primaryLocale && !marketId) {
+      markTranslationSaved(altTextLockId(productId));
     }
 
     // Save to Database ONLY if Shopify save succeeded (no mismatch allowed)
@@ -777,8 +862,19 @@ async function updateTranslatedProduct(
     // Use transaction to ensure all upserts and deletes succeed or fail together
     // @ts-expect-error Prisma interactive transaction types are complex; tx has same model accessors as db
     await db.$transaction(async (tx: PrismaClient) => {
-      // Save all translations to DB — both Shopify-saved and DB-only (no digest)
+      // Save all translations to DB — both Shopify-saved and DB-only (no digest).
+      // The digest is MIRRORED, not dropped: it records which source text this
+      // translation was written against, and the sync's stale-translation
+      // reconciliation uses exactly that as its baseline
+      // (services/translations/stale-translation-sync.server.ts). Writing null
+      // here made every product the merchant translated IN THIS APP invisible
+      // to that detection — no baseline, no evidence, no repair — which is the
+      // one workflow it exists for. `dbOnlyTranslations` genuinely have none.
       for (const translation of [...translationsInput, ...dbOnlyTranslations]) {
+        const digest: string | null =
+          "translatableContentDigest" in translation
+            ? (translation as { translatableContentDigest: string }).translatableContentDigest
+            : null;
         await tx.contentTranslation.upsert({
           where: {
             // Unique constraint: @@unique([shop, resourceId, key, locale, marketId])
@@ -792,7 +888,7 @@ async function updateTranslatedProduct(
           },
           update: {
             value: translation.value,
-            digest: null,
+            digest,
             resourceType: "Product", // Update resourceType in case it changed
           },
           create: {
@@ -802,7 +898,7 @@ async function updateTranslatedProduct(
             key: translation.key,
             value: translation.value,
             locale: translation.locale,
-            digest: null,
+            digest,
             marketId,
           },
         });
@@ -822,8 +918,13 @@ async function updateTranslatedProduct(
       }
     });
 
-    // Mark this product as recently saved so webhook syncs don't overwrite
-    markTranslationSaved(productId);
+    // Mark this product as recently saved so webhook syncs don't overwrite —
+    // and a MARKET write marks its own key. A repair writes GLOBAL rows only,
+    // so a market override can never collide with one; a mark it could see
+    // would abort an in-flight run for nothing and leave that run's remaining
+    // locales in neither list (translation-locks.shared.ts). The syncs that
+    // rewrite the market layer ask for both keys by name.
+    markTranslationSaved(marketId ? marketLayerLockId(productId) : productId);
 
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
@@ -848,7 +949,10 @@ async function updatePrimaryProduct(
   params: UpdateProductParams,
   changedFields: string[] = [],
   changedAltTextIndices: number[] = [],
-  shop: string
+  shop: string,
+  /** §Phase 3 — the attributes the merchant actually touched. Empty ⇒ write
+   *  none of them; see the gate below for why that is the safe default. */
+  changedAttributeFields: string[] = [],
 ): Promise<DataResponse> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
@@ -867,6 +971,15 @@ async function updatePrimaryProduct(
       { status: 400 }
     );
   }
+
+  /**
+   * The Task rows this ONE save handed a detached re-translation to. A product
+   * save can start TWO of them — its own content fields and its alt texts, two
+   * groups and two rows — and the sub-resource save adds a third from its own
+   * action. They travel back so the page can stop showing empty foreign fields
+   * for translations that are merely in flight.
+   */
+  const retranslationTaskIds: string[] = [];
 
   // Build mutation input — every field is omitted unless the client sent it, so
   // an unsent field is left untouched on Shopify instead of being cleared.
@@ -931,6 +1044,133 @@ async function updatePrimaryProduct(
     mutationInput.productType = params.productType || "";
   }
 
+  // ── PLAN §Phase 3 merchandising attributes ────────────────────────────────
+  //
+  // Gated on `changedFields`, NOT on "the client sent it". A primary save
+  // carries EVERY field (buildFieldsForSave only filters for foreign locales),
+  // so writing on presence alone means editing a title also writes vendor,
+  // tags and template suffix — and on a shop whose products predate the
+  // attribute sync those arrive as "" because the cache holds the migration's
+  // defaults. The result is not a no-op: `productUpdate` REPLACES the tag
+  // list, so a title edit would delete every tag, clear the vendor and reset
+  // the theme template. `productType` two blocks up has carried exactly this
+  // guard for the same reason since long before these fields existed.
+  //
+  // No `changedFields` at all ⇒ write no attributes. A caller that does not
+  // say what changed cannot be distinguished from one that changed nothing,
+  // and of the two readings only this one is safe.
+  const attributeChanged = (key: string) => changedAttributeFields.includes(key);
+
+  if (params.status !== undefined && attributeChanged("status")) {
+    // An unrecognised status is REFUSED rather than sent: `status` is the one
+    // attribute whose bad value fails at the GraphQL SCHEMA level, which comes
+    // back as a top-level `errors` array with `data: null` and never reaches
+    // `userErrors` — so the whole save would read as a success while nothing
+    // was written (the false-success pattern in CLAUDE.md).
+    const status = params.status.trim().toUpperCase();
+    if (!isValidProductStatus(status)) {
+      return json(
+        { success: false, error: `Unknown product status "${params.status}".` },
+        { status: 400 },
+      );
+    }
+    mutationInput.status = status;
+  }
+  if (params.vendor !== undefined && attributeChanged("vendor")) {
+    mutationInput.vendor = params.vendor;
+  }
+  if (params.templateSuffix !== undefined && attributeChanged("templateSuffix")) {
+    // "" is meaningful here: it puts the product back on the theme's default
+    // template. Shopify accepts the empty string for exactly that.
+    mutationInput.templateSuffix = params.templateSuffix || null;
+  }
+  if (params.tags !== undefined && attributeChanged("tags")) {
+    // Shopify REPLACES the whole tag list on productUpdate, so this is a
+    // complete list, not an addition. Trimmed and emptied-dropped to match how
+    // Shopify itself stores them — otherwise a stray comma becomes a tag.
+    mutationInput.tags = parseTagList(params.tags);
+  }
+
+  // §Phase 3.1 — the product taxonomy. A malformed GID is REFUSED rather than
+  // forwarded: an ID of the wrong type fails at the SCHEMA level, which comes
+  // back as a top-level `errors` array with `data: null` and never reaches
+  // `userErrors` — the save would read as a success while nothing was written.
+  if (params.category !== undefined && attributeChanged("category")) {
+    const parsed = parseCategoryId(params.category);
+    if (!parsed.valid) {
+      return json(
+        { success: false, error: `"${params.category}" is not a product category.` },
+        { status: 400 },
+      );
+    }
+    // null is meaningful: it takes the product OUT of the taxonomy.
+    mutationInput.category = parsed.id;
+  }
+
+  // §Phase 3.1 — collection membership, as a DIFF against the cache.
+  //
+  // The BEFORE side never comes from the client: a payload that names an id as
+  // "left" must not be able to remove a membership this editor never showed.
+  // An AUTOMATED membership is refused outright — its rule would re-add the
+  // product within seconds, and the merchant would be looking at a save that
+  // apparently did nothing.
+  const membershipNotes: string[] = [];
+  if (params.collections !== undefined && attributeChanged("collections")) {
+    const cached = await db.productCollection.findMany({
+      where: { shop, productId },
+      select: { collectionId: true, automated: true },
+    });
+    // How each collection of the SHOP reads, for screening JOINS — `cached`
+    // has no row for a collection the product is not in yet, so it cannot
+    // answer "is this one rule-based". `attributesSyncedAt` is the
+    // discriminator: an unsynced row's `isSmart: false` is the migration's
+    // default, not a measurement, and is refused rather than trusted.
+    const knownCollections = new Map<string, boolean | null>(
+      (
+        await db.collection.findMany({
+          where: { shop },
+          select: { id: true, isSmart: true, attributesSyncedAt: true },
+        })
+      ).map((c) => [c.id, collectionAutomation(c)] as const),
+    );
+    const diff = diffCollectionMembership(
+      cached,
+      parseCollectionIds(params.collections),
+      knownCollections,
+    );
+    if (diff.toJoin.length > 0) mutationInput.collectionsToJoin = diff.toJoin;
+    if (diff.toLeave.length > 0) mutationInput.collectionsToLeave = diff.toLeave;
+    // Two refusals, two sentences: a MEASURED rule-based collection has an
+    // explanation ("its rules decide"), an unmeasured one has an instruction
+    // ("sync the collections"). One note for both told merchants their manual
+    // collection was rule-based.
+    if (diff.refusedAutomated.length > 0) membershipNotes.push("collectionsAutomatedKept");
+    if (diff.refusedUnknown.length > 0) membershipNotes.push("collectionsUnknownKept");
+  }
+
+  // Which halves of §Phase 3.1 this save is actually writing. Used for BOTH
+  // the echo selection and the mirror, so the two can never disagree about
+  // whether the block is present.
+  const wroteCategory = mutationInput.category !== undefined;
+  const wroteMembership =
+    mutationInput.collectionsToJoin !== undefined || mutationInput.collectionsToLeave !== undefined;
+
+  // The echoed selection below is PLAN §Phase 3: `status`, `vendor`, `tags`
+  // and `templateSuffix` come back so the cache mirrors what Shopify STORED,
+  // not what this app sent. Shopify normalises tags (trim, dedupe, case) and
+  // can refuse a template suffix, so the sent value is not the stored one.
+  //
+  // The two interpolated selections are PLAN §Phase 3.1 — echoed ONLY when
+  // this save actually writes them. The membership selection is 100 nodes with
+  // a nested ruleSet, and a title fix, an SEO edit or an alt-text save has no
+  // use for any of it — the mirror below is already gated on the same
+  // predicate, so unconditional selection drained the cost bucket for data
+  // that was then discarded. Absent means productCollectionRows gets
+  // undefined, returns null, and the "skip the rebuild" path runs, which is
+  // the designed semantics rather than a special case.
+  //
+  // The prose stays out here on purpose: a `#` comment inside the document
+  // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
   const response = await gateway.graphql(
     `#graphql
       mutation updateProduct($input: ProductInput!) {
@@ -940,6 +1180,12 @@ async function updatePrimaryProduct(
             title
             handle
             descriptionHtml
+            status
+            vendor
+            tags
+            templateSuffix
+            ${wroteCategory ? "category { id fullName name }" : ""}
+            ${wroteMembership ? PRODUCT_COLLECTIONS_SELECTION : ""}
             seo {
               title
               description
@@ -960,6 +1206,25 @@ async function updatePrimaryProduct(
 
   const data = await response.json() as any;
 
+  // A SCHEMA-level error arrives as a top-level `errors` array with
+  // `data: null` and never as a userError. Before this check the line below
+  // dereferenced `data.data.productUpdate` and threw a TypeError, which the
+  // caller reported as a generic 500 — the merchant learned nothing about
+  // which field Shopify refused.
+  if (Array.isArray(data.errors) && data.errors.length > 0) {
+    logger.error("Shopify product update schema error", {
+      context: "UpdateProduct",
+      errors: data.errors,
+    });
+    return json(
+      { success: false, error: data.errors[0]?.message || "Shopify refused the update." },
+      { status: 500 },
+    );
+  }
+  if (!data.data?.productUpdate) {
+    return json({ success: false, error: "Shopify returned no result for this update." }, { status: 500 });
+  }
+
   if (data.data.productUpdate.userErrors.length > 0) {
     logger.error("Shopify product update error", {
       context: "UpdateProduct",
@@ -976,7 +1241,8 @@ async function updatePrimaryProduct(
 
   // Update local database
   try {
-    const updateData: Record<string, string | Date | null> = {};
+    // `string[]` is in the union for `tags` — a Prisma scalar list column.
+    const updateData: Record<string, string | string[] | boolean | Date | null> = {};
     if (params.title) updateData.title = params.title;
     if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml || null;
     if (params.handle !== undefined) updateData.handle = params.handle || null;
@@ -989,12 +1255,80 @@ async function updatePrimaryProduct(
       updateData.productType = params.productType || null;
     }
 
+    // §Phase 3 attributes, mirrored from the ECHO rather than from the input:
+    // Shopify normalises tags and may reject a template suffix, so writing the
+    // sent value would leave the cache claiming something the shop does not
+    // hold — and the attribute checklist reads that cache.
+    const echoed = data.data.productUpdate.product as {
+      status?: string; vendor?: string; tags?: string[]; templateSuffix?: string | null;
+      category?: { id?: string; fullName?: string | null; name?: string | null } | null;
+      // The SHARED type, not a hand-written near-copy: this is exactly the
+      // drift the removed `as never` cast used to hide — the mapper requires
+      // every key of the selection, and a local shape that merely looks like
+      // it would stop the mirror writing without a word.
+      collections?: ShopifyProductCollections | null;
+    } | null;
+    // Mirrored only for what was actually WRITTEN — same gate as the mutation
+    // input above, or a title edit would mirror the cache's own defaults back
+    // over themselves and, worse, look like a real value afterwards.
+    if (mutationInput.status !== undefined && echoed?.status) updateData.status = echoed.status;
+    if (mutationInput.vendor !== undefined) updateData.vendor = echoed?.vendor ?? params.vendor ?? null;
+    if (mutationInput.templateSuffix !== undefined) {
+      updateData.templateSuffix = echoed?.templateSuffix ?? null;
+    }
+    // A scalar list, so it is written whole. Only when Shopify echoed one:
+    // mirroring `[]` because the echo was missing would WIPE the product's
+    // tags in the cache and light up the attribute checklist for a change the
+    // merchant never made.
+    if (mutationInput.tags !== undefined && Array.isArray(echoed?.tags)) {
+      updateData.tags = echoed.tags;
+    }
+
+    // §Phase 3.1 — the taxonomy. `fullName` is the whole path and is what the
+    // picker labels the category with; storing only the leaf would make the
+    // sidebar say "Shirts & Tops" for a category the merchant chose under
+    // "Apparel". Cleared to null when the merchant cleared it, which the echo
+    // reports as a missing category rather than an empty one.
+    if (wroteCategory) {
+      updateData.categoryId = echoed?.category?.id ?? null;
+      updateData.categoryName = echoed?.category?.fullName ?? echoed?.category?.name ?? null;
+    }
+
     // Always update lastSyncedAt
     updateData.lastSyncedAt = new Date();
 
-    await db.product.update({
-      where: { shop_id: { shop, id: productId } },
-      data: updateData,
+    // §Phase 3.1 — membership, rebuilt from the ECHO.
+    //
+    // `productCollectionRows` returns null when the block was not delivered,
+    // which is the caller's signal to SKIP the rebuild rather than wipe the
+    // memberships — the same rule the sync follows. It is also why the
+    // truncation flag rides along: "in N collections" must not read as
+    // complete when it is a cut-off list.
+    const membership = wroteMembership
+      ? productCollectionRows(shop, productId, echoed?.collections)
+      : null;
+    if (membership) updateData.hasMoreCollections = membership.hasMore;
+
+    // ONE transaction, exactly as the three sync sites do it. Without it a
+    // connection blip between the delete and the createMany leaves the product
+    // cached as a member of NOTHING while the save reports success — and
+    // because `attributesSyncedAt` is untouched, the picker then renders that
+    // emptiness as a confident "in no collections". The `hasMoreCollections`
+    // flag rides along for the same reason: it and the rows must not disagree.
+    await db.$transaction(async (tx) => {
+      await tx.product.update({
+        where: { shop_id: { shop, id: productId } },
+        data: updateData,
+      });
+
+      if (!membership) return;
+      // Delete-by-product then createMany, exactly as the sync does: the echo
+      // is the complete window, so a diff against it would only reintroduce
+      // the drift this rebuild exists to remove.
+      await tx.productCollection.deleteMany({ where: { shop, productId } });
+      if (membership.rows.length > 0) {
+        await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+      }
     });
 
     loggers.product("info", "Updated product in DB", {
@@ -1010,21 +1344,65 @@ async function updatePrimaryProduct(
     // Don't fail the entire request if DB update fails - Shopify is source of truth
   }
 
-  // Delete translations for changed fields in all foreign languages
-  if (changedFields.length > 0) {
+  // Whether a changed/cleared primary value purges its foreign translations at
+  // all — merchant switch (Settings → Übersetzungen). Read ONCE for both the
+  // field purge and the alt-text purge below; fails OPEN, so an error keeps
+  // the historic behaviour. See
+  // services/translations/translation-change-policy.server.ts.
+  const { loadTranslationChangePolicy } = await import(
+    "~/services/translations/translation-change-policy.server"
+  );
+  const changePolicy =
+    changedFields.length > 0 || changedAltTextIndices.length > 0
+      ? await loadTranslationChangePolicy(shop, db)
+      : null;
+  // The product's own fields are re-translated by the sync, so the
+  // auto-translation may supersede their deletion. ALT-TEXTS are not: they
+  // live on the MediaImage resource, which the reconciliation never looks at,
+  // so suppressing their deletion would leave the old alt text live for good.
+  const purgeStaleTranslations = changePolicy?.purgeOnPrimaryChange ?? false;
+  // ALT-TEXTS are repaired by THIS save or by nothing: they live on the
+  // MediaImage resource, which no sync and no webhook in this app looks at. So
+  // with auto-translate on the save re-translates them and the deletion stands
+  // down — read through the policy, never written as `false`, because which of
+  // the two switches applies is that module's question.
+  //
+  // The locales are fetched FIRST, because the decision depends on the result:
+  // without a known primary locale there is nothing to translate FROM, and
+  // deciding before the lookup left a throttled shop with neither the repair
+  // nor the deletion.
+  let altForeignLocales: string[] = [];
+  let altPrimaryLocale = "";
+  // The product's OWN fields need the same list when the auto-translation is on
+  // — the repair below translates into every published foreign locale — so the
+  // one lookup serves both. It stays gated on there being something to do.
+  const contentRepairPossible =
+    changedFields.length > 0 && !!changePolicy?.autoTranslateExternalChanges;
+  if ((changedAltTextIndices.length > 0 || contentRepairPossible) && changePolicy) {
     try {
-      // Map field names to Shopify translation keys
-      const fieldToKeyMap: Record<string, string> = {
-        title: "title",
-        description: "body_html",
-        handle: "handle",
-        seoTitle: "meta_title",
-        metaDescription: "meta_description",
-        productType: "product_type",
-      };
+      const { fetchShopLocales } = await import("~/services/sync-utils");
+      const shopLocales = await fetchShopLocales(gateway.graphql.bind(gateway));
+      altForeignLocales = shopLocales.filter((l) => !l.primary).map((l) => l.locale);
+      altPrimaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+    } catch (localeError: unknown) {
+      // Non-fatal: the primary write has already gone through, so throwing here
+      // would report a completed save as failed.
+      loggers.product("warn", "Could not load shop locales — alt-text translations untouched", {
+        productId,
+        error: localeError instanceof Error ? localeError.message : String(localeError),
+      });
+    }
+  }
+  const retranslateAltTexts = altRepairRetranslates(changePolicy, altForeignLocales, altPrimaryLocale);
+  const purgeStaleAltTextTranslations = retranslateAltTexts
+    ? (changePolicy?.purgeOnPrimaryChange ?? false)
+    : (changePolicy?.purgeUnreconciledSurfaces ?? false);
 
+  // Delete translations for changed fields in all foreign languages
+  if (changedFields.length > 0 && purgeStaleTranslations) {
+    try {
       const translationKeysToDelete = changedFields
-        .map((field) => fieldToKeyMap[field])
+        .map((field) => FIELD_TO_TRANSLATION_KEY[field])
         .filter((key): key is string => !!key);
 
       if (translationKeysToDelete.length > 0) {
@@ -1042,9 +1420,9 @@ async function updatePrimaryProduct(
         const localesData = await localesResponse.json() as any;
         const shopLocales = localesData.data?.shopLocales || [];
 
-        // Filter out the primary locale, only keep published foreign locales
+        // Every foreign locale, published or not (a language being prepared).
         const foreignLocales = shopLocales
-          .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+          .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary)
           .map((l: { locale: string }) => l.locale);
 
         if (foreignLocales.length > 0) {
@@ -1054,6 +1432,33 @@ async function updatePrimaryProduct(
             translationKeys: translationKeysToDelete,
             locales: foreignLocales,
           });
+
+          // The MARKET overrides of the same keys, first and on their own
+          // layer. Nothing re-translates one (the repair writes global rows
+          // only), so once the primary text moves the override is as stale as
+          // the global row below it — and this branch is the one where the
+          // global rows are being DELETED, so after it nothing is left that
+          // would ever make anyone look at this resource again. Without it the
+          // bulk editor purged a product's overrides on a title edit and the
+          // single editor did not.
+          try {
+            const { purgeMarketOverrides } = await import(
+              "~/services/translations/market-layer-purge.server"
+            );
+            const { contentTranslationMirror } = await import(
+              "~/services/translations/stale-translation-sync.server"
+            );
+            await purgeMarketOverrides({
+              gateway,
+              mirror: contentTranslationMirror(shop),
+              refs: [{ resourceId: productId, resourceType: "Product" }],
+              locales: foreignLocales,
+              keys: translationKeysToDelete,
+              context: "Product",
+            });
+          } catch {
+            // Logged inside; never fails a primary write that already succeeded.
+          }
 
           // Delete translations from Shopify
           const response = await gateway.graphql(
@@ -1102,8 +1507,9 @@ async function updatePrimaryProduct(
                 where: {
                   resourceId: productId,
                   resourceType: "Product",
-                  // Global only — mirrors the global-only Shopify removal so market
-                  // overrides are preserved on both sides (no DB/Shopify divergence).
+                  // Global only because that is what the removal above sent;
+                  // the MARKET layer was handled separately, before it, and
+                  // needs its own echo per market to be deleted safely.
                   marketId: "",
                   key: key,
                   locale: { in: foreignLocales },
@@ -1130,144 +1536,110 @@ async function updatePrimaryProduct(
     }
   }
 
-  // Delete alt-text translations for changed image indices in all foreign languages
-  if (changedAltTextIndices.length > 0) {
+  // The product's OWN fields, with the auto-translation on: REPLACE the stale
+  // translations instead of deleting them — and write the ones that were never
+  // there.
+  //
+  // This used to be the `products/update` webhook's job alone, and for a
+  // product that HAS translations it still does it (the claim below makes the
+  // webhook stand down for this save's own run, and a later one finds the
+  // digests the repair wrote and proves nothing). What the webhook can never do
+  // is repair a product nobody has translated yet: its gate compares digests
+  // stored ON TRANSLATION ROWS, so with no rows there is no baseline and
+  // nothing can be proven — which is exactly the state a merchant is in when
+  // they switch the feature on. So the save owes the repair here too.
+  //
+  // Best-effort by contract: the primary write is already through, so a failure
+  // may not fail the save.
+  if (contentRepairPossible && altForeignLocales.length > 0) {
     try {
-      // Get all shop locales from Shopify API (reuse if already fetched above)
-      const localesResponse = await gateway.graphql(
-        `#graphql
-          query getShopLocales {
-            shopLocales {
-              locale
-              primary
-              published
-            }
-          }`
-      );
-      const localesData = await localesResponse.json() as any;
-      const shopLocales = localesData.data?.shopLocales || [];
-
-      // Filter out the primary locale, only keep published foreign locales
-      const foreignLocales = shopLocales
-        .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
-        .map((l: { locale: string }) => l.locale);
-
-      if (foreignLocales.length > 0) {
-        // Get product images from DB to find mediaIds
-        const dbProduct = await db.product.findUnique({
-          where: { shop_id: { shop, id: productId } },
-          include: {
-            images: {
-              orderBy: { position: 'asc' },
-            },
-          },
+      // The SAME map the purge above uses — they are the two branches of one
+      // decision, so a second copy here would purge a field on one switch
+      // setting and re-translate it on the other.
+      const changedKeys = [
+        ...new Set(
+          changedFields
+            .map((field) => FIELD_TO_TRANSLATION_KEY[field])
+            .filter((key): key is string => !!key),
+        ),
+      ];
+      if (changedKeys.length > 0) {
+        const { reconcileAfterPrimarySave } = await import(
+          "~/services/translations/stale-translation-sync.server"
+        );
+        const contentOutcome = await reconcileAfterPrimarySave({
+          client: gateway,
+          shop,
+          resourceId: productId,
+          resourceType: "Product",
+          contentKind: "product",
+          resourceTitle: (data.data.productUpdate.product?.title as string) || productId,
+          // No `lockId`: this claims the PRODUCT itself, which is the point —
+          // it is what makes the `products/update` webhook arriving from this
+          // very save skip the reconciliation instead of queueing a second run
+          // behind ours. The alt-text repair beside it claims a private key for
+          // the opposite reason: it repairs a MediaImage, not the product.
+          changed: changedKeys.map((key) => ({ key })),
+          foreignLocales: altForeignLocales,
+          policy: changePolicy!,
         });
-
-        if (dbProduct?.images) {
-          // Collect all Shopify API calls first, then batch DB deletes in a transaction
-          const shopifyDeletePromises: Promise<void>[] = [];
-          const imageIdsToDeleteTranslations: string[] = [];
-
-          for (const imageIndex of changedAltTextIndices) {
-            const dbImage = dbProduct.images[imageIndex];
-            if (!dbImage) continue;
-
-            const mediaImageId = dbImage.mediaId;
-            imageIdsToDeleteTranslations.push(dbImage.id);
-
-            loggers.product("info", "Deleting alt-text translations for changed image", {
-              productId,
-              imageIndex,
-              mediaImageId,
-              locales: foreignLocales,
-            });
-
-            // Delete translations from Shopify if we have the mediaId
-            if (mediaImageId) {
-              shopifyDeletePromises.push(
-                (async () => {
-                  const response = await gateway.graphql(
-                    `#graphql
-                      mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                        translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
-                          userErrors {
-                            field
-                            message
-                          }
-                          translations {
-                            key
-                            locale
-                          }
-                        }
-                      }`,
-                    {
-                      variables: {
-                        resourceId: mediaImageId,
-                        translationKeys: ["alt"],
-                        locales: foreignLocales,
-                      },
-                    }
-                  );
-
-                  const responseData = await response.json() as any;
-                  if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
-                    logger.error("Shopify translationsRemove API error (alt-text)", {
-                      context: "UpdateProduct",
-                      imageIndex,
-                      mediaImageId,
-                      errors: responseData.data.translationsRemove.userErrors,
-                    });
-                  } else {
-                    loggers.product("info", "Deleted alt-text translations from Shopify", {
-                      productId,
-                      imageIndex,
-                      mediaImageId,
-                      locales: foreignLocales,
-                    });
-                  }
-                })()
-              );
-            }
-          }
-
-          // Execute Shopify API calls (these can't be in a DB transaction)
-          await Promise.all(shopifyDeletePromises);
-
-          // Delete translations from local database (using transaction for consistency)
-          if (imageIdsToDeleteTranslations.length > 0) {
-            // @ts-expect-error Prisma interactive transaction types are complex; tx has same model accessors as db
-    await db.$transaction(async (tx: PrismaClient) => {
-              for (const imageId of imageIdsToDeleteTranslations) {
-                await tx.productImageAltTranslation.deleteMany({
-                  where: {
-                    imageId: imageId,
-                    // Global-scoped to mirror the global-only Shopify removal —
-                    // market-specific alt overrides survive on both sides.
-                    marketId: "",
-                    locale: { in: foreignLocales },
-                  },
-                });
-              }
-            });
-
-            loggers.product("info", "Deleted alt-text translations from DB", {
-              productId,
-              imageIds: imageIdsToDeleteTranslations,
-              locales: foreignLocales,
-            });
-          }
-        }
+        if (contentOutcome.taskId) retranslationTaskIds.push(contentOutcome.taskId);
       }
-    } catch (altTextTranslationError: unknown) {
-      logger.error("Failed to delete alt-text translations for changed images", {
-        context: "UpdateProduct",
+    } catch (repairError: unknown) {
+      loggers.product("warn", "Auto-translation of the changed fields could not start", {
         productId,
-        changedAltTextIndices,
-        error: altTextTranslationError instanceof Error ? altTextTranslationError.message : String(altTextTranslationError),
+        error: repairError instanceof Error ? repairError.message : String(repairError),
       });
-      // Don't fail the request - primary update succeeded
     }
   }
 
-  return json({ success: true, product: data.data.productUpdate.product });
+  // The alt texts this save rewrote: purged or re-translated, by the ONE
+  // implementation the image manager's per-image save calls too
+  // (product-alt-repair.server.ts).
+  if (changedAltTextIndices.length > 0 && (purgeStaleAltTextTranslations || retranslateAltTexts) && changePolicy) {
+    try {
+      const dbProduct = await db.product.findUnique({
+        where: { shop_id: { shop, id: productId } },
+        include: { images: { orderBy: { position: "asc" } } },
+      });
+      const changes: ProductAltChange[] = [];
+      for (const index of changedAltTextIndices) {
+        const image = dbProduct?.images?.[index];
+        if (!image) continue;
+        const written = params.confirmedAltTexts?.[index] ?? params.imageAltTexts?.[index];
+        changes.push({
+          imageId: image.id,
+          mediaId: image.mediaId ?? null,
+          ...(typeof written === "string" ? { alt: written } : {}),
+        });
+      }
+      const altOutcome = await repairChangedProductAlts({
+        gateway,
+        db,
+        shop,
+        productId,
+        productTitle: (data.data.productUpdate.product?.title as string) || productId,
+        changes,
+        policy: changePolicy,
+        foreignLocales: altForeignLocales,
+        primaryLocale: altPrimaryLocale,
+      });
+      if (altOutcome.taskId) retranslationTaskIds.push(altOutcome.taskId);
+    } catch (altError: unknown) {
+      loggers.product("warn", "Alt-text translation repair failed — translations kept", {
+        productId,
+        error: altError instanceof Error ? altError.message : String(altError),
+      });
+    }
+  }
+
+  return json({
+    success: true,
+    product: data.data.productUpdate.product,
+    retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+    // §Phase 3.1 — a rule-based membership the picker asked to remove was
+    // kept. Reported rather than silent: the merchant unticked a box and the
+    // product is still in the collection, and only this line explains why.
+    ...(membershipNotes.length > 0 ? { attributeWarnings: membershipNotes } : {}),
+  });
 }

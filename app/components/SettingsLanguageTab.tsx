@@ -87,7 +87,11 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
             onDiscard={handleDiscard}
             saveText={t.products.saveChanges}
             discardText={t.content?.discardChanges || "Verwerfen"}
-            action="saveSettings"
+            action="saveAppLanguage"
+            isSavingCurrentItem={
+              fetcher.state !== "idle" &&
+              fetcher.formData?.get("actionType") === "saveAppLanguage"
+            }
             fetcherState={fetcher.state}
             fetcherFormData={fetcher.formData}
           />

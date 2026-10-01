@@ -69,7 +69,7 @@ try {
   serverLogger.error("[server.js] Failed to load rate-limit-cjs.cjs: " + e.message);
   // Provide no-op middleware so server can still start
   const noop = (req, res, next) => next();
-  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, webhookRateLimit: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
+  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookRateLimit: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
 }
 
 const {
@@ -92,14 +92,17 @@ const {
 // load failure can never prevent the server from starting (mirrors the
 // server-logger fallback pattern above).
 // Shared gate + scrubbing — the SAME module the TS app uses, so events sent
-// from this early window are redacted identically (review R2/H2). Plain .cjs
-// so it loads via require() before the React Router build exists.
+// from this early window are redacted identically (review R2/H2). Zero-dep ESM
+// that Node loads directly, before the React Router build exists; this file is
+// already a module (it top-level-awaits @sentry/node below), so the older
+// createRequire() detour bought nothing and cost `npm run dev`, which cannot
+// evaluate a CommonJS project file at all.
 let sentryScrub;
 try {
-  sentryScrub = require("./app/utils/sentry-scrub.cjs");
+  sentryScrub = await import("./app/utils/sentry-scrub.js");
 } catch (e) {
   sentryScrub = null;
-  serverLogger.error("[server.js] Failed to load sentry-scrub.cjs: " + e.message);
+  serverLogger.error("[server.js] Failed to load sentry-scrub.js: " + e.message);
 }
 
 let sentryNode = null;
@@ -195,6 +198,19 @@ app.use(compression());
 // http://expressjs.com/en/advanced/best-practice-security.html#at-a-minimum-disable-x-powered-by-header
 app.disable("x-powered-by");
 
+// A non-production deployment serves the same public website on its own
+// Railway host, and a search engine that finds it indexes the site twice.
+// Only an EXPLICIT non-production APP_ENV opts out of indexing — an unset
+// variable keeps the old behaviour, because a production deploy that loses the
+// variable must not vanish from search. The header covers every response, so
+// the website, robots.txt, sitemap.xml and llms.txt are all covered.
+if (process.env.APP_ENV && process.env.APP_ENV !== "production") {
+  app.use((_req, res, next) => {
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    next();
+  });
+}
+
 // HTTP → HTTPS redirect — defense-in-depth. Railway terminates TLS and also
 // redirects at the proxy level, but this catches any path that reaches the app
 // with X-Forwarded-Proto: http (e.g., internal mis-routing or proxy config change).
@@ -229,6 +245,13 @@ app.use('/app/settings', strictRateLimit);
 app.use('/api/sync-products', bulkOperationRateLimit);
 app.use('/api/sync-content', bulkOperationRateLimit);
 
+// The editors' JSON doors for their plain-fetch saves (copy to all languages,
+// option translate/copy). They used to post to the content PAGE routes, so they
+// belong to the content limit below, not to the general /api one: a copy on a
+// shop with many languages fires one request per locale, and sharing the 100/min
+// /api budget with every other API call turned routine clicks into 429s.
+const CONTENT_EDITOR_API_PATHS = ['/api/content-editor-action', '/api/product-sub-resources'];
+
 // Content page rate limiting — applied to form submissions (save, copy, translate).
 // Uses a permissive 200/min limit because these pages mix AI and non-AI operations
 // and routine copy/save clicks must not be throttled. The /api/ai route has its
@@ -239,7 +262,8 @@ app.use((req, res, next) => {
       contentType.includes('multipart/form-data')) {
     if (req.path.includes('/app/products') ||
         req.path.includes('/app/content') ||
-        req.path.includes('/app/collections')) {
+        req.path.includes('/app/collections') ||
+        CONTENT_EDITOR_API_PATHS.includes(req.path)) {
       return contentActionRateLimit(req, res, next);
     }
   }
@@ -255,7 +279,9 @@ app.use('/api', (req, res, next) => {
   // Skip rate limiting for these endpoints - they have exponential backoff in the client
   const excludedPaths = [
     '/running-tasks-count',
-    '/recently-completed-tasks'
+    '/recently-completed-tasks',
+    // Limited by contentActionRateLimit above instead (CONTENT_EDITOR_API_PATHS).
+    ...CONTENT_EDITOR_API_PATHS.map((p) => p.slice('/api'.length)),
   ];
 
   if (excludedPaths.includes(req.path)) {
@@ -392,6 +418,28 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to start GDPR audit log cleanup service", { error: String(error) });
   }
 
+  // Recover pending tasks BEFORE any processor starts claiming work, and
+  // AWAIT it. `recoverRunningWebpTasks` resets a `running` WebP item that died
+  // under 70% progress back to `pending`, on the premise that nothing reached
+  // Shopify yet — but `webpProcessor.start()` begins polling immediately and is
+  // not awaited, so with the old order it could already have claimed that very
+  // item. Recovery then reset a LIVE conversion, and a later poll ran the
+  // destructive sequence on the same image a second time. The ordering is the
+  // fix: a timestamp filter inside the recovery service would be a second
+  // mechanism answering the same question.
+  try {
+    const { TaskRecoveryService } = await import("./task-recovery.service.js");
+    const recoveryService = TaskRecoveryService.getInstance();
+    const result = await recoveryService.recoverPendingTasks();
+    serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
+
+    // Start periodic monitoring for stuck tasks
+    recoveryService.startStuckTaskMonitoring();
+    serverLogger.info("Stuck task monitoring started");
+  } catch (error) {
+    serverLogger.error("Failed to recover tasks", { error: String(error) });
+  }
+
   // Start WebP conversion task processor — gated while app is under Shopify review.
   // Remove this guard once the Image Manager feature set is approved.
   if (process.env.APP_ENV !== "production") {
@@ -405,20 +453,6 @@ const server = app.listen(port, host, async () => {
     }
   } else {
     serverLogger.info("WebP processor service skipped (APP_ENV=production, feature gated for review)");
-  }
-
-  // Recover pending tasks after server restart and start stuck task monitoring
-  try {
-    const { TaskRecoveryService } = await import("./task-recovery.service.js");
-    const recoveryService = TaskRecoveryService.getInstance();
-    const result = await recoveryService.recoverPendingTasks();
-    serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
-
-    // Start periodic monitoring for stuck tasks
-    recoveryService.startStuckTaskMonitoring();
-    serverLogger.info("Stuck task monitoring started");
-  } catch (error) {
-    serverLogger.error("Failed to recover tasks", { error: String(error) });
   }
 
   // Start stale image cleanup service — gated while app is under Shopify review.

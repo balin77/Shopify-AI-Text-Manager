@@ -54,6 +54,11 @@ export const FIELD_CONFIGS = {
   policies: ['body'],
   templates: ['title', 'body'],
   metaobjects: [], // Metaobjects have dynamic fields
+  // Menus carry no editor fields of their own: a menu's translatable content is
+  // its ITEMS, each its own Link resource with the single key `title`. The
+  // menus page therefore computes completeness itself (see the `menus` branch
+  // in field-validation.utils.ts) and nothing here can enumerate it.
+  menus: [],
   // ThemeContent-backed rubrics — all dynamic fields (no fixed required set).
   system: [],
   delivery: [],

@@ -1,0 +1,209 @@
+/**
+ * Unit tests — the translation-change policy (Settings → Übersetzungen).
+ *
+ * The two rules that matter are behavioural, not cosmetic:
+ *   - it FAILS OPEN (a lookup error must keep the historic purge behaviour,
+ *     never silently start preserving stale translations), and
+ *   - the Max gate is applied on every READ, so a stored `true` left over from
+ *     a former Max subscription stays inert after a downgrade.
+ *
+ * DB is fully mocked (image-operations.test.ts convention).
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { row, db } = vi.hoisted(() => {
+  const row: { value: any; error: Error | null } = { value: null, error: null };
+  const db = {
+    aISettings: {
+      findUnique: vi.fn(async () => {
+        if (row.error) throw row.error;
+        return row.value;
+      }),
+    },
+  };
+  return { row, db };
+});
+
+vi.mock("../../app/db.server", () => ({ db, default: db }));
+
+import {
+  loadTranslationChangePolicy,
+  isPurgeOnPrimaryChangeEnabled,
+} from "../../app/services/translations/translation-change-policy.server";
+
+beforeEach(() => {
+  row.value = null;
+  row.error = null;
+  db.aISettings.findUnique.mockClear();
+});
+
+describe("loadTranslationChangePolicy", () => {
+  it("defaults to purging when the shop has no settings row yet", async () => {
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.purgeOnPrimaryChange).toBe(true);
+    expect(policy.autoTranslateExternalChanges).toBe(false);
+  });
+
+  it("honours a merchant who switched the purge off", async () => {
+    row.value = {
+      translationPurgeOnPrimaryChange: false,
+      autoTranslateExternalChanges: false,
+      subscriptionPlan: "pro",
+    };
+    expect(await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com")).toBe(false);
+  });
+
+  it("fails OPEN: a lookup error keeps the historic purge behaviour", async () => {
+    row.error = new Error("connection lost");
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.purgeOnPrimaryChange).toBe(true);
+    expect(policy.autoTranslateExternalChanges).toBe(false);
+  });
+
+  it("keeps the purge ON for surfaces the re-translation cannot reach", async () => {
+    // Metaobject fields, theme content, options/metafields and alt-texts are
+    // outside the sync's reconciliation. Suppressing their deletion there would
+    // leave a translation of text that no longer exists live forever, because
+    // nothing would ever refresh it.
+    row.value = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.purgeOnPrimaryChange).toBe(false);
+    expect(policy.purgeUnreconciledSurfaces).toBe(true);
+    // The default answer is the safe one: a caller that does not claim to be
+    // reconciled keeps deleting.
+    expect(await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com")).toBe(true);
+    expect(
+      await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com", undefined, { reconciled: true }),
+    ).toBe(false);
+  });
+
+  it("respects a merchant who switched the purge off, on both surfaces", async () => {
+    row.value = {
+      translationPurgeOnPrimaryChange: false,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.purgeOnPrimaryChange).toBe(false);
+    expect(policy.purgeUnreconciledSurfaces).toBe(false);
+  });
+
+  it("forces the purge OFF while auto-translation is in force", async () => {
+    // The two are alternatives: deleting the rows a re-translation is about to
+    // refresh means nothing. Enforced server-side, not only in the UI, because
+    // both columns are independently writable.
+    row.value = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.autoTranslateExternalChanges).toBe(true);
+    expect(policy.purgeOnPrimaryChange).toBe(false);
+    expect(
+      await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com", undefined, { reconciled: true }),
+    ).toBe(false);
+  });
+
+  it("leaves the purge alone when auto-translation is only stored, not granted", async () => {
+    // Below Max the flag is inert, so it cannot switch the deletion off either.
+    row.value = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "pro",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.autoTranslateExternalChanges).toBe(false);
+    expect(policy.purgeOnPrimaryChange).toBe(true);
+  });
+
+  it("grants auto-translation on Max", async () => {
+    row.value = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.autoTranslateExternalChanges).toBe(true);
+  });
+
+  it("keeps a stored `true` inert below Max (downgrade never resets the column)", async () => {
+    for (const plan of ["free", "basic", "pro"]) {
+      row.value = {
+        translationPurgeOnPrimaryChange: true,
+        autoTranslateExternalChanges: true,
+        subscriptionPlan: plan,
+      };
+      const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+      expect(policy.autoTranslateExternalChanges).toBe(false);
+      expect(policy.plan).toBe(plan);
+    }
+  });
+
+  it("ANDs the handle sub-decision with the parent switch and the plan", async () => {
+    const base = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateHandles: true,
+    };
+    // Granted only where BOTH the plan and the parent switch allow it.
+    row.value = { ...base, autoTranslateExternalChanges: true, subscriptionPlan: "max" };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateHandles).toBe(true);
+
+    // Parent off: the stored column stays, the behaviour does not. A merchant
+    // who switches the automation off to try something must not lose the
+    // answer underneath it.
+    row.value = { ...base, autoTranslateExternalChanges: false, subscriptionPlan: "max" };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateHandles).toBe(false);
+
+    // Downgraded: the parent is already inert, so this is too.
+    row.value = { ...base, autoTranslateExternalChanges: true, subscriptionPlan: "pro" };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateHandles).toBe(false);
+  });
+
+  it("never grants handles on a lookup error — a slug must not move on a guess", async () => {
+    row.error = new Error("connection lost");
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.autoTranslateHandles).toBe(false);
+  });
+
+  it("defaults both switches when the row carries neither field", async () => {
+    // Defensive only. The real pre-migration case does NOT reach here: Prisma
+    // raises P2022 for a `select` of a column the database does not have, so a
+    // container running ahead of its migration lands in the fail-open catch
+    // above — same outcome, different route.
+    row.value = { subscriptionPlan: "max" };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.purgeOnPrimaryChange).toBe(true);
+    expect(policy.autoTranslateExternalChanges).toBe(false);
+    expect(policy.autoTranslateHandles).toBe(false);
+  });
+});
+
+describe("the optional daily limit", () => {
+  const on = { translationPurgeOnPrimaryChange: true, autoTranslateExternalChanges: true, subscriptionPlan: "max" };
+
+  it("is NO limit unless the merchant set one", async () => {
+    row.value = { ...on, autoTranslateDailyLimit: null };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBeNull();
+  });
+
+  it("carries a positive whole number through", async () => {
+    row.value = { ...on, autoTranslateDailyLimit: 25 };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBe(25);
+  });
+
+  it("reads a stored 0 or negative as NO limit — never as 'stop everything'", async () => {
+    row.value = { ...on, autoTranslateDailyLimit: 0 };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBeNull();
+  });
+
+  it("is null whenever the auto-translation itself is not in force", async () => {
+    row.value = { ...on, autoTranslateExternalChanges: false, autoTranslateDailyLimit: 25 };
+    expect((await loadTranslationChangePolicy("shop.myshopify.com")).autoTranslateDailyLimit).toBeNull();
+  });
+});

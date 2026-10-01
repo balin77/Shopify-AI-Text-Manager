@@ -7,19 +7,51 @@
 
 import { data as json } from "react-router";
 import { TranslationService } from "../../../src/services/translation.service";
+import { fieldTranslationKeyMap } from "../../../src/services/shopify-content.service";
+import { isAttributeField } from "~/services/content-attributes.shared";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "../../utils/validation";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
-import { findMetaobjectLabelField } from "../../constants/shopifyFields";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
+
+/**
+ * The SOURCE language of a translate request, or `undefined` when the caller
+ * named none.
+ *
+ * Three things this is not allowed to be, each of which it was:
+ *
+ * - It is not `"en"` by default. Both batch prompts NAME the source language
+ *   ("Translate these fields from English to: ..."), so on a German shop the
+ *   model was told German text was English - and with `en` among the TARGETS
+ *   that reads as translating English into English, which the batch helper's
+ *   source-echo guard skips on purpose (two identical languages legitimately
+ *   produce identical text). The untranslated German could then be
+ *   echo-confirmed and mirrored as the English translation. `undefined` hands
+ *   the question to `translateAllContent`, which answers it from the shop's own
+ *   primary locale.
+ * - It is not read from `sourceLocale` alone. The clients on the
+ *   translate-to-all-locales paths send the source as `primaryLocale` (the name
+ *   the `/api/ai` handlers read it under), so a handler asking only for
+ *   `sourceLocale` never saw it.
+ * - And an INVALID value is still refused rather than quietly replaced.
+ */
+function requestedSourceLocale(formData: FormData): string | undefined {
+  return (
+    getFormString(formData, "sourceLocale") ||
+    getFormString(formData, "primaryLocale") ||
+    undefined
+  );
+}
 
 // ============================================================================
 // METAOBJECT TRANSLATION HELPER (local copy)
@@ -29,28 +61,38 @@ async function translateMetaobjectEntries(params: {
   admin: AdminApiContext;
   session: Session;
   db: PrismaClient;
-  itemId: string;
+  /**
+   * Keyed by `<Metaobject GID>#<field key>` — the editor's compound field key
+   * (PLAN_METAOBJECTS_EDITOR §6.1). It used to be the bare entry GID, which is
+   * why this helper looked up "the label field" for every entry: there was no
+   * other field it could have meant. Now the key names the field itself.
+   */
   metaobjectFields: Record<string, string>;
   targetLocales: string[];
   translationService: TranslationService;
   customInstructions?: string;
 }): Promise<{ translations: Record<string, Record<string, string>>; failedLocales: string[] }> {
-  const { admin, session, db, itemId, metaobjectFields, targetLocales, translationService, customInstructions } = params;
+  const { admin, session, db, metaobjectFields, targetLocales, translationService, customInstructions } = params;
   const { TRANSLATE_CONTENT } = await import("../../graphql/content.mutations");
   const { GET_TRANSLATABLE_CONTENT } = await import("../../graphql/content.queries");
+  const { parseMetaobjectFieldKey } = await import("~/services/metaobject-fields.shared");
 
-  // Build short-key mapping for cleaner AI prompts
-  const gids = Object.keys(metaobjectFields);
-  const gidToShort: Record<string, string> = {};
-  const shortToGid: Record<string, string> = {};
+  // Build short-key mapping for cleaner AI prompts. A key that is NOT compound
+  // is dropped rather than guessed at: it would reach `metaobject(id: …)` as a
+  // malformed id and translate nothing, which is worse than saying so.
+  const compoundKeys = Object.keys(metaobjectFields).filter((key) => parseMetaobjectFieldKey(key) !== null);
+  const shortToKey: Record<string, string> = {};
   const shortFields: Record<string, string> = {};
 
-  gids.forEach((gid, i) => {
+  compoundKeys.forEach((key, i) => {
     const short = `entry_${i}`;
-    gidToShort[gid] = short;
-    shortToGid[short] = gid;
-    shortFields[short] = metaobjectFields[gid];
+    shortToKey[short] = key;
+    shortFields[short] = metaobjectFields[key];
   });
+
+  if (compoundKeys.length === 0) {
+    return { translations: {}, failedLocales: [...targetLocales] };
+  }
 
   // AI translation (all entries × all locales in one request)
   const aiResult = await translationService.translateProduct(
@@ -72,45 +114,48 @@ async function translateMetaobjectEntries(params: {
     }
     allTranslations[locale] = {};
     for (const [shortKey, value] of Object.entries(localeResult)) {
-      const gid = shortToGid[shortKey];
-      if (gid && value) {
-        allTranslations[locale][gid] = String(value);
+      const compound = shortToKey[shortKey];
+      if (compound && value) {
+        allTranslations[locale][compound] = String(value);
       }
     }
   }
 
   // Save translations to Shopify + DB for each metaobject × locale
   for (const [locale, fieldMap] of Object.entries(allTranslations)) {
-    for (const [gid, translatedValue] of Object.entries(fieldMap)) {
+    for (const [compound, translatedValue] of Object.entries(fieldMap)) {
+      const parsed = parseMetaobjectFieldKey(compound);
+      if (!parsed) continue;
+      const { metaobjectId, fieldKey } = parsed;
       try {
-        // Find label field key for this metaobject
-        const moResponse = await admin.graphql(
-          `#graphql
-            query getMetaobject($id: ID!) {
-              metaobject(id: $id) { fields { key type } }
-            }`,
-          { variables: { id: gid } }
-        );
-        const moData = await moResponse.json();
-        const fields = moData.data?.metaobject?.fields || [];
-        const labelField = findMetaobjectLabelField(fields);
-        if (!labelField) continue;
+        // The cache row is the tenancy check AND the source of the type the DB
+        // row is stamped with. `itemId` on this page is `metaobject_type_<type>`
+        // and stamping THAT is what the definition stale-delete then removes
+        // (PLAN_METAOBJECTS_EDITOR B5) — masked while every key was a label
+        // field, real now that any field key can occur.
+        const cached = await db.metaobject.findUnique({
+          where: { shop_id: { shop: session.shop, id: metaobjectId } },
+          select: { type: true },
+        });
+        if (!cached) continue;
 
-        // Fetch digest
+        // Fetch digest for THIS field. `translatableContent` only lists keys
+        // that have a primary value, so a missing digest means the source field
+        // is empty — nothing to translate, not a failure.
         const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
-          variables: { resourceId: gid },
+          variables: { resourceId: metaobjectId },
         });
         const digestData = await digestResponse.json();
         const tc = digestData.data?.translatableResource?.translatableContent || [];
-        const digestEntry = tc.find((c: any) => c.key === labelField.key);
+        const digestEntry = tc.find((c: { key: string; digest: string | null }) => c.key === fieldKey);
         if (!digestEntry?.digest) continue;
 
         // Register translation
         await admin.graphql(TRANSLATE_CONTENT, {
           variables: {
-            resourceId: gid,
+            resourceId: metaobjectId,
             translations: [{
-              key: labelField.key,
+              key: fieldKey,
               value: translatedValue,
               locale,
               translatableContentDigest: digestEntry.digest,
@@ -124,16 +169,16 @@ async function translateMetaobjectEntries(params: {
             shop_metaobjectId_key_locale_marketId: {
               marketId: "",
               shop: session.shop,
-              metaobjectId: gid,
-              key: labelField.key,
+              metaobjectId,
+              key: fieldKey,
               locale,
             },
           },
           create: {
             shop: session.shop,
-            metaobjectId: gid,
-            type: itemId,
-            key: labelField.key,
+            metaobjectId,
+            type: cached.type,
+            key: fieldKey,
             value: translatedValue,
             locale,
             outdated: false,
@@ -141,15 +186,18 @@ async function translateMetaobjectEntries(params: {
           update: {
             value: translatedValue,
             outdated: false,
+            // Repairs a row an older build stamped with the pseudo-item id.
+            type: cached.type,
             updatedAt: new Date(),
           },
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         logger.error("[translateMetaobjectEntries] Error saving translation", {
           context: "Metaobjects",
-          gid,
+          metaobjectId,
+          fieldKey,
           locale,
-          error: err.message,
+          error: err instanceof Error ? err.message : String(err),
         });
       }
     }
@@ -171,6 +219,68 @@ function getEffectiveResourceType(itemId: string, configResourceType: string): s
   return itemId.includes("/Blog/") ? "Blog" : configResourceType;
 }
 
+/**
+ * The fields a whole-item translation may carry, out of the flat form the
+ * editor submits.
+ *
+ * The editor sends every field definition it renders, and on a product that
+ * includes the merchandising attributes — `status`, `vendor`, `tags`,
+ * `templateSuffix`, `category`. Shopify stores those ONCE PER ITEM and has no
+ * translation key for any of them, so each one was translated by the AI, sent
+ * to `prepareField`, refused there for want of a key mapping and reported back
+ * as `rejectedFields`: every "translate everything" on a product ended in
+ * "Feld(er) status, vendor konnten nicht auf Shopify gespeichert werden", a
+ * failure notice about two fields that can never succeed.
+ *
+ * The gate is the ONE canonical map (`FIELD_TO_TRANSLATION_KEY` via
+ * `fieldTranslationKeyMap`, which also carries the ShopPolicy `body`
+ * exception), never a second vocabulary: exactly what the save stage would
+ * accept is what the AI is paid to translate, so a field can no longer be
+ * translated only to be reported as rejected. It drops `images` by the same
+ * rule and rightly so — alt texts ride on their own parallel request
+ * (`translateAllAltTexts*`), never through this form.
+ *
+ * Server-side, because both entry points are directly POST-reachable: the
+ * client's own filter below is what keeps the values off the wire, this is
+ * what makes the rejection structurally impossible.
+ *
+ * What the gate must NOT become is a silent hole. Dropping an attribute is the
+ * point and says nothing; dropping a field that CLAIMS to be translatable means
+ * someone added one to the config without an entry in the map, and before this
+ * gate existed `prepareField` at least logged and reported it. So a submitted
+ * value for such a field still warns — the attributes stay quiet because
+ * `isAttributeField` is exactly the mark that says "one value per item", and a
+ * non-text field like `images` never carries a value through this form.
+ */
+export function collectTranslatableFields(
+  formData: FormData,
+  fieldDefinitions: ReadonlyArray<{
+    key: string;
+    translationKey?: string;
+    supportsTranslation?: boolean;
+    groupId?: string;
+  }>,
+  resourceType: string,
+): Record<string, string> {
+  const keyMapping = fieldTranslationKeyMap(resourceType);
+  const fields: Record<string, string> = {};
+  for (const field of fieldDefinitions) {
+    const value = getFormString(formData, field.key);
+    if (!value) continue;
+    if (!keyMapping[field.key]) {
+      if (!isAttributeField(field)) {
+        logger.warn(
+          `[Translation] Field '${field.key}' claims translation support but has no entry in FIELD_TO_TRANSLATION_KEY - NOT translated`,
+          { context: "Translation", resourceType, field: field.key },
+        );
+      }
+      continue;
+    }
+    fields[field.key] = value;
+  }
+  return fields;
+}
+
 // ============================================================================
 // TRANSLATE FIELD
 // ============================================================================
@@ -188,7 +298,13 @@ export async function handleTranslateField(
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Name the ITEM. This row stored a `resourceId` and no title at all, so the
+  // Tasks card rendered nothing for it — not even the Shopify link that would
+  // have let the merchant see which item it was. The client sends no title on
+  // the single-field translate, so the cached one is read here.
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -196,6 +312,7 @@ export async function handleTranslateField(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
+      resourceTitle: taskResourceTitle,
       fieldType,
       targetLocale,
       progress: 0,
@@ -260,6 +377,8 @@ export async function handleTranslateField(
     } catch (updateErr) {
       console.error("Failed to update task status:", updateErr);
     }
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateField", fieldType });
+    if (refused) return refused;
     return json({ actionType: "translateField", success: false, error: errorMsg, fieldType }, { status: 500 });
   }
 }
@@ -276,12 +395,18 @@ export async function handleTranslateAll(
 
   const targetLocalesStr = getFormString(formData, "targetLocales");
   const contextTitle = getFormString(formData, "title");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
-  if (!isValidLocale(sourceLocale)) {
+  const sourceLocale = requestedSourceLocale(formData);
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Create task entry.
+  // The client sends the title it has on screen; an editor opened by deep link
+  // may not have one yet, and an empty subject used to blank the card's whole
+  // resource row. Cached title as the fallback.
+  const taskResourceTitle2 = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId, contextTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -289,7 +414,7 @@ export async function handleTranslateAll(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
-      resourceTitle: contextTitle,
+      resourceTitle: taskResourceTitle2,
       fieldType: "all",
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -307,12 +432,14 @@ export async function handleTranslateAll(
         }
       }
     } else {
-      contentConfig.fieldDefinitions.forEach((field) => {
-        const value = getFormString(formData, field.key);
-        if (value) {
-          changedFields[field.key] = value;
-        }
-      });
+      Object.assign(
+        changedFields,
+        collectTranslatableFields(
+          formData,
+          contentConfig.fieldDefinitions,
+          getEffectiveResourceType(itemId, contentConfig.resourceType),
+        ),
+      );
     }
 
     if (Object.keys(changedFields).length === 0) {
@@ -349,7 +476,7 @@ export async function handleTranslateAll(
     if (contentConfig.resourceType === "Metaobject") {
       const targetLocales = targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : [];
       const result = await translateMetaobjectEntries({
-        admin, session, db, itemId,
+        admin, session, db,
         metaobjectFields: changedFields,
         targetLocales,
         translationService: translationServiceWithTask,
@@ -419,6 +546,8 @@ export async function handleTranslateAll(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAll" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -435,15 +564,21 @@ export async function handleTranslateAllForLocale(
 
   const targetLocale = getFormString(formData, "targetLocale");
   const contextTitle = getFormString(formData, "title");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+  const sourceLocale = requestedSourceLocale(formData);
   if (!targetLocale || !isValidLocale(targetLocale)) {
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
   }
-  if (!isValidLocale(sourceLocale)) {
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Create task entry.
+  // The client sends the title it has on screen; an editor opened by deep link
+  // may not have one yet, and an empty subject used to blank the card's whole
+  // resource row. Cached title as the fallback.
+  const taskResourceTitle3 = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId, contextTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -451,7 +586,7 @@ export async function handleTranslateAllForLocale(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
-      resourceTitle: contextTitle,
+      resourceTitle: taskResourceTitle3,
       targetLocale,
       fieldType: "all",
       progress: 0,
@@ -470,12 +605,14 @@ export async function handleTranslateAllForLocale(
         }
       }
     } else {
-      contentConfig.fieldDefinitions.forEach((field) => {
-        const value = getFormString(formData, field.key);
-        if (value) {
-          changedFields[field.key] = value;
-        }
-      });
+      Object.assign(
+        changedFields,
+        collectTranslatableFields(
+          formData,
+          contentConfig.fieldDefinitions,
+          getEffectiveResourceType(itemId, contentConfig.resourceType),
+        ),
+      );
     }
 
     if (Object.keys(changedFields).length === 0) {
@@ -509,7 +646,7 @@ export async function handleTranslateAllForLocale(
     // Metaobjects need custom translation flow
     if (contentConfig.resourceType === "Metaobject") {
       const result = await translateMetaobjectEntries({
-        admin, session, db, itemId,
+        admin, session, db,
         metaobjectFields: changedFields,
         targetLocales: [targetLocale],
         translationService: translationServiceWithTask,
@@ -557,7 +694,12 @@ export async function handleTranslateAllForLocale(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        // A locale that reached NOTHING — the AI refused it, or Shopify did —
+        // is a partial failure, not a success. This used to be hardcoded to
+        // "completed" while the very same update wrote `failedLocales` into
+        // the result blob, so the row contradicted its own payload and the
+        // merchant got a success notification for a run that saved nothing.
+        status: failedLocales.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({
@@ -582,6 +724,8 @@ export async function handleTranslateAllForLocale(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAllForLocale" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -600,14 +744,20 @@ export async function handleTranslateFieldToAllLocales(
   const sourceText = getFormString(formData, "sourceText");
   const targetLocalesStr = getFormString(formData, "targetLocales");
   const contextTitle = getFormString(formData, "contextTitle");
-  const sourceLocale = getFormString(formData, "sourceLocale") || "en";
-  if (!isValidLocale(sourceLocale)) {
+  const sourceLocale = requestedSourceLocale(formData);
+  if (sourceLocale !== undefined && !isValidLocale(sourceLocale)) {
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
   logger.debug('[UnifiedContent] translateFieldToAllLocales', { fieldType, targetLocales: targetLocalesStr });
 
-  // Create task entry
+  // Create task entry.
+  // The client sends the title it has on screen; an editor opened by deep link
+  // may not have one yet, and an empty subject used to blank the card's whole
+  // resource row. Cached title as the fallback.
+  const taskResourceTitle4 = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId, contextTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -615,7 +765,7 @@ export async function handleTranslateFieldToAllLocales(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
-      resourceTitle: contextTitle,
+      resourceTitle: taskResourceTitle4,
       fieldType,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -685,7 +835,9 @@ export async function handleTranslateFieldToAllLocales(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        // Same rule as the two siblings above: the result blob already carries
+        // `failedLocales`, so the status has to agree with it.
+        status: failedLocales.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({ translations: flattenedTranslations, fieldType, failedLocales, rejectedFields, skippedFields }),
@@ -703,6 +855,8 @@ export async function handleTranslateFieldToAllLocales(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateFieldToAllLocales", fieldType });
+    if (refused) return refused;
     return json({ actionType: "translateFieldToAllLocales", success: false, error: errorMsg, fieldType }, { status: 500 });
   }
 }

@@ -60,9 +60,14 @@ RUN npx prisma generate
 # Copy built application from builder stage
 COPY --chown=node:node --from=builder /app/build ./build
 
-# Copy runtime files
+# Copy runtime files. NOTE: these are listed by NAME, so a root module imported
+# by one of them and forgotten here throws ERR_MODULE_NOT_FOUND inside
+# server.js's try/catch: the app still serves requests, while a whole background
+# service is silently gone (missing orphan-run-recovery.js would take task
+# recovery AND the stuck-task monitor for every task type with it, leaving one
+# log line behind).
 COPY --chown=node:node server.js start.js ./
-COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js image-op-refund.js ./
+COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js image-op-refund.js orphan-run-recovery.js ./
 COPY --chown=node:node scripts ./scripts/
 
 # Copy middleware and other app files needed at runtime by server.js

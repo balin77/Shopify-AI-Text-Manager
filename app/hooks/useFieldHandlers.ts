@@ -6,13 +6,22 @@
  *          language/item selection, value changes, clear operations.
  */
 
+import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
+import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { useCallback, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey, buildDeletedKey, LOCALE_MARKET_SEP } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
+import { writeLastContentLocale } from "../utils/last-content-locale";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
+import {
+  setFieldSuggestion,
+  clearFieldSuggestion,
+  clearSuggestionsForScope,
+  type SuggestionScope,
+} from "./useAISuggestionStore";
 import { confirmNavigation } from "./useSaveBar";
 import type {
   TranslatableContentItem,
@@ -25,6 +34,9 @@ import type {
   MarketInfo,
 } from "../types/content-editor.types";
 import type { TransitionResult } from "./useUiDataLoader";
+import { aiImageCandidates } from "../services/ai/vision-policy.shared";
+import { partialLocaleCounts } from "../services/translations/partial-result.shared";
+import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 
 // ============================================================================
 // TYPES
@@ -38,6 +50,7 @@ export interface FieldHandlerProps {
   shopLocales: ShopLocale[];
   t: TranslationStrings;
   onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
+  onCopyToAllLocalesFailed?: (fieldKey: string, locales: string[]) => void;
 
   // State values
   selectedItemId: string | null;
@@ -51,9 +64,10 @@ export interface FieldHandlerProps {
   enabledLanguages: string[];
   editableValues: Record<string, string>;
   aiSuggestions: Record<string, string>;
+  /** Item + locale + market the suggestions above are stored under. */
+  suggestionScope: SuggestionScope;
   imageAltTexts: Record<number, string>;
   originalAltTexts: Record<number, string>;
-  sendImageToAI: boolean;
   selectedImageIndex: number;
   fallbackFields: Set<string>;
 
@@ -62,6 +76,10 @@ export interface FieldHandlerProps {
   selectedItemRef: { current: TranslatableContentItem | undefined };
   editableValuesRef: { current: Record<string, string> };
   imageAltTextsRef: { current: Record<number, string> };
+  /** Locale (or `locale::market`) → index → alt text, from useEditorAltText.
+   *  Checked BEFORE the loaded item, so a primary save has to drop what the
+   *  server just deleted here as well. */
+  localAltTextOverlayRef: { current: Record<string, Record<number, string>> };
   originalAltTextsRef: { current: Record<number, string> };
   fallbackFieldsRef: { current: Set<string> };
   isAcceptAndTranslateFlowRef: { current: boolean };
@@ -78,6 +96,13 @@ export interface FieldHandlerProps {
   isSavePendingRef: { current: boolean };
   isSavingCurrentItem: boolean;
   isSaveFromTranslateRef: { current: boolean };
+  /** Set by a save that carries only SOME fields (a single-field translate),
+   *  read by the save-response handling so it treats only those as saved. */
+  partialSaveRef: { current: PartialSave | null };
+  /** The locale on screen NOW — an AI callback lands after the merchant may
+   *  have switched away from the locale it was asked for. */
+  currentLanguageRef: { current: string };
+  selectedMarketIdRef: { current: string };
   /** Tracks the fieldKey of a copy save so the response handler can clear the loading state. */
   pendingCopyFieldKeyRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
@@ -90,7 +115,8 @@ export interface FieldHandlerProps {
     data: Record<string, string>,
     fieldKey: string,
     onSuccess?: (result: Record<string, unknown>) => void,
-    onError?: (error: string) => void
+    onError?: (error: string) => void,
+    options?: { suppressErrorBox?: boolean }
   ) => Promise<void>;
   performAutoSave: (valuesToSave: Record<string, string>, locale: string) => void;
   safeSubmit: (
@@ -101,7 +127,7 @@ export interface FieldHandlerProps {
   getChangedFields: (valuesToCheck: Record<string, string>) => string[];
   getChangedAltTextIndices: () => number[];
   resolveFieldLabel: (fieldKey: string) => string;
-  showInfoBox: (message: string, tone: InfoBoxTone, title?: string) => void;
+  showInfoBox: (message: string, tone: InfoBoxTone) => void;
   dataLoader: {
     onTranslateFieldComplete: (
       fieldKey: string,
@@ -109,13 +135,15 @@ export interface FieldHandlerProps {
       translatedValue: string,
       targetLocale: string,
       currentEditableValues: Record<string, string>,
-      marketIdArg?: string
+      marketIdArg?: string,
+      viewing?: boolean
     ) => TransitionResult;
     onTranslateFieldToAllLocalesComplete: (
       translationKey: string,
       translations: Record<string, string>,
       currentLocale: string
     ) => void;
+    onCopyToLocalesFailed: (translationKey: string, locales: string[], copiedValue: string) => void;
   };
 
   // State setters
@@ -125,14 +153,12 @@ export interface FieldHandlerProps {
   /** All markets (for the language-change reset guard). */
   markets: MarketInfo[];
   setEditableValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setHtmlModes: React.Dispatch<React.SetStateAction<Record<string, "html" | "rendered">>>;
   setEnabledLanguages: React.Dispatch<React.SetStateAction<string[]>>;
   setIsAcceptAndTranslateFlow: React.Dispatch<React.SetStateAction<boolean>>;
   setIsLoadingData: React.Dispatch<React.SetStateAction<boolean>>;
   setIsClearAllModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setImageAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
-  setAltTextSuggestions: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   setOriginalAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   setFallbackFields: React.Dispatch<React.SetStateAction<Set<string>>>;
   setTemplateValuesVersion: React.Dispatch<React.SetStateAction<number>>;
@@ -151,7 +177,7 @@ export interface FieldHandlers {
   /** True while that multi-field run is in flight. */
   isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
-  handleTranslateFieldToAllLocales: (fieldKey: string) => void;
+  handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
@@ -188,6 +214,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     shopLocales,
     t,
     onTranslateToAllLocalesComplete,
+    onCopyToAllLocalesFailed,
     selectedItemId,
     selectedItem,
     currentLanguage,
@@ -197,15 +224,16 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     enabledLanguages,
     editableValues,
     aiSuggestions,
+    suggestionScope,
     imageAltTexts,
     originalAltTexts,
-    sendImageToAI,
     selectedImageIndex,
     fallbackFields,
     selectedItemIdRef,
     selectedItemRef,
     editableValuesRef,
     imageAltTextsRef,
+    localAltTextOverlayRef,
     originalAltTextsRef,
     fallbackFieldsRef,
     isAcceptAndTranslateFlowRef,
@@ -222,6 +250,9 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     isSavePendingRef,
     isSavingCurrentItem,
     isSaveFromTranslateRef,
+    partialSaveRef,
+    currentLanguageRef,
+    selectedMarketIdRef,
     pendingCopyFieldKeyRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
@@ -241,14 +272,12 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     setSelectedMarketId,
     markets,
     setEditableValues,
-    setAiSuggestions,
     setHtmlModes,
     setEnabledLanguages,
     setIsAcceptAndTranslateFlow,
     setIsLoadingData,
     setIsClearAllModalOpen,
     setImageAltTexts,
-    setAltTextSuggestions,
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
@@ -294,6 +323,46 @@ const handleSave = () => {
         debugLog.translationClear(`Marked translations for field "${fieldKey}" (key: ${field.translationKey}) as deleted`);
       }
     });
+
+    // The same invalidation for the ALT texts of the images whose primary alt
+    // changed: the server deletes their foreign translations (globally — a
+    // market override survives), and both places the editor reads them from
+    // would otherwise keep serving the deleted value for the rest of the
+    // session, with a save from that view writing it straight back.
+    //
+    // Unconditional, exactly like `deletedTranslationKeysRef` above: the client
+    // does not know the merchant's purge switch, so with the deletion switched
+    // OFF this shows the alt texts as gone for the rest of the session while
+    // Shopify still serves them. A deliberate match with the field path rather
+    // than an oversight — one reload corrects it, and the two halves of one
+    // save must not disagree about what the server did.
+    if (changedAltTextIndices.length > 0) {
+      for (const key of Object.keys(localAltTextOverlayRef.current)) {
+        // Global layer only — `buildLocaleKey` writes a market key as
+        // `locale@@market`, and the server's removal leaves market overrides
+        // alone. Testing for the wrong separator wiped them from the editor
+        // while Shopify kept serving them.
+        if (key.includes(LOCALE_MARKET_SEP)) continue;
+        if (key === primaryLocale) continue;
+        for (const index of changedAltTextIndices) {
+          delete localAltTextOverlayRef.current[key][index];
+        }
+      }
+      const images: Array<{ altTextTranslations?: Array<{ locale: string; marketId?: string }> }> =
+        selectedItem.images && selectedItem.images.length > 0
+          ? selectedItem.images
+          : selectedItem.featuredImage
+            ? [selectedItem.featuredImage]
+            : [];
+      for (const index of changedAltTextIndices) {
+        const img = images[index];
+        if (!img?.altTextTranslations) continue;
+        img.altTextTranslations = img.altTextTranslations.filter(
+          (t: { locale: string; marketId?: string }) =>
+            t.locale === primaryLocale || (t.marketId ?? "") !== "",
+        );
+      }
+    }
 
     // Cache the saved values in a ref that survives revalidation.
     // resolve() checks savedPrimaryValuesRef first for primary locale.
@@ -343,6 +412,21 @@ const handleSave = () => {
     if (changedFields.length > 0) {
       formDataObj.changedFields = JSON.stringify(changedFields);
       debugLog.save(' Changed fields (translations will be deleted on server):', changedFields);
+    }
+
+    // PLAN §Phase 3 — a SEPARATE list, because it answers a different question.
+    // `changedFields` says which translations went stale; this says which
+    // merchandising attributes the merchant actually touched. A primary save
+    // carries every field, so without it the server cannot tell an edit from a
+    // passenger — and would rewrite vendor/tags/visibility on every save.
+    // They are separate rather than one list because the accept-and-translate
+    // flow deliberately withholds `changedFields` (see useEditorAutoSave).
+    const changedAttributes = changedFields.filter((fieldKey) => {
+      const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+      return !!field && isAttributeField(field);
+    });
+    if (changedAttributes.length > 0) {
+      formDataObj.changedAttributeFields = JSON.stringify(changedAttributes);
     }
 
     if (changedAltTextIndices.length > 0) {
@@ -396,25 +480,20 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
   if (!selectedItemId || !selectedItem) return;
 
   const requestItemId = selectedItemId;
+  // The scope the merchant ASKED from. A suggestion that arrives after they
+  // moved on belongs here, not to wherever they are now — and this is what
+  // makes it wait for them instead of being dropped.
+  const requestScope: SuggestionScope = { ...suggestionScope, resourceId: requestItemId };
   const currentValue = editableValues[fieldKey] || "";
   const contextTitle = editableValues.title || "";
   const contextDescription = editableValues.description || editableValues.body || "";
   const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name || currentLanguage;
 
-  // Determine which image to send based on content type and sendImageToAI state
-  let imageUrl: string | undefined;
-  if (sendImageToAI) {
-    if (config.contentType === "products") {
-      // For products: use currently selected image or fallback to featured image
-      const images = selectedItem.images || [];
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
-    } else if (config.contentType === "collections" || config.contentType === "blogs") {
-      // For collections/blogs: use featured image only
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = featuredImage?.url;
-    }
-  }
+  // The images this item COULD show the AI, best first. Whether any of them is
+  // actually sent, and how many, is the shop's setting and is decided
+  // server-side — this route takes a direct POST, so the client offering
+  // candidates is the only honest half of that contract it can hold up.
+  const imageCandidates = aiImageCandidates(config.contentType, selectedItem, selectedImageIndex);
 
   submitAIAction(
     {
@@ -429,18 +508,15 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
       // the SeoKeyword convention). `mainLanguage` is a display name and can't
       // serve — without this, French copy got the German target keyword.
       keywordLocale: currentLanguage === primaryLocale ? "" : currentLanguage,
-      sendImageToAI: sendImageToAI.toString(),
-      ...(imageUrl && { imageUrl }),
+      ...(imageCandidates.length > 0 && { imageUrls: JSON.stringify(imageCandidates) }),
       ...(userInstruction?.trim() && { userInstruction: userInstruction.trim() }),
     },
     fieldKey,
     (result) => {
-      // Guard: discard if user has switched to a different item since the request was made
+      setFieldSuggestion(requestScope, fieldKey, result.generatedContent as string);
+      // The WARNING is only worth showing while the merchant is still looking
+      // at the item it belongs to; the suggestion above is kept either way.
       if (selectedItemIdRef.current !== requestItemId) return;
-      setAiSuggestions((prev) => ({
-        ...prev,
-        [fieldKey]: result.generatedContent as string,
-      }));
       // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2): the server retried
       // once and the output STILL over-uses a tracked keyword — warn so the
       // merchant reviews the suggestion before accepting it. This raw-fetch
@@ -450,8 +526,7 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
         showInfoBox(
           (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
             "The generated text still over-uses a tracked keyword — review it before accepting.",
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       }
     }
@@ -462,12 +537,12 @@ const handleFormatAI = (fieldKey: string) => {
   if (!selectedItemId || !selectedItem) return;
 
   const requestItemId = selectedItemId;
+  const requestScope: SuggestionScope = { ...suggestionScope, resourceId: requestItemId };
   const currentValue = editableValues[fieldKey] || "";
   if (!currentValue) {
     showInfoBox(
       t.common?.noContentToFormat || "No content available to format",
-      "warning",
-      t.common?.warning || "Warning"
+      "warning"
     );
     return;
   }
@@ -476,20 +551,11 @@ const handleFormatAI = (fieldKey: string) => {
   const contextDescription = editableValues.description || editableValues.body || "";
   const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name || currentLanguage;
 
-  // Determine which image to send based on content type and sendImageToAI state
-  let imageUrl: string | undefined;
-  if (sendImageToAI) {
-    if (config.contentType === "products") {
-      // For products: use currently selected image or fallback to featured image
-      const images = selectedItem.images || [];
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
-    } else if (config.contentType === "collections" || config.contentType === "blogs") {
-      // For collections/blogs: use featured image only
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = featuredImage?.url;
-    }
-  }
+  // The images this item COULD show the AI, best first. Whether any of them is
+  // actually sent, and how many, is the shop's setting and is decided
+  // server-side — this route takes a direct POST, so the client offering
+  // candidates is the only honest half of that contract it can hold up.
+  const imageCandidates = aiImageCandidates(config.contentType, selectedItem, selectedImageIndex);
 
   submitAIAction(
     {
@@ -503,25 +569,19 @@ const handleFormatAI = (fieldKey: string) => {
       // Same locale contract as generation — the format pass must preserve THIS
       // language's keywords, not the primary language's.
       keywordLocale: currentLanguage === primaryLocale ? "" : currentLanguage,
-      sendImageToAI: sendImageToAI.toString(),
-      ...(imageUrl && { imageUrl }),
+      ...(imageCandidates.length > 0 && { imageUrls: JSON.stringify(imageCandidates) }),
     },
     fieldKey,
     (result) => {
-      // Guard: discard if user has switched to a different item since the request was made
+      setFieldSuggestion(requestScope, fieldKey, result.generatedContent as string);
       if (selectedItemIdRef.current !== requestItemId) return;
-      setAiSuggestions((prev) => ({
-        ...prev,
-        [fieldKey]: result.generatedContent as string,
-      }));
       // Formatting may now work a missing target keyword in, so it can overshoot
       // the same way generation can — and warns the same way.
       if ((result as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) {
         showInfoBox(
           (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
             "The formatted text still over-uses a tracked keyword — review it before accepting.",
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       }
     }
@@ -547,6 +607,7 @@ const handleInsertKeywords = async () => {
       }
     | undefined;
   const requestItemId = selectedItemId;
+  const requestScope: SuggestionScope = { ...suggestionScope, resourceId: requestItemId };
 
   // The fields a keyword can live in, in the order the server understands
   // them. Slugs are deliberately absent — the pass skips them anyway, and
@@ -558,8 +619,7 @@ const handleInsertKeywords = async () => {
   if (candidateKeys.length === 0) {
     showInfoBox(
       seoStrings?.insertKeywordsNothing || "No text to work keywords into.",
-      "warning",
-      t.common?.warning || "Warning",
+      "warning"
     );
     return;
   }
@@ -584,11 +644,13 @@ const handleInsertKeywords = async () => {
         },
         fieldKey,
         (result) => {
-          if (selectedItemIdRef.current !== requestItemId) return;
           if (result.skipped) return;
+          setFieldSuggestion(requestScope, fieldKey, result.value as string);
+          // The run's own bookkeeping (the summary box at the end) only makes
+          // sense while the merchant is still on the item it summarises.
+          if (selectedItemIdRef.current !== requestItemId) return;
           changed += 1;
           if ((result as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) stuffing = true;
-          setAiSuggestions((prev) => ({ ...prev, [fieldKey]: result.value as string }));
         },
       );
     }
@@ -600,16 +662,14 @@ const handleInsertKeywords = async () => {
   if (changed === 0) {
     showInfoBox(
       seoStrings?.insertKeywordsNoneMissing || "Every tracked keyword is already in the texts.",
-      "info",
-      String(t.common?.info || "Info"),
+      "info"
     );
     return;
   }
   showInfoBox(
     (seoStrings?.insertKeywordsDone || "Keywords worked into {count} field(s) — review and accept them.")
       .replace("{count}", String(changed)),
-    stuffing ? "warning" : "success",
-    stuffing ? t.common?.warning || "Warning" : t.common?.success || "Success",
+    stuffing ? "warning" : "success"
   );
 };
 
@@ -626,8 +686,7 @@ const handleTranslateField = (fieldKey: string) => {
   if (!sourceText) {
     showInfoBox(
       t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
-      "warning",
-      "Warnung"
+      "warning"
     );
     return;
   }
@@ -650,6 +709,11 @@ const handleTranslateField = (fieldKey: string) => {
       if (selectedItemIdRef.current !== requestItemId) return;
       // Handle success - update the field with translated value
       const translatedValue = result.translatedValue as string;
+      // The merchant may have switched language while the AI worked. The
+      // translation still belongs to `targetLocale` and is still saved there,
+      // but nothing of it may land in the locale now on screen.
+      const viewing =
+        currentLanguageRef.current === targetLocale && selectedMarketIdRef.current === selectedMarketId;
       if (field.translationKey) {
         // Delegate ref mutations to transition method
         const transResult = dataLoader.onTranslateFieldComplete(
@@ -657,7 +721,10 @@ const handleTranslateField = (fieldKey: string) => {
           field.translationKey,
           translatedValue,
           targetLocale,
-          editableValuesRef.current
+          editableValuesRef.current,
+          // The market the save below persists under — the one at click time.
+          selectedMarketId,
+          viewing
         );
 
         // Apply UI updates
@@ -692,23 +759,32 @@ const handleTranslateField = (fieldKey: string) => {
         // Single-field translate auto-saves to the current (foreign) locale —
         // scope it to the selected market so the override lands correctly.
         if (selectedMarketId) formDataObj.marketId = selectedMarketId;
-        Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
-
-        // Ensure the translated field is always included in the save.
-        // buildFieldsForSave may filter it out due to stale fallbackFieldsRef
-        // or originalLoadedValuesRef timing issues during async AI callbacks.
+        // ONLY the translated field. Other fields may carry the merchant's
+        // unsaved input, and saving it here would be an autosave they never
+        // asked for; they stay dirty for their own Save instead.
         if (translatedValue && translatedValue.trim()) {
           formDataObj[fieldKey] = translatedValue;
         }
+        partialSaveRef.current = { locale: targetLocale, marketId: selectedMarketId, values: { [fieldKey]: translatedValue } };
 
         savedLocaleRef.current = targetLocale;
         savedMarketIdRef.current = selectedMarketId;
+        // Same claim as handleSave/handleCopyFieldToAllLocales: without it the
+        // save-response effects fail their `isSavedItemCurrent` guard and
+        // early-return, so this translation never reaches onSaveComplete's
+        // overlay write or the tail revalidation — and `isSaveFromTranslateRef`
+        // is never reset either (its reset sits past that return), which
+        // swallows the "changes saved" box of the NEXT ordinary save.
+        savedItemIdRef.current = requestItemId;
         isSavePendingRef.current = true;
         isSaveFromTranslateRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
 
-        // Reset the baseline so the just-saved translated field isn't re-sent on the next save.
-        originalLoadedValuesRef.current = { ...newValues };
+        // Reset the baseline for the just-saved field only, so it isn't re-sent
+        // on the next save and nothing else is marked saved that was not.
+        if (viewing) {
+          originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, [fieldKey]: translatedValue };
+        }
       }
 
       // Show explicit success toast for the translation
@@ -717,12 +793,11 @@ const handleTranslateField = (fieldKey: string) => {
         t.common?.fieldTranslatedAndSaved
           ?.replace("{fieldType}", fieldLabel)
           || `${fieldLabel} translated and saved successfully`,
-        "success",
-        t.common?.success || "Success"
+        "success"
       );
 
       // For templates: Update original values so templateHasFieldChanges becomes false
-      if (isThemeContentType(config.contentType)) {
+      if (isThemeContentType(config.contentType) && viewing) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
           [fieldKey]: translatedValue,
@@ -735,19 +810,34 @@ const handleTranslateField = (fieldKey: string) => {
   );
 };
 
-const handleTranslateFieldToAllLocales = (fieldKey: string) => {
+/**
+ * `options.auto` marks a run the APP started, not the merchant — today only
+ * the product type derived from a category pick.
+ *
+ * It changes nothing about the translation and everything about the reporting.
+ * A merchant who presses the translate button is waiting for an answer, so a
+ * missing text or an unreachable provider belongs on screen. A merchant who
+ * just pressed Save is not waiting for anything, and a red "Error" landing on
+ * top of a save they watched succeed reads as "the save broke". So the
+ * pre-flight refusals go quiet (the caller has already checked them) and a
+ * real failure comes back as ONE warning that names what did not happen and
+ * what to press — never as a critical box, and never as silence either.
+ */
+const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: boolean }) => {
   if (!selectedItemId || !selectedItem) return;
 
+  const auto = options?.auto === true;
   const requestItemId = selectedItemId;
 
   // Filter out primary locale and disabled languages
   const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
   if (targetLocales.length === 0) {
-    showInfoBox(
-      t.common?.noTargetLanguagesSelected || "No target languages selected",
-      "warning",
-      t.common?.warning || "Warning"
-    );
+    if (!auto) {
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning"
+      );
+    }
     return;
   }
 
@@ -758,11 +848,12 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
     savedPrimaryValuesRef.current[selectedItemId]?.[fieldKey] ||
     getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
   if (!sourceText) {
-    showInfoBox(
-      t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
-      "warning",
-      "Warnung"
-    );
+    if (!auto) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning"
+      );
+    }
     return;
   }
 
@@ -796,15 +887,19 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
         dataLoader.onTranslateFieldToAllLocalesComplete(
           shopifyKey,
           translations,
-          currentLanguage
+          currentLanguageRef.current
         );
 
-        // If the current language is one of the translated languages, update editableValues immediately
-        if (translations[currentLanguage]) {
-          setEditableValues(prev => ({
-            ...prev,
-            [fieldKey]: translations[currentLanguage]
-          }));
+        // The locale on screen NOW, not the one at click time: after a switch
+        // mid-request the captured one would write another language's text into
+        // this view as an unsaved edit, which the next save then stores there.
+        const viewingLocale = currentLanguageRef.current;
+        if (translations[viewingLocale]) {
+          const value = translations[viewingLocale];
+          setEditableValues(prev => ({ ...prev, [fieldKey]: value }));
+          // Already saved server-side, so it is the baseline, not an edit.
+          originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, [fieldKey]: value };
+          baselineValuesRef.current = { ...baselineValuesRef.current, [fieldKey]: value };
         }
       }
 
@@ -821,10 +916,11 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
 
         if (failedFieldLocales2.length > 0) {
           const failedList = failedFieldLocales2.join(", ");
+          const counts2 = partialLocaleCounts(translations, failedFieldLocales2);
           messages.push(
             String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-              .replace("{successCount}", String(translationCount))
-              .replace("{totalCount}", String(translationCount + failedFieldLocales2.length))
+              .replace("{successCount}", String(counts2.succeeded))
+              .replace("{totalCount}", String(counts2.total))
               .replace("{failedLocales}", failedList)
           );
         }
@@ -851,8 +947,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
 
         showInfoBox(
           messages.join(" "),
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       } else {
         const fieldLabel2 = resolveFieldLabel(fieldKey);
@@ -860,14 +955,14 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
             ?.replace("{fieldType}", fieldLabel2)
             .replace("{count}", String(translationCount))
             || `${fieldLabel2} translated to ${translationCount} language(s)`;
-        showInfoBox(toastMsg, "success", t.common?.success || "Success");
+        showInfoBox(toastMsg, "success");
       }
 
       // For templates: Update original value so hasChanges becomes false after translation
-      if (isThemeContentType(config.contentType) && translations[currentLanguage]) {
+      if (isThemeContentType(config.contentType) && translations[currentLanguageRef.current]) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
-          [fieldKey]: translations[currentLanguage]
+          [fieldKey]: translations[currentLanguageRef.current]
         };
         setTemplateValuesVersion(v => v + 1);
       }
@@ -881,7 +976,22 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
       if (revalidatorRef.current.state === 'idle') {
         revalidatorRef.current.revalidate();
       }
-    }
+    },
+    // An automatic run reports its own failure, in its own words: what did not
+    // happen and what to press. Never silence — a translation that quietly did
+    // not run is indistinguishable from one nobody wanted.
+    auto
+      ? () => {
+          showInfoBox(
+            String(
+              t.content?.autoTranslateFailed ||
+                "{field} could not be translated automatically. Use the translate button on the field to do it now.",
+            ).replace("{field}", resolveFieldLabel(fieldKey)),
+            "warning"
+          );
+        }
+      : undefined,
+    auto ? { suppressErrorBox: true } : undefined,
   );
 };
 
@@ -897,8 +1007,7 @@ const handleTranslateAll = () => {
   if (targetLocales.length === 0) {
     showInfoBox(
       t.common?.noTargetLanguagesSelected || "No target languages selected",
-      "warning",
-      t.common?.warning || "Warning"
+      "warning"
     );
     return;
   }
@@ -910,10 +1019,36 @@ const handleTranslateAll = () => {
     action: "translateAll",
     itemId: selectedItemId,
     targetLocales: JSON.stringify(targetLocales),
+    // The SOURCE language of everything below, under the name every AI path in
+    // this app already reads it by — including the THEME content action, which
+    // this same handler posts to for `/app/templates` and its siblings.
+    //
+    // It used to be absent, and both receivers then defaulted it to "en" while
+    // both batch prompts NAME it ("Translate these fields from English to: …"):
+    // on a German shop the model was told the source was English — and for `en`
+    // as a TARGET that reads as translating English into English, which the
+    // batch helper's source-echo guard deliberately does not catch (a cell
+    // equal to its source is legitimate when the two languages are the same).
+    // The untranslated German could then be echo-confirmed and mirrored as the
+    // English translation.
+    primaryLocale,
   };
 
-  // Add all field values from primary locale
+  // Add all field values from primary locale — the TRANSLATABLE ones only.
+  // The merchandising attributes are left out: `status`, `vendor`, `tags` and
+  // their siblings hold ONE value per item, have no Shopify translation key,
+  // and sending them meant paying for an AI translation of "ACTIVE" that the
+  // save then refused and reported to the merchant as a failed field. The
+  // server filters on the canonical key map for the same reason; this keeps
+  // them off the wire and out of the prompt.
+  //
+  // Asked in the POSITIVE (`isTranslatableFieldDefinition`) rather than by
+  // excluding `isAttributeField`, because the attributes are not the only field
+  // here that has no Shopify content key: an image GALLERY carries
+  // `translationKey: "images"`, which is not one either, and its alt-texts are
+  // translated by their own action further down this function.
   effectiveFieldDefinitions.forEach((field) => {
+    if (!isTranslatableFieldDefinition(field)) return;
     const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
     if (value) {
       formDataObj[field.key] = value;
@@ -960,16 +1095,14 @@ const handleTranslateAll = () => {
                 .replace("{totalCount}", String(imageCount))
                 .replace("{languageCount}", String(translatedCount))
                 .replace("{failedImages}", failedList),
-              "warning",
-              t.common?.warning || "Warning"
+              "warning"
             );
           } else {
             showInfoBox(
               String(t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)")
                 .replace("{totalCount}", String(imageCount))
                 .replace("{languageCount}", String(translatedCount)),
-              "success",
-              t.common?.success || "Success"
+              "success"
             );
           }
           // Update UI state with translated alt texts for current language
@@ -1039,11 +1172,7 @@ const handleAcceptSuggestion = (fieldKey: string) => {
   // Update the UI state
   setEditableValues(newValues);
 
-  setAiSuggestions((prev) => {
-    const newSuggestions = { ...prev };
-    delete newSuggestions[fieldKey];
-    return newSuggestions;
-  });
+  clearFieldSuggestion(suggestionScope, fieldKey);
 };
 
 const handleAcceptAndTranslate = (fieldKey: string) => {
@@ -1058,8 +1187,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     showInfoBox(
       String(t.content?.primaryReadOnlyHint
         || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
-      "warning",
-      String(t.common?.warning || "Warning")
+      "warning"
     );
     return;
   }
@@ -1086,11 +1214,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   // Accept the suggestion into the currently-viewed locale
   setEditableValues(newValues);
 
-  setAiSuggestions((prev) => {
-    const newSuggestions = { ...prev };
-    delete newSuggestions[fieldKey];
-    return newSuggestions;
-  });
+  clearFieldSuggestion(suggestionScope, fieldKey);
 
   // Get context title for translation
   const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale, config) || selectedItem!.id || "";
@@ -1149,17 +1273,17 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       locale: L,
       primaryLocale,
     };
-    Object.assign(foreignForm, buildFieldsForSave(foreignSaveValues, L));
-    // Always include the accepted field (buildFieldsForSave may filter it out
-    // due to stale originalLoadedValuesRef timing during async callbacks).
+    // ONLY the accepted field: other fields may hold unsaved input, which
+    // stays dirty for its own Save rather than riding along here.
     foreignForm[fieldKey] = suggestion;
+    partialSaveRef.current = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
     savedLocaleRef.current = L;
     savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
     isSavePendingRef.current = true;
     isSaveFromTranslateRef.current = true;
     safeSubmit(foreignForm, { method: "POST" });
-    originalLoadedValuesRef.current = { ...foreignSaveValues };
+    originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, [fieldKey]: suggestion };
 
     // ONE AI call: translate the accepted text into the primary language AND the
     // other foreign locales in a single batch. The server persists the OTHER
@@ -1180,8 +1304,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         showInfoBox(
           String(t.content?.primaryReadOnlyTranslateInfo
             || "The main language is read-only for this content type — the translation was accepted, but the original is managed in your Shopify admin."),
-          "info",
-          String(t.common?.info || "Info")
+          "info"
         );
       }
       return;
@@ -1246,6 +1369,11 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           savedItemIdRef.current = requestItemId;
           isSavePendingRef.current = true;
           isSaveFromTranslateRef.current = true;
+          // PARTIAL, carrying no foreign value at all: this writes the PRIMARY
+          // field, so nothing of the L view is saved by it — handled as a full
+          // save it overlaid every field on screen as an L translation and
+          // marked unsaved input clean.
+          partialSaveRef.current = { locale: L, marketId: selectedMarketId, values: {} };
           safeSubmit(primaryForm, { method: "POST" });
         }
 
@@ -1266,8 +1394,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
               .replace("{successCount}", String(Object.keys(translations).length))
               .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
               .replace("{failedLocales}", failedLocales.join(", ")),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
@@ -1275,8 +1402,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
               ?.replace("{fieldType}", fieldLabel)
               .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
               || `${fieldLabel} translated`,
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
 
@@ -1303,8 +1429,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   if (targetLocales.length === 0) {
     showInfoBox(
       t.common?.noTargetLanguagesEnabled || "No target languages enabled",
-      "warning",
-      t.common?.warning || "Warning"
+      "warning"
     );
     setIsAcceptAndTranslateFlow(false);
     // No translations needed, just save the primary text directly
@@ -1350,18 +1475,22 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
 };
 
 const handleRejectSuggestion = useCallback((fieldKey: string) => {
-  setAiSuggestions((prev) => {
-    const newSuggestions = { ...prev };
-    delete newSuggestions[fieldKey];
-    return newSuggestions;
-  });
-}, []);
+  clearFieldSuggestion(suggestionScope, fieldKey);
+}, [suggestionScope]);
 
 const handleLanguageChange = async (locale: string) => {
   if (hasChanges || isSavingCurrentItem) {
     await confirmNavigation();
   }
   setCurrentLanguage(locale);
+  // This click is the only writer of the remembered working language: the
+  // editor unmounts on every main-nav navigation, and coming back in the
+  // primary locale threw away the language the merchant was editing in — and
+  // with it the view onto anything stored per locale, a pending AI suggestion
+  // included. It sits directly beside the state change and behind the same
+  // unsaved-changes confirmation, so what is remembered is exactly the switch
+  // that happened — never one the merchant backed out of.
+  writeLastContentLocale(locale);
   // If the currently-selected market does not serve the new locale, fall back to
   // "global" — a market-specific translation only makes sense for locales the
   // market actually offers (and the primary locale is always global).
@@ -1532,7 +1661,7 @@ const handleClearAllConfirm = () => {
     setImageAltTexts(clearedAltTexts);
     setOriginalAltTexts({});
   }
-  setAltTextSuggestions({});
+  clearSuggestionsForScope(suggestionScope);
 
   // Close modal
   setIsClearAllModalOpen(false);
@@ -1587,7 +1716,7 @@ const handleClearAllForLocaleConfirm = () => {
     setImageAltTexts(clearedAltTexts);
     setOriginalAltTexts({});
   }
-  setAltTextSuggestions({});
+  clearSuggestionsForScope(suggestionScope);
 
   // Close modal
   setIsClearAllModalOpen(false);
@@ -1655,7 +1784,18 @@ const handleClearAllForLocaleConfirm = () => {
 
   savedLocaleRef.current = currentLanguage;
   savedMarketIdRef.current = selectedMarketId;
+  // Track WHICH item is being saved, exactly like handleSave and the copy
+  // paths. Without it savedItemIdRef stays null (or holds a previous item) and
+  // BOTH save-response effects fail their `isSavedItemCurrent` guard and
+  // early-return: onSaveComplete never runs, and — the visible half — the
+  // REVALIDATION at the end of the second one never fires. The loader data
+  // therefore keeps the translations this save just deleted, so as soon as
+  // anything re-resolves the fields (an item switch, which clears
+  // deletedTranslationKeysRef, or a locale switch) the cleared values come
+  // straight back and only a full page reload shows the real state.
+  savedItemIdRef.current = selectedItemId;
   isSavePendingRef.current = true;
+  setIsSaving(true); // Drive the spinner — same reason as handleSave
   safeSubmit(formDataObj, { method: "POST" });
 };
 
@@ -1673,10 +1813,26 @@ const handleTranslateAllForLocale = () => {
     action: "translateAllForLocale",
     itemId: selectedItemId,
     targetLocale: currentLanguage,
+    // See handleTranslateAll — both receivers default this to "en" and the
+    // prompts name it, so it has to be the shop's real primary locale.
+    primaryLocale,
   };
 
-  // Add all field values from primary locale
+  // Add all field values from primary locale — the TRANSLATABLE ones only.
+  // The merchandising attributes are left out: `status`, `vendor`, `tags` and
+  // their siblings hold ONE value per item, have no Shopify translation key,
+  // and sending them meant paying for an AI translation of "ACTIVE" that the
+  // save then refused and reported to the merchant as a failed field. The
+  // server filters on the canonical key map for the same reason; this keeps
+  // them off the wire and out of the prompt.
+  //
+  // Asked in the POSITIVE (`isTranslatableFieldDefinition`) rather than by
+  // excluding `isAttributeField`, because the attributes are not the only field
+  // here that has no Shopify content key: an image GALLERY carries
+  // `translationKey: "images"`, which is not one either, and its alt-texts are
+  // translated by their own action further down this function.
   effectiveFieldDefinitions.forEach((field) => {
+    if (!isTranslatableFieldDefinition(field)) return;
     const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
     if (value) {
       formDataObj[field.key] = value;
@@ -1738,8 +1894,7 @@ const handleTranslateAllForLocale = () => {
             showInfoBox(
               String(t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
                 .replace("{failedImages}", failedList),
-              "warning",
-              t.common?.warning || "Warning"
+              "warning"
             );
           }
         }
@@ -1830,7 +1985,11 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   const capturedItemId = selectedItemId;
   markOperationActive(capturedItemId, fieldKey, "copyToAllLocales");
 
+  // Sequential, as before. The answer is READ now (see
+  // content-action-endpoint.shared.ts): "copied" is said once every locale
+  // confirmed, and a locale that did not is named instead of hidden.
   const runSaves = async () => {
+    const failed: string[] = [];
     for (const locale of targetLocales) {
       const fd = new FormData();
       fd.set("action", "updateContent");
@@ -1838,18 +1997,30 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
       fd.set("locale", locale);
       fd.set("primaryLocale", primaryLocale);
       fd.set(fieldKey, primaryValue);
-      try {
-        await fetch(window.location.pathname, { method: "POST", body: fd });
-      } catch {
-        // individual locale save failure is non-critical
-      }
+      if ((await postContentEditorSave(fd)) === false) failed.push(locale);
     }
     markOperationFailed(capturedItemId, fieldKey);
+    if (failed.length > 0) {
+      // Take back what the copy showed up front for those locales: the
+      // overlay (it outranks the loaded data in resolve()) and whatever a
+      // page cached through onTranslateToAllLocalesComplete. Left in place,
+      // the editor went on showing a value that was never saved.
+      dataLoader.onCopyToLocalesFailed(field.translationKey, failed, primaryValue);
+      onCopyToAllLocalesFailed?.(fieldKey, failed);
+      showInfoBox(
+        String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
+          "{locales}",
+          failed.map((l) => l.toUpperCase()).join(", "),
+        ),
+        "critical",
+      );
+    } else {
+      showInfoBox(t.common?.copied ?? "Copied", "success");
+    }
   };
-  runSaves();
+  void runSaves();
 
   onTranslateToAllLocalesComplete?.(fieldKey, translations);
-  showInfoBox(t.common?.copied ?? "Copied", "success");
 };
 
   return {

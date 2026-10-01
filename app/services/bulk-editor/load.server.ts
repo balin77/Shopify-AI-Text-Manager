@@ -9,7 +9,9 @@
  * apply.server.ts.
  */
 
+import { lookupLocalizedNames, scheduleTaxonomyImport } from "../taxonomy-localization.server";
 import type { PrismaClient, Prisma } from "@prisma/client";
+import { canonicalCollectionIds } from "../collection-picker.shared";
 import { isDefaultTitleOption } from "../../utils/shopify-product.utils";
 import { debugLog } from "../../utils/debug";
 import {
@@ -36,6 +38,13 @@ import {
   METAFIELD_TYPE_LIST_SINGLE_LINE,
   metafieldColumnId,
   metaobjectColumnId,
+  filterIdsForType,
+  selectedInGroup,
+  STATUS_FILTER_IDS,
+  STATUS_FILTER_VALUES,
+  VISIBILITY_FILTER_IDS,
+  COLLECTION_KIND_FILTER_IDS,
+  ATTRIBUTE_GATED_FILTER_IDS,
 } from "./columns.shared";
 
 /** Minimal admin-client surface the blog live-fetch needs — the same shape
@@ -91,6 +100,13 @@ export interface LoadBulkRowsOptions {
    * Passed by the caller (which already has the locales); absent ⇒ the flag is
    * skipped (no extra query), which the grid simply renders as no blue. */
   foreignLocales?: string[];
+  /** Product rows only: the shop's PRIMARY locale, to show the category name
+   * in it. The cached `categoryName` comes from the Admin API, which only
+   * speaks English, so without this the grid's category cells were the one
+   * English spot next to a picker whose list is localized. Absent ⇒ the
+   * cached name as it is (the CSV paths, which compare values and must not
+   * depend on an import having run). */
+  categoryLocale?: string;
 }
 
 export interface LoadBulkRowsResult {
@@ -122,6 +138,27 @@ const RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   metaobject: "Metaobject", // unused — metaobjects read MetaobjectTranslation instead
   image: "MediaImage", // unused — image rows read ProductImageAltTranslation instead
 };
+
+// ─── Category names in the shop's language ─────────────────────────────────
+
+/**
+ * Replaces each product row's cached (English) category path with the
+ * localized one, in ONE query for the page — the same source and the same
+ * fallback the picker's own route uses: no localized row (an English shop, no
+ * import yet, a category newer than the pinned release) keeps the cached
+ * name, and a failed lookup answers EMPTY rather than throwing. A locale whose
+ * import has not run yet is scheduled, like the route does.
+ */
+async function localizeCategoryNames(db: PrismaClient, locale: string, rows: BulkRow[]): Promise<void> {
+  const gids = [...new Set(rows.map((r) => r.category).filter((g): g is string => !!g))];
+  if (gids.length === 0) return;
+  const { byGid, missing, localized } = await lookupLocalizedNames(db, locale, gids);
+  if (localized && missing.length > 0) scheduleTaxonomyImport(db, locale);
+  for (const row of rows) {
+    const name = row.category ? byGid.get(row.category) : undefined;
+    if (name?.fullName) row.categoryName = name.fullName;
+  }
+}
 
 // ─── Shop currency (Phase 3 — Plan §5.2) ───────────────────────────────────
 
@@ -233,6 +270,47 @@ async function buildWhere(
   return { and, translationFilterApproximate };
 }
 
+/** Shopify status values selected by the status filter group (OR). Empty =
+ * no status restriction. */
+function selectedStatuses(filters: readonly BulkFilterId[]): string[] {
+  return selectedInGroup(filters, STATUS_FILTER_IDS).map((id) => STATUS_FILTER_VALUES[id] as string);
+}
+
+/**
+ * The type-specific filters of the four DB-backed content types (status,
+ * visibility, collection kind, content gaps). `opts.filters` is already
+ * pruned to `filterIdsForType(type)` by loadBulkRows, so every column named
+ * here exists on the type's model.
+ */
+function typeFilterConditions(type: BulkRowType, filters: readonly BulkFilterId[]): Record<string, unknown>[] {
+  const and: Record<string, unknown>[] = [];
+  const has = (id: BulkFilterId) => filters.includes(id);
+
+  // Merchandising attributes hold migration DEFAULTS until the row was
+  // attribute-synced — never read them without the discriminator.
+  if (ATTRIBUTE_GATED_FILTER_IDS.some(has)) and.push({ attributesSyncedAt: { not: null } });
+
+  const statuses = selectedStatuses(filters);
+  if (statuses.length > 0) and.push({ status: { in: statuses } });
+
+  const visibility = selectedInGroup(filters, VISIBILITY_FILTER_IDS);
+  if (visibility.length === 1) and.push({ isPublished: visibility[0] === "published" });
+
+  const kind = selectedInGroup(filters, COLLECTION_KIND_FILTER_IDS);
+  if (kind.length === 1) and.push({ isSmart: kind[0] === "smartCollection" });
+
+  if (has("missingDescription")) {
+    and.push(missingField(type === "product" || type === "collection" ? "descriptionHtml" : "body"));
+  }
+  if (has("missingSummary")) and.push(missingField("summary"));
+  if (has("missingImage")) and.push(missingField(type === "product" ? "featuredImageUrl" : "imageUrl"));
+  if (has("missingProductType")) and.push(missingField("productType"));
+  if (has("missingVendor")) and.push(missingField("vendor"));
+  if (has("missingCategory")) and.push({ categoryId: null });
+  if (has("missingTags")) and.push({ tags: { isEmpty: true } });
+  return and;
+}
+
 /** orderBy for a validated BulkSort — parseSortParam already guaranteed the
  * column is sortable for the type, so this just maps to the DB column.
  * Default stays title asc (the pre-rework behaviour). */
@@ -303,7 +381,15 @@ export async function loadBulkRows(
   shop: string,
   opts: LoadBulkRowsOptions,
 ): Promise<LoadBulkRowsResult> {
+  // A filter id the type does not speak (a hand-crafted URL, a stale id
+  // carried across a type switch) is dropped here, before any branch could
+  // turn it into a query on a column the type does not have.
+  const allowed = filterIdsForType(opts.type);
+  opts = { ...opts, filters: opts.filters.filter((f) => allowed.includes(f)) };
   const result = await loadBulkRowsInner(db, shop, opts);
+  if (opts.type === "product" && opts.categoryLocale) {
+    await localizeCategoryNames(db, opts.categoryLocale, result.rows);
+  }
   if (opts.locale !== "") {
     await attachForeignValues(db, shop, opts, result.rows);
   } else {
@@ -634,6 +720,7 @@ async function loadBulkRowsInner(
     return loadImageRows(db, shop, opts);
   }
   const { and, translationFilterApproximate } = await buildWhere(db, shop, opts);
+  and.push(...typeFilterConditions(type, opts.filters));
   const orderBy = buildOrderBy(type, opts.sort);
 
   switch (type) {
@@ -650,6 +737,27 @@ async function loadBulkRowsInner(
         descriptionHtml: true,
         productType: true,
         status: true,
+        // §Phase 3.6 merchandising columns. `attributesSyncedAt` travels with
+        // them for the same reason it does everywhere else: `vendor: null` and
+        // `tags: []` on a row an older sync wrote are the migration's
+        // defaults, not the merchant's data.
+        vendor: true,
+        tags: true,
+        templateSuffix: true,
+        // The two picker cells. The category's GID is the VALUE and its
+        // `fullName` path is what the picker shows; a membership carries its
+        // collection TITLE denormalised (so a collection the cache never
+        // stored still has a name) and its rule-based flag, which the picker
+        // needs to LOCK the row the server would refuse. `hasMoreCollections`
+        // keeps a truncated list from reading as a complete one.
+        categoryId: true,
+        categoryName: true,
+        hasMoreCollections: true,
+        collections: {
+          orderBy: { collectionTitle: "asc" as const },
+          select: { collectionId: true, collectionTitle: true, automated: true },
+        },
+        attributesSyncedAt: true,
         featuredImageUrl: true,
         featuredImageAlt: true,
         // Dynamic cell payloads (Phase 2), loaded only when the plan's cache
@@ -680,6 +788,17 @@ async function loadBulkRowsInner(
               },
             }
           : {}),
+        // The price/compare-at/SKU columns of a PRODUCT row edit its ONE
+        // variant. `take: 2` is the whole cost of the feature: it answers
+        // "exactly one?" without counting, and a product with two is the same
+        // "several" as one with two hundred. `hasMoreVariants` is not consulted
+        // here — it means "more than the sync's 100-variant window", which two
+        // rows already rule out.
+        variants: {
+          orderBy: { position: "asc" as const },
+          take: 2,
+          select: { shopifyGid: true, price: true, compareAtPrice: true, sku: true },
+        },
       };
       const [items, total] = await Promise.all([
         db.product.findMany({ where, select, orderBy, skip, take }) as Promise<
@@ -688,6 +807,13 @@ async function loadBulkRowsInner(
               metafields?: { id: string; namespace: string; key: string; value: string; type: string }[];
               options?: { id: string; name: string; position: number; values: string; linkedMetafieldKey: string | null }[];
               images?: { mediaId: string | null; altText: string | null }[];
+              collections?: { collectionId: string; collectionTitle: string; automated: boolean }[];
+              variants?: {
+                shopifyGid: string;
+                price: Prisma.Decimal | null;
+                compareAtPrice: Prisma.Decimal | null;
+                sku: string | null;
+              }[];
             }
           >
         >,
@@ -696,6 +822,11 @@ async function loadBulkRowsInner(
       return {
         rows: items.map((i) => {
           const mainImage = i.images?.[0];
+          const variants = i.variants ?? [];
+          // Exactly one ⇒ the product IS its variant and the three cells edit
+          // it. Several ⇒ no `singleVariant`, and the cell says which of the
+          // two situations it is in rather than showing one of several prices.
+          const single = variants.length === 1 ? variants[0] : undefined;
           return {
             id: i.id as string,
             type: "product" as const,
@@ -706,12 +837,39 @@ async function loadBulkRowsInner(
             descriptionHtml: (i.descriptionHtml as string | null) ?? "",
             productType: (i.productType as string | null) ?? "",
             status: (i.status as string | null) ?? "",
+            vendor: (i.vendor as string | null) ?? "",
+            // ONE cell holding a list, comma-joined the same way the single
+            // editor's chips serialise — the grid stores strings, and a save
+            // REPLACES the product's tags rather than adding to them.
+            tags: Array.isArray(i.tags) ? (i.tags as string[]).join(", ") : "",
+            templateSuffix: (i.templateSuffix as string | null) ?? "",
+            category: (i.categoryId as string | null) ?? "",
+            categoryName: (i.categoryName as string | null) ?? "",
+            // Canonical — sorted and de-duplicated — because the grid decides
+            // "dirty" by comparing strings, and the picker emits the same form.
+            collections: canonicalCollectionIds((i.collections ?? []).map((c) => c.collectionId)),
+            collectionMemberships: (i.collections ?? []).map((c) => ({
+              collectionId: c.collectionId,
+              collectionTitle: c.collectionTitle,
+              automated: c.automated,
+            })),
+            hasMoreCollections: !!i.hasMoreCollections,
+            attributesKnown: !!i.attributesSyncedAt,
             imageUrl: (i.featuredImageUrl as string | null) ?? undefined,
             imageAlt: (i.featuredImageAlt as string | null) ?? undefined,
             metafields: mapRowMetafields(i.metafields),
             options: mapRowOptions(i.options),
             mainImage: mainImage
               ? { mediaId: mainImage.mediaId ?? null, alt: mainImage.altText ?? "" }
+              : undefined,
+            variantCount: variants.length,
+            singleVariant: single
+              ? {
+                  id: single.shopifyGid,
+                  price: decimalToGridValue(single.price),
+                  compareAtPrice: decimalToGridValue(single.compareAtPrice),
+                  sku: single.sku ?? "",
+                }
               : undefined,
           };
         }),
@@ -730,6 +888,13 @@ async function loadBulkRowsInner(
         descriptionHtml: true,
         imageUrl: true,
         imageAltText: true,
+        // §Phase 3 attributes. `attributesSyncedAt` travels with them for the
+        // same reason it does on products: `sortOrder: null` and
+        // `templateSuffix: null` on a row an older sync wrote are the
+        // migration's defaults, not the merchant's data.
+        sortOrder: true,
+        templateSuffix: true,
+        attributesSyncedAt: true,
       } as const;
       const [items, total] = await Promise.all([
         db.collection.findMany({ where, select, orderBy, skip, take }),
@@ -746,6 +911,9 @@ async function loadBulkRowsInner(
           descriptionHtml: i.descriptionHtml ?? "",
           imageUrl: i.imageUrl ?? undefined,
           imageAlt: i.imageAltText ?? undefined,
+          sortOrder: i.sortOrder ?? "",
+          templateSuffix: i.templateSuffix ?? "",
+          attributesKnown: !!i.attributesSyncedAt,
         })),
         total,
         translationFilterApproximate,
@@ -764,6 +932,11 @@ async function loadBulkRowsInner(
         imageUrl: true,
         imageAltText: true,
         blogTitle: true,
+        author: true,
+        tags: true,
+        isPublished: true,
+        templateSuffix: true,
+        attributesSyncedAt: true,
       } as const;
       const [items, total] = await Promise.all([
         db.article.findMany({ where, select, orderBy, skip, take }),
@@ -782,6 +955,14 @@ async function loadBulkRowsInner(
           imageUrl: i.imageUrl ?? undefined,
           imageAlt: i.imageAltText ?? undefined,
           blogTitle: i.blogTitle ?? undefined,
+          author: i.author ?? "",
+          // ONE cell holding a list, comma-joined exactly like the product
+          // row's — a save REPLACES the article's tags rather than adding to
+          // them, which is what `articleUpdate` does with the field.
+          tags: i.tags.join(", "),
+          isPublished: String(i.isPublished),
+          templateSuffix: i.templateSuffix ?? "",
+          attributesKnown: !!i.attributesSyncedAt,
         })),
         total,
         translationFilterApproximate,
@@ -796,6 +977,9 @@ async function loadBulkRowsInner(
         seoDescription: true,
         handle: true,
         body: true,
+        isPublished: true,
+        templateSuffix: true,
+        attributesSyncedAt: true,
       } as const;
       const [items, total] = await Promise.all([
         db.page.findMany({ where, select, orderBy, skip, take }),
@@ -810,6 +994,9 @@ async function loadBulkRowsInner(
           seoDescription: i.seoDescription ?? "",
           handle: i.handle,
           body: i.body ?? "",
+          isPublished: String(i.isPublished),
+          templateSuffix: i.templateSuffix ?? "",
+          attributesKnown: !!i.attributesSyncedAt,
         })),
         total,
         translationFilterApproximate,
@@ -825,6 +1012,24 @@ async function loadBulkRowsInner(
  * pure read-side formatting of the already-normalized column. */
 function decimalToGridValue(value: { toFixed(digits: number): string } | null): string {
   return value === null ? "" : value.toFixed(2);
+}
+
+/**
+ * A non-money decimal as the merchant should see it — "1.5", not "1.500".
+ *
+ * The weight column is `Decimal(12, 3)`, and `toFixed(3)` would pad every
+ * whole kilogram with three zeros. Money keeps `toFixed(2)` above, because
+ * there a trailing zero is the correct spelling of an amount.
+ */
+function decimalToPlainValue(value: { toString(): string } | null): string {
+  return value === null ? "" : value.toString();
+}
+
+/** A nullable boolean as a two-value enum cell. `null` is NOT "false": it is
+ *  "Shopify did not say", which the select shows as its disabled placeholder
+ *  rather than as an answer the merchant never gave. */
+function booleanToGridValue(value: boolean | null): string {
+  return value === null ? "" : String(value);
 }
 
 /**
@@ -871,7 +1076,11 @@ async function loadVariantRows(
     });
   }
 
-  const where: Prisma.ProductVariantWhereInput = { product: { shop }, AND: and };
+  const statuses = selectedStatuses(opts.filters);
+  const where: Prisma.ProductVariantWhereInput = {
+    product: statuses.length > 0 ? { shop, status: { in: statuses } } : { shop },
+    AND: and,
+  };
 
   // DB-backed sorts only (§3.3): variant title/sku/price/compareAtPrice/
   // position plus the product title (nested). Default mirrors the Shopify
@@ -898,6 +1107,22 @@ async function loadVariantRows(
     compareAtPrice: true,
     barcode: true,
     position: true,
+    // §Phase 4 commerce block. `commerceSyncedAt` travels with it for the same
+    // reason `attributesSyncedAt` does on the content types: a null `taxable`
+    // on a row an older sync wrote is the migration's default, not "this
+    // variant is tax-free". `inventoryItemId` is the ADDRESS the cost, weight
+    // and customs cells are written at — without it they have nowhere to go.
+    inventoryItemId: true,
+    cost: true,
+    taxable: true,
+    inventoryPolicy: true,
+    inventoryTracked: true,
+    weight: true,
+    weightUnit: true,
+    requiresShipping: true,
+    countryCodeOfOrigin: true,
+    harmonizedSystemCode: true,
+    commerceSyncedAt: true,
     product: {
       select: {
         id: true,
@@ -933,6 +1158,17 @@ async function loadVariantRows(
       compareAtPrice: decimalToGridValue(v.compareAtPrice),
       barcode: v.barcode ?? "",
       position: v.position,
+      inventoryItemId: v.inventoryItemId ?? undefined,
+      cost: decimalToGridValue(v.cost),
+      taxable: booleanToGridValue(v.taxable),
+      inventoryPolicy: v.inventoryPolicy ?? "",
+      inventoryTracked: booleanToGridValue(v.inventoryTracked),
+      weight: decimalToPlainValue(v.weight),
+      weightUnit: v.weightUnit ?? "",
+      requiresShipping: booleanToGridValue(v.requiresShipping),
+      countryCodeOfOrigin: v.countryCodeOfOrigin ?? "",
+      harmonizedSystemCode: v.harmonizedSystemCode ?? "",
+      commerceKnown: !!v.commerceSyncedAt,
       hasMoreVariants: v.product.hasMoreVariants,
     })),
     total,
@@ -1241,6 +1477,7 @@ interface LiveBlogNode {
   id: string;
   title: string;
   handle: string;
+  templateSuffix?: string | null;
   seoTitle?: { value: string } | null;
   seoDescription?: { value: string } | null;
 }
@@ -1270,6 +1507,7 @@ async function loadBlogRows(
               id
               title
               handle
+              templateSuffix
               seoTitle: metafield(namespace: "global", key: "title_tag") { value }
               seoDescription: metafield(namespace: "global", key: "description_tag") { value }
             }
@@ -1290,6 +1528,11 @@ async function loadBlogRows(
     seoTitle: node.seoTitle?.value ?? "",
     seoDescription: node.seoDescription?.value ?? "",
     handle: node.handle,
+    templateSuffix: node.templateSuffix ?? "",
+    // Blog containers are read LIVE from Shopify, so their attribute values
+    // are never a migration default — the `attributesSyncedAt` gate the cached
+    // types need has nothing to discriminate here.
+    attributesKnown: true,
   }));
 
   if (opts.ids) {

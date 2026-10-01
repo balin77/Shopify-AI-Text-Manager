@@ -1,7 +1,7 @@
 /**
  * Pure SEO score core (Phase 0.3 of SEO_TAB_IMPLEMENTATION_PLAN.md).
  *
- * The scoring logic used to live inline in [SeoSidebar.tsx] as a `useMemo` that
+ * The scoring logic used to live inline in [ItemSidebar.tsx] as a `useMemo` that
  * produced *translated* strings, so it could only run in the browser. The store-
  * wide Audit-Dashboard (Phase 1) needs the exact same scoring server-side, so the
  * logic is extracted here as a framework-free, code-based function.
@@ -15,7 +15,7 @@
  *    `round(score / maxScore * 100)`). The ≥70 / ≥40 tone thresholds live here too,
  *    as the single source for both Sidebar and Dashboard.
  *  - `seoTitleEffectiveLimit` (the suffix-adjusted budget) is computed by the
- *    **caller** — some callers (app.seo._index.tsx, SeoSidebar.tsx) still inline
+ *    **caller** — some callers (app.seo._index.tsx, ItemSidebar.tsx) still inline
  *    `suffix ? 60 - suffix.length : 60`; new/updated callers should use the
  *    exported `seoTitleEffectiveLimit()` helper below instead, which floors the
  *    result so a long suffix can't drive it to zero/negative. computeSeoScore
@@ -81,7 +81,7 @@ const MIN_SEO_TITLE_LIMIT = 20;
 
 /**
  * Suffix-adjusted SEO-title character budget. Callers historically inlined
- * `suffix ? 60 - suffix.length : 60` (app.seo._index.tsx, SeoSidebar.tsx) with
+ * `suffix ? 60 - suffix.length : 60` (app.seo._index.tsx, ItemSidebar.tsx) with
  * no floor, so a long enough shop-name suffix drove the limit to zero or
  * negative — which would make EVERY seoTitle "too long" (limit <= 0 means no
  * length can satisfy `0 < length <= limit`). Clamp to a sensible minimum
@@ -153,7 +153,7 @@ export function stripHtml(html: string | null | undefined): string {
 
 /**
  * Compute the SEO score for one resource. Pure: no i18n, no DOM, no Shopify.
- * Mirrors the former SeoSidebar `useMemo` exactly so Sidebar and Dashboard agree.
+ * Mirrors the former ItemSidebar `useMemo` exactly so Sidebar and Dashboard agree.
  */
 export function computeSeoScore(input: SeoScoreInput): SeoScoreResult {
   const {

@@ -249,8 +249,8 @@ describe('checkAndSyncSubscription()', () => {
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop },
-        update: { subscriptionPlan: 'pro' },
-        create: { shop, subscriptionPlan: 'pro' },
+        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
+        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
       })
     );
   });
@@ -262,7 +262,9 @@ describe('checkAndSyncSubscription()', () => {
 
     expect(plan).toBe('max');
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { subscriptionPlan: 'max' } })
+      expect.objectContaining({
+        update: { subscriptionPlan: 'max', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
+      })
     );
   });
 
@@ -273,7 +275,9 @@ describe('checkAndSyncSubscription()', () => {
 
     expect(plan).toBe('free');
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { subscriptionPlan: 'free' } })
+      expect.objectContaining({
+        update: { subscriptionPlan: 'free', managedAiActive: false, managedAiPeriodEnd: null },
+      })
     );
   });
 
@@ -299,6 +303,20 @@ describe('checkAndSyncSubscription()', () => {
     );
   });
 
+  it('a transient API error does NOT revoke a paid managed entitlement', async () => {
+    // The error path establishes nothing, so it writes nothing about managed
+    // AI — clearing it would revoke on a network blip what a merchant paid
+    // for. It costs nothing meanwhile: the plan written here is `free`, whose
+    // managed budget is zero.
+    const admin = { graphql: vi.fn().mockRejectedValue(new Error('Network error')) };
+
+    await checkAndSyncSubscription(admin, shop);
+
+    const call = mockAISettingsUpsert.mock.calls.at(-1)?.[0];
+    expect(call.update).not.toHaveProperty('managedAiActive');
+    expect(call.update).not.toHaveProperty('managedAiPeriodEnd');
+  });
+
   it('upserts even when shop has no aISettings record (covers reinstall edge case)', async () => {
     mockAISettingsFindUnique.mockResolvedValue(null);
     const admin = makeMockAdmin([activeProSubscription]);
@@ -311,8 +329,62 @@ describe('checkAndSyncSubscription()', () => {
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop },
-        update: { subscriptionPlan: 'pro' },
-        create: { shop, subscriptionPlan: 'pro' },
+        update: { subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
+        create: { shop, subscriptionPlan: 'pro', managedAiActive: false, managedAiPeriodEnd: null, subscriptionIsTest: false },
+      })
+    );
+  });
+
+  it('mirrors managed AI from the subscription, never from anything a merchant posts', async () => {
+    // The entitlement IS the subscription. A shop on the managed variant gets
+    // `managedAiActive: true` and the period end the budget is keyed on; a
+    // shop on the BYO variant gets false, even if it asked for managed.
+    const managedPro = {
+      ...activeProSubscription,
+      name: 'Pro Plan + AI',
+      currentPeriodEnd: '2026-10-14T00:00:00Z',
+      lineItems: [
+        {
+          id: 'li-1',
+          plan: {
+            pricingDetails: {
+              __typename: 'AppRecurringPricing',
+              price: { amount: '39.90', currencyCode: 'EUR' },
+              interval: 'EVERY_30_DAYS',
+            },
+          },
+        },
+      ],
+    };
+    const admin = makeMockAdmin([managedPro]);
+
+    const plan = await checkAndSyncSubscription(admin, shop);
+
+    expect(plan).toBe('pro');
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          subscriptionPlan: 'pro',
+          managedAiActive: true,
+          managedAiPeriodEnd: new Date('2026-10-14T00:00:00Z'),
+        }),
+      })
+    );
+  });
+
+  it('an unparseable period end is null, not a guessed boundary', async () => {
+    const managedMax = {
+      ...activeMaxSubscription,
+      name: 'Max Plan + AI',
+      currentPeriodEnd: 'not a date',
+    };
+    const admin = makeMockAdmin([managedMax]);
+
+    await checkAndSyncSubscription(admin, shop);
+
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ managedAiActive: true, managedAiPeriodEnd: null }),
       })
     );
   });
@@ -522,8 +594,61 @@ describe('checkAndSyncSubscription() – dev override short-circuit', () => {
     expect(plan).toBe('max');
     expect(admin.graphql).not.toHaveBeenCalled();
     expect(mockAISettingsUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { subscriptionPlan: 'max' } }),
+      expect.objectContaining({
+        // No `subscriptionIsTest`: the dev-override path reads no
+        // subscription, so it establishes nothing about the test flag and
+        // leaves that column exactly as it found it.
+        update: { subscriptionPlan: 'max', managedAiActive: false, managedAiPeriodEnd: null },
+      }),
     );
+  });
+
+  describe('managed-AI TESTING opt-in (MANAGED_AI_ALLOW_DEV_BUILD)', () => {
+    let savedFlag: string | undefined;
+    beforeEach(() => {
+      savedFlag = process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      if (savedFlag === undefined) delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      else process.env.MANAGED_AI_ALLOW_DEV_BUILD = savedFlag;
+    });
+
+    it('a forced "+ AI" plan stands in for the purchase, with a period end SET ONCE', async () => {
+      vi.stubEnv('MANAGED_AI_POOL_MICROS', '2000000');
+      vi.stubEnv('MANAGED_AI_TASTER_POOL_MICROS', '1000000');
+      vi.stubEnv('MANAGED_AI_FAILOVER_POOL_MICROS', '1000000');
+      process.env.MANAGED_AI_ALLOW_DEV_BUILD = 'true';
+      mockAISettingsFindUnique.mockResolvedValue({
+        shop, subscriptionPlan: 'max', trialConsumedAt: null,
+        devForcedPlan: 'max', devForcedManagedAi: true, managedAiPeriodEnd: null,
+      });
+      await checkAndSyncSubscription(makeMockAdmin([]), shop);
+      const first = mockAISettingsUpsert.mock.calls.at(-1)![0].update;
+      expect(first).toMatchObject({ managedAiActive: true, subscriptionIsTest: false });
+      expect(first.managedAiPeriodEnd).toBeInstanceOf(Date);
+
+      // The next sync keeps that end — a fresh one per navigation would mint
+      // a new budget key every time.
+      const kept = new Date('2099-01-01T00:00:00Z');
+      mockAISettingsFindUnique.mockResolvedValue({
+        shop, subscriptionPlan: 'max', trialConsumedAt: null,
+        devForcedPlan: 'max', devForcedManagedAi: true, managedAiPeriodEnd: kept,
+      });
+      await checkAndSyncSubscription(makeMockAdmin([]), shop);
+      expect(mockAISettingsUpsert.mock.calls.at(-1)![0].update.managedAiPeriodEnd).toBe(kept);
+    });
+
+    it('without the opt-in the marker grants nothing', async () => {
+      delete process.env.MANAGED_AI_ALLOW_DEV_BUILD;
+      mockAISettingsFindUnique.mockResolvedValue({
+        shop, subscriptionPlan: 'max', trialConsumedAt: null,
+        devForcedPlan: 'max', devForcedManagedAi: true,
+      });
+      await checkAndSyncSubscription(makeMockAdmin([]), shop);
+      expect(mockAISettingsUpsert.mock.calls.at(-1)![0].update).toMatchObject({ managedAiActive: false });
+    });
   });
 
   it('does NOT short-circuit when client_id is not the dev app id', async () => {

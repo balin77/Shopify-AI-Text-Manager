@@ -7,11 +7,20 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, isAuthError } from "../../../src/services/ai.service";
+import { buildTranslateInstructions } from "~/utils/character-limits";
+import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
+import { AIService, isAuthError, isManagedRefusal } from "../../../src/services/ai.service";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import { getFormString } from "../../utils/form-data.utils";
+import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
+import { parseValueOrderPayload } from "~/services/product-options.shared";
+import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { subResourceLockId } from "~/services/translations/translation-locks.shared";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
@@ -249,6 +258,14 @@ export async function handleSaveSubResourceTranslations(
           await shopifyContentService.saveTranslations(resourceId, translationInputs, marketId);
         }
 
+        // Claim the SUB-RESOURCE the merchant just wrote. A detached
+        // re-translation started by an earlier primary save watches every
+        // resource of its group, and this is how it learns that a hand-written
+        // value landed while it was working — without it the AI overwrites the
+        // merchant minutes later, which is the one outcome
+        // `isTranslationRecentlySaved` exists to prevent.
+        markTranslationSaved(resourceId);
+
         // Delete empty translations for ProductOptionValue. marketIds null =
         // remove the global translation; a market removes only that override.
         if (keysToDelete.length > 0) {
@@ -374,9 +391,17 @@ export async function handleTranslateSubResources(
 
   // Build a descriptive task title based on what's being translated
   const resourceLabels = sourceData.map(s => s.label).join(", ");
-  const taskTitle = resourceLabels.length > 50
+  const subResourceLabel = resourceLabels.length > 50
     ? `${sourceData.length} sub-resource${sourceData.length > 1 ? 's' : ''}`
     : resourceLabels;
+  // The options/metafields alone never said WHICH product they belong to —
+  // the card showed "Farbe, Größe" under a bare "Product" badge. The item
+  // leads; the sub-resources follow it, because `fieldType` here is the
+  // constant "sub-resources" and would otherwise name nothing specific.
+  const itemTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId,
+  );
+  const taskTitle = itemTitle ? `${itemTitle} – ${subResourceLabel}` : subResourceLabel;
 
   // Create task entry for tracking
   const task = await db.task.create({
@@ -511,6 +536,8 @@ export async function handleTranslateSubResources(
         error: msg.substring(0, 1000),
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateSubResources", fieldId: getFormString(formData, "fieldId") });
+    if (refused) return refused;
     return json({ success: false, error: msg }, { status: 500 });
   }
 }
@@ -523,7 +550,7 @@ export async function handleTranslateSubResourceToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<DataResponse> {
-  const { admin, session, contentConfig, db, itemId, shopifyContentService, provider, serviceConfig } = ctx;
+  const { admin, session, contentConfig, db, itemId, shopifyContentService, provider, serviceConfig, aiInstructions, translationMode, seoLimits } = ctx;
 
   const sourceDataJson = getFormString(formData, "sourceData");
   const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
@@ -552,7 +579,7 @@ export async function handleTranslateSubResourceToAllLocales(
   const localesData = await localesResponse.json() as any;
   const shopLocales = localesData.data?.shopLocales || [];
   const targetLocales = shopLocales
-    .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+    .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary)
     .map((l: { locale: string }) => l.locale);
 
   if (targetLocales.length === 0) {
@@ -561,9 +588,17 @@ export async function handleTranslateSubResourceToAllLocales(
 
   // Build a descriptive task title
   const resourceLabels = sourceData.map(s => s.label).join(", ");
-  const taskTitle = resourceLabels.length > 50
+  const subResourceLabel = resourceLabels.length > 50
     ? `${sourceData.length} sub-resource${sourceData.length > 1 ? 's' : ''}`
     : resourceLabels;
+  // The options/metafields alone never said WHICH product they belong to —
+  // the card showed "Farbe, Größe" under a bare "Product" badge. The item
+  // leads; the sub-resources follow it, because `fieldType` here is the
+  // constant "sub-resources" and would otherwise name nothing specific.
+  const itemTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId,
+  );
+  const taskTitle = itemTitle ? `${itemTitle} – ${subResourceLabel}` : subResourceLabel;
 
   // Create task entry for tracking
   const task = await db.task.create({
@@ -595,56 +630,84 @@ export async function handleTranslateSubResourceToAllLocales(
     const allTranslations: Record<string, Record<string, Record<string, string>>> = {}; // locale → resourceId → { key: value }
     const failedLocales: string[] = [];
 
-    for (let localeIdx = 0; localeIdx < targetLocales.length; localeIdx++) {
-      const targetLocale = targetLocales[localeIdx];
+    // ONE AI pass for every language. The values do not vary by locale here —
+    // they are the product's option names, option values and metafield values —
+    // so this used to ask the SAME strings once per language, which on an
+    // eight-language shop was eight requests for one click.
+    // `translateBatchValuesToLocales` chunks on both dimensions, so sixty
+    // metafields still split where they have to and a handful still go in one.
+    const fieldsToTranslate: Record<string, string> = {};
+    for (const item of sourceData) {
+      fieldsToTranslate[`${item.resourceId}::${item.key}`] = item.value;
+    }
+    const values = Object.values(fieldsToTranslate);
+    const keys = Object.keys(fieldsToTranslate);
 
+    if (values.length > 0) {
+      let perLocale: Record<string, string[]> = {};
       try {
-        const fieldsToTranslate: Record<string, string> = {};
-        for (const item of sourceData) {
-          fieldsToTranslate[`${item.resourceId}::${item.key}`] = item.value;
-        }
-
-        const values = Object.values(fieldsToTranslate);
-        const keys = Object.keys(fieldsToTranslate);
-
-        if (values.length > 0) {
-          const translatedValues = await aiService.translateBatchValues(
-            values,
-            primaryLocale,
-            targetLocale,
-            "product options and metafield values"
-          );
-
-          const translations: Record<string, Record<string, string>> = {};
-          for (let i = 0; i < keys.length; i++) {
-            const translated = translatedValues[i];
-            // Skip fields the model didn't return — never write the
-            // untranslated source value back as a "translation" (N-H3).
-            if (!translated) continue;
-            const [resourceId, key] = keys[i].split("::");
-            if (!translations[resourceId]) translations[resourceId] = {};
-            translations[resourceId][key] = translated;
-          }
-
-          allTranslations[targetLocale] = translations;
-
-          // Update progress
-          const progressPercent = Math.round(10 + ((localeIdx + 1) / targetLocales.length) * 50);
-          await db.task.update({
-            where: { id: task.id },
-            data: { progress: progressPercent },
-          });
-        }
+        perLocale = await aiService.translateBatchValuesToLocales(
+          values,
+          primaryLocale,
+          targetLocales,
+          "product options and metafield values",
+          // An option name and a metafield value are merchant content like a
+          // title is, so the instruction that says how to word things applies
+          // here too — the bulk grid's equivalent call now carries them, and one
+          // setting behaving differently on two screens is the thing to avoid.
+          // No field keys: a bare value has no named field for an SEO cap.
+          {
+            instructions: buildTranslateInstructions(
+              getInstructionWithDefault(aiInstructions, "translateInstructions"),
+              translationMode,
+              [],
+              { limits: seoLimits as unknown as Record<string, number> | null },
+            ),
+          },
+        );
       } catch (err) {
-        // Invalid API key: abort — every remaining locale would 401 too. Surface
-        // it so the request fails loudly instead of reporting success with every
-        // locale in failedLocales.
-        if (isAuthError(err)) throw err;
-        logger.error(`[UnifiedContent] Failed to translate sub-resources to ${targetLocale}`, {
+        // Only a run whose EVERY chunk failed throws, so this is every locale.
+        // An invalid API key aborts instead: every retry would 401 too, and
+        // reporting success with all locales failed hides the real cause.
+        // A managed refusal (budget, taster, consent) aborts for the same
+        // reason: every locale would be refused identically.
+        if (isAuthError(err) || isManagedRefusal(err)) throw err;
+        logger.error("[UnifiedContent] Failed to translate sub-resources", {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });
-        failedLocales.push(targetLocale);
       }
+
+      for (const targetLocale of targetLocales) {
+        const translatedValues = perLocale[targetLocale];
+        // A locale the batch could not deliver at all is a failed locale, the
+        // same as before. A locale it delivered PARTLY keeps what came back: an
+        // entry a chunk missed is "" and falls through the guard below, which is
+        // the same "never write the source as a translation" rule the per-locale
+        // version had.
+        if (!translatedValues) {
+          failedLocales.push(targetLocale);
+          continue;
+        }
+        const translations: Record<string, Record<string, string>> = {};
+        for (let i = 0; i < keys.length; i++) {
+          const translated = translatedValues[i];
+          // Skip fields the model didn't return — never write the
+          // untranslated source value back as a "translation" (N-H3).
+          if (!translated || !translated.trim()) continue;
+          const [resourceId, key] = keys[i].split("::");
+          if (!translations[resourceId]) translations[resourceId] = {};
+          translations[resourceId][key] = translated;
+        }
+        if (Object.keys(translations).length === 0) {
+          failedLocales.push(targetLocale);
+          continue;
+        }
+        allTranslations[targetLocale] = translations;
+      }
+
+      await db.task
+        .update({ where: { id: task.id }, data: { progress: 60 } })
+        .catch(() => undefined);
     }
 
     // Save all translations to Shopify + DB
@@ -710,6 +773,8 @@ export async function handleTranslateSubResourceToAllLocales(
         error: msg.substring(0, 1000),
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateSubResourceToAllLocales", fieldId: getFormString(formData, "fieldId") });
+    if (refused) return refused;
     return json({ success: false, error: msg }, { status: 500 });
   }
 }
@@ -717,6 +782,43 @@ export async function handleTranslateSubResourceToAllLocales(
 // ============================================================================
 // SAVE PRIMARY SUB-RESOURCES (Options + Metafields - main language values)
 // ============================================================================
+
+/** A JSON list from the form, or an empty one. A malformed payload must not
+ *  fail the whole save — the other halves of it are still valid. */
+function safeParseList<T>(raw: string): T[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The value GIDs an option currently has, from the cache.
+ *
+ * Only needed on the way OUT: once the option is deleted, nothing can name the
+ * `ContentTranslation` rows its values leave behind, and no other path in the
+ * app ever removes them.
+ */
+async function cachedOptionValueIds(
+  db: ContentActionHandlerContext["db"],
+  optionId: string,
+): Promise<string[]> {
+  try {
+    const row = await db.productOption.findUnique({ where: { id: optionId }, select: { values: true } });
+    const parsed: unknown = JSON.parse(row?.values ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    // The legacy `["string"]` shape carries no ids, so it yields none rather
+    // than throwing -- a missed cleanup, never a wrong delete.
+    return parsed
+      .map((v) => (typeof v === "object" && v && "id" in v ? String((v as { id: unknown }).id) : ""))
+      .filter((id) => isValidShopifyGID(id));
+  } catch {
+    return [];
+  }
+}
 
 export async function handleSavePrimarySubResources(
   ctx: ContentActionHandlerContext,
@@ -734,12 +836,50 @@ export async function handleSavePrimarySubResources(
     const optionsChangesJson = getFormString(formData, "optionsChanges");
     const metafieldChangesJson = getFormString(formData, "metafieldChanges");
 
-    const optionsChanges: Record<string, { name?: string; valueUpdates?: { id: string; name: string }[] }> = optionsChangesJson
-      ? JSON.parse(optionsChangesJson) : {};
+    const optionsChanges: Record<
+      string,
+      {
+        name?: string;
+        valueUpdates?: { id: string; name: string }[];
+        valuesToAdd?: string[];
+        /** Metaobject GIDs, for a linked option — see `OptionValueChange`. */
+        valuesToAddLinked?: string[];
+        valuesToDelete?: string[];
+      }
+    > = optionsChangesJson ? JSON.parse(optionsChangesJson) : {};
+    /** Brand-new options, and options to remove entirely. */
+    const optionsToCreate: Array<{ name: string; values: string[] }> = safeParseList(
+      getFormString(formData, "optionsToCreate"),
+    );
+    const optionsToDelete: string[] = safeParseList(getFormString(formData, "optionsToDelete"));
+    /** The full ordered list of option ids, after the creates and deletes. */
+    const optionOrder: string[] = safeParseList(getFormString(formData, "optionOrder"));
+    /** Value GIDs in their new order, per option id. Reordering VALUES is what
+     *  decides which variant the storefront shows first. Parsed in a shared,
+     *  testable module -- it is a positional payload and its all-or-nothing
+     *  rule is the kind that shipped wrong while it lived inline. */
+    const optionValueOrder = parseValueOrderPayload(
+      getFormString(formData, "optionValueOrder"),
+      isValidShopifyGID,
+    );
+    /** Failure CODES from the option writes — phrased by the client. */
+    const optionWarnings: string[] = [];
+    /** The Task row this save handed the detached re-translation to (one group
+     *  for the whole product, so at most one) — on its way back to the page so
+     *  it can reload once the AI is through instead of leaving the merchant in
+     *  front of empty translations that are merely in flight. */
+    const retranslationTaskIds: string[] = [];
+    /** Create / delete / reorder failures. They have no option id to report
+     *  under, so they are counted here -- see the response below. */
+    let structuralFailures = 0;
+    /** Options and values that no longer exist. Their translation rows have no
+     *  owner left, and nothing else in the app would ever remove them. */
+    const removedOptionIds: string[] = [];
+    const removedValueIds: string[] = [];
     const metafieldChanges: Record<string, string> = metafieldChangesJson
       ? JSON.parse(metafieldChangesJson) : {};
 
-    const { PRODUCT_OPTION_UPDATE, METAFIELDS_SET } = await import("~/graphql/content.mutations");
+    const { METAFIELDS_SET } = await import("~/graphql/content.mutations");
 
     const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
     const gateway = new ShopifyApiGateway(admin, session.shop);
@@ -749,81 +889,96 @@ export async function handleSavePrimarySubResources(
     const savedMetafields: string[] = [];
     const failedMetafields: string[] = [];
 
-    // 1. Update option names and/or values using productOptionUpdate mutation
+    // 1. Options: names, values, and — new — adding, deleting and reordering.
+    //
+    // All of it goes through `product-options.server.ts` rather than an inline
+    // mutation here. That module owns the rules that make these writes safe:
+    // `variantStrategy` only where the matrix actually moves, the echo check,
+    // and a cache mirror built from what Shopify STORED (an added value's GID
+    // is assigned by Shopify, and every translation write addresses values by
+    // GID). A second copy of that here is how the two would drift.
+    const {
+      applyOptionChange,
+      createOption,
+      deleteOption,
+      reorderOptions,
+    } = await import("~/services/product-options.server");
+
+    /** Order matters: create before reorder, so a new option can be placed;
+     *  delete before reorder, so the order does not name a gone option. */
+    for (const create of optionsToCreate) {
+      const warning = await createOption(admin, db, session.shop, {
+        productId,
+        name: create.name,
+        values: create.values,
+      });
+      if (warning) {
+        optionWarnings.push(warning);
+        structuralFailures++;
+      }
+    }
+
+    for (const optionId of optionsToDelete) {
+      if (!isValidShopifyGID(optionId)) continue;
+      // Read the value ids BEFORE the delete: afterwards the cache row is gone
+      // and nothing could name the translation rows they leave behind.
+      const cachedValueIds = await cachedOptionValueIds(db, optionId);
+      const warning = await deleteOption(admin, db, session.shop, {
+        productId,
+        optionId,
+        // Counted from the CACHE, which is the server's own state — a client
+        // that under-reports it could talk this into deleting the last option.
+        // Keyed by the GID: that is what `Product.id` holds, and a numeric id
+        // matches no row at all -- which counted 0 and refused every delete as
+        // "the last option".
+        remainingCount: await db.productOption.count({ where: { productId } }),
+      });
+      if (warning) {
+        optionWarnings.push(warning);
+        structuralFailures++;
+      } else {
+        // NOT savedOptions: a deleted option has no primary value to have
+        // changed, and the generic invalidation below would find no entry for
+        // it and skip it silently. Its translations are removed outright.
+        removedOptionIds.push(optionId);
+        removedValueIds.push(...cachedValueIds);
+      }
+    }
+
     for (const [optionId, changes] of Object.entries(optionsChanges)) {
       if (!isValidShopifyGID(optionId)) continue;
-
-      const hasNameChange = changes.name !== undefined;
-      const hasValueChanges = changes.valueUpdates && changes.valueUpdates.length > 0;
-
-      if (!hasNameChange && !hasValueChanges) continue;
-
-      try {
-        const optionInput: { id: string; name?: string } = { id: optionId };
-        if (hasNameChange) {
-          optionInput.name = changes.name;
-        }
-
-        const variables: { productId: string; option: typeof optionInput; optionValuesToUpdate?: { id: string; name: string }[] } = {
-          productId,
-          option: optionInput,
-        };
-
-        if (hasValueChanges) {
-          variables.optionValuesToUpdate = changes.valueUpdates;
-        }
-
-        const updateResponse = await gateway.graphql(
-          PRODUCT_OPTION_UPDATE,
-          { variables }
-        );
-
-        const updateData = await updateResponse.json() as any;
-
-        if (updateData.data?.productOptionUpdate?.userErrors?.length > 0) {
-          logger.error("[UnifiedContent] productOptionUpdate userErrors", {
-            context: "UnifiedContent", optionId, errors: updateData.data.productOptionUpdate.userErrors,
-          });
-          failedOptions.push(optionId);
-        } else {
-          savedOptions.push(optionId);
-
-          // Mirror the saved primary edit into the local DB. The loader reads
-          // option name/values from the ProductOption row; without this, the
-          // client's post-save revalidation re-reads the STALE row and the UI
-          // snaps back to the old value (only a full Shopify reload fixes it).
-          try {
-            const dbOption = await db.productOption.findUnique({ where: { id: optionId } });
-            if (dbOption) {
-              const dbData: { name?: string; values?: string } = {};
-              if (hasNameChange && changes.name !== undefined) {
-                dbData.name = changes.name;
-              }
-              if (hasValueChanges && changes.valueUpdates) {
-                let parsed: any[] = [];
-                try { parsed = JSON.parse(dbOption.values || "[]"); } catch { parsed = []; }
-                const nameById = new Map(changes.valueUpdates.map(v => [v.id, v.name]));
-                const updatedValues = parsed.map((v: any) =>
-                  // Legacy string-format values have no id → can't be matched, leave as-is
-                  typeof v === "string" ? v : (nameById.has(v.id) ? { ...v, name: nameById.get(v.id) } : v)
-                );
-                dbData.values = JSON.stringify(updatedValues);
-              }
-              if (Object.keys(dbData).length > 0) {
-                await db.productOption.update({ where: { id: optionId }, data: dbData });
-              }
-            }
-          } catch (err) {
-            logger.error(`[UnifiedContent] Failed to mirror primary option ${optionId} into DB`, {
-              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      } catch (err) {
-        logger.error(`[UnifiedContent] Failed to update option ${optionId}`, {
-          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-        });
+      const warning = await applyOptionChange(admin, db, session.shop, {
+        productId,
+        optionId,
+        name: changes.name,
+        values: {
+          toUpdate: changes.valueUpdates,
+          toAdd: changes.valuesToAdd,
+          toAddLinked: changes.valuesToAddLinked,
+          toDelete: changes.valuesToDelete,
+        },
+      });
+      if (warning) {
+        optionWarnings.push(warning);
         failedOptions.push(optionId);
+      } else {
+        savedOptions.push(optionId);
+        if (changes.valuesToDelete?.length) removedValueIds.push(...changes.valuesToDelete);
+      }
+    }
+
+    // One call does both halves. The client sends the full option order
+    // whenever EITHER half moved, so a pure value reorder still has a list of
+    // options to hang its values on.
+    if (optionOrder.length > 0 && (optionOrder.length > 1 || Object.keys(optionValueOrder).length > 0)) {
+      const warning = await reorderOptions(admin, db, session.shop, {
+        productId,
+        orderedIds: optionOrder.filter(isValidShopifyGID),
+        valueOrder: optionValueOrder,
+      });
+      if (warning) {
+        optionWarnings.push(warning);
+        structuralFailures++;
       }
     }
 
@@ -874,12 +1029,40 @@ export async function handleSavePrimarySubResources(
     }
 
     // 4. Delete translations for changed fields in all foreign languages
-    const changedOptionIds = [...new Set([...savedOptions, ...Object.keys(optionsChanges)])];
-    const changedMetafieldIds = [...new Set([...savedMetafields, ...Object.keys(metafieldChanges)])];
+    //
+    // Only what was actually SAVED. Unioning in every requested id invalidated
+    // the foreign translations of a write Shopify REJECTED -- the primary value
+    // is unchanged, so the translations were still correct and are now gone.
+    // An id that appears in both lists (one value of an option saved, another
+    // failed) counts as failed: the option's primary text did move, but taking
+    // its translations on a half-applied write is the destructive reading.
+    //
+    // Whether the purge happens at all is a merchant switch (Settings →
+    // Übersetzungen); the lookup fails OPEN so an error keeps the historic
+    // behaviour.
+    const changedOptionIds = savedOptions.filter((id) => !failedOptions.includes(id));
+    const changedMetafieldIds = savedMetafields.filter((id) => !failedMetafields.includes(id));
+    const somethingChanged = changedOptionIds.length > 0 || changedMetafieldIds.length > 0;
+    const { loadTranslationChangePolicy } = await import(
+      "~/services/translations/translation-change-policy.server"
+    );
+    const changePolicy = somethingChanged
+      ? await loadTranslationChangePolicy(session.shop, db)
+      : null;
+    // A sub-resource is repaired by THIS save or by nothing at all: an option,
+    // an option value and a metafield each translate on their OWN Shopify
+    // resource, which no sync and no webhook in this app ever looks at. So with
+    // auto-translate on, the re-translation below IS the repair and the
+    // deletion stands down — read through the policy rather than written as
+    // `false`, because which of the two switches applies is that module's
+    // question, never a call site's.
+    const autoTranslate = !!changePolicy?.autoTranslateExternalChanges;
 
-    if (changedOptionIds.length > 0 || changedMetafieldIds.length > 0) {
+    // Locales for both passes below, fetched once and only when one can run.
+    let foreignLocales: string[] = [];
+    let shopPrimaryLocale = "";
+    if (somethingChanged && !!changePolicy) {
       try {
-        // Get all shop locales
         const localesResponse = await gateway.graphql(
           `#graphql
             query getShopLocales {
@@ -892,13 +1075,90 @@ export async function handleSavePrimarySubResources(
         );
         const localesData = await localesResponse.json() as any;
         const shopLocales = localesData.data?.shopLocales || [];
-
-        // Filter out the primary locale, only keep published foreign locales
-        const foreignLocales = shopLocales
-          .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+        foreignLocales = shopLocales
+          .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary)
           .map((l: { locale: string }) => l.locale);
+        shopPrimaryLocale =
+          shopLocales.find((l: { primary: boolean }) => l.primary)?.locale || "";
+      } catch (err) {
+        // Non-fatal: the sub-resource writes have already gone through, so
+        // failing the save here would report a write that succeeded as broken.
+        logger.warn("[UnifiedContent] Could not load shop locales — sub-resource translations untouched", {
+          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
-        if (foreignLocales.length > 0) {
+    // Decided AFTER the lookup, because it depends on its result: without a
+    // known PRIMARY locale there is nothing to translate FROM, and the repair
+    // cannot run — so the deletion has to, or the stale text stays live for
+    // good on a surface nothing else ever revisits.
+    const selfRetranslated = autoTranslate && !!shopPrimaryLocale && foreignLocales.length > 0;
+    const purgeStaleTranslations =
+      !!changePolicy &&
+      (selfRetranslated
+        ? changePolicy.purgeOnPrimaryChange
+        : changePolicy.purgeUnreconciledSurfaces);
+
+    if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
+      // The MARKET overrides of every sub-resource this save moved. Nothing
+      // re-translates one (the repair writes global rows only), so once the
+      // option name or the metafield value changes the override is as stale as
+      // the global row beside it — and a sub-resource is outside every webhook
+      // and every sync-side reconciliation in this app, so nothing else looks
+      // again. Option VALUES are covered by the option's own entry below only
+      // where their ids are known; the removal loop addresses each id itself.
+      try {
+        const { purgeMarketOverrides } = await import(
+          "~/services/translations/market-layer-purge.server"
+        );
+        const { contentTranslationMirror } = await import(
+          "~/services/translations/stale-translation-sync.server"
+        );
+        const mirror = contentTranslationMirror(session.shop);
+        // Exactly what the global removals below address, and no more. An
+        // option whose VALUES changed did not necessarily get a new NAME — the
+        // global loop guards on `changes?.name !== undefined` and the
+        // auto-translate branch repeats it, so a market purge without that
+        // guard would delete a hand-written market name whose primary text
+        // never moved. Option VALUES are their OWN resource and need their own
+        // refs; a `ProductOptionValue` row can never match a `ProductOption`
+        // one, so leaving them out simply missed them.
+        const nameRefs = changedOptionIds
+          .filter((id) => isValidShopifyGID(id) && optionsChanges[id]?.name !== undefined)
+          .map((id) => ({ resourceId: id, resourceType: "ProductOption" }));
+        const valueRefs = changedOptionIds
+          .filter((id) => isValidShopifyGID(id))
+          .flatMap((id) =>
+            (optionsChanges[id]?.valueUpdates ?? [])
+              .filter((update) => isValidShopifyGID(update.id))
+              .map((update) => ({ resourceId: update.id, resourceType: "ProductOptionValue" })),
+          );
+        const metafieldRefs = changedMetafieldIds
+          .filter((id) => isValidShopifyGID(id))
+          .map((id) => ({ resourceId: id, resourceType: "Metafield" }));
+
+        // `name` and `value` are asked for together because the lookup is ONE
+        // query over the whole set and a row only matches its own resource
+        // type's key — a ProductOption has no `value` row to find.
+        if (nameRefs.length + valueRefs.length + metafieldRefs.length > 0) {
+          await purgeMarketOverrides({
+            gateway,
+            mirror,
+            refs: [...nameRefs, ...valueRefs, ...metafieldRefs],
+            locales: foreignLocales,
+            keys: ["name", "value"],
+            context: "subResource",
+          });
+        }
+      } catch {
+        // Logged inside; a stale override never fails a save that succeeded.
+      }
+      try {
+        {
+          // (the `foreignLocales.length > 0` guard now sits on the `if` above —
+          // without it every changed sub-resource fired a
+          // `translationsRemove(locales: [])` on a single-language shop)
           // Delete option translations
           for (const optionId of changedOptionIds) {
             if (!isValidShopifyGID(optionId)) continue;
@@ -1041,13 +1301,166 @@ export async function handleSavePrimarySubResources(
       }
     }
 
+    // 4b. …or, with auto-translate on, REPLACE the stale translations instead
+    // of deleting them. One group for the whole save: an option, an option
+    // value and a metafield are three Shopify resources but one merchant
+    // action, so they share a Task row, one batched detection and one AI
+    // request per locale. Best-effort — the primary writes above have already
+    // gone through, so nothing here may fail the save.
+    if (selfRetranslated && somethingChanged) {
+      try {
+      const changed: Array<{
+        resourceId: string;
+        resourceType: string;
+        key: string;
+        retranslatable?: boolean;
+      }> = [];
+      for (const optionId of changedOptionIds) {
+        if (!isValidShopifyGID(optionId)) continue;
+        const changes = optionsChanges[optionId];
+        // Same rule as the purge above: only what the merchant actually moved.
+        // An option whose VALUES changed did not necessarily get a new name.
+        if (changes?.name !== undefined) {
+          changed.push({ resourceId: optionId, resourceType: "ProductOption", key: "name" });
+        }
+        for (const valueUpdate of changes?.valueUpdates ?? []) {
+          if (!valueUpdate.id || !isValidShopifyGID(valueUpdate.id)) continue;
+          changed.push({
+            resourceId: valueUpdate.id,
+            resourceType: "ProductOptionValue",
+            key: "name",
+          });
+        }
+      }
+      // A metafield's TYPE decides whether its value can go through the generic
+      // prompt at all: a multi-line text comes back with its newlines stripped
+      // and a list field is raw JSON, and both would be echo-confirmed and
+      // mirrored — a corruption recorded as a success, where the previous
+      // behaviour was a plain deletion. The bulk editor draws the same line.
+      const metafieldTypes = new Map<string, string>(
+        changedMetafieldIds.length > 0
+          ? (
+              await db.productMetafield.findMany({
+                where: { productId, id: { in: changedMetafieldIds } },
+                select: { id: true, type: true },
+              })
+            ).map((row: { id: string; type: string }) => [row.id, row.type])
+          : [],
+      );
+      for (const metafieldId of changedMetafieldIds) {
+        if (!isValidShopifyGID(metafieldId)) continue;
+        changed.push({
+          resourceId: metafieldId,
+          resourceType: "Metafield",
+          key: "value",
+          // An UNKNOWN type (not in the cache) counts as unsafe: guessing
+          // "single line" is the direction that corrupts.
+          retranslatable: isBatchTranslatableValueType(metafieldTypes.get(metafieldId) ?? ""),
+        });
+      }
+
+      if (changed.length > 0) {
+        {
+          const { reconcileAfterPrimarySave } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          const outcome = await reconcileAfterPrimarySave({
+            client: admin,
+            shop: session.shop,
+            // The GROUP is the product: one Task row the merchant recognises,
+            // one in-flight key, one `markTranslationSaved`. Each entry names
+            // the sub-resource its translation actually lives on.
+            resourceId: productId,
+            resourceType: "Product",
+            // Same reason as the alt-text repair: the Task row names the
+            // product, the lock does not, so the product's OWN field
+            // reconciliation on the next webhook is not blocked by this.
+            lockId: subResourceLockId(productId),
+            contentKind: "product",
+            // Read from the cache rather than taken from the form: the client
+            // does not send a title here, and a Task row labelled with a GID is
+            // one the merchant cannot match to anything they did.
+            resourceTitle:
+              (await db.product.findFirst({
+                where: { shop: session.shop, id: productId },
+                select: { title: true },
+              }))?.title || productId,
+            changed,
+            foreignLocales,
+            policy: changePolicy!,
+            // No field semantics: an option name and a metafield value have no
+            // named field to hang the merchant's per-field instructions or an
+            // SEO character limit on. Same context string the bulk editor
+            // passes for exactly these columns.
+            translateAs: {
+              kind: "values",
+              context: "product options and metafield values",
+              sourceLocale: shopPrimaryLocale,
+            },
+          });
+          // The run is detached, so its Task id is the only handle the page has
+          // on it. Without it a merchant watched an option name's translations
+          // stay empty for the minute the AI was working.
+          if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
+        }
+      }
+      } catch (err) {
+        // Everything from the metafield-type lookup onwards: the sub-resource
+        // writes have already gone through, so a failure here must not report a
+        // completed save as broken and invite a re-save that repeats every
+        // Shopify write.
+        logger.warn("[UnifiedContent] Sub-resource re-translation failed — translations kept", {
+          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 5. Translation rows whose OWNER is gone.
+    //
+    // A deleted option or value takes its Shopify resource with it, so there is
+    // nothing left to call `translationsRemove` on -- and nothing else in the
+    // app would ever visit these rows again. Left behind they are unbounded
+    // drift in a table the bulk editor reads. GIDs are never reused, so this
+    // cannot orphan a live translation.
+    if (removedOptionIds.length > 0 || removedValueIds.length > 0) {
+      try {
+        if (removedOptionIds.length > 0) {
+          await db.contentTranslation.deleteMany({
+            where: { resourceId: { in: removedOptionIds }, resourceType: "ProductOption" },
+          });
+        }
+        if (removedValueIds.length > 0) {
+          await db.contentTranslation.deleteMany({
+            where: { resourceId: { in: removedValueIds }, resourceType: "ProductOptionValue" },
+          });
+        }
+      } catch (err) {
+        // Cache hygiene, not correctness: the resource is gone either way.
+        logger.warn("[UnifiedContent] Failed to clean up translations of deleted options", {
+          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     return json({
       actionType: "savePrimarySubResources",
       success: true,
       savedOptions,
+      removedOptionIds,
+      // Failure CODES — the client phrases them, this app ships in three
+      // languages and the server has no business writing English here.
+      //
+      // `structuralFailures` counts the create/delete/reorder failures that
+      // have no option id to report under. Without it the client saw
+      // `failedOptions: []`, called the save a success, and cleared the
+      // pending lists -- destroying the merchant's edit and saying it was
+      // saved. This app treats that shape as the bug, not the nuisance.
+      optionWarnings,
+      structuralFailures,
       failedOptions,
       savedMetafields,
       failedMetafields,
+      retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
     });
   } catch (error: unknown) {
     const msg = getFullErrorMessage(error);

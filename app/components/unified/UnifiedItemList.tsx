@@ -32,7 +32,7 @@ import {
   Spinner,
   Select,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon, DuplicateIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 import { useI18n } from "../../contexts/I18nContext";
@@ -140,6 +140,17 @@ interface UnifiedItemListProps {
   /** Optional: Accessible label / tooltip for the add button */
   addButtonLabel?: string;
 
+  /** Optional: disable the add button while keeping it VISIBLE. A refused
+   *  create must explain itself, not disappear — a missing button reads as a
+   *  missing feature (PLAN_CONTENT_CREATION §1.2). */
+  addButtonDisabled?: boolean;
+
+  /** Optional: "create like this one" for the selected entry
+   *  (PLAN_CONTENT_CREATION §1.9). Like delete, it needs a selection. */
+  showDuplicateButton?: boolean;
+  onDuplicateItem?: (itemId: string) => void;
+  duplicateButtonLabel?: string;
+
   /** Optional: Show a trash button to delete the selected entry (default: false).
    *  Only enabled when an item is selected — without a target there is nothing
    *  to remove. Other content tabs can opt-in later; for now used by the
@@ -204,6 +215,10 @@ export function UnifiedItemList({
   showAddButton = false,
   onAddItem,
   addButtonLabel,
+  addButtonDisabled,
+  showDuplicateButton = false,
+  onDuplicateItem,
+  duplicateButtonLabel,
   showDeleteButton = false,
   onDeleteItem,
   deleteButtonLabel,
@@ -459,7 +474,7 @@ export function UnifiedItemList({
         {/* Type icon (emoji) with hover tooltip naming the type. Only rendered
             when the item carries an icon (theme groups, blogs, selling plans). */}
         {item.icon && (
-          <Tooltip content={item.iconTooltip || item.type || ""} zIndexOverride={1200}>
+          <Tooltip content={item.iconTooltip || item.type || ""}>
             <span style={{ fontSize: "1.1rem", flexShrink: 0, lineHeight: 1 }}>{item.icon}</span>
           </Tooltip>
         )}
@@ -640,7 +655,7 @@ export function UnifiedItemList({
                   <Popover
                     active={filterPopoverActive}
                     activator={
-                      <Tooltip content={t.filterTooltip || "Typen filtern"} zIndexOverride={1200}>
+                      <Tooltip content={t.filterTooltip || "Typen filtern"}>
                         <Button
                           icon={FilterIcon}
                           variant="plain"
@@ -679,7 +694,7 @@ export function UnifiedItemList({
                   <Popover
                     active={sortPopoverActive}
                     activator={
-                      <Tooltip content={t.sortTooltip || "Einträge sortieren"} zIndexOverride={1200}>
+                      <Tooltip content={t.sortTooltip || "Einträge sortieren"}>
                         <Button
                           icon={SortIcon}
                           variant="plain"
@@ -722,7 +737,7 @@ export function UnifiedItemList({
                   </Popover>
                 )}
                 {onSyncAll && (
-                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"} zIndexOverride={1200}>
+                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"}>
                     <Button
                       icon={RefreshIcon}
                       onClick={onSyncAll}
@@ -733,13 +748,35 @@ export function UnifiedItemList({
                   </Tooltip>
                 )}
                 {showAddButton && onAddItem && (
-                  <Button
-                    icon={PlusIcon}
-                    variant="primary"
-                    onClick={onAddItem}
-                    accessibilityLabel={addButtonLabel || "Add"}
-                    size="slim"
-                  />
+                  <Tooltip content={addButtonLabel || "Add"}>
+                    {/* A disabled control dispatches no pointer events, so the
+                        tooltip needs a wrapper to be reachable at all — the
+                        same reason DisabledActionTooltip exists. */}
+                    <span>
+                      <Button
+                        icon={PlusIcon}
+                        variant="primary"
+                        onClick={onAddItem}
+                        disabled={addButtonDisabled}
+                        accessibilityLabel={addButtonLabel || "Add"}
+                        size="slim"
+                      />
+                    </span>
+                  </Tooltip>
+                )}
+                {showDuplicateButton && onDuplicateItem && (
+                  <Tooltip content={duplicateButtonLabel || "Duplicate"}>
+                    <span>
+                      <Button
+                        icon={DuplicateIcon}
+                        variant="plain"
+                        onClick={() => { if (selectedItemId) onDuplicateItem(selectedItemId); }}
+                        disabled={!selectedItemId}
+                        accessibilityLabel={duplicateButtonLabel || "Duplicate"}
+                        size="slim"
+                      />
+                    </span>
+                  </Tooltip>
                 )}
                 {showDeleteButton && onDeleteItem && (
                   <Button
@@ -840,14 +877,14 @@ export function UnifiedItemList({
                       {(item.isBusy || item.hasMissingPrimary || item.hasMissingTranslations) && (
                         <div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px", alignItems: "center" }}>
                           {item.isBusy && (
-                            <Tooltip content={item.busyTooltip || "In progress"} dismissOnMouseOut zIndexOverride={1200}>
+                            <Tooltip content={item.busyTooltip || "In progress"} dismissOnMouseOut>
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px" }}>
                                 <Spinner size="small" />
                               </div>
                             </Tooltip>
                           )}
                           {item.hasMissingPrimary && (
-                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut zIndexOverride={1200}>
+                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut>
                               <div
                                 style={{
                                   width: "12px",
@@ -861,7 +898,7 @@ export function UnifiedItemList({
                             </Tooltip>
                           )}
                           {item.hasMissingTranslations && (
-                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut zIndexOverride={1200}>
+                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut>
                               <div
                                 style={{
                                   width: "12px",

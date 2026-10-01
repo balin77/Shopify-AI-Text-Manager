@@ -103,7 +103,9 @@ import {
   saveGlossaryEntries,
   loadGlossaryRules,
   buildGlossaryDirective,
+  buildGlossaryGenerationDirective,
   matchesVerbatimDoNotTranslate,
+  glossaryValueForLocale,
   parseGlossaryCsv,
   serializeGlossaryCsv,
   importGlossaryEntries,
@@ -226,6 +228,87 @@ describe("saveGlossaryEntries", () => {
 
 // ── Directive builder ────────────────────────────────────────────────────────
 
+// ── Generation directive (PLAN_CONTENT_CREATION §2.5e) ───────────────────────
+
+describe("buildGlossaryGenerationDirective", () => {
+  const rules: GlossaryRule[] = [
+    rule({ sourceTerm: "Acme", doNotTranslate: true }),
+    rule({ sourceTerm: "Turnschuh", translations: { de: "Sneaker", fr: "basket" } }),
+    rule({ sourceTerm: "Zelt", translations: { de: "Zelt" } }),
+  ];
+
+  it("phrases the rules as WRITING instructions, never as translation ones", () => {
+    // The whole reason this is not `buildGlossaryDirective`: nothing is being
+    // translated here, and "Always translate X as Y" is an instruction the
+    // model cannot follow — it can only be read as "the glossary is about
+    // translation", which is how the brand name gets localised anyway.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Acme Turnschuh"], "de");
+    expect(block).not.toContain("Always translate");
+    expect(block).not.toContain("Do NOT translate");
+    expect(block).toContain('"Acme"');
+    expect(block).toContain('Refer to "Turnschuh" as "Sneaker"');
+  });
+
+  it("uses only the language being WRITTEN", () => {
+    // A French value dropped into German copy is a foreign word, not a rule.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Turnschuh"], "de");
+    expect(block).toContain("Sneaker");
+    expect(block).not.toContain("basket");
+  });
+
+  it("falls back to the SOURCE term when the written locale has no value", () => {
+    // The normal case when the language being written is the shop's PRIMARY
+    // one: the glossary editor can only record a value for a FOREIGN locale,
+    // so `translations[<primary>]` never exists. The source term IS the
+    // primary-language entry — and this is the plan's own motivating case, the
+    // house word honoured in every translation and paraphrased in the original.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Turnschuh"], "es");
+    expect(block).toContain('Use "Turnschuh"');
+    expect(block).not.toContain("Sneaker");
+  });
+
+  it("keeps the do-not-translate half when the locale is unknown", () => {
+    // "" is what a failed locale lookup yields. The house-term half is
+    // unusable then — a value is keyed by locale, and guessing one would put
+    // another language's words into the text. The NAME half is not: "write
+    // Acme exactly as given" holds in every language, so it still ships.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Acme Turnschuh"], "");
+    expect(block).toContain('"Acme"');
+    expect(block).not.toContain("Sneaker");
+    // And not the source-term fallback either: without a known language,
+    // "the shop's own word" is a claim about a language nobody established.
+    expect(block).not.toContain("Turnschuh");
+  });
+
+  it("still emits do-not-translate names even with no translations at all", () => {
+    const onlyNames = [rule({ sourceTerm: "Acme", doNotTranslate: true })];
+    const block = buildGlossaryGenerationDirective(onlyNames, ["Acme sells tents"], "en");
+    expect(block).toContain('"Acme"');
+  });
+
+  it("only injects terms that occur in the context", () => {
+    expect(buildGlossaryGenerationDirective(rules, ["nothing relevant"], "de")).toBe("");
+  });
+
+  it("is empty with no context and with no rules", () => {
+    expect(buildGlossaryGenerationDirective(rules, [], "de")).toBe("");
+    expect(buildGlossaryGenerationDirective([], ["Der Acme Turnschuh"], "de")).toBe("");
+  });
+
+  it("says the entries are data, not instructions", () => {
+    // Same M1 hardening as the translation directive: a merchant's glossary
+    // term is untrusted text interpolated into a prompt.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Acme Turnschuh"], "de");
+    expect(block).toContain("never instructions");
+  });
+
+  it("respects the case-sensitive flag", () => {
+    const cs = [rule({ sourceTerm: "IT", caseSensitive: true, doNotTranslate: true })];
+    expect(buildGlossaryGenerationDirective(cs, ["it is nice"], "de")).toBe("");
+    expect(buildGlossaryGenerationDirective(cs, ["IT department"], "de")).toContain('"IT"');
+  });
+});
+
 describe("buildGlossaryDirective", () => {
   const rules: GlossaryRule[] = [
     rule({ sourceTerm: "Acme", doNotTranslate: true }),
@@ -293,6 +376,142 @@ describe("buildGlossaryDirective", () => {
   it("returns '' for empty inputs", () => {
     expect(buildGlossaryDirective([], ["text"], ["de"])).toBe("");
     expect(buildGlossaryDirective(rules, [], ["de"])).toBe("");
+  });
+});
+
+describe("glossary rules and regional locale variants", () => {
+  // A rule is stored under the locale the merchant typed. Matching it by
+  // EXACT locale meant a `de` rule never fired for a `de-CH` translation -
+  // i.e. on a Swiss shop the glossary was silently inert.
+  const hoodie = (translations: Record<string, string>) => [
+    rule({ sourceTerm: "Hoodie", translations }),
+  ];
+  const text = ["Der Acme Hoodie ist warm"];
+
+  describe("glossaryValueForLocale", () => {
+    it("prefers the exact locale over the base language", () => {
+      expect(glossaryValueForLocale({ de: "Kapuzenpulli", "de-CH": "Kapuzepulli" }, "de-CH")).toBe(
+        "Kapuzepulli",
+      );
+    });
+
+    it("falls back to the base language when no exact rule exists", () => {
+      expect(glossaryValueForLocale({ de: "Kapuzenpulli" }, "de-CH")).toBe("Kapuzenpulli");
+      expect(glossaryValueForLocale({ zh: "连帽衫" }, "zh-Hans")).toBe("连帽衫");
+      expect(glossaryValueForLocale({ es: "sudadera" }, "es-419")).toBe("sudadera");
+    });
+
+    it("drops ONE subtag at a time, so the most specific rule wins", () => {
+      const t = { zh: "base", "zh-Hant": "traditional", "zh-Hant-TW": "taiwan" };
+      expect(glossaryValueForLocale(t, "zh-Hant-TW")).toBe("taiwan");
+      expect(glossaryValueForLocale({ zh: "base", "zh-Hant": "traditional" }, "zh-Hant-TW")).toBe(
+        "traditional",
+      );
+      expect(glossaryValueForLocale({ zh: "base" }, "zh-Hant-TW")).toBe("base");
+    });
+
+    it("never widens upwards - a regional rule does not reach the base language", () => {
+      expect(glossaryValueForLocale({ "de-CH": "Kapuzepulli" }, "de")).toBeUndefined();
+    });
+
+    it("gives an unrelated locale nothing", () => {
+      expect(glossaryValueForLocale({ de: "Kapuzenpulli" }, "fr")).toBeUndefined();
+      expect(glossaryValueForLocale({ de: "Kapuzenpulli" }, "fr-CA")).toBeUndefined();
+      expect(glossaryValueForLocale({}, "de-CH")).toBeUndefined();
+    });
+
+    it("an empty exact entry is no rule, so it does not shadow the base one", () => {
+      expect(glossaryValueForLocale({ de: "Kapuzenpulli", "de-CH": "  " }, "de-CH")).toBe(
+        "Kapuzenpulli",
+      );
+    });
+
+    it("only reads own properties", () => {
+      expect(glossaryValueForLocale({} as Record<string, string>, "constructor")).toBeUndefined();
+      expect(glossaryValueForLocale({} as Record<string, string>, "toString")).toBeUndefined();
+    });
+  });
+
+  describe("buildGlossaryDirective", () => {
+    it("applies a base-language rule to a regional target", () => {
+      const block = buildGlossaryDirective(hoodie({ de: "Kapuzenpulli" }), text, ["de-CH"]);
+      // Labelled with the locale being translated INTO, not the stored one.
+      expect(block).toContain('Always translate "Hoodie" as "Kapuzenpulli" (de-CH)');
+    });
+
+    it("an exact regional rule OVERRIDES the base one, and the base is not also emitted", () => {
+      const block = buildGlossaryDirective(
+        hoodie({ de: "Kapuzenpulli", "de-CH": "Kapuzepulli" }),
+        text,
+        ["de-CH"],
+      );
+      expect(block).toContain('as "Kapuzepulli" (de-CH)');
+      expect(block).not.toContain("Kapuzenpulli");
+    });
+
+    it("serves base and regional targets in the same call from their own rules", () => {
+      const block = buildGlossaryDirective(
+        hoodie({ de: "Kapuzenpulli", "de-CH": "Kapuzepulli" }),
+        text,
+        ["de", "de-CH"],
+      );
+      expect(block).toContain('as "Kapuzenpulli" (de)');
+      expect(block).toContain('as "Kapuzepulli" (de-CH)');
+    });
+
+    it("gives an unrelated target locale nothing", () => {
+      expect(buildGlossaryDirective(hoodie({ de: "Kapuzenpulli" }), text, ["fr-CA"])).toBe("");
+    });
+
+    it("does not widen upwards", () => {
+      expect(buildGlossaryDirective(hoodie({ "de-CH": "Kapuzepulli" }), text, ["de"])).toBe("");
+    });
+
+    it("emits ONE line naming every locale a rendering covers, not one per target", () => {
+      const block = buildGlossaryDirective(hoodie({ de: "Kapuzenpulli" }), text, [
+        "de",
+        "de-CH",
+        "de-AT",
+      ]);
+      expect(block).toContain('Always translate "Hoodie" as "Kapuzenpulli" (de, de-CH, de-AT)');
+    });
+
+    // The cap counts RULES, so a base rendering fanning out per target would
+    // multiply the block by the shop's locale count behind a cap blind to it.
+    it("does not multiply the block by the number of regional targets", () => {
+      const many: GlossaryRule[] = Array.from({ length: MAX_TERMS_IN_PROMPT }, (_, i) =>
+        rule({ sourceTerm: `term${i}`, translations: { de: `wert${i}` } }),
+      );
+      const all = many.map((r) => r.sourceTerm).join(" ");
+      const oneLocale = buildGlossaryDirective(many, [all], ["de"]);
+      const manyLocales = buildGlossaryDirective(many, [all], ["de", "de-CH", "de-AT"]);
+      const lines = (block: string) => (block.match(/"term\d+"/g) ?? []).length;
+      expect(lines(oneLocale)).toBe(MAX_TERMS_IN_PROMPT);
+      expect(lines(manyLocales)).toBe(MAX_TERMS_IN_PROMPT);
+    });
+  });
+
+  describe("buildGlossaryGenerationDirective", () => {
+    it("uses the base-language house term when writing a regional variant", () => {
+      const block = buildGlossaryGenerationDirective(hoodie({ de: "Kapuzenpulli" }), text, "de-CH");
+      expect(block).toContain('Refer to "Hoodie" as "Kapuzenpulli"');
+    });
+
+    it("an exact regional rule wins", () => {
+      const block = buildGlossaryGenerationDirective(
+        hoodie({ de: "Kapuzenpulli", "de-CH": "Kapuzepulli" }),
+        text,
+        "de-CH",
+      );
+      expect(block).toContain('as "Kapuzepulli"');
+      expect(block).not.toContain("Kapuzenpulli");
+    });
+
+    it("an unrelated locale still gets only the shop's-own-word line", () => {
+      const block = buildGlossaryGenerationDirective(hoodie({ de: "Kapuzenpulli" }), text, "fr-CA");
+      expect(block).not.toContain("Kapuzenpulli");
+      expect(block).toContain('Use "Hoodie" for that concept');
+    });
   });
 });
 

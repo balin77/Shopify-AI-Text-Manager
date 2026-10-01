@@ -2,6 +2,7 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
+import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
@@ -10,10 +11,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     try {
       const { db } = await import("../db.server");
 
-      // Count active tasks (pending → queued → running)
+      // Count active tasks (pending → queued → running).
+      //
+      // The per-image work items of a WebP conversion are excluded — a 20-image
+      // upload would otherwise put "21" on the badge for one merchant action.
+      // The run's own aggregate row (`imageWebpConversion`) stays counted for
+      // as long as any of its items is open, so the badge still says something
+      // is running. Legacy rows from before the split carry the aggregate type
+      // and keep counting one per image, as they always did.
       const runningTaskCount = await db.task.count({
         where: {
           shop: session.shop,
+          type: { not: WEBP_ITEM_TASK_TYPE },
           status: {
             in: ["pending", "queued", "running"],
           },

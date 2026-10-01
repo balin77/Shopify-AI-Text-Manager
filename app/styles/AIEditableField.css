@@ -1,8 +1,28 @@
 /* AI Editable Field Styling - Background colors for translation states */
 
+/* The BACKGROUND is this file's job — it is what says "untranslated", "AI
+   suggestion", "fallback". The frame is not: border colour and radius come from
+   the field-chrome tokens in responsive.css, so these fields and the plain
+   Polaris controls beside them cannot drift apart again.
+
+   The tint is painted on Polaris' BACKDROP, not on the input, and that is the
+   whole reason these fields have a visible frame at all. Polaris draws the
+   input itself with `background: none; border: none` and the frame on an
+   absolutely positioned Backdrop BEHIND it (z-index 10 against the input's
+   20). An opaque background on the input therefore covers the Backdrop
+   completely — border included. That is exactly what happened when the
+   hand-written `border: 1px solid #c9cccf` was dropped from these rules in
+   favour of the shared token: the token was being spent on a frame no one
+   could see any more, so the product type sat in the same card as the vendor
+   with no outline while the vendor kept one. Tinting the Backdrop keeps the
+   state colour AND the shared frame, which is what "one field optic" means.
+
+   `!important` because Polaris' own hover/focus rules on the Backdrop are more
+   specific than a single class. The tint is a STATE ("this is untranslated"),
+   and a state that disappears under the pointer is not one. */
+
 /* Smooth transition for background colors to prevent flashing */
-.ai-editable-field-wrapper input,
-.ai-editable-field-wrapper textarea {
+.ai-editable-field-wrapper .Polaris-TextField__Backdrop {
   transition: background-color 150ms ease-in-out;
 }
 
@@ -12,44 +32,35 @@
 }
 
 /* White background for primary locale or translated fields */
-.ai-editable-field-wrapper.bg-white input,
-.ai-editable-field-wrapper.bg-white textarea {
+.ai-editable-field-wrapper.bg-white .Polaris-TextField__Backdrop {
   background-color: white !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
 }
 
 /* Orange background for untranslated fields */
-.ai-editable-field-wrapper.bg-untranslated input,
-.ai-editable-field-wrapper.bg-untranslated textarea {
+.ai-editable-field-wrapper.bg-untranslated .Polaris-TextField__Backdrop {
   background-color: #fff4e5 !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
 }
 
 /* Light blue background when AI suggestion is active */
-.ai-editable-field-wrapper.bg-suggestion input,
-.ai-editable-field-wrapper.bg-suggestion textarea {
+.ai-editable-field-wrapper.bg-suggestion .Polaris-TextField__Backdrop {
   background-color: #f0f9ff !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
 }
 
 /* Blue background when primary locale has content but foreign translation is missing */
-.ai-editable-field-wrapper.bg-missing-translation input,
-.ai-editable-field-wrapper.bg-missing-translation textarea {
-  background-color: #e0f2fe !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
+.ai-editable-field-wrapper.bg-missing-translation .Polaris-TextField__Backdrop {
+  background-color: var(--app-missing-translation-bg, rgba(234, 244, 255, 1)) !important;
 }
 
 /* Gray background for fallback values (using primary locale value when no translation exists) */
 /* WCAG AA Compliant: Text color #5a5e62 has 4.52:1 contrast ratio with #f3f4f6 background */
+.ai-editable-field-wrapper.bg-fallback .Polaris-TextField__Backdrop {
+  background-color: #f3f4f6 !important;
+}
+
+/* The text itself, so a fallback still reads as borrowed — this half belongs
+   on the input, because that is where the characters are. */
 .ai-editable-field-wrapper.bg-fallback input,
 .ai-editable-field-wrapper.bg-fallback textarea {
-  background-color: #f3f4f6 !important;
-  border: 1px solid #d1d5db !important;
-  border-radius: 8px !important;
   color: #5a5e62 !important; /* Improved from #6b7280 for better contrast */
   font-style: italic !important;
 }
@@ -76,7 +87,9 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.5rem;
-  min-height: 28px;
+  /* One button row: as tall as the buttons it holds (responsive.css token),
+     so the row does not grow by the difference when they appear. */
+  min-height: var(--app-control-height);
 }
 
 .ai-field-footer-left {
@@ -252,37 +265,37 @@
 .ai-editable-html-field textarea,
 .ai-editable-html-field [contenteditable] {
   background-color: white;
-  border-radius: 8px;
+  border-radius: var(--app-field-border-radius);
 }
 
 .ai-editable-html-field.bg-white textarea,
 .ai-editable-html-field.bg-white [contenteditable] {
   background-color: white !important;
-  border-color: #c9cccf !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-untranslated textarea,
 .ai-editable-html-field.bg-untranslated [contenteditable] {
   background-color: #fff4e5 !important;
-  border-color: #c9cccf !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-suggestion textarea,
 .ai-editable-html-field.bg-suggestion [contenteditable] {
   background-color: #f0f9ff !important;
-  border-color: #c9cccf !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-missing-translation textarea,
 .ai-editable-html-field.bg-missing-translation [contenteditable] {
-  background-color: #e0f2fe !important;
-  border-color: #c9cccf !important;
+  background-color: var(--app-missing-translation-bg, rgba(234, 244, 255, 1)) !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-fallback textarea,
 .ai-editable-html-field.bg-fallback [contenteditable] {
   background-color: #f3f4f6 !important;
-  border-color: #d1d5db !important;
+  border-color: var(--app-field-border-color) !important;
   color: #5a5e62 !important; /* WCAG AA compliant contrast */
   font-style: italic !important;
 }
@@ -329,7 +342,7 @@
 .description-editor blockquote {
   margin: 0.5em 0 !important;
   padding-left: 1rem !important;
-  border-left: 3px solid #c9cccf !important;
+  border-left: 3px solid var(--app-content-rule-color) !important;
   color: #5a5e62 !important;
 }
 
@@ -418,7 +431,7 @@
 .ai-suggestion-html-content blockquote {
   margin: 0.5rem 0;
   padding-left: 1rem;
-  border-left: 3px solid #c9cccf;
+  border-left: 3px solid var(--app-content-rule-color);
   color: #5a5e62; /* WCAG AA compliant */
 }
 
@@ -439,7 +452,7 @@
 .ai-suggestion-html-content hr {
   margin: 1rem 0;
   border: none;
-  border-top: 1px solid #c9cccf;
+  border-top: 1px solid var(--app-content-rule-color);
 }
 
 /* ==========================================================================

@@ -1,3 +1,4 @@
+import { resolveApiVersionString } from "../utils/api-version";
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { Outlet, useLoaderData, useRouteError, useFetcher } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -34,6 +35,11 @@ import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription } from "~/services/billing.server";
 import { isProductionLocked } from "../utils/planUtils";
 import { de, en, es } from "../i18n";
+import {
+  hasCurrentAiProcessingConsent,
+  hasOwnKeyStored,
+  wantsManagedAi,
+} from "~/services/ai/managed-ai.shared";
 
 // Inline helper to build API-key presence flags from a single AISettings record.
 type AiSettingsRow = {
@@ -44,9 +50,18 @@ type AiSettingsRow = {
   grokApiKey?: string | null;
   deepseekApiKey?: string | null;
   preferredProvider?: string | null;
+  aiKeySource?: string | null;
+  managedAiActive?: boolean | null;
+  aiProcessingConsentAt?: Date | string | null;
+  aiProcessingConsentVersion?: string | null;
+  managedAiTasterSpentAt?: Date | string | null;
 } | null | undefined;
 
-function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: string | null) => string | null) {
+function buildAiSettingsFlags(
+  settings: AiSettingsRow,
+  decryptApiKey: (v?: string | null) => string | null,
+  managedAvailable = false,
+) {
   return {
     hasHuggingfaceApiKey: !!decryptApiKey(settings?.huggingfaceApiKey),
     hasGeminiApiKey: !!decryptApiKey(settings?.geminiApiKey),
@@ -55,6 +70,47 @@ function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: strin
     hasGrokApiKey: !!decryptApiKey(settings?.grokApiKey),
     hasDeepseekApiKey: !!decryptApiKey(settings?.deepseekApiKey),
     preferredProvider: settings?.preferredProvider || null,
+    /**
+     * Managed AI is serving this shop — decided by the PLAN (wantsManagedAi) and the
+     * CONSENT. Since §10's taster the verified entitlement is no longer part
+     * of it: a Free shop on the one-time grant has a working AI source and no
+     * key of its own, and raising the app-wide "add an API key" warning at it
+     * points to the one thing it does not have to do.
+     *
+     * One residual, stated rather than hidden, and it errs the safe way — no
+     * warning where one would be due, never a warning that is wrong: a shop
+     * whose taster is SPENT reads as working here (establishing otherwise is
+     * an aggregate over the usage ledger, on a loader that runs on every
+     * navigation). It meets the truth at the point of use, where the refusal
+     * names the two exits — and is handed back to its own key by the resolver
+     * anyway, if it has one. A deployment with managed AI switched off is NOT
+     * working: there the resolver answers "add a key", and so does the warning.
+     */
+    managedAiWorking:
+      managedAvailable &&
+      wantsManagedAi(settings ?? null) &&
+      hasCurrentAiProcessingConsent(settings ?? null),
+    /**
+     * Managed AI is chosen and this deployment serves it, but the current
+     * processing consent is missing — every AI call is refused with
+     * `AI_CONSENT_REQUIRED`. The banner must say "confirm AI processing", not
+     * "add an API key": a managed shop needs no key, and the keys tab is not
+     * where the consent is given.
+     */
+    /**
+     * No plan with AI, no key of its own, taster not yet spent: the "add an
+     * API key" warning must also say that the included AI can be tried once
+     * — confirming the processing notice is what starts it.
+     */
+    managedTasterOffered:
+      managedAvailable &&
+      settings?.managedAiActive !== true &&
+      settings?.managedAiTasterSpentAt == null &&
+      !hasOwnKeyStored((settings ?? null) as Record<string, unknown> | null),
+    managedAiConsentMissing:
+      managedAvailable &&
+      wantsManagedAi(settings ?? null) &&
+      !hasCurrentAiProcessingConsent(settings ?? null),
   };
 }
 
@@ -177,10 +233,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokApiKey: true,
         deepseekApiKey: true,
         preferredProvider: true,
+        // The three columns that answer "has a working AI source" for a
+        // managed shop — §8a rule 6.
+        aiKeySource: true,
+        managedAiActive: true,
+        aiProcessingConsentAt: true,
+        aiProcessingConsentVersion: true,
+        // Whether the one-time taster is still there to be offered.
+        managedAiTasterSpentAt: true,
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
         seoLimits: true,
         extensionSetupHintShownAt: true,
+        autoTranslateExternalChanges: true,
       },
     });
 
@@ -194,9 +259,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const subscriptionPlan = (settings?.subscriptionPlan || "free") as Plan;
 
     // Build API-key presence flags from the single query result
+    const { managedAiAvailable } = await import("~/services/ai/ai-credentials.server");
+    let managedAvailable = false;
+    try {
+      managedAvailable = managedAiAvailable();
+    } catch {
+      managedAvailable = false;
+    }
     let aiSettings: ReturnType<typeof buildAiSettingsFlags>;
     try {
-      aiSettings = buildAiSettingsFlags(settings, decryptApiKey);
+      aiSettings = buildAiSettingsFlags(settings, decryptApiKey, managedAvailable);
     } catch {
       aiSettings = buildAiSettingsFlags(null, decryptApiKey);
     }
@@ -267,13 +339,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // primary locale) and the nav reads it as multi-language, so a lookup
     // hiccup can never grey out a section the merchant can actually use.
     const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+    // PUBLISHED locales only, on purpose: this count gates the SEO sections
+    // that exist for a multi-language STOREFRONT (hreflang), exactly like
+    // app.seo.tsx's. The editors' translate buttons do not read it — they
+    // count every shop locale, unpublished ones included.
     const localeCount = (await getCachedShopLocales(admin, session.shop)).filter(
       (l) => l.published !== false,
     ).length;
 
+    // Whether the Max auto-translation is IN FORCE — the stored switch ANDed
+    // with the plan, the same reading the server makes on every write (the
+    // column survives a downgrade). Only a UI default hangs off it: the create
+    // dialog pre-ticks "translate afterwards", because a merchant who asked
+    // for everything to be translated automatically expects a new item to be.
+    const { meetsPlan } = await import("../utils/planUtils");
+    const { AUTO_TRANSLATE_MIN_PLAN } = await import(
+      "../services/translations/translation-change-policy.shared"
+    );
+    const autoTranslateActive =
+      !!settings?.autoTranslateExternalChanges && meetsPlan(subscriptionPlan, AUTO_TRANSLATE_MIN_PLAN);
+
     return json({
       appLanguage,
       subscriptionPlan,
+      autoTranslateActive,
       aiSettings,
       seoTitleSuffix,
       seoLimits,
@@ -282,6 +371,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       initialSync,
       extensionSetupHint,
       conditionalContent,
+      // PLAN_CONTENT_CREATION §1.4b — the client needs to know which Shopify
+      // API this deployment speaks, because `sources[]` (and therefore the
+      // collection rule editor) only exists from 2026-07. A deploy constant,
+      // not a per-shop value, but the client has no other way to see it.
+      shopifyApiVersion: resolveApiVersionString(),
     });
   } catch (error) {
     // The auth handshake can no longer land here (see the hoist above), so a
@@ -332,10 +426,15 @@ function AppContent() {
 
     showInfoBox(
       extensionHintMessage,
-      // 'warning' (not 'info') so the hint persists until dismissed instead of
-      // auto-hiding after 5s — it carries an actionable deep-link.
+      // 'warning' (not 'info') so the hint gets the long dwell time rather
+      // than the 5s one — it carries an actionable deep-link. It no longer
+      // stands until dismissed: a toast that never goes away QUEUES every
+      // later message behind it, which is what once made save errors
+      // invisible on a shop with no API key (InfoBoxContext). The nudge is
+      // not lost by hiding — the row keeps its deep-link in the message bell,
+      // which is now always on screen, and that is what the one-shot marker
+      // below is really guaranteeing.
       "warning",
-      t.settings?.extensionSetupHintTitle || "Set up the theme extension",
       {
         url: "/app/settings?tab=imagemanager",
         label: t.settings?.extensionSetupHintAction || "Set it up",
@@ -367,6 +466,38 @@ function AppContent() {
   // bell). Both warnings carry a stable dedupeKey for that.
   useEffect(() => {
     if (!aiSettings) return;
+
+    // PLAN_MANAGED_AI_KEY §8a rule 6 — "has a key" is no longer the question;
+    // "has a working AI source" is. A merchant who PAID for AI included would
+    // otherwise be told on every screen that AI does not work, and sent to a
+    // tab that in managed mode no longer renders the fields it names.
+    const CONSENT_MISSING = "managed-ai:consent-missing";
+    if (aiSettings.managedAiWorking) {
+      dismissByKey("missing-api-key:any");
+      dismissByKey("missing-api-key:preferred");
+      dismissByKey(CONSENT_MISSING);
+      return;
+    }
+
+    // Managed AI chosen and available, consent not (or no longer) given: the
+    // way out is the confirmation in Settings, not a key this shop does not
+    // need. Shown INSTEAD of the key warnings.
+    if (aiSettings.managedAiConsentMissing) {
+      dismissByKey("missing-api-key:any");
+      dismissByKey("missing-api-key:preferred");
+      showInfoBox(
+        t.settings?.managedAiConsentMissingBanner ||
+          "AI processing has not been confirmed for this shop yet. Confirm it in Settings to use the included AI.",
+        "warning",
+        {
+          url: "/app/settings?tab=ai",
+          label: t.settings?.managedAiConsentMissingAction || "Confirm in Settings",
+        },
+        CONSENT_MISSING,
+      );
+      return;
+    }
+    dismissByKey(CONSENT_MISSING);
 
     const hasAnyKey =
       aiSettings.hasHuggingfaceApiKey ||
@@ -413,10 +544,12 @@ function AppContent() {
       // Clear the more specific warning if it was previously shown.
       dismissByKey(NO_PREFERRED_KEY);
       showInfoBox(
-        t.settings?.noApiKeyAtAllDescription ||
-          "To use AI features, you first need to add an API key for an AI provider.",
+        aiSettings.managedTasterOffered
+          ? t.settings?.noApiKeyTasterDescription ||
+              "To use AI features, add an API key for an AI provider — or try the included AI once with a free trial credit, which you activate in Settings."
+          : t.settings?.noApiKeyAtAllDescription ||
+              "To use AI features, you first need to add an API key for an AI provider.",
         "warning",
-        t.settings?.noApiKeyAtAll || "No AI API key set up yet",
         link,
         NO_KEY_AT_ALL,
       );
@@ -424,9 +557,13 @@ function AppContent() {
       // Keys exist, just not for the preferred provider.
       dismissByKey(NO_KEY_AT_ALL);
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
-      const message = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
+      const keyMessage = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
         `No ${providerName} API key. Please add in Settings.`;
-      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key", link, NO_PREFERRED_KEY);
+      // Without a key for the PREFERRED provider the taster applies too.
+      const message = aiSettings.managedTasterOffered && t.settings?.tasterAlternative
+        ? `${keyMessage} ${t.settings.tasterAlternative}`
+        : keyMessage;
+      showInfoBox(message, "warning", link, NO_PREFERRED_KEY);
     }
   }, [aiSettings, t, showInfoBox, dismissByKey]);
 

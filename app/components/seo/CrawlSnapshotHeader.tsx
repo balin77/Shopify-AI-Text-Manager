@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { useFetcher, useRevalidator } from "react-router";
 import { Card, BlockStack, InlineStack, Text, Button, Banner } from "@shopify/polaris";
 import { useI18n } from "../../contexts/I18nContext";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useHydrated } from "../../hooks/useHydrated";
 import { formatDateTime } from "../../utils/format";
 import { BLOCK_SOURCE_TEXT_KEY } from "../../utils/task-error-text";
@@ -27,12 +28,25 @@ export function CrawlSnapshotHeader({
   snapshot,
   running,
   gated,
+  pendingSettings = false,
+  pendingSettingsReason,
   children,
 }: {
   snapshot: SnapshotHeaderView | null;
   /** A `seoCrawl` task is running server-side (from the shared loader). */
   running: boolean;
   gated: boolean;
+  /**
+   * A control in `children` holds an UNSAVED change that would change what this
+   * crawl does — so the crawl waits for it.
+   *
+   * The server reads the STORED value when it starts a run, so a merchant who
+   * ticks "check external links" and presses Scan immediately would get a run
+   * without them while the box on screen says otherwise. Refusing the start is
+   * the only answer that keeps the button honest; the reason is named on it.
+   */
+  pendingSettings?: boolean;
+  pendingSettingsReason?: string;
   /**
    * Rendered inside the same card, below the banners — the controls that change
    * what the crawl DOES (the external-link opt-in) and the warnings about the
@@ -92,6 +106,16 @@ export function CrawlSnapshotHeader({
   }, [running, scanStarted]);
 
   const isCapped = snapshot?.status === "capped";
+  /**
+   * A run the orphan recovery closed because the process that owned it is gone
+   * (orphan-run-recovery.js) — a redeploy, an OOM kill. Stored as a `failed`
+   * snapshot, because that is what it is (it has no pages: they are written in
+   * one bulk insert at the very end), but shown as a WARNING and with its own
+   * text: nothing is wrong with the merchant's storefront, and a red banner
+   * telling them to "try again" over our own restart sends them looking for a
+   * fault they do not have.
+   */
+  const isInterrupted = snapshot?.status === "failed" && snapshot.errorCode === "interrupted";
   const blockSourceText = snapshot?.blockedBy ? c[BLOCK_SOURCE_TEXT_KEY[snapshot.blockedBy]] : null;
 
   return (
@@ -103,14 +127,16 @@ export function CrawlSnapshotHeader({
               ? c.lastScanned.replace("{time}", formatDateTime(snapshot.finishedAt || snapshot.startedAt, hydrated))
               : c.neverScanned}
           </Text>
-          <Button
-            variant="primary"
-            onClick={handleScanNow}
-            disabled={gated || scanInProgress || scanFetcher.state !== "idle"}
-            loading={scanFetcher.state !== "idle"}
-          >
-            {c.scanNow}
-          </Button>
+          <DisabledActionTooltip hint={pendingSettings ? pendingSettingsReason : undefined}>
+            <Button
+              variant="primary"
+              onClick={handleScanNow}
+              disabled={gated || pendingSettings || scanInProgress || scanFetcher.state !== "idle"}
+              loading={scanFetcher.state !== "idle"}
+            >
+              {c.scanNow}
+            </Button>
+          </DisabledActionTooltip>
         </InlineStack>
 
         {scanBanner && (
@@ -128,7 +154,10 @@ export function CrawlSnapshotHeader({
           </Banner>
         )}
 
-        {snapshot?.status === "failed" && !scanInProgress && (
+        {isInterrupted && !scanInProgress && (
+          <Banner tone="warning">{c.errorInterrupted}</Banner>
+        )}
+        {snapshot?.status === "failed" && !isInterrupted && !scanInProgress && (
           <Banner tone="critical">
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">

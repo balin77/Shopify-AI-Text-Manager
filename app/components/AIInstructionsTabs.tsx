@@ -1,9 +1,15 @@
 import { useState, useEffect } from "react";
-import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner } from "@shopify/polaris";
+import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner, Select } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
-import { ToggleSwitch } from "./ToggleSwitch";
+import { ToggleRow } from "./ToggleRow";
+import {
+  AI_IMAGES_PER_REQUEST_MAX,
+  AI_IMAGES_PER_REQUEST_MIN,
+  clampImagesPerRequest,
+} from "../services/ai/vision-policy.shared";
 import { HelpTooltip } from "./HelpTooltip";
+import { FieldLabel } from "./unified/FieldChrome";
 import { SettingsGlossaryTab, type GlossaryEntryDto, type GlossaryShopLocale } from "./SettingsGlossaryTab";
 import {
   getDefaultInstructions,
@@ -13,6 +19,10 @@ import {
 } from "../constants/aiInstructionsDefaults";
 import type { FetcherWithComponents } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
+import { taskErrorText } from "../utils/task-error-text";
+import { meetsPlan, type Plan } from "../utils/planUtils";
+import { PLAN_DISPLAY_NAMES } from "../config/plans";
+import { AUTO_TRANSLATE_MIN_PLAN } from "../services/translations/translation-change-policy.shared";
 
 interface Instructions {
   // General (Writing Style Instructions)
@@ -98,6 +108,49 @@ interface AIInstructionsTabsProps {
    * literal rendering of the primary text.
    */
   keywordAwareTranslation: boolean;
+  /**
+   * AISettings.translationPurgeOnPrimaryChange — whether a changed or CLEARED
+   * primary value deletes its foreign translations (everywhere: both editors,
+   * and the sync that notices a change made outside this app).
+   */
+  translationPurgeOnPrimaryChange: boolean;
+  /**
+   * AISettings.autoTranslateExternalChanges (Max) — re-translate instead of
+   * only deleting when the primary text changed. The column name says
+   * "External" for historic reasons: it reaches an in-app change too, whenever
+   * the purge switch is off (with the purge on, that change's translations are
+   * already gone before any sync runs).
+   */
+  autoTranslateExternalChanges: boolean;
+  /**
+   * AISettings.autoTranslateHandles (Max) — the sub-decision under the switch
+   * above: may that re-translation also rewrite a URL handle? Stored on its
+   * own, so switching the parent off to try something does not discard it; the
+   * server ANDs the two on every read.
+   */
+  autoTranslateHandles: boolean;
+  /**
+   * AISettings.autoTranslateDailyLimit (Max) — the merchant's OPTIONAL daily
+   * limit on first automatic translations. `null` = no limit.
+   */
+  autoTranslateDailyLimit: number | null;
+  /** The retry list, summarised (translation-retry.server.ts). */
+  autoTranslateRetrySummary?: {
+    pending: number;
+    exhausted: number;
+    exhaustedItems: Array<{ resourceType: string; resourceTitle: string | null; resourceId: string; lastError: string | null }>;
+  } | null;
+  /** Drives the Max gate on the auto-translate switch. */
+  subscriptionPlan: Plan;
+  /**
+   * AISettings.sendImagesToAI — may the AI LOOK at the shop's images? ONE
+   * answer for the whole app; it used to be a per-session checkbox in the
+   * content editor's toolbar, a second one in the create dialog, and a
+   * hardcoded `false` in the alt-text path the image manager posts to.
+   */
+  sendImagesToAI: boolean;
+  /** AISettings.aiImagesPerRequest — how many of them one generation carries. */
+  aiImagesPerRequest: number;
 }
 
 export function AIInstructionsTabs({
@@ -111,6 +164,14 @@ export function AIInstructionsTabs({
   onGlossaryHasChangesChange,
   translationMode,
   keywordAwareTranslation,
+  translationPurgeOnPrimaryChange,
+  autoTranslateExternalChanges,
+  autoTranslateHandles,
+  autoTranslateDailyLimit,
+  autoTranslateRetrySummary,
+  subscriptionPlan,
+  sendImagesToAI,
+  aiImagesPerRequest,
 }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [subSection, setSubSection] = useState<"content" | "translations">("content");
@@ -118,6 +179,72 @@ export function AIInstructionsTabs({
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
   const [localTranslationMode, setLocalTranslationMode] = useState<"exact" | "seo_optimized">(translationMode);
   const [localKeywordAware, setLocalKeywordAware] = useState(keywordAwareTranslation);
+  const [localPurgeOnChange, setLocalPurgeOnChange] = useState(translationPurgeOnPrimaryChange);
+  const [localAutoTranslateExternal, setLocalAutoTranslateExternal] = useState(
+    autoTranslateExternalChanges,
+  );
+  const [localAutoTranslateHandles, setLocalAutoTranslateHandles] = useState(
+    autoTranslateHandles,
+  );
+  /** The limit as the merchant TYPES it: "" = no limit. A draft like every
+   *  other setting here — saved only by the Save button. */
+  const storedDailyLimit = autoTranslateDailyLimit == null ? "" : String(autoTranslateDailyLimit);
+  const [localDailyLimit, setLocalDailyLimit] = useState(storedDailyLimit);
+  // The auto-translate switch stays VISIBLE on every plan (hiding it would
+  // read as "this app cannot do that") and is greyed out below Max, with the
+  // required tier named underneath.
+  const canAutoTranslateExternal = meetsPlan(subscriptionPlan, AUTO_TRANSLATE_MIN_PLAN);
+  /** Auto-translation is on AND allowed — the state in which it supersedes the
+   *  deletion switch (loadTranslationChangePolicy enforces the same). */
+  const autoTranslateActive = canAutoTranslateExternal && localAutoTranslateExternal;
+  /**
+   * The vision pair waits for the Save button, like every other setting in
+   * this app — nothing here is persisted by the act of clicking it.
+   *
+   * What it does NOT share with the rest of the card is its ACTION. Two
+   * constraints force that. Free and Basic see this card `readOnly` (they use
+   * the default instructions) and this switch has to stay reachable there,
+   * because it was a checkbox in the content editor's toolbar on every plan
+   * before it moved here — so the Save button is rendered for it even when the
+   * texts are locked. And `saveInstructions` writes `data.<field> || null` for
+   * every instruction it knows: a save fired from that read-only card would
+   * blank the lot. `saveAiVision` sends two fields and touches nothing else.
+   */
+  const [localSendImages, setLocalSendImages] = useState(sendImagesToAI);
+  const [localImagesPerRequest, setLocalImagesPerRequest] = useState(
+    clampImagesPerRequest(aiImagesPerRequest),
+  );
+  const visionChanged =
+    localSendImages !== sendImagesToAI ||
+    localImagesPerRequest !== clampImagesPerRequest(aiImagesPerRequest);
+
+  /**
+   * ONE request per Save, on the page's own fetcher — never two.
+   *
+   * Two submits on one fetcher abort each other (`router.fetch` starts with
+   * `abortFetcher`), two fetchers racing two `AISettings` upserts collide on
+   * the unique key when the shop has no row yet, and the settings route toasts
+   * and reports errors off the SHARED fetcher only, so anything sent on a
+   * private one succeeds and fails in silence.
+   *
+   * So: where the instruction texts are editable, the vision fields ride along
+   * in that submit like the translation knobs already do. Where they are not
+   * (Free and Basic see this card read-only), the narrow `saveAiVision` action
+   * goes out ALONE — `saveInstructions` writes `data.<field> || null` for every
+   * instruction it knows, so a save fired from a read-only card would blank
+   * the lot.
+   */
+  const appendVision = (formData: FormData) => {
+    formData.append("sendImagesToAI", String(localSendImages));
+    formData.append("aiImagesPerRequest", String(localImagesPerRequest));
+  };
+  /** Only when they actually changed: this state is seeded at mount and never
+   *  re-synced, so an instructions-only save that carried it would revert a
+   *  vision change made in another tab. Absent ⇒ the action leaves it alone. */
+  const appendVisionIfChanged = (formData: FormData) => {
+    if (visionChanged) appendVision(formData);
+  };
+
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -192,18 +319,71 @@ export function AIInstructionsTabs({
   };
 
   const handleSave = () => {
+    // A limit the server would refuse is not sent — the field already says why.
+    if (dailyLimitChanged && dailyLimitInvalid) return;
+    /**
+     * A vision-only change goes out NARROW, on every plan.
+     *
+     * `localInstructions` is seeded once when this card mounts and never
+     * re-synced from props, so a `saveInstructions` fired for the vision
+     * switch would write whatever texts this tab was opened with — over
+     * anything a second tab or another device has stored since. On the
+     * read-only plans it is worse still: those texts are the DEFAULTS the
+     * merchant is merely being shown.
+     */
+    if (readOnly || !instructionsChanged) {
+      if (!visionChanged) return;
+      const visionOnly = new FormData();
+      visionOnly.append("actionType", "saveAiVision");
+      appendVision(visionOnly);
+      fetcher.submit(visionOnly, { method: "POST" });
+      return;
+    }
+
     const formData = new FormData();
     formData.append("actionType", "saveInstructions");
+    appendVisionIfChanged(formData);
 
-    // Add all instruction fields to FormData
-    Object.entries(localInstructions).forEach(([key, value]) => {
-      formData.append(key, value);
-    });
-
-    // Translation mode piggybacks on the same save so one button covers the
-    // entire Translations sub-section (radio + custom instructions).
-    formData.append("translationMode", localTranslationMode);
-    formData.append("keywordAwareTranslation", String(localKeywordAware));
+    // ONLY what changed, field by field. This card's state is seeded once at
+    // mount and never re-synced (CLAUDE.md, "Field chrome"), so sending every
+    // value wrote this tab's stale copies over anything a second tab stored
+    // since — a switch-only save reverted another tab's instruction edits and
+    // its switches with it. The server writes only the fields it is sent.
+    for (const key of changedInstructionKeys) {
+      formData.append(key, localInstructions[key] ?? "");
+    }
+    // Translation mode and the knobs of the Translations sub-section ride on
+    // the same save, so one button covers the whole sub-section — each only
+    // when it changed, for the same reason.
+    if (localTranslationMode !== translationMode) {
+      formData.append("translationMode", localTranslationMode);
+    }
+    if (localKeywordAware !== keywordAwareTranslation) {
+      formData.append("keywordAwareTranslation", String(localKeywordAware));
+    }
+    // The merchant's OWN choice is stored, not the value the card currently
+    // displays: while auto-translate is on the server resolves the deletion to
+    // off anyway, and persisting that resolved `false` would silently discard
+    // their preference — switching auto-translate back off later would leave
+    // them with neither behaviour and no hint why.
+    if (localPurgeOnChange !== translationPurgeOnPrimaryChange) {
+      formData.append("translationPurgeOnPrimaryChange", String(localPurgeOnChange));
+    }
+    // Never claim the Max feature from a plan that cannot have it — the
+    // change flags are false there, so nothing is sent at all.
+    if (autoTranslateExternalChanged) {
+      formData.append("autoTranslateExternalChanges", String(localAutoTranslateExternal));
+    }
+    // The sub-decision is stored as the merchant LEFT it: the server resolves
+    // it against the parent on every read. Sent only while the parent is on in
+    // this draft — with it off the switch shows its resolved "off", and a save
+    // must not store an answer the screen does not show.
+    if (autoTranslateHandlesChanged) {
+      formData.append("autoTranslateHandles", String(localAutoTranslateHandles));
+    }
+    if (dailyLimitChanged) {
+      formData.append("autoTranslateDailyLimit", localDailyLimit.trim());
+    }
 
     fetcher.submit(formData, { method: "POST" });
   };
@@ -215,11 +395,34 @@ export function AIInstructionsTabs({
     }));
   };
 
-  // Check if there are unsaved changes (instructions OR translation mode)
-  const hasChanges =
-    JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
+  // Check if there are unsaved changes (instructions OR translation mode).
+  // Per KEY, because the save sends exactly these and nothing else.
+  const changedInstructionKeys = Object.keys({ ...instructions, ...localInstructions }).filter(
+    (key) =>
+      ((localInstructions as unknown as Record<string, string | undefined>)[key] ?? "") !==
+      ((instructions as unknown as Record<string, string | undefined>)[key] ?? ""),
+  ) as Array<keyof typeof localInstructions>;
+  const autoTranslateExternalChanged =
+    canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges;
+  // Only while the parent is on in the draft: with it off the child renders
+  // its resolved "off", and a lit save bar over no visible difference is a
+  // change the merchant cannot see (and would store blind).
+  const autoTranslateHandlesChanged =
+    autoTranslateActive && localAutoTranslateHandles !== autoTranslateHandles;
+  // Same rule as the handle switch: only while the parent is on in the draft.
+  const dailyLimitChanged = autoTranslateActive && localDailyLimit.trim() !== storedDailyLimit;
+  // "" (no limit) or a whole number of at least 1 — the server refuses the
+  // rest, and the field says so before the merchant presses Save.
+  const dailyLimitInvalid = localDailyLimit.trim() !== "" && !(/^\d{1,7}$/.test(localDailyLimit.trim()) && Number(localDailyLimit.trim()) >= 1);
+  const instructionsChanged =
+    changedInstructionKeys.length > 0 ||
     localTranslationMode !== translationMode ||
-    localKeywordAware !== keywordAwareTranslation;
+    localKeywordAware !== keywordAwareTranslation ||
+    localPurgeOnChange !== translationPurgeOnPrimaryChange ||
+    autoTranslateExternalChanged ||
+    autoTranslateHandlesChanged ||
+    dailyLimitChanged;
+  const hasChanges = instructionsChanged || visionChanged;
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -232,6 +435,12 @@ export function AIInstructionsTabs({
     setLocalInstructions(instructions);
     setLocalTranslationMode(translationMode);
     setLocalKeywordAware(keywordAwareTranslation);
+    setLocalPurgeOnChange(translationPurgeOnPrimaryChange);
+    setLocalAutoTranslateExternal(autoTranslateExternalChanges);
+    setLocalAutoTranslateHandles(autoTranslateHandles);
+    setLocalDailyLimit(storedDailyLimit);
+    setLocalSendImages(sendImagesToAI);
+    setLocalImagesPerRequest(clampImagesPerRequest(aiImagesPerRequest));
   };
 
   return (
@@ -243,16 +452,23 @@ export function AIInstructionsTabs({
           <Text as="h2" variant="headingLg">
             {t.settings.aiInstructions}
           </Text>
-          {!readOnly && (
+          {(!readOnly || visionChanged) && (
             <SaveDiscardButtons
               hasChanges={hasChanges}
               onSave={handleSave}
               onDiscard={handleDiscard}
               saveText={t.products?.saveChanges || "Änderungen speichern"}
               discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveInstructions"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
+              // Explicit rather than `action` + `fetcherFormData`: that pair
+              // compares `formData.get("action")`, and this card posts its
+              // discriminator as `actionType` — so it never matched and the
+              // Save button never disabled. It also has to cover BOTH submits,
+              // since the vision pair goes through its own fetcher.
+              isSavingCurrentItem={
+                fetcher.state !== "idle" &&
+                (fetcher.formData?.get("actionType") === "saveInstructions" ||
+                  fetcher.formData?.get("actionType") === "saveAiVision")
+              }
             />
           )}
         </InlineStack>
@@ -301,6 +517,63 @@ export function AIInstructionsTabs({
             })}
           </InlineStack>
         </div>
+
+              {/* Content sub-section only. Not a layout preference: the
+            "translations" sub-section mounts SettingsGlossaryTab, which brings
+            its OWN `ui-save-bar`, and only one can be visible — a dirty
+            glossary next to a flipped switch here would leave one of the two
+            drafts with no way to save. */}
+        {subSection === "content" && (
+          <>
+          {/* Vision — FIRST, above everything this card holds: it decides what
+              the AI can SEE, which outranks how it is told to write. One answer
+              for the whole app; every surface that generates text or an alt text
+              reads it server-side.
+
+              OUTSIDE the read-only wrapper below on purpose. That wrapper sets
+              `pointerEvents: none` for Free and Basic (they use the default
+              instructions), and this pair is a capability those plans had on
+              every plan while it was a checkbox in the editor's toolbar — inside
+              it, the switch was simply unclickable there. Being outside also
+              means it shows in both sub-sections, which is right for a setting
+              that is neither about writing nor about translating specifically. */}
+                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                  <BlockStack gap="400">
+                    {/* No ❓ on the heading: the switch below carries the
+                        explanation, and two question marks in one small card
+                        are two places to look for one answer. */}
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.aiVisionHeading || "Images"}
+                    </Text>
+                    <ToggleRow
+                      layout="inline"
+                      label={t.settings.aiVisionToggle || "Let the AI look at the images"}
+                      help={t.settings.aiVisionHelp}
+                      checked={localSendImages}
+                      onChange={setLocalSendImages}
+                    />
+                    {/* Offered only once vision is ON: "how many of nothing"
+                        is not a question, and a live control under a switch
+                        that is off reads as if it did something. */}
+                    {localSendImages && (
+                      <Select
+                        label={t.settings.aiImagesPerRequestLabel || "Images per request"}
+                        options={Array.from(
+                          { length: AI_IMAGES_PER_REQUEST_MAX - AI_IMAGES_PER_REQUEST_MIN + 1 },
+                          (_, i) => {
+                            const n = AI_IMAGES_PER_REQUEST_MIN + i;
+                            return { value: String(n), label: String(n) };
+                          },
+                        )}
+                        value={String(localImagesPerRequest)}
+                        onChange={(v) => setLocalImagesPerRequest(clampImagesPerRequest(Number(v)))}
+                        helpText={t.settings.aiImagesPerRequestHelp}
+                      />
+                    )}
+                  </BlockStack>
+                </div>
+          </>
+        )}
 
         {/* Custom Tab Navigation — only visible in "content" sub-section */}
         {subSection === "content" && (
@@ -402,20 +675,180 @@ export function AIInstructionsTabs({
                   knob: it changes HOW the AI translates, not what it is told
                   about the shop. Saved with the rest of this tab. */}
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                <BlockStack gap="300">
+                {/* A `ToggleRow` like every other decision in this card — it
+                    was a hand-rolled copy of the same shape with its
+                    explanation as body text, which is the third copy
+                    CLAUDE.md's "Field chrome" rule exists to prevent. The
+                    heading went with it: the switch's own label said the same
+                    words one line lower. */}
+                <ToggleRow
+                  layout="inline"
+                  label={t.settings.keywordAwareTranslation}
+                  help={t.settings.keywordAwareTranslationHelp}
+                  checked={localKeywordAware}
+                  onChange={setLocalKeywordAware}
+                  disabled={readOnly}
+                />
+              </div>
+              {/* What happens to a translation when its SOURCE text changes.
+                  Two switches, one card: the first decides whether the stale
+                  translation is dropped at all, the second (Max) whether a
+                  change is translated again right away. They sit together
+                  because a merchant reasons about them together — "what does
+                  the app do when the German text changes?" — and because they
+                  are ALTERNATIVES: switching the re-translation on switches
+                  the deletion off, here and in the policy module, since
+                  deleting the rows a re-translation is about to refresh is not
+                  a combination that means anything. */}
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="400">
                   <Text as="h3" variant="headingMd">
-                    {t.settings.keywordAwareTranslation}
+                    {t.settings.translationChangeHeading || 'Bei Änderung der Hauptsprache'}
                   </Text>
-                  <InlineStack gap="300" blockAlign="center" wrap={false}>
-                    <ToggleSwitch
-                      checked={localKeywordAware}
-                      onChange={setLocalKeywordAware}
-                      disabled={readOnly}
+
+                  {/* Three `ToggleRow`s: a yes/no decision is a pill switch,
+                      the switch leads (the row style the whole Settings page
+                      uses) and what it MEANS lives in the ❓ — never in a
+                      paragraph under the control.
+
+                      They name a `t.help` key rather than a raw string,
+                      because these explanations do not fit in a popover
+                      either: the key carries a SHORT summary, the rules as
+                      bullet tips, and the long version behind "Mehr erfahren".
+                      Where auto-translate actually reaches, and where the
+                      bulk editor's run cap hands back to the deletion, is
+                      exactly that long version — it used to stand under the
+                      first switch as a paragraph nobody reads.
+
+                      What stays ON SCREEN is only what says why a switch
+                      cannot be operated right now: the plan hint, and the
+                      child's "the parent is off". Those are one line each. */}
+                  <BlockStack gap="100">
+                    <ToggleRow
+                      layout="inline"
+                      label={
+                        t.settings.translationPurgeOnPrimaryChange ||
+                        'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'
+                      }
+                      helpKey="translationPurgeOnPrimaryChange"
+                      checked={!autoTranslateActive && localPurgeOnChange}
+                      onChange={setLocalPurgeOnChange}
+                      disabled={readOnly || autoTranslateActive}
                     />
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.settings.keywordAwareTranslationHelp}
-                    </Text>
-                  </InlineStack>
+                    {/* ONE line, like the two below it: the switch is greyed
+                        and a stored `true` renders unchecked, so without this
+                        the row says nothing about why. The enumeration that
+                        used to stand here — where the re-translation actually
+                        reaches, and where the bulk editor's run cap hands back
+                        to the deletion — is the ❓'s `details` now. A reason,
+                        not an explanation. */}
+                    {autoTranslateActive && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.settings.translationPurgeSupersededNote ||
+                          'Nicht nötig, solange automatisch neu übersetzt wird.'}
+                      </Text>
+                    )}
+                  </BlockStack>
+
+                  <BlockStack gap="100">
+                    <ToggleRow
+                      layout="inline"
+                      label={
+                        t.settings.autoTranslateExternalChanges ||
+                        'Texte automatisch neu übersetzen, wenn sich der Originaltext ändert'
+                      }
+                      helpKey="autoTranslateExternalChanges"
+                      checked={autoTranslateActive}
+                      onChange={setLocalAutoTranslateExternal}
+                      disabled={readOnly || !canAutoTranslateExternal}
+                    />
+                    {!canAutoTranslateExternal && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {(t.settings.autoTranslateExternalChangesPlanHint ||
+                          'Ab dem {plan}-Plan verfügbar.').replace(
+                          '{plan}',
+                          PLAN_DISPLAY_NAMES[AUTO_TRANSLATE_MIN_PLAN],
+                        )}
+                      </Text>
+                    )}
+                    {/* The sub-decision, INDENTED under the switch it belongs
+                        to: a handle is a URL, so "translate the texts" must not
+                        silently move the shop's addresses as well. Off by
+                        default, disabled while the parent is off — and the
+                        stored value is kept either way, so trying the parent
+                        switch does not discard this answer. */}
+                    <div style={{ paddingInlineStart: "2.25rem" }}>
+                      <ToggleRow
+                        layout="inline"
+                        label={t.settings.autoTranslateHandles || 'Auch URL-Handles übersetzen'}
+                        helpKey="autoTranslateHandles"
+                        checked={autoTranslateActive && localAutoTranslateHandles}
+                        onChange={setLocalAutoTranslateHandles}
+                        disabled={readOnly || !canAutoTranslateExternal || !autoTranslateActive}
+                      />
+                      {canAutoTranslateExternal && !autoTranslateActive && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.settings.autoTranslateHandlesRequiresParent ||
+                            'Nur möglich, wenn automatisch neu übersetzt wird.'}
+                        </Text>
+                      )}
+                    </div>
+                    {/* The OPTIONAL daily limit, directly under the handle
+                        switch and indented the same way: a sub-decision of
+                        the auto-translation. Empty = no limit. What it limits,
+                        and what happens to refused work (the retry list), is
+                        the ❓'s business. */}
+                    <div style={{ paddingInlineStart: "2.25rem", maxWidth: "28rem" }}>
+                      <TextField
+                        label={
+                          <FieldLabel
+                            label={t.settings.autoTranslateDailyLimit || 'Höchstens so viele Einträge pro Tag erstmals übersetzen'}
+                            helpKey="autoTranslateDailyLimit"
+                          />
+                        }
+                        type="number"
+                        min={1}
+                        autoComplete="off"
+                        value={autoTranslateActive ? localDailyLimit : storedDailyLimit}
+                        onChange={setLocalDailyLimit}
+                        placeholder={t.settings.autoTranslateDailyLimitPlaceholder || 'Keine Grenze'}
+                        disabled={readOnly || !canAutoTranslateExternal || !autoTranslateActive}
+                        error={
+                          autoTranslateActive && dailyLimitInvalid
+                            ? t.settings.autoTranslateDailyLimitInvalid || 'Eine ganze Zahl ab 1 — oder leer für keine Grenze.'
+                            : undefined
+                        }
+                      />
+                      {autoTranslateRetrySummary &&
+                        (autoTranslateRetrySummary.pending > 0 || autoTranslateRetrySummary.exhausted > 0) && (
+                          <BlockStack gap="100">
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {(t.settings.autoTranslateRetrySummary ||
+                                'Wiederholungsliste: {pending} wartend, {exhausted} endgültig fehlgeschlagen.')
+                                .replace('{pending}', String(autoTranslateRetrySummary.pending))
+                                .replace('{exhausted}', String(autoTranslateRetrySummary.exhausted))}
+                            </Text>
+                            {autoTranslateRetrySummary.exhaustedItems.map((item) => (
+                              <Text key={item.resourceId} as="p" variant="bodySm" tone="critical">
+                                {item.resourceTitle || item.resourceId}
+                                {item.lastError
+                                  ? ` — ${
+                                      // A managed-AI refusal carries its reason (`managed_ai_refused:<reason>`),
+                                      // rendered by the same function the Tasks tab uses.
+                                      (item.lastError.startsWith('managed_ai_refused:')
+                                        ? taskErrorText(item.lastError, t)
+                                        : null) ||
+                                      (t.settings.autoTranslateRetryErrors as Record<string, string> | undefined)?.[item.lastError] ||
+                                      t.settings.autoTranslateRetryErrors?.run_failed ||
+                                      'Übersetzung fehlgeschlagen'
+                                    }`
+                                  : ''}
+                              </Text>
+                            ))}
+                          </BlockStack>
+                        )}
+                    </div>
+                  </BlockStack>
                 </BlockStack>
               </div>
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
@@ -461,6 +894,7 @@ export function AIInstructionsTabs({
                 <Text as="p" variant="bodyMd" tone="subdued">
                   {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
                 </Text>
+
 
                 {/* Writing Style Instructions */}
                 <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>

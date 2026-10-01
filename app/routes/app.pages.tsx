@@ -33,6 +33,14 @@ export const loader = createContentLoader({
   async loadData(ctx) {
     // Load pages directly from Shopify (not from DB)
     // This reduces database storage for multi-tenant SaaS
+    // `templateSuffix` / `isPublished` are the PLAN §2.2 attribute checklist.
+    // Pages are read LIVE here (not from the cache), so unlike the other three
+    // types there is no "written by an older sync" ambiguity: whatever comes
+    // back IS current, which is why the item below can report the block as
+    // known outright.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const pagesResponse = await ctx.admin.graphql(
       `#graphql
         query getPages {
@@ -43,6 +51,8 @@ export const loader = createContentLoader({
                 title
                 handle
                 body
+                templateSuffix
+                isPublished
                 seoTitle: metafield(namespace: "global", key: "title_tag") { value }
                 seoDescription: metafield(namespace: "global", key: "description_tag") { value }
               }
@@ -63,6 +73,12 @@ export const loader = createContentLoader({
           title: p.seoTitle?.value ?? null,
           description: p.seoDescription?.value ?? null,
         },
+        // The query above just delivered these, so the checklist may judge
+        // them. A live read is the strongest form of "known" there is — the
+        // stamp is what the sidebar gates on, not where the value came from.
+        attributesSyncedAt: new Date().toISOString(),
+        templateSuffix: p.templateSuffix ?? null,
+        isPublished: p.isPublished ?? null,
       })),
       ids: pages.map((p: any) => p.id),
     };
@@ -112,7 +128,11 @@ export default function PagesPage() {
   const initialItemId = searchParams.get("select") || undefined;
   // Locale of the deep link (the SEO dashboard passes the language it was
   // showing). Validated against the shop's locales inside the editor hook.
-  const initialLocale = searchParams.get("locale") || undefined;
+  // NOT `?locale=` — Shopify appends the merchant's ADMIN UI language under
+  // that name on every embedded request, and useAppNavigation carries every
+  // param along, so reading it here opened the content editor in whatever
+  // language the admin happens to be in (see the initialLocale docstring).
+  const initialLocale = searchParams.get("contentLocale") || undefined;
 
   // Content-Freshness deep-link (PLAN_SEO_SUITE_COMPLETION.md §5.3): the
   // "Mit AI überarbeiten" button on the Freshness panel links here with
@@ -145,7 +165,7 @@ export default function PagesPage() {
   // Show loader error
   useEffect(() => {
     if (error) {
-      showInfoBox(error, "critical", t.content?.error || "Error");
+      showInfoBox(error, "critical");
     }
   }, [error, showInfoBox, t]);
 

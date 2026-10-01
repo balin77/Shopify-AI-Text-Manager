@@ -1,0 +1,498 @@
+/**
+ * PLAN_CONTENT_CREATION §Phase 3.1/3.2 — the merchandising half of a save.
+ *
+ * The editor sends every field as a flat string. Shopify wants an enum, a
+ * boolean, a string array and a nullable string, on four different inputs. This
+ * is the ONE place that translation happens, for the same reason
+ * `FIELD_TO_TRANSLATION_KEY` is one map: the previous generation of this code
+ * grew a per-resource copy of every rule and they drifted.
+ *
+ * ── Why validation lives here and not at the mutation ───────────────────────
+ * `sortOrder` and `status` are GraphQL ENUMS. An unknown value fails at the
+ * SCHEMA level, which Shopify returns as a top-level `errors` array with
+ * `data: null` — it never reaches `userErrors`. Callers that only check
+ * `userErrors` therefore read the whole save as a success while nothing was
+ * written: the false-success pattern CLAUDE.md exists to prevent. So a value
+ * this module does not recognise is DROPPED and reported, never forwarded.
+ *
+ * ── Why "" is not the same as absent ────────────────────────────────────────
+ * A field the client never sent is `undefined` and must be left untouched. A
+ * field the merchant cleared is `""` and must be written — for `templateSuffix`
+ * that means `null`, which puts the item back on the theme's default template.
+ * Collapsing the two is how a save silently stops being able to clear a field.
+ */
+
+import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "../config/shopify-enums.shared";
+
+export type AttributeResource = "Page" | "Blog" | "Article" | "Collection";
+
+/**
+ * Is this field one of the §Phase 3 merchandising attributes?
+ *
+ * The two marks together, never the `type` alone: `vendor`, `author` and
+ * `templateSuffix` are `type: "text"` like a title is, and routing on type
+ * would either miss them (leaving them without the not-synced lock and the
+ * not-translatable notice the other four get) or swallow every text field in
+ * the app.
+ *
+ * `groupId` is the third mark and it is a VETO, because the two above stopped
+ * being unique to these seven fields: a metaobject entry's colour, file
+ * reference and taxonomy reference carry `translationKey: ""` +
+ * `supportsTranslation: false` for a completely different reason — they hold
+ * one value per shop rather than one per locale. Read as attributes they were
+ * lifted out of their entry's card and stacked in the page-wide "Details" card
+ * at the bottom, so the metaobjects tab showed the entries and, far below them,
+ * a flat list of their colours with nothing but a help text saying which colour
+ * belonged to which entry. A field that names a group belongs to THAT group's
+ * card; where it renders is the group's business, and the merchandising
+ * attributes name no group.
+ */
+export function isAttributeField(field: {
+  translationKey?: string;
+  supportsTranslation?: boolean;
+  groupId?: string;
+}): boolean {
+  if (field.groupId) return false;
+  return field.supportsTranslation === false && !field.translationKey;
+}
+
+/**
+ * May this field definition be part of a TRANSLATION run at all?
+ *
+ * The complement of `isAttributeField` seen from the translation side, and it
+ * has to be asked BEFORE the AI call, not after it. `translateAllContent`'s
+ * `prepareField` rejects a field with no `FIELD_TO_TRANSLATION_KEY` entry — but
+ * it does so once the model has already translated it, which is the wrong end:
+ * the merchant paid for the tokens and then read `en: author, isPublished,
+ * templateSuffix` in a red "failed items" box about three fields that were
+ * never translatable and that nobody asked to have translated. Every content
+ * type has them (a product also ships `vendor`, `tags`, `status`, `category`
+ * and `collections` — the last two as bare GIDs), so a translate-all run asked
+ * the model to translate a `gid://shopify/TaxonomyCategory/…` and reported the
+ * result as a failure.
+ *
+ * `translationKey` is the config's own marker for "has no Shopify translation
+ * key at all", which is why the walk is on it rather than on `type` — and it is
+ * the same walk the editor's change-detection already does. The two further
+ * rails: `supportsTranslation === false` is the second mark those fields carry,
+ * and an image GALLERY carries a `translationKey` (`"images"`) that is not a
+ * Shopify content key either — its alt-texts are translated by their own
+ * action (`translateAllAltTextsToAllLocales`), never as a field of the row.
+ *
+ * This is the CLIENT-side half, and it exists as its own predicate because
+ * `FIELD_TO_TRANSLATION_KEY` lives in a server module the client cannot import.
+ * The server answers the same question from that map twice over —
+ * `collectTranslatableFields` at the action, `translateAllContent` behind it —
+ * because every one of these actions is directly POST-reachable.
+ */
+export function isTranslatableFieldDefinition(field: {
+  type?: string;
+  translationKey?: string;
+  supportsTranslation?: boolean;
+}): boolean {
+  if (!field.translationKey) return false;
+  if (field.supportsTranslation === false) return false;
+  return field.type !== "image-gallery";
+}
+
+/**
+ * WHICH CARD a field renders in — the one place that decides, for all three.
+ *
+ * WHERE a field sits and HOW it saves are separate questions. `isAttributeField`
+ * above answers the second and nothing here changes that: it still decides the
+ * not-translatable notice, the `attributesSyncedAt` lock and the `changedFields`
+ * gate. This answers only the first, and DERIVES it from the second — an
+ * attribute belongs in the Details card, everything else in the main one — so
+ * that a new field lands in the right place without saying anything.
+ *
+ * `card` is how the two deliberately come apart, and there are exactly two
+ * such fields. `category` is an attribute that renders UP in the main card,
+ * because Shopify's own admin puts the category next to the description and a
+ * merchant who knows that admin looks there. `productType` is translatable
+ * content that renders DOWN in the Details card, right next to the category —
+ * the two are constantly taken for one field, and two cards apart there was
+ * nothing to compare. Both keep their own save semantics either way.
+ */
+export function fieldCard(field: {
+  card?: string;
+  translationKey?: string;
+  supportsTranslation?: boolean;
+}): "main" | "searchEngine" | "details" {
+  if (field.card === "searchEngine") return "searchEngine";
+  if (field.card === "details") return "details";
+  if (field.card === "main") return "main";
+  return isAttributeField(field) ? "details" : "main";
+}
+
+/**
+ * Which of the Details card's fields a given LOCALE shows.
+ *
+ * The card's fields are merchandising attributes — one value per item, never
+ * one per locale — plus the single translatable exception the `card` override
+ * puts there (`productType`). In a foreign locale that meant six greyed boxes
+ * repeating one sentence around the one field the merchant came to edit, and
+ * on the other three content types it meant a whole card of them with nothing
+ * translatable left at all. A translation screen shows what a translation can
+ * change; everything else is read where it is written, in the primary language.
+ *
+ * The reason does not vanish with the boxes: the caller renders ONE line of it
+ * (`content.attributesHiddenInTranslation`) whenever this dropped something,
+ * because a field that disappears without a word reads as a bug or a plan gate.
+ *
+ * Deliberately about this CARD, not about "everything untranslatable": the
+ * category is an attribute that renders UP in the main card, where Shopify's
+ * own admin puts it, and it keeps its read-only box with the explanation the
+ * other attributes used to carry — hiding a field from the card a merchant
+ * navigates by is a different decision from thinning out a card of controls
+ * they cannot use.
+ *
+ * `isAttributeField` and not `supportsTranslation`, so the line this draws is
+ * the same one that decides the fields' SAVE semantics: what a foreign locale
+ * refuses to write is exactly what it now refuses to show.
+ */
+export function detailsFieldsForLocale<
+  F extends {
+    card?: string;
+    translationKey?: string;
+    supportsTranslation?: boolean;
+    groupId?: string;
+  },
+>(fields: F[], isPrimaryLocale: boolean): F[] {
+  if (isPrimaryLocale) return fields;
+  return fields.filter((field) => !isAttributeField(field));
+}
+
+/** Shaped for the four `*UpdateInput`s. `author` stays a plain name here — the
+ *  service wraps it in Shopify's `AuthorInput` at the call. */
+export interface AttributeInput {
+  isPublished?: boolean;
+  templateSuffix?: string | null;
+  sortOrder?: string;
+  author?: string;
+  tags?: string[];
+}
+
+const VALID_STATUSES = new Set<string>(CREATE_PRODUCT_STATUSES);
+const VALID_SORT_ORDERS = new Set<string>(COLLECTION_SORT_ORDERS);
+
+/** Which attributes each resource actually HAS. A `sortOrder` on a page is not
+ *  a harmless extra: Shopify rejects the whole input. */
+const ATTRIBUTES_BY_RESOURCE: Record<AttributeResource, Array<keyof AttributeInput>> = {
+  Page: ["isPublished", "templateSuffix"],
+  Blog: ["templateSuffix"],
+  Article: ["isPublished", "templateSuffix", "author", "tags"],
+  Collection: ["sortOrder", "templateSuffix"],
+};
+
+/**
+ * Which attributes this resource declares — the same list `attributeInputFor`
+ * filters against, exported so a CALLER can tell "not declared here" from
+ * "dropped because it was empty".
+ *
+ * `attributeInputFor` drops both silently, which is right for the editor (it
+ * sends every field on a primary save and most of them are not attributes at
+ * all) and wrong for the bulk grid, where every cell in the diff is one the
+ * merchant TOUCHED: a column that exists on the grid but not in the list below
+ * would save, report success and write nothing — the false-success pattern.
+ * The grid asks this first and fails that cell loudly instead.
+ */
+export function attributesForResource(resource: AttributeResource): Array<keyof AttributeInput> {
+  return [...(ATTRIBUTES_BY_RESOURCE[resource] ?? [])];
+}
+
+/** Shopify trims tags and drops empties; mirror that so a save does not report
+ *  a change the shop would never store. Case-insensitively de-duplicated,
+ *  because Shopify collapses "Sale" and "sale" into one. */
+export function parseTagList(value: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value.split(",")) {
+    const tag = raw.trim();
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+  }
+  return out;
+}
+
+export function isValidProductStatus(value: string): boolean {
+  return VALID_STATUSES.has(value.trim().toUpperCase());
+}
+
+export function isValidSortOrder(value: string): boolean {
+  return VALID_SORT_ORDERS.has(value.trim().toUpperCase());
+}
+
+/**
+ * The attribute half of a Shopify update input, built from the editor's flat
+ * update map. Only keys the caller actually sent, and only ones this resource
+ * has. An invalid enum value is omitted and named in `rejected`.
+ */
+export function attributeInputFor(
+  resource: AttributeResource,
+  updates: Record<string, string>,
+  changedFields?: string[],
+): AttributeInput & { rejected?: string[] } {
+  // ── Presence is NOT intent ────────────────────────────────────────────────
+  // A primary-locale save carries EVERY field, changed or not — only foreign
+  // saves are filtered client-side. So "the client sent `tags`" says nothing
+  // about whether the merchant touched them, and acting on presence alone
+  // means editing a TITLE also writes the attributes. On an item whose row
+  // predates the attribute sync those arrive as the migration's defaults —
+  // empty — and Shopify REPLACES rather than merges, so the title edit would
+  // delete every tag, clear the author and publish a hidden article.
+  //
+  // Undefined `changedFields` ⇒ write nothing. A caller that does not say what
+  // changed is indistinguishable from one where nothing did, and only one of
+  // those two readings is safe.
+  const touched = (key: keyof AttributeInput) => !!changedFields?.includes(key);
+
+  const declared = ATTRIBUTES_BY_RESOURCE[resource] ?? [];
+  const allowed = declared.filter(touched);
+  const input: AttributeInput & { rejected?: string[] } = {};
+  const rejected: string[] = [];
+
+  if (allowed.includes("isPublished") && updates.isPublished !== undefined) {
+    // Anything but an explicit "false" is published — the same rule as the
+    // column default, so a value written before the attribute sync existed
+    // does not silently unpublish an item.
+    input.isPublished = updates.isPublished !== "false";
+  }
+
+  if (allowed.includes("templateSuffix") && updates.templateSuffix !== undefined) {
+    // "" means "back to the theme default", which Shopify expresses as null.
+    input.templateSuffix = updates.templateSuffix.trim() || null;
+  }
+
+  if (allowed.includes("sortOrder") && updates.sortOrder !== undefined) {
+    const value = updates.sortOrder.trim().toUpperCase();
+    // Empty is "not set" — nothing to write, and certainly not an enum error.
+    if (value) {
+      if (isValidSortOrder(value)) input.sortOrder = value;
+      else rejected.push("sortOrder");
+    }
+  }
+
+  if (allowed.includes("author") && updates.author !== undefined) {
+    const name = updates.author.trim();
+    // `ArticleCreateInput.author` is REQUIRED, so an article always has one.
+    // Sending an empty name would be Shopify's problem to reject; leaving the
+    // existing author alone is the honest reading of an emptied field the UI
+    // marks required.
+    if (name) input.author = name;
+    else rejected.push("author");
+  }
+
+  if (allowed.includes("tags") && updates.tags !== undefined) {
+    // Shopify REPLACES the whole list, so this is the complete set, not an
+    // addition. An empty string therefore legitimately clears every tag.
+    input.tags = parseTagList(updates.tags);
+  }
+
+  if (rejected.length > 0) input.rejected = rejected;
+  return input;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §Phase 3.1 — collection MEMBERSHIP (products only)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Membership is a DIFF, not a list.
+ *
+ * `ProductInput` takes `collectionsToJoin` / `collectionsToLeave`, so sending
+ * "the collections this product is in" is not an option at all — and that is
+ * the right shape anyway: a product can belong to collections whose rows this
+ * shop never cached (the collection cache is capped by the merchant's plan),
+ * and a full-list write would silently drop every one of them.
+ *
+ * Two rules carry the correctness here:
+ *
+ *   - The BEFORE side is the CACHE (`ProductCollection`), never the client. A
+ *     payload that names an id as "left" must not be able to remove a
+ *     membership this editor never showed.
+ *   - A RULE-BASED collection is never touched, in EITHER direction. Leaving
+ *     one is undone by its rule within seconds — a save that apparently did
+ *     nothing. JOINING one is worse: Shopify refuses manual membership on a
+ *     smart collection, and because `productUpdate` is atomic that refusal
+ *     takes the merchant's title, description and SEO edits down with it. The
+ *     picker locks such rows; this is the server-side twin, because the action
+ *     is reachable by POST.
+ *   - `automated: null` means UNKNOWN — a collection row written before the
+ *     attribute sync existed, where the column's `false` default is
+ *     indistinguishable from a measured "manual". Unknown is treated as
+ *     automated for the purpose of refusing: the cost of not adding a
+ *     membership is a merchant clicking again, the cost of adding it wrongly is
+ *     a lost text edit.
+ */
+/**
+ * Two flags, one answer — and the ladder is the whole correctness argument.
+ *
+ * A membership's "is this rule-based" comes from two places that can each be
+ * stale or blind in a different way:
+ *
+ *   - `measured` — `Collection.isSmart`, derived from `sources` (the real
+ *     model) but only as fresh as the last COLLECTION sync.
+ *   - `row` — `ProductCollection.automated`, rewritten on every
+ *     `products/update` webhook but derived from `Collection.ruleSet`, the
+ *     lossy back-projection: its `false` can mean "manual" OR "a rule tree
+ *     that does not project".
+ *
+ * So neither one may simply outrank the other. A positive from EITHER is a
+ * positive (one of them saw a rule; a collection converted manual→smart in the
+ * admin is exactly the case where the fresher row knows and the cache does
+ * not). Only when nobody says yes does an explicit `false` count. And when
+ * neither knows, the answer is UNKNOWN, which every caller treats as
+ * automated — the costs are not symmetric: refusing a change costs a click,
+ * allowing one Shopify refuses costs the merchant's text edits, because
+ * `productUpdate` is atomic.
+ *
+ * Exported and client-safe on purpose: the picker locks the rows this
+ * function calls automated, and a second copy of the ladder in the component
+ * is how the UI comes to offer what the server then refuses.
+ */
+export function resolveMembershipAutomated(
+  measured: boolean | null | undefined,
+  row: boolean | null | undefined,
+): boolean | null {
+  if (measured === true || row === true) return true;
+  if (measured === false || row === false) return false;
+  return null;
+}
+
+export interface MembershipDiff {
+  toJoin: string[];
+  toLeave: string[];
+  /** MEASURED rule-based collections the payload tried to change. */
+  refusedAutomated: string[];
+  /**
+   * Refused because nobody has measured them yet — a collection row the
+   * attribute sync never reached.
+   *
+   * Separate from `refusedAutomated` because the two need different sentences:
+   * "its rules decide who belongs to it" is an explanation, while "we do not
+   * know yet, sync the collections" is an instruction. Telling a merchant
+   * their manual collection is rule-based sends them looking for a rule that
+   * does not exist — the same confusion the picker's own `automatedUnknown`
+   * text exists to avoid.
+   */
+  refusedUnknown: string[];
+}
+
+export function diffCollectionMembership(
+  before: Array<{ collectionId: string; automated: boolean | null }>,
+  afterIds: string[],
+  /**
+   * How each collection in the SHOP reads — the picker's own list, derived
+   * from `Collection.isSmart`, which the collection sync measures from
+   * `sources` on 2026-07.
+   *
+   * Consulted for BOTH directions, and for the leave side that is a
+   * correction rather than a convenience: `before.automated` comes from
+   * `ProductCollection`, which the product sync fills from `Collection.ruleSet`
+   * — the LOSSY back-projection of `sources`. A rule tree that ruleSet cannot
+   * express (an exclusion, several named sources, variant targeting) projects
+   * to null, so the membership reads MANUAL, the leave is allowed, Shopify
+   * refuses `collectionsToLeave`, and because `productUpdate` is atomic the
+   * refusal takes the merchant's title, description and SEO edits with it.
+   * Where this map KNOWS, it therefore outranks the row's own flag; where it
+   * does not, the row is still the only answer there is.
+   *
+   * Omitted ⇒ neither direction is screened against it, which is the
+   * pre-existing behaviour and the right one for a caller with no list.
+   */
+  known?: Map<string, boolean | null>,
+): MembershipDiff {
+  const beforeById = new Map(before.map((row) => [row.collectionId, row] as const));
+  const after = new Set(afterIds.filter((id) => id.trim()));
+
+  const toJoin: string[] = [];
+  const refusedAutomated: string[] = [];
+  const refusedUnknown: string[] = [];
+  const refuse = (id: string, automated: boolean | null) =>
+    (automated === true ? refusedAutomated : refusedUnknown).push(id);
+
+  for (const id of after) {
+    if (beforeById.has(id)) continue;
+    // Not `=== true`: `null` (never attribute-synced) is refused too. See the
+    // header — the asymmetry of the two costs is the whole argument.
+    // The same ladder, with no row to consult: `before` has no entry for a
+    // collection the product is not in yet. `has()` stays load-bearing — a
+    // collection the cache does not carry at all (the cache is capped by the
+    // plan) is NOT screened, which is the documented pre-existing behaviour.
+    if (known?.has(id) && resolveMembershipAutomated(known.get(id), undefined) !== false) {
+      refuse(id, known.get(id) ?? null);
+      continue;
+    }
+    toJoin.push(id);
+  }
+
+  const toLeave: string[] = [];
+  for (const row of before) {
+    if (after.has(row.collectionId)) continue;
+    // Both flags, one ladder (`resolveMembershipAutomated`) — the measured one
+    // is not simply "better": it is fresher about the MODEL and staler about
+    // the collection, so a positive from either side wins and an unmeasured
+    // shop still gets to remove a membership.
+    const automated = resolveMembershipAutomated(known?.get(row.collectionId), row.automated);
+    if (automated !== false) {
+      refuse(row.collectionId, automated);
+      continue;
+    }
+    toLeave.push(row.collectionId);
+  }
+
+  return { toJoin, toLeave, refusedAutomated, refusedUnknown };
+}
+
+/**
+ * How ONE cached collection reads for membership screening: rule-based,
+ * manual, or UNKNOWN.
+ *
+ * `attributesSyncedAt` is the discriminator — `Collection.isSmart` is NOT NULL
+ * DEFAULT false on a column added to an existing table, so an unsynced row's
+ * `false` is the migration's default, not a measurement, and must read as
+ * unknown (which every caller then treats as locked). Three places used to
+ * spell this out inline — the picker's option list, the editor's save and the
+ * grid's save — and all three have to give the same answer, or a picker offers
+ * exactly the change its save then refuses.
+ */
+export function collectionAutomation(collection: {
+  isSmart: boolean;
+  attributesSyncedAt: Date | string | null;
+}): boolean | null {
+  return collection.attributesSyncedAt ? collection.isSmart === true : null;
+}
+
+/**
+ * The editor carries membership as a comma-separated list of collection GIDs,
+ * like every other value in that flat map. Parsed here so the client and the
+ * server read it the same way.
+ */
+export function parseCollectionIds(value: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value.split(",")) {
+    const id = raw.trim();
+    // Only real GIDs. A stray token would become a `collectionsToJoin` entry
+    // and fail the WHOLE mutation, taking the merchant's text edits with it.
+    if (!id.startsWith("gid://shopify/Collection/")) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/** A taxonomy GID, or null for "cleared". Anything else is refused. */
+export function parseCategoryId(value: string): { id: string | null; valid: boolean } {
+  const trimmed = value.trim();
+  if (!trimmed) return { id: null, valid: true };
+  // Same reasoning as the collection ids: a bad ID fails at the schema level,
+  // which never reaches `userErrors` — the save would read as a success while
+  // nothing was written.
+  if (!trimmed.startsWith("gid://shopify/TaxonomyCategory/")) return { id: null, valid: false };
+  return { id: trimmed, valid: true };
+}

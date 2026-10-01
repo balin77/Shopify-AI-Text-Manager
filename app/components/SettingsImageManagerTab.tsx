@@ -48,7 +48,7 @@ export function SettingsImageManagerTab({ settings, onHasChangesChange }: Props)
         || t.products?.saveFailed
         || "Save failed";
       setSaveError(msg);
-      showInfoBox(msg, "critical", t.common?.error || "Error");
+      showInfoBox(msg, "critical");
     }
   }, [fetcher.state, fetcher.data, showInfoBox, t]);
 

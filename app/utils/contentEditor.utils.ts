@@ -13,6 +13,7 @@ import {
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { parseMetaobjectFieldKey } from "../services/metaobject-fields.shared";
 import {
   ValidationOverlays,
   hasPrimaryContentMissing as fvHasPrimaryContentMissing,
@@ -36,7 +37,9 @@ export interface MetaobjectEntry {
  */
 export function getLocalizedLanguageName(localeCode: string, appLocale: string, fallbackName?: string): string {
   try {
-    const displayNames = new Intl.DisplayNames([appLocale], { type: 'language' });
+    // `fallback: 'none'` answers undefined for a code Intl does not know, so the
+    // caller's own name (e.g. Shopify's) wins over echoing the raw code back.
+    const displayNames = new Intl.DisplayNames([appLocale], { type: 'language', fallback: 'none' });
     const name = displayNames.of(localeCode);
     if (name) return name.charAt(0).toUpperCase() + name.slice(1);
   } catch {
@@ -333,16 +336,21 @@ export function getLocaleButtonTooltip(
       return extractReadableName(key);
     }
 
-    // Metaobjects: resolve metaobject ID to its display name
+    // Metaobjects: the key is `<Metaobject GID>#<field key>` (§6.1), so the
+    // entry is behind the FIRST half. Naming both — "Rot / colour" — is what
+    // makes a missing-translation list actionable now that one entry has
+    // several fields; the bare display name would list the same entry three
+    // times with no way to tell which field is meant.
     if (contentType === 'metaobjects') {
+      const parsed = parseMetaobjectFieldKey(key);
+      const entryId = parsed?.metaobjectId ?? key;
       const metaobjects = (selectedItem as { metaobjects?: MetaobjectEntry[] }).metaobjects;
-      if (metaobjects && Array.isArray(metaobjects)) {
-        const metaobj = metaobjects.find((m: MetaobjectEntry) => m.id === key);
-        if (metaobj) {
-          return metaobj.displayName || metaobj.handle || key.split('/').pop() || key;
-        }
-      }
-      return key.split('/').pop() || key;
+      const metaobj = Array.isArray(metaobjects)
+        ? metaobjects.find((m: MetaobjectEntry) => m.id === entryId)
+        : undefined;
+      const entryLabel =
+        metaobj?.displayName || metaobj?.handle || entryId.split('/').pop() || entryId;
+      return parsed ? `${entryLabel} / ${parsed.fieldKey}` : entryLabel;
     }
 
     // Handle product option fields (e.g., "option_1_name", "option_2_values")
@@ -374,7 +382,8 @@ export const PULSE_SYNC_EPOCH = Date.now();
 /**
  * Hook: Get button style for locale navigation with memoization
  * Shows pulsing border animation when translations are missing
- * This hook provides better performance than getLocaleButtonStyle by memoizing the result
+ * Memoized, so the pulse is recomputed only when the item, the locale set
+ * or the overlays actually change
  */
 export function useLocaleButtonStyle(
   locale: ShopLocale,

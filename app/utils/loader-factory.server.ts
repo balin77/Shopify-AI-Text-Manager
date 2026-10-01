@@ -38,10 +38,16 @@ export interface AISettingsForValidation {
   hasOpenaiApiKey: boolean;
   hasGrokApiKey: boolean;
   hasDeepseekApiKey: boolean;
+  /** Managed AI is serving this shop — see PLAN_MANAGED_AI_KEY §8a rule 6. */
+  managedAiWorking?: boolean;
+  managedAiConsentMissing?: boolean;
   preferredProvider: string | null;
 }
 
 export interface LoaderContext {
+  /** The incoming request, for loaders that need the URL — e.g. resolving a
+   *  `?select=` parameter server-side, which the client cannot do alone. */
+  request: Request;
   admin: ShopifyGraphQLClient;
   session: { shop: string };
   db: PrismaClient;
@@ -95,7 +101,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       const primaryLocale = shopLocales.find((l: ShopLocale) => l.primary)?.locale || "en";
       const markets: MarketInfo[] = marketsResult.markets;
 
-      const ctx: LoaderContext = { admin, session, db, shopLocales, primaryLocale, aiSettings };
+      const ctx: LoaderContext = { request, admin, session, db, shopLocales, primaryLocale, aiSettings };
 
       // Route-specific: load items
       const { items, ids } = await config.loadData(ctx);

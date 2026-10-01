@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import type { StagedItem, VariantWithGallery, MediaKind } from "../components/image-manager/types";
+import type { SettlingMediaEntry } from "../components/image-manager/settling-media";
 
 /** Resource URL + the kind it was uploaded as. The kind is needed at save
  *  time so productCreateMedia.mediaContentType maps correctly — without it
@@ -37,6 +38,10 @@ export function useVariantImageManager() {
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<PendingProductNewMedia[]>([]);
+  // Saved-but-still-processing media (see SettlingMedia). Deliberately NOT part
+  // of hasPendingImageChanges — these are persisted; the Save button must not
+  // light up again for them.
+  const [settlingMedia, setSettlingMedia] = useState<SettlingMediaEntry[]>([]);
   const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<string[]>([]);
   // Per-variant YouTube / Vimeo URLs that the merchant has added via the URL
   // input inside each VariantGallerySection. variantId → canonical URLs.
@@ -363,6 +368,39 @@ export function useVariantImageManager() {
         carryOverPreviews,
         carryOverGids,
       };
+      // Every media node Shopify created for this save, with the local
+      // preview we already have for it. Shopify keeps processing a new
+      // MediaImage after productCreateMedia returns, and while it does,
+      // /api/product-variants reports no URL for it at all — so the post-save
+      // refetch below would land with the new image simply missing. Handing
+      // these to the Image Manager lets it keep the tile (under the real GID)
+      // and poll until the URL appears, instead of the merchant watching the
+      // upload disappear and only finding it again after a page reload.
+      const previewByResourceUrl = new Map<string, string | undefined>();
+      for (const m of pendingProductNewMedia) previewByResourceUrl.set(m.resourceUrl, m.previewUrl);
+      for (const i of readyItems) {
+        if (!previewByResourceUrl.get(i.resourceUrl)) previewByResourceUrl.set(i.resourceUrl, i.previewUrl || undefined);
+      }
+      type CreatedMedia = { resourceUrl: string; mediaId: string; kind: MediaKind };
+      const created: CreatedMedia[] = Array.isArray(data.createdMedia) ? data.createdMedia : [];
+      if (created.length > 0) {
+        setSettlingMedia(prev => {
+          // Keep only entries still belonging to this product; an earlier
+          // save's media may still be processing and must not be dropped.
+          const kept = prev.filter(e => e.productId === productId);
+          const seen = new Set(kept.map(e => e.mediaId));
+          const additions: SettlingMediaEntry[] = created
+            .filter(c => c.mediaId && !seen.has(c.mediaId))
+            .map(c => ({
+              productId,
+              mediaId: c.mediaId,
+              kind: c.kind ?? "image",
+              previewUrl: previewByResourceUrl.get(c.resourceUrl),
+            }));
+          if (additions.length === 0 && kept.length === prev.length) return prev;
+          return [...kept, ...additions];
+        });
+      }
       // bulkItems / hasAltTextEdits aren't tied to the gallery render in the
       // same way (no optimistic-tile flicker risk) so clear them now.
       setBulkItems([]);
@@ -380,9 +418,27 @@ export function useVariantImageManager() {
     }
   }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingVariant3dPreviews, pendingKnownModelGids, pendingGalleryOrder]);
 
+  /** Called by the Image Manager once every settling media node has shown up
+   *  in the fetched media map (or the bounded wait gave up). */
+  const handleSettlingMediaResolved = useCallback((mediaIds: string[]) => {
+    if (mediaIds.length === 0) return;
+    const done = new Set(mediaIds);
+    setSettlingMedia(prev => {
+      const next = prev.filter(e => !done.has(e.mediaId));
+      return next.length === prev.length ? prev : next;
+    });
+  }, []);
+
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
     setBulkItems([]);
+    // settlingMedia is deliberately NOT cleared here: this function is also
+    // the Discard handler, and settling media is already SAVED — discarding
+    // an unrelated text edit must not make a just-uploaded image disappear
+    // again, which is the bug this whole mechanism exists to prevent. On a
+    // product switch the Image Manager reports the previous product's entries
+    // as resolved (they no longer match its productId) and they are dropped
+    // there instead.
     setSelectedBulkIds(new Set());
     setActiveAction(null);
     setPendingVariantGalleries([]);
@@ -419,6 +475,8 @@ export function useVariantImageManager() {
     pendingVariantGalleries,
     pendingMediaOrder,
     pendingProductNewMedia,
+    settlingMedia,
+    handleSettlingMediaResolved,
     pendingClearVariantMainImages,
     resetCounter,
     hasAltTextEdits,

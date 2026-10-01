@@ -43,6 +43,8 @@ interface ThemeContentDomainPageProps {
       hasOpenaiApiKey: boolean;
       hasGrokApiKey: boolean;
       hasDeepseekApiKey: boolean;
+      /** Managed AI is serving this shop — key, entitlement and consent. */
+      managedAiWorking?: boolean;
     } | null;
     /** Theme-Auswahl: installed themes + resolved selection (from the loader). */
     themeOptions?: { id: string; name: string; role: string }[];
@@ -101,9 +103,14 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   const hasAiKeyForTitles = useMemo(() => {
     const s = data.aiSettings;
     if (!s) return false;
-    // Lowercase to match the server gate (getMissingPreferredKey →
-    // toValidProvider lowercases); a mixed-case stored value must not silently
-    // fall through to the "any key" default and disagree with the server.
+    // PLAN_MANAGED_AI_KEY §8a rule 6 — a shop on managed AI has a working
+    // source without any key of its own, and gating on the six `has*ApiKey`
+    // booleans made this feature silently never fire for exactly the
+    // merchants who paid for AI to be included.
+    if (s.managedAiWorking) return true;
+    // Lowercase to match the server gate (toValidProvider lowercases); a
+    // mixed-case stored value must not silently fall through to the "any key"
+    // default and disagree with the server.
     switch ((s.preferredProvider ?? "").toLowerCase()) {
       case "claude": return s.hasClaudeApiKey;
       case "openai": return s.hasOpenaiApiKey;
@@ -336,8 +343,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     } catch {
       showInfoBox(
         "Error loading theme content",
-        "critical",
-        t.content?.error || "Error"
+        "critical"
       );
     } finally {
       setIsLoading(false);
@@ -422,6 +428,24 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     });
   }, [selectedGroupId]);
 
+  // A copy that did not save for some locales: forget those locales' cached
+  // translations so the next visit re-reads them from Shopify instead of
+  // showing the copied value handleTranslateToAllLocalesComplete put there.
+  // Every group, not only the selected one: the answer arrives after the
+  // saves, and the merchant may have moved on to another group by then --
+  // re-reading a locale costs one request, a stale one lies.
+  const handleCopyToAllLocalesFailed = useCallback((_fieldKey: string, locales: string[]) => {
+    setLoadedTranslations(prev => {
+      const next: typeof prev = {};
+      for (const [groupId, groupCache] of Object.entries(prev)) {
+        const kept = { ...groupCache };
+        for (const locale of locales) delete kept[locale];
+        next[groupId] = kept;
+      }
+      return next;
+    });
+  }, []);
+
   // Create editor with dynamic config
   const editor = useUnifiedContentEditor({
     config: config,
@@ -433,6 +457,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     showInfoBox,
     t,
     onTranslateToAllLocalesComplete: handleTranslateToAllLocalesComplete,
+    onCopyToAllLocalesFailed: handleCopyToAllLocalesFailed,
   });
 
   // Ref to store editor helpers to avoid triggering effects on every render
@@ -503,7 +528,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             }, 0);
           })
           .catch(() => {
-            showInfoBox(t.content?.errorLoadingThemeContent || "Error loading theme content", "critical", t.content?.error || "Error");
+            showInfoBox(t.content?.errorLoadingThemeContent || "Error loading theme content", "critical");
           })
           .finally(() => {
             setIsLoading(false);
@@ -875,6 +900,80 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   }, [fetcher.data, selectedGroupId]);
 
   // ============================================================================
+  // BACKGROUND RE-TRANSLATION: re-fetch this group's foreign translations
+  // A primary save strips the changed keys from `loadedTranslations` and hands
+  // them to a detached AI run. The editor reloads the route when that run
+  // finishes — but theme translations are not in the route loader at all, they
+  // live in this component's cache, and every loader of it skips a locale it
+  // already holds. So without this the changed keys stayed empty in every
+  // language until the merchant pressed Reload.
+  // It ONLY READS, and unsaved input wins: the fetch lands asynchronously, and
+  // if the merchant typed meanwhile nothing is applied — the fresh values are
+  // one Reload (or one later refresh) away, a lost keystroke is not.
+  // ============================================================================
+  const editorHasChangesRef = useRef(editor.state.hasChanges);
+  editorHasChangesRef.current = editor.state.hasChanges;
+  const loadedThemesRef = useRef(loadedThemes);
+  loadedThemesRef.current = loadedThemes;
+  const backgroundRefreshVersion = editor.helpers.backgroundRefreshVersion;
+  useEffect(() => {
+    if (backgroundRefreshVersion === 0) return;
+    const groupId = selectedGroupIdRef.current;
+    if (!groupId) return;
+    const foreignLocales = loaderShopLocales
+      .filter((l): l is NonNullable<typeof l> => l != null && !l.primary)
+      .map((l) => l.locale);
+    if (foreignLocales.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.allSettled(
+        foreignLocales.map(async (locale) => {
+          const formData = new FormData();
+          formData.append("action", "loadTranslations");
+          formData.append("locale", locale);
+          appendResourceTypes(formData);
+          const response = await fetch(`${apiBasePath}/${groupId}`, { method: "POST", body: formData });
+          // A failed load says nothing about the translations; the cached ones
+          // stay rather than being replaced by an empty list.
+          if (!response.ok) throw new Error(`loadTranslations failed (${response.status})`);
+          const data = await response.json();
+          return { locale, translations: (data.translations || []) as ThemeTranslationRecord[] };
+        }),
+      );
+      if (cancelled || editorHasChangesRef.current) return;
+      const fresh: Record<string, ThemeTranslationRecord[]> = {};
+      for (const result of results) {
+        if (result.status === "fulfilled") fresh[result.value.locale] = result.value.translations;
+      }
+      if (Object.keys(fresh).length === 0) return;
+      const merged = { ...(loadedTranslationsRef.current[groupId] || {}), ...fresh };
+      loadedTranslationsRef.current = { ...loadedTranslationsRef.current, [groupId]: merged };
+      setLoadedTranslations((prev) => ({ ...prev, [groupId]: { ...(prev[groupId] || {}), ...fresh } }));
+
+      // The locale on screen is applied directly, as every other loader here
+      // does: theme fields are the page's to set, and a translation of the
+      // same length would not even move the editor's change signal.
+      const currentLanguage = editorLanguageRef.current;
+      const onScreen = fresh[currentLanguage];
+      const themeData = loadedThemesRef.current[groupId];
+      if (!onScreen || currentLanguage === primaryLocale || selectedGroupIdRef.current !== groupId) return;
+      if (!themeData?.translatableContent) return;
+      const newValues: Record<string, string> = {};
+      themeData.translatableContent.forEach((item: TranslatableField) => {
+        newValues[item.key] = onScreen.find((tr) => tr.key === item.key)?.value || "";
+      });
+      Object.entries(newValues).forEach(([key, value]) => {
+        editorHelpersRef.current.setEditableValue(key, value);
+      });
+      editorHelpersRef.current.setOriginalTemplateValues(newValues);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone; reads refs
+  }, [backgroundRefreshVersion]);
+
+  // ============================================================================
   // RELOAD: Invalidate caches and re-fetch fresh data after revalidation completes
   // After the ReloadButton syncs from Shopify to DB, we need to re-fetch theme
   // data and translations from the API (which reads from the now-updated DB).
@@ -1031,7 +1130,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   // Show loader error
   useEffect(() => {
     if (error) {
-      showInfoBox(error, "critical", t.content?.error || "Error");
+      showInfoBox(error, "critical");
     }
   }, [error, showInfoBox, t]);
 
@@ -1068,7 +1167,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         .then((r) => r.json())
         .then((res) => {
           if (!res?.success) {
-            showInfoBox(res?.error || "Failed to switch theme", "critical", t.content?.error || "Error");
+            showInfoBox(res?.error || "Failed to switch theme", "critical");
             return;
           }
           // Theme changed → drop caches + selection so the now theme-scoped loader
@@ -1081,23 +1180,32 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           revalidator.revalidate();
         })
         .catch(() => {
-          showInfoBox(t.content?.error || "Error", "critical", t.content?.error || "Error");
+          showInfoBox(t.content?.error || "Error", "critical");
         });
     },
     [selectedThemeId, revalidator, showInfoBox, t]
   );
+
+  // Mirrors the width choice UnifiedContentEditor makes for this config, so
+  // everything stacked on this page ends at the same right edge.
+  const editorWidthClass = config.showItemSidebar ? "app-page-width-full" : "app-page-width-start";
 
   return (
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {/* Top padding (16px) matches the editor page's grey padding border
-            below, so the gap nav→banner equals the gap banner→content. */}
+            below, so the gap nav→banner equals the gap banner→content. The
+            width class is the same one the editor below picks for these pages
+            (no item sidebar → capped at the with-list width, responsive.css
+            :root) — a
+            banner running the full 4K width above a capped editor would read as
+            two different pages. */}
         {infoBanner && (
-          <div style={{ padding: "1rem 1rem 0" }}>{infoBanner}</div>
+          <div className={editorWidthClass} style={{ padding: "1rem 1rem 0" }}>{infoBanner}</div>
         )}
         {selectedEmbedTechnical && (
-          <div style={{ padding: "1rem 1rem 0" }}>
+          <div className={editorWidthClass} style={{ padding: "1rem 1rem 0" }}>
             <Banner tone="warning" title={t.content?.appEmbedWarningTitle || "Technical content"}>
               {t.content?.appEmbedWarning ||
                 "This is app-embed content. It can contain CSS selectors and technical configuration — translating it may break the embed on your storefront."}

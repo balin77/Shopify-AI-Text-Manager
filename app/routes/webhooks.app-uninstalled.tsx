@@ -55,5 +55,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
+  // Uninstalling cancels the subscription on Shopify's side, so the verified
+  // managed-AI entitlement ends here too. Without this a detached run already
+  // in flight kept spending the operator's key against a plan that no longer
+  // exists until the next billing sync, which for an uninstalled shop never
+  // comes. A reinstall re-syncs the subscription in afterAuth. Own try/catch.
+  try {
+    await db.aISettings.updateMany({
+      where: { shop, managedAiActive: true },
+      data: { managedAiActive: false },
+    });
+  } catch (error) {
+    logger.error(
+      `[APP_UNINSTALLED] Failed to clear the managed-AI entitlement for ${shop}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   return new Response("OK", { status: 200 });
 };

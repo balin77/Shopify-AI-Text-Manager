@@ -29,11 +29,8 @@ import {
   Divider,
   Spinner,
   Collapsible,
-  Popover,
-  Icon,
 } from "@shopify/polaris";
-import { QuestionCircleIcon } from "@shopify/polaris-icons";
-import { ToggleSwitch } from "../components/ToggleSwitch";
+import { ToggleRow } from "../components/ToggleRow";
 import { createContentLoader, type LoaderContext } from "~/utils/loader-factory.server";
 import { authenticate } from "../shopify.server";
 import { PlanAccessGate } from "../components/PlanAccessGate";
@@ -101,11 +98,10 @@ export const loader = createContentLoader({
       dt.getSettings(ctx.db, ctx.session.shop),
       dt.countNewCandidates(ctx.db, ctx.session.shop),
     ]);
-    // All published locales (incl. primary) are valid translation targets:
+    // All shop locales (incl. primary, published or not) are valid targets:
     // the source text is auto-detected per item, so an EN string on a
     // DE-primary store needs a DE translation for the German storefront.
     const targetLocales: TargetLocale[] = (ctx.shopLocales as Array<{ locale: string; name?: string; primary: boolean; published?: boolean }>)
-      .filter((l) => l.published !== false)
       .map((l) => ({ locale: l.locale, name: l.name }));
     return {
       collect: settings.collect,
@@ -177,6 +173,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return requested.filter((l) => allow.has(l));
   };
 
+  /** The AI compliance gate, shaped for this page (the `actionType` echo). */
+  const aiRefusal = async (extra: Record<string, unknown> = {}) => {
+    const [{ aiRefusalResponse }, { withRefusalShape }] = await Promise.all([
+      import("./api-ai-handlers/shared"),
+      import("../utils/ai-refusal-response.server"),
+    ]);
+    const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+    const refusal = await aiRefusalResponse(settings, session.shop);
+    return refusal ? withRefusalShape(refusal, { actionType, ...extra }) : null;
+  };
+
   try {
     switch (actionType) {
       case "save": {
@@ -241,6 +248,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const locales = scope === "all" ? enabledTargets(targets) : locale ? [locale] : [];
         if (locales.length === 0) return json({ success: true, actionType, itemId: id, translated: 0 });
 
+        // Compliance gate (managed consent / budget / availability, BYO key)
+        // BEFORE the detached run: a refusal inside it only ever reached the
+        // Tasks tab, while the merchant here was told "started".
+        const refusal = await aiRefusal({ itemId: id });
+        if (refusal) return refusal;
+
         // Run in the background — the Task poller surfaces progress/completion
         // and the page revalidates when the running count drops to zero.
         void runAiTask(session.shop, {
@@ -265,6 +278,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       case "addCandidates": {
         const ids = JSON.parse(getFormString(formData, "ids") || "[]") as string[];
         const withAi = getFormString(formData, "withAi") === "true";
+        // Refused AI → refuse the whole request before anything is added, so
+        // the merchant is not left with items that silently never got their
+        // translations (they can add them again without AI).
+        if (withAi) {
+          const refusal = await aiRefusal();
+          if (refusal) return refusal;
+        }
         const created = await dt.addCandidatesAsItems(db, session.shop, Array.isArray(ids) ? ids : []);
         if (withAi && created.length > 0) {
           const { targets } = await resolveLocales();
@@ -422,16 +442,39 @@ export default function DirectTranslationsPage() {
       return next;
     });
   }, []);
-  // Mirror the three persisted booleans locally so the toggles feel snappy
-  // (toggling fires an action; we update the UI immediately and let the
-  // revalidator reconcile if it bounces). Synced when the loader reports
-  // fresh values.
+  /**
+   * The three collector switches are a DRAFT until Save — the app-wide rule
+   * (CLAUDE.md, "Field chrome"): a setting is never written by the click that
+   * changes it. They used to fire an action per click, which is also why they
+   * were mirrored locally "so the toggles feel snappy".
+   *
+   * All three save TOGETHER, in one request: they are one decision with two
+   * refinements ("collect texts, and which ones"), the action already takes
+   * them as one present-or-absent payload, and three save rows under three
+   * switches in a settings panel is not a design, it is an accident.
+   */
   const [collectOn, setCollectOn] = useState(collect);
   const [ignoreOn, setIgnoreOn] = useState(ignoreTranslateNo);
   const [filterOn, setFilterOn] = useState(filterByLanguage);
   useEffect(() => setCollectOn(collect), [collect]);
   useEffect(() => setIgnoreOn(ignoreTranslateNo), [ignoreTranslateNo]);
   useEffect(() => setFilterOn(filterByLanguage), [filterByLanguage]);
+  const resetCollectorDraft = useCallback(() => {
+    setCollectOn(collect);
+    setIgnoreOn(ignoreTranslateNo);
+    setFilterOn(filterByLanguage);
+  }, [collect, ignoreTranslateNo, filterByLanguage]);
+  /**
+   * The page's navigation guards ask the save bar before switching item,
+   * language or market — and that bar now also stands for the collector
+   * switches. Once the merchant has CONFIRMED leaving, this draft is what they
+   * chose to drop: without resetting it the bar stays up over a change nothing
+   * else clears, and the same dialog greets every following click, forever.
+   */
+  const leaveGuard = useCallback(async () => {
+    await confirmNavigation();
+    resetCollectorDraft();
+  }, [resetCollectorDraft]);
 
   const selectedItem = useMemo(
     () => (isNew ? null : items.find((i) => i.id === selectedId) || null),
@@ -474,17 +517,17 @@ export default function DirectTranslationsPage() {
     async (id: string) => {
       if (id === (isNew ? NEW_ID : selectedId)) return;
       // Guard unsaved edits (same as switching languages / the other tabs).
-      await confirmNavigation();
+      await leaveGuard();
       const item = items.find((i) => i.id === id) || null;
       setSelectedId(id);
       setIsNew(false);
       loadEditor(item, currentLanguage);
     },
-    [items, currentLanguage, loadEditor, isNew, selectedId],
+    [items, currentLanguage, loadEditor, isNew, selectedId, leaveGuard],
   );
 
   const handleAddNew = useCallback(async () => {
-    await confirmNavigation();
+    await leaveGuard();
     setSelectedId(NEW_ID);
     setIsNew(true);
     setDraftSource("");
@@ -492,7 +535,10 @@ export default function DirectTranslationsPage() {
     setBaseSource("");
     setBaseTarget("");
     setEditingSource(true);
-  }, []);
+    // `leaveGuard` in the deps, not an empty array: it closes over the loader
+    // values the collector draft is reset TO, so a stale copy would put the
+    // switches back to what they were before the last save.
+  }, [leaveGuard]);
 
   // Plain click switches language; Ctrl/Cmd-click toggles it on/off (primary
   // can't be toggled). The pointerdown flag prevents the click from also firing.
@@ -510,7 +556,7 @@ export default function DirectTranslationsPage() {
       if (language === currentLanguage) return;
       // Prompt via the native save bar if there are unsaved edits (resolves
       // immediately when nothing is dirty / App Bridge is unavailable).
-      await confirmNavigation();
+      await leaveGuard();
       setCurrentLanguage(language);
       // If the selected market does not serve the new locale, fall back to global
       // (a market-specific translation only makes sense for locales it offers).
@@ -528,13 +574,13 @@ export default function DirectTranslationsPage() {
         setBaseTarget(resolved);
       }
     },
-    [currentLanguage, isNew, selectedItem, selectedMarketId, markets, resolveTargetText],
+    [currentLanguage, isNew, selectedItem, selectedMarketId, markets, resolveTargetText, leaveGuard],
   );
 
   const handleMarketChange = useCallback(
     async (marketId: string) => {
       if (marketId === selectedMarketId) return;
-      await confirmNavigation();
+      await leaveGuard();
       setSelectedMarketId(marketId);
       // Re-resolve the editor for the new market (market override → global fallback).
       if (!isNew && selectedItem) {
@@ -543,10 +589,10 @@ export default function DirectTranslationsPage() {
         setBaseTarget(resolved);
       }
     },
-    [selectedMarketId, isNew, selectedItem, currentLanguage, resolveTargetText],
+    [selectedMarketId, isNew, selectedItem, currentLanguage, resolveTargetText, leaveGuard],
   );
 
-  const hasChanges =
+  const editorHasChanges =
     (isNew && draftSource.trim().length > 0) ||
     (!isNew && selectedItem != null && (draftSource !== baseSource || draftTarget !== baseTarget));
 
@@ -609,6 +655,19 @@ export default function DirectTranslationsPage() {
     [fetcher],
   );
 
+  /**
+   * The collector switches ride on the page's ONE save bar.
+   *
+   * `SaveDiscardButtons` / `AppSaveBar` is not a pair of in-page buttons — it
+   * is the native App Bridge `ui-save-bar` above the iframe, and only one can
+   * be visible. A second one mounted for these switches REPLACED the editor's
+   * bar while a translation draft was dirty, and its unmount then hid the bar
+   * altogether, leaving that draft with no way to save and `confirmNavigation`
+   * asking about the wrong thing.
+   */
+  const collectorChanged =
+    collectOn !== collect || ignoreOn !== ignoreTranslateNo || filterOn !== filterByLanguage;
+
   const handleSave = useCallback(() => {
     submit({
       action: "save",
@@ -620,7 +679,53 @@ export default function DirectTranslationsPage() {
     });
   }, [submit, isNew, selectedId, draftSource, currentLanguage, draftTarget, selectedMarketId]);
 
+  /**
+   * Its OWN fetcher, and that is not a preference.
+   *
+   * The bar can cover two independent drafts, and `router.fetch` begins by
+   * ABORTING whatever is in flight on the same fetcher key — so saving both at
+   * once on the page's fetcher killed the collector request mid-air, silently.
+   * A second fetcher lets them fly together; the effect below reports its
+   * failure the same way the page reports any other.
+   */
+  const collectorFetcher = useFetcher<{ success?: boolean; error?: string }>();
+  const saveCollectorSettings = useCallback(() => {
+    // All three in ONE request: they are one decision with two refinements, and
+    // the action already takes them as a single present-or-absent patch.
+    const fd = new FormData();
+    fd.append("action", "setCollectorSettings");
+    fd.append("collect", String(collectOn));
+    fd.append("ignoreTranslateNo", String(ignoreOn));
+    fd.append("filterByLanguage", String(filterOn));
+    collectorFetcher.submit(fd, { method: "POST" });
+  }, [collectorFetcher, collectOn, ignoreOn, filterOn]);
+
+  // Never silent: the page's own error surface, for the one save that does not
+  // go through the shared fetcher the effect below watches.
+  useEffect(() => {
+    if (collectorFetcher.state !== "idle" || !collectorFetcher.data) return;
+    if (collectorFetcher.data.success === false) {
+      // Put the switches back, like the crawl and AEO drafts do: left standing,
+      // they assert a value nobody stored and the save bar stays up for the
+      // rest of the page's life.
+      resetCollectorDraft();
+      showInfoBox(collectorFetcher.data.error || t.common?.error || "Error", "critical");
+    }
+  }, [collectorFetcher.state, collectorFetcher.data, showInfoBox, t, resetCollectorDraft]);
+
+  /** The bar covers two independent drafts; each half is saved only if it is
+   *  the one that changed. */
+  const handleSaveAll = useCallback(() => {
+    if (collectorChanged) saveCollectorSettings();
+    if (editorHasChanges) handleSave();
+  }, [collectorChanged, saveCollectorSettings, editorHasChanges, handleSave]);
+
   const handleDiscard = useCallback(() => {
+    resetCollectorDraft();
+    // Only the half that is dirty. The bar can be up for the collector switches
+    // alone, and running the editor branch then throws a merchant who is
+    // composing a new entry out of the form they are typing in.
+    if (!editorHasChanges) return;
     if (isNew) {
       setSelectedId(items[0]?.id || null);
       setIsNew(false);
@@ -628,7 +733,7 @@ export default function DirectTranslationsPage() {
     } else {
       loadEditor(selectedItem, currentLanguage);
     }
-  }, [isNew, items, selectedItem, currentLanguage, loadEditor]);
+  }, [isNew, items, selectedItem, currentLanguage, loadEditor, resetCollectorDraft, editorHasChanges]);
 
   const enabledList = useMemo(() => JSON.stringify([...enabledLanguages]), [enabledLanguages]);
 
@@ -776,7 +881,12 @@ export default function DirectTranslationsPage() {
   return (
     <PlanAccessGate contentType="directTranslations">
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "16px", padding: "16px", boxSizing: "border-box" }}>
+        {/* Capped at .app-page-width-start (responsive.css :root) — this page
+            has no item sidebar, so nothing else would stop the right column
+            from growing on a wide screen. The cap includes the item column, so
+            the translation column beside it comes out at the same reading width
+            as an SEO page. Left-aligned: the list stays flush with the gutter. */}
+        <div className="app-page-width-start" style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "var(--app-page-padding)", padding: "var(--app-page-padding)", boxSizing: "border-box" }}>
           {/* Left list is desktop-only; on mobile the navbar compact selector
               (fed via registerItems) takes over, like the other content tabs. */}
           <div className="desktop-only" style={{ flexShrink: 0, height: "100%" }}>
@@ -857,37 +967,38 @@ export default function DirectTranslationsPage() {
 
                   <Divider />
 
-                  <SettingRow
+                  <ToggleRow
                     label={tt.collectToggle}
                     help={tt.collectHelp}
                     checked={collectOn}
-                    onChange={(v) => {
-                      setCollectOn(v);
-                      submit({ action: "setCollectorSettings", collect: String(v) });
-                    }}
+                    onChange={setCollectOn}
                   />
 
                   {collectOn && (
                     <>
-                      <SettingRow
+                      <ToggleRow
                         label={tt.ignoreTranslateNoToggle}
                         help={tt.ignoreTranslateNoHelp}
                         checked={ignoreOn}
-                        onChange={(v) => {
-                          setIgnoreOn(v);
-                          submit({ action: "setCollectorSettings", ignoreTranslateNo: String(v) });
-                        }}
+                        onChange={setIgnoreOn}
                       />
-                      <SettingRow
+                      <ToggleRow
                         label={tt.filterByLanguageToggle}
                         help={tt.filterByLanguageHelp}
                         checked={filterOn}
-                        onChange={(v) => {
-                          setFilterOn(v);
-                          submit({ action: "setCollectorSettings", filterByLanguage: String(v) });
-                        }}
+                        onChange={setFilterOn}
                       />
+                    </>
+                  )}
 
+                  {/* The workflow below follows the STORED setting, not the
+                      draft: nothing is being collected until the switch is
+                      saved, so offering "visit the storefront, then look at
+                      what was found" beforehand promises a list that cannot
+                      fill. The two switches above it are the opposite case —
+                      they are what is being configured. */}
+                  {collect && (
+                    <>
                       <Divider />
 
                       <BlockStack gap="200">
@@ -927,7 +1038,7 @@ export default function DirectTranslationsPage() {
                   primaryLocale={primaryLocale}
                   selectedItem={languageBarItem}
                   contentType={"directTranslations" as ContentType}
-                  hasChanges={hasChanges}
+                  hasChanges={editorHasChanges}
                   onLanguageChange={(loc) => { void handleLanguageChange(loc); }}
                   markets={markets}
                   selectedMarketId={selectedMarketId}
@@ -1051,10 +1162,14 @@ export default function DirectTranslationsPage() {
         </div>
 
         <AppSaveBar
-          hasChanges={hasChanges}
-          onSave={handleSave}
+          hasChanges={editorHasChanges || collectorChanged}
+          onSave={handleSaveAll}
           onDiscard={handleDiscard}
-          loading={isBusy}
+          // BOTH fetchers: during a collector-only save the shared one is idle,
+          // so Save stayed enabled and a second click re-submitted — and
+          // `router.fetch` aborts the first request on that same key, which is
+          // exactly what the second fetcher exists to avoid.
+          loading={isBusy || collectorFetcher.state !== "idle"}
           saveText={t.content?.save}
           discardText={t.content?.discardChanges}
         />
@@ -1082,60 +1197,6 @@ export default function DirectTranslationsPage() {
 // "Found texts" modal
 // ============================================================================
 
-/**
- * Toggle + label + question-mark popover that holds the explanation. Same
- * visual pattern as the help icons on the language bar; replaces the inline
- * helpText that used to sit below the old checkboxes.
- */
-function SettingRow({
-  label,
-  help,
-  checked,
-  onChange,
-}: {
-  label: string;
-  help: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  const [helpOpen, setHelpOpen] = useState(false);
-  const activator = (
-    <button
-      type="button"
-      onClick={() => setHelpOpen((v) => !v)}
-      aria-label={label}
-      style={{
-        background: "none",
-        border: 0,
-        padding: 0,
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-      }}
-    >
-      <Icon source={QuestionCircleIcon} tone="interactive" />
-    </button>
-  );
-  return (
-    <InlineStack align="space-between" blockAlign="center" gap="200">
-      <InlineStack gap="100" blockAlign="center">
-        <Text as="p" variant="bodyMd">{label}</Text>
-        <Popover
-          active={helpOpen}
-          activator={activator}
-          onClose={() => setHelpOpen(false)}
-          preferredPosition="below"
-          sectioned
-        >
-          <Box maxWidth="320px">
-            <Text as="p" variant="bodySm">{help}</Text>
-          </Box>
-        </Popover>
-      </InlineStack>
-      <ToggleSwitch checked={checked} onChange={onChange} />
-    </InlineStack>
-  );
-}
 
 function CandidatePill({
   item,
@@ -1155,7 +1216,7 @@ function CandidatePill({
         alignItems: "center",
         gap: "8px",
         padding: "6px 10px",
-        border: `1px solid ${checked ? "#008060" : "#c9cccf"}`,
+        border: `1px solid ${checked ? "#008060" : "var(--app-surface-border-color)"}`,
         borderRadius: "16px",
         background: checked ? "#f1f8f5" : "white",
       }}

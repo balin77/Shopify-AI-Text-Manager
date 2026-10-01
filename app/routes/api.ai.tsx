@@ -14,12 +14,14 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { isThemeContentType } from "~/utils/content-type-groups";
+import { isManagedRefusal } from "../../src/services/ai.service";
+import type { AISettings } from "@prisma/client";
 import {
   VALID_CONTENT_TYPES,
   errorMessage,
   errorStack,
-  getMissingPreferredKey,
-  noAiKeyResponse,
+  aiRefusalResponse,
+  managedRefusalResponse,
   isAuthError,
   aiAuthErrorResponse,
   resolveSeoContext,
@@ -52,6 +54,7 @@ import { handleBulkEditorTranslate } from "./api-ai-handlers/bulk-editor-transla
 import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
 import { handleInsertKeyword } from "./api-ai-handlers/keyword-insert.handler";
 import { handleSeoRobotsAdvice } from "./api-ai-handlers/seo-robots-advice.handler";
+import { handleAiDiscoveryIntro } from "./api-ai-handlers/ai-discovery-intro.handler";
 import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
 
 // Actions that never call an AI provider — they only read/write the DB
@@ -62,6 +65,9 @@ const NON_AI_ACTIONS = new Set(["seoAudit", "seoBulkMeta", "seoJsonLdAudit", "se
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
+  // Hoisted so the catch below can phrase a mid-call managed refusal in the
+  // merchant's language.
+  let settings: AISettings | null = null;
 
   try {
     const formData = await request.formData();
@@ -84,7 +90,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const { db } = await import("../db.server");
 
     // Load AI settings
-    const settings = await db.aISettings.findUnique({
+    settings = await db.aISettings.findUnique({
       where: { shop: session.shop }
     });
 
@@ -94,9 +100,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // NON_AI_ACTIONS are exempt — they only read/write the DB content cache
     // and/or Shopify directly (no provider call at all), so a shop with no AI
     // key configured yet must still be able to use them.
-    const missingKey = NON_AI_ACTIONS.has(actionType) ? null : getMissingPreferredKey(settings);
-    if (missingKey) {
-      return noAiKeyResponse(settings, missingKey);
+    const refusal = NON_AI_ACTIONS.has(actionType)
+      ? null
+      : await aiRefusalResponse(settings, session.shop);
+    if (refusal) {
+      return refusal;
     }
 
     // Resolve merchant SEO knobs once — used across generation, translation
@@ -162,6 +170,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleGenerateTemplateTitles(ctx);
       case "seoRobotsAdvice":
         return handleSeoRobotsAdvice(ctx);
+      case "aiDiscoveryIntro":
+        return handleAiDiscoveryIntro(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }
@@ -176,6 +186,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         error: errorMessage(error),
       });
       return aiAuthErrorResponse(error);
+    }
+    // A managed refusal the per-REQUEST preflight raised mid-call (the budget
+    // ran out between the gate above and this provider call, the pool closed,
+    // consent was withdrawn). It is not an internal error: it gets the same
+    // coded status and sentence the up-front gate answers with.
+    if (isManagedRefusal(error)) {
+      logger.warn("[API-AI] Managed AI refused mid-call", {
+        context: "AI",
+        reason: error.reason,
+      });
+      return managedRefusalResponse(error.reason, settings, {
+        usedMicros: error.usedMicros,
+        limitMicros: error.limitMicros,
+      });
     }
     logger.error("[API-AI] Error processing AI request", {
       context: "AI",

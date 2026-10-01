@@ -27,6 +27,14 @@ import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
 import { buildLocaleKey } from "./useUiDataLoader";
 
+/**
+ * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
+ * page route, and a plain POST to it is answered with the rendered HTML
+ * document, so the JSON this hook reads never arrives -- every successful
+ * translate then reported "failed". See api.product-sub-resources.tsx.
+ */
+const SUB_RESOURCE_ENDPOINT = "/api/product-sub-resources";
+
 /** Response shape from sub-resource API actions */
 interface SubResourceFetcherData {
   success: boolean;
@@ -36,6 +44,11 @@ interface SubResourceFetcherData {
   failedResources?: string[];
   failedOptions?: string[];
   failedMetafields?: string[];
+  /** Failure CODES from the option write paths; the client owns the wording. */
+  optionWarnings?: string[];
+  /** Create / delete / reorder failures, which carry no option id. */
+  structuralFailures?: number;
+  removedOptionIds?: string[];
 }
 
 export interface SubResourceState {
@@ -45,6 +58,27 @@ export interface SubResourceState {
   metafieldTranslations: Record<string, string>;
   /** Primary locale option edits keyed by option GID → { name, values[] } */
   primaryOptionEdits: Record<string, { name: string; values: string[] }>;
+  /** Pending structural edits, so the card can render them before the save. */
+  optionValuesToAdd: Record<string, string[]>;
+  /** Metaobject entries queued on a LINKED option: its values are entries, not
+   *  free text, so they are added by naming the entry. */
+  optionLinkedValuesToAdd: Record<string, Array<{ id: string; name: string }>>;
+  optionValuesToDelete: Record<string, string[]>;
+  optionsToCreate: Array<{ name: string; values: string[] }>;
+  optionsToDelete: string[];
+  /** Values in their dragged order, per option id. */
+  optionValueOrder: Record<string, string[]>;
+  /** Incremented on every landed save. The variants card drops its cached
+   *  variant counts on it — a save that added a value moved the matrix. */
+  savedNonce: number;
+  /**
+   * Options whose primary text may not be translated right now: the merchant
+   * changed the option (a renamed name or value, a value added or removed) and
+   * has not saved, or saved and the item has not been reloaded yet. The
+   * translate request sends the CACHED text as its source, so translating in
+   * either window translates the text the merchant just replaced.
+   */
+  optionTranslationBlockedIds: Set<string>;
   /** Primary locale metafield edits keyed by metafield GID → value */
   primaryMetafieldEdits: Record<string, string>;
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
@@ -70,29 +104,68 @@ export interface SubResourceHandlers {
   handleMetafieldChange: (metafieldId: string, value: string) => void;
   handlePrimaryOptionNameChange: (optionId: string, value: string) => void;
   handlePrimaryOptionValuesChange: (optionId: string, values: string[]) => void;
+  /** A value the merchant added. Shopify assigns its GID on save. */
+  handleAddOptionValue: (optionId: string, name: string) => void;
+  /** Queue a metaobject entry on a LINKED option. */
+  handleAddLinkedOptionValue: (optionId: string, entry: { id: string; name: string }) => void;
+  /** Drop a queued metaobject entry again, by its GID. */
+  handleRemoveLinkedOptionValue: (optionId: string, entryId: string) => void;
+  /** A value the merchant removed. An empty `valueId` means it was only added
+   *  locally, so `addedIndex` says which pending entry to drop. */
+  handleRemoveOptionValue: (optionId: string, valueId: string, addedIndex?: number) => void;
+  /** Rename a value that exists only locally, by its index in the pending list. */
+  handleEditPendingValue: (optionId: string, index: number, name: string) => void;
+  handleCreateOption: (name: string, values: string[]) => void;
+  /** Drops a not-yet-saved option again. Nothing was written, so nothing is
+   *  lost — without it a mistyped option could only be undone by discarding
+   *  every other pending edit with it. */
+  handleCancelCreateOption: (index: number) => void;
+  handleDeleteOption: (optionId: string) => void;
+  handleReorderOptions: (orderedIds: string[]) => void;
+  /** Values in their new order, for one option. Their order decides which
+   *  variant the storefront shows first. */
+  handleReorderOptionValues: (optionId: string, orderedValueIds: string[]) => void;
   handlePrimaryMetafieldChange: (metafieldId: string, value: string) => void;
   translateOption: (optionId: string) => void;
   translateOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   copyOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   copyOptionFieldToAllLocales: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
+  /** Copies an option's name and (unless linked) every value into all foreign
+   *  locales, verbatim — the whole-option twin of `copyOptionFieldToAllLocales`. */
+  copyOptionToAllLocales: (optionId: string) => void;
   translateMetafield: (metafieldId: string) => void;
   translateAllSubResources: () => void;
   translateAllSubResourcesToAllLocales: () => void;
   saveSubResources: () => void;
   resetChanges: () => void;
   resetForReload: () => void;
+  /**
+   * Re-read the translations of the CURRENT item/locale/market from the item
+   * the loader just delivered — for a background re-translation that finished.
+   * Unlike `resetForReload` it resets nothing: a pending option, a reorder or
+   * a typed translation is the merchant's, so with anything unsaved it does
+   * nothing at all, and the page's refresh is held back anyway until those
+   * changes are saved or discarded.
+   */
+  refreshTranslations: () => void;
 }
 
+// Only MESSAGE strings — the box has no title (see InfoBoxContext), so the
+// `saveFailed` / `validationError` / `success` headings this used to carry
+// have no reader and are gone rather than passed and dropped.
 interface UseProductSubResourcesStrings {
   optionsSavedSuccess?: string;
-  saveFailed?: string;
+  /** Fallback when a sub-resource translate fails without a server message. */
+  translateFailed?: string;
   saveFailedOptions?: string;
   saveFailedItems?: string;
-  validationError?: string;
   optionNameEmpty?: string;
   optionValuesEmpty?: string;
   metafieldValuesEmpty?: string;
-  success?: string;
+  /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
+   *  Indexed rather than listed: the server owns the code list, and a missing
+   *  entry drops that reason instead of printing an English one. */
+  [optionWarning: `optionWarning_${string}`]: string | undefined;
 }
 
 interface UseProductSubResourcesProps {
@@ -106,7 +179,18 @@ interface UseProductSubResourcesProps {
   /** @deprecated No longer used — hook creates its own fetcher to avoid shared-fetcher race conditions */
   fetcher?: FetcherWithComponents<any>;
   revalidator?: { revalidate: () => void; state: string };
-  showInfoBox?: (message: string, tone?: "success" | "info" | "warning" | "critical", title?: string) => void;
+  /**
+   * Every response of this hook's OWN fetcher, handed to the editor's single
+   * background-task watcher.
+   *
+   * The sub-resource save starts its own detached re-translation (a product's
+   * options, option values and metafields are one group and one Task row), and
+   * this fetcher is deliberately separate from the editor's — so without this
+   * the one surface whose translations have neither a webhook nor a sync would
+   * be the only one nothing ever waited for.
+   */
+  onSaveResponse?: (response: unknown) => void;
+  showInfoBox?: (message: string, tone?: "success" | "info" | "warning" | "critical") => void;
   strings?: UseProductSubResourcesStrings;
 }
 
@@ -199,6 +283,7 @@ export function useProductSubResources({
   selectedMarketId = "",
   enabledLanguages = [],
   revalidator,
+  onSaveResponse,
   showInfoBox,
   strings = {},
 }: UseProductSubResourcesProps): { state: SubResourceState; handlers: SubResourceHandlers } {
@@ -215,6 +300,9 @@ export function useProductSubResources({
   // Primary locale editing state
   const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, { name: string; values: string[] }>>({});
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
+  /** True from a landed save of the options until the reload that follows it
+   *  has finished — see `optionTranslationBlockedIds`. */
+  const [awaitingOptionReload, setAwaitingOptionReload] = useState(false);
 
   // Shared state
   // translatingFieldIds is now derived from the global AI operations store
@@ -267,38 +355,13 @@ export function useProductSubResources({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
 
-  // ============================================================================
-  // LOAD — Two-phase: DB pre-load (instant) + Shopify fetch (supplement)
-  // ============================================================================
-  useEffect(() => {
-    // Market is part of the load key: switching market re-resolves values.
-    const loadKey = `${itemId}::${currentLanguage}::${selectedMarketId}`;
-    if (loadedForRef.current === loadKey) return;
-
-    // Reset state — unsaved edits belong to the previous item/locale/market.
-    setHasChanges(false);
-    setDirtyOptionIds(new Set());
-    setDirtyOptionValueIds(new Set());
-    setDirtyMetafieldIds(new Set());
-    // Note: translatingFieldIds is now in the global AI operations store
-    // and should NOT be cleared on item change — it's resource-specific.
-
-    loadedForRef.current = loadKey;
-
-    // Clear overlay when switching to a different item (data is item-specific)
-    if (lastOverlayItemIdRef.current !== itemId) {
-      lastOverlayItemIdRef.current = itemId || null;
-      localSubResourceOverlayRef.current = {};
-    }
-
-    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
-      setOptionTranslations({});
-      setMetafieldTranslations({});
-      setFallbackResourceIds(new Set());
-      setIsLoading(false);
-      return;
-    }
-
+  /**
+   * Phase 1 + Phase 2 of the load, for the current item/locale/market. Shared
+   * by the load effect and the background refresh so the two cannot come to
+   * resolve a translation differently.
+   */
+  const readTranslationsFromItem = (fetchMissing = true) => {
+    if (!itemId) return;
     // Phase 1: DB pre-load — read from item.subResourceTranslations (instant,
     // synchronous), resolving market → global and flagging inherited resources.
     const { map: dbMap, fallbackResourceIds: dbFallback } =
@@ -327,7 +390,7 @@ export function useProductSubResources({
     // This catches translations made via Translate & Adapt or partial syncs.
     const missingFromDb = subResourceIds.filter(id => !dbMap[id]);
 
-    if (missingFromDb.length > 0) {
+    if (missingFromDb.length > 0 && fetchMissing) {
       setIsLoading(true);
       fetcher.submit(
         {
@@ -341,8 +404,85 @@ export function useProductSubResources({
     } else {
       setIsLoading(false);
     }
+  };
+
+  // ============================================================================
+  // LOAD — Two-phase: DB pre-load (instant) + Shopify fetch (supplement)
+  // ============================================================================
+  useEffect(() => {
+    // Market is part of the load key: switching market re-resolves values.
+    const loadKey = `${itemId}::${currentLanguage}::${selectedMarketId}`;
+    if (loadedForRef.current === loadKey) return;
+
+    // Reset state — unsaved edits belong to the previous item/locale/market.
+    setHasChanges(false);
+    setDirtyOptionIds(new Set());
+    setDirtyOptionValueIds(new Set());
+    setDirtyMetafieldIds(new Set());
+    // The structural lists too, and this half is not cosmetic: the save skips
+    // an option id it cannot find on the current item, but `optionsToCreate`
+    // carries NO id at all -- so a pending "add Material" left over from
+    // product A would be created on product B, multiplying B's variant matrix
+    // with `variantStrategy: CREATE`.
+    setOptionValuesToAdd({});
+    setOptionLinkedValuesToAdd({});
+    setOptionValuesToDelete({});
+    setOptionsToCreate([]);
+    setOptionsToDelete([]);
+    setOptionOrder(null);
+    setOptionValueOrder({});
+    // And the primary text edits: `hasChanges` goes above, so an edit left
+    // here had no save bar any more, yet came back on returning to the same
+    // product -- shown in the card and locking its translate button behind a
+    // "save first" nothing could satisfy.
+    setPrimaryOptionEdits({});
+    // Note: translatingFieldIds is now in the global AI operations store
+    // and should NOT be cleared on item change — it's resource-specific.
+
+    loadedForRef.current = loadKey;
+
+    // Clear overlay when switching to a different item (data is item-specific)
+    if (lastOverlayItemIdRef.current !== itemId) {
+      lastOverlayItemIdRef.current = itemId || null;
+      localSubResourceOverlayRef.current = {};
+    }
+
+    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
+      setOptionTranslations({});
+      setMetafieldTranslations({});
+      setFallbackResourceIds(new Set());
+      setIsLoading(false);
+      return;
+    }
+
+    readTranslationsFromItem();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fetcher is hook-internal and stable
   }, [itemId, currentLanguage, selectedMarketId, isPrimaryLocale, subResourceIds, selectedItem]);
+
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  useEffect(() => {
+    if (refreshVersion === 0) return;
+    // Unsaved input wins, always. The page does not start a background refresh
+    // while this card is dirty, but an edit can land between that decision and
+    // this pass.
+    if (hasChanges) return;
+    // A different item/locale/market is the load effect's job, with its full
+    // reset; this pass only re-reads what is already on screen.
+    if (loadedForRef.current !== `${itemId}::${currentLanguage}::${selectedMarketId}`) return;
+    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) return;
+    // The server has just rewritten these languages; a staged copy would
+    // otherwise keep winning over the fresh loader value. The overlay only ever
+    // holds values that were already saved, which the fresh item carries too.
+    localSubResourceOverlayRef.current = {};
+    // Phase 2 goes through the SAME fetcher as a save; submitting while it is
+    // busy would abort that request, so the Shopify supplement is skipped then.
+    readTranslationsFromItem(fetcher.state === "idle");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone; reads the render it runs in
+  }, [refreshVersion]);
+
+  const refreshTranslations = useCallback(() => {
+    setRefreshVersion((v) => v + 1);
+  }, []);
 
   // ============================================================================
   // Handle fetcher responses (load + translate + save)
@@ -485,8 +625,7 @@ export function useProductSubResources({
         if (showInfoBox) {
           showInfoBox(
             (strings.saveFailedOptions || "Failed to save {count} option(s). Changes have been reverted to original values.").replace("{count}", String(failedResources.length)),
-            "critical",
-            strings.saveFailed || "Save Failed"
+            "critical"
           );
         }
 
@@ -549,7 +688,7 @@ export function useProductSubResources({
       } else {
         // All saved successfully
         if (showInfoBox) {
-          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success", strings.success || "Success");
+          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
         }
         setHasChanges(false);
         setDirtyOptionIds(new Set());
@@ -564,17 +703,33 @@ export function useProductSubResources({
     }
 
     if (data.actionType === "savePrimarySubResources") {
+      // Offered whatever the outcome: a save can fail for one option and still
+      // have started the repair for the others.
+      onSaveResponse?.(data);
       const failedOptions = data.failedOptions || [];
       const failedMetafields = data.failedMetafields || [];
-      const totalFailed = failedOptions.length + failedMetafields.length;
+      // Create, delete and reorder failures have no id to report under, so
+      // counting only the two id-lists made every one of them read as a
+      // success -- green toast, pending lists cleared, merchant's edit gone.
+      const structuralFailures = data.structuralFailures || 0;
+      const totalFailed = failedOptions.length + failedMetafields.length + structuralFailures;
 
       if (totalFailed > 0) {
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
+          // The warning codes carry the only specific reason there is (the
+          // last option cannot go, an empty name, an unconfirmed write), and
+          // the generic count alone leaves the merchant guessing.
+          const reasons = [...new Set(data.optionWarnings || [])]
+            .map((code) => strings[`optionWarning_${code}`] || "")
+            .filter(Boolean)
+            .join(" ");
           showInfoBox(
-            (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
-            "critical",
-            strings.saveFailed || "Save Failed"
+            [
+              (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
+              reasons,
+            ].filter(Boolean).join(" "),
+            "critical"
           );
         }
 
@@ -603,20 +758,49 @@ export function useProductSubResources({
           });
         }
 
+        // The structural lists go too. Left armed while `hasChanges` is
+        // cleared, the card would keep showing a deletion as applied with no
+        // save bar to undo it -- and the next unrelated edit would re-fire the
+        // whole queue. Reverting is what the message already promises.
+        setOptionValuesToAdd({});
+        setOptionLinkedValuesToAdd({});
+        setOptionValuesToDelete({});
+        setOptionsToCreate([]);
+        setOptionsToDelete([]);
+        setOptionOrder(null);
+        setOptionValueOrder({});
+        setSavedNonce((n) => n + 1);
+
         setHasChanges(false);
       } else {
         // All saved successfully
         if (showInfoBox) {
-          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success", strings.success || "Success");
+          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
         }
         setHasChanges(false);
         // Clear primary edits after successful save
         setPrimaryOptionEdits({});
+        // The matrix-changing lists too: a discarded delete that survives the
+        // save would fire again on the next one.
+        setOptionValuesToAdd({});
+        setOptionLinkedValuesToAdd({});
+        setOptionValuesToDelete({});
+        setOptionsToCreate([]);
+        setOptionsToDelete([]);
+        setOptionOrder(null);
+        setOptionValueOrder({});
+        setSavedNonce((n) => n + 1);
+
         setPrimaryMetafieldEdits({});
 
         // Trigger revalidation to reload fresh data from DB/Shopify
         // This ensures new option value GIDs and updated values are loaded
         if (revalidator && revalidator.state === "idle") {
+          // Until it lands, the item still carries the text from BEFORE the
+          // save, and that is what a translate would send as its source. Only
+          // a PRIMARY save moves that text; a foreign one changes nothing a
+          // translate reads.
+          if (isPrimaryLocale) setAwaitingOptionReload(true);
           revalidator.revalidate();
         }
       }
@@ -734,6 +918,114 @@ export function useProductSubResources({
   // Primary Locale Handlers
   // ============================================================================
 
+  /**
+   * Option values the merchant ADDED, per option id. Names only: Shopify
+   * assigns the GID, and the echo is what tells us which one.
+   */
+  const [optionValuesToAdd, setOptionValuesToAdd] = useState<Record<string, string[]>>({});
+  /** Metaobject entries queued on a LINKED option, by option id. The name is
+   *  carried alongside the GID only so the card can render the pending add;
+   *  the SAVE sends the GID, and Shopify takes the name from the entry. */
+  const [optionLinkedValuesToAdd, setOptionLinkedValuesToAdd] = useState<
+    Record<string, Array<{ id: string; name: string }>>
+  >({});
+  /** Value GIDs the merchant removed — and with them, their variants. */
+  const [optionValuesToDelete, setOptionValuesToDelete] = useState<Record<string, string[]>>({});
+  /** Whole options to create, in the order the merchant added them. */
+  const [optionsToCreate, setOptionsToCreate] = useState<Array<{ name: string; values: string[] }>>([]);
+  /** Whole options to remove. */
+  const [optionsToDelete, setOptionsToDelete] = useState<string[]>([]);
+  /** The option ids in the order the merchant dragged them into, or null while
+   *  nothing has been dragged — an unchanged order must not be written. */
+  const [optionOrder, setOptionOrder] = useState<string[] | null>(null);
+  /** Value GIDs in their new order, per option id. Empty while nothing has
+   *  been dragged — an unchanged order must not be written. */
+  const [optionValueOrder, setOptionValueOrder] = useState<Record<string, string[]>>({});
+  /** Bumped on every landed save — see `SubResourceState.savedNonce`. */
+  const [savedNonce, setSavedNonce] = useState(0);
+
+  const handleAddLinkedOptionValue = useCallback(
+    (optionId: string, entry: { id: string; name: string }) => {
+      setOptionLinkedValuesToAdd((prev) => {
+        const list = prev[optionId] ?? [];
+        // Adding the same entry twice would ask Shopify for a duplicate value,
+        // which it refuses — and the refusal would take the merchant's other
+        // edits on that option with it.
+        if (list.some((e) => e.id === entry.id)) return prev;
+        return { ...prev, [optionId]: [...list, entry] };
+      });
+      setHasChanges(true);
+    },
+    [],
+  );
+
+  const handleRemoveLinkedOptionValue = useCallback((optionId: string, entryId: string) => {
+    setOptionLinkedValuesToAdd((prev) => ({
+      ...prev,
+      [optionId]: (prev[optionId] ?? []).filter((e) => e.id !== entryId),
+    }));
+    setHasChanges(true);
+  }, []);
+
+  const handleAddOptionValue = useCallback((optionId: string, name: string) => {
+    const clean = name.trim();
+    if (!clean) return;
+    setOptionValuesToAdd((prev) => ({ ...prev, [optionId]: [...(prev[optionId] ?? []), clean] }));
+    setHasChanges(true);
+  }, []);
+
+  /** `valueId` empty ⇒ an entry that was only added locally, so it just goes
+   *  off the pending list rather than being queued for deletion. */
+  const handleRemoveOptionValue = useCallback((optionId: string, valueId: string, addedIndex?: number) => {
+    if (!valueId) {
+      setOptionValuesToAdd((prev) => ({
+        ...prev,
+        [optionId]: (prev[optionId] ?? []).filter((_, i) => i !== addedIndex),
+      }));
+      setHasChanges(true);
+      return;
+    }
+    setOptionValuesToDelete((prev) => ({ ...prev, [optionId]: [...(prev[optionId] ?? []), valueId] }));
+    setHasChanges(true);
+  }, []);
+
+  /** Rename a value that only exists locally. Its own handler because
+   *  remove-then-add would move it to the end of the list, and the input the
+   *  merchant is typing into would jump out from under the cursor. */
+  const handleEditPendingValue = useCallback((optionId: string, index: number, name: string) => {
+    setOptionValuesToAdd((prev) => {
+      const list = [...(prev[optionId] ?? [])];
+      if (index < 0 || index >= list.length) return prev;
+      list[index] = name;
+      return { ...prev, [optionId]: list };
+    });
+    setHasChanges(true);
+  }, []);
+
+  const handleCreateOption = useCallback((name: string, values: string[]) => {
+    setOptionsToCreate((prev) => [...prev, { name, values }]);
+    setHasChanges(true);
+  }, []);
+
+  const handleCancelCreateOption = useCallback((index: number) => {
+    setOptionsToCreate((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleDeleteOption = useCallback((optionId: string) => {
+    setOptionsToDelete((prev) => (prev.includes(optionId) ? prev : [...prev, optionId]));
+    setHasChanges(true);
+  }, []);
+
+  const handleReorderOptions = useCallback((orderedIds: string[]) => {
+    setOptionOrder(orderedIds);
+    setHasChanges(true);
+  }, []);
+
+  const handleReorderOptionValues = useCallback((optionId: string, orderedValueIds: string[]) => {
+    setOptionValueOrder((prev) => ({ ...prev, [optionId]: orderedValueIds }));
+    setHasChanges(true);
+  }, []);
+
   const handlePrimaryOptionNameChange = useCallback((optionId: string, value: string) => {
     setPrimaryOptionEdits(prev => {
       // If this option hasn't been edited yet, get the original values from selectedItem
@@ -773,6 +1065,74 @@ export function useProductSubResources({
     setHasChanges(true);
   }, []);
 
+  // The reload a landed save started has finished: whatever it brought back is
+  // the text Shopify holds now, so the options may be translated again. Keyed
+  // on the TRANSITION, because the save sets the flag while the revalidator is
+  // still idle.
+  const revalidatorState = revalidator?.state ?? "idle";
+  const previousRevalidatorStateRef = useRef(revalidatorState);
+  useEffect(() => {
+    const previous = previousRevalidatorStateRef.current;
+    previousRevalidatorStateRef.current = revalidatorState;
+    if (previous !== "idle" && revalidatorState === "idle") {
+      setAwaitingOptionReload(false);
+    }
+  }, [revalidatorState]);
+
+  // Two more ways out, because a lock nothing releases is worse than the bug
+  // it prevents: the item the reload brings back is a NEW object (if React
+  // batched "loading" and "idle" into one commit, the transition above is
+  // never seen), and a bound on how long the reload may take at all.
+  const itemWhenAwaitingRef = useRef<typeof selectedItem>(null);
+  useEffect(() => {
+    if (!awaitingOptionReload) {
+      itemWhenAwaitingRef.current = null;
+      return;
+    }
+    if (itemWhenAwaitingRef.current === null) {
+      itemWhenAwaitingRef.current = selectedItem;
+    } else if (itemWhenAwaitingRef.current !== selectedItem) {
+      setAwaitingOptionReload(false);
+    }
+  }, [awaitingOptionReload, selectedItem]);
+  useEffect(() => {
+    if (!awaitingOptionReload) return;
+    const timer = setTimeout(() => setAwaitingOptionReload(false), 20_000);
+    return () => clearTimeout(timer);
+  }, [awaitingOptionReload]);
+
+  /**
+   * See `SubResourceState.optionTranslationBlockedIds`. Every translate entry
+   * point builds its source from `selectedItem` — the text as it was LOADED —
+   * and the server translates exactly what it is sent, so an option that does
+   * not read the same on screen as in the cache must not be translated. Any
+   * pending change counts, structural ones included: a value added but not
+   * saved has no id and would be left out, one removed would be translated.
+   */
+  const optionTranslationBlockedIds = useMemo((): Set<string> => {
+    const blocked = new Set<string>();
+    for (const opt of selectedItem?.options || []) {
+      if (awaitingOptionReload) {
+        blocked.add(opt.id);
+        continue;
+      }
+      const edit = primaryOptionEdits[opt.id];
+      const textChanged = !!edit && (
+        edit.name !== opt.name ||
+        opt.values.some((v, i) => (edit.values[i] ?? v.name) !== v.name)
+      );
+      if (
+        textChanged ||
+        (optionValuesToAdd[opt.id]?.length ?? 0) > 0 ||
+        (optionLinkedValuesToAdd[opt.id]?.length ?? 0) > 0 ||
+        (optionValuesToDelete[opt.id]?.length ?? 0) > 0
+      ) {
+        blocked.add(opt.id);
+      }
+    }
+    return blocked;
+  }, [selectedItem, awaitingOptionReload, primaryOptionEdits, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete]);
+
   const buildSourceData = useCallback((filterOptionId?: string, filterMetafieldId?: string) => {
     if (!selectedItem) return [];
 
@@ -780,6 +1140,9 @@ export function useProductSubResources({
 
     for (const opt of selectedItem.options || []) {
       if (filterOptionId && opt.id !== filterOptionId) continue;
+      // Its cached text is not the text on screen — see the set above. A
+      // translate-all leaves it out rather than translating the old wording.
+      if (optionTranslationBlockedIds.has(opt.id)) continue;
       sourceData.push({
         resourceId: opt.id,
         resourceType: "ProductOption",
@@ -815,7 +1178,7 @@ export function useProductSubResources({
     }
 
     return sourceData;
-  }, [selectedItem]);
+  }, [selectedItem, optionTranslationBlockedIds]);
 
   // Merge a translations map ({ resourceId: { key: value } }) into option/metafield state.
   const applyTranslationsToState = useCallback((
@@ -879,10 +1242,21 @@ export function useProductSubResources({
     }
 
     try {
-      const resp = await fetch("/app/products", { method: "POST", body: fd });
+      const resp = await fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
       const data = await resp.json().catch(() => null) as SubResourceFetcherData | null;
       if (data?.success && data.translations) {
         applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
+      }
+      // A refused or failed translate used to be swallowed: the spinner
+      // stopped and nothing said why. The server's sentence is shown as is —
+      // for a managed-AI refusal (budget, taster, consent) it is already
+      // localised and names the way out.
+      if (!data || data.success === false) {
+        const message = typeof (data as { error?: unknown } | null)?.error === "string"
+          ? String((data as { error?: unknown }).error)
+          : "";
+        showInfoBox?.(message || strings.translateFailed || "Translation failed", "critical");
+        return;
       }
       // Primary-locale translate saves to foreign locales server-side and returns
       // no translations — revalidate so locale-pulsing state refreshes.
@@ -895,7 +1269,7 @@ export function useProductSubResources({
     } finally {
       markSubResourceCompleted(resourceId, fieldId);
     }
-  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings.translateFailed]);
 
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);
@@ -912,7 +1286,7 @@ export function useProductSubResources({
   }, [buildSourceData, selectedItem?.id, runIndividualTranslate]);
 
   const translateOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
-    if (!selectedItem) return;
+    if (!selectedItem || optionTranslationBlockedIds.has(optionId)) return;
 
     const option = selectedItem.options?.find(o => o.id === optionId);
     if (!option) return;
@@ -946,7 +1320,7 @@ export function useProductSubResources({
     // Own request lifecycle (not the shared fetcher) so concurrent translates
     // each clear their own spinner. See runIndividualTranslate.
     void runIndividualTranslate(fieldId, sourceData);
-  }, [selectedItem, runIndividualTranslate]);
+  }, [selectedItem, runIndividualTranslate, optionTranslationBlockedIds]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
     if (isPrimaryLocale || !selectedItem) return;
@@ -1062,13 +1436,24 @@ export function useProductSubResources({
 
     if (isPrimaryLocale) {
       // PRIMARY LOCALE: Save primary values (options + metafields)
-      const optionsChanges: Record<string, { name?: string; valueUpdates?: { id: string; name: string }[] }> = {};
+      const optionsChanges: Record<
+        string,
+        {
+          name?: string;
+          valueUpdates?: { id: string; name: string }[];
+          valuesToAdd?: string[];
+          valuesToAddLinked?: string[];
+          valuesToDelete?: string[];
+        }
+      > = {};
       const metafieldChanges: Record<string, string> = {};
 
       // Collect option name and value changes with validation
       for (const [optionId, edit] of Object.entries(primaryOptionEdits)) {
         const originalOption = selectedItem.options?.find(o => o.id === optionId);
-        if (!originalOption) {
+        // Same rule as the passes below: an option on its way out cannot be
+        // renamed, and asking would fail the whole save.
+        if (!originalOption || optionsToDelete.includes(optionId)) {
           continue;
         }
 
@@ -1081,15 +1466,26 @@ export function useProductSubResources({
           // VALIDATION: Prevent empty option names and values
           if (hasNameChange && edit.name.trim() === "") {
             if (showInfoBox) {
-              showInfoBox(strings.optionNameEmpty || "Option name cannot be empty", "critical", strings.validationError || "Validation Error");
+              showInfoBox(strings.optionNameEmpty || "Option name cannot be empty", "critical");
             } else {
               alert("Option name cannot be empty");
             }
             return;
           }
-          if (hasValuesChange && edit.values.some(v => v.trim() === "")) {
+          // A value the merchant renamed and then DELETED must not be sent as
+          // both a rename and a delete: Shopify rejects the contradiction, and
+          // because failures are per option that takes the other renames on
+          // the same option down with it. It also must not trip the
+          // empty-value guard below -- a value on its way out is allowed to
+          // read blank.
+          const deletedHere = new Set(optionValuesToDelete[optionId] ?? []);
+          const survivingEdits = originalOption.values
+            .map((v, i) => ({ id: v.id, name: edit.values[i], original: v.name }))
+            .filter((v) => !deletedHere.has(v.id));
+
+          if (hasValuesChange && survivingEdits.some(v => (v.name ?? "").trim() === "")) {
             if (showInfoBox) {
-              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical", strings.validationError || "Validation Error");
+              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
             } else {
               alert("Option values cannot be empty");
             }
@@ -1100,12 +1496,41 @@ export function useProductSubResources({
           if (hasNameChange) optionsChanges[optionId].name = edit.name;
           // For metaobject-linked options, only save name changes (not values)
           if (hasValuesChange && !originalOption.isLinked) {
-            // Only include values that actually changed
-            optionsChanges[optionId].valueUpdates = originalOption.values
-              .map((v, i) => ({ id: v.id, name: edit.values[i] }))
-              .filter((v, i) => v.name !== originalOption.values[i].name);
+            // Only include values that actually changed — and never one that
+            // is being deleted in the same save.
+            const updates = survivingEdits
+              .filter((v) => v.name !== v.original)
+              .map((v) => ({ id: v.id, name: v.name }));
+            if (updates.length > 0) optionsChanges[optionId].valueUpdates = updates;
           }
         }
+      }
+
+      // Values added and removed. Their own pass: a merchant can add a colour
+      // without renaming anything, and the loop above only visits options that
+      // carry a text edit.
+      // An option being deleted in the same save takes its queued edits with
+      // it. Sent, they address a GID that no longer exists: Shopify rejects
+      // them, the save reports "changes have been reverted", and the merchant
+      // is told the opposite of what happened -- the delete succeeded and is
+      // irreversible. The value-order pass already filtered this; the add and
+      // remove passes did not.
+      for (const [optionId, added] of Object.entries(optionValuesToAdd)) {
+        if (added.length === 0 || optionsToDelete.includes(optionId)) continue;
+        optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: added };
+      }
+      for (const [optionId, removed] of Object.entries(optionValuesToDelete)) {
+        if (removed.length === 0 || optionsToDelete.includes(optionId)) continue;
+        optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToDelete: removed };
+      }
+      // A LINKED option's additions travel as metaobject GIDs: its values are
+      // entries, not free text, and Shopify takes the name from the entry.
+      for (const [optionId, added] of Object.entries(optionLinkedValuesToAdd)) {
+        if (added.length === 0 || optionsToDelete.includes(optionId)) continue;
+        optionsChanges[optionId] = {
+          ...(optionsChanges[optionId] ?? {}),
+          valuesToAddLinked: added.map((e) => e.id),
+        };
       }
 
       // Collect metafield value changes with validation
@@ -1117,7 +1542,7 @@ export function useProductSubResources({
           // VALIDATION: Prevent empty metafield values
           if (editValue.trim() === "") {
             if (showInfoBox) {
-              showInfoBox(strings.metafieldValuesEmpty || "Metafield values cannot be empty", "critical", strings.validationError || "Validation Error");
+              showInfoBox(strings.metafieldValuesEmpty || "Metafield values cannot be empty", "critical");
             } else {
               alert("Metafield values cannot be empty");
             }
@@ -1127,7 +1552,44 @@ export function useProductSubResources({
         }
       }
 
-      if (Object.keys(optionsChanges).length === 0 && Object.keys(metafieldChanges).length === 0) {
+      // The order counts as changed only if it DIFFERS from the saved one:
+      // dragging an option away and back leaves `optionOrder` non-null, and a
+      // reorder that reorders nothing is a Shopify call with a chance of going
+      // wrong and no chance of achieving anything.
+      const savedOrder = [...(selectedItem.options ?? [])]
+        .sort((a, b) => a.position - b.position)
+        .map((o) => o.id);
+      const wantedOrder = (optionOrder ?? []).filter((id) => !optionsToDelete.includes(id));
+      const orderChanged =
+        optionOrder !== null &&
+        JSON.stringify(wantedOrder) !== JSON.stringify(savedOrder.filter((id) => !optionsToDelete.includes(id)));
+
+      // Values that actually MOVED, per option. Same rule as the option order:
+      // an arrangement identical to the saved one is not a change, and writing
+      // it would be a Shopify call with nothing to achieve.
+      const movedValueOrder: Record<string, string[]> = {};
+      for (const [optionId, ids] of Object.entries(optionValueOrder)) {
+        const option = selectedItem.options?.find((o) => o.id === optionId);
+        // An option being deleted in the same save has no order left to have
+        // changed, and keeping it would force a reorder call whose entire
+        // content is restating positions nobody moved.
+        if (!option || optionsToDelete.includes(optionId)) continue;
+        const deletedHere = new Set(optionValuesToDelete[optionId] ?? []);
+        const saved = option.values.map((v) => v.id).filter((id) => id && !deletedHere.has(id));
+        const wanted = ids.filter((id) => !deletedHere.has(id) && saved.includes(id));
+        if (wanted.length === saved.length && JSON.stringify(wanted) !== JSON.stringify(saved)) {
+          movedValueOrder[optionId] = wanted;
+        }
+      }
+      const valueOrderChanged = Object.keys(movedValueOrder).length > 0;
+
+      const hasStructuralChange =
+        optionsToCreate.length > 0 || optionsToDelete.length > 0 || orderChanged || valueOrderChanged;
+      if (
+        Object.keys(optionsChanges).length === 0 &&
+        Object.keys(metafieldChanges).length === 0 &&
+        !hasStructuralChange
+      ) {
         setHasChanges(false);
         return;
       }
@@ -1138,6 +1600,39 @@ export function useProductSubResources({
       formData.append("productId", selectedItem.id);
       formData.append("optionsChanges", JSON.stringify(optionsChanges));
       formData.append("metafieldChanges", JSON.stringify(metafieldChanges));
+      // The structural half. Sent only when it has content: an empty order
+      // list would otherwise ask Shopify to reorder nothing on every save.
+      if (optionsToCreate.length > 0) {
+        formData.append("optionsToCreate", JSON.stringify(optionsToCreate));
+      }
+      if (optionsToDelete.length > 0) {
+        formData.append("optionsToDelete", JSON.stringify(optionsToDelete));
+      }
+      if (orderChanged || valueOrderChanged) {
+        // Already minus whatever is being deleted in the same save — naming a
+        // gone option would fail the reorder for all of them. Options CREATED
+        // in the same save have no GID yet and so cannot appear here; the
+        // server runs creates first and Shopify appends them, which is where a
+        // merchant expects a brand-new variant to land.
+        //
+        // Sent even when only VALUES moved: the reorder mutation hangs its
+        // values off an option list, so it needs the current order to name
+        // them under.
+        const orderToSend = orderChanged
+          ? wantedOrder
+          : savedOrder.filter((id) => !optionsToDelete.includes(id));
+        formData.append("optionOrder", JSON.stringify(orderToSend));
+      }
+      if (valueOrderChanged) {
+        // UNMEASURED: values ADDED in the same save have no GID yet, so a
+        // reorder that follows an add names only the values that already
+        // existed. Whether `productOptionsReorder` accepts a partial value
+        // list or demands the complete set is not established -- if it demands
+        // it, this reorder fails and says so (the save reports a structural
+        // failure), rather than applying a wrong order silently. Worth one
+        // probe against a live shop before relying on the combination.
+        formData.append("optionValueOrder", JSON.stringify(movedValueOrder));
+      }
 
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
@@ -1187,7 +1682,7 @@ export function useProductSubResources({
         { method: "POST", action: "/app/products" }
       );
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder]);
 
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
@@ -1199,6 +1694,17 @@ export function useProductSubResources({
 
     // Reset primary locale edits
     setPrimaryOptionEdits({});
+    setOptionValuesToAdd({});
+    setOptionLinkedValuesToAdd({});
+    setOptionValuesToDelete({});
+    setOptionsToCreate([]);
+    setOptionsToDelete([]);
+    setOptionOrder(null);
+    setOptionValueOrder({});
+    // The card keeps the dragged order in its own state so a drag feels
+    // immediate; without this it would go on showing an arrangement that the
+    // discard just threw away.
+    setSavedNonce((n) => n + 1);
     setPrimaryMetafieldEdits({});
 
     // Reset flags
@@ -1264,7 +1770,8 @@ export function useProductSubResources({
   }, [selectedItem, currentLanguage, selectedMarketId, fetcher, handleOptionNameChange, handleOptionValueChange]);
 
   const copyOptionFieldToAllLocales = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
-    if (!selectedItem) return;
+    // Copies the CACHED primary text, so the same rule as translating holds.
+    if (!selectedItem || optionTranslationBlockedIds.has(optionId)) return;
     const option = selectedItem.options?.find(o => o.id === optionId);
     if (!option) return;
 
@@ -1310,7 +1817,7 @@ export function useProductSubResources({
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return fetch("/app/products", { method: "POST", body: fd });
+      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
     });
 
     Promise.all(saves).finally(() => {
@@ -1319,13 +1826,82 @@ export function useProductSubResources({
         revalidator.revalidate();
       }
     });
-  }, [selectedItem, primaryLocale, enabledLanguages, revalidator]);
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
+
+  const copyOptionToAllLocales = useCallback((optionId: string) => {
+    // Copies the CACHED primary text, so the same rule as translating holds.
+    if (!selectedItem || optionTranslationBlockedIds.has(optionId)) return;
+    const option = selectedItem.options?.find(o => o.id === optionId);
+    if (!option) return;
+
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) return;
+
+    // The same rows `buildSourceData` would translate: the name, and the
+    // values only where they belong to the product (a linked option's values
+    // live in the metaobjects). Empty text is skipped — copying "" would
+    // register an empty translation rather than leave the field to fall back.
+    const entries: Array<{ resourceId: string; resourceType: string; value: string }> = [];
+    if (option.name) entries.push({ resourceId: option.id, resourceType: "ProductOption", value: option.name });
+    if (!option.isLinked) {
+      for (const val of option.values) {
+        if (val.id && val.name) entries.push({ resourceId: val.id, resourceType: "ProductOptionValue", value: val.name });
+      }
+    }
+    if (entries.length === 0) return;
+
+    const translationsData = JSON.stringify(
+      Object.fromEntries(entries.map((e) => [e.resourceId, { name: e.value }])),
+    );
+    const resourceTypes = JSON.stringify(
+      Object.fromEntries(entries.map((e) => [e.resourceId, e.resourceType])),
+    );
+    const capturedItemId = selectedItem.id;
+    const fieldId = `${optionId}:copyAll`;
+
+    // Write to overlay immediately for all target locales
+    for (const locale of targetLocales) {
+      const overlay = localSubResourceOverlayRef.current;
+      if (!overlay[locale]) overlay[locale] = {};
+      for (const e of entries) {
+        if (!overlay[locale][e.resourceId]) overlay[locale][e.resourceId] = {};
+        overlay[locale][e.resourceId]["name"] = e.value;
+      }
+    }
+
+    markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
+
+    const saves = targetLocales.map(locale => {
+      const fd = new FormData();
+      fd.set("action", "saveSubResourceTranslations");
+      fd.set("locale", locale);
+      fd.set("translationsData", translationsData);
+      fd.set("resourceTypes", resourceTypes);
+      fd.set("itemId", capturedItemId);
+      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
+    });
+
+    Promise.all(saves).finally(() => {
+      markSubResourceCompleted(capturedItemId, fieldId);
+      if (revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
+    });
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
 
   return {
     state: {
       optionTranslations,
       metafieldTranslations,
       primaryOptionEdits,
+      optionValuesToAdd,
+      optionLinkedValuesToAdd,
+      optionValuesToDelete,
+      optionsToCreate,
+      optionsToDelete,
+      optionValueOrder,
+      savedNonce,
+      optionTranslationBlockedIds,
       primaryMetafieldEdits,
       translatingFieldIds,
       fallbackResourceIds,
@@ -1339,17 +1915,29 @@ export function useProductSubResources({
       handleMetafieldChange,
       handlePrimaryOptionNameChange,
       handlePrimaryOptionValuesChange,
+      handleAddOptionValue,
+      handleAddLinkedOptionValue,
+      handleRemoveLinkedOptionValue,
+      handleRemoveOptionValue,
+      handleEditPendingValue,
+      handleCreateOption,
+      handleCancelCreateOption,
+      handleDeleteOption,
+      handleReorderOptions,
+      handleReorderOptionValues,
       handlePrimaryMetafieldChange,
       translateOption,
       translateOptionField,
       copyOptionField,
       copyOptionFieldToAllLocales,
+      copyOptionToAllLocales,
       translateMetafield,
       translateAllSubResources,
       translateAllSubResourcesToAllLocales,
       saveSubResources,
       resetChanges,
       resetForReload,
+      refreshTranslations,
     },
   };
 }

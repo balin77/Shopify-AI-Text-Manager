@@ -10,6 +10,7 @@
  * Replaces the two separate Cards (LanguageBar + OperationButtons) on mobile.
  */
 
+import type { ReloadResourceType } from "../../utils/reload-resource-type";
 import { useState, useCallback } from "react";
 import { Card, Button, Popover, ActionList, Tooltip } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
@@ -19,7 +20,7 @@ import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { MarketSelector } from "./MarketSelector";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType, ContentImage, MarketInfo } from "../../types/content-editor.types";
+import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../../types/content-editor.types";
 
 interface MobileToolbarProps {
   shopLocales: ShopLocale[];
@@ -39,35 +40,53 @@ interface MobileToolbarProps {
   validationOverlays?: ValidationOverlays;
   validationVersion?: number;
 
+  /**
+   * The item-level actions the desktop bar shows as buttons: the visibility
+   * switch, Duplicate, Delete.
+   *
+   * They are in this menu rather than only on desktop because the switch
+   * REPLACED the status field in the form — leaving it out here would make a
+   * product's status unreachable on a phone. `statusLabel` arrives ready to
+   * read (an ActionList row has no room to explain itself), and a `null`
+   * status means the item's state is not known, which renders as a disabled
+   * row rather than a guess.
+   */
+  itemActions?: {
+    statusLabel?: string;
+    statusChecked?: boolean;
+    statusDisabled?: boolean;
+    statusHelp?: string;
+    onToggleStatus?: () => void;
+    onDuplicate?: () => void;
+    duplicateLabel?: string;
+    onDelete?: () => void;
+    deleteLabel?: string;
+  };
+
   // Operation handlers (Save/Discard are handled by the native save bar)
   onTranslateAll: () => void;
   onClearAll: () => void;
-  onToggleSendImageToAI?: () => void;
   /** Hides Translate All / Clear All — used for locked app-embed technical groups. */
   disableBulkActions?: boolean;
 
-  // Send image to AI feature
-  sendImageToAI?: boolean;
-  images?: ContentImage[];
-  featuredImage?: ContentImage;
 
   // Global AI action state (from global store, persists across navigation)
   isTranslatingGlobal?: boolean;
 
   // Reload button props
   reloadResourceId: string;
-  reloadResourceType: "product" | "collection" | "page" | "article" | "policy" | "templates";
+  reloadResourceType: ReloadResourceType;
   reloadLocale: string;
   onReloadComplete: () => void;
   revalidator?: { state: "idle" | "loading"; revalidate: () => void };
 
   t?: {
     primaryLocaleSuffix?: string;
+    unpublishedLocaleSuffix?: string;
     translateAll?: string;
     translating?: string;
     clearAll?: string;
-    sendImageToAI?: string;
-    reloadItemTooltip?: string;
+      reloadItemTooltip?: string;
     allMarketsGlobal?: string;
     marketSelectorLabel?: string;
     marketTooltip?: string;
@@ -92,11 +111,8 @@ export function MobileToolbar({
   validationVersion,
   onTranslateAll,
   onClearAll,
-  onToggleSendImageToAI,
+  itemActions,
   disableBulkActions = false,
-  sendImageToAI = false,
-  images = [],
-  featuredImage,
   isTranslatingGlobal = false,
   reloadResourceId,
   reloadResourceType,
@@ -194,16 +210,31 @@ export function MobileToolbar({
                   destructive: true,
                 },
                 ]),
-                // Send image to AI checkbox (only in main language for products/collections/blogs with images)
-                ...((currentLanguage === primaryLocale &&
-                   (contentType === "products" || contentType === "collections" || contentType === "blogs") &&
-                   (images.length > 0 || featuredImage?.url) &&
-                   onToggleSendImageToAI) ? [{
-                  content: `${sendImageToAI ? '✓' : ''} ${t.sendImageToAI || "📷 Send image to AI"}`,
+                // The item itself: visible or not, copy it, delete it. Same
+                // set and same order as the desktop action bar.
+                ...(itemActions?.onToggleStatus && itemActions.statusLabel ? [{
+                  content: `${itemActions.statusChecked ? "✓" : ""} ${itemActions.statusLabel}`,
                   onAction: () => {
-                    onToggleSendImageToAI();
+                    itemActions.onToggleStatus?.();
                     closePopover();
                   },
+                  disabled: itemActions.statusDisabled,
+                  helpText: itemActions.statusHelp,
+                }] : []),
+                ...(itemActions?.onDuplicate ? [{
+                  content: itemActions.duplicateLabel || "Duplicate",
+                  onAction: () => {
+                    itemActions.onDuplicate?.();
+                    closePopover();
+                  },
+                }] : []),
+                ...(itemActions?.onDelete ? [{
+                  content: itemActions.deleteLabel || "Delete",
+                  onAction: () => {
+                    itemActions.onDelete?.();
+                    closePopover();
+                  },
+                  destructive: true,
                 }] : []),
               ]}
             />
@@ -297,7 +328,10 @@ function MobileLocaleButton({
   const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
   const isPrimary = locale.primary;
   const isCurrentLanguage = currentLanguage === locale.locale;
-  const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
+  // "°" marks a language that is not published yet, as in the desktop bar.
+  const shortLabel = `${locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1)}${
+    !isPrimary && (locale as { published?: boolean }).published === false ? "°" : ""
+  }`;
 
   const buttonEl = (
     <div style={{ ...buttonStyle, flexShrink: 0 }}>

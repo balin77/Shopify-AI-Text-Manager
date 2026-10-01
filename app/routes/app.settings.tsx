@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
-import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator, useLocation } from "react-router";
 import {
   Page,
   Card,
@@ -17,8 +17,9 @@ import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
-import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
-import { SettingsPageSpeedProbeTab } from "../components/SettingsPageSpeedProbeTab";
+import { SettingsProbesTab } from "../components/SettingsProbesTab";
+import { SettingsShopLanguagesTab } from "../components/SettingsShopLanguagesTab";
+import type { ProbeSubTab } from "../components/SettingsProbesTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -30,6 +31,17 @@ import { AISettingsSchema, AIInstructionsSchema, parseFormData, isValidLocale } 
 import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
+import {
+  hasCurrentAiProcessingConsent,
+  wantsManagedAi,
+  hasOwnKeyStored,
+  AI_PROCESSING_CONSENT_VERSION,
+} from "../services/ai/managed-ai.shared";
+import {
+  keyFieldsWithheld,
+  managedAiAvailable,
+  managedTasterActions,
+} from "../services/ai/ai-credentials.server";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import {
   DEFAULT_GENERAL_INSTRUCTIONS,
@@ -43,6 +55,7 @@ import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "~/services/billing.server";
 import { resolveDevPlanMode } from "~/services/dev-plan-override.server";
 import { getImageOperationUsage } from "~/utils/imageOperations.server";
+import { clampImagesPerRequest } from "~/services/ai/vision-policy.shared";
 
 /**
  * Shallow value-equality for the sparse `seoLimits` JSON blob. Used by the
@@ -63,6 +76,19 @@ function shallowEqualLimits(
   return true;
 }
 
+/**
+ * The reset DATE a `b:<YYYY-MM-DD>` period key names, or null for any other
+ * scheme (`m:<month>`, the taster). Reading the key rather than the mirrored
+ * column is what keeps a stale webhook from showing a reset date in the past:
+ * `managedBudgetPeriod` walks an expired `managedAiPeriodEnd` forward instead
+ * of keying on it, and the card must show the date the budget really resets.
+ */
+function periodEndFromKey(period: string): string | null {
+  if (!period.startsWith("b:")) return null;
+  const day = period.slice(2);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${day}T00:00:00.000Z` : null;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
@@ -75,6 +101,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       await checkAndSyncSubscription(admin, session.shop);
     }
 
+    // The languages Shopify lets this shop ADD (Settings → Sprachen und Märkte) —
+    // its own query, started IN PARALLEL with the one below: a failure must not
+    // take the settings page down, and `null` tells the tab "could not load",
+    // never "nothing can be added".
+    const availableShopLocalesPromise = import("../services/shop-locale-publish.server").then(
+      ({ loadAvailableLocales }) => loadAvailableLocales(admin),
+    );
+    // Which markets have an address of their own (Märkte und Adressen) — the
+    // same parallel, `null` on failure. Its page sizes are kept small (cost),
+    // because it runs on every settings load beside the query below.
+    const marketAddressesPromise = import("../services/market-address.server").then(({ loadMarketAddresses }) =>
+      loadMarketAddresses(admin, session.shop),
+    );
+    // Which market web presences show each language — same parallel, `null`
+    // on failure ("could not load", never "in no market").
+    const marketWebPresencesPromise = import("../services/shop-locale-publish.server").then(
+      ({ loadMarketWebPresences }) => loadMarketWebPresences(admin, session.shop),
+    );
     // Fetch shop's locales (incl. name for the glossary locale bar) and display name
     const localesResponse = await admin.graphql(
       `#graphql
@@ -95,6 +139,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales: Array<{ locale: string; name?: string; primary: boolean; published: boolean }> =
       localesData.data.shopLocales || [];
     const primaryShopLocale = shopLocales.find((l) => l.primary)?.locale || "en";
+    const availableShopLocales = await availableShopLocalesPromise;
+    const marketWebPresences = await marketWebPresencesPromise;
+    const marketAddresses = await marketAddressesPromise;
     const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
@@ -398,12 +445,91 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
      // when the merchant re-enters that key. Display name is derived at
      // render time.
     const corruptedApiKeys: AIProvider[] = [];
-    for (const { field, provider } of keyFields) {
-      const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
-      decryptedKeys[field] = value || "";
-      if (corrupted) {
-        corruptedApiKeys.push(provider);
-        logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
+
+    // PLAN_MANAGED_AI_KEY §8a rule 5 — in MANAGED mode the key fields are not
+    // rendered, so decrypting them would ship six credentials to the browser
+    // in plaintext on every Settings load for no reason at all. The stored
+    // keys SURVIVE untouched (rule 4: "back to my own key" means back to the
+    // merchant's own setup); only their plaintext stops travelling. What the
+    // merchant keeps is the COUNT and a Delete control (rule 5, GDPR: a
+    // credential they gave us must be erasable without uninstalling the app).
+    // Managed mode is the merchant's stored choice AND a deployment that can
+    // serve it (§9.4's kill switch). Both halves matter here: withholding the
+    // key fields for a shop whose managed AI nothing can serve would hide the
+    // one screen it still needs.
+    const managedAiOffered = managedAiAvailable();
+    const onManagedAi = wantsManagedAi(settings) && managedAiOffered;
+    // The key fields are withheld only under an AI-included PLAN. A shop on
+    // the taster has no key BY DEFINITION and must be able to add one — the
+    // key it adds is what takes it off the taster.
+    const keysWithheld = keyFieldsWithheld(session.shop, settings);
+    const storedKeyCount = keyFields.filter(
+      ({ field }) => !!(settings[field] as string | null | undefined),
+    ).length;
+
+    if (!keysWithheld) {
+      for (const { field, provider } of keyFields) {
+        const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
+        decryptedKeys[field] = value || "";
+        if (corrupted) {
+          corruptedApiKeys.push(provider);
+          logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
+        }
+      }
+    }
+
+    // The usage card's numbers — only for a shop actually on managed AI. A
+    // BYO shop pays nothing for us and has nothing to show, and the read is a
+    // DB aggregate we should not make on every Settings load for everybody.
+    let managedAiBudget: {
+      usedMicros: number;
+      limitMicros: number;
+      resetsOn: string | null;
+      estimatedShare: number;
+      /** A period budget that resets, or the one-time taster (§10). */
+      kind: "period" | "taster";
+      /** How many AI actions the taster is worth here — display only. */
+      tasterActions: number;
+      grantedAt: string | null;
+    } | null = null;
+    if (onManagedAi) {
+      try {
+        const { managedBudgetStatus, usedPeriodsFilter } = await import(
+          "../services/ai/managed-budget.server"
+        );
+        const status = await managedBudgetStatus(
+          session.shop,
+          settings,
+          (settings.subscriptionPlan ?? "free") as never,
+        );
+        const rows = await db.aiUsageCounter.findMany({
+          // The rows the budget's used figure is summed over, so the share of
+          // estimated calls describes that same number.
+          where: { shop: session.shop, source: "managed", ...usedPeriodsFilter(status.period, status.kind) },
+          select: { calls: true, estimated: true },
+        });
+        const total = rows.reduce((n, r) => n + r.calls, 0);
+        const estimated = rows.filter((r) => r.estimated).reduce((n, r) => n + r.calls, 0);
+        const { managedTasterActions } = await import("../services/ai/ai-credentials.server");
+        managedAiBudget = {
+          usedMicros: status.usedMicros,
+          limitMicros: status.limitMicros,
+          // A taster does not reset, so it has no reset date — and printing
+          // the subscription's period end beside it would promise one.
+          resetsOn: status.kind === "period" ? periodEndFromKey(status.period) : null,
+          estimatedShare: total > 0 ? estimated / total : 0,
+          kind: status.kind,
+          tasterActions: status.kind === "taster" ? managedTasterActions() : 0,
+          grantedAt: settings.managedAiTasterGrantedAt
+            ? settings.managedAiTasterGrantedAt.toISOString()
+            : null,
+        };
+      } catch (error) {
+        // A usage card that cannot load is not a reason to fail Settings.
+        logger.warn("[SETTINGS LOADER] Managed AI usage unavailable", {
+          context: "Settings",
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -433,6 +559,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // dev-only gate as the Translation Probe tab (APP_ENV === "development").
     // Temporary.
     const showPageSpeedProbeTab = showTranslationProbeTab;
+    // PLAN_CONTENT_CREATION Phase 0 §5: collection-model probe — same dev-only
+    // gate. The route additionally refuses its WRITE test outside
+    // APP_ENV=development; a hidden tab is not a permission check.
+    const showCollectionProbeTab = showTranslationProbeTab;
+    // PLAN_METAOBJECTS_EDITOR Phase 0: metaobject probe (V1-V5, M2) — same
+    // dev-only gate, and the route refuses itself outside development too
+    // because two of its four steps WRITE to the merchant's live shop.
+    const showMetaobjectProbeTab = showTranslationProbeTab;
+    // Unit price (Grundpreis): same dev-only gate. It WRITES a measurement to
+    // a live variant and restores it, so it is a diagnostic, not a feature.
+    const showUnitPriceProbeTab = showTranslationProbeTab;
+    const showPublicationProbeTab = showTranslationProbeTab;
+    // Product taxonomy: same dev-only gate. READ-only — it asks Shopify's
+    // taxonomy what a category picker can be built on — but a diagnostic that
+    // fans out introspection queries is not a feature, and the route refuses
+    // itself outside development because it takes a direct GET.
+    const showTaxonomyProbeTab = showTranslationProbeTab;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -457,6 +600,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
       select: { metafieldsLastScanAt: true },
     });
+
+    // The auto-translation retry list, summarised for the Translations card.
+    const { loadRetrySummary } = await import("../services/translations/translation-retry.server");
+    const autoTranslateRetrySummary = await loadRetrySummary(session.shop, db);
 
     // Glossary tab: entries incl. per-locale fixed translations.
     const { listGlossaryEntries } = await import("../../src/services/glossary.service");
@@ -489,12 +636,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showImageManagerTab,
       showSkuTab,
       showTranslationProbeTab,
+      showCollectionProbeTab,
+      showMetaobjectProbeTab,
+      showUnitPriceProbeTab,
+      showPublicationProbeTab,
+      showTaxonomyProbeTab,
       showPageSpeedProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
       optionValueMemory,
       primaryShopLocale,
       shopLocales,
+      availableShopLocales,
+      marketWebPresences,
+      marketAddresses,
       glossaryEntries,
       corruptedApiKeys,
       enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
@@ -503,12 +658,46 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         key: d.key,
         patchedTranslatable: d.patchedTranslatable,
       })),
+      autoTranslateRetrySummary,
       metafieldsLastScanAt: metafieldScanState?.metafieldsLastScanAt
         ? metafieldScanState.metafieldsLastScanAt.toISOString()
         : null,
+      // Consent is an EVENT, so the timestamp travels beside the boolean: the
+      // card shows when it was given, which is what makes it a record rather
+      // than a state somebody could have flipped.
+      managedAiConsentedAt: settings.aiProcessingConsentAt
+        ? settings.aiProcessingConsentAt.toISOString()
+        : null,
+      managedAiConsentVersion: settings.aiProcessingConsentVersion ?? null,
+      managedAiBudget,
+      // Whether this DEPLOYMENT can serve plan-included AI at all (§9.4).
+      // Offering the second price where managed mode is off would sell a
+      // feature every call then refuses.
+      managedAiOffered,
+      // The taster's size in ACTIONS comes from the environment, not from the
+      // usage aggregate, so the offer sentence has a number to show a shop
+      // that has switched nothing on yet — which is the only population it is
+      // addressed to.
+      managedAiTasterActions: managedAiOffered ? managedTasterActions() : 0,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
+
+        // ── Managed AI (PLAN_MANAGED_AI_KEY §8) ───────────────────────────
+        // One choice, shown in two places, rendered from ONE state: the
+        // merchant's stored choice and the Shopify-verified entitlement.
+        /** On managed AI right now — by PLAN, or on the taster. */
+        managedAiOn: onManagedAi,
+        managedAiActive: settings.managedAiActive === true,
+        /** The one-time grant is gone — the offer stops being an invitation. */
+        managedAiTasterSpent: settings.managedAiTasterSpentAt != null,
+        managedAiConsented: hasCurrentAiProcessingConsent(settings),
+        /** How many keys are stored — the line that replaces the hidden tab. */
+        storedApiKeyCount: storedKeyCount,
+        /** A key for the PREFERRED provider — what decides own key vs taster. */
+        managedAiOwnKeyStored: hasOwnKeyStored(settings as unknown as Record<string, unknown>),
+        /** True when the key fields were NOT decrypted for this response. */
+        apiKeysWithheld: keysWithheld,
         selectedModel: settings.selectedModel || '',
         appLanguage: settings.appLanguage || "en",
 
@@ -529,14 +718,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // Keyword-aware translation (Übersetzungen card).
         keywordAwareTranslation: settings.keywordAwareTranslation ?? true,
 
+        // "Bei Änderung der Hauptsprache" (Übersetzungen card): whether a
+        // changed/cleared primary value deletes its foreign translations, and
+        // (Max) whether a change made OUTSIDE the app is re-translated instead
+        // of only deleted. The Max gate is applied in the tab and again in the
+        // action — the stored value is shown as-is so a downgraded shop sees
+        // what would happen if it upgraded again.
+        translationPurgeOnPrimaryChange: settings.translationPurgeOnPrimaryChange ?? true,
+        autoTranslateExternalChanges: settings.autoTranslateExternalChanges ?? false,
+        autoTranslateHandles: settings.autoTranslateHandles ?? false,
+        // Optional daily limit on FIRST automatic translations — null = none.
+        autoTranslateDailyLimit: settings.autoTranslateDailyLimit ?? null,
+
         // Nightly SEO audit (Max) — merchant switch, see
         // services/seo/audit-auto-run.service.ts. Shown on every plan but only
         // editable where the plan grants scheduledAudit.
         seoAutoAuditEnabled: settings.seoAutoAuditEnabled ?? true,
+        seoAutoCrawlEnabled: settings.seoAutoCrawlEnabled ?? true,
 
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
+
+        // PLAN §Phase 3.3 — redirect the old URL when a handle changes.
+        seoAutoHandleRedirect: settings.seoAutoHandleRedirect ?? true,
 
         // Merchant-editable SEO character limits (Pro+). null = defaults
         // from character-limits.ts — no need to widen the client bundle with
@@ -549,6 +754,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
         // Theme-settings richtext handling: "autofix" | "normalize" | "error"
         themeRichtextMode: settings.themeRichtextMode || 'autofix',
+
+        // May the AI look at the shop's images, and at how many per request?
+        // ONE answer for the whole app, edited in AI instructions → General.
+        sendImagesToAI: settings.sendImagesToAI ?? false,
+        aiImagesPerRequest: clampImagesPerRequest(settings.aiImagesPerRequest),
       },
       instructions: {
         // General (Writing Style Instructions)
@@ -629,6 +839,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+/**
+ * The daily-limit field of the Translations card: absent (not in the payload),
+ * `null` (the merchant emptied it — no limit), a positive integer, or invalid.
+ * Exported for the tests.
+ */
+export function parseAutoTranslateDailyLimit(
+  raw: FormDataEntryValue | null,
+): number | null | "absent" | "invalid" {
+  if (raw === null) return "absent";
+  const text = String(raw).trim();
+  if (text === "") return null;
+  if (!/^\d{1,7}$/.test(text)) return "invalid";
+  const value = Number(text);
+  return value >= 1 ? value : "invalid";
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -647,6 +873,87 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       const data = validationResult.data;
+
+      // PLAN GATE FIRST — before anything is written. The Translations
+      // sub-section saves its switches together with the instruction texts, so
+      // a 403 decided after the AIInstructions upsert would leave a
+      // half-applied save that keeps failing on every retry.
+      // Same "would it change anything" rule as the SEO limits: a payload that
+      // matches the stored value is a no-op and must not 403 (a downgraded
+      // shop re-submits its stored `true` on every save of this tab).
+      const rawAutoTranslate = formData.get("autoTranslateExternalChanges");
+      // The sub-decision shares the parent's gate, so it shares the READ too:
+      // one query decides both, and neither can 403 on a value that is already
+      // stored. It is NOT gated on the parent being on — the column is
+      // deliberately independent (the server ANDs the two on every read), so a
+      // merchant may tick it before, or leave it ticked after, switching the
+      // automation off without losing the answer.
+      const rawAutoTranslateHandles = formData.get("autoTranslateHandles");
+      // The optional daily limit rides on the same gate: "" clears it (no
+      // limit), a positive integer sets it, anything else is refused BEFORE
+      // anything is written — never guessed into a number, and never 0, which
+      // would silently stop every first translation.
+      const rawDailyLimit = formData.get("autoTranslateDailyLimit");
+      const dailyLimit = parseAutoTranslateDailyLimit(rawDailyLimit);
+      if (dailyLimit === "invalid") {
+        return json(
+          { success: false, error: "The daily limit must be a whole number of at least 1, or empty.", actionType },
+          { status: 400 },
+        );
+      }
+      let autoTranslateUpdate: {
+        autoTranslateExternalChanges?: boolean;
+        autoTranslateHandles?: boolean;
+        autoTranslateDailyLimit?: number | null;
+      } = {};
+      if (rawAutoTranslate !== null || rawAutoTranslateHandles !== null || dailyLimit !== "absent") {
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: {
+            subscriptionPlan: true,
+            autoTranslateExternalChanges: true,
+            autoTranslateHandles: true,
+            autoTranslateDailyLimit: true,
+          },
+        });
+        const changes: Array<
+          | ["autoTranslateExternalChanges" | "autoTranslateHandles", boolean]
+          | ["autoTranslateDailyLimit", number | null]
+        > = [];
+        if (
+          rawAutoTranslate !== null &&
+          (row?.autoTranslateExternalChanges ?? false) !== (rawAutoTranslate === "true")
+        ) {
+          changes.push(["autoTranslateExternalChanges", rawAutoTranslate === "true"]);
+        }
+        if (
+          rawAutoTranslateHandles !== null &&
+          (row?.autoTranslateHandles ?? false) !== (rawAutoTranslateHandles === "true")
+        ) {
+          changes.push(["autoTranslateHandles", rawAutoTranslateHandles === "true"]);
+        }
+        if (dailyLimit !== "absent" && (row?.autoTranslateDailyLimit ?? null) !== dailyLimit) {
+          changes.push(["autoTranslateDailyLimit", dailyLimit]);
+        }
+        if (changes.length > 0) {
+          const { meetsPlan } = await import("../utils/planUtils");
+          const { AUTO_TRANSLATE_MIN_PLAN } = await import(
+            "../services/translations/translation-change-policy.shared"
+          );
+          const plan = (row?.subscriptionPlan || "free") as Plan;
+          if (!meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN)) {
+            return json(
+              {
+                success: false,
+                error: "Automatic re-translation of external changes is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoTranslateUpdate = Object.fromEntries(changes);
+        }
+      }
 
       // Sanitize HTML content in format examples (for description fields)
       const sanitizedData = {
@@ -712,14 +1019,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         policyDescriptionInstructions: data.policyDescriptionInstructions || null,
       };
 
-      await db.aIInstructions.upsert({
-        where: { shop: session.shop },
-        update: sanitizedData,
-        create: {
-          shop: session.shop,
-          ...sanitizedData,
-        },
-      });
+      // Only the fields this request CARRIES. The card sends what changed
+      // (its copy is seeded at mount and never re-synced), and writing the
+      // absent ones as NULL would erase every instruction a merchant did not
+      // touch in this save — the same absent-means-unchanged rule the switches
+      // below follow.
+      const sentInstructions = Object.fromEntries(
+        Object.entries(sanitizedData).filter(([key]) => formData.has(key)),
+      ) as Partial<typeof sanitizedData>;
+      if (Object.keys(sentInstructions).length > 0) {
+        await db.aIInstructions.upsert({
+          where: { shop: session.shop },
+          update: sentInstructions,
+          create: {
+            shop: session.shop,
+            ...sentInstructions,
+          },
+        });
+      }
 
       // Translation mode ("exact" | "seo_optimized") is stored on AISettings
       // and piggybacks on the same submit so the Translations sub-section has
@@ -734,18 +1051,81 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         rawKeywordAware === null ? {} : { keywordAwareTranslation: rawKeywordAware === "true" };
       const modeUpdate =
         rawMode === "exact" || rawMode === "seo_optimized" ? { translationMode: rawMode } : {};
-      if (Object.keys(modeUpdate).length > 0 || Object.keys(keywordAwareUpdate).length > 0) {
+
+      // "Bei Änderung der Hauptsprache" — same absent-means-unchanged rule.
+      const rawPurge = formData.get("translationPurgeOnPrimaryChange");
+      const purgeUpdate =
+        rawPurge === null ? {} : { translationPurgeOnPrimaryChange: rawPurge === "true" };
+
+      // The vision pair rides along on this card's one Save, like the
+      // translation knobs above — one request, one AISettings upsert, one
+      // answer for the toast to read. `saveAiVision` stays for the read-only
+      // plans, where this branch must not run at all.
+      const rawSendImages = formData.get("sendImagesToAI");
+      const rawImagesPerRequest = formData.get("aiImagesPerRequest");
+      const visionUpdate = {
+        ...(rawSendImages === null ? {} : { sendImagesToAI: rawSendImages === "true" }),
+        ...(rawImagesPerRequest === null
+          ? {}
+          : { aiImagesPerRequest: clampImagesPerRequest(Number(rawImagesPerRequest)) }),
+      };
+
+
+      // (The Max gate for autoTranslateExternalChanges already ran above, so
+      // `autoTranslateUpdate` is either the entitled change or empty.)
+      const translationSettingsUpdate = {
+        ...modeUpdate,
+        ...keywordAwareUpdate,
+        ...purgeUpdate,
+        ...autoTranslateUpdate,
+        ...visionUpdate,
+      };
+      if (Object.keys(translationSettingsUpdate).length > 0) {
         await db.aISettings.upsert({
           where: { shop: session.shop },
-          update: { ...modeUpdate, ...keywordAwareUpdate },
+          update: translationSettingsUpdate,
           create: {
             shop: session.shop,
-            ...modeUpdate,
-            ...keywordAwareUpdate,
+            ...translationSettingsUpdate,
             preferredProvider: "claude",
           },
         });
       }
+
+      return json({ success: true, actionType });
+    } else if (actionType === "saveAiVision") {
+      /**
+       * May the AI look at the shop's images, and at how many per request.
+       *
+       * Its OWN action rather than a rider on `saveInstructions`, for two
+       * reasons. Free and Basic see the instructions card read-only — it holds
+       * the default instructions on those plans — and this switch has to stay
+       * reachable there, because it was a checkbox in the content editor's
+       * toolbar on every plan before it moved here. And `saveInstructions`
+       * writes `data.<field> || null` for every instruction it knows: a save
+       * that carried only these two fields would blank the lot.
+       *
+       * Present-or-absent per field, and the count goes through the same clamp
+       * the Select is built from — this action takes a direct POST, so a
+       * stored 500 would be 500 images on every generation.
+       */
+      const rawSendImages = formData.get("sendImagesToAI");
+      const rawImagesPerRequest = formData.get("aiImagesPerRequest");
+      const visionUpdate = {
+        ...(rawSendImages === null ? {} : { sendImagesToAI: rawSendImages === "true" }),
+        ...(rawImagesPerRequest === null
+          ? {}
+          : { aiImagesPerRequest: clampImagesPerRequest(Number(rawImagesPerRequest)) }),
+      };
+      if (Object.keys(visionUpdate).length === 0) {
+        return json({ success: true, actionType });
+      }
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: visionUpdate,
+        create: { shop: session.shop, ...visionUpdate, preferredProvider: "claude" },
+      });
 
       return json({ success: true, actionType });
     } else if (actionType === "saveAppLanguage") {
@@ -767,6 +1147,210 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "createMarket" || actionType === "deleteMarket") {
+      // Märkte und Adressen: add a market (as a DRAFT) or delete one. Both are
+      // their own confirmed actions, replayed over a fresh read
+      // (market-address.server.ts).
+      const { loadMarketAddresses, validateMarketRequest, createMarket, deleteMarket } = await import(
+        "../services/market-address.server"
+      );
+      if (actionType === "deleteMarket") {
+        const marketId = getFormString(formData, "marketId");
+        if (!marketId) return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+        const outcome = await deleteMarket(admin, session.shop, marketId);
+        return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+      }
+      let countries: string[] = [];
+      try {
+        const parsed = JSON.parse(String(formData.get("countries") ?? "[]"));
+        countries = Array.isArray(parsed) ? parsed.filter((c): c is string => typeof c === "string") : [];
+      } catch {
+        return json({ success: false, actionType, marketId: "new", error: "invalidChanges" }, { status: 400 });
+      }
+      const addresses = await loadMarketAddresses(admin, session.shop, { currencies: false });
+      if (!addresses) return json({ success: false, actionType, marketId: "new", error: "unverified" }, { status: 502 });
+      const checked = validateMarketRequest({ name: getFormString(formData, "name") ?? "", countries }, addresses);
+      if (!checked.ok) return json({ success: false, actionType, marketId: "new", error: checked.error }, { status: 400 });
+      const outcome = await createMarket(admin, session.shop, { name: checked.name, countries: checked.countries });
+      return json({ success: outcome.ok, actionType, marketId: "new", error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "setMarketStatus") {
+      // Activate a (draft) market or switch one back to draft — the moment the
+      // shop starts or stops selling into its countries (market-address.server.ts).
+      const { setMarketStatus } = await import("../services/market-address.server");
+      const marketId = getFormString(formData, "marketId");
+      const status = getFormString(formData, "status");
+      if (!marketId || (status !== "ACTIVE" && status !== "DRAFT")) {
+        return json({ success: false, actionType, marketId: marketId ?? "", error: "invalidChanges" }, { status: 400 });
+      }
+      const outcome = await setMarketStatus(admin, session.shop, marketId, status);
+      return json({ success: outcome.ok, actionType, marketId, status, error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "removeOrphanAddress") {
+      // An address no market uses any more — removed only while the fresh
+      // read still shows it unclaimed (market-address.server.ts).
+      const { removeOrphanAddress } = await import("../services/market-address.server");
+      const presenceId = getFormString(formData, "presenceId");
+      if (!presenceId) return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+      const outcome = await removeOrphanAddress(admin, session.shop, presenceId);
+      return json({ success: outcome.ok, actionType, marketId: presenceId, error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "createMarketAddress" || actionType === "removeMarketAddress") {
+      // Märkte und Adressen: give a market its own subfolder, or take it back
+      // onto the shared address. Not a setting — it moves storefront URLs — so
+      // each is its own confirmed action, replayed over the addresses and shop
+      // locales read FRESH here (market-address.server.ts).
+      const {
+        loadMarketAddresses,
+        validateSubfolderRequest,
+        createMarketSubfolder,
+        removeMarketAddress,
+      } = await import("../services/market-address.server");
+      const marketId = getFormString(formData, "marketId");
+      if (!marketId) {
+        return json({ success: false, actionType, marketId: "", error: "invalidChanges" }, { status: 400 });
+      }
+      if (actionType === "removeMarketAddress") {
+        const outcome = await removeMarketAddress(admin, session.shop, marketId);
+        return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+      }
+      let alternates: string[] = [];
+      try {
+        const parsed = JSON.parse(String(formData.get("alternateLocales") ?? "[]"));
+        alternates = Array.isArray(parsed) ? parsed.filter((l): l is string => typeof l === "string") : [];
+      } catch {
+        return json({ success: false, actionType, marketId, error: "invalidChanges" }, { status: 400 });
+      }
+      const [addresses, localesJson] = await Promise.all([
+        loadMarketAddresses(admin, session.shop, { currencies: false }),
+        admin
+          .graphql(`#graphql
+            query settingsShopLocalesForAddress {
+              shopLocales {
+                locale
+              }
+            }`)
+          .then((r) => r.json() as Promise<{ data?: { shopLocales?: Array<{ locale: string }> } }>),
+      ]);
+      const locales = (localesJson.data?.shopLocales ?? []).map((l) => l.locale);
+      if (!addresses || locales.length === 0) {
+        return json({ success: false, actionType, marketId, error: "unverified" }, { status: 502 });
+      }
+      const checked = validateSubfolderRequest(
+        {
+          marketId,
+          suffix: getFormString(formData, "suffix") ?? "",
+          defaultLocale: getFormString(formData, "defaultLocale") ?? "",
+          alternateLocales: alternates,
+        },
+        addresses,
+        locales,
+      );
+      if (!checked.ok) return json({ success: false, actionType, marketId, error: checked.error }, { status: 400 });
+      const outcome = await createMarketSubfolder(admin, session.shop, checked.request);
+      return json({ success: outcome.ok, actionType, marketId, error: outcome.ok ? undefined : outcome.error });
+    } else if (actionType === "saveShopLocalePublication" || actionType === "removeShopLocale") {
+      // Settings → Sprachen und Märkte. Everything submitted is replayed over the
+      // shop's CURRENT locales, read fresh here: the client's copy may be a
+      // minute old, and an unknown or primary locale is refused rather than
+      // sent (shop-locale-publish.server.ts). A REMOVAL is its own action,
+      // behind the two-step typed confirmation — it is irreversible, so it
+      // never rides along with a save of switches.
+      const parseList = <T,>(raw: FormDataEntryValue | null, pick: (c: any) => T | null): T[] | null => {
+        try {
+          const parsed = JSON.parse(String(raw || "[]"));
+          if (!Array.isArray(parsed)) return null;
+          return parsed.map(pick).filter((x): x is T => x !== null);
+        } catch {
+          return null;
+        }
+      };
+      const publish = parseList(formData.get("changes"), (c) =>
+        c && typeof c.locale === "string" && typeof c.published === "boolean"
+          ? { locale: c.locale as string, published: c.published as boolean }
+          : null,
+      );
+      const add = parseList(formData.get("add"), (c) =>
+        c && typeof c.locale === "string" ? { locale: c.locale as string, published: c.published === true } : null,
+      );
+      const markets = parseList(formData.get("markets"), (c) =>
+        c && typeof c.locale === "string" && Array.isArray(c.webPresenceIds)
+          ? {
+              locale: c.locale as string,
+              webPresenceIds: (c.webPresenceIds as unknown[]).filter((id): id is string => typeof id === "string"),
+            }
+          : null,
+      );
+      const removeLocale = actionType === "removeShopLocale" ? getFormString(formData, "locale") : null;
+      if (
+        publish === null ||
+        add === null ||
+        markets === null ||
+        (actionType === "removeShopLocale" && !removeLocale)
+      ) {
+        // A CODE, rendered by the tab — no `error` key, or the page's generic
+        // info box prints English text.
+        return json({ success: false, failed: [{ locale: "", error: "invalidChanges" }], actionType }, { status: 400 });
+      }
+      const localesResponse = await admin.graphql(`#graphql
+        query settingsShopLocalesForPublish {
+          shopLocales {
+            locale
+            primary
+            published
+          }
+        }`);
+      const localesJson = (await localesResponse.json()) as {
+        data?: { shopLocales?: Array<{ locale: string; primary: boolean; published: boolean }> };
+      };
+      const current = localesJson.data?.shopLocales ?? [];
+      if (current.length === 0) {
+        // A failed lookup is not "no languages": refuse rather than guess.
+        return json({ success: false, failed: [{ locale: "", error: "localesUnreadable" }], actionType }, { status: 502 });
+      }
+      const {
+        planLocaleChanges,
+        applyLocaleChanges,
+        loadAvailableLocales,
+        loadMarketWebPresences,
+        planMarketAssignments,
+      } = await import("../services/shop-locale-publish.server");
+      const isRemoval = actionType === "removeShopLocale";
+      const [available, presences] = await Promise.all([
+        add.length > 0 ? loadAvailableLocales(admin) : Promise.resolve([]),
+        // Re-read, never trusted from the client: the planner validates the
+        // ids against it and keeps what the tab does not show.
+        !isRemoval && markets.length > 0 ? loadMarketWebPresences(admin, session.shop) : Promise.resolve([]),
+      ]);
+      const plan = isRemoval
+        ? planLocaleChanges(current, [], { publish: [], add: [], remove: [removeLocale as string] })
+        : planLocaleChanges(current, available, { publish, add, remove: [] });
+      // A language whose addition was REFUSED already has its line; its
+      // markets would only add a second one ("unknown language").
+      const refusedLocales = new Set(plan.refused.map((r) => r.locale.toLowerCase()));
+      const marketPlan = isRemoval
+        ? { changes: [], refused: [] }
+        : planMarketAssignments(
+            current,
+            presences,
+            markets.filter((m) => !refusedLocales.has(m.locale.toLowerCase())),
+            { adding: plan.add.map((a) => a.locale) },
+          );
+      const outcome = await applyLocaleChanges(admin, db, session.shop, {
+        ...plan,
+        markets: marketPlan.changes,
+        publishedBefore: Object.fromEntries(current.map((l) => [l.locale, l.published])),
+      });
+      const failed = [...plan.refused, ...marketPlan.refused, ...outcome.failed];
+      return json({
+        success: failed.length === 0,
+        actionType,
+        confirmed: outcome.confirmed,
+        added: outcome.added,
+        removed: outcome.removed,
+        marketsConfirmed: outcome.marketsConfirmed,
+        // No `error` key on a failure: the page's generic info box would
+        // print the raw codes. The tab renders `failed` itself, in the
+        // merchant's language.
+        failed,
+      });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       // Nightly audit switch. Only written when the field is present, so a
@@ -775,7 +1359,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // rule — a no-op payload from an unentitled shop must not 403.
       const rawAutoAudit = formData.get("seoAutoAuditEnabled");
       const autoAuditRequested = rawAutoAudit === null ? undefined : rawAutoAudit === "true";
+      // Weekly crawl switch — same present-or-absent rule as the audit one.
+      const rawAutoCrawl = formData.get("seoAutoCrawlEnabled");
+      const autoCrawlRequested = rawAutoCrawl === null ? undefined : rawAutoCrawl === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
+
+      // PLAN §Phase 3.3 — auto-redirect on handle change. Read as
+      // present-or-absent, NOT as `=== "true"` on a possibly-missing field:
+      // this setting defaults to ON, so a payload that simply does not carry
+      // it (an older client, another caller of this action) would otherwise
+      // switch it off without anyone asking.
+      const rawAutoRedirect = formData.get("seoAutoHandleRedirect");
+      const autoRedirectUpdate =
+        rawAutoRedirect === null ? undefined : String(rawAutoRedirect) === "true";
 
       // Merchant-editable SEO character limits (Pro+). Parse first, then
       // decide whether the plan gate needs to fire — a payload that would
@@ -847,7 +1443,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             return json(
               {
                 success: false,
-                error: "The nightly SEO audit is available on the Max plan.",
+                error: "The daily SEO audit is available on the Max plan.",
                 actionType,
               },
               { status: 403 },
@@ -857,20 +1453,48 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
+      let autoCrawlUpdate: boolean | undefined = undefined;
+      if (autoCrawlRequested !== undefined) {
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoAutoCrawlEnabled: true },
+        });
+        const current = row?.seoAutoCrawlEnabled ?? true;
+        if (current !== autoCrawlRequested) {
+          const { canAccessSeoFeature } = await import("../utils/planUtils");
+          const plan = (row?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!canAccessSeoFeature(plan, "scheduledCrawl")) {
+            return json(
+              {
+                success: false,
+                error: "The weekly storefront crawl is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoCrawlUpdate = autoCrawlRequested;
+        }
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
+          ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+          ...(autoCrawlUpdate !== undefined ? { seoAutoCrawlEnabled: autoCrawlUpdate } : {}),
         },
         create: {
           shop: session.shop,
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
+          ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+          ...(autoCrawlUpdate !== undefined ? { seoAutoCrawlEnabled: autoCrawlUpdate } : {}),
         },
       });
 
@@ -1066,8 +1690,142 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType, enabledCount: toInsert.length, failed });
-    } else {
-      // Validate and save AI settings
+    } else if (actionType === "saveAiProcessingConsent") {
+      // §2 rule 1 — explicit, LOGGED, versioned consent to processing content
+      // through the OPERATOR's AI account. It is what makes managed mode
+      // permissible at all (the compliance audit's §B4 names it as the second
+      // of two acceptable fixes), so three properties are not negotiable.
+      //
+      // EXPLICIT: its own action, its own button, never folded into a Save bar
+      // that also carries five other settings. A box that becomes consent when
+      // some other control is saved is the bundled consent the audit refuses.
+      //
+      // VERSIONED: the stored version is compared for EQUALITY, so the day a
+      // sub-processor changes, bumping the constant re-asks everybody. A
+      // merchant who agreed to two named providers has not agreed to a third.
+      //
+      // LOGGED: the event, not just the state. `aiProcessingConsentAt` is the
+      // record; this line is the audit trail a reviewer asks for.
+      const granted = getFormString(formData, "consent") === "true";
+
+      // The merchant agrees to the text they were SHOWN, which is not
+      // necessarily the text this process now holds: a deploy between the
+      // render and the click would otherwise record agreement to wording
+      // nobody read — which is the one property versioning exists to make
+      // impossible. A mismatch refuses and asks them to look again.
+      // A grant WITHOUT a version is refused the same way: the page always
+      // sends one, so its absence is a direct POST that read nothing.
+      const shownVersion = getFormString(formData, "consentVersion");
+      if (granted && shownVersion !== AI_PROCESSING_CONSENT_VERSION) {
+        logger.warn("[Settings] Consent posted against an outdated text version", {
+          shop: session.shop,
+          shown: shownVersion,
+          current: AI_PROCESSING_CONSENT_VERSION,
+        });
+        return json(
+          {
+            success: false,
+            actionType,
+            code: "consentTextChanged",
+            error: "The processing notice has changed. Please read it again and confirm.",
+          },
+          { status: 409 },
+        );
+      }
+
+      await db.aISettings.update({
+        where: { shop: session.shop },
+        data: granted
+          ? {
+              aiProcessingConsentAt: new Date(),
+              aiProcessingConsentVersion: AI_PROCESSING_CONSENT_VERSION,
+            }
+          : // Withdrawal clears BOTH, so nothing can read a version without a
+            // timestamp as consent.
+            { aiProcessingConsentAt: null, aiProcessingConsentVersion: null },
+      });
+      // The durable record. The columns above are the CURRENT answer and a
+      // withdrawal clears them; this row is what still shows, afterwards,
+      // that consent was given for the calls made while it stood. Its own
+      // try: the consent itself is saved, and a failed log line must not
+      // report the merchant's decision as failed.
+      try {
+        await db.aiConsentEvent.create({
+          data: {
+            shop: session.shop,
+            granted,
+            version: granted ? AI_PROCESSING_CONSENT_VERSION : null,
+          },
+        });
+      } catch (error) {
+        logger.error("[Settings] Could not append the AI consent event", {
+          shop: session.shop,
+          granted,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      logger.info("[Settings] AI processing consent recorded", {
+        shop: session.shop,
+        granted,
+        version: granted ? AI_PROCESSING_CONSENT_VERSION : null,
+      });
+      return json({ success: true, actionType, consented: granted });
+    } else if (actionType === "deleteAiKeys") {
+      // §8a rule 5 — a merchant must be able to ERASE a credential they gave
+      // us without uninstalling the app. In managed mode the key fields are
+      // hidden, so without this the only erasure route would be uninstalling,
+      // which is a weak answer to a GDPR request and an obvious App Review
+      // question.
+      //
+      // It clears the keys and nothing else: the provider and model choices
+      // survive, so a merchant who deletes a key and pastes a new one is back
+      // where they were.
+      // updateMany: a shop with no settings row has no keys to delete, and
+      // `update` would throw on it and report the erasure as failed.
+      await db.aISettings.updateMany({
+        where: { shop: session.shop },
+        data: {
+          huggingfaceApiKey: null,
+          geminiApiKey: null,
+          claudeApiKey: null,
+          openaiApiKey: null,
+          grokApiKey: null,
+          deepseekApiKey: null,
+        },
+      });
+
+      logger.info("[Settings] Stored AI keys deleted at merchant request", {
+        shop: session.shop,
+      });
+      return json({ success: true, actionType });
+    } else if (actionType === "saveAiKeys" || actionType === "saveSettings") {
+      // "saveSettings" is the OLD name, kept for exactly one release. An
+      // embedded app sits in an iframe for hours, so on deploy day a merchant
+      // whose tab still holds the previous bundle posts the old name — and
+      // with the fallback closed below, that POST would 400, the page would
+      // raise a critical banner, and their pasted API key would silently not
+      // save. A fetcher POST does not trigger React Router's manifest-mismatch
+      // reload, so it would not self-heal until a manual refresh. Drop this
+      // alias in the next deploy.
+      if (actionType === "saveSettings") {
+        logger.warn("[Settings] deprecated actionType saveSettings (stale bundle)", {
+          shop: session.shop,
+        });
+      }
+      // The AI credentials, the provider/model choice and the per-provider
+      // rate limits — the AI tab owns all of them and nothing else writes
+      // them.
+      //
+      // This used to be the unnamed `else` FALLBACK, which is what made it
+      // dangerous: any actionType that did not match a branch above landed in
+      // a write path, and `encryptApiKey(undefined)` returns null exactly like
+      // `encryptApiKey("")`, so a payload that merely omitted a field cleared
+      // a stored credential. It also invited a second caller to reuse the
+      // vague name "saveSettings" for a different tab's save — which is how
+      // the SEO-title-suffix wipe happened, one field at a time. A branch that
+      // writes secrets is matched by NAME, and an unknown action is refused
+      // below.
       const validationResult = parseFormData(formData, AISettingsSchema);
 
       if (!validationResult.success) {
@@ -1076,18 +1834,46 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const data = validationResult.data;
 
+      // The key fields are only a statement about the keys when the form was
+      // SHOWN them. In managed mode the loader withholds them and the tab is
+      // seeded with "" for every key — and `encryptApiKey("")` is null, so
+      // writing that payload back would delete every stored merchant key
+      // (§8a rule 4: the stored keys survive managed mode). Two signals, both
+      // refusing: the form says it was rendered without them (a tab seeded
+      // before a switch back to BYO), or the shop is on managed AI right now.
+      const storedForKeys = await db.aISettings.findUnique({ where: { shop: session.shop } });
+      const keysWithheld =
+        formData.get("keysWithheld") === "true" || keyFieldsWithheld(session.shop, storedForKeys);
+      const keyWrites = keysWithheld
+        ? {}
+        : {
+            huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
+            geminiApiKey: encryptApiKey(data.geminiApiKey),
+            claudeApiKey: encryptApiKey(data.claudeApiKey),
+            openaiApiKey: encryptApiKey(data.openaiApiKey),
+            grokApiKey: encryptApiKey(data.grokApiKey),
+            deepseekApiKey: encryptApiKey(data.deepseekApiKey),
+          };
+      if (keysWithheld) {
+        logger.info("[Settings] saveAiKeys without key fields — stored keys left untouched", {
+          shop: session.shop,
+        });
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
-          huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
-          geminiApiKey: encryptApiKey(data.geminiApiKey),
-          claudeApiKey: encryptApiKey(data.claudeApiKey),
-          openaiApiKey: encryptApiKey(data.openaiApiKey),
-          grokApiKey: encryptApiKey(data.grokApiKey),
-          deepseekApiKey: encryptApiKey(data.deepseekApiKey),
+          ...keyWrites,
           preferredProvider: data.preferredProvider,
           selectedModel: data.selectedModel || null,
-          appLanguage: data.appLanguage,
+          // appLanguage is NOT written here — it belongs to `saveAppLanguage`.
+          // The AI tab sends it from a prop seeded at mount and never
+          // re-synced, so writing it back on every key save wrote the app
+          // language as it had been minutes earlier: with two tabs open, a
+          // language change in one was undone by saving a key in the other.
+          // Same class as the SEO suffix, one column over. The field stays in
+          // the payload because the CREATE half below seeds a NEW row from it,
+          // where there is no stored value to lose.
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
           hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,
           geminiMaxTokensPerMinute: data.geminiMaxTokensPerMinute,
@@ -1100,8 +1886,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
-          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
-          seoTitleSuffix: data.seoTitleSuffix || null,
+          // seoTitleSuffix(Enabled) are NOT written here: they belong to
+          // `saveSeoSettings`, and this branch is posted by the AI tab, whose
+          // payload does not carry them. Zod then filled the gap with its own
+          // defaults — `?? false` and `|| null` — so every save in the AI tab
+          // silently cleared a suffix the merchant had configured in the SEO
+          // tab. Same failure the `saveAppLanguage` branch above was narrowed
+          // to fix ("fields not in the payload got wiped"); a field is written
+          // by the action that owns it, or not at all.
         },
         create: {
           shop: session.shop,
@@ -1113,6 +1905,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           deepseekApiKey: encryptApiKey(data.deepseekApiKey),
           preferredProvider: data.preferredProvider,
           selectedModel: data.selectedModel || null,
+          // Only on CREATE: there is no stored value to overwrite, and Prisma's
+          // own default applies when the field is absent.
           appLanguage: data.appLanguage,
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
           hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,
@@ -1126,12 +1920,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
-          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
-          seoTitleSuffix: data.seoTitleSuffix || null,
+          // seoTitleSuffix(Enabled) are NOT written here: they belong to
+          // `saveSeoSettings`, and this branch is posted by the AI tab, whose
+          // payload does not carry them. Zod then filled the gap with its own
+          // defaults — `?? false` and `|| null` — so every save in the AI tab
+          // silently cleared a suffix the merchant had configured in the SEO
+          // tab. Same failure the `saveAppLanguage` branch above was narrowed
+          // to fix ("fields not in the payload got wiped"); a field is written
+          // by the action that owns it, or not at all.
         },
       });
 
       return json({ success: true, actionType });
+    } else {
+      // An unrecognised actionType is a bug in a caller, not a save. Refusing
+      // it is what keeps the branches above closed: every one of them writes a
+      // different subset of AISettings, so a request that matches none of them
+      // has no correct subset to write.
+      // The raw value goes to the log, never into the banner: this response is
+      // rendered as a critical InfoBox and the app ships in three languages, so
+      // a developer string would be shown to a merchant untranslated.
+      logger.warn("[Settings] Unknown actionType", { shop: session.shop, actionType });
+      return json(
+        { success: false, error: "Unsupported settings action", actionType },
+        { status: 400 },
+      );
     }
   } catch (error: unknown) {
     // Use safe error handler to prevent information leakage
@@ -1144,7 +1957,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, showTaxonomyProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], availableShopLocales = null, marketWebPresences = null, marketAddresses = null, glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null, autoTranslateRetrySummary = null, managedAiOffered = false, managedAiTasterActions = 0, managedAiConsentedAt = null, managedAiConsentVersion = null, managedAiBudget = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1157,11 +1970,25 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe" | "pagespeedprobe";
+  type Section = "setup" | "languages" | "ai" | "instructions" | "other" | "seo" | "plan" | "probes";
+
+  // The three dev-only probes share ONE tab with a sub-tab strip. Their gates
+  // stay per probe (unchanged), so the tab itself exists iff any of them is on.
+  const showProbesTab =
+    showTranslationProbeTab ||
+    showPageSpeedProbeTab ||
+    showCollectionProbeTab ||
+    showMetaobjectProbeTab ||
+    showUnitPriceProbeTab ||
+    showPublicationProbeTab ||
+    showTaxonomyProbeTab;
 
   const getInitialSection = (): Section => {
-    if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
+    // An explicit `tab` wins over a billing result: the callback's `billing`
+    // used to ride along on every later navigation, so a banner's "open the
+    // AI tab" link landed on the plan tab instead.
+    if (searchParams.get("billing") && !tabParam) return "plan";
     // Legacy deep-links keep working: language/glossary/feedback landed inside
     // the Setup / AI-Instructions tabs; translations/sku/metafields/richtext/
     // recurring/imagemanager all now live inside the "Weiteres" (other) tab.
@@ -1175,12 +2002,35 @@ export default function SettingsPage() {
       tabParam === "richtext" ||
       tabParam === "imagemanager"
     ) return "other";
-    if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam === "pagespeedprobe" && !showPageSpeedProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe", "pagespeedprobe"].includes(tabParam)) {
+    // Legacy probe deep-links keep working: each one now opens the shared
+    // "Probes" tab on its own sub-tab. A probe whose own gate is closed still
+    // falls back to setup — the group gate must not re-open an individual one.
+    if (tabParam === "translationprobe") return showTranslationProbeTab ? "probes" : "setup";
+    if (tabParam === "pagespeedprobe") return showPageSpeedProbeTab ? "probes" : "setup";
+    if (tabParam === "collectionprobe") return showCollectionProbeTab ? "probes" : "setup";
+    if (tabParam === "metaobjectprobe") return showMetaobjectProbeTab ? "probes" : "setup";
+    if (tabParam === "unitpriceprobe") return showUnitPriceProbeTab ? "probes" : "setup";
+    if (tabParam === "publicationprobe") return showPublicationProbeTab ? "probes" : "setup";
+    if (tabParam === "taxonomyprobe") return showTaxonomyProbeTab ? "probes" : "setup";
+    if (tabParam === "probes") return showProbesTab ? "probes" : "setup";
+    if (tabParam && ["setup", "languages", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
+  };
+
+  // Deep-link target inside the "Probes" tab (undefined ⇒ the tab picks its
+  // own first available sub-tab).
+  const getInitialProbeSubTab = (): ProbeSubTab | undefined => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "translationprobe" && showTranslationProbeTab) return "translationprobe";
+    if (tabParam === "pagespeedprobe" && showPageSpeedProbeTab) return "pagespeedprobe";
+    if (tabParam === "collectionprobe" && showCollectionProbeTab) return "collectionprobe";
+    if (tabParam === "metaobjectprobe" && showMetaobjectProbeTab) return "metaobjectprobe";
+    if (tabParam === "unitpriceprobe" && showUnitPriceProbeTab) return "unitpriceprobe";
+    if (tabParam === "publicationprobe" && showPublicationProbeTab) return "publicationprobe";
+    if (tabParam === "taxonomyprobe" && showTaxonomyProbeTab) return "taxonomyprobe";
+    return undefined;
   };
 
   // Deep-link target inside the "Weiteres" tab. imagemanager only makes sense
@@ -1197,14 +2047,16 @@ export default function SettingsPage() {
 
   const [selectedSection, setSelectedSection] = useState<Section>(getInitialSection);
   const [initialOtherSubTab] = useState<OtherSubTab | undefined>(getInitialOtherSubTab);
+  const [initialProbeSubTab] = useState<ProbeSubTab | undefined>(getInitialProbeSubTab);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
   const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
   const [hasGlossaryChanges, setHasGlossaryChanges] = useState(false);
+  const [hasShopLanguageChanges, setHasShopLanguageChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges || hasShopLanguageChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
@@ -1212,6 +2064,26 @@ export default function SettingsPage() {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
+
+  // A deep link that arrives while Settings is ALREADY open (a banner's
+  // "confirm in Settings", the plan buttons in the nav) is a navigation to
+  // this same route: the component stays mounted, so the section read once
+  // into state above would ignore it — the merchant landed in Settings, on
+  // whatever tab was open. Every navigation carries a new location key, also
+  // one to the identical URL (the tab is not mirrored into the URL, so a
+  // second click on the same link changes nothing else). Only a navigation
+  // that NAMES a section moves it: dismissing the billing banner rewrites the
+  // URL too, and must not throw the merchant off the plan tab.
+  const location = useLocation();
+  const seenLocationKey = useRef(location.key);
+  useEffect(() => {
+    if (seenLocationKey.current === location.key) return;
+    seenLocationKey.current = location.key;
+    if (!searchParams.get("tab") && !searchParams.get("billing")) return;
+    const target = getInitialSection();
+    if (target !== selectedSection) void handleSectionChange(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
 
   // Reset changes state after successful save
   useEffect(() => {
@@ -1226,10 +2098,10 @@ export default function SettingsPage() {
   // Also revalidate root loader so SeoSettingsContext picks up new suffix immediately
   useEffect(() => {
     if (fetcher.data?.success) {
-      showInfoBox(t.common.settingsSaved, "success", t.common.success);
+      showInfoBox(t.common.settingsSaved, "success");
       revalidator.revalidate();
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
-      showInfoBox(fetcher.data.error as string, "critical", t.common.error);
+      showInfoBox(fetcher.data.error as string, "critical");
     }
   }, [fetcher.data, showInfoBox, t]);
 
@@ -1243,12 +2115,10 @@ export default function SettingsPage() {
     const template =
       t.settings?.corruptedApiKeyWarning ||
       "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.";
-    const title = t.settings?.corruptedApiKeyTitle || "API key error";
     for (const provider of corruptedApiKeys) {
       showInfoBox(
         template.replace("{provider}", getProviderDisplayName(provider as AIProvider)),
         "critical",
-        title,
         undefined,
         `corrupted-api-key:${provider}`,
       );
@@ -1261,11 +2131,11 @@ export default function SettingsPage() {
       { id: "setup", title: t.settings.appSetup },
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
+      { id: "languages", title: t.settings.shopLanguages?.title || "Languages and markets" },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "other", title: t.settings.otherSettings || "Weiteres" },
       { id: "plan", title: t.settings.plan },
-      ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
-      ...(showPageSpeedProbeTab ? [{ id: "pagespeedprobe", title: "PageSpeed Probe" }] : []),
+      ...(showProbesTab ? [{ id: "probes", title: "Probes" }] : []),
     ];
 
     registerItems({
@@ -1364,6 +2234,25 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
+                onClick={() => handleSectionChange("languages")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "languages" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "languages" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "languages" ? "semibold" : "regular"}>
+                  {t.settings.shopLanguages?.title || "Languages and markets"}
+                </Text>
+              </button>
+              <button
                 onClick={() => handleSectionChange("seo")}
                 style={{
                   width: "100%",
@@ -1420,45 +2309,24 @@ export default function SettingsPage() {
                   {t.settings.plan}
                 </Text>
               </button>
-              {showTranslationProbeTab && (
+              {showProbesTab && (
               <button
-                onClick={() => handleSectionChange("translationprobe")}
+                onClick={() => handleSectionChange("probes")}
                 style={{
                   width: "100%",
                   padding: "1rem",
-                  background: selectedSection === "translationprobe" ? "#f1f8f5" : "white",
+                  background: selectedSection === "probes" ? "#f1f8f5" : "white",
                   borderTop: "1px solid #e1e3e5",
                   borderRight: "none",
                   borderBottom: "none",
-                  borderLeft: selectedSection === "translationprobe" ? "3px solid #008060" : "3px solid transparent",
+                  borderLeft: selectedSection === "probes" ? "3px solid #008060" : "3px solid transparent",
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "translationprobe" ? "semibold" : "regular"}>
-                  Translation Probe
-                </Text>
-              </button>
-              )}
-              {showPageSpeedProbeTab && (
-              <button
-                onClick={() => handleSectionChange("pagespeedprobe")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "pagespeedprobe" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "pagespeedprobe" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "pagespeedprobe" ? "semibold" : "regular"}>
-                  PageSpeed Probe
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "probes" ? "semibold" : "regular"}>
+                  Probes
                 </Text>
               </button>
               )}
@@ -1489,10 +2357,28 @@ export default function SettingsPage() {
               {/* AI Settings */}
               {selectedSection === "ai" && (
                 <SettingsAITab
+                  // Remount when the key fields switch between withheld and
+                  // shown: the tab seeds its key state ONCE, so a switch back
+                  // to own-key would otherwise keep the "" it was seeded with
+                  // in managed mode and offer to save that over the real keys.
+                  key={settings.apiKeysWithheld ? "keys-withheld" : "keys-shown"}
                   settings={settings}
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasAIChanges}
+                  managedAi={{
+                    onManaged: settings.managedAiOn === true,
+                    managedAiActive: settings.managedAiActive,
+                    managedAiOffered,
+                    tasterActions: managedAiTasterActions,
+                    tasterSpent: settings.managedAiTasterSpent,
+                    consented: settings.managedAiConsented,
+                    consentedAt: managedAiConsentedAt,
+                    consentVersion: managedAiConsentVersion,
+                    storedApiKeyCount: settings.storedApiKeyCount,
+                    ownKeyStored: settings.managedAiOwnKeyStored === true,
+                    budget: managedAiBudget,
+                  }}
                 />
               )}
 
@@ -1520,8 +2406,30 @@ export default function SettingsPage() {
                     onGlossaryHasChangesChange={setHasGlossaryChanges}
                     translationMode={settings.translationMode}
                     keywordAwareTranslation={settings.keywordAwareTranslation}
+                    translationPurgeOnPrimaryChange={settings.translationPurgeOnPrimaryChange}
+                    autoTranslateExternalChanges={settings.autoTranslateExternalChanges}
+                    autoTranslateHandles={settings.autoTranslateHandles}
+                    autoTranslateDailyLimit={settings.autoTranslateDailyLimit}
+                    autoTranslateRetrySummary={autoTranslateRetrySummary}
+                    subscriptionPlan={subscriptionPlan as Plan}
+                    sendImagesToAI={settings.sendImagesToAI}
+                    aiImagesPerRequest={settings.aiImagesPerRequest}
                   />
                 </>
+              )}
+
+              {/* Shop languages — publish / unpublish; an unpublished one is
+                  prepared here like any other (translationForeignLocales). */}
+              {selectedSection === "languages" && (
+                <SettingsShopLanguagesTab
+                  shopLocales={shopLocales}
+                  availableLocales={availableShopLocales}
+                  marketWebPresences={marketWebPresences}
+                  marketAddresses={marketAddresses}
+                  fetcher={fetcher}
+                  t={t}
+                  onHasChangesChange={setHasShopLanguageChanges}
+                />
               )}
 
               {/* SEO Settings */}
@@ -1602,17 +2510,27 @@ export default function SettingsPage() {
                     pageCount={pageCount}
                     themeTranslationCount={themeTranslationCount}
                     imageOperationCount={imageOperationCount}
+                    managedAiOffered={managedAiOffered}
+                    managedAiActive={settings.managedAiActive}
+                    managedAiTasterActions={managedAiTasterActions}
                     t={t}
                   />
                 </>
               )}
 
-              {/* Translation Coverage Probe (Phase 0 dev tool) */}
-              {selectedSection === "translationprobe" && showTranslationProbeTab && (
-                <SettingsTranslationProbeTab />
-              )}
-              {selectedSection === "pagespeedprobe" && showPageSpeedProbeTab && (
-                <SettingsPageSpeedProbeTab />
+              {/* Dev-only diagnostic probes — one tab, one sub-tab per probe,
+                  each still behind its own gate (see SettingsProbesTab). */}
+              {selectedSection === "probes" && showProbesTab && (
+                <SettingsProbesTab
+                  showTranslationProbe={showTranslationProbeTab}
+                  showPageSpeedProbe={showPageSpeedProbeTab}
+                  showCollectionProbe={showCollectionProbeTab}
+                  showMetaobjectProbe={showMetaobjectProbeTab}
+                  showUnitPriceProbe={showUnitPriceProbeTab}
+                  showPublicationProbe={showPublicationProbeTab}
+                  showTaxonomyProbe={showTaxonomyProbeTab}
+                  initialSubTab={initialProbeSubTab}
+                />
               )}
             </BlockStack>
           </div>

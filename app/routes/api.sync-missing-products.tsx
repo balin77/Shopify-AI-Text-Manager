@@ -15,6 +15,12 @@ import { db } from "../db.server";
 import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
+import {
+  PRODUCT_ATTRIBUTE_SELECTION,
+  PRODUCT_COLLECTIONS_SELECTION,
+  productAttributeColumns,
+  productCollectionRows,
+} from "../services/attribute-sync.shared";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
@@ -64,7 +70,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 handle
                 status
                 productType
-                updatedAt
+                updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
                 seo {
                   title
                   description
@@ -139,6 +145,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // templates", so a crash/contention between the two left the
         // product with zero/partial images until the next full sync.
         await withDbRaceRetry(() => db.$transaction(async (tx) => {
+        // PLAN_CONTENT_CREATION Phase 0 — same rule as the other product write
+        // paths: fetch and map the attribute block through the shared module,
+        // or discovered products keep attributesSyncedAt null and read as
+        // permanently "unknown".
+        const attributes = productAttributeColumns(product);
+        const membership = productCollectionRows(session.shop, product.id, product.collections);
+
         await tx.product.upsert({
           where: {
             shop_id: {
@@ -158,6 +171,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             seoDescription: product.seo?.description || null,
             featuredImageUrl: product.featuredImage?.url || null,
             featuredImageAlt: product.featuredImage?.altText || null,
+            ...attributes,
+            ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
             shopifyUpdatedAt: new Date(product.updatedAt),
             lastSyncedAt: new Date(),
           },
@@ -171,10 +186,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             seoDescription: product.seo?.description || null,
             featuredImageUrl: product.featuredImage?.url || null,
             featuredImageAlt: product.featuredImage?.altText || null,
+            ...attributes,
+            ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
             shopifyUpdatedAt: new Date(product.updatedAt),
             lastSyncedAt: new Date(),
           },
         });
+
+        // Collection membership — rebuilt per product; skipped entirely when
+        // the block was not delivered, so a narrower response can never be
+        // written as "in 0 collections".
+        if (membership) {
+          await tx.productCollection.deleteMany({ where: { productId: product.id } });
+          if (membership.rows.length > 0) {
+            await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+          }
+        }
 
         // Save images if plan allows
         if (planLimits.cacheEnabled.productImages) {

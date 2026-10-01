@@ -7,6 +7,7 @@
 import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { ValidationOverlays } from "~/utils/field-validation.utils";
+import type { InfoBoxLink } from "~/contexts/InfoBoxContext";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -18,6 +19,9 @@ export interface ShopLocale {
   locale: string;
   primary: boolean;
   name?: string;
+  /** `false` for a language the merchant is preparing before launch — it is
+   *  translated like any other and only MARKED in the language bar. */
+  published?: boolean;
 }
 
 export interface Translation {
@@ -99,9 +103,14 @@ export interface TranslatableContentItem {
     id: string;           // gid://shopify/ProductOption/...
     name: string;
     position: number;
-    values: Array<{ id: string; name: string; linked?: boolean }>;  // ProductOptionValue GIDs
+    values: Array<{ id: string; name: string; linked?: boolean; linkedValue?: string }>;  // ProductOptionValue GIDs; linkedValue = the metaobject GID behind a linked value
     isLinked?: boolean;   // true = metaobject-linked (values translated via Metaobjects, not here)
-    linkedMetaobjectType?: string;  // metaobject definition type handle (e.g. "color")
+    /** The linked METAFIELD's `namespace--key` (e.g. "shopify--color-pattern"),
+     *  NOT the metaobject definition type. The two are spelled alike only for
+     *  Shopify's standard definitions; for a custom option (`custom--stoff` over
+     *  the definition `stoff`) they differ, which is why the metaobjects page
+     *  strips the namespace before matching and prefers a linked entry GID. */
+    linkedMetafieldKey?: string;
   }>;
   metafields?: Array<{
     id: string;           // gid://shopify/Metafield/...
@@ -238,15 +247,62 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'menus' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
 
-export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
+/**
+ * `select`, `tags` and `toggle` are the PLAN_CONTENT_CREATION §Phase 3
+ * merchandising attributes. They differ from every type above them in one way
+ * that runs through the whole editor: they are NOT translatable. Shopify stores
+ * one value per item, not one per locale (`FIELD_TO_TRANSLATION_KEY` lists what
+ * is translatable, and none of these are on it), so in a foreign locale they
+ * render read-only with an explanation rather than looking editable and then
+ * silently writing the primary value.
+ */
+export type FieldType =
+  | 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options'
+  | 'select' | 'tags' | 'toggle' | 'money' | 'collectionRules'
+  // §Phase 3.1 — two lookups the cache cannot answer alone. `taxonomy` is
+  // Shopify's own ~10k-node category tree (searched live); `collections` is
+  // the shop's collection list, read from this app's own cache.
+  | 'taxonomy' | 'collections'
+  // Phase 4 — stock per location and sales channels. Its own type because it
+  // loads LIVE and saves through its own endpoint: stock is volatile, so a
+  // number carried in the editor's flat value map would be stale by the time
+  // the merchant pressed save.
+  | 'commerce'
+  // The theme template. A `select` whose options are the template FILES of the
+  // published theme, so it needs a lookup before it knows what it offers —
+  // which is what keeps it out of the plain `select` type. It saves like any
+  // other attribute.
+  | 'themeTemplate';
+
+/**
+ * One dynamic field handed to a page's `renderFieldGroup`.
+ *
+ * The rendered node alone would force the page to place controls by POSITION.
+ * The definition lets it pick one out by key, and the live value lets it paint
+ * something beside the control while the merchant is still typing.
+ */
+export interface RenderedGroupField {
+  field: FieldDefinition;
+  /** What the editor currently holds for it — not what the item stores. */
+  value: string;
+  node: React.ReactNode;
+}
 
 export interface FieldRenderProps {
   value: string;
   onChange: (value: string) => void;
   field: FieldDefinition;
   disabled?: boolean;
+  /**
+   * The editor's own read-only verdict — theme content in the primary locale,
+   * an app-embed technical field, or a metaobject definition Shopify does not
+   * let this app write (§7.2). A custom renderer that ignores it presents an
+   * editable control whose save can only fail, which is what the flag exists
+   * to prevent.
+   */
+  readOnly?: boolean;
   suggestion?: string;
   isPrimaryLocale?: boolean;
   isTranslated?: boolean;
@@ -269,9 +325,32 @@ export interface FieldRenderProps {
   t?: TranslationStrings;
 }
 
+/**
+ * Which card a field renders in.
+ *
+ * `searchEngine` collects the three fields Shopify's own admin groups under
+ * "Search engine listing" (SEO title, meta description, URL handle) into a
+ * card of their own, below the item's text. `details` is the merchandising
+ * card at the bottom. Everything else defaults to the main content card.
+ *
+ * WHERE a field renders and HOW it saves are two questions, and this type
+ * answers only the first. `isAttributeField` still answers the second — it
+ * decides the not-translatable notice, the `attributesSyncedAt` lock and the
+ * `changedFields` gate on the save, none of which follow from a position on
+ * screen. The default derives one from the other (an attribute lands in
+ * `details`, everything else in `main`), and `card` is how a field opts out:
+ * `category` is an attribute that renders in the MAIN card, and `productType`
+ * is translatable content that renders in the DETAILS card, next to the
+ * category it is so easily confused with. Both keep their own save semantics.
+ */
+export type FieldCard = 'main' | 'searchEngine' | 'details';
+
 export interface FieldDefinition {
   /** Unique key for this field */
   key: string;
+
+  /** Which card this field renders in (default: "main") */
+  card?: FieldCard;
 
   /** Field type determines the UI component */
   type: FieldType;
@@ -281,6 +360,17 @@ export interface FieldDefinition {
 
   /** Translation key used in Shopify API */
   translationKey: string;
+
+  /**
+   * Dynamic fields only: which CARD this field belongs to.
+   *
+   * The metaobjects tab builds one field per entry x definition field, and a
+   * flat list of them repeats every label ("Label", "Colour", "Label", ...)
+   * with nothing saying which entry it belongs to. Fields sharing a groupId
+   * are handed to the page's `renderFieldGroup` as one group; without one the
+   * editor renders the fields exactly as it always did.
+   */
+  groupId?: string;
 
   /** Optional help text */
   helpText?: string | ((value: string) => string);
@@ -308,6 +398,27 @@ export interface FieldDefinition {
 
   /** Optional: Custom render function for special field types */
   renderField?: (props: FieldRenderProps) => React.ReactNode;
+
+  // ── PLAN_CONTENT_CREATION §Phase 3 — merchandising attributes ─────────────
+
+  /** `select` only. `labelKey` resolves under `t.content.fieldOptions`, with
+   *  `label` as the fallback so a missing translation degrades to English
+   *  rather than to a raw enum value. */
+  options?: Array<{ value: string; labelKey?: string; label: string }>;
+
+  /** `tags` only: suggestions for the autocomplete, gathered from the shop. */
+  suggestionsKey?: 'productTags' | 'articleTags';
+
+  /** `toggle` only: what the two states mean, e.g. published vs. hidden. */
+  toggleLabels?: { on: string; off: string };
+
+  /** Rendered under the control — for the things a merchant cannot see, like
+   *  "Active does not mean visible without a sales channel" (§2.3). */
+  attributeNote?: string;
+
+  /** `money` only: the shop currency, shown as a suffix. Currency is shop-wide,
+   *  never per field — the same rule the bulk editor's money columns follow. */
+  currencyCode?: string;
 }
 
 export interface ContentEditorConfig {
@@ -327,7 +438,38 @@ export interface ContentEditorConfig {
   displayNameSingular: string;
 
   /** Whether to show SEO sidebar */
-  showSeoSidebar?: boolean;
+  showItemSidebar?: boolean;
+
+  /**
+   * PLAN_CONTENT_CREATION §1.1/§2.6 — which resource the "+" button creates.
+   *
+   * A FLAG per config, not a global default, because create is impossible on
+   * several tabs and for different reasons: policies are a fixed set of six
+   * with no create API, the whole theme-content family has no creatable
+   * resources at all. Leaving it unset is how those tabs say so.
+   *
+   * `blogs` is the one tab with TWO creatable resources (the blog container
+   * and an article inside it), which is why this is a list.
+   */
+  createSupport?: {
+    /** Offered in the create menu, in this order. */
+    resources: Array<"product" | "collection" | "page" | "article" | "blog" | "metaobject">;
+    /**
+     * Also offer creating from the EDITOR's action bar, not only from the "+"
+     * above the item list.
+     *
+     * Set where the item list does not list the thing that gets created. On
+     * the metaobjects tab the list holds TYPES ("Color", "Material") while
+     * create makes an ENTRY, so a "+" above that list reads as "add a type" --
+     * which this app cannot do at all, and which is why merchants looked at
+     * an open type and found no way to add anything to it. The action bar sits
+     * above the entry cards, i.e. above the things that actually appear.
+     *
+     * Everywhere else the list holds the created thing and the "+" is already
+     * in the right place; a second button there would be noise.
+     */
+    fromActionBar?: boolean;
+  };
 
   /** Custom primary field getter (t is optional for i18n support) */
   getPrimaryField?: (item: TranslatableContentItem, t?: I18nTranslation) => string | undefined;
@@ -342,7 +484,16 @@ export interface ContentEditorConfig {
   dynamicFields?: boolean;
 
   /** Function to generate field definitions dynamically from an item */
-  getFieldDefinitions?: (item: TranslatableContentItem) => FieldDefinition[];
+  /**
+   * `t` is the LOOSE `TranslationStrings`, not the strict per-locale type the
+   * two getters above take: the only caller is `useUnifiedContentEditor`,
+   * whose own `t` prop is the loose one. A dynamic field's label and help text
+   * are built here and nowhere else, so without it the only place to put such
+   * a string is an English literal in the config — which is what the metaobject
+   * list hint was. Read a value with a `typeof … === "string"` check: a block
+   * of `TranslationStrings` may legitimately hold a list.
+   */
+  getFieldDefinitions?: (item: TranslatableContentItem, t?: TranslationStrings) => FieldDefinition[];
 
   /** Custom function to get field value from item (for non-standard data structures) */
   getFieldValue?: (item: TranslatableContentItem, fieldKey: string) => string;
@@ -386,7 +537,6 @@ export interface EditorState {
   isLoadingImages?: boolean; // True when loading images on-demand from Shopify
   fallbackFields: Set<string>; // Fields showing fallback values (e.g., handle with primary locale value)
   loadingFieldKeys: Set<string>; // Fields with AI actions currently running (for per-field loading states)
-  sendImageToAI: boolean; // When enabled, sends images to vision-capable AI models
   selectedImageIndex: number; // Currently selected/viewed image index in products
   images: ContentImage[]; // All images for the current item
   featuredImage: ContentImage | null; // Featured image (for collections/blogs/products)
@@ -404,7 +554,9 @@ export interface EditorHandlers {
   /** True while that multi-field run is in flight. */
   isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
-  handleTranslateFieldToAllLocales: (fieldKey: string) => void;
+  /** `auto` marks a run the APP started rather than the merchant — it keeps a
+   *  failure off the red error banner. See useFieldHandlers. */
+  handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
@@ -436,7 +588,6 @@ export interface EditorHandlers {
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
   handleRejectAltTextSuggestion: (imageIndex: number) => void;
-  handleToggleSendImageToAI: () => void;
   setSelectedImageIndex: (index: number) => void;
 }
 
@@ -460,8 +611,9 @@ export interface UseContentEditorProps {
   /** Fetcher from useFetcher() */
   fetcher: FetcherWithComponents<FetcherData>;
 
-  /** ShowInfoBox function */
-  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
+  /** ShowInfoBox function — the context's own signature, so the context
+   *  function is assignable here. There is no `title`: see InfoBoxContext. */
+  showInfoBox: (message: string, tone?: InfoBoxTone, link?: InfoBoxLink, dedupeKey?: string) => void;
 
   /** Translation strings object */
   t: TranslationStrings;
@@ -469,14 +621,27 @@ export interface UseContentEditorProps {
   /** Optional callback when translateFieldToAllLocales completes successfully */
   onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
 
+  /** A "copy to all languages" that `onTranslateToAllLocalesComplete` was told
+   *  about up front did NOT save for these locales: a page that cached the
+   *  copied values has to take them back. */
+  onCopyToAllLocalesFailed?: (fieldKey: string, locales: string[]) => void;
+
   /** Optional initial item ID to select on mount (e.g. from URL params) */
   initialItemId?: string;
 
   /**
-   * Optional locale to open in, from `?locale=xx` on a deep link (the SEO
-   * dashboard links here with the locale it was showing). Ignored unless it is
-   * a published foreign locale of this shop — an unknown or stale code falls
-   * back to the primary language rather than opening an empty editor.
+   * Optional locale to open in, from `?contentLocale=xx` on a deep link (the
+   * SEO dashboard links here with the locale it was showing). Ignored unless it
+   * is a foreign locale of this shop — an unknown or stale code falls back to
+   * the primary language rather than opening an empty editor.
+   *
+   * The param has its own name because `?locale=` is NOT free: Shopify appends
+   * the merchant's ADMIN UI language under it on every embedded request, and
+   * `useAppNavigation` copies every param onto every in-app navigation — so
+   * reading `locale` here meant an English-speaking admin on a German shop that
+   * publishes English opened every product on the ENGLISH translation tab, and
+   * a remembered working language could never win against it because the param
+   * was always there.
    */
   initialLocale?: string;
 }
@@ -508,6 +673,27 @@ export interface UseContentEditorReturn {
     getValidationOverlays: () => ValidationOverlays;
     /** Increments whenever overlays change — use as useMemo dependency to trigger recomputation */
     validationVersion: number;
+    /**
+     * Hand a save response from a fetcher the editor does NOT own to the ONE
+     * background-task watcher, so the detached re-translation it started is
+     * waited for like any other. A response with no task ids is ignored, so
+     * this is always safe to call.
+     */
+    trackRetranslationTasks: (response: unknown) => void;
+    /** Watched re-translation runs that have not finished yet. */
+    pendingRetranslationCount: number;
+    /**
+     * Bumped once per completed background refresh, for a card this hook does
+     * not resolve — the product page's options and metafields load themselves
+     * and would otherwise never re-read.
+     */
+    backgroundRefreshVersion: number;
+    /**
+     * Report unsaved work this hook cannot see (sub-resource and image-manager
+     * edits). While it is true a finished background re-translation does NOT
+     * reload the page; the reload waits until it is false again.
+     */
+    setExternalUnsavedChanges: (hasChanges: boolean) => void;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */

@@ -30,7 +30,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const syncService = new ProductSyncService(admin, session.shop);
-    await syncService.syncProduct(productId);
+    await syncService.syncProduct(productId, false, { reconcileTranslations: true });
 
     // Fetch updated product and translations from database
     const { db } = await import("../db.server");

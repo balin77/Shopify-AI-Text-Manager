@@ -59,23 +59,31 @@
   endif
 -%}
 
-<meta property="og:title" content="{{ og_title | escape }}">
+{%- comment -%}
+  Every tag carries data-contentpilot, the same marker structured-data.liquid
+  puts on its JSON-LD blocks and for the same reason: most themes set og:title
+  and og:image themselves, and the delivered HTML otherwise cannot tell a
+  merchant which of two og:image tags is ours. `data-*` is valid on <meta> and
+  inert for every consumer -- Facebook, X, LinkedIn and Slack read `property`/
+  `name` and `content`, and ignore the rest.
+{%- endcomment -%}
+<meta property="og:title" content="{{ og_title | escape }}" data-contentpilot="og">
 {%- if og_description != blank -%}
-<meta property="og:description" content="{{ og_description | escape }}">
+<meta property="og:description" content="{{ og_description | escape }}" data-contentpilot="og">
 {%- endif -%}
-<meta property="og:url" content="{{ canonical_url | escape }}">
-<meta property="og:type" content="{{ og_type | escape }}">
+<meta property="og:url" content="{{ canonical_url | escape }}" data-contentpilot="og">
+<meta property="og:type" content="{{ og_type | escape }}" data-contentpilot="og">
 {%- if og_image != blank -%}
-<meta property="og:image" content="{{ og_image | escape }}">
+<meta property="og:image" content="{{ og_image | escape }}" data-contentpilot="og">
 {%- endif -%}
 
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="{{ og_title | escape }}">
+<meta name="twitter:card" content="summary_large_image" data-contentpilot="og">
+<meta name="twitter:title" content="{{ og_title | escape }}" data-contentpilot="og">
 {%- if og_description != blank -%}
-<meta name="twitter:description" content="{{ og_description | escape }}">
+<meta name="twitter:description" content="{{ og_description | escape }}" data-contentpilot="og">
 {%- endif -%}
 {%- if og_image != blank -%}
-<meta name="twitter:image" content="{{ og_image | escape }}">
+<meta name="twitter:image" content="{{ og_image | escape }}" data-contentpilot="og">
 {%- endif -%}
 
 {% schema %}
@@ -85,7 +93,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Adds Open Graph and Twitter Card meta tags so shared links show a title, description and image on Facebook, X/Twitter, LinkedIn, Slack, WhatsApp and AI chat link previews. Enable once - no placement needed."
+      "content": "Adds Open Graph and Twitter Card meta tags so shared links show a title, description and image on Facebook, X/Twitter, LinkedIn, Slack, WhatsApp and AI chat link previews. Enable once - no placement needed. Most themes already set og:title and og:image themselves; the app's Structured data section, step 3, measures which tags your pages already serve and whether switching this on would duplicate them."
     },
     {
       "type": "image_picker",

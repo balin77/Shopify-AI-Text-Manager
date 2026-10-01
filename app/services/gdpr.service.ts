@@ -189,17 +189,18 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 57 models in prisma/schema.prisma:
+ * Coverage of all 59 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
- *      Article, Page, ShopPolicy, Menu, ContentTranslation, ThemeContent,
+ *      Article, Page, ShopPolicy, Menu, ProductCollection,
+ *      ContentTranslation, ThemeContent,
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
- *      ImageOperationCounter, EnabledMetafieldDefinition,
+ *      ImageOperationCounter, AiUsageCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
- *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
+ *      DirectTranslationSettings, Seo404Hit, SeoAiReferral, SeoKeyword,
  *      SeoKeywordAssignment, SeoKeywordGroup, SeoKeywordGroupMembership,
  *      SeoKeywordSnapshot,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
@@ -265,6 +266,34 @@ export async function redactShopData(
     logger.debug(`[GDPR] Deleted ${tasksDeleted.count} tasks`);
 
     // 5. Delete products (cascade will delete translations, images, etc.)
+    // ProductCollection cascades through Product, but is deleted explicitly
+    // anyway: it is shop-scoped in its own right, and a purge that depends on
+    // the FK would silently miss rows whose product row was already gone.
+    const productCollectionsDeleted = await tx.productCollection.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${productCollectionsDeleted.count} product-collection memberships`);
+
+    // PLAN_CONTENT_CREATION Phase 4 — the commerce tables. Same reasoning as
+    // ProductCollection above: they cascade through Product / ProductVariant,
+    // and are deleted explicitly anyway because they are shop-scoped in their
+    // own right and a purge that leans on the FK misses rows whose parent was
+    // already gone. InventoryLevel first — it references Location.
+    const inventoryLevelsDeleted = await tx.inventoryLevel.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${inventoryLevelsDeleted.count} inventory levels`);
+
+    const publicationsDeleted = await tx.productPublication.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${publicationsDeleted.count} product publications`);
+
+    const locationsDeleted = await tx.location.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${locationsDeleted.count} locations`);
+
     const productsDeleted = await tx.product.deleteMany({
       where: { shop: shop_domain },
     });
@@ -308,6 +337,16 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${contentTranslationsDeleted.count} content translations`);
+
+    // 11a. The primary-digest baselines and the first-translation budget —
+    //      both shop-scoped and FK-less (the baseline is polymorphic like the
+    //      translations above).
+    const primaryBaselinesDeleted = await tx.primaryDigestBaseline.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${primaryBaselinesDeleted.count} primary digest baselines`);
+    await tx.autoTranslateFillBudget.deleteMany({ where: { shop: shop_domain } });
+    await tx.autoTranslateRetry.deleteMany({ where: { shop: shop_domain } });
 
     // 12. Delete theme content
     const themeContentDeleted = await tx.themeContent.deleteMany({
@@ -392,6 +431,20 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${imageOperationCountersDeleted.count} image operation counters`);
 
+    // 24b. Delete AI usage counters — shop-identifying usage data (Art. 17),
+    //      the same reasoning as the image counter above. Both key sources
+    //      ("managed" and "byo") are shop-scoped rows and go together.
+    const aiUsageCountersDeleted = await tx.aiUsageCounter.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${aiUsageCountersDeleted.count} AI usage counters`);
+
+    // 24c. The AI processing consent log — shop-scoped, goes with the shop.
+    const aiConsentEventsDeleted = await tx.aiConsentEvent.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${aiConsentEventsDeleted.count} AI consent events`);
+
     // 25. Delete enabled metafield-definition selections — shop-scoped config
     //     (which product metafields the merchant enabled for translation).
     const enabledMetafieldDefsDeleted = await tx.enabledMetafieldDefinition.deleteMany({
@@ -422,6 +475,14 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seo404HitsDeleted.count} SEO 404 hits`);
+
+    // AI referral tracking (aggregate visits from ChatGPT/Perplexity/...).
+    // Shop-scoped usage data, no visitor identifiers — deleted with the shop
+    // all the same.
+    const seoAiReferralsDeleted = await tx.seoAiReferral.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoAiReferralsDeleted.count} AI referral rows`);
 
     // Ranking history for SEO keyword assignments (shop-scoped). Deleted
     // before the assignment/keyword tables even though it also cascades on

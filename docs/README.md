@@ -24,7 +24,7 @@ nach Zweck sortiert.
 
 | Dokument | Beschreibung |
 |----------|--------------|
-| [ROADMAP.md](ROADMAP.md) | **⭐ Product Roadmap** — Vision, geplante Features, Timeline, Pricing |
+| [ROADMAP.md](ROADMAP.md) | **⭐ Roadmap** — Wegweiser: die Roadmap selbst ist `app/config/roadmap.server.ts` (eine Datei fuer Entwicklung UND Website) |
 
 ## 🏛️ Architektur — [architecture/](architecture/)
 
@@ -84,12 +84,16 @@ die Doku korrigieren.
 | [COMPETITIVE_ANALYSIS.md](reference/COMPETITIVE_ANALYSIS.md) | Wettbewerbsanalyse + Feature-Gaps |
 | [TECHNICAL_DEBT.md](reference/TECHNICAL_DEBT.md) | Technical Debt aus Code-Reviews |
 | [AI_PROVIDER_BALANCE_FEASIBILITY.md](reference/AI_PROVIDER_BALANCE_FEASIBILITY.md) | Machbarkeitsanalyse Restguthaben pro AI-Provider (recherchiert, nicht umgesetzt) |
+| [PRICING_AND_LIMITS.md](reference/PRICING_AND_LIMITS.md) | Limit-Review Mai 2026, Wettbewerber-Preis-Benchmark, Preisstrategie |
+| [JSONLD_BACKLOG.md](reference/JSONLD_BACKLOG.md) | Offene JSON-LD-Entscheidungen (Product vs ProductGroup, Merchant listings) |
+| [ROADMAP_ARCHIVE_2026-01.md](reference/ROADMAP_ARCHIVE_2026-01.md) | Die Roadmap vom Januar 2026, unveraendert |
 
 ## 📋 Pläne — [plans/](plans/)
 
 | Dokument | Beschreibung |
 |----------|--------------|
 | [PLAN_SEO_SUITE_COMPLETION.md](plans/PLAN_SEO_SUITE_COMPLETION.md) | Fertigstellung der SEO-Suite |
+| [PLAN_EXTRA_LANGUAGES.md](plans/PLAN_EXTRA_LANGUAGES.md) | Zusatzsprachen über Shopifys Limit hinaus — Stufe 1 Browser, Stufe 2 Proxy |
 
 ---
 

@@ -14,6 +14,15 @@
 
 // zod-based pure validation helpers — no server-only imports (safe here).
 import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
+// The enum vocabularies the create form and the single editor already offer.
+// From the import-FREE leaf module, never from create-fields.config: that file
+// imports metaobject-fields.shared, which imports this one, and spreading a
+// constant across that cycle reads it before it is initialised.
+import {
+  COLLECTION_SORT_ORDERS,
+  WEIGHT_UNITS,
+  INVENTORY_POLICIES,
+} from "../../config/shopify-enums.shared";
 
 // ─── Row types ─────────────────────────────────────────────────────────────
 
@@ -110,7 +119,11 @@ export interface ColumnDescriptor {
   editable: boolean;
   /** Whether the column is editable in a foreign locale (locale !== ""). */
   translatable: boolean;
-  inputType: "text" | "textarea" | "select" | "money" | "number" | "boolean";
+  /** "category" and "collections" are PICKER cells: the value is a GID (or a
+   *  canonical list of them) that no merchant types, so the cell renders the
+   *  same picker the single editor uses instead of a text box — see
+   *  `isPickerColumn`. */
+  inputType: "text" | "textarea" | "select" | "money" | "number" | "boolean" | "category" | "collections";
   minWidth: number;
   /** Upper bound for the column's grid track. Without it a column grows to an
    * equal 1fr share, which wastes the row's width on columns whose content is
@@ -119,6 +132,24 @@ export interface ColumnDescriptor {
   /** DB column backing a server-side sort — absent means the column is NOT
    * sortable and the header must not render a sort affordance (Plan §3.3). */
   sortKey?: string;
+  /** inputType "select": the enum values this column accepts, in offer order.
+   *
+   * The VALUE vocabulary, never the labels — those are i18n and live in
+   * `t.bulkEditor.enumLabels` keyed `<column.label>.<value>`, so the grid can
+   * word "true" as "Sichtbar" on one column and "Ja" on the next. Carried on
+   * the descriptor rather than in the cell component because both ends need
+   * it: the cell offers exactly these, and the server refuses anything else
+   * before the value can fail at the GraphQL SCHEMA level — where a bad enum
+   * comes back as a top-level `errors` array with `data: null` that never
+   * reaches `userErrors`, i.e. a save that reads as a success while nothing
+   * was written.
+   *
+   * Deliberately NOT how `field.templateSuffix` gets its options: those are
+   * the published THEME's files, so they are per shop and per resource, which
+   * a static column universe cannot carry (and which the server, like the
+   * single editor, does not re-validate). The grid feeds that one list in as a
+   * prop; see `ThemeTemplateField` for the same lookup one item at a time. */
+  selectOptions?: string[];
   /** kind "metafield": the Shopify metafield type (drives cell rendering AND
    * is sent verbatim in metafieldsSet — §14 no. 4: type is mandatory when the
    * set creates a metafield without a definition). */
@@ -207,7 +238,12 @@ export function isListShapedColumn(column: ColumnDescriptor): boolean {
  */
 export function columnCanHaveCellActions(column: ColumnDescriptor): boolean {
   if (!column.editable) return false;
-  if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
+  if (
+    column.inputType === "select" ||
+    column.inputType === "money" ||
+    column.inputType === "number" ||
+    isPickerColumn(column)
+  ) {
     return false;
   }
   return column.kind === "field" || column.translatable;
@@ -265,6 +301,83 @@ const FEATURED_ALT_TRANSLATION_CALLS = 3;
  * rather than pattern-matching the column id. */
 export function isFeaturedImageAltColumn(column: ColumnDescriptor): boolean {
   return column.id === FEATURED_IMAGE_ALT_COLUMN_ID;
+}
+
+/**
+ * The product's taxonomy category and its collection memberships — edited in
+ * the grid through the SAME pickers the single editor uses.
+ *
+ * Neither survives a text cell, which is why they were read-only first and why
+ * they are PICKER cells now rather than text:
+ *
+ *  - A category is a `TaxonomyCategory` GID chosen from Shopify's tree. Its NAME
+ *    is what a merchant reads, and a name is not a value that can be written
+ *    back — the tree repeats names under different parents. So the cell VALUE is
+ *    the GID (the single editor's representation), and the picker shows the
+ *    name.
+ *  - A membership is a JOIN/LEAVE DIFF (`collectionsToJoin`/`ToLeave`), never a
+ *    list: a product can belong to collections whose rows this shop never
+ *    cached, collection titles are not unique, and a RULE-BASED collection must
+ *    be refused in both directions — Shopify rejects a manual join on one, and
+ *    because `productUpdate` is atomic that refusal takes the merchant's text
+ *    edits with it. So the cell value is the membership as canonical GIDs
+ *    (`canonicalCollectionIds`), the picker LOCKS what the server would refuse
+ *    (`collectionPickerRows`, shared with the editor), and the save diffs
+ *    against the CACHE with `diffCollectionMembership` exactly as the editor's
+ *    save does.
+ *
+ * The value being a GID is also why a rectangular PASTE must not reach these
+ * cells, and why the server refuses a cell carrying anything but GIDs: the
+ * editor's lenient `parseCollectionIds` drops what it cannot read, so a pasted
+ * "Sale, Winter" would parse to NO collections and be saved as "leave every
+ * manual collection".
+ */
+export const CATEGORY_COLUMN_ID = "field.category";
+export const COLLECTIONS_COLUMN_ID = "field.collections";
+
+const COL_CATEGORY = fieldColumn("category", {
+  translatable: false,
+  inputType: "category",
+  minWidth: 220,
+});
+
+const COL_COLLECTIONS = fieldColumn("collections", {
+  translatable: false,
+  inputType: "collections",
+  minWidth: 240,
+});
+
+/** A cell whose value only a picker can produce (see COL_CATEGORY). */
+export function isPickerColumn(column: ColumnDescriptor): boolean {
+  return column.inputType === "category" || column.inputType === "collections";
+}
+
+/**
+ * What a picker cell SHOWS where no picker is rendered — a read-only cell (the
+ * foreign-language tabs, an unsynced row), which otherwise prints its value.
+ *
+ * The value is GIDs, and a merchant reading "gid://shopify/Collection/123" in a
+ * column where the names used to be has learned nothing. The category shows the
+ * cached PATH while the value is still the cached one; memberships show their
+ * titles from the row. An id this row cannot name stays the id — an honest
+ * "we do not know its name" rather than a blank that reads as "none".
+ */
+export function pickerDisplayValue(row: BulkRow, column: ColumnDescriptor, value: string): string {
+  if (column.inputType === "category") {
+    return value && value === row.category ? row.categoryName || value : value;
+  }
+  if (column.inputType === "collections") {
+    const titles = new Map(
+      (row.collectionMemberships ?? []).map((m) => [m.collectionId, m.collectionTitle] as const),
+    );
+    return value
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => titles.get(id) || id)
+      .join(", ");
+  }
+  return value;
 }
 
 const BLOG_TITLE_COLUMN: ColumnDescriptor = {
@@ -328,10 +441,93 @@ const MO_HANDLE_COLUMN: ColumnDescriptor = {
 // read-only too. ALL variant columns are translatable:false — prices/SKUs
 // have no translation layer.
 
+/** `isPublished`, `taxable`, … — a boolean cell is a two-value enum, so it
+ *  rides the same select machinery rather than growing a checkbox kind of its
+ *  own. The strings are what the diff, the CSV round trip and the edit map all
+ *  carry; only the LABEL differs per column (`enumLabels`). */
+export const BOOLEAN_SELECT_OPTIONS = ["true", "false"];
+
 export const VAR_SKU_COLUMN_ID = "var.sku";
 export const VAR_PRICE_COLUMN_ID = "var.price";
 export const VAR_COMPARE_AT_COLUMN_ID = "var.compareAtPrice";
 export const VAR_BARCODE_COLUMN_ID = "var.barcode";
+
+// ─── The Phase-4 commerce block (PLAN_CONTENT_CREATION §Phase 4) ───────────
+//
+// The single editor's variants card has had these since Phase 4; the grid had
+// four of its fourteen. Cost, tax, the stock policy and everything customs
+// wants are exactly the fields a merchant corrects across a catalogue rather
+// than one variant at a time.
+//
+// TWO Shopify objects, which is the only thing that is structurally
+// interesting here: `taxable` and `inventoryPolicy` are fields of the VARIANT
+// and ride the existing `productVariantsBulkUpdate`, while cost, the weight,
+// the customs fields and `tracked` live on the variant's INVENTORY ITEM and
+// need `inventoryItemUpdate` — addressed by `inventoryItemId`, which is why
+// the sync stores it at all and why a variant without one shows these cells
+// read-only rather than offering a control that fails.
+//
+// What is deliberately NOT here is the QUANTITY. A stock level is a claim
+// about a moment: the panel reads it LIVE and writes it with `compareQuantity`
+// against the number the merchant was looking at, so a value that moved under
+// their feet is refused rather than overwritten. A grid cell fed from a cache
+// cannot make that promise, and "cached + typed number" is the classic source
+// of inventory drift. It stays in the editor's stock panel.
+
+export const VAR_COST_COLUMN_ID = "var.cost";
+export const VAR_TAXABLE_COLUMN_ID = "var.taxable";
+export const VAR_INVENTORY_POLICY_COLUMN_ID = "var.inventoryPolicy";
+export const VAR_INVENTORY_TRACKED_COLUMN_ID = "var.inventoryTracked";
+export const VAR_WEIGHT_COLUMN_ID = "var.weight";
+export const VAR_WEIGHT_UNIT_COLUMN_ID = "var.weightUnit";
+export const VAR_REQUIRES_SHIPPING_COLUMN_ID = "var.requiresShipping";
+export const VAR_COUNTRY_OF_ORIGIN_COLUMN_ID = "var.countryCodeOfOrigin";
+export const VAR_HS_CODE_COLUMN_ID = "var.harmonizedSystemCode";
+
+/**
+ * The three variant columns a PRODUCT row may carry.
+ *
+ * A price is not a property of a product — it is a property of a variant, which
+ * is why "where is the price column?" has an answer that is correct and
+ * unhelpful at the same time ("under Produktvarianten"). For the shop that
+ * sells one thing per product, though, the product's ONE variant is the
+ * product, and making a merchant switch row types to reprice it is the kind of
+ * correctness nobody asked for.
+ *
+ * So exactly these three appear on product rows, editable only where the
+ * product has exactly ONE variant — otherwise the cell would have to pick one
+ * of several prices to show and one to overwrite, and either choice is wrong.
+ * The rest of the commerce block stays on the variant rows: cost, customs and
+ * the stock policy are per-variant settings a merchant goes looking for, not
+ * numbers they scan a catalogue for.
+ */
+export const PRODUCT_VARIANT_COLUMN_IDS = new Set([
+  VAR_PRICE_COLUMN_ID,
+  VAR_COMPARE_AT_COLUMN_ID,
+  VAR_SKU_COLUMN_ID,
+]);
+
+/** The commerce columns whose value lives on the variant's INVENTORY ITEM —
+ *  a second mutation, and unreachable without an `inventoryItemId`. */
+export const INVENTORY_ITEM_COLUMN_IDS = new Set([
+  VAR_COST_COLUMN_ID,
+  VAR_INVENTORY_TRACKED_COLUMN_ID,
+  VAR_WEIGHT_COLUMN_ID,
+  VAR_WEIGHT_UNIT_COLUMN_ID,
+  VAR_REQUIRES_SHIPPING_COLUMN_ID,
+  VAR_COUNTRY_OF_ORIGIN_COLUMN_ID,
+  VAR_HS_CODE_COLUMN_ID,
+]);
+
+/** Every column fed by the Phase-4 commerce block, whose emptiness only means
+ *  something once `commerceSyncedAt` is set — the variant-level twin of
+ *  ATTRIBUTE_BLOCK_COLUMNS. Price, compare-at, SKU and barcode are NOT in it:
+ *  they predate that block and come from the ordinary product sync. */
+export const COMMERCE_BLOCK_COLUMNS = new Set([
+  ...INVENTORY_ITEM_COLUMN_IDS,
+  VAR_TAXABLE_COLUMN_ID,
+  VAR_INVENTORY_POLICY_COLUMN_ID,
+]);
 
 const PRODUCT_TITLE_COLUMN: ColumnDescriptor = {
   id: "productTitle",
@@ -376,7 +572,12 @@ const VARIANT_POSITION_COLUMN: ColumnDescriptor = {
 function variantColumn(
   id: string,
   label: string,
-  opts: { inputType: ColumnDescriptor["inputType"]; minWidth: number; sortKey?: string },
+  opts: {
+    inputType: ColumnDescriptor["inputType"];
+    minWidth: number;
+    sortKey?: string;
+    selectOptions?: string[];
+  },
 ): ColumnDescriptor {
   return {
     id,
@@ -388,6 +589,14 @@ function variantColumn(
     inputType: opts.inputType,
     minWidth: opts.minWidth,
     ...(opts.sortKey ? { sortKey: opts.sortKey } : {}),
+    // A boolean is a two-value enum here (BOOLEAN_SELECT_OPTIONS); a select
+    // with no vocabulary would render as an empty dropdown, which is a control
+    // whose next save clears a working value.
+    ...(opts.selectOptions
+      ? { selectOptions: opts.selectOptions }
+      : opts.inputType === "select"
+        ? { selectOptions: BOOLEAN_SELECT_OPTIONS }
+        : {}),
   };
 }
 
@@ -395,6 +604,48 @@ const VAR_SKU_COLUMN = variantColumn(VAR_SKU_COLUMN_ID, "sku", { inputType: "tex
 const VAR_PRICE_COLUMN = variantColumn(VAR_PRICE_COLUMN_ID, "price", { inputType: "money", minWidth: 110, sortKey: "price" });
 const VAR_COMPARE_AT_COLUMN = variantColumn(VAR_COMPARE_AT_COLUMN_ID, "compareAtPrice", { inputType: "money", minWidth: 130, sortKey: "compareAtPrice" });
 const VAR_BARCODE_COLUMN = variantColumn(VAR_BARCODE_COLUMN_ID, "barcode", { inputType: "text", minWidth: 140 });
+
+const VAR_COST_COLUMN = variantColumn(VAR_COST_COLUMN_ID, "cost", { inputType: "money", minWidth: 120 });
+const VAR_TAXABLE_COLUMN = variantColumn(VAR_TAXABLE_COLUMN_ID, "taxable", {
+  inputType: "select",
+  minWidth: 140,
+  selectOptions: BOOLEAN_SELECT_OPTIONS,
+});
+const VAR_INVENTORY_POLICY_COLUMN = variantColumn(VAR_INVENTORY_POLICY_COLUMN_ID, "inventoryPolicy", {
+  inputType: "select",
+  minWidth: 200,
+  selectOptions: [...INVENTORY_POLICIES],
+});
+const VAR_INVENTORY_TRACKED_COLUMN = variantColumn(VAR_INVENTORY_TRACKED_COLUMN_ID, "inventoryTracked", {
+  inputType: "select",
+  minWidth: 170,
+  selectOptions: BOOLEAN_SELECT_OPTIONS,
+});
+/** Value and unit are ONE value to Shopify (it replaces the measurement rather
+ *  than merging into it), but two cells here — so a save that carries only one
+ *  of them takes the other from the cached row, and refuses when the cache has
+ *  no unit to take. A number with no unit is not a weight. */
+const VAR_WEIGHT_COLUMN = variantColumn(VAR_WEIGHT_COLUMN_ID, "weight", {
+  inputType: "number",
+  minWidth: 110,
+});
+const VAR_WEIGHT_UNIT_COLUMN = variantColumn(VAR_WEIGHT_UNIT_COLUMN_ID, "weightUnit", {
+  inputType: "select",
+  minWidth: 150,
+  selectOptions: [...WEIGHT_UNITS],
+});
+const VAR_REQUIRES_SHIPPING_COLUMN = variantColumn(VAR_REQUIRES_SHIPPING_COLUMN_ID, "requiresShipping", {
+  inputType: "select",
+  minWidth: 170,
+});
+const VAR_COUNTRY_OF_ORIGIN_COLUMN = variantColumn(VAR_COUNTRY_OF_ORIGIN_COLUMN_ID, "countryCodeOfOrigin", {
+  inputType: "text",
+  minWidth: 150,
+});
+const VAR_HS_CODE_COLUMN = variantColumn(VAR_HS_CODE_COLUMN_ID, "harmonizedSystemCode", {
+  inputType: "text",
+  minWidth: 150,
+});
 
 function fieldColumn(
   name: string,
@@ -408,6 +659,7 @@ function fieldColumn(
   maxWidth?: number;
     sortKey?: string;
     group?: ColumnGroup;
+    selectOptions?: string[];
   },
 ): ColumnDescriptor {
   return {
@@ -420,6 +672,7 @@ function fieldColumn(
     inputType: opts.inputType,
     minWidth: opts.minWidth,
     ...(opts.sortKey ? { sortKey: opts.sortKey } : {}),
+    ...(opts.selectOptions ? { selectOptions: opts.selectOptions } : {}),
   };
 }
 
@@ -430,7 +683,94 @@ function fieldColumn(
 const COL_TITLE = fieldColumn("title", { translatable: true, inputType: "text", minWidth: 220, sortKey: "title" });
 const COL_DESCRIPTION_HTML = fieldColumn("descriptionHtml", { translatable: true, inputType: "textarea", minWidth: 280 });
 const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputType: "text", minWidth: 200, sortKey: "productType" });
-const COL_STATUS = fieldColumn("status", { translatable: false, inputType: "select", minWidth: 130, sortKey: "status" });
+/**
+ * The four values, in the order the grid has always offered them.
+ *
+ * Written out rather than spread from `CREATE_PRODUCT_STATUSES` because that
+ * constant leads with DRAFT (a create form's default) and reshuffling a
+ * dropdown merchants already know is a change nobody asked for. The two must
+ * still describe the same SET, which is the half that actually matters —
+ * `bulk-editor.attributes.test.ts` ("offers exactly the enum values the single
+ * editor does") fails when they drift.
+ */
+const PRODUCT_STATUS_OPTIONS = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"];
+
+const COL_STATUS = fieldColumn("status", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 130,
+  sortKey: "status",
+  selectOptions: PRODUCT_STATUS_OPTIONS,
+});
+// PLAN_CONTENT_CREATION §Phase 3.6 — the two merchandising attributes the
+// single editor gained in §3.1, pulled through to the grid where they are
+// worth most: vendor and tags are the fields a merchant fixes across a whole
+// catalogue, not one product at a time.
+//
+// Neither is translatable — Shopify stores one value per product — so they
+// carry `translatable: false` like `status`, which keeps them out of every
+// foreign-locale group by the same rule that already governs it.
+//
+// `tags` is a LIST behind one cell, comma-separated in the grid the same way
+// the single editor's chips serialise. Written whole, because that is what
+// `productUpdate` does with it: a cell edit REPLACES the product's tags.
+const COL_VENDOR = fieldColumn("vendor", { translatable: false, inputType: "text", minWidth: 160, sortKey: "vendor" });
+const COL_TAGS = fieldColumn("tags", { translatable: false, inputType: "text", minWidth: 220 });
+
+// ─── The remaining merchandising attributes (PLAN_CONTENT_CREATION §3) ─────
+//
+// Until now these existed only in the single editor, which meant the one kind
+// of field a merchant fixes across a whole catalogue — "put every gift product
+// on the gift template", "unpublish last season's articles" — was the one kind
+// they had to open five hundred items to reach.
+//
+// Every one of them is UNTRANSLATABLE (`translationKey: ""` in the single
+// editor's config, one value per item), so `translatable: false` keeps them out
+// of the foreign-locale groups by the rule that already governs status, vendor
+// and tags. They also all live in the Phase-0 attribute block, so their cells
+// are read-only until `attributesSyncedAt` is set — see
+// ATTRIBUTE_BLOCK_COLUMNS, where an empty value and a never-fetched one are
+// finally told apart.
+
+/** The theme file that renders the item. A suffix nobody created renders the
+ *  DEFAULT template and reports nothing anywhere, which is why the single
+ *  editor made this a dropdown — and why it matters more here, where one typo
+ *  is applied to every selected row. The OPTIONS are the published theme's and
+ *  arrive as a prop (see `selectOptions`' note); with the lookup failed the
+ *  cell falls back to a text box, exactly as `ThemeTemplateField` does. */
+const COL_TEMPLATE_SUFFIX = fieldColumn("templateSuffix", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 190,
+});
+
+/** Pages and articles are visible or not. NOT the product's four-value status:
+ *  a different field on a different mutation, and conflating the two is how a
+ *  hidden article gets published by a title edit. */
+const COL_IS_PUBLISHED = fieldColumn("isPublished", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 170,
+  selectOptions: BOOLEAN_SELECT_OPTIONS,
+});
+
+/** Shopify's CollectionSortOrder. A GraphQL ENUM, so the offered set has to be
+ *  exactly the accepted one. */
+const COL_SORT_ORDER = fieldColumn("sortOrder", {
+  translatable: false,
+  inputType: "select",
+  minWidth: 210,
+  selectOptions: [...COLLECTION_SORT_ORDERS],
+});
+
+/** An article's author. `ArticleCreateInput.author` is REQUIRED, so an article
+ *  always has one — which is why clearing this cell is refused rather than
+ *  written (attributeInputFor reports it as rejected). */
+const COL_AUTHOR = fieldColumn("author", {
+  translatable: false,
+  inputType: "text",
+  minWidth: 180,
+});
 const COL_HANDLE = fieldColumn("handle", { translatable: true, inputType: "text", minWidth: 220, sortKey: "handle" });
 const COL_SEO_TITLE = fieldColumn("seoTitle", { translatable: true, inputType: "text", minWidth: 200, group: "seo" });
 const COL_SEO_DESCRIPTION = fieldColumn("seoDescription", { translatable: true, inputType: "textarea", minWidth: 280, group: "seo" });
@@ -484,9 +824,20 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_DESCRIPTION_HTML,
     COL_PRODUCT_TYPE,
     COL_STATUS,
+    COL_VENDOR,
+    COL_TAGS,
+    COL_TEMPLATE_SUFFIX,
+    // Picker cells — see COL_CATEGORY for why a picker and not text.
+    COL_CATEGORY,
+    COL_COLLECTIONS,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
+    // The single variant's price, compare-at price and SKU — see
+    // PRODUCT_VARIANT_COLUMN_IDS for why only these three and only here.
+    VAR_PRICE_COLUMN,
+    VAR_COMPARE_AT_COLUMN,
+    VAR_SKU_COLUMN,
   ],
   variant: [
     IMAGE_COLUMN,
@@ -495,13 +846,24 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     VAR_SKU_COLUMN,
     VAR_PRICE_COLUMN,
     VAR_COMPARE_AT_COLUMN,
+    VAR_COST_COLUMN,
+    VAR_TAXABLE_COLUMN,
     VAR_BARCODE_COLUMN,
+    VAR_INVENTORY_TRACKED_COLUMN,
+    VAR_INVENTORY_POLICY_COLUMN,
+    VAR_WEIGHT_COLUMN,
+    VAR_WEIGHT_UNIT_COLUMN,
+    VAR_REQUIRES_SHIPPING_COLUMN,
+    VAR_COUNTRY_OF_ORIGIN_COLUMN,
+    VAR_HS_CODE_COLUMN,
     VARIANT_POSITION_COLUMN,
   ],
   collection: [
     IMAGE_COLUMN,
     COL_TITLE,
     COL_DESCRIPTION_HTML,
+    COL_SORT_ORDER,
+    COL_TEMPLATE_SUFFIX,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
@@ -513,18 +875,31 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_TITLE,
     COL_SUMMARY,
     COL_BODY,
+    COL_AUTHOR,
+    COL_TAGS,
+    COL_IS_PUBLISHED,
+    COL_TEMPLATE_SUFFIX,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
     FEATURED_IMAGE_ALT_COLUMN,
   ],
-  page: [IMAGE_COLUMN, COL_TITLE, COL_BODY, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
+  page: [
+    IMAGE_COLUMN,
+    COL_TITLE,
+    COL_BODY,
+    COL_IS_PUBLISHED,
+    COL_TEMPLATE_SUFFIX,
+    COL_HANDLE,
+    COL_SEO_TITLE,
+    COL_SEO_DESCRIPTION,
+  ],
   // Blog CONTAINERS (Plan §7): no body — Shopify's translatable keys for BLOG
   // are title/handle/meta_title/meta_description (Plan §14 no. 6), and the
   // primary write path (blogUpdate + global.title_tag/description_tag
   // metafields) covers exactly these four. Rows are live-fetched (no DB
   // cache), so the sortKeys here are resolved IN MEMORY by the loader.
-  blog: [COL_TITLE, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
+  blog: [COL_TITLE, COL_TEMPLATE_SUFFIX, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
   // Policies (Plan §7): title read-only (§14 — shopPolicyUpdate has no title
   // input), body editable exactly like descriptionHtml/body on other types.
   // body IS translatable — under the ShopPolicy key exception ("body", not
@@ -542,6 +917,39 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
 
 export function getColumnForType(type: BulkRowType, columnId: string): ColumnDescriptor | undefined {
   return BULK_COLUMNS_BY_TYPE[type].find((c) => c.id === columnId);
+}
+
+/**
+ * The canonical spelling of a select cell's value, or null if it has none.
+ *
+ * The grid's dropdown can only ever produce the vocabulary, but the grid is not
+ * the only entrance: a rectangular PASTE writes raw text into whatever cells it
+ * covers, and a CSV import writes whatever the file says. Without this, one
+ * pasted "Ja" column read as `true` on every boolean cell it touched — turning
+ * tax on for tax-exempt variants and publishing hidden pages — because the
+ * boolean readers treat anything that is not the exact string "false" as true.
+ * That is the right reading of a two-value enum and the wrong reading of
+ * arbitrary text, and the fix is to make sure only the enum ever reaches them.
+ *
+ * It NORMALIZES rather than merely judging, because the values come out of
+ * spreadsheets: "  unlisted  " is the merchant meaning UNLISTED, and the
+ * product status path has trimmed and uppercased for exactly that reason since
+ * before this existed. Matching case-insensitively and writing the canonical
+ * option back does it once, for every select column, instead of each reader
+ * inventing its own tolerance — which is also what makes `value !== "false"`
+ * downstream a safe reading again.
+ *
+ * `templateSuffix` is the one select with no static vocabulary (its options are
+ * the published theme's files), so it is deliberately not judged here — its
+ * cell falls back to a text box for the same reason.
+ *
+ * An EMPTY value has no canonical form either: none of these enums has a blank
+ * member, so "" is a cell somebody cleared into a value Shopify will not take.
+ */
+export function canonicalSelectValue(column: ColumnDescriptor, value: string): string | null {
+  if (column.inputType !== "select" || !column.selectOptions) return value;
+  const needle = value.trim().toLowerCase();
+  return column.selectOptions.find((option) => option.toLowerCase() === needle) ?? null;
 }
 
 /** True if `columnId` is a valid EDITABLE column for `type`. Server-side
@@ -854,6 +1262,26 @@ export type ParseMoneyResult =
  *    clears, §14).
  */
 export function parseMoney(input: string): ParseMoneyResult {
+  const parsed = parseDecimalInput(input);
+  if (!parsed.ok) return parsed;
+  if (parsed.value === null) return { ok: true, value: null };
+  return { ok: true, value: Number(parsed.value).toFixed(2) };
+}
+
+/**
+ * The SEPARATOR rules of `parseMoney`, without the money.
+ *
+ * Extracted because the unit-price quantity needs the identical
+ * de/es-vs-en decision - a merchant typing "1.000" for a 1000 ml bottle must
+ * not have it silently read as 1 - but must NOT be rounded to two decimals:
+ * 0.125 kg is a quantity, where 0.125 of a franc is not a price. Two copies of
+ * rule 3 is exactly how the ambiguity guard would come back missing from one
+ * of them.
+ *
+ * Returns the normalized value with its own precision intact, or the same
+ * three errors `parseMoney` reports.
+ */
+export function parseDecimalInput(input: string): ParseMoneyResult {
   const trimmed = input.trim();
   if (trimmed === "") return { ok: true, value: null };
 
@@ -882,11 +1310,16 @@ export function parseMoney(input: string): ParseMoneyResult {
     normalized = stripped.replace(/,/g, "");
     if ((normalized.match(/\./g) ?? []).length > 1) return { ok: false, error: "invalid" };
   }
-  if (!/^(\d+(\.\d+)?|\.\d+)$/.test(normalized)) return { ok: false, error: "invalid" };
+  // A missing digit on either side of the separator is what people type
+  // (".5", "2.") and is unambiguous, so it is completed, not refused. The
+  // comma form ("2,") already arrives here as "2" — a trailing comma is not a
+  // decimal separator under rule 2.
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(normalized)) return { ok: false, error: "invalid" };
+  if (normalized.endsWith(".")) normalized = normalized.slice(0, -1);
 
   const num = Number(normalized);
   if (!Number.isFinite(num)) return { ok: false, error: "invalid" };
-  return { ok: true, value: num.toFixed(2) };
+  return { ok: true, value: normalized };
 }
 
 /** Localized display form of a normalized money value (Plan §5.5): shown via
@@ -1051,6 +1484,22 @@ export interface BulkRow {
   descriptionHtml?: string;
   productType?: string;
   status?: string;
+  // §Phase 3.6. `tags` is a LIST behind one cell — comma-separated, written
+  // whole (productUpdate replaces the list rather than appending to it).
+  vendor?: string;
+  tags?: string;
+  /** The remaining merchandising attributes, as grid strings. `isPublished`
+   *  is "true"/"false" (a two-value enum; see BOOLEAN_SELECT_OPTIONS), the
+   *  other three are the stored value verbatim — an empty `templateSuffix` is
+   *  the theme's DEFAULT template and an empty `sortOrder` is "not set", both
+   *  of which the cell offers as a named option rather than as a blank. */
+  templateSuffix?: string;
+  isPublished?: string;
+  sortOrder?: string;
+  author?: string;
+  /** False ⇒ `vendor`/`tags` above are the migration's defaults, not the
+   *  merchant's data (§2.4). The grid shows them as unknown, never as empty. */
+  attributesKnown?: boolean;
   body?: string;
   summary?: string;
   // Read-only display fields.
@@ -1069,6 +1518,54 @@ export interface BulkRow {
   compareAtPrice?: string;
   barcode?: string;
   position?: number;
+  /** §Phase 4 commerce block, as grid strings. The booleans are "true"/"false"
+   *  (two-value enums), the money and the weight are the normalized dot form
+   *  ("12.50", "" = unset) and the two enums are Shopify's own values. */
+  cost?: string;
+  taxable?: string;
+  inventoryPolicy?: string;
+  inventoryTracked?: string;
+  weight?: string;
+  weightUnit?: string;
+  requiresShipping?: string;
+  countryCodeOfOrigin?: string;
+  harmonizedSystemCode?: string;
+  /** False ⇒ every field of the block above is the migration's default, not
+   *  the shop's data (`ProductVariant.commerceSyncedAt`) — the variant twin of
+   *  `attributesKnown`. The grid shows them as unknown, never as empty. */
+  commerceKnown?: boolean;
+  /** PRODUCT rows: the taxonomy category's GID ("" = none) — the cell VALUE —
+   *  and its full path, which is what the picker shows (see COL_CATEGORY). */
+  category?: string;
+  categoryName?: string;
+  /** PRODUCT rows: the memberships as canonical collection GIDs (the cell
+   *  VALUE, `canonicalCollectionIds`), and the rows behind them with their
+   *  titles and rule-based flags, which the picker needs to name and LOCK
+   *  them. */
+  collections?: string;
+  collectionMemberships?: {
+    collectionId: string;
+    collectionTitle: string;
+    automated: boolean | null;
+  }[];
+  /** PRODUCT rows: the membership list above is INCOMPLETE — the product
+   *  belongs to more collections than the sync's window fetched. The picker
+   *  says so; editing stays safe, because the save diffs against the cache and
+   *  a membership the cache never held can never be "left". */
+  hasMoreCollections?: boolean;
+  /** PRODUCT rows: the product's ONE variant, when it has exactly one — the
+   *  price, compare-at price and SKU cells then edit it directly. Absent means
+   *  either "more than one variant" (`variantCount`, which the cell reports as
+   *  such) or "the variants were never cached". */
+  singleVariant?: { id: string; price: string; compareAtPrice: string; sku: string };
+  /** PRODUCT rows: how many variants the cache holds, capped at the loader's
+   *  peek. Null ⇒ not cached at all, which is a different cell state from
+   *  "several". */
+  variantCount?: number | null;
+  /** The variant's InventoryItem GID — the address cost, weight, the customs
+   *  fields and `tracked` are written at. Absent ⇒ those cells are read-only:
+   *  there is nothing to write them to, and a resync is the way in. */
+  inventoryItemId?: string;
   /** Product has >100 variants — the sync window is capped (Plan §5.1); the
    * UI shows a "remainder lives in the Shopify admin" hint. */
   hasMoreVariants?: boolean;
@@ -1140,13 +1637,134 @@ export type CellReadOnlyReason =
   | "missingMediaId" // image row lacks the MediaImage GID — resync needed
   | "wrongMetaobjectType" // mofield column of another definition type (Phase 5)
   | "listSeparatorInValue" // a list entry contains "|" — editing would shatter it (Finding 11)
-  | "altTextInImages"; // product main-image alt — edit it under the Images row type
+  | "altTextInImages" // product main-image alt — edit it under the Images row type
+  | "attributesNotSynced" // PLAN §2.4 — the block was never fetched (see below)
+  | "commerceNotSynced" // §Phase 4 — `commerceSyncedAt` unset: unknown, not empty
+  | "missingInventoryItem" // the variant has no InventoryItem GID to write to
+  | "multipleVariants" // a product row's price cell: which of several? (see below)
+  | "variantsNotSynced" // the product's variants were never cached
+  | "priceNotSynced"; // the variant row is cached, its price is not (see priceCell)
+
+/** The columns fed by the Phase-0 attribute block, whose emptiness only means
+ *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
+ *  predates that block and is non-null in the schema.
+ *
+ *  `isPublished` is the one that would be silently destructive without this:
+ *  its column is `Boolean @default(true)`, so a row an older sync wrote reads
+ *  as "visible" whether or not it is, and a merchant who saw that and moved on
+ *  would publish a hidden page by touching a NEIGHBOURING cell. The same
+ *  argument as `tags`, where the migration default is `[]` and `productUpdate`
+ *  replaces rather than merges. A resync is the way out, for all of them. */
+export const ATTRIBUTE_BLOCK_COLUMNS = new Set([
+  "field.vendor",
+  "field.tags",
+  "field.templateSuffix",
+  "field.isPublished",
+  "field.sortOrder",
+  "field.author",
+  // An empty category on a row an older sync wrote is "not fetched", not "no
+  // category" — and an empty membership list there would be saved as "leave
+  // every collection", which is the expensive direction of the same trap.
+  CATEGORY_COLUMN_ID,
+  COLLECTIONS_COLUMN_ID,
+]);
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */
   value: string;
   editable: boolean;
   readOnlyReason?: CellReadOnlyReason;
+}
+
+/**
+ * A variant column on a PRODUCT row.
+ *
+ * Three states, and collapsing any two of them is a wrong answer rather than a
+ * shorter one: the product has one variant (edit it), it has several (which
+ * price would the cell show, and which would a save overwrite?), or the
+ * variants were never cached (a resync, not a restriction). A product with
+ * more than 100 variants is the same "several" as one with two — the sync
+ * window is capped, and `variantCount` is only ever the loader's peek.
+ */
+function resolveProductVariantCell(row: BulkRow, column: ColumnDescriptor): ResolvedCell {
+  // Shopify guarantees every product at least one variant, so a count of ZERO
+  // is the cache lacking them rather than a product without any — the same
+  // "empty is not evidence" rule as `attributesSyncedAt`.
+  if (!row.variantCount) {
+    // …but the OPTIONS are cached by every product sync, including the list
+    // reload that does not fetch variants at all. An option offering two or
+    // more values proves "several" without a single variant row, and "several"
+    // is read-only however many a reload would bring in — so a resync hint
+    // there would send the merchant on an errand that changes nothing. Only a
+    // product whose options leave "exactly one" possible keeps the hint: there
+    // a reload really does make the cell editable. Both answers are read-only,
+    // so an orphaned option value (one without a variant) can at worst pick
+    // the wrong explanation, never unlock a cell.
+    const provesSeveral = (row.options ?? []).some((o) => o.values.length > 1);
+    return {
+      value: "",
+      editable: false,
+      readOnlyReason: provesSeveral ? "multipleVariants" : "variantsNotSynced",
+    };
+  }
+  const variant = row.singleVariant;
+  if (!variant) return { value: "", editable: false, readOnlyReason: "multipleVariants" };
+  switch (column.id) {
+    case VAR_PRICE_COLUMN_ID:
+      return priceCell(variant.price, variant.price);
+    case VAR_COMPARE_AT_COLUMN_ID:
+      return priceCell(variant.price, variant.compareAtPrice);
+    case VAR_SKU_COLUMN_ID:
+      return { value: variant.sku, editable: true };
+    default:
+      // A product row offers no other variant column — see
+      // PRODUCT_VARIANT_COLUMN_IDS.
+      return { value: "", editable: false, readOnlyReason: "column" };
+  }
+}
+
+/**
+ * A price or compare-at cell, given the variant's cached PRICE.
+ *
+ * Shopify has no variant without a price, so an empty one is the cache lacking
+ * it — a row the image manager created before it learned to store prices —
+ * and not a product that costs nothing. Shown as an editable blank it read as
+ * "this product has no price", and the compare-at beside it is unknown for the
+ * same reason (its own emptiness is a real answer only once the price proves
+ * the row was price-synced). Opening the product once, or any product sync,
+ * fills it in.
+ */
+function priceCell(price: string, value: string): ResolvedCell {
+  if (price === "") return { value: "", editable: false, readOnlyReason: "priceNotSynced" };
+  return { value, editable: true };
+}
+
+/** The commerce block's value for one column. Flat properties on the row, so
+ *  this is a lookup rather than a computation — written out instead of indexing
+ *  by a derived name, which would silently answer "" for a typo. */
+function commerceValueForColumn(row: BulkRow, columnId: string): string {
+  switch (columnId) {
+    case VAR_COST_COLUMN_ID:
+      return row.cost ?? "";
+    case VAR_TAXABLE_COLUMN_ID:
+      return row.taxable ?? "";
+    case VAR_INVENTORY_POLICY_COLUMN_ID:
+      return row.inventoryPolicy ?? "";
+    case VAR_INVENTORY_TRACKED_COLUMN_ID:
+      return row.inventoryTracked ?? "";
+    case VAR_WEIGHT_COLUMN_ID:
+      return row.weight ?? "";
+    case VAR_WEIGHT_UNIT_COLUMN_ID:
+      return row.weightUnit ?? "";
+    case VAR_REQUIRES_SHIPPING_COLUMN_ID:
+      return row.requiresShipping ?? "";
+    case VAR_COUNTRY_OF_ORIGIN_COLUMN_ID:
+      return row.countryCodeOfOrigin ?? "";
+    case VAR_HS_CODE_COLUMN_ID:
+      return row.harmonizedSystemCode ?? "";
+    default:
+      return "";
+  }
 }
 
 function joinOptionValues(option: BulkRowOption): string {
@@ -1162,8 +1780,19 @@ function joinOptionValues(option: BulkRowOption): string {
  */
 export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): ResolvedCell {
   switch (column.kind) {
-    case "field":
-      return { value: primaryValueForColumn(row, column), editable: column.editable };
+    case "field": {
+      const value = primaryValueForColumn(row, column);
+      // PLAN §2.4 / §3.6 — a cell whose row predates the attribute sync shows
+      // the migration's default, not the merchant's data. Read-only, because
+      // `productUpdate` REPLACES the tag list rather than merging it: typing
+      // one tag into an unsynced row would wipe the product's real tags, on a
+      // row the grid itself admits it does not know. The single editor locks
+      // the same fields for the same reason; a resync is the way out.
+      if (ATTRIBUTE_BLOCK_COLUMNS.has(column.id) && row.attributesKnown === false) {
+        return { value, editable: false, readOnlyReason: "attributesNotSynced" };
+      }
+      return { value, editable: column.editable };
+    }
     case "metafield": {
       const mf = row.metafields?.[column.id];
       const raw = mf?.value ?? "";
@@ -1215,6 +1844,8 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       return { value: "", editable: false, readOnlyReason: "column" };
     }
     case "variant": {
+      // A PRODUCT row carries three of these, for its ONE variant.
+      if (row.type === "product") return resolveProductVariantCell(row, column);
       // Editable variant cells (Plan §5.3): SKU, price, compareAtPrice,
       // barcode. Money values are stored normalized; display formatting
       // happens at render time.
@@ -1222,14 +1853,32 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
         case VAR_SKU_COLUMN_ID:
           return { value: row.sku ?? "", editable: true };
         case VAR_PRICE_COLUMN_ID:
-          return { value: row.price ?? "", editable: true };
+          return priceCell(row.price ?? "", row.price ?? "");
         case VAR_COMPARE_AT_COLUMN_ID:
-          return { value: row.compareAtPrice ?? "", editable: true };
+          return priceCell(row.price ?? "", row.compareAtPrice ?? "");
         case VAR_BARCODE_COLUMN_ID:
           return { value: row.barcode ?? "", editable: true };
         default:
-          return { value: "", editable: false, readOnlyReason: "column" };
+          break;
       }
+      if (COMMERCE_BLOCK_COLUMNS.has(column.id)) {
+        const value = commerceValueForColumn(row, column.id);
+        // §Phase 4 — a variant row written before the commerce sync existed
+        // carries nulls that are indistinguishable from "the merchant left it
+        // empty". `taxable` is the one that would be quietly expensive: shown
+        // as "no" and saved along with a neighbouring cell, it stops charging
+        // tax on a product that owes it. A resync is the way out.
+        if (row.commerceKnown === false) {
+          return { value, editable: false, readOnlyReason: "commerceNotSynced" };
+        }
+        // Cost, weight, customs and `tracked` are written on the INVENTORY
+        // ITEM, which this variant has no address for.
+        if (INVENTORY_ITEM_COLUMN_IDS.has(column.id) && !row.inventoryItemId) {
+          return { value, editable: false, readOnlyReason: "missingInventoryItem" };
+        }
+        return { value, editable: true };
+      }
+      return { value: "", editable: false, readOnlyReason: "column" };
     }
     case "mofield": {
       // Cross-type cell (the union universe contains every definition's
@@ -1344,6 +1993,48 @@ export interface BulkFailure {
 export interface BulkApplyResult {
   saved: number;
   failures: BulkFailure[];
+  /**
+   * What the save handed to the auto-translation (retranslate.server.ts).
+   * Present only when auto-translate is on AND something was collected —
+   * absent is "nothing to say", never "nothing happened".
+   *
+   * `capped` is the number of rows that were NOT re-translated because the
+   * save had already opened MAX_REPAIR_GROUPS background runs. Not "deleted":
+   * what happens to them depends on the surface — most follow the merchant's
+   * stored deletion answer, while a webhook-backed row this save claimed keeps
+   * its stale translations (its webhook was made to bail). Reported rather than
+   * logged either way: a merchant told "everything gets re-translated" who then
+   * finds row 30 untouched has no way to learn that a limit exists.
+   */
+  retranslation?: {
+    /** Background RUNS this save started — a run per (row, surface), and only
+     *  where the repair really had something left to translate. */
+    started: number;
+    /** The (locale, key) pairs those runs are rewriting. This is the number a
+     *  merchant recognises; `started` is the number of Task rows it produced. */
+    translations: number;
+    /** Groups whose repair could not start (a failed lookup, a surface with no
+     *  source language). Their stale translations are kept, so this is not a
+     *  silent zero — it is the count nobody would otherwise see. */
+    skipped: number;
+    /** Rows the cap refused, counted as ROWS. */
+    capped: number;
+    /**
+     * The `Task` rows those runs report under, so the grid can stop showing an
+     * empty foreign cell for a translation that is still being written.
+     *
+     * The save's own revalidation lands seconds before the first AI answer, and
+     * nothing else ever tells the page a detached run finished — which is
+     * exactly what a merchant sees as "I switched languages and the new entries
+     * are not there". A reader polls these until each is terminal and then
+     * reloads the DISPLAY; it must never write anything back.
+     *
+     * A row may not exist yet when this arrives (the run is spawned, not
+     * awaited, and may be queued behind another for the same resource), so
+     * "no such task" reads as NOT-YET, never as finished.
+     */
+    taskIds?: string[];
+  };
 }
 
 /**
@@ -1377,6 +2068,11 @@ export interface BulkApplyResult {
  * baseline accumulation and become diffable once the row loads) and surfaces
  * their count in a banner instead of silently losing them (Finding 1).
  */
+/** CRLF and lone CR → LF (see computeDiff). */
+function normalizeLineEndings(value: string): string {
+  return value.includes("\r") ? value.replace(/\r\n?/g, "\n") : value;
+}
+
 export function computeDiff(
   rows: BulkRow[],
   columns: ColumnDescriptor[],
@@ -1402,17 +2098,37 @@ export function computeDiff(
     // Per-ROW editability (Phase 2): a linked option, a legacy values format
     // or a missing mediaId make an otherwise-editable column read-only for
     // this row — edits that sneak into the map are dropped, same as
-    // column-level read-only.
+    // column-level read-only. In EVERY locale: the grid locks these cells in
+    // a foreign view too (BulkGrid resolves per cell regardless of locale),
+    // and the CSV import — which has no grid in front of it — must not reach
+    // what the grid refuses (a translation of a list metafield whose entries
+    // contain "|" would shatter on the split when saving).
     const resolved = resolveCellValue(row, column);
-    if (locale === "" && !resolved.editable) continue;
+    if (!resolved.editable) continue;
 
     const baseline =
       locale === "" && marketId === ""
         ? resolved.value
         : row.foreignValues?.[`${locale}|${marketId}|${columnId}`] ?? "";
 
-    const original = baseline.trim();
-    let next = (edits[key] ?? "").trim();
+    // Line endings are compared as "\n": a spreadsheet or an editor on the
+    // way through a CSV round trip rewrites them freely, and a CRLF that only
+    // differs in its line breaks is not a change — nor should it be written
+    // back as one.
+    let original = normalizeLineEndings(baseline).trim();
+    let next = normalizeLineEndings(edits[key] ?? "").trim();
+    // Select columns (closed vocabularies): Excel, LibreOffice and Sheets all
+    // save `true`/`false` as `TRUE`/`FALSE`, so an untouched file came back
+    // with one "change" per boolean cell — each one counted against the call
+    // budget. The canonical option is what the save path writes anyway
+    // (canonicalSelectValue in applyBulkDiff); an UNKNOWN value passes
+    // through verbatim and stays dirty, so it is refused and reported there.
+    if (column.inputType === "select") {
+      const canonical = canonicalSelectValue(column, next);
+      if (canonical !== null) next = canonical;
+      const canonicalBaseline = canonicalSelectValue(column, original);
+      if (canonicalBaseline !== null) original = canonicalBaseline;
+    }
     // Money columns (Plan §5.5): the merchant may have typed a localized form
     // ("1.299,90") or a bulk action may have written a formatted value —
     // normalize BEFORE comparing, so re-typing the same amount in another
@@ -1487,12 +2203,18 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
  *   CLEARED (Plan §7/§14 no. 4 — clearing global.title_tag/description_tag
  *   needs the extra delete call; setting rides inside blogUpdate);
  * - foreign group: 1 translationsRegister (any non-empty cell) +
- *   1 translationsRemove (any cleared cell);
+ *   1 translationsRemove (any cleared cell) PLUS 1 verification re-read for it
+ *     — an unechoed removal is re-checked against the resource's current
+ *     translations, so a clear costs two calls in the worst case;
  * - plus ceil(unique foreign resources / DIGEST_BATCH_CHUNK) digest batches.
  *
  * `columns` is the (current type's) descriptor universe — unknown column ids
  * are counted as one call each (defensive over-estimate, never under).
  */
+/** A cleared foreign cell: `translationsRemove`, plus the re-read that
+ *  verifies an unechoed removal instead of reporting a dead end. */
+const CLEAR_CELL_CALLS = 2;
+
 export function estimateCalls(
   diff: BulkDiffEntry[],
   columns: ColumnDescriptor[],
@@ -1532,7 +2254,11 @@ export function estimateCalls(
       calls += featuredAltEntries.length * FEATURED_ALT_TRANSLATION_CALLS;
       const hasWrites = ownEntries.some(([, v]) => v !== "");
       const hasClears = ownEntries.some(([, v]) => v === "");
-      calls += (hasWrites ? 1 : 0) + (hasClears ? 1 : 0);
+      // A clear is TWO calls in the worst case: the removal, plus the
+      // verification re-read when Shopify echoes nothing back. The re-read only
+      // fires on a gap, so this over-estimates the common case — which is the
+      // only direction this guard is allowed to err in.
+      calls += (hasWrites ? 1 : 0) + (hasClears ? CLEAR_CELL_CALLS : 0);
       if (hasWrites) foreignDigestResources.add(group.rowId);
       for (const [columnId, value] of subEntries) {
         const column = columnById.get(columnId);
@@ -1558,6 +2284,12 @@ export function estimateCalls(
       // One mutation per product (§5.4) — fall back to the row id itself when
       // the mapping is unknown (defensive over-estimate).
       variantTargets.add(opts?.variantProductIdByRowId?.[group.rowId] ?? group.rowId);
+      // …plus ONE `inventoryItemUpdate` per VARIANT that touches the
+      // InventoryItem half (cost, weight, customs, `tracked`). Shopify offers
+      // no bulk form of that mutation, so a 200-row save of cost prices is 200
+      // calls on top of the one bulk update — exactly the fan-out this guard
+      // exists to notice before MAX_TASK_CALLS is blown past.
+      if (entries.some(([columnId]) => INVENTORY_ITEM_COLUMN_IDS.has(columnId))) calls += 1;
       continue;
     }
     if (group.rowType === "blog") {
@@ -1588,6 +2320,9 @@ export function estimateCalls(
     let metafieldSets = 0;
     let metafieldDeletes = 0;
     let imageAlt = 0;
+    // The three single-variant cells share ONE productVariantsBulkUpdate, so
+    // they are a flag and not a count — the same shape as `base`.
+    let variantWrite = 0;
     const optionPositions = new Set<number>();
     for (const [columnId, value] of entries) {
       const column = columnById.get(columnId);
@@ -1606,6 +2341,9 @@ export function estimateCalls(
         case "option":
           optionPositions.add(column.optionPosition ?? 0);
           break;
+        case "variant":
+          variantWrite = 1;
+          break;
         default:
           if (column.id === IMG_ALT_COLUMN_ID) imageAlt = 1;
           else calls += 1;
@@ -1616,7 +2354,8 @@ export function estimateCalls(
       Math.ceil(metafieldSets / METAFIELDS_SET_CHUNK) +
       Math.ceil(metafieldDeletes / METAFIELDS_SET_CHUNK) +
       optionPositions.size +
-      imageAlt;
+      imageAlt +
+      variantWrite;
   }
 
   calls += variantTargets.size;
@@ -1679,7 +2418,27 @@ export type BulkFilterId =
   | "missingPrice"
   | "compareAtNotAbovePrice" // compareAtPrice ≤ price — the classic data error
   // Image-row filter (one row = one product medium):
-  | "missingAltText";
+  | "missingAltText"
+  // Product status (products, and variants via their product). OR-combined
+  // with each other — see BULK_FILTER_OR_GROUPS:
+  | "statusActive"
+  | "statusDraft"
+  | "statusUnlisted"
+  | "statusArchived"
+  // Page/article visibility (OR group):
+  | "published"
+  | "hidden"
+  // Collection kind (OR group):
+  | "smartCollection"
+  | "manualCollection"
+  // Content gaps (AND-combined like every other flag):
+  | "missingDescription"
+  | "missingImage"
+  | "missingVendor"
+  | "missingProductType"
+  | "missingCategory"
+  | "missingTags"
+  | "missingSummary";
 
 export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingSeoTitle",
@@ -1689,6 +2448,67 @@ export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingPrice",
   "compareAtNotAbovePrice",
   "missingAltText",
+  "statusActive",
+  "statusDraft",
+  "statusUnlisted",
+  "statusArchived",
+  "published",
+  "hidden",
+  "smartCollection",
+  "manualCollection",
+  "missingDescription",
+  "missingImage",
+  "missingVendor",
+  "missingProductType",
+  "missingCategory",
+  "missingTags",
+  "missingSummary",
+];
+
+/** Shopify `ProductStatus` value behind each status filter id. */
+export const STATUS_FILTER_VALUES: Partial<Record<BulkFilterId, string>> = {
+  statusActive: "ACTIVE",
+  statusDraft: "DRAFT",
+  statusUnlisted: "UNLISTED",
+  statusArchived: "ARCHIVED",
+};
+
+export const STATUS_FILTER_IDS: BulkFilterId[] = ["statusActive", "statusDraft", "statusUnlisted", "statusArchived"];
+export const VISIBILITY_FILTER_IDS: BulkFilterId[] = ["published", "hidden"];
+export const COLLECTION_KIND_FILTER_IDS: BulkFilterId[] = ["smartCollection", "manualCollection"];
+
+/**
+ * Filter ids that answer ONE question with several values ("which status?").
+ * Inside a group they are OR-combined — AND over "active" and "draft" would
+ * always be empty — and every group is AND-combined with the rest. All other
+ * ids are independent flags and AND-combine as before.
+ */
+export const BULK_FILTER_OR_GROUPS: BulkFilterId[][] = [
+  STATUS_FILTER_IDS,
+  VISIBILITY_FILTER_IDS,
+  COLLECTION_KIND_FILTER_IDS,
+];
+
+/** The selected members of one OR group, in group order. */
+export function selectedInGroup(filters: readonly BulkFilterId[], group: readonly BulkFilterId[]): BulkFilterId[] {
+  return group.filter((id) => filters.includes(id));
+}
+
+/**
+ * Filters that read a merchandising attribute (`vendor`, `tags`, `category`,
+ * `isPublished`, `isSmart`). On a row an older sync wrote those columns hold
+ * the migration DEFAULTS, indistinguishable from real values
+ * (`attributesSyncedAt` is the discriminator — CLAUDE.md), so these filters
+ * only ever match attribute-synced rows. Undercounting is the chosen failure:
+ * an unsynced page must not be reported as "visible", nor an unsynced product
+ * as "no vendor".
+ */
+export const ATTRIBUTE_GATED_FILTER_IDS: BulkFilterId[] = [
+  ...VISIBILITY_FILTER_IDS,
+  ...COLLECTION_KIND_FILTER_IDS,
+  "missingVendor",
+  "missingCategory",
+  "missingTags",
 ];
 
 /** Filters that apply to variant rows — the FilterBar shows exactly these for
@@ -1719,6 +2539,37 @@ export const FILTER_IDS_BY_SET: Record<BulkFilterSet, BulkFilterId[]> = {
   translationOnly: ["missingTranslation"],
   image: ["missingAltText", "missingTranslation"],
 };
+
+/**
+ * Type-specific filters on top of the set's shared vocabulary — the columns
+ * behind them exist only on that type (blogs, for instance, share the
+ * "content" set but have no status, description or image in the cache).
+ */
+const TYPE_FILTER_IDS: Partial<Record<BulkRowType, BulkFilterId[]>> = {
+  product: [
+    ...STATUS_FILTER_IDS,
+    "missingDescription",
+    "missingImage",
+    "missingProductType",
+    "missingVendor",
+    "missingCategory",
+    "missingTags",
+  ],
+  variant: STATUS_FILTER_IDS,
+  collection: [...COLLECTION_KIND_FILTER_IDS, "missingDescription", "missingImage"],
+  article: [...VISIBILITY_FILTER_IDS, "missingDescription", "missingSummary", "missingImage", "missingTags"],
+  page: [...VISIBILITY_FILTER_IDS, "missingDescription"],
+};
+
+/**
+ * THE per-TYPE filter-id source: what the FilterBar offers, what a type switch
+ * prunes the URL against, and what the loader accepts (a hand-crafted URL
+ * param outside it is dropped there rather than reaching a column the type
+ * does not have).
+ */
+export function filterIdsForType(type: BulkRowType): BulkFilterId[] {
+  return [...FILTER_IDS_BY_SET[filterSetForType(type)], ...(TYPE_FILTER_IDS[type] ?? [])];
+}
 
 export type SortDirection = "asc" | "desc";
 

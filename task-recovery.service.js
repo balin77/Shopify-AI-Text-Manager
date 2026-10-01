@@ -6,6 +6,18 @@
 
 import { PrismaClient } from "@prisma/client";
 import { refundImageOperations } from "./image-op-refund.js";
+import {
+  WEBP_NON_TERMINAL_STATUS,
+  WEBP_PARENT_TASK_TYPE,
+  isWebpWorkRow,
+  webpWorkRowWhere,
+} from "./app/config/webp-tasks.js";
+import {
+  HEARTBEAT_TASK_TYPES,
+  HEARTBEAT_STALL_MS,
+  recoverOrphanedRuns,
+  reconcileOrphanCrawlSnapshots,
+} from "./orphan-run-recovery.js";
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
@@ -27,13 +39,28 @@ const STUCK_CHECK_INTERVAL_MS = parseInt(process.env.STUCK_CHECK_INTERVAL_MS || 
 // R4-H2 (core): a SINGLE global 10-min threshold mis-classifies legitimately
 // long bulk AI work (translating a large catalog across many locales, bulk
 // generation, alt-text-template apply) as "stuck" and kills it mid-run.
-// These task types get a much larger threshold; everything else (incl.
-// imageWebpConversion, which has its own 4-min internal timeout + dedicated
-// recovery) keeps the default. Env-overridable.
+// These task types get a much larger threshold; everything else (incl. the
+// WebP types — a work item has its own 4-min internal timeout + dedicated
+// recovery, and an aggregate row is heartbeated by the processor for as long
+// as any of its items is still open) keeps the default. Env-overridable.
 const LONG_TASK_TIMEOUT_MS = parseInt(process.env.LONG_TASK_TIMEOUT_MS || String(45 * 60 * 1000), 10);
 const LONG_RUNNING_TASK_TYPES = [
+  // A renamed blog gets one redirect per article, and Shopify redirects have
+  // no wildcards — a 200-article blog is 200 lookups plus 200 creates through
+  // a rate-limited API. Minutes, not seconds, so the short stuck-threshold
+  // would reap it while it is working (PLAN_CONTENT_CREATION §Phase 3.3).
+  'blogArticleRedirects',
   'bulkTranslation',
+  // The SAME task type, spelled two ways, and both must be listed. The
+  // alt-text paths create `bulkAIGeneration` (alt-text.handler.ts L227,
+  // alt-text.action.ts L247); the notification-title generator creates
+  // `bulkAiGeneration` (template-titles.handler.ts L89) — an AI call per batch
+  // over every untitled row, i.e. exactly the minutes-long shape this list
+  // exists for, which was reaped at the 10-minute default and marked stuck
+  // mid-flight. NEITHER may be renamed: running rows carry the old string, and
+  // the reaper matches the string it finds in the database.
   'bulkAIGeneration',
+  'bulkAiGeneration',
   'altTextTemplateApply',
   'translation',
   'aiGeneration',
@@ -70,18 +97,18 @@ const LONG_RUNNING_TASK_TYPES = [
   // scan shape as seoAudit, so it needs the same generous stuck-task
   // threshold rather than the short default cutoff.
   'seoJsonLdAudit',
-  // Storefront crawler / site audit (PLAN_SEO_SUITE_COMPLETION.md §3.5,
-  // Phase 1, seo-crawl.handler.ts) — a live BFS crawl of up to 2000 pages
-  // (5 parallel requests, ~200ms spacing, 10s timeout + one retry on
-  // 5xx/timeout) can legitimately run for many minutes on a large shop, so it
-  // needs the same generous stuck-task threshold as the other detached scans.
-  'seoCrawl',
   // Internal-linking suggestions (PLAN_SEO_SUITE_COMPLETION.md §4.3, Phase 2,
   // internal-links.handler.ts) — a synonym LLM call per target product/
   // collection (up to a few hundred) followed by an LLM-free cheerio match
   // loop over every article/page/product body, same fan-out shape as
   // seoBulkFix, so it needs the same generous stuck-task threshold.
   'seoInternalLinks',
+  // Deliberately NOT here: 'seoCrawl'. It is a HEARTBEAT type
+  // (orphan-run-recovery.js) and is reaped on the much shorter heartbeat
+  // threshold instead — a crawl writes Task.progress at least every 10s through
+  // every phase, so silence means the runner died. Until it is reaped,
+  // single-flight refuses every new crawl and the crawl page shows a scan that
+  // never finishes: 45 minutes of that is the hang a redeploy used to produce.
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement
@@ -112,7 +139,7 @@ export class TaskRecoveryService {
       return;
     }
 
-    console.log(`[TaskRecovery] Starting stuck task monitoring (every ${Math.round(STUCK_CHECK_INTERVAL_MS / 60000)} min; stuck threshold ${Math.round(STUCK_TASK_TIMEOUT_MS / 60000)} min)`);
+    console.log(`[TaskRecovery] Starting stuck task monitoring (every ${Math.round(STUCK_CHECK_INTERVAL_MS / 60000)} min; stuck threshold ${Math.round(STUCK_TASK_TIMEOUT_MS / 60000)} min, heartbeat types ${Math.round(HEARTBEAT_STALL_MS / 60000)} min)`);
 
     this.stuckCheckInterval = setInterval(async () => {
       try {
@@ -150,6 +177,24 @@ export class TaskRecoveryService {
     // is safe to retry or must be flagged for manual review.
     const webpRecovered = await this.recoverRunningWebpTasks();
 
+    // …and keep the aggregate row ABOVE them out of the reaper that runs three
+    // lines down. Nothing bumped its `updatedAt` while the process was down, so
+    // a restart that took longer than the stuck threshold (a slow redeploy)
+    // would flip a batch to `failed` — permanently, since the settlement is
+    // guarded on a non-terminal status — and hand the merchant a red "timed
+    // out" for a run whose twenty images then convert successfully. Its items
+    // were just reset or flagged above; whichever of the two, the processor's
+    // first poll settles the batch from what they really are.
+    await this.touchOpenWebpBatches();
+
+    // A detached runner cannot outlive its process, so every `running`
+    // heartbeat-type row we find while booting belongs to a process that is
+    // gone — no age check here (orphan-run-recovery.js, rule 2). This is what
+    // makes a crawl interrupted by a redeploy restartable immediately instead
+    // of after the reaper's timeout, and it closes the SeoCrawlSnapshot the
+    // reaper never touched.
+    const orphaned = await this.recoverOrphanedDetachedRuns();
+
     // Mark stuck tasks as failed
     const stuckCount = await this.markStuckTasksAsFailed();
 
@@ -165,9 +210,72 @@ export class TaskRecoveryService {
     // user interaction instead.
     const resetCount = await this.resetPendingTasks();
 
-    console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed, ${webpRecovered.retried} WebP retried, ${webpRecovered.failed} WebP flagged`);
+    console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed, ${orphaned.tasks} orphaned run(s) + ${orphaned.snapshots} crawl snapshot(s) closed, ${webpRecovered.retried} WebP retried, ${webpRecovered.failed} WebP flagged`);
 
-    return { recovered: resetCount, failed: stuckCount, webpRetried: webpRecovered.retried, webpFailed: webpRecovered.failed };
+    return {
+      recovered: resetCount,
+      failed: stuckCount,
+      orphaned: orphaned.tasks,
+      orphanedSnapshots: orphaned.snapshots,
+      webpRetried: webpRecovered.retried,
+      webpFailed: webpRecovered.failed,
+    };
+  }
+
+  /**
+   * Boot-time half of the orphan rule: fail heartbeat-type runs regardless of
+   * age and close the crawl snapshots behind them.
+   *
+   * Multi-instance caveat (same class as the R4-C2 note in server.js): with
+   * more than one replica, a booting instance would reap a run that is alive on
+   * another one. The app is deployed as a single web process; a run that IS
+   * still alive elsewhere is a run whose container is being replaced anyway,
+   * and its own finalizer keeps writing its own terminal state.
+   */
+  async recoverOrphanedDetachedRuns() {
+    // Never let this abort the rest of the boot recovery (and with it the
+    // monitoring interval that would clean up later): a failure here costs one
+    // delayed reap, a thrown one costs the reaper.
+    const result = await recoverOrphanedRuns(prisma, { olderThan: null }).catch((error) => {
+      console.error('[TaskRecovery] Orphaned-run recovery failed:', error);
+      return { tasks: 0, snapshots: 0, shops: [] };
+    });
+    if (result.tasks > 0 || result.snapshots > 0) {
+      console.log(
+        `[TaskRecovery] Orphaned detached runs: ${result.tasks} task(s) failed, ` +
+          `${result.snapshots} crawl snapshot(s) closed`,
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Give every open WebP batch a fresh heartbeat at boot.
+   *
+   * Deliberately unconditional: a batch whose items are ALL terminal is settled
+   * by the processor's next poll (seconds), and one whose items are gone is
+   * failed by the same sweep once past its grace period — so the only thing
+   * this can delay is a verdict that something else is about to write anyway.
+   * The reverse mistake, reaping a live batch, is not recoverable.
+   */
+  async touchOpenWebpBatches() {
+    try {
+      const res = await prisma.task.updateMany({
+        where: {
+          type: WEBP_PARENT_TASK_TYPE,
+          total: { not: null },
+          status: { in: WEBP_NON_TERMINAL_STATUS },
+        },
+        data: { updatedAt: new Date() },
+      });
+      if (res.count > 0) {
+        console.log(`[TaskRecovery] Kept ${res.count} open WebP batch(es) alive across the restart`);
+      }
+      return res.count;
+    } catch (error) {
+      console.error('[TaskRecovery] Failed to heartbeat open WebP batches:', error);
+      return 0;
+    }
   }
 
   /**
@@ -179,10 +287,18 @@ export class TaskRecoveryService {
    *   >=90:  old PNG already deleted on Shopify, only DB swap missing -> manual review
    *
    * retryCount is capped at 3 to prevent loops when the underlying source is broken.
+   *
+   * WORK ITEMS ONLY (`webpWorkRowWhere`: the `imageWebpConversionItem` rows this
+   * build creates plus the pre-split rows an older one wrote under the parent
+   * type). The aggregate row deliberately does NOT come through here: its
+   * `progress` is percent-of-batch and has none of the step meaning above, and
+   * resetting it to `pending` would hand the processor an aggregate to run as
+   * an image. An open batch needs no boot recovery — its items are reset or
+   * flagged here, and the processor's first poll settles the parent from them.
    */
   async recoverRunningWebpTasks() {
     const tasks = await prisma.task.findMany({
-      where: { type: 'imageWebpConversion', status: 'running' },
+      where: webpWorkRowWhere({ status: 'running' }),
       select: { id: true, progress: true, retryCount: true, shop: true },
     });
 
@@ -249,13 +365,29 @@ export class TaskRecoveryService {
     const now = Date.now();
     const defaultCutoff = new Date(now - STUCK_TASK_TIMEOUT_MS);
     const longCutoff = new Date(now - LONG_TASK_TIMEOUT_MS);
+    const heartbeatCutoff = new Date(now - HEARTBEAT_STALL_MS);
 
-    // R3-C4: each stuck imageWebpConversion task consumed an image op at
-    // batch creation, so we must refund it when WE flip it to 'failed'.
+    // R3-C4: each stuck WebP WORK ITEM consumed an image op at batch creation,
+    // so we must refund it when WE flip it to 'failed'.
     // We select rows (incl. type+shop), then updateMany ONLY those ids that
     // are still non-terminal, and refund webp rows. Once 'failed' a row no
     // longer matches the selector, so a later pass cannot re-select /
     // double-refund (idempotent across runs, same guarantee as before).
+    //
+    // "When WE flip it" is the whole rule, and it is the WRITE that says so,
+    // not the read: a work item can finish between the SELECT and the guarded
+    // UPDATE below, in which case the update skips it and a refund counted off
+    // the selected rows would hand a merchant their quota back for an image
+    // that converted. Work rows are therefore flipped per shop, so
+    // `updateMany`'s count is attributable to one counter.
+    //
+    // The AGGREGATE row spent nothing: its items each spent one and each refund
+    // themselves, here or in the processor. Refunding for it too would give a
+    // twenty-image batch twenty-one operations back, and refunding for it
+    // INSTEAD (which is what "one row per conversion" would have meant) would
+    // give the merchant one image's quota back for a run of twenty. That is why
+    // `total` is in the select — it is what tells an aggregate row from a
+    // pre-split row of the same type (app/config/webp-tasks.js).
     const refundByShop = new Map();
     let total = 0;
 
@@ -265,44 +397,93 @@ export class TaskRecoveryService {
       for (;;) {
         const rows = await prisma.task.findMany({
           where,
-          select: { id: true, shop: true, type: true },
+          select: { id: true, shop: true, type: true, total: true },
           take: STUCK_REAP_BATCH,
         });
         if (rows.length === 0) break;
-        const res = await prisma.task.updateMany({
-          where: { id: { in: rows.map((r) => r.id) }, status: { in: NON_TERMINAL } },
-          data: {
-            status: 'failed',
-            // Machine code, not prose: this runs outside any request, so there
-            // is no merchant locale here. The UI translates it via
-            // app/utils/task-error-text.ts (`taskTimedOut`).
-            error: 'task_timed_out',
-            completedAt: new Date(),
-          },
-        });
-        total += res.count;
+        const reapData = {
+          status: 'failed',
+          // Machine code, not prose: this runs outside any request, so there
+          // is no merchant locale here. The UI translates it via
+          // app/utils/task-error-text.ts (`taskTimedOut`).
+          error: 'task_timed_out',
+          completedAt: new Date(),
+        };
+
+        // Everything that owes no refund goes in one statement, as before.
+        const plainIds = [];
+        // Work rows grouped by shop, because that is the granularity a refund
+        // is paid at and therefore the granularity the flip has to be counted at.
+        const workIdsByShop = new Map();
         for (const r of rows) {
-          if (r.type === 'imageWebpConversion') {
-            refundByShop.set(r.shop, (refundByShop.get(r.shop) ?? 0) + 1);
+          if (isWebpWorkRow(r)) {
+            const ids = workIdsByShop.get(r.shop);
+            if (ids) ids.push(r.id);
+            else workIdsByShop.set(r.shop, [r.id]);
+          } else {
+            plainIds.push(r.id);
           }
         }
+
+        if (plainIds.length > 0) {
+          const res = await prisma.task.updateMany({
+            where: { id: { in: plainIds }, status: { in: NON_TERMINAL } },
+            data: reapData,
+          });
+          total += res.count;
+        }
+
+        for (const [shop, ids] of workIdsByShop) {
+          const res = await prisma.task.updateMany({
+            where: { id: { in: ids }, status: { in: NON_TERMINAL } },
+            data: reapData,
+          });
+          total += res.count;
+          if (res.count > 0) {
+            refundByShop.set(shop, (refundByShop.get(shop) ?? 0) + res.count);
+          }
+        }
+
         if (rows.length < STUCK_REAP_BATCH) break;
       }
     };
 
+    // Pass 0: heartbeat types (orphan-run-recovery.js) — their runner reports
+    // progress at a bounded interval, so a gap this long is evidence the
+    // process is gone rather than of a long-running job. Reaped here rather
+    // than in pass 1 because a 45-minute wait IS the hang for a task whose
+    // single-flight blocks the merchant from starting a new one.
+    await reapBatched({
+      type: { in: HEARTBEAT_TASK_TYPES },
+      status: { in: NON_TERMINAL },
+      updatedAt: { lt: heartbeatCutoff },
+    });
+
     // Pass 1: legitimately-long types — only stuck after the LONG cutoff.
     await reapBatched({
-      type: { in: LONG_RUNNING_TASK_TYPES },
+      type: { in: LONG_RUNNING_TASK_TYPES, notIn: HEARTBEAT_TASK_TYPES },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: longCutoff },
     });
 
     // Pass 2: everything else (incl. imageWebpConversion) — default cutoff.
     await reapBatched({
-      type: { notIn: LONG_RUNNING_TASK_TYPES },
+      type: { notIn: [...LONG_RUNNING_TASK_TYPES, ...HEARTBEAT_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: defaultCutoff },
     });
+
+    // The snapshot half of a reaped crawl. Runs on every pass, not just at
+    // boot: a crawl that times out here leaves the same open SeoCrawlSnapshot
+    // as one killed by a redeploy, and an open snapshot is what makes the
+    // newest crawl read as zero pages.
+    const closedSnapshots = await reconcileOrphanCrawlSnapshots(prisma).catch((err) => {
+      console.error('[TaskRecovery] Failed to close orphaned crawl snapshots:', err);
+      return 0;
+    });
+    if (closedSnapshots > 0) {
+      console.log(`[TaskRecovery] Closed ${closedSnapshots} orphaned crawl snapshot(s)`);
+    }
 
     if (total > 0) {
       console.log(`[TaskRecovery] Marked ${total} stuck task(s) as failed`);

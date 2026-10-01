@@ -12,14 +12,23 @@ import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/
 import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { getTaskExpirationDate } from "~/config/constants";
+import { resolveTaskResourceTitle } from "~/services/tasks/resource-title.server";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import {
+  readImageCandidates,
+  resolveVisionPolicy,
+  visionImageUrls,
+} from "~/services/ai/vision-policy.shared";
+import {
+  explicitPrimaryKeyword,
   findStuffedKeyword,
   keywordPreservationLine,
   keywordRequirementLines,
+  isKeywordAwareField,
   loadTrackedKeywords,
   resolveKeywordLocale,
+  resolveWrittenLocale,
   stuffingRetryWarning,
 } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
@@ -64,6 +73,18 @@ Return only the formatted text, without explanations.`;
 
   // Create task entry with prompt
   const taskFieldLabel3 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle3 =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel3 : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -71,7 +92,7 @@ Return only the formatted text, without explanations.`;
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel3,
+      resourceTitle: taskResourceTitle3,
       fieldType: taskFieldLabel3,
       progress: 0,
       // prompt is saved by AI service via savePromptToTask
@@ -137,8 +158,14 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   const contextDescription = getFormString(formData, "contextDescription") || "";
   const sanitizedContextDescription = sanitizePromptInput(contextDescription, { fieldType: "description", allowNewlines: true });
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
-  const sendImageToAI = formData.get("sendImageToAI") === "true";
-  const imageUrl = getFormString(formData, "imageUrl") || undefined;
+  /**
+   * Whether the AI may look at the images, and at how many, is the SHOP's
+   * setting — not the client's claim. This route takes a direct POST, so a
+   * `sendImageToAI=true` on the wire would be a permission the merchant never
+   * granted; the field is gone and this reads `AISettings` instead. The client
+   * only offers candidates.
+   */
+  const visionImages = visionImageUrls(readImageCandidates(formData), resolveVisionPolicy(ctx.settings));
   // Ad-hoc instruction the merchant typed into the prompt box before firing the
   // generation. Null when the box was submitted empty — then the prompt below
   // is byte-identical to what it was before this feature existed.
@@ -157,6 +184,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   const genInstructionsTextKey = genInstructionsKey ? `${genInstructionsKey}Instructions` : null;
   const genFieldLabel = genField?.label || fieldType;
   const isGenLongContent = genField?.type === "html";
+  const isGenSlug = genField?.type === "slug";
 
   // Get instructions (with default fallback)
   const writingStyle = getWritingStyleInstructions(genAiInstructions);
@@ -175,13 +203,28 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   // the editor's current locale as `keywordLocale` (already collapsed to "" for
   // the primary locale), so generating French copy pulls the French keyword set
   // instead of the primary one. Field gating lives in the helper.
-  const trackedKeywords = await loadTrackedKeywords(
-    db,
-    session.shop,
-    itemId,
-    resolveKeywordLocale(formData),
-    fieldType,
-  );
+  //
+  // §2.5d — the CREATE modal has no item yet, so the DB lookup would come back
+  // empty at exactly the moment the merchant has just said what the thing is
+  // about. It sends the keyword explicitly instead. The explicit value wins
+  // when present: it is what the merchant is looking at, and for a create
+  // there is nothing in the DB to lose to it.
+  const explicitKeyword = getFormString(formData, "explicitKeyword") || "";
+  const trackedKeywords =
+    explicitKeyword && isKeywordAwareField(fieldType)
+      ? explicitPrimaryKeyword(explicitKeyword)
+      : await loadTrackedKeywords(
+          db,
+          session.shop,
+          itemId,
+          resolveKeywordLocale(formData),
+          fieldType,
+        );
+
+  // §2.5e — the glossary is keyed by real locale codes, so it needs the
+  // language actually being WRITTEN. `keywordLocale` says "" for the primary
+  // one, which is right for the keyword rows and useless here.
+  const writtenLocale = await resolveWrittenLocale(ctx.admin, session.shop, formData);
 
   // Build field-type-aware prompt
   let prompt = `Create an improved ${genFieldLabel} for the following content.`;
@@ -251,6 +294,18 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
 
   // Create task entry (prompt is saved by AI service via savePromptToTask)
   const taskFieldLabel4 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle4 =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel4 : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -258,7 +313,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel4,
+      resourceTitle: taskResourceTitle4,
       fieldType: taskFieldLabel4,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -282,12 +337,31 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
       hasInstructions: !!(genInstructionsTextKey && genAiInstructions?.[genInstructionsTextKey]),
     });
 
-    // Use appropriate method based on field type
-    const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
+    // Use appropriate method based on field type. `visionImages` is already
+    // the merchant's answer applied — empty means either "vision is off" or
+    // "this item has no picture", and neither is this call's business.
+    // §2.5e — the glossary applies to the ORIGINAL, not only to its
+    // translations. Until now a merchant who forced "Sneaker" over "Turnschuh"
+    // got "Sneaker" in every translation and "Turnschuh" in the German source:
+    // the glossary working on exactly the half they are least likely to check.
+    // The context decides which rules are relevant, so a 200-term glossary
+    // does not dilute the rest of the prompt.
+    // A SLUG gets no glossary block. Its prompt restricts the output to
+    // a-z0-9-, and "write these names exactly as given, never translated or
+    // inflected" directly contradicts that two lines below the slug rules.
+    // `sanitizeSlug` saves the output either way, so this is about not putting
+    // two contradicting instructions in one prompt. The keyword line already
+    // takes an `isSlug` flag for the same reason.
+    const glossary = isGenSlug
+      ? undefined
+      : {
+          contextTexts: [sanitizedContextTitle, sanitizedContextDescription, currentValue],
+          locale: writtenLocale,
+        };
     const generate = (p: string) =>
       isGenLongContent
-        ? aiService.generateProductDescription(sanitizedContextTitle, p, imageUrlToSend)
-        : aiService.generateProductTitle(p, imageUrlToSend);
+        ? aiService.generateProductDescription(sanitizedContextTitle, p, visionImages, glossary)
+        : aiService.generateProductTitle(p, visionImages, glossary);
     let generatedContent = await generate(appendUserInstruction(prompt, userInstruction));
 
     // Stuffing guard (§3.2): hard-enforced in the handler, not just the
@@ -360,8 +434,8 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
   const contextDescription = getFormString(formData, "contextDescription") || "";
   const sanitizedContextDescription = sanitizePromptInput(contextDescription, { fieldType: "description", allowNewlines: true });
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
-  const sendImageToAI = formData.get("sendImageToAI") === "true";
-  const imageUrl = getFormString(formData, "imageUrl") || undefined;
+  // Same rule as the generation path: the shop decides, not the request.
+  const visionImages = visionImageUrls(readImageCandidates(formData), resolveVisionPolicy(ctx.settings));
 
   if (!currentValue) {
     return json({ success: false, error: "No content available to format" }, { status: 400 });
@@ -535,6 +609,18 @@ Do NOT:
 
   // Create task entry (prompt is saved by AI service via savePromptToTask)
   const taskFieldLabel5 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle5 =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel5 : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -542,7 +628,7 @@ Do NOT:
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel5,
+      resourceTitle: taskResourceTitle5,
       fieldType: taskFieldLabel5,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -566,12 +652,24 @@ Do NOT:
       hasInstructions: !!(instructionsTextKey && aiInstructions?.[instructionsTextKey]),
     });
 
-    // Use appropriate method based on field type
-    const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
+    // Use appropriate method based on field type. `visionImages` is already
+    // the merchant's answer applied — empty means either "vision is off" or
+    // "this item has no picture", and neither is this call's business.
+    // §2.5e — a reformat rewrites the merchant's own words, which is exactly
+    // where a house term gets replaced by a synonym. The context is the text
+    // being reworked, so only the rules it actually touches are sent.
+    // Same slug exception as the generation path above.
+    const glossary =
+      field?.type === "slug"
+        ? undefined
+        : {
+            contextTexts: [currentValue, sanitizedContextTitle],
+            locale: await resolveWrittenLocale(ctx.admin, session.shop, formData),
+          };
     const runFormat = (p: string) =>
       isLongContent
-        ? aiService.generateProductDescription(currentValue, p, imageUrlToSend)
-        : aiService.generateProductTitle(p, imageUrlToSend);
+        ? aiService.generateProductDescription(currentValue, p, visionImages, glossary)
+        : aiService.generateProductTitle(p, visionImages, glossary);
     let formattedValue = await runFormat(prompt);
 
     // Stuffing guard — the same one generation uses, and now needed here for

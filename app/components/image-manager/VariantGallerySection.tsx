@@ -350,14 +350,14 @@ export function VariantGallerySection({
                     minWidth: 180,
                     padding: "5px 8px",
                     fontSize: 13,
-                    border: "1px solid #c9cccf",
+                    border: "1px solid var(--app-field-border-color)",
                     borderRadius: 4,
                     outline: "none",
                     background: !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white",
                   }}
                   onFocus={(e) => { e.target.style.borderColor = "#005bd3"; e.target.style.background = "white"; }}
                   onBlur={(e) => {
-                    e.target.style.borderColor = "#c9cccf";
+                    e.target.style.borderColor = "var(--app-field-border-color)";
                     e.target.style.background = !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white";
                     if (skipNextBlurRef.current) {
                       skipNextBlurRef.current = false;

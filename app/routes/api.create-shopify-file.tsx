@@ -97,8 +97,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
   if (!cdnUrl) {
+    // The file EXISTS — only its CDN url is still being produced. Callers that
+    // need the url (the 3D snapshot) retry; callers that only need the
+    // reference (a metaobject `file_reference` field) can use `fileId` and go
+    // without a thumbnail, which beats leaving an orphaned file behind.
     return json(
-      { error: "Preview upload still processing — try saving again in a moment" },
+      { fileId, error: "Preview upload still processing — try saving again in a moment" },
       { status: 504 },
     );
   }

@@ -38,6 +38,23 @@ import {
 import { debugLog } from "../../utils/debug";
 import { markTranslationSaved } from "../../utils/translation-save-lock.server";
 import {
+  featuredAltLockId,
+  marketLayerLockId,
+  subResourceLockId,
+} from "../translations/translation-locks.shared";
+import {
+  collectBulkRepair,
+  recordBulkForeignWrite,
+  recordBulkMarketWrite,
+  flushBulkRepairs,
+  newBulkRepairPlan,
+  type BulkRepairPlan,
+} from "./retranslate.server";
+import { isBatchTranslatableValueType } from "../metaobject-fields.shared";
+import type { TranslationChangePolicy } from "../translations/translation-change-policy.server";
+// TYPE only — the module is imported dynamically where it is used.
+import type { TranslationMirror } from "../translations/stale-translation-sync.server";
+import {
   loadDigestsForRows,
   fetchDigestsForResource,
   registerAndVerify,
@@ -55,6 +72,31 @@ import {
   type TranslationInput,
 } from "./translations.server";
 import { logger } from "../../utils/logger.server";
+import { redirectResourceFor, wasEverLive, type RedirectableResource } from "../seo/handle-redirect.shared";
+// The single editor parses tags with exactly this function — one rule, so the
+// two surfaces cannot disagree about what a tag list is.
+import {
+  writeInventoryItemFields,
+  type InventoryItemFields,
+  type CommerceWarning,
+} from "../commerce-write.server";
+import { INVENTORY_POLICIES } from "../../config/shopify-enums.shared";
+import {
+  PRODUCT_COLLECTIONS_SELECTION,
+  productCollectionRows,
+  type ShopifyProductCollections,
+} from "../attribute-sync.shared";
+import { parseGridCollectionIds } from "../collection-picker.shared";
+import {
+  parseTagList,
+  parseCategoryId,
+  diffCollectionMembership,
+  collectionAutomation,
+  attributeInputFor,
+  attributesForResource,
+  type AttributeInput,
+  type AttributeResource,
+} from "../content-attributes.shared";
 import {
   groupDiffByRow,
   parseListMetafieldInput,
@@ -69,6 +111,18 @@ import {
   VAR_PRICE_COLUMN_ID,
   VAR_COMPARE_AT_COLUMN_ID,
   VAR_BARCODE_COLUMN_ID,
+  VAR_COST_COLUMN_ID,
+  VAR_TAXABLE_COLUMN_ID,
+  VAR_INVENTORY_POLICY_COLUMN_ID,
+  VAR_INVENTORY_TRACKED_COLUMN_ID,
+  VAR_WEIGHT_COLUMN_ID,
+  VAR_WEIGHT_UNIT_COLUMN_ID,
+  VAR_REQUIRES_SHIPPING_COLUMN_ID,
+  VAR_COUNTRY_OF_ORIGIN_COLUMN_ID,
+  VAR_HS_CODE_COLUMN_ID,
+  INVENTORY_ITEM_COLUMN_IDS,
+  PRODUCT_VARIANT_COLUMN_IDS,
+  canonicalSelectValue,
   type BulkRowType,
   type BulkDiffEntry,
   type BulkDiffRowGroup,
@@ -77,6 +131,7 @@ import {
   type ColumnDescriptor,
 } from "./columns.shared";
 import { moneyToDecimalString } from "../product-variant-sync.server";
+import { writeMetaobjectFields, type MetaobjectFieldWrite } from "../metaobject-write.server";
 
 interface ApplyContext {
   db: PrismaClient;
@@ -92,6 +147,21 @@ interface ApplyContext {
    * (which already has the shop locales) so applyBulkDiff makes no extra
    * fetch; omitted/empty ⇒ invalidation safely no-ops (e.g. in unit tests). */
   foreignLocales?: string[];
+  /** PLAN §Phase 3.3 — override the shop's "redirect on handle change" setting.
+   *  Omitted ⇒ read from `AISettings` once per run. Tests pass `false` to keep
+   *  the write paths free of redirect traffic. */
+  autoHandleRedirect?: boolean;
+  /** The shop's PRIMARY locale. Only the auto-translation repair needs it: it
+   *  is the source language of every value prompt (option names, metafield
+   *  values, alt texts, metaobject fields). Omitted ⇒ those surfaces fall back
+   *  to the merchant's stored deletion answer rather than translating FROM an
+   *  unknown language — the same rule the metaobject editor's repair follows. */
+  primaryLocale?: string;
+  /** How many auto-translation repair groups this call may open (see
+   *  `BulkRepairPlan.maxGroups`). Omitted ⇒ MAX_REPAIR_GROUPS, the per-save
+   *  cap. The batched CSV import passes the remainder of ONE budget for the
+   *  whole file, so its batches together open no more runs than one save. */
+  repairGroupBudget?: number;
 }
 
 /** Settable `ProductStatus` values for `productUpdate`'s `ProductInput`.
@@ -146,6 +216,13 @@ interface PersistDeps {
    * GID is cached nowhere and cannot be derived from the parent, so it is
    * resolved once per row instead of once per (row, locale, market) group. */
   featuredImageIds: Map<string, string | null>;
+  /** The shop's collections as membership screening needs them — the `known`
+   *  map `diffCollectionMembership` takes, plus titles for a refusal message.
+   *  The same for every row of one save, so it is read ONCE per run (a
+   *  200-row membership edit would otherwise issue 200 identical full-table
+   *  reads and rebuild the map 200 times). Lazily filled; see
+   *  `collectionScreenForRun`. */
+  collectionScreen?: Promise<CollectionScreen>;
   /** Published, non-primary shop locales — the target set for the primary-save
    * stale-foreign-translation invalidation (Plan §6.6 / Phase 4b). Loaded once
    * per run; empty when the lookup failed (invalidation then safely no-ops). */
@@ -154,6 +231,35 @@ interface PersistDeps {
    * write SUB-RESOURCE translations (metafield "value", option/value "name").
    * Loaded in ONE pass by applyBulkDiff, together with their digests. */
   subResourceCaches: Map<string, ProductSubResourceCache>;
+  /** Merchant switch (Settings → Übersetzungen): may a changed/cleared PRIMARY
+   * value delete its foreign translations at all? Resolved once per run and
+   * checked by every §6.6 invalidation entry point; `false` makes them no-op
+   * exactly like an empty `foreignLocales`. Fails OPEN — see
+   * services/translations/translation-change-policy.server.ts.
+   *
+   * TWO answers, because the auto-translation only supersedes the deletion
+   * where it can actually refresh the row: `purgeStaleTranslations` covers a
+   * ROW's own translatable fields on the types the sync reconciles, and
+   * `purgeStaleSubResourceTranslations` covers everything it never sees —
+   * metafields, options, option values, image alt-texts and metaobject fields.
+   * Suppressing the second would leave a translation of text that no longer
+   * exists live forever. */
+  purgeStaleTranslations: boolean;
+  purgeStaleSubResourceTranslations: boolean;
+  /** PLAN §Phase 3.3 — the shop's "redirect when a handle changes" preference,
+   *  read ONCE per run. The setting is shop-level, so it has to hold on this
+   *  write path too; the single editor's per-save override has no equivalent
+   *  here (a grid has no per-row checkbox). */
+  autoHandleRedirect: boolean;
+  /** The full policy behind the two booleans above. The §6.6 sites read
+   *  `autoTranslateExternalChanges` off it to decide between REPAIRING a
+   *  surface and deleting it, and the repair itself needs the whole record. */
+  policy: TranslationChangePolicy;
+  /** What this save will hand to `reconcileAfterPrimarySave` once every write
+   *  is through (retranslate.server.ts). Empty unless auto-translate is on. */
+  repairPlan: BulkRepairPlan;
+  /** The shop's primary locale, for the value prompts — see ApplyContext. */
+  primaryLocale?: string;
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -183,6 +289,9 @@ interface ProductCellGroups {
   metafields: { columnId: string; column: ColumnDescriptor; value: string }[];
   options: Map<number, OptionCells>;
   imageAlt?: { columnId: string; value: string };
+  /** §Phase 4 — the price/compare-at/SKU cells of a SINGLE-variant product,
+   *  written on the variant itself (PRODUCT_VARIANT_COLUMN_IDS). */
+  variant: Record<string, string>;
   /** Cells whose column could not be classified — validation rejected these
    * already, so hitting this is a programming error surfaced per cell. */
   failures: BulkFailure[];
@@ -194,6 +303,7 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
     baseColumnIds: [],
     metafields: [],
     options: new Map(),
+    variant: {},
     failures: [],
   };
   for (const [columnId, value] of Object.entries(group.cells)) {
@@ -218,6 +328,16 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
         out.options.set(position, cells);
         break;
       }
+      case "variant":
+        // A product row offers exactly three of these, for its ONE variant.
+        if (PRODUCT_VARIANT_COLUMN_IDS.has(columnId)) {
+          out.variant[columnId] = value;
+        } else {
+          out.failures.push(
+            failureOf(group, `Column "${columnId}" is not editable on ${group.rowType}.`, columnId),
+          );
+        }
+        break;
       case "image": {
         if (column.id === IMG_ALT_COLUMN_ID) {
           out.imageAlt = { columnId, value };
@@ -253,30 +373,237 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
  * leaves the stale rows (the pre-4b behaviour, identical to a direct edit in
  * the Shopify admin) rather than failing the cell.
  */
+/**
+ * A resource whose PRIMARY text this save just rewrote: its digests are stale.
+ *
+ * `applyBulkDiff` prefetches every digest in one batched pass BEFORE the first
+ * write, because that is the only way a 250-row save is affordable. But a save
+ * that changes a row's primary text AND writes a translation of it holds a
+ * digest that describes the text as it was — and `translationsRegister` refuses
+ * one that no longer matches: "Translatable content hash is invalid", the whole
+ * foreign cell lost while the primary half saved fine.
+ *
+ * Dropping the entry (and its one-re-fetch marker) makes the foreign path treat
+ * the digest as MISSING, which it already knows how to repair: one re-fetch of
+ * that resource, then the write. The unit order below puts primary groups first
+ * so the re-fetch reads the text the merchant actually just saved.
+ */
+function markDigestsStale(deps: PersistDeps, resourceId: string): void {
+  deps.digests.delete(resourceId);
+  deps.digestRefetched.delete(resourceId);
+}
+
+/**
+ * The MARKET overrides of a changed primary value.
+ *
+ * Nothing re-translates an override — every repair in this app writes global
+ * rows only — so when the text it describes moves it is exactly as stale as the
+ * global row beside it, and until this existed nothing removed it either. It
+ * runs on the paths that did NOT hand the change to the repair; where they did,
+ * the repair purges the market layer itself.
+ *
+ * Keys and locales are the CHANGE, not what the global lookup found: an
+ * override can sit on a (locale, key) that has no global translation at all, so
+ * a purge driven by that lookup would walk straight past it.
+ *
+ * Best-effort, like every §6.6 site — the primary write has already succeeded.
+ */
+async function purgeBulkMarketOverrides(
+  deps: PersistDeps,
+  mirror: TranslationMirror,
+  refs: Array<{ resourceId: string; resourceType: string }>,
+  keys: readonly string[],
+  context: string,
+): Promise<void> {
+  try {
+    const { purgeMarketOverrides } = await import("../translations/market-layer-purge.server");
+    await purgeMarketOverrides({
+      gateway: deps.gateway,
+      mirror,
+      refs,
+      locales: deps.foreignLocales,
+      keys,
+      // What THIS save wrote on a market layer stays: which of the two row
+      // groups persisted first is the client's ordering, not a decision about
+      // the merchant's value.
+      currentOverrides: deps.repairPlan.marketWrites,
+      context,
+    });
+  } catch (err: unknown) {
+    logger.warn("[BULK] Market-override purge could not run — those rows stay", {
+      context: "Bulk",
+      surface: context,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Which repair a §6.6 candidate belongs to, and record it. Returns FALSE when
+ * the caller must fall back to its own purge: the group cap was reached, or the
+ * row type has no repair at all.
+ */
+function collectRepairForKeys(
+  deps: PersistDeps,
+  rowType: BulkRowType,
+  resourceId: string,
+  keys: string[],
+  opts: InvalidateOptions,
+): boolean {
+  // A value-shaped surface (an option name, a metafield value, an alt text, a
+  // metaobject field) is translated by the GENERIC value prompt, which has to
+  // be told the source language. Without a known primary locale there is
+  // nothing to translate FROM, so it must fall through to the deletion here —
+  // decided at COLLECTION time and not at the flush, because by then the purge
+  // has already stood down and the stale text would simply survive with
+  // nothing left to refresh it. The same rule the metaobject editor follows.
+  if (!deps.primaryLocale && (opts.resourceTypeOverride || rowType === "metaobject")) return false;
+  const retranslatable = opts.retranslatable ?? (() => true);
+  const entries = keys.map((key) => ({
+    resourceId,
+    resourceType: opts.resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType],
+    key,
+    retranslatable: retranslatable(key),
+  }));
+  if (opts.resourceTypeOverride) {
+    // A metafield, option or option value: its translations live on its OWN
+    // gid, but the RUN belongs to the product — one Task row for everything
+    // this save moved under it, exactly like the single editor's.
+    return collectBulkRepair(deps.repairPlan, {
+      surface: "subResource",
+      ownerId: opts.ownerId ?? resourceId,
+      rowType,
+      entries,
+    });
+  }
+  if (rowType === "metaobject") {
+    return collectBulkRepair(deps.repairPlan, {
+      surface: "metaobject",
+      ownerId: resourceId,
+      rowType,
+      entries,
+    });
+  }
+  // `variant` carries no translatable column at all, and `image` never reaches
+  // here — invalidateStaleImageAltTranslations owns that surface.
+  if (rowType === "variant" || rowType === "image") return false;
+  const collected = collectBulkRepair(deps.repairPlan, {
+    surface: "content",
+    ownerId: resourceId,
+    rowType,
+    entries,
+  });
+  // CLAIM THE ROW NOW, not at the flush.
+  //
+  // A product's or collection's own fields are repaired by this save, and the
+  // only thing stopping its `products/update` webhook from starting a SECOND
+  // AI run for the same resource is that claim. The repair makes one when it
+  // starts — but the flush is the last thing `applyBulkDiff` does, and the
+  // webhook of row 1 fires the moment row 1 is written: on a save of 25 rows it
+  // arrives, finds nothing claimed, and reconciles tens of seconds before the
+  // flush. `retranslationsInFlight` then QUEUES our run behind it rather than
+  // dropping it, so every locale is translated and registered twice on the
+  // merchant's own key. Marking here is what the removed two-pool design was
+  // approximating: the claim has to land with the WRITE, not with the repair.
+  if (collected && (rowType === "product" || rowType === "collection")) {
+    markTranslationSaved(resourceId);
+  }
+  return collected;
+}
+
+interface InvalidateOptions {
+  /** ContentTranslation.resourceType to match — set for SUB-RESOURCES
+   * (Metafield / ProductOption / ProductOptionValue), whose rows are keyed by
+   * their own gid, not by the product's. */
+  resourceTypeOverride?: string;
+  /** The ROW this resource belongs to, when `resourceId` is not it: a
+   * metafield's or an option's owning product. It is what the repair groups
+   * and locks by, so the product's sub-resources share ONE run instead of one
+   * per cell. */
+  ownerId?: string;
+  /** May the automation re-translate this key's value, or must it be removed?
+   * A multi-line, list or rich-text value comes back from the generic value
+   * prompt corrupted (CLAUDE.md), so its type decides. Default: yes. */
+  retranslatable?: (key: string) => boolean;
+}
+
 async function invalidateStaleForeignTranslations(
   deps: PersistDeps,
   rowType: BulkRowType,
   resourceId: string,
   translationKeys: string[],
-  /** ContentTranslation.resourceType to match — set for SUB-RESOURCES
-   * (Metafield / ProductOption / ProductOptionValue), whose rows are keyed by
-   * their own gid, not by the product's. */
-  resourceTypeOverride?: string,
+  opts: InvalidateOptions = {},
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
-  const keys = [...new Set(translationKeys.filter(Boolean))];
+  const { resourceTypeOverride } = opts;
+  let keys = [...new Set(translationKeys.filter(Boolean))];
+  // FIRST, and before every gate: the prefetched digest describes the text as
+  // it was a moment ago, and a foreign cell of this same save would register
+  // against it and be refused.
+  if (keys.length > 0) markDigestsStale(deps, resourceId);
+  // An ALLOWLIST, never a denylist: a row type that is not named here — a new
+  // one, or `variant`, whose ContentTranslation resourceType the reconciliation
+  // never sees — must fall on the side that keeps deleting, not the one that
+  // silently keeps stale content. Only a row's OWN fields on the two
+  // webhook-backed types are re-translated automatically; sub-resources
+  // (`resourceTypeOverride`), image alts and metaobject fields never are.
+  const reconciledSurface =
+    !resourceTypeOverride && (rowType === "product" || rowType === "collection");
+  const mayPurge = reconciledSurface
+    ? deps.purgeStaleTranslations
+    : deps.purgeStaleSubResourceTranslations;
   if (keys.length === 0 || foreignLocales.length === 0) return;
 
-  const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
-  const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
-
+  // With auto-translate on, this save is the REPAIR rather than the deletion —
+  // the same answer the single editor gives for the same edit. Collected here
+  // and handed over once at the end of the run (retranslate.server.ts), so a
+  // product whose title and three metafields moved starts two runs, not four.
+  // A refusal (the group cap) falls through to the purge below, which is
+  // exactly what this surface did before.
+  if (deps.policy.autoTranslateExternalChanges) {
+    if (collectRepairForKeys(deps, rowType, resourceId, keys, opts)) return;
+    // Refused (the group cap). Everything else falls back to the deletion,
+    // but a `handle` the merchant opted into re-translating does NOT: it is
+    // the one key whose stale translation is still a WORKING URL, and the
+    // repair itself leaves every handle it cannot deliver alone rather than
+    // purging it. Deleting it here would move the foreign address to the
+    // primary slug with no redirect — the breakage the opt-in exists to avoid,
+    // reached only because this save happened to be large.
+    if (deps.policy.autoTranslateHandles && !resourceTypeOverride && rowType !== "metaobject") {
+      keys = keys.filter((key) => key !== "handle");
+      if (keys.length === 0) return;
+    }
+  }
   // Image rows keep their translations in ProductImageAltTranslation — one key
   // ("alt") on one resource, so the generic key/locale bookkeeping below would
-  // be pure overhead.
+  // be pure overhead. It dispatches BEFORE the purge gate: that function owns
+  // both answers for its surface, and behind the gate its whole auto-translate
+  // branch was unreachable on a shop with the deletion switched off — the one
+  // surface where the switch would have done nothing at all.
   if (rowType === "image" && !resourceTypeOverride) {
     await invalidateStaleImageAltTranslations(deps, resourceId);
     return;
   }
+  if (!mayPurge) return;
+
+  const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
+  const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
+
+  // The market layer FIRST: it is driven by the changed keys and every
+  // published locale, so it must not sit behind the global lookup's early exit.
+  {
+    const { contentTranslationMirror, metaobjectTranslationMirror } = await import(
+      "../translations/stale-translation-sync.server"
+    );
+    await purgeBulkMarketOverrides(
+      deps,
+      isMetaobject ? metaobjectTranslationMirror(shop, new Map()) : contentTranslationMirror(shop),
+      [{ resourceId, resourceType: contentResourceType }],
+      keys,
+      isMetaobject ? "metaobject" : contentResourceType,
+    );
+  }
+
   try {
     // Which (locale, key) GLOBAL foreign rows actually exist — skip Shopify
     // entirely when there is nothing to invalidate (the common case on shops
@@ -349,12 +676,61 @@ async function invalidateStaleForeignTranslations(
  */
 async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: string): Promise<void> {
   const { db, gateway, foreignLocales } = deps;
-  if (foreignLocales.length === 0) return;
+  markDigestsStale(deps, mediaId);
+  const autoTranslate = deps.policy.autoTranslateExternalChanges;
+  if ((!autoTranslate && !deps.purgeStaleSubResourceTranslations) || foreignLocales.length === 0) {
+    return;
+  }
   try {
     // Two stores, one rule: product media mirror into
     // ProductImageAltTranslation, every other image into
     // ContentTranslation("MediaImage") — the same split the write path applies.
-    const cacheId = await imageCacheIdFor(deps, mediaId);
+    const cacheRow = await imageCacheRowFor(deps, mediaId);
+    const cacheId = cacheRow?.id ?? null;
+
+    // With auto-translate on the alt is REWRITTEN rather than deleted. The two
+    // stores split the group as well: product media hang their run off the
+    // owning PRODUCT (one Task row however many of its images moved, under the
+    // private alt-text lock), while a library image has no owning product and
+    // is its own group.
+    // No primary locale ⇒ no source language for the value prompt ⇒ the
+    // deletion stands (see collectRepairForKeys).
+    if (autoTranslate && deps.primaryLocale) {
+      const entries = [{ resourceId: mediaId, resourceType: "MediaImage", key: "alt" }];
+      const collected = cacheRow
+        ? collectBulkRepair(deps.repairPlan, {
+            surface: "productImageAlt",
+            ownerId: cacheRow.productId,
+            rowType: "product",
+            entries,
+          })
+        : collectBulkRepair(deps.repairPlan, {
+            surface: "libraryImageAlt",
+            ownerId: mediaId,
+            rowType: "image",
+            entries,
+          });
+      if (collected) return;
+    }
+    if (!deps.purgeStaleSubResourceTranslations) return;
+
+    // The market layer, before the global lookup's early exit — two stores, the
+    // same split the write path makes.
+    {
+      const { contentTranslationMirror, productImageAltMirror } = await import(
+        "../translations/stale-translation-sync.server"
+      );
+      await purgeBulkMarketOverrides(
+        deps,
+        cacheRow
+          ? productImageAltMirror(deps.shop, cacheRow.productId)
+          : contentTranslationMirror(deps.shop),
+        [{ resourceId: mediaId, resourceType: "MediaImage" }],
+        ["alt"],
+        "MediaImage",
+      );
+    }
+
     const existing = cacheId
       ? await db.productImageAltTranslation.findMany({
           where: { imageId: cacheId, marketId: "", locale: { in: foreignLocales } },
@@ -418,6 +794,36 @@ function translatableKeysForColumnIds(
 
 // ─── Product row: stage 1 — base fields via productUpdate ──────────────────
 
+/** See `PersistDeps.collectionScreen`. */
+interface CollectionScreen {
+  known: Map<string, boolean | null>;
+  titles: Map<string, string>;
+}
+
+/**
+ * The shop's collections, read ONCE per save and turned into the screening map
+ * once. On the run's own `PersistDeps`, like every other per-run cache here, so
+ * it lives exactly as long as the save and a later save sees fresh rule flags.
+ * A failed read is dropped rather than memoised, so the next row asks again.
+ */
+function collectionScreenForRun(deps: PersistDeps): Promise<CollectionScreen> {
+  if (deps.collectionScreen) return deps.collectionScreen;
+  const request = deps.db.collection
+    .findMany({
+      where: { shop: deps.shop },
+      select: { id: true, title: true, isSmart: true, attributesSyncedAt: true },
+    })
+    .then((rows) => ({
+      known: new Map(rows.map((c) => [c.id, collectionAutomation(c)] as const)),
+      titles: new Map(rows.map((c) => [c.id, c.title] as const)),
+    }));
+  deps.collectionScreen = request;
+  request.catch(() => {
+    if (deps.collectionScreen === request) deps.collectionScreen = undefined;
+  });
+  return request;
+}
+
 async function persistProductBaseFields(
   group: BulkDiffRowGroup,
   cells: ProductCellGroups,
@@ -447,6 +853,91 @@ async function persistProductBaseFields(
       delete fields.status;
     } else {
       fields.status = s;
+    }
+  }
+
+  // ── The two picker cells (COL_CATEGORY / COL_COLLECTIONS) ────────────────
+  //
+  // A category is a TaxonomyCategory GID or "" (none). Anything else fails at
+  // the GraphQL SCHEMA level, where `userErrors` never sees it and the save
+  // reads as a success while nothing was written — so it is refused HERE, per
+  // cell, with `parseCategoryId`, the editor's own check.
+  if (fields.category !== undefined) {
+    const parsed = parseCategoryId(fields.category);
+    if (!parsed.valid) {
+      failures.push(
+        failureOf(group, `"${fields.category}" is not a product category — pick one from the list.`, "field.category"),
+      );
+      delete fields.category;
+    }
+  }
+
+  // Memberships are a JOIN/LEAVE DIFF against the CACHE, exactly as the
+  // editor's save does it (update.actions.ts) — never a list write: a product
+  // can belong to collections this shop never cached, and a list would drop
+  // them. The BEFORE side never comes from the client, so a cell cannot remove
+  // a membership the grid never showed.
+  //
+  // Two refusals ride on it. The cell's value must be GIDs and nothing else
+  // (`parseGridCollectionIds` — a pasted "Sale, Winter" read leniently would be
+  // saved as "leave everything"). And a RULE-BASED or never-measured
+  // collection is refused in both directions by `diffCollectionMembership`:
+  // Shopify rejects a manual join on one, and because `productUpdate` is
+  // atomic that refusal would take this row's title and SEO edits with it. The
+  // picker locks those rows; this is the server-side twin for the entrances
+  // that do not go through it. What is refused is reported on the cell, and
+  // whatever is left of the diff is still written.
+  let membershipDiff: { toJoin: string[]; toLeave: string[] } | null = null;
+  if (fields.collections !== undefined) {
+    const parsed = parseGridCollectionIds(fields.collections);
+    if (!parsed.ok) {
+      failures.push(
+        failureOf(
+          group,
+          `Only collections picked from the list can be saved here — "${parsed.bad[0]}" is not one. Nothing was changed.`,
+          "field.collections",
+        ),
+      );
+      delete fields.collections;
+    } else {
+      try {
+        const cached = await db.productCollection.findMany({
+          where: { shop, productId: id },
+          select: { collectionId: true, collectionTitle: true, automated: true },
+        });
+        const screen = await collectionScreenForRun(deps);
+        const diff = diffCollectionMembership(cached, parsed.ids, screen.known);
+        // (4) Two refusals, two sentences, and each title under its OWN
+        // reason. One sentence for both told a merchant their manual
+        // collection was rule-based and sent them looking for a rule that does
+        // not exist — MembershipDiff keeps the two apart for exactly that.
+        const titleOf = (ref: string) =>
+          cached.find((c) => c.collectionId === ref)?.collectionTitle || screen.titles.get(ref) || ref;
+        const quoted = (refs: string[]) => refs.map((ref) => `"${titleOf(ref)}"`).join(", ");
+        const reasons: string[] = [];
+        if (diff.refusedAutomated.length > 0) {
+          reasons.push(`Not changed: ${quoted(diff.refusedAutomated)} — a rule-based collection decides its own members.`);
+        }
+        if (diff.refusedUnknown.length > 0) {
+          reasons.push(
+            `Not changed: ${quoted(diff.refusedUnknown)} — not loaded from Shopify yet; resync the collections first.`,
+          );
+        }
+        if (reasons.length > 0) failures.push(failureOf(group, reasons.join(" "), "field.collections"));
+        if (diff.toJoin.length > 0 || diff.toLeave.length > 0) {
+          membershipDiff = { toJoin: diff.toJoin, toLeave: diff.toLeave };
+        } else {
+          // Nothing left to send — refused, or the cache already says so.
+          // Keeping the field would run `productUpdate` with only an id and
+          // report a save of nothing.
+          delete fields.collections;
+        }
+      } catch (err: unknown) {
+        failures.push(
+          failureOf(group, err instanceof Error ? err.message : String(err), "field.collections"),
+        );
+        delete fields.collections;
+      }
     }
   }
 
@@ -486,6 +977,9 @@ async function persistProductBaseFields(
   );
   if (remainingColumnIds.length === 0) return failures;
 
+  // §Phase 3.3 — read the old handle before productUpdate replaces it.
+  const capturedHandle = await captureHandleForRedirect(group, fields.handle, deps);
+
   try {
     // Minimal partial productUpdate — only the fields that changed are sent,
     // so everything else is left untouched by Shopify (omitted GraphQL input
@@ -496,6 +990,24 @@ async function persistProductBaseFields(
     if (fields.descriptionHtml !== undefined) input.descriptionHtml = fields.descriptionHtml;
     if (fields.productType !== undefined) input.productType = fields.productType;
     if (fields.status !== undefined) input.status = fields.status;
+    // §Phase 3.6. `tags` goes through the SAME parser as the single editor —
+    // trimmed, empties dropped, case-insensitively de-duplicated — because
+    // Shopify stores them that way and a grid cell full of stray commas would
+    // otherwise report a change on every subsequent save.
+    if (fields.vendor !== undefined) input.vendor = fields.vendor;
+    if (fields.tags !== undefined) input.tags = parseTagList(fields.tags);
+    // "" is the theme's DEFAULT template, which Shopify expresses as null —
+    // the same rule `attributeInputFor` applies for the other four row types.
+    // Collapsing the two is how a field stops being clearable.
+    if (fields.templateSuffix !== undefined) {
+      input.templateSuffix = fields.templateSuffix.trim() || null;
+    }
+    // null is meaningful: it takes the product OUT of the taxonomy.
+    if (fields.category !== undefined) input.category = parseCategoryId(fields.category).id;
+    if (membershipDiff?.toJoin.length) input.collectionsToJoin = membershipDiff.toJoin;
+    if (membershipDiff?.toLeave.length) input.collectionsToLeave = membershipDiff.toLeave;
+    const wroteCategory = fields.category !== undefined;
+    const wroteMembership = membershipDiff !== null;
     if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
       input.seo = {
         title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.seoTitle ?? "",
@@ -503,17 +1015,47 @@ async function persistProductBaseFields(
           fields.seoDescription !== undefined ? fields.seoDescription : untouchedSeo?.seoDescription ?? "",
       };
     }
+    // `product { id handle tags }` is the echo the mirror and the redirect
+    // read. Shopify normalises both of these — tags are trimmed and
+    // case-collapsed, and a handle is slugified ("Summer Sale" is stored as
+    // "summer-sale") — so the value this app SENT is not the value the shop
+    // holds. Mirroring or redirecting to the sent one records a handle that
+    // does not exist, and (per §Phase 3.3) a redirect onto a live page's own
+    // path makes that page unreachable.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const response = await gateway.graphql(
       `#graphql
         mutation seoBulkMetaProductUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
+            product {
+              id
+              handle
+              tags
+              templateSuffix
+              ${wroteCategory ? "category { id fullName name }" : ""}
+              ${wroteMembership ? PRODUCT_COLLECTIONS_SELECTION : ""}
+            }
             userErrors { field message }
           }
         }`,
       { variables: { input } },
     );
     const data = (await response.json()) as {
-      data?: { productUpdate?: { userErrors?: { field?: string[] | string; message: string }[] } };
+      data?: {
+        productUpdate?: {
+          product?: {
+            id: string;
+            handle?: string;
+            tags?: string[];
+            templateSuffix?: string | null;
+            category?: { id?: string; fullName?: string | null; name?: string | null } | null;
+            collections?: ShopifyProductCollections | null;
+          } | null;
+          userErrors?: { field?: string[] | string; message: string }[];
+        };
+      };
       errors?: { message?: string }[];
     };
     // A SCHEMA-level GraphQL error (unknown enum value, wrong variable type)
@@ -533,17 +1075,113 @@ async function persistProductBaseFields(
     const userErrors = data.data.productUpdate.userErrors ?? [];
     if (userErrors.length > 0) throw new Error(userErrors[0].message);
 
+    const echoedProduct = data.data.productUpdate.product ?? null;
+
     const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
-    for (const key of Object.keys(fields)) dbData[key] = fields[key];
-    await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
+    // The two picker cells have no 1:1 Prisma column — `category` is split
+    // into `categoryId`/`categoryName` below and `collections` is a RELATION —
+    // so copying their strings across would fail the whole row.
+    for (const key of Object.keys(fields)) {
+      if (key === "category" || key === "collections") continue;
+      dbData[key] = fields[key];
+    }
+    // The taxonomy, from the ECHO: `fullName` is the whole path, which is what
+    // the picker labels the category with. Cleared ⇒ Shopify reports
+    // `category: null`, which mirrors as null.
+    //
+    // (5) The echo rule decides whether there IS anything to mirror. A payload
+    // that did not carry the `category` key at all (`product: null`, a
+    // throttled partial answer) confirms nothing — mirroring it as "no
+    // category" would wipe the cache over a write nobody confirmed, and the
+    // grid would show "Not set" for a product that still has one. The cell is
+    // reported instead, so the merchant's pick stays on screen to save again.
+    const categoryConfirmed = !!echoedProduct && "category" in echoedProduct;
+    if (wroteCategory && categoryConfirmed) {
+      dbData.categoryId = echoedProduct?.category?.id ?? null;
+      dbData.categoryName = echoedProduct?.category?.fullName ?? echoedProduct?.category?.name ?? null;
+    } else if (wroteCategory) {
+      failures.push(
+        failureOf(group, "Shopify did not confirm the category — nothing was changed locally. Save again.", "field.category"),
+      );
+    }
+    // Membership, rebuilt from the ECHO the way the editor's save and all three
+    // sync sites do it. `productCollectionRows` answers null for an echo that
+    // did not carry the block, which SKIPS the rebuild rather than wiping the
+    // memberships — "member of nothing" must never come from a missing field.
+    const membership = wroteMembership
+      ? productCollectionRows(shop, id, echoedProduct?.collections)
+      : null;
+    if (membership) dbData.hasMoreCollections = membership.hasMore;
+    // The same rule for the memberships: no echoed block, no rebuild — and a
+    // cell that says so rather than one that looks saved.
+    if (wroteMembership && !membership) {
+      failures.push(
+        failureOf(
+          group,
+          "Shopify did not confirm the collections — nothing was changed locally. Save again.",
+          "field.collections",
+        ),
+      );
+    }
+    // The handle Shopify STORED, not the cell that was typed: Shopify
+    // slugifies it, so mirroring the raw cell would leave the cache claiming a
+    // handle the shop does not serve — and the grid reads that cache back.
+    if (fields.handle !== undefined && echoedProduct?.handle) dbData.handle = echoedProduct.handle;
+    // §Phase 3.6 — `tags` is a Prisma scalar LIST, not a string: the 1:1 copy
+    // above would hand Prisma the comma-joined cell and fail the whole row.
+    // Taken from Shopify's ECHO where there is one, because Shopify normalises
+    // tags (trim, case-collapse) and the cache is what the grid reads back.
+    if (fields.tags !== undefined) {
+      const echoedTags = echoedProduct?.tags;
+      dbData.tags = Array.isArray(echoedTags) ? echoedTags : parseTagList(fields.tags);
+    }
+    // Prisma's column is nullable and "" is not the same value as "no custom
+    // template" — the 1:1 copy above would store the empty string and the grid
+    // would read it back as a suffix the theme does not have. Taken from the
+    // ECHO, like the handle and the tags beside it.
+    if (fields.templateSuffix !== undefined) {
+      dbData.templateSuffix =
+        echoedProduct && "templateSuffix" in echoedProduct
+          ? echoedProduct.templateSuffix ?? null
+          : fields.templateSuffix.trim() || null;
+    }
+    // ONE transaction when the memberships are rebuilt, exactly as the editor
+    // does it: a connection blip between the delete and the createMany would
+    // otherwise leave the product cached as a member of NOTHING while the save
+    // reports success — and the picker would then render that as a confident
+    // "in no collections".
+    if (membership) {
+      await db.$transaction(async (tx) => {
+        await tx.product.update({ where: { shop_id: { shop, id } }, data: dbData });
+        await tx.productCollection.deleteMany({ where: { shop, productId: id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      });
+    } else {
+      await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
+    }
 
     // Phase 4b: the changed primary fields' foreign translations are now stale.
     await invalidateStaleForeignTranslations(deps, "product", id, translatableKeysForColumnIds(deps, "product", remainingColumnIds));
+
+    // §Phase 3.3 — only now, with the write confirmed: a redirect to a handle
+    // Shopify never stored would point the old URL at a 404.
+    await finishBulkHandleRedirect(capturedHandle, echoedProduct?.handle ?? fields.handle, group, deps);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // productUpdate is one atomic mutation over every base cell — attribute
     // the failure to each of them so the UI keeps their edits.
-    for (const columnId of remainingColumnIds) failures.push(failureOf(group, message, columnId));
+    //
+    // A cell that ALREADY carries a failure (the memberships' refusal note) is
+    // extended, never joined by a second entry: the grid keys failures by cell,
+    // so the later one would replace the earlier and the merchant would lose
+    // either why a collection was kept or why the save failed.
+    for (const columnId of remainingColumnIds) {
+      const existing = failures.find((f) => f.columnId === columnId && f.rowId === group.rowId);
+      if (existing) existing.message = `${existing.message} ${message}`;
+      else failures.push(failureOf(group, message, columnId));
+    }
   }
   return failures;
 }
@@ -669,7 +1307,16 @@ async function persistProductMetafields(
         });
         // The metafield's own foreign translations are now stale (§6.6) — they
         // live on the METAFIELD gid, so they need their own invalidation.
-        await invalidateStaleForeignTranslations(deps, "product", echo.id, ["value"], "Metafield");
+        await invalidateStaleForeignTranslations(deps, "product", echo.id, ["value"], {
+          resourceTypeOverride: "Metafield",
+          // The RUN belongs to the product, not to this metafield.
+          ownerId: group.rowId,
+          // Only a single-line text survives the generic value prompt — a
+          // multi-line value comes back flattened and a list comes back as
+          // rewritten JSON, both echo-confirmed, i.e. corruption recorded as
+          // a success (CLAUDE.md). Anything else is REMOVED, not translated.
+          retranslatable: () => isBatchTranslatableValueType(echo.type),
+        });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -896,10 +1543,16 @@ async function persistProductOptions(
       // translations stale — they live on the ProductOption /
       // ProductOptionValue gid, so each one is invalidated separately.
       if (optionInput.name !== undefined) {
-        await invalidateStaleForeignTranslations(deps, "product", option.id, ["name"], "ProductOption");
+        await invalidateStaleForeignTranslations(deps, "product", option.id, ["name"], {
+          resourceTypeOverride: "ProductOption",
+          ownerId: group.rowId,
+        });
       }
       for (const update of valueUpdates ?? []) {
-        await invalidateStaleForeignTranslations(deps, "product", update.id, ["name"], "ProductOptionValue");
+        await invalidateStaleForeignTranslations(deps, "product", update.id, ["name"], {
+          resourceTypeOverride: "ProductOptionValue",
+          ownerId: group.rowId,
+        });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1106,7 +1759,64 @@ async function persistProductRow(group: BulkDiffRowGroup, deps: PersistDeps): Pr
   failures.push(...(await persistProductMetafields(group, cells, deps)));
   failures.push(...(await persistProductOptions(group, cells, deps)));
   failures.push(...(await persistProductImageAlt(group, cells, deps)));
+  failures.push(...(await persistProductSingleVariant(group, cells, deps)));
   return failures;
+}
+
+/**
+ * The price, compare-at price and SKU of a single-variant product.
+ *
+ * The product row's three variant cells (PRODUCT_VARIANT_COLUMN_IDS) go through
+ * the SAME `productVariantsBulkUpdate` path a variant row does — including the
+ * money parser that refuses an ambiguous "1.299", the "price is not nullable"
+ * rule and the echo mirror — because the only thing that differs is which id
+ * the grid put the cells under.
+ *
+ * The single-variant condition is re-checked HERE and not taken from the row:
+ * the grid renders these cells read-only for a multi-variant product, but this
+ * path is also reached by direct POST and by CSV import, and writing one of
+ * several variants' prices is the one outcome that would be silently wrong.
+ * `take: 2` answers it without counting, exactly as the loader does.
+ */
+async function persistProductSingleVariant(
+  group: BulkDiffRowGroup,
+  cells: ProductCellGroups,
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
+  const columnIds = Object.keys(cells.variant);
+  if (columnIds.length === 0) return [];
+  const failEveryCell = (message: string): BulkFailure[] =>
+    columnIds.map((columnId) => failureOf(group, message, columnId));
+
+  let variants: { shopifyGid: string }[];
+  try {
+    variants = await deps.db.productVariant.findMany({
+      where: { productId: group.rowId, product: { shop: deps.shop } },
+      orderBy: { position: "asc" },
+      take: 2,
+      select: { shopifyGid: true },
+    });
+  } catch (err: unknown) {
+    return failEveryCell(err instanceof Error ? err.message : String(err));
+  }
+
+  if (variants.length === 0) {
+    // Shopify gives every product at least one variant, so none cached means
+    // the cache lacks them — a resync, not a product without a price.
+    return failEveryCell("This product's variants are not in the local cache — resync the products first.");
+  }
+  if (variants.length > 1) {
+    return failEveryCell(
+      "This product has several variants, which can differ in price — edit them under the Product variants row type.",
+    );
+  }
+
+  const target: VariantWriteTarget = {
+    group,
+    variantId: variants[0].shopifyGid,
+    cells: cells.variant,
+  };
+  return persistVariantProductGroup(group.rowId, [target], deps);
 }
 
 /**
@@ -1224,6 +1934,144 @@ async function persistImageRow(group: BulkDiffRowGroup, deps: PersistDeps): Prom
   return failures;
 }
 
+// ─── Merchandising attributes on a non-product row (PLAN §Phase 3) ────────
+
+/**
+ * Grid field names that are ATTRIBUTES rather than content.
+ *
+ * Mirrors what the single editor marks with `translationKey: ""` +
+ * `supportsTranslation: false` — the column descriptors carry the same fact as
+ * `translatable: false`, but a `status` is `translatable: false` too and is NOT
+ * one of these (it is a product field written straight into `ProductInput`).
+ * So the set is written down rather than derived from the descriptor, and
+ * `attributesForResource` is what keeps it honest per resource.
+ */
+const ATTRIBUTE_FIELD_NAMES = new Set(["templateSuffix", "isPublished", "sortOrder", "author", "tags"]);
+
+/** The grid row type → the resource `attributeInputFor` knows. Products are
+ *  deliberately absent: they have no entry in ATTRIBUTES_BY_RESOURCE and their
+ *  attributes ride `ProductInput` directly (persistProductBaseFields). */
+function attributeResourceForRowType(type: BulkRowType): AttributeResource | null {
+  switch (type) {
+    case "collection":
+      return "Collection";
+    case "page":
+      return "Page";
+    case "article":
+      return "Article";
+    case "blog":
+      return "Blog";
+    default:
+      return null;
+  }
+}
+
+/** Why an attribute cell was refused. The enum cases fail at the GraphQL
+ *  SCHEMA level if forwarded — where `userErrors` never sees them and the save
+ *  reads as a success — so they are refused HERE, per cell, and the rest of the
+ *  row still saves. */
+function rejectedAttributeMessage(name: string): string {
+  if (name === "author") {
+    return "An article always has an author — Shopify requires one, so this cannot be cleared here.";
+  }
+  return `"${name}" is not one of the values Shopify accepts for this field.`;
+}
+
+interface PreparedAttributes {
+  /** The attribute half of the mutation input, already typed for Shopify. */
+  input: AttributeInput;
+  /** Per-cell refusals — never fatal to the row. */
+  failures: BulkFailure[];
+}
+
+/**
+ * Turns the attribute cells of a row group into a Shopify input.
+ *
+ * `attributeInputFor` is the ONE place the string→enum/boolean/list conversion
+ * lives (the single editor calls the same function with the same arguments),
+ * and every cell in a bulk diff is by definition a CHANGED field, so the
+ * `changedFields` gate that protects the editor from writing an untouched
+ * attribute is satisfied by construction here.
+ */
+function prepareRowAttributes(
+  group: BulkDiffRowGroup,
+  resource: AttributeResource,
+  fields: Partial<Record<string, string>>,
+): PreparedAttributes {
+  const changed = Object.keys(fields).filter((name) => ATTRIBUTE_FIELD_NAMES.has(name));
+  if (changed.length === 0) return { input: {}, failures: [] };
+
+  const failures: BulkFailure[] = [];
+  const declared = new Set<string>(attributesForResource(resource));
+  const writable = changed.filter((name) => {
+    if (declared.has(name)) return true;
+    // A column the grid offers that this resource does not have. Sending it
+    // makes Shopify reject the WHOLE input (a `sortOrder` on a page does), and
+    // dropping it silently reports a save that wrote nothing.
+    failures.push(
+      failureOf(group, `"${name}" is not a field of this resource type.`, `field.${name}`),
+      );
+    return false;
+  });
+
+  const { rejected, ...input } = attributeInputFor(
+    resource,
+    fields as Record<string, string>,
+    writable,
+  );
+  for (const name of rejected ?? []) {
+    failures.push(failureOf(group, rejectedAttributeMessage(name), `field.${name}`));
+  }
+  return { input, failures };
+}
+
+/**
+ * The DB mirror of an attribute write, taken from what Shopify ECHOED.
+ *
+ * Never from what was sent: Shopify normalises (tags are trimmed and
+ * case-collapsed, an author is wrapped in an AuthorInput and comes back as a
+ * name, a cleared `templateSuffix` comes back null) and the grid reads this
+ * cache back on its next page. The same rule the handle and the product tags
+ * already follow one function up.
+ *
+ * A key absent from the echo is left out of the mirror rather than guessed:
+ * the cached value then stays whatever the last sync established, which is the
+ * honest reading of "Shopify did not tell us".
+ */
+function attributeMirrorFromEcho(
+  input: AttributeInput,
+  echo: EchoedResourceAttributes | null,
+): Record<string, unknown> {
+  const mirror: Record<string, unknown> = {};
+  if (input.templateSuffix !== undefined && echo && "templateSuffix" in echo) {
+    mirror.templateSuffix = echo.templateSuffix ?? null;
+  }
+  if (input.isPublished !== undefined && typeof echo?.isPublished === "boolean") {
+    mirror.isPublished = echo.isPublished;
+  }
+  if (input.sortOrder !== undefined && typeof echo?.sortOrder === "string") {
+    mirror.sortOrder = echo.sortOrder;
+  }
+  if (input.author !== undefined && typeof echo?.author?.name === "string") {
+    mirror.author = echo.author.name;
+  }
+  if (input.tags !== undefined && Array.isArray(echo?.tags)) {
+    mirror.tags = echo.tags;
+  }
+  return mirror;
+}
+
+/** What the four update mutations echo back beside the handle. Every one of
+ *  these is already in their selection sets (content.mutations.ts). */
+interface EchoedResourceAttributes {
+  handle?: string;
+  templateSuffix?: string | null;
+  isPublished?: boolean | null;
+  sortOrder?: string | null;
+  author?: { name?: string | null } | null;
+  tags?: string[] | null;
+}
+
 // ─── Non-product rows: single-mutation persist (unchanged from Phase 1) ────
 
 /** Resolves a row group's cells (columnId → value) into flat field names
@@ -1250,11 +2098,55 @@ function fieldsOfGroup(group: BulkDiffRowGroup, columns: ColumnDescriptor[]): Pa
   return fields;
 }
 
-async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<void> {
+async function persistSingleMutationRow(
+  group: BulkDiffRowGroup,
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
   const { rowType: type, rowId: id } = group;
   const { db, shop, contentService } = deps;
 
   const fields = fieldsOfGroup(group, deps.columnsByType[type]);
+
+  // §Phase 3 — the merchandising half. Split off BEFORE the content branches
+  // so the generic 1:1 DB mirror below never sees an attribute: `tags` is a
+  // Prisma scalar LIST and `isPublished` a Boolean, and copying the grid's
+  // strings into either fails the whole row.
+  const attributeResource = attributeResourceForRowType(type);
+  const { input: attributes, failures: attributeFailures } = attributeResource
+    ? prepareRowAttributes(group, attributeResource, fields)
+    : { input: {} as AttributeInput, failures: [] as BulkFailure[] };
+  for (const name of Object.keys(fields)) {
+    if (ATTRIBUTE_FIELD_NAMES.has(name)) delete fields[name];
+  }
+  const hasAttributes = Object.keys(attributes).length > 0;
+
+  /**
+   * §Phase 3.4 — pages and articles have NO Shopify webhook, so this save is
+   * the only moment anything can tell IndexNow that a URL went live or went
+   * away. The single editor has done this since the column existed; the grid
+   * could not, because it had no `isPublished` cell to do it for. It has one
+   * now, and a bulk publish that nothing announces is the same gap on a
+   * hundred pages at once.
+   *
+   * The BEFORE side comes from the cache and is read before the mutation
+   * replaces it. `attributesSyncedAt` unset makes it UNKNOWN rather than
+   * `true`: the column defaults to published, so reading it as "was visible"
+   * would make the first save of every draft look like a publish.
+   *
+   * Products and collections are covered by their own webhooks and are
+   * deliberately not repeated. A BLOG container is left out too — its handle
+   * is the only thing that can move it, it has no cache row to read the old
+   * one from, and that gap predates this column.
+   */
+  const indexNowResource = type === "page" || type === "article" ? type : null;
+  const beforeIndexNow =
+    indexNowResource && (attributes.isPublished !== undefined || fields.handle !== undefined)
+      ? await loadRedirectStateForRow(deps, group).catch(() => null)
+      : null;
+  // Everything the merchant touched was refused (a bad enum, a cleared author)
+  // — there is nothing left to send, and calling the mutation with only an id
+  // would report a successful save of nothing.
+  if (Object.keys(fields).length === 0 && !hasAttributes) return attributeFailures;
 
   // Shopify rejects an empty title outright for every one of these resource
   // types — reject it here too so it counts as a per-row failure instead of
@@ -1269,6 +2161,25 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   for (const key of Object.keys(fields)) {
     dbData[key] = fields[key];
   }
+  /** Applied AFTER the write, because only then is Shopify's own value known.
+   *  Same reason as the product path: a slugified handle differs from the cell
+   *  that produced it, and the grid reads this cache back. */
+  const withEchoedValues = () => ({
+    ...dbData,
+    // The handle Shopify STORED, not the cell that produced it.
+    ...(fields.handle !== undefined && echoedResource?.handle
+      ? { handle: echoedResource.handle }
+      : {}),
+    ...attributeMirrorFromEcho(attributes, echoedResource),
+  });
+
+  // §Phase 3.3 — read the old handle before the mutation below replaces it.
+  const capturedHandle = await captureHandleForRedirect(group, fields.handle, deps);
+  // What Shopify ECHOED back. Every one of these mutations returns the
+  // resource with its handle, and Shopify slugifies a handle it is given —
+  // so the stored value is the only safe basis for both the cache mirror and
+  // the redirect target.
+  let echoedResource: EchoedResourceAttributes | null = null;
 
   switch (type) {
     case "collection": {
@@ -1302,7 +2213,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
               : untouched?.seoDescription ?? "",
         };
       }
-      await contentService.updateCollection(id, {
+      echoedResource = await contentService.updateCollection(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.descriptionHtml !== undefined ? { descriptionHtml: fields.descriptionHtml } : {}),
@@ -1310,26 +2221,28 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         // Featured-image alt: collectionUpdate carries it inline, the same
         // call the single editor makes (shopify-content.service updateContent).
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
+        ...attributes,
       });
-      await db.collection.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.collection.update({ where: { shop_id: { shop, id } }, data: withEchoedValues() });
       break;
     }
     case "page": {
-      await contentService.updatePage(id, {
+      echoedResource = await contentService.updatePage(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.body !== undefined ? { body: fields.body } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
+        ...attributes,
       });
-      await db.page.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.page.update({ where: { shop_id: { shop, id } }, data: withEchoedValues() });
       break;
     }
     case "article": {
       // Article SEO title/description are stored as global.title_tag /
       // description_tag metafields, written inline by updateArticle() (see
       // ShopifyContentService.updateArticle) — same as Page/Blog.
-      await contentService.updateArticle(id, {
+      echoedResource = await contentService.updateArticle(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.body !== undefined ? { body: fields.body } : {}),
@@ -1338,8 +2251,9 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
         // See the collection branch — same inline alt write.
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
+        ...attributes,
       });
-      await db.article.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.article.update({ where: { shop_id: { shop, id } }, data: withEchoedValues() });
       break;
     }
     case "blog": {
@@ -1351,11 +2265,12 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
       // path as the single editor (app.blog.tsx → updateContent → updateBlog).
       // NO DB mirror: blog containers have no cache model — the grid's
       // post-save revalidation live-fetches the fresh state from Shopify.
-      await contentService.updateBlog(id, {
+      echoedResource = await contentService.updateBlog(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
+        ...attributes,
       });
       break;
     }
@@ -1406,6 +2321,42 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   if (fields.imageAltText !== undefined && (type === "collection" || type === "article")) {
     await invalidateStaleFeaturedImageAltTranslations(deps, type, id);
   }
+
+  // §Phase 3.3 — the write is confirmed (every branch above throws otherwise),
+  // so the old URL can now be pointed at the new one.
+  await finishBulkHandleRedirect(capturedHandle, echoedResource?.handle ?? fields.handle, group, deps);
+
+  // Announce a visibility or URL change to IndexNow. Never throws — the save
+  // has already happened, and `enqueuePublishChange` catches its own.
+  if (indexNowResource && beforeIndexNow) {
+    const nextPublished =
+      attributes.isPublished !== undefined
+        ? attributes.isPublished
+        : beforeIndexNow.state.attributesKnown
+          ? beforeIndexNow.state.isPublished
+          : undefined;
+    const { enqueuePublishChange } = await import("~/services/seo/index-now-content.server");
+    await enqueuePublishChange(db, shop, {
+      resource: indexNowResource,
+      previousPublished: beforeIndexNow.state.attributesKnown
+        ? beforeIndexNow.state.isPublished
+        : undefined,
+      nextPublished,
+      previousHandle: beforeIndexNow.handle,
+      nextHandle: echoedResource?.handle ?? fields.handle ?? beforeIndexNow.handle,
+      // A THUNK: resolving an article's blog costs a DB read plus a GraphQL
+      // call, and `enqueuePublishChange` returns early for every shop with
+      // IndexNow switched off — the same reason the single editor passes one.
+      loadBlogHandle:
+        indexNowResource === "article"
+          ? () => loadArticleBlogHandleForRedirect(deps, group.rowId)
+          : undefined,
+    });
+  }
+
+  // The row itself succeeded; these are the individual cells that were refused
+  // before the mutation ran.
+  return attributeFailures;
 }
 
 /**
@@ -1419,8 +2370,63 @@ async function invalidateStaleFeaturedImageAltTranslations(
   parentId: string,
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
-  if (foreignLocales.length === 0) return;
+  // The featured alt's digest lives on the IMAGE resource, which this save has
+  // just rewritten — drop it before any gate, or a foreign alt cell in the same
+  // save registers against the old hash and is refused.
+  const staleImageId = deps.featuredImageIds.get(parentId);
+  if (staleImageId) markDigestsStale(deps, staleImageId);
+  const autoTranslate = deps.policy.autoTranslateExternalChanges;
+  if ((!autoTranslate && !deps.purgeStaleSubResourceTranslations) || foreignLocales.length === 0) {
+    return;
+  }
   const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
+
+  // With auto-translate on the alt is rewritten instead of deleted. Its run is
+  // its OWN surface: the parent's lock belongs to that resource's CONTENT
+  // repair, which an article save runs on the same id. A lookup that fails, or
+  // an object with no image, falls through to the deletion below rather than
+  // leaving a translation of an alt text that no longer exists.
+  if (autoTranslate && deps.primaryLocale) {
+    try {
+      const imageResourceId = await fetchFeaturedImageId(deps, rowType, parentId);
+      if (
+        imageResourceId &&
+        collectBulkRepair(deps.repairPlan, {
+          surface: "featuredAlt",
+          ownerId: parentId,
+          rowType,
+          entries: [{ resourceId: imageResourceId, resourceType: "MediaImage", key: "alt" }],
+        })
+      ) {
+        return;
+      }
+    } catch {
+      // fall through to the removal
+    }
+  }
+  if (!deps.purgeStaleSubResourceTranslations) return;
+
+  // The market layer of the featured alt. Its rows live on the PARENT under
+  // `image_alt_text` while Shopify is addressed on the IMAGE under `alt` — the
+  // mirror rewrites both halves, which is exactly why it is used here too.
+  try {
+    const imageResourceId = await fetchFeaturedImageId(deps, rowType, parentId);
+    if (imageResourceId) {
+      const { featuredImageAltMirror } = await import(
+        "../translations/stale-translation-sync.server"
+      );
+      await purgeBulkMarketOverrides(
+        deps,
+        featuredImageAltMirror(shop, parentId, resourceType),
+        [{ resourceId: imageResourceId, resourceType: "MediaImage" }],
+        ["alt"],
+        "image_alt_text",
+      );
+    }
+  } catch {
+    // The lookup failed; the global removal below still tries.
+  }
+
   try {
     // Only touch Shopify when there is actually something to invalidate — the
     // common case is a shop that never translated this alt text.
@@ -1480,6 +2486,10 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
   const columns = deps.columnsByType.metaobject;
   const failures: BulkFailure[] = [];
 
+  // The row's type is needed BEFORE the write for the cross-type guard below,
+  // so it is read here as well as inside the shared writer. Two cheap reads of
+  // one indexed row beat handing the writer a column model it has no business
+  // knowing about.
   const cached = await db.metaobject.findUnique({
     where: { shop_id: { shop, id } },
     select: { type: true },
@@ -1488,12 +2498,10 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
     return [failureOf(group, "This metaobject is not in the local cache — resync content first.")];
   }
 
-  interface FieldWrite {
-    columnId: string;
-    key: string;
-    value: string;
-  }
-  const writes: FieldWrite[] = [];
+  const writes: MetaobjectFieldWrite[] = [];
+  /** field key -> its definition type, for the repair's "may this value go
+   *  through the generic value prompt at all" question below. */
+  const fieldTypeByKey = new Map<string, string>();
   for (const [columnId, value] of Object.entries(group.cells)) {
     const column = columns.find((c) => c.id === columnId);
     if (!column || !column.editable || column.kind !== "mofield" || !column.moFieldKey) {
@@ -1523,78 +2531,27 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
     // "" clears the field value (MetaobjectFieldInput.value is a plain
     // String) — if a definition-level validation rejects the empty value,
     // Shopify answers with a userError and the cell fails visibly below.
-    writes.push({ columnId, key: column.moFieldKey, value: outgoing });
+    writes.push({ ref: columnId, key: column.moFieldKey, value: outgoing });
+    fieldTypeByKey.set(column.moFieldKey, column.moFieldType ?? "");
   }
   if (writes.length === 0) return failures;
 
-  const failAllWrites = (message: string) => {
-    for (const write of writes) failures.push(failureOf(group, message, write.columnId));
-  };
-
-  try {
-    const response = await gateway.graphql(METAOBJECT_UPDATE, {
-      variables: {
-        id,
-        metaobject: { fields: writes.map((w) => ({ key: w.key, value: w.value })) },
-      },
+  // ONE echo-verified metaobjectUpdate — the same call the single editor makes
+  // (metaobject-write.server.ts). Failures come back per `ref`, which is the
+  // column id, so a cell that Shopify refused stays red on its own.
+  const result = await writeMetaobjectFields({ gateway, db, shop, id, writes });
+  for (const failure of result.failures) {
+    failures.push(failureOf(group, failure.message, failure.ref));
+  }
+  if (result.confirmedKeys.length > 0) {
+    // Phase 4b: the confirmed primary field changes make their foreign
+    // MetaobjectTranslation rows stale — invalidate by field key.
+    await invalidateStaleForeignTranslations(deps, "metaobject", id, result.confirmedKeys, {
+      // A rich-text or list field cannot go through the generic value prompt
+      // without coming back corrupted, and an UNKNOWN type counts as unsafe —
+      // guessing "single line" is the direction that destroys data (CLAUDE.md).
+      retranslatable: (key) => isBatchTranslatableValueType(fieldTypeByKey.get(key) ?? ""),
     });
-    const data = (await response.json()) as {
-      data?: {
-        metaobjectUpdate?: {
-          metaobject?: {
-            id: string;
-            handle?: string;
-            displayName?: string;
-            type?: string;
-            fields?: { key: string; value: string | null; type: string }[] | null;
-          } | null;
-          userErrors?: { field?: string[] | string; message: string }[];
-        };
-      };
-      errors?: { message: string }[];
-    };
-    if (data.errors && data.errors.length > 0) {
-      failAllWrites(data.errors[0].message);
-      return failures;
-    }
-    const payload = data.data?.metaobjectUpdate;
-    const userErrors = payload?.userErrors ?? [];
-    if (userErrors.length > 0) {
-      failAllWrites(userErrors[0].message);
-      return failures;
-    }
-    // Echo check: the mutation returns the full metaobject — every written
-    // key must come back with OUR value, otherwise that cell failed silently.
-    const echoedFields = payload?.metaobject?.fields ?? [];
-    const confirmed: FieldWrite[] = [];
-    for (const write of writes) {
-      const echo = echoedFields?.find((f) => f.key === write.key);
-      if (!echo || (echo.value ?? "") !== write.value) {
-        failures.push(failureOf(group, "Shopify did not confirm the field write.", write.columnId));
-        continue;
-      }
-      confirmed.push(write);
-    }
-    if (confirmed.length > 0 && payload?.metaobject) {
-      // Mirror the ECHOED state wholesale — fields JSON, displayName (the
-      // label field may have been one of the writes) — same shape the sync
-      // writes.
-      await db.metaobject.update({
-        where: { shop_id: { shop, id } },
-        data: {
-          fields: echoedFields as object[],
-          ...(payload.metaobject.displayName !== undefined
-            ? { displayName: payload.metaobject.displayName ?? "" }
-            : {}),
-          lastSyncedAt: new Date(),
-        },
-      });
-      // Phase 4b: the confirmed primary field changes make their foreign
-      // MetaobjectTranslation rows stale — invalidate by field key.
-      await invalidateStaleForeignTranslations(deps, "metaobject", id, confirmed.map((w) => w.key));
-    }
-  } catch (err: unknown) {
-    failAllWrites(err instanceof Error ? err.message : String(err));
   }
   return failures;
 }
@@ -1604,11 +2561,21 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
 /** ProductImage cache-row id for a MediaImage GID, shop-scoped (which doubles
  * as the tenancy check). Null when the image is not cached. */
 async function imageCacheIdFor(deps: PersistDeps, mediaId: string): Promise<string | null> {
+  return (await imageCacheRowFor(deps, mediaId))?.id ?? null;
+}
+
+/** The same lookup with the OWNING product, which the alt-text repair groups
+ *  and locks by. Null when the image is not product media — then it is a
+ *  library image, mirrored in ContentTranslation("MediaImage") instead. */
+async function imageCacheRowFor(
+  deps: PersistDeps,
+  mediaId: string,
+): Promise<{ id: string; productId: string } | null> {
   const row = await deps.db.productImage.findFirst({
     where: { mediaId, product: { shop: deps.shop } },
-    select: { id: true },
+    select: { id: true, productId: true },
   });
-  return row?.id ?? null;
+  return row ?? null;
 }
 
 /** Primary-locale handle of a row — for the duplicate-slug guard below. */
@@ -1630,6 +2597,310 @@ async function loadPrimaryHandle(
       return (await db.page.findUnique({ where, select }))?.handle ?? null;
     default:
       return null;
+  }
+}
+
+// ── PLAN §Phase 3.3 / §A1 — redirect on a handle change, in bulk ────────────
+// The single editor is not the only place handles change: `field.handle` is an
+// editable column here too, and a 250-row save can rewrite as many URLs in one
+// go. The shop-level setting is a shop-level promise, so it has to hold on this
+// path as well — through the SAME decision module, never a second rule.
+//
+// Since the locale prefix was measured (see the header of
+// handle-redirect.shared.ts), the FOREIGN half is covered too: a translated
+// handle is a real storefront URL and editing it breaks that URL exactly the
+// same way. `captureTranslatedHandleForRedirect` below is that path, and it is
+// deliberately narrower — the rules live in `decideTranslatedHandleRedirect`.
+//
+// Note what this does NOT change: bulk-TRANSLATE only ever fills EMPTY
+// translations, and a locale that had no translated handle was being served
+// under the primary one, which stays live. Nothing breaks there, so nothing is
+// redirected — the decision reports `notTranslatedBefore` and stops.
+
+interface CapturedHandle {
+  resource: RedirectableResource;
+  previousHandle: string;
+  /** Was the OLD URL ever reachable? `false` ⇒ no redirect (a draft's address
+   *  is one nobody holds); `null` ⇒ unknown, which proceeds. */
+  previouslyLive: boolean | null;
+}
+
+/** The old handle, read BEFORE the write — afterwards it is gone. Returns null
+ *  whenever no redirect could come of it, so the common case costs nothing. */
+async function captureHandleForRedirect(
+  group: BulkDiffRowGroup,
+  nextHandle: string | undefined,
+  deps: PersistDeps,
+): Promise<CapturedHandle | null> {
+  if (!deps.autoHandleRedirect || nextHandle === undefined || group.locale !== "") return null;
+  const resource = redirectResourceFor(bulkRowTypeToResourceType(group.rowType), group.rowId);
+  if (!resource) return null;
+  // Blog containers have no cache model — their handle is only on Shopify.
+  const before =
+    group.rowType === "blog"
+      ? { handle: await loadBlogHandleForRedirect(deps, group.rowId), state: {} }
+      : await loadRedirectStateForRow(deps, group).catch(() => ({ handle: null, state: {} }));
+  if (!before.handle) return null;
+  return { resource, previousHandle: before.handle, previouslyLive: wasEverLive(resource, before.state) };
+}
+
+/** The row's pre-write handle plus what says whether its URL was reachable —
+ *  one query, since both come off the same cache row. */
+async function loadRedirectStateForRow(
+  deps: PersistDeps,
+  group: BulkDiffRowGroup,
+): Promise<{ handle: string | null; state: { status?: string | null; isPublished?: boolean | null; attributesKnown?: boolean } }> {
+  const where = { shop_id: { shop: deps.shop, id: group.rowId } };
+  switch (group.rowType) {
+    case "product": {
+      const row = await deps.db.product.findUnique({ where, select: { handle: true, status: true } });
+      return { handle: row?.handle ?? null, state: { status: row?.status ?? null } };
+    }
+    case "page": {
+      const row = await deps.db.page.findUnique({
+        where,
+        select: { handle: true, isPublished: true, attributesSyncedAt: true },
+      });
+      return {
+        handle: row?.handle ?? null,
+        state: { isPublished: row?.isPublished ?? null, attributesKnown: !!row?.attributesSyncedAt },
+      };
+    }
+    case "article": {
+      const row = await deps.db.article.findUnique({
+        where,
+        select: { handle: true, isPublished: true, attributesSyncedAt: true },
+      });
+      return {
+        handle: row?.handle ?? null,
+        state: { isPublished: row?.isPublished ?? null, attributesKnown: !!row?.attributesSyncedAt },
+      };
+    }
+    case "collection": {
+      const row = await deps.db.collection.findUnique({ where, select: { handle: true } });
+      // Visibility lives in publications — no scope, genuinely unknown.
+      return { handle: row?.handle ?? null, state: {} };
+    }
+    default:
+      return { handle: null, state: {} };
+  }
+}
+
+/** Applies a captured handle change. Never throws and never fails a cell: the
+ *  row is already written, and reporting a cell error here would tell the
+ *  merchant their edit did not land when it did. */
+async function finishBulkHandleRedirect(
+  captured: CapturedHandle | null,
+  nextHandle: string | undefined,
+  group: BulkDiffRowGroup,
+  deps: PersistDeps,
+): Promise<void> {
+  if (!captured || !nextHandle) return;
+  try {
+    const { applyHandleRedirect } = await import("../seo/handle-redirect.server");
+    await applyHandleRedirect(deps.gateway as never, deps.shop, {
+      resource: captured.resource,
+      previousHandle: captured.previousHandle,
+      nextHandle,
+      wanted: true,
+      previouslyLive: captured.previouslyLive,
+      blogHandle:
+        captured.resource === "article" ? await loadArticleBlogHandleForRedirect(deps, group.rowId) : undefined,
+    });
+  } catch {
+    // Best effort by design — see the block comment above.
+  }
+}
+
+interface CapturedTranslatedHandle {
+  resource: RedirectableResource;
+  previousHandle: string;
+  primaryHandle: string | null;
+  otherLocaleHandles: string[];
+  previouslyLive: boolean | null;
+  blogHandle: string | null;
+  blogHandleTranslatedInLocale: boolean;
+  previousHandleTakenElsewhere: boolean;
+}
+
+/**
+ * Everything the foreign-locale decision needs, read BEFORE the write.
+ *
+ * Returns null for every case that could not produce a redirect anyway, so the
+ * overwhelmingly common one — a translation row group with no handle cell —
+ * costs nothing, and the next commonest — a handle being translated for the
+ * FIRST time, which is every row bulk-translate writes — costs exactly one
+ * indexed read before bailing. Only a real rename pays the rest: the cache
+ * read, the collision lookup, and for articles the blog handle (a GraphQL
+ * round-trip) plus one more translation read. This runs per ROW.
+ */
+async function captureTranslatedHandleForRedirect(
+  group: BulkDiffRowGroup,
+  hasHandleCell: boolean,
+  deps: PersistDeps,
+): Promise<CapturedTranslatedHandle | null> {
+  // marketId: a market override is served to one market while a redirect row is
+  // shop-wide. The decision refuses it too; skipping the reads here means the
+  // common market-scoped save does not pay for a refusal.
+  if (!deps.autoHandleRedirect || !hasHandleCell || group.locale === "" || group.marketId !== "") return null;
+  const resource = redirectResourceFor(bulkRowTypeToResourceType(group.rowType), group.rowId);
+  if (!resource) return null;
+
+  try {
+    // One query for BOTH halves of rule 2: this locale's own previous value and
+    // every other locale's, which the unprefixed row would also answer for.
+    const handleRows = await deps.db.contentTranslation.findMany({
+      where: { shop: deps.shop, resourceId: group.rowId, key: "handle", marketId: "" },
+      select: { locale: true, value: true },
+    });
+    const previousHandle = handleRows.find((r) => r.locale === group.locale)?.value?.trim() ?? "";
+    // Nothing was translated before ⇒ the locale was served under the primary
+    // handle, which stays live. Bail before the remaining reads.
+    if (!previousHandle) return null;
+
+    const before =
+      group.rowType === "blog"
+        ? { handle: await loadBlogHandleForRedirect(deps, group.rowId), state: {} }
+        : await loadRedirectStateForRow(deps, group).catch(() => ({ handle: null, state: {} }));
+
+    let blogHandle: string | null = null;
+    let blogHandleTranslatedInLocale = false;
+    if (resource === "article") {
+      const article = await deps.db.article.findUnique({
+        where: { shop_id: { shop: deps.shop, id: group.rowId } },
+        select: { blogId: true },
+      });
+      if (article?.blogId) {
+        blogHandle = await loadBlogHandleForRedirect(deps, article.blogId);
+        const translatedBlogHandle = await deps.db.contentTranslation.findFirst({
+          where: {
+            shop: deps.shop,
+            resourceId: article.blogId,
+            key: "handle",
+            locale: group.locale,
+            marketId: "",
+          },
+          select: { value: true },
+        });
+        blogHandleTranslatedInLocale = !!translatedBlogHandle?.value?.trim();
+      }
+    }
+
+    // Only reachable on a real rename, which is what makes an unindexed lookup
+    // affordable here — see handleTakenByOtherResource.
+    const { handleTakenByOtherResource } = await import("../seo/handle-redirect.server");
+    const previousHandleTakenElsewhere = await handleTakenByOtherResource(
+      deps.db as never,
+      deps.shop,
+      resource,
+      previousHandle,
+      group.rowId,
+    );
+
+    return {
+      resource,
+      previousHandle,
+      previousHandleTakenElsewhere,
+      primaryHandle: before.handle,
+      otherLocaleHandles: handleRows.filter((r) => r.locale !== group.locale).map((r) => r.value),
+      previouslyLive: wasEverLive(resource, before.state),
+      blogHandle,
+      blogHandleTranslatedInLocale,
+    };
+  } catch {
+    // A redirect is a courtesy on a write that has to happen either way.
+    return null;
+  }
+}
+
+/** Applies a captured translated-handle change. `nextHandle` is `""` for a
+ *  CLEARED translation, which the decision reads as "back to the primary
+ *  handle". Never throws and never fails a cell — the translation is already
+ *  written, and a redirect failure must not read as a failed save. */
+async function finishTranslatedHandleRedirect(
+  captured: CapturedTranslatedHandle | null,
+  nextHandle: string | undefined,
+  group: BulkDiffRowGroup,
+  deps: PersistDeps,
+): Promise<void> {
+  if (!captured || nextHandle === undefined) return;
+  try {
+    const { applyTranslatedHandleRedirect } = await import("../seo/handle-redirect.server");
+    await applyTranslatedHandleRedirect(deps.gateway as never, deps.shop, {
+      resource: captured.resource,
+      marketId: group.marketId,
+      previousTranslatedHandle: captured.previousHandle,
+      nextTranslatedHandle: nextHandle,
+      primaryHandle: captured.primaryHandle,
+      otherLocaleHandles: captured.otherLocaleHandles,
+      previousHandleTakenElsewhere: captured.previousHandleTakenElsewhere,
+      wanted: true,
+      previouslyLive: captured.previouslyLive,
+      blogHandle: captured.blogHandle,
+      blogHandleTranslatedInLocale: captured.blogHandleTranslatedInLocale,
+    });
+  } catch {
+    // Best effort by design — see the block comment above.
+  }
+}
+
+/**
+ * The shop's "redirect on handle change" preference, read ONCE per run.
+ *
+ * Every failure mode resolves to the column's own default (on): the setting
+ * protects URLs, so the safe answer when the row cannot be read is to protect
+ * them. An unwanted redirect is one row a merchant can delete; a missed one is
+ * traffic nobody notices losing. The try/catch is not decoration — this runs
+ * under test doubles that carry only the models a given test needs.
+ */
+async function loadAutoHandleRedirect(db: PrismaClient, shop: string): Promise<boolean> {
+  try {
+    const row = await db.aISettings.findUnique({
+      where: { shop },
+      select: { seoAutoHandleRedirect: true },
+    });
+    return row?.seoAutoHandleRedirect !== false;
+  } catch {
+    return true;
+  }
+}
+
+/** The bulk row types that map onto the unified handler's resource names. */
+function bulkRowTypeToResourceType(rowType: BulkRowType): string {
+  switch (rowType) {
+    case "product":    return "Product";
+    case "collection": return "Collection";
+    case "page":       return "Page";
+    case "article":    return "Article";
+    case "blog":       return "Blog";
+    default:           return "";
+  }
+}
+
+async function loadBlogHandleForRedirect(deps: PersistDeps, blogId: string): Promise<string | null> {
+  try {
+    const response = await deps.gateway.graphql(
+      `#graphql
+        query bulkBlogHandleForRedirect($id: ID!) { blog(id: $id) { handle } }`,
+      { variables: { id: blogId } },
+    );
+    const data = (await response.json()) as { data?: { blog?: { handle?: string } } };
+    return data?.data?.blog?.handle ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadArticleBlogHandleForRedirect(deps: PersistDeps, articleId: string): Promise<string | null> {
+  try {
+    const article = await deps.db.article.findUnique({
+      where: { shop_id: { shop: deps.shop, id: articleId } },
+      select: { blogId: true },
+    });
+    if (!article?.blogId) return null;
+    return await loadBlogHandleForRedirect(deps, article.blogId);
+  } catch {
+    return null;
   }
 }
 
@@ -1701,7 +2972,45 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   for (const cell of featuredAltCells) {
     const error = await writeFeaturedImageAltTranslation(group, cell.value, deps);
     if (error) failures.push(failureOf(group, error, cell.columnId));
-    else markTranslationSaved(group.rowId);
+    else {
+      // The featured alt is its OWN surface and is claimed under its OWN key
+      // (translation-locks.shared.ts) — never under the row's.
+      //
+      // The row's own repairs cannot reach an `image_alt_text` row: the
+      // `collections/update` webhook's reconciliation and
+      // reconcileAfterPrimarySave both work from the keys of the row's own
+      // `translatableResource`, and this key is not one of them (it lives on
+      // the IMAGE resource as `alt`). This column exists on collection and
+      // ARTICLE rows, and an article has no update webhook at all. So claiming
+      // the row protected nothing here and made a collection's field
+      // reconciliation bail for 30 seconds instead: with auto-translate on the
+      // purge is off, so the row's own field translations were then neither
+      // refreshed nor removed — permanently, since the sync has advanced their
+      // digest baseline by the time anything looks again.
+      //
+      // A MARKET write marks the market key instead of nothing: the repair must
+      // not see it (it would abort a global run it cannot collide with), while
+      // the content sync's cache rewrite deletes every fetched layer and does
+      // have to see it.
+      markTranslationSaved(
+        group.marketId === ""
+          ? featuredAltLockId(group.rowId)
+          : marketLayerLockId(featuredAltLockId(group.rowId)),
+      );
+      // The repair addresses the IMAGE resource, so that is the id this write
+      // has to be recorded under. The write above resolved (and cached) it.
+      // GLOBAL layer only, for the reason the row path spells out: a market
+      // override is not a value the repair could ever overwrite, and recording
+      // one hides the GLOBAL alt translation from the repair AND the purge.
+      const writtenImageId = deps.featuredImageIds.get(group.rowId);
+      if (writtenImageId) {
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, writtenImageId, group.locale, "alt");
+        } else {
+          recordBulkMarketWrite(deps.repairPlan, writtenImageId, group.marketId, group.locale, "alt");
+        }
+      }
+    }
   }
 
   // Duplicate-slug guard (same rule as updateContent in the single editor):
@@ -1723,6 +3032,18 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       writes.splice(handleIndex, 1);
     }
   }
+
+  // §3.3 foreign half — captured BEFORE the write, because afterwards the old
+  // translated handle is gone. `writes` is re-scanned rather than reusing
+  // `handleIndex`: the duplicate-slug guard above may just have removed it.
+  const capturedTranslatedHandle = await captureTranslatedHandleForRedirect(
+    group,
+    writes.some((w) => w.key === "handle") || clears.some((c) => c.key === "handle"),
+    deps,
+  );
+  /** The handle translation Shopify CONFIRMED — `""` for a confirmed clear,
+   *  `undefined` while nothing is confirmed. */
+  let confirmedHandle: string | undefined;
 
   // ── Digest rule (§6.3, ONE strict rule): no digest ⇒ one re-fetch of the
   // resource ⇒ still none ⇒ cell error. No Shopify write, NO DB write.
@@ -1769,7 +3090,7 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       ...(marketId ? { marketId } : {}),
     }));
     try {
-      const { confirmedKeys, userErrors } = await registerAndVerify(gateway, resourceId, inputs);
+      const { confirmedKeys, confirmedValues, userErrors } = await registerAndVerify(gateway, resourceId, inputs);
       for (const write of ready) {
         if (!confirmedKeys.has(write.key)) {
           failures.push(
@@ -1786,6 +3107,30 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
+        // …and WHAT was written. This row's repair is ours, and this is what
+        // keeps it off the very value the merchant just typed — see
+        // `alreadyWritten` in stale-translation-sync.server.ts.
+        //
+        // GLOBAL layer only, and for the opposite reason to the mark above:
+        // the repair writes global rows, so a MARKET override is not the value
+        // it would overwrite. Recording one silenced the repair for a GLOBAL
+        // translation nobody had touched — neither refreshed nor removed, since
+        // the purge stood down when the candidate was collected. That is the
+        // worst outcome this module has, reached through a second channel.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, resourceId, locale, write.key);
+        } else {
+          // A MARKET write of this save. Nothing re-translates that layer, so
+          // this is not about the repair — it is about the market PURGE, which
+          // another row group of the same save may run a moment later.
+          recordBulkMarketWrite(deps.repairPlan, resourceId, group.marketId, locale, write.key);
+        }
+        // What Shopify ECHOED, not what was sent. The same rule the theme path
+        // already follows for autofix-normalised richtext: mirroring the raw
+        // value diverges the DB from the storefront, and for `handle` it would
+        // point the redirect at an address nobody serves.
+        const storedValue = confirmedValues.get(write.key) ?? write.value;
+        if (write.key === "handle") confirmedHandle = storedValue;
         if (group.rowType === "image") {
           // PRODUCT media mirror into ProductImageAltTranslation (keyed by the
           // ProductImage CACHE row) — the store the single editor and the SEO
@@ -1796,8 +3141,8 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           if (cacheId) {
             await db.productImageAltTranslation.upsert({
               where: { imageId_locale_marketId: { imageId: cacheId, locale, marketId } },
-              update: { altText: write.value },
-              create: { imageId: cacheId, locale, marketId, altText: write.value },
+              update: { altText: storedValue },
+              create: { imageId: cacheId, locale, marketId, altText: storedValue },
             });
           } else {
             await db.contentTranslation.upsert({
@@ -1810,13 +3155,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                   marketId,
                 },
               },
-              update: { value: write.value, digest: write.digest, resourceType: "MediaImage" },
+              update: { value: storedValue, digest: write.digest, resourceType: "MediaImage" },
               create: {
                 shop,
                 resourceId,
                 resourceType: "MediaImage",
                 key: write.key,
-                value: write.value,
+                value: storedValue,
                 locale,
                 marketId,
                 digest: write.digest,
@@ -1843,13 +3188,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                 marketId,
               },
             },
-            update: { value: write.value, outdated: false },
+            update: { value: storedValue, outdated: false },
             create: {
               shop,
               metaobjectId: resourceId,
               type: cached?.type ?? "",
               key: write.key,
-              value: write.value,
+              value: storedValue,
               locale,
               marketId,
               outdated: false,
@@ -1866,13 +3211,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                 marketId,
               },
             },
-            update: { value: write.value, digest: write.digest, resourceType },
+            update: { value: storedValue, digest: write.digest, resourceType },
             create: {
               shop,
               resourceId,
               resourceType,
               key: write.key,
-              value: write.value,
+              value: storedValue,
               locale,
               marketId,
               digest: write.digest,
@@ -1911,6 +3256,15 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           continue;
         }
         markTranslationSaved(resourceId);
+        // A CLEARED value is just as deliberate: the merchant emptied this
+        // translation in this save, so the repair must not write it back.
+        // Global layer only, exactly as above.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, resourceId, locale, clear.key);
+        }
+        // A cleared handle: the locale is served under the PRIMARY handle
+        // again, so the dead translated URL gets a redirect there.
+        if (clear.key === "handle") confirmedHandle = "";
         if (group.rowType === "image") {
           // Cleared alt translation — the row goes only because Shopify already
           // confirmed the removal above (CLAUDE.md).
@@ -1939,6 +3293,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       for (const clear of clears) failures.push(failureOf(group, message, clear.columnId));
     }
   }
+
+  // AFTER both loops: only a translation Shopify confirmed changed a URL, and
+  // an unconfirmed write leaves the old translated handle in place.
+  await finishTranslatedHandleRedirect(capturedTranslatedHandle, confirmedHandle, group, deps);
 
   return failures;
 }
@@ -2170,12 +3528,53 @@ async function persistSubResourceTranslations(
     }
 
     let cellFailed: string | null = null;
+    const claimed: string[] = [];
     for (const pair of pairs) {
       const error = await writeSubResourceTranslation(pair.target, pair.value, deps);
       if (error && !cellFailed) cellFailed = error;
+      if (!error) {
+        claimed.push(pair.target.resourceId);
+        // Global layer only — see the row path's note: a market override is not
+        // a value the repair would ever overwrite, and recording one hides a
+        // global translation from BOTH the repair and the purge.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, pair.target.resourceId, group.locale, pair.target.key);
+        } else {
+          recordBulkMarketWrite(
+            deps.repairPlan,
+            pair.target.resourceId,
+            group.marketId,
+            group.locale,
+            pair.target.key,
+          );
+        }
+      }
     }
     if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
-    else markTranslationSaved(group.rowId);
+    // The SUB-RESOURCES themselves, and the private lock their repair runs
+    // under (translation-locks.shared.ts) — never the row. That repair watches
+    // the resources it is about to write plus its own lock, not the product,
+    // so a claim on the row alone is invisible to it and the AI would
+    // overwrite this value. And the row's own repair never sees a
+    // sub-resource, so claiming the row protected nothing while making the
+    // `products/update` webhook's field reconciliation bail for 30 seconds:
+    // with auto-translate on the purge is off, so the row's field translations
+    // were then neither refreshed nor removed — permanently, since the sync
+    // has advanced their digest baseline by then. The product sync's own
+    // shield asks for this private key BY NAME, so it is unaffected.
+    //
+    // GLOBAL layer only: that repair writes global rows, so a MARKET override
+    // can never collide with it, and aborting it over one would leave its
+    // remaining entries in neither list.
+    if (claimed.length === 0) continue;
+    if (group.marketId === "") {
+      markTranslationSaved(subResourceLockId(group.rowId));
+      for (const resourceId of claimed) markTranslationSaved(resourceId);
+    } else {
+      // A market write shields the product sync's cache rewrite — which
+      // deletes every fetched layer — without being visible to the repair.
+      markTranslationSaved(marketLayerLockId(subResourceLockId(group.rowId)));
+    }
   }
 
   return failures;
@@ -2292,6 +3691,8 @@ const PRODUCT_VARIANTS_BULK_UPDATE = `#graphql
         price
         compareAtPrice
         barcode
+        taxable
+        inventoryPolicy
       }
       userErrors {
         field
@@ -2306,10 +3707,35 @@ interface VariantBulkInput {
   compareAtPrice?: string | null;
   barcode?: string | null;
   inventoryItem?: { sku: string };
+  /** §Phase 4 — the two commerce fields that are the VARIANT's own. Everything
+   *  else in that block lives on its InventoryItem and needs a second
+   *  mutation (see persistVariantInventoryItems). */
+  taxable?: boolean;
+  inventoryPolicy?: string;
+}
+
+/**
+ * One variant to write, and the grid row a failure belongs to.
+ *
+ * The two came apart when a PRODUCT row learned to carry its single variant's
+ * price: the mutation addresses the VARIANT, while a failure has to be marked
+ * on the cell the merchant typed in — which is a product row's cell. For an
+ * ordinary variant row the two ids are the same, and were until now the same
+ * field, which is why the mirror below used to key on `group.rowId`.
+ */
+interface VariantWriteTarget {
+  /** The row group the failures belong to — a variant row, or the product row
+   *  whose one variant this is. */
+  group: BulkDiffRowGroup;
+  /** The ProductVariant GID the mutation addresses. */
+  variantId: string;
+  /** The variant-shaped cells of that group (a product row's other cells go
+   *  through the product's own stages). */
+  cells: Record<string, string>;
 }
 
 interface PreparedVariantInput {
-  group: BulkDiffRowGroup;
+  target: VariantWriteTarget;
   input: VariantBulkInput;
   /** columnIds actually carried by `input` — failure attribution set. */
   columnIds: string[];
@@ -2328,6 +3754,10 @@ function variantColumnForErrorField(tail: string): string | null {
     case "sku":
     case "inventoryItem":
       return VAR_SKU_COLUMN_ID;
+    case "taxable":
+      return VAR_TAXABLE_COLUMN_ID;
+    case "inventoryPolicy":
+      return VAR_INVENTORY_POLICY_COLUMN_ID;
     default:
       return null;
   }
@@ -2357,12 +3787,17 @@ function moneyErrorMessage(error: "negative" | "invalid" | "ambiguous", value: s
  * fields). Money rules (Plan §5.5/§14): price is NOT nullable — clearing it
  * is a cell error; compareAtPrice cleared ⇒ explicit null.
  */
-function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariantInput | null; failures: BulkFailure[] } {
+function buildVariantInput(target: VariantWriteTarget): { prepared: PreparedVariantInput | null; failures: BulkFailure[] } {
+  const { group } = target;
   const failures: BulkFailure[] = [];
-  const input: VariantBulkInput = { id: group.rowId };
+  const input: VariantBulkInput = { id: target.variantId };
   const columnIds: string[] = [];
 
-  for (const [columnId, value] of Object.entries(group.cells)) {
+  for (const [columnId, value] of Object.entries(target.cells)) {
+    // Cost, weight, customs and `tracked` are fields of the variant's
+    // InventoryItem, not of the variant — a different mutation, run after this
+    // one (persistVariantInventoryItems).
+    if (INVENTORY_ITEM_COLUMN_IDS.has(columnId)) continue;
     switch (columnId) {
       case VAR_PRICE_COLUMN_ID: {
         const parsed = parseMoney(value);
@@ -2401,6 +3836,29 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
         input.barcode = value === "" ? null : value;
         columnIds.push(columnId);
         break;
+      case VAR_TAXABLE_COLUMN_ID:
+        // A two-value enum in the grid. Anything but an explicit "false" is
+        // taxable — the same reading `attributeInputFor` gives `isPublished`,
+        // and the safe direction: a product that owes tax must not stop
+        // charging it because a cell arrived malformed.
+        input.taxable = value !== "false";
+        columnIds.push(columnId);
+        break;
+      case VAR_INVENTORY_POLICY_COLUMN_ID: {
+        const policy = value.trim().toUpperCase();
+        // A GraphQL ENUM: a bad value fails at the SCHEMA level, where
+        // `userErrors` never sees it and the whole call reads as a success
+        // while nothing was written.
+        if (!INVENTORY_POLICY_VALUES.has(policy)) {
+          failures.push(
+            failureOf(group, `"${value}" is not a stock policy — expected DENY or CONTINUE.`, columnId),
+          );
+          break;
+        }
+        input.inventoryPolicy = policy;
+        columnIds.push(columnId);
+        break;
+      }
       default:
         // Validation rejected unknown columns already — reaching this is a
         // programming error, surfaced per cell.
@@ -2409,7 +3867,224 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
   }
 
   if (columnIds.length === 0) return { prepared: null, failures };
-  return { prepared: { group, input, columnIds }, failures };
+  return { prepared: { target, input, columnIds }, failures };
+}
+
+/** Shopify's `ProductVariantInventoryPolicy`, as the server-side gate. The
+ *  grid offers exactly these (the column's `selectOptions`); this is the
+ *  second layer, for a diff that arrives by direct POST or CSV import. */
+const INVENTORY_POLICY_VALUES = new Set<string>(INVENTORY_POLICIES);
+
+/** Which InventoryItem field a grid column writes. */
+const INVENTORY_ITEM_FIELD_BY_COLUMN: Record<string, keyof InventoryItemFields> = {
+  [VAR_COST_COLUMN_ID]: "cost",
+  [VAR_INVENTORY_TRACKED_COLUMN_ID]: "tracked",
+  [VAR_REQUIRES_SHIPPING_COLUMN_ID]: "requiresShipping",
+  [VAR_COUNTRY_OF_ORIGIN_COLUMN_ID]: "countryCodeOfOrigin",
+  [VAR_HS_CODE_COLUMN_ID]: "harmonizedSystemCode",
+};
+
+/** The reverse, for attributing a refusal back to its cell. The weight pair
+ *  answers with the VALUE column: `writeInventoryItemFields` refuses the two
+ *  as one (`field: "weight"`), and a merchant reading "not a valid weight"
+ *  looks at the number first. */
+const COLUMN_BY_INVENTORY_ITEM_FIELD: Partial<Record<keyof InventoryItemFields, string>> = {
+  cost: VAR_COST_COLUMN_ID,
+  tracked: VAR_INVENTORY_TRACKED_COLUMN_ID,
+  requiresShipping: VAR_REQUIRES_SHIPPING_COLUMN_ID,
+  countryCodeOfOrigin: VAR_COUNTRY_OF_ORIGIN_COLUMN_ID,
+  harmonizedSystemCode: VAR_HS_CODE_COLUMN_ID,
+  weight: VAR_WEIGHT_COLUMN_ID,
+  sku: VAR_SKU_COLUMN_ID,
+};
+
+/** The cached row a weight write may have to complete itself from. */
+interface VariantCommerceRow {
+  /** ProductVariant.id — the NUMERIC Shopify id, which is what the mirror in
+   *  commerce-write.server.ts is keyed by (the grid's row id is the GID). */
+  id: string;
+  inventoryItemId: string | null;
+  weight: { toString(): string } | null;
+  weightUnit: string | null;
+}
+
+/**
+ * The InventoryItem half of a variant save: cost, tax-free weight, customs and
+ * whether Shopify keeps a count at all.
+ *
+ * ── One mutation per VARIANT, deliberately ─────────────────────────────────
+ * `productVariantsBulkUpdate` covers the whole product in one call, but
+ * `inventoryItemUpdate` is addressed by a single InventoryItem GID and Shopify
+ * offers no bulk form of it. So this is one call per variant that has such a
+ * cell — counted by `estimateCalls`, which is what keeps a save that fans out
+ * from slipping past MAX_TASK_CALLS.
+ *
+ * ── The write itself is NOT here ───────────────────────────────────────────
+ * It is `writeInventoryItemFields` in commerce-write.server.ts, the same
+ * function the single editor's stock panel calls — including its echo check
+ * (`tracked` is verified against what Shopify stored, because it decides
+ * whether stock exists at all) and its mirror, which is taken from the ECHO
+ * because Shopify normalises a cost of "4.5" to "4.50" and may rebase a
+ * weight. A second copy of that here is exactly what this file is not allowed
+ * to grow.
+ *
+ * ── The weight is ONE value in two cells ───────────────────────────────────
+ * Shopify REPLACES the measurement rather than merging into it, so "change
+ * only the unit" is not an operation that exists. A save carrying one half
+ * takes the other from the CACHED row — which is the value the merchant was
+ * looking at in the neighbouring cell — and refuses when the cache has no unit
+ * to take, because a number with no unit is not a weight.
+ */
+async function persistVariantInventoryItems(
+  targets: VariantWriteTarget[],
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
+  const failures: BulkFailure[] = [];
+  const relevant = targets.filter((t) =>
+    Object.keys(t.cells).some((columnId) => INVENTORY_ITEM_COLUMN_IDS.has(columnId)),
+  );
+  if (relevant.length === 0) return failures;
+
+  // ONE lookup for the whole product's rows: the InventoryItem address, plus
+  // the weight pair a half-written measurement has to be completed from.
+  const rows = new Map<string, VariantCommerceRow>();
+  try {
+    const found = await deps.db.productVariant.findMany({
+      where: { shopifyGid: { in: relevant.map((t) => t.variantId) }, product: { shop: deps.shop } },
+      select: { id: true, shopifyGid: true, inventoryItemId: true, weight: true, weightUnit: true },
+    });
+    for (const row of found) rows.set(row.shopifyGid, row);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    for (const target of relevant) {
+      for (const columnId of Object.keys(target.cells)) {
+        if (INVENTORY_ITEM_COLUMN_IDS.has(columnId)) {
+          failures.push(failureOf(target.group, message, columnId));
+        }
+      }
+    }
+    return failures;
+  }
+
+  for (const target of relevant) {
+    const group = target.group;
+    const cells = Object.entries(target.cells).filter(([columnId]) =>
+      INVENTORY_ITEM_COLUMN_IDS.has(columnId),
+    );
+    const columnIds = cells.map(([columnId]) => columnId);
+    const row = rows.get(target.variantId);
+    const failEveryCell = (message: string) => {
+      for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
+    };
+
+    if (!row?.inventoryItemId) {
+      // The grid renders these cells read-only without one, so this is the
+      // direct-POST / CSV entrance. Naming the resync is the way out.
+      failEveryCell(
+        "This variant has no Shopify inventory item — cost, weight and customs data are written on it. Resync the product first.",
+      );
+      continue;
+    }
+
+    const fields: InventoryItemFields = {};
+    let weightFailed = false;
+    for (const [columnId, value] of cells) {
+      if (columnId === VAR_WEIGHT_COLUMN_ID || columnId === VAR_WEIGHT_UNIT_COLUMN_ID) continue;
+      const field = INVENTORY_ITEM_FIELD_BY_COLUMN[columnId];
+      if (field === "cost" || field === "countryCodeOfOrigin" || field === "harmonizedSystemCode") {
+        fields[field] = value;
+      } else if (field === "tracked" || field === "requiresShipping") {
+        // Two-value enums in the grid. Anything but an explicit "false" is
+        // true — the same reading every other boolean cell gets.
+        fields[field] = value !== "false";
+      }
+    }
+
+    const weightCell = target.cells[VAR_WEIGHT_COLUMN_ID];
+    const unitCell = target.cells[VAR_WEIGHT_UNIT_COLUMN_ID];
+    if (weightCell !== undefined || unitCell !== undefined) {
+      const value = weightCell !== undefined ? weightCell : row.weight?.toString() ?? "";
+      const unit = unitCell !== undefined ? unitCell : row.weightUnit ?? "";
+      if (value.trim() === "" || unit.trim() === "") {
+        // Both or neither, and the message says which half is missing rather
+        // than reporting an invalid weight the merchant can see is fine.
+        failures.push(
+          failureOf(
+            group,
+            "A weight needs a value AND a unit — Shopify stores the two as one measurement, so fill both cells.",
+            weightCell !== undefined ? VAR_WEIGHT_COLUMN_ID : VAR_WEIGHT_UNIT_COLUMN_ID,
+          ),
+        );
+        weightFailed = true;
+      } else {
+        fields.weight = { value, unit };
+      }
+    }
+
+    if (Object.keys(fields).length === 0) continue;
+
+    const result = await writeInventoryItemFields(deps.gateway, deps.db, deps.shop, {
+      variantId: row.id,
+      inventoryItemId: row.inventoryItemId,
+      fields,
+    });
+    if (result.ok) continue;
+
+    // `inventoryItemUpdate` applies as a UNIT, and a value this app refuses
+    // before sending aborts the same unit — so nothing was written for ANY of
+    // this variant's item cells and every one of them has to say so. Reporting
+    // only the cell that was named let the grid prune the others as saved: a
+    // cost of "12.00" beside a country of "Germany" was silently lost, which is
+    // the false-success pattern one cell at a time.
+    //
+    // The named cell still gets Shopify's own words (or this app's specific
+    // refusal); the rest get the atomicity explanation, exactly as the variant
+    // bulk update already reports for a refused sibling.
+    const message = result.message ?? inventoryItemWarningMessage(result.warning, result.field);
+    const named = result.field ? COLUMN_BY_INVENTORY_ITEM_FIELD[result.field] : undefined;
+    for (const columnId of columnIds) {
+      if (weightFailed && (columnId === VAR_WEIGHT_COLUMN_ID || columnId === VAR_WEIGHT_UNIT_COLUMN_ID)) {
+        continue;
+      }
+      failures.push(
+        failureOf(
+          group,
+          columnId === named || !named
+            ? message
+            : `Not saved — another inventory field of this variant was refused (${message})`,
+          columnId,
+        ),
+      );
+    }
+  }
+
+  return failures;
+}
+
+/** A warning code the bulk grid has to say out loud. The single editor renders
+ *  these from `t.content.commerceWarnings`; a per-cell failure carries its own
+ *  sentence, like every other message in this file. */
+function inventoryItemWarningMessage(warning: CommerceWarning, field?: keyof InventoryItemFields): string {
+  switch (warning) {
+    case "itemFieldsInvalid":
+      if (field === "harmonizedSystemCode") {
+        return "A customs tariff (HS) code is 6 to 13 digits, e.g. 442090 or 4420900000 — dots and spaces are removed automatically.";
+      }
+      if (field === "weight") {
+        return "The weight is not a number Shopify accepts — use digits with one decimal separator, e.g. 0.25 or 1,5.";
+      }
+      if (field === "cost") {
+        return "The cost is not an amount Shopify accepts — use digits with one decimal separator, e.g. 4.50.";
+      }
+      if (field === "countryCodeOfOrigin") {
+        return "The country of origin needs a two-letter ISO code, e.g. DE or CH.";
+      }
+      return "Shopify would refuse this value — check the amount, the weight unit or the two-letter country code.";
+    case "itemFieldsNotConfirmed":
+      return "Shopify did not confirm the change, so nothing was saved locally either.";
+    default:
+      return "The inventory details could not be saved.";
+  }
 }
 
 /**
@@ -2422,23 +4097,23 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
  */
 async function persistVariantProductGroup(
   productId: string,
-  groups: BulkDiffRowGroup[],
+  targets: VariantWriteTarget[],
   deps: PersistDeps,
 ): Promise<BulkFailure[]> {
   const { db, gateway } = deps;
   const failures: BulkFailure[] = [];
   const sent: PreparedVariantInput[] = [];
 
-  for (const group of groups) {
-    const { prepared, failures: buildFailures } = buildVariantInput(group);
+  for (const target of targets) {
+    const { prepared, failures: buildFailures } = buildVariantInput(target);
     failures.push(...buildFailures);
     if (prepared) sent.push(prepared);
   }
   if (sent.length === 0) return failures;
 
   const failEverySentCell = (message: string) => {
-    for (const { group, columnIds } of sent) {
-      for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
+    for (const { target, columnIds } of sent) {
+      for (const columnId of columnIds) failures.push(failureOf(target.group, message, columnId));
     }
   };
 
@@ -2450,7 +4125,15 @@ async function persistVariantProductGroup(
       data?: {
         productVariantsBulkUpdate?: {
           productVariants?:
-            | { id: string; sku?: string | null; price?: string | null; compareAtPrice?: string | null; barcode?: string | null }[]
+            | {
+                id: string;
+                sku?: string | null;
+                price?: string | null;
+                compareAtPrice?: string | null;
+                barcode?: string | null;
+                taxable?: boolean | null;
+                inventoryPolicy?: string | null;
+              }[]
             | null;
           userErrors?: { field?: string[] | string | null; message: string }[];
         };
@@ -2481,18 +4164,18 @@ async function persistVariantProductGroup(
         const tail = path.length > 0 ? path[path.length - 1] : "";
         const columnId = variantColumnForErrorField(tail);
         if (index !== undefined && index < sent.length && columnId) {
-          messageByCell.set(`${sent[index].group.rowId}|${columnId}`, err.message);
+          messageByCell.set(`${sent[index].target.variantId}|${columnId}`, err.message);
         }
       }
       // The mutation applies atomically (no partial updates requested): cells
       // named in an error get the specific message, every other sent cell the
       // atomicity explanation. Nothing is mirrored.
-      for (const { group, columnIds } of sent) {
+      for (const { target, columnIds } of sent) {
         for (const columnId of columnIds) {
-          const specific = messageByCell.get(`${group.rowId}|${columnId}`);
+          const specific = messageByCell.get(`${target.variantId}|${columnId}`);
           failures.push(
             failureOf(
-              group,
+              target.group,
               specific ??
                 (messageByCell.size > 0
                   ? "Not saved — another variant of the same product failed (Shopify applies the call atomically)."
@@ -2508,11 +4191,11 @@ async function persistVariantProductGroup(
     // Echo check + DB mirror: only the values Shopify RETURNED go into the
     // cache (Plan §5.4 "nur zurückgemeldete Werte spiegeln").
     const echoed = payload?.productVariants ?? [];
-    for (const { group, input, columnIds } of sent) {
-      const echo = echoed?.find((v) => v.id === group.rowId);
+    for (const { target, input, columnIds } of sent) {
+      const echo = echoed?.find((v) => v.id === target.variantId);
       if (!echo) {
         for (const columnId of columnIds) {
-          failures.push(failureOf(group, "Shopify did not confirm the variant update.", columnId));
+          failures.push(failureOf(target.group, "Shopify did not confirm the variant update.", columnId));
         }
         continue;
       }
@@ -2523,7 +4206,9 @@ async function persistVariantProductGroup(
       }
       if (input.inventoryItem !== undefined) mirror.sku = echo.sku ?? null;
       if (input.barcode !== undefined) mirror.barcode = echo.barcode ?? null;
-      await db.productVariant.updateMany({ where: { shopifyGid: group.rowId }, data: mirror });
+      if (input.taxable !== undefined) mirror.taxable = echo.taxable ?? null;
+      if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echo.inventoryPolicy ?? null;
+      await db.productVariant.updateMany({ where: { shopifyGid: target.variantId }, data: mirror });
     }
   } catch (err: unknown) {
     failEverySentCell(err instanceof Error ? err.message : String(err));
@@ -2557,8 +4242,7 @@ async function persistRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<B
   }
 
   try {
-    await persistSingleMutationRow(group, deps);
-    return [];
+    return await persistSingleMutationRow(group, deps);
   } catch (err: unknown) {
     // Single-mutation rows fail as a whole — row-level failure (no columnId),
     // the UI falls back to marking the row's dirty cells.
@@ -2582,11 +4266,80 @@ export async function applyBulkDiff(
   const gateway = new ShopifyApiGateway(admin, shop);
   const contentService = new ShopifyContentService(gateway as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-  const groups = groupDiffByRow(diff);
+  const allGroups = groupDiffByRow(diff);
+
+  // ── Select columns: the VALUE, before anything dispatches on it ───────────
+  //
+  // Every select cell carries a closed vocabulary, and every one of those
+  // values is a GraphQL enum or a boolean somewhere downstream — where a wrong
+  // one either fails at the SCHEMA level (a top-level `errors` array with
+  // `data: null` that never reaches `userErrors`, i.e. a save that reads as a
+  // success while nothing was written) or, worse, parses: the boolean readers
+  // take anything that is not the exact string "false" as true, so a pasted
+  // "Ja" column switches tax on for every tax-exempt variant it covers.
+  //
+  // ONE pass, here, because there are three entrances (the route action, the
+  // seoBulkMeta task, the bulkEditorTranslate task) and four dispatchers below
+  // — and because a rectangular paste and a CSV import bypass the dropdown
+  // that would otherwise be the only guard. The offending cell is DROPPED from
+  // its group and reported; the rest of the row still saves, like every other
+  // per-cell refusal in this file.
+  const selectFailures: BulkFailure[] = [];
+  for (const group of allGroups) {
+    const columns = columnsByType[group.rowType] ?? [];
+    for (const columnId of Object.keys(group.cells)) {
+      const column = columns.find((c) => c.id === columnId);
+      if (!column) continue;
+      const value = group.cells[columnId];
+      const canonical = canonicalSelectValue(column, value);
+      if (canonical === null) {
+        // The message NAMES the vocabulary: a merchant fixing a CSV needs to
+        // know what to write, and for most of these columns there is no
+        // dropdown in front of them to look at.
+        const accepted = column.selectOptions ?? [];
+        const expected =
+          accepted.length > 1
+            ? `${accepted.slice(0, -1).join(", ")} or ${accepted[accepted.length - 1]}`
+            : accepted.join("");
+        selectFailures.push(
+          failureOf(group, `"${value}" is not a value this column accepts — expected ${expected}.`, columnId),
+        );
+        delete group.cells[columnId];
+      } else if (canonical !== value) {
+        // A spreadsheet's spelling, normalized once so every reader below sees
+        // the enum and not the merchant's typing.
+        group.cells[columnId] = canonical;
+      }
+    }
+  }
+  // A row whose ONLY cell was refused has nothing left to write, and
+  // dispatching it anyway would run every stage as a no-op and then count the
+  // row as saved — "1 row saved" about a row where nothing was.
+  const groups = allGroups.filter((g) => Object.keys(g.cells).length > 0);
 
   // Published foreign locales for the Phase-4b invalidation come from the
   // caller (which already loaded them) — no extra fetch here.
   const foreignLocales = ctx.foreignLocales ?? [];
+  // One lookup per run for the §6.6 invalidation switch (Settings →
+  // Übersetzungen). Skipped entirely when there is nothing to invalidate
+  // against, so a test context without locales makes no DB call.
+  const { loadTranslationChangePolicy } = await import(
+    "../translations/translation-change-policy.server"
+  );
+  const changePolicy: TranslationChangePolicy =
+    foreignLocales.length > 0
+      ? await loadTranslationChangePolicy(shop, db)
+      : {
+          purgeOnPrimaryChange: false,
+          purgeUnreconciledSurfaces: false,
+          autoTranslateExternalChanges: false,
+          autoTranslateHandles: false,
+          autoTranslateDailyLimit: null,
+          plan: "free",
+        };
+  const purgeStaleTranslations = changePolicy.purgeOnPrimaryChange;
+  const purgeStaleSubResourceTranslations = changePolicy.purgeUnreconciledSurfaces;
+  const repairPlan = newBulkRepairPlan(ctx.repairGroupBudget);
 
   // Digest prefetch for every foreign group in ONE batched pass (Plan §6.1:
   // only digests are bündelbar — the register itself is per resource).
@@ -2664,6 +4417,12 @@ export async function applyBulkDiff(
       ? await loadDigestsForRows(gateway, foreignResourceIds, [...foreignKeys])
       : new Map<string, Map<string, string>>();
 
+  // §Phase 3.3 — ONE read per run, not per row. A failed lookup falls back to
+  // the column's own default (on): the setting protects URLs, so the safe
+  // failure is to protect them, and an unwanted redirect is removable while a
+  // missed one costs traffic no one notices.
+  const autoHandleRedirect = ctx.autoHandleRedirect ?? (await loadAutoHandleRedirect(db, shop));
+
   const deps: PersistDeps = {
     db,
     shop,
@@ -2675,8 +4434,14 @@ export async function applyBulkDiff(
     featuredImageIds: new Map(),
     foreignLocales,
     subResourceCaches,
+    purgeStaleTranslations,
+    purgeStaleSubResourceTranslations,
+    autoHandleRedirect,
+    policy: changePolicy,
+    repairPlan,
+    primaryLocale: ctx.primaryLocale,
   };
-  const failures: BulkFailure[] = [];
+  const failures: BulkFailure[] = [...selectFailures];
   let saved = 0;
 
   // Persist units (Plan §5.4 groupDiffByMutationTarget): primary variant row
@@ -2687,7 +4452,7 @@ export async function applyBulkDiff(
   // shop simply doesn't resolve.
   type PersistUnit =
     | { kind: "single"; groups: [BulkDiffRowGroup] }
-    | { kind: "variantProduct"; productId: string; groups: BulkDiffRowGroup[] }
+    | { kind: "variantProduct"; productId: string; groups: BulkDiffRowGroup[]; targets: VariantWriteTarget[] }
     | { kind: "unresolvedVariant"; groups: [BulkDiffRowGroup] };
 
   const units: PersistUnit[] = [];
@@ -2702,7 +4467,7 @@ export async function applyBulkDiff(
       select: { shopifyGid: true, productId: true },
     });
     const productIdByGid = new Map(owned.map((v) => [v.shopifyGid, v.productId] as const));
-    const byProduct = new Map<string, BulkDiffRowGroup[]>();
+    const byProduct = new Map<string, VariantWriteTarget[]>();
     for (const group of variantPrimaryGroups) {
       const productId = productIdByGid.get(group.rowId);
       if (!productId) {
@@ -2710,20 +4475,44 @@ export async function applyBulkDiff(
         continue;
       }
       const list = byProduct.get(productId) ?? [];
-      list.push(group);
+      // A variant ROW addresses itself: its row id IS the variant GID.
+      list.push({ group, variantId: group.rowId, cells: group.cells });
       byProduct.set(productId, list);
     }
-    for (const [productId, productGroups] of byProduct) {
-      units.push({ kind: "variantProduct", productId, groups: productGroups });
+    for (const [productId, targets] of byProduct) {
+      units.push({
+        kind: "variantProduct",
+        productId,
+        groups: targets.map((t) => t.group),
+        targets,
+      });
     }
   }
+
+  // PRIMARY groups first. A save that changes a row's text AND writes a
+  // translation of it is one merchant action, and the translation belongs to
+  // the NEW text: writing it first would register a value against text that is
+  // about to change, and the §6.6 pass would then treat what the merchant just
+  // typed as stale. Doing the primary half first also means the digest re-fetch
+  // that `markDigestsStale` triggers reads the text they actually saved.
+  //
+  // A stable sort, so the client's order is preserved within each half — the
+  // fixed target-group order inside a row (§4.4) is unaffected either way.
+  units.sort((a, b) => (a.groups[0].locale === "" ? 0 : 1) - (b.groups[0].locale === "" ? 0 : 1));
 
   let processedGroups = 0;
   for (const unit of units) {
     let unitFailures: BulkFailure[];
     try {
       if (unit.kind === "variantProduct") {
-        unitFailures = await persistVariantProductGroup(unit.productId, unit.groups, deps);
+        // Two mutations, in this order: the variants' own fields for the whole
+        // product in ONE call, then the InventoryItem fields one variant at a
+        // time. The order matters only in that both write the same variant's
+        // SKU path — running them concurrently would race on it.
+        unitFailures = [
+          ...(await persistVariantProductGroup(unit.productId, unit.targets, deps)),
+          ...(await persistVariantInventoryItems(unit.targets, deps)),
+        ];
       } else if (unit.kind === "unresolvedVariant") {
         unitFailures = [
           failureOf(
@@ -2750,6 +4539,47 @@ export async function applyBulkDiff(
     if (onProgress) await onProgress(processedGroups, groups.length);
   }
 
+  // Auto-translation LAST, when every primary write of the save is through:
+  // the repair reads the new text back from Shopify, and a group flushed
+  // mid-run would translate half a row.
+  // Never throws — every row above is already saved.
+  let flushed: { started: number; translations: number; skipped: number; taskIds: string[] } = {
+    started: 0,
+    translations: 0,
+    skipped: 0,
+    taskIds: [],
+  };
+  try {
+    flushed = await flushBulkRepairs({
+      db,
+      shop,
+      gateway,
+      foreignLocales,
+      primaryLocale: ctx.primaryLocale,
+      policy: changePolicy,
+      plan: repairPlan,
+    });
+  } catch (err: unknown) {
+    logger.warn("[BULK] Auto-translation flush failed — stale rows kept", {
+      context: "Bulk",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  // Assembled OUTSIDE the try: a flush that threw before its first group still
+  // has to report the rows the cap refused, which were decided long before it
+  // ran. Absent means "nothing to say", never "nothing happened".
+  const capped = repairPlan.overflowRows.size;
+  const retranslation: BulkApplyResult["retranslation"] =
+    flushed.started > 0 || flushed.skipped > 0 || capped > 0
+      ? {
+          started: flushed.started,
+          translations: flushed.translations,
+          skipped: flushed.skipped,
+          capped,
+          ...(flushed.taskIds.length > 0 ? { taskIds: flushed.taskIds } : {}),
+        }
+      : undefined;
+
   // §10.5: summaries only — never cell values.
   debugLog.bulkSave("diff applied", {
     rows: groups.length,
@@ -2759,5 +4589,5 @@ export async function applyBulkDiff(
     failedRows: new Set(failures.map((f) => f.rowId)).size,
   });
 
-  return { saved, failures };
+  return { saved, failures, ...(retranslation ? { retranslation } : {}) };
 }

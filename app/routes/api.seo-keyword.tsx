@@ -1,6 +1,6 @@
 /**
  * Keyword read/write endpoint for the content editor's SEO sidebar
- * (see app/components/SeoSidebar.tsx). Thin wrapper around the CRUD helpers
+ * (see app/components/ItemSidebar.tsx). Thin wrapper around the CRUD helpers
  * in app/services/seo/keywords.service.ts — the same ones app.seo.keywords.tsx
  * uses — so the sidebar's keywords panel and the Keywords tab never disagree
  * about what's stored for an item.

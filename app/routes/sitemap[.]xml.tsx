@@ -1,0 +1,116 @@
+/**
+ * Sitemap of the public website.
+ *
+ * Every page is listed once per locale, and each entry carries the full
+ * `xhtml:link` alternate set — the same three URLs plus `x-default` that the
+ * pages themselves declare. A sitemap whose alternates disagree with the pages'
+ * hreflang tags is worse than no sitemap: search engines treat the mismatch as
+ * a reason to trust neither.
+ */
+
+import type { LoaderFunctionArgs } from "react-router";
+import { marketingOrigin } from "../utils/marketing-route.server";
+import { MARKETING_SITE } from "../config/marketing-site";
+import { GUIDE_TOPIC_ORDER, guideTopicPath } from "../config/marketing-guide";
+import {
+  COMPARE_TOPICS,
+  COMPARE_TOPIC_ORDER,
+  LIVE_COMPETITORS,
+  comparePath,
+  topicPath,
+} from "../config/marketing-compare";
+import {
+  MARKETING_DEFAULT_LOCALE,
+  MARKETING_LOCALES,
+  MARKETING_LOCALIZED_PATHS,
+  localizedPath,
+} from "../services/marketing-locale.shared";
+
+/**
+ * Localized pages, from the one list in marketing-locale.shared.ts.
+ *
+ * `/install` is dropped while an App Store listing exists: it redirects
+ * there, and a sitemap that lists a redirect reports a soft error for every
+ * locale it names.
+ */
+const LOCALIZED_PATHS: string[] = [
+  ...MARKETING_LOCALIZED_PATHS.filter((path) => path !== "/install" || !MARKETING_SITE.appStoreUrl),
+  // One page per guide topic, from the same config the guide routes render.
+  ...GUIDE_TOPIC_ORDER.map(guideTopicPath),
+  // One page per published comparison topic past the first (which is /compare),
+  // and one per compared app of a published topic.
+  ...COMPARE_TOPIC_ORDER.filter((id) => id !== "translation" && COMPARE_TOPICS[id].published).map(topicPath),
+  ...LIVE_COMPETITORS.map(comparePath),
+];
+
+/** Public but not localized — the URLs the App Store listing points at. */
+const PLAIN_PATHS = ["/privacy", "/terms"];
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const origin = marketingOrigin(new URL(request.url));
+
+  const entries: string[] = [];
+
+  for (const path of LOCALIZED_PATHS) {
+    const alternates = [
+      ...MARKETING_LOCALES.map((locale) => ({
+        hreflang: locale,
+        href: `${origin}${localizedPath(locale, path)}`,
+      })),
+      {
+        hreflang: "x-default",
+        href: `${origin}${localizedPath(MARKETING_DEFAULT_LOCALE, path)}`,
+      },
+    ];
+
+    for (const locale of MARKETING_LOCALES) {
+      const links = alternates
+        .map(
+          (alt) =>
+            `    <xhtml:link rel="alternate" hreflang="${alt.hreflang}" href="${escapeXml(alt.href)}"/>`,
+        )
+        .join("\n");
+
+      entries.push(
+        [
+          "  <url>",
+          `    <loc>${escapeXml(`${origin}${localizedPath(locale, path)}`)}</loc>`,
+          links,
+          `    <priority>${path === "/" ? "1.0" : "0.8"}</priority>`,
+          "  </url>",
+        ].join("\n"),
+      );
+    }
+  }
+
+  for (const path of PLAIN_PATHS) {
+    entries.push(
+      ["  <url>", `    <loc>${escapeXml(`${origin}${path}`)}</loc>`, "    <priority>0.3</priority>", "  </url>"].join(
+        "\n",
+      ),
+    );
+  }
+
+  const body = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">',
+    ...entries,
+    "</urlset>",
+    "",
+  ].join("\n");
+
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+};

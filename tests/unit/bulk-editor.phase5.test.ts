@@ -95,10 +95,29 @@ describe("Phase-5 column universe", () => {
     expect(body.translatable).toBe(true);
   });
 
-  it("gives blog containers exactly title/handle/seoTitle/seoDescription — no body (§14 no. 6)", () => {
-    const ids = BULK_COLUMNS_BY_TYPE.blog.map((c) => c.id).sort();
-    expect(ids).toEqual(["field.handle", "field.seoDescription", "field.seoTitle", "field.title"]);
-    expect(BULK_COLUMNS_BY_TYPE.blog.every((c) => c.editable && c.translatable)).toBe(true);
+  it("gives blog containers exactly title/handle/seoTitle/seoDescription as CONTENT — no body (§14 no. 6)", () => {
+    // Shopify's translatable keys for BLOG are title/handle/meta_title/
+    // meta_description. `body` is deliberately absent: a blog container has
+    // none, and the primary write path (blogUpdate + the two global.* SEO
+    // metafields) covers exactly these four.
+    const translatable = BULK_COLUMNS_BY_TYPE.blog.filter((c) => c.translatable).map((c) => c.id).sort();
+    expect(translatable).toEqual([
+      "field.handle",
+      "field.seoDescription",
+      "field.seoTitle",
+      "field.title",
+    ]);
+    expect(BULK_COLUMNS_BY_TYPE.blog.every((c) => c.editable)).toBe(true);
+  });
+
+  it("adds the blog's one merchandising attribute, and it is NOT translatable", () => {
+    // `templateSuffix` is a Blog's only §Phase 3 attribute (ATTRIBUTES_BY_RESOURCE).
+    // One value per blog, so it must stay out of every foreign-locale group —
+    // which `translatable: false` is what enforces.
+    const templateSuffix = BULK_COLUMNS_BY_TYPE.blog.find((c) => c.id === "field.templateSuffix");
+    expect(templateSuffix).toBeDefined();
+    expect(templateSuffix!.editable).toBe(true);
+    expect(templateSuffix!.translatable).toBe(false);
   });
 
   it("builds metaobject columns per definition field with the metafield type filter", () => {

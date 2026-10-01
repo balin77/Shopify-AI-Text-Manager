@@ -32,6 +32,7 @@ import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
 import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
+import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
@@ -118,6 +119,37 @@ export const loader = createContentLoader({
           : false,
         options: { orderBy: { position: "asc" } },
         metafields: true,
+        // §2.2 attribute checklist. Both are narrowed on purpose: this loader
+        // runs over the whole (bounded) catalogue, so pulling full variant and
+        // membership rows for a count and one price would multiply its cost for
+        // nothing.
+        // `automated` rides along for §Phase 3.1's membership picker: a
+        // rule-based membership renders locked, because unticking it would be
+        // a save the rule silently undoes.
+        collections: { select: { collectionId: true, collectionTitle: true, automated: true } },
+        variants: { select: { price: true }, orderBy: { position: "asc" }, take: 1 },
+        // §2.3 — the sales-channel row of the attribute checklist.
+        //
+        // The Phase-4 mirror `/api/product-commerce` writes, read here for the
+        // reason that mirror was kept: a completeness check. Narrow on purpose
+        // (two scalars), and it only exists for products whose commerce panel
+        // has run at least once — an EMPTY list is therefore "never mirrored",
+        // which is the discriminator this block has no dedicated column for.
+        // `resourcePublicationsV2(onlyPublished: false)` mirrors every
+        // publication, published or not, so a product genuinely on no channel
+        // still has rows and cannot be confused with one nobody asked about —
+        // as long as the SHOP's publication list was readable, which is what
+        // supplies that universe. When it was not, a product on no channel
+        // mirrors nothing and this reads as "unknown" instead of raising the
+        // §2.3 alarm. Silence over a false alarm, deliberately, but it does
+        // mean the alarm is unreachable on that path.
+        publications: { select: { catalogType: true, isPublished: true } },
+        // The COUNT, not the rows: the default-price field means "the first
+        // variant" and says so, which is only honest while there is just one.
+        // With several, the field is hidden and the per-variant panel takes
+        // over — so the editor has to know how many there are without paying
+        // for them.
+        _count: { select: { variants: true } },
       },
       orderBy: { title: "asc" },
       take: effectiveTake,
@@ -197,17 +229,20 @@ export const loader = createContentLoader({
           return !isDefaultTitleOption({ name: opt.name, values: valNames });
         } catch { return true; }
       }).map((opt: any) => {
-        let values: Array<{ id: string; name: string; linked?: boolean }> = [];
+        let values: Array<{ id: string; name: string; linked?: boolean; linkedValue?: string }> = [];
         try {
           const parsed = JSON.parse(opt.values || "[]");
-          // Support both new format [{id, name, linked}] and legacy ["string"] format
+          // Support both new format [{id, name, linked}] and legacy ["string"] format.
+          // `linkedValue` is the METAOBJECT GID behind a linked value — the only
+          // thing that addresses the entry itself, so the editor's link into
+          // /app/metaobjects can select it rather than guessing at a type.
           values = Array.isArray(parsed)
-            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked })
+            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked, linkedValue: v.linkedValue || undefined })
             : [];
         } catch { values = []; }
         // Option is linked if linkedMetafieldKey is set (most reliable) OR any value has linked flag
         const isLinked = !!opt.linkedMetafieldKey || values.some(v => v.linked);
-        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetaobjectType: opt.linkedMetafieldKey || undefined };
+        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetafieldKey: opt.linkedMetafieldKey || undefined };
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
         // Shared predicate — the bulk editor's metafield columns use the SAME
@@ -248,6 +283,65 @@ export const loader = createContentLoader({
         }
         return result;
       })(),
+      // ── PLAN_CONTENT_CREATION §2.2/§2.3 — the attribute checklist ────────
+      // Without these the sidebar has nothing to judge and renders every row
+      // "unknown" forever. `attributesSyncedAt` is THE discriminator and must
+      // travel with them: shipped alone, the values below are the migration's
+      // defaults (null / []), which the checklist would otherwise read as
+      // "the merchant left it empty" — a screen full of confident, wrong red.
+      attributesSyncedAt: p.attributesSyncedAt ?? null,
+      vendor: p.vendor ?? null,
+      tags: Array.isArray(p.tags) ? p.tags : null,
+      categoryName: p.categoryName ?? null,
+      // §Phase 3.1 — the picker writes the GID, the checklist shows the name.
+      // Both travel: `categoryName` alone cannot be sent back as a value, and
+      // `categoryId` alone has no label.
+      //
+      // GATED on the discriminator, like `collections` below. Ungated, an
+      // un-attribute-synced row's `null` reaches the picker as "" and renders a
+      // confident "Not set" — right next to `vendor` and `tags` correctly
+      // saying "not loaded from Shopify yet". Same block, same question,
+      // opposite answers.
+      categoryId: p.attributesSyncedAt ? p.categoryId ?? null : null,
+      templateSuffix: p.templateSuffix ?? null,
+      featuredImageUrl: p.featuredImageUrl || null,
+      // Membership count comes from the Phase-0 join rows. `hasMoreCollections`
+      // marks the window Shopify truncated, so "3" never reads as "exactly 3".
+      // NULL until the attribute sync has run, never `[]`. The membership rows
+      // are part of the Phase-0 attribute block, so on a product an older sync
+      // wrote there simply are none — and an empty array would make the
+      // checklist report a confident "missing" while every row beside it says
+      // "unknown". Same discriminator, same rule, applied at the source.
+      collections: p.attributesSyncedAt
+        ? (p.collections || []).map((c: any) => ({
+            id: c.collectionId,
+            title: c.collectionTitle || "",
+            // §Phase 3.1 — the membership picker must show a rule-based
+            // membership as LOCKED. Dropping the flag here would make it
+            // untickable-looking-but-tickable, and the save would appear to do
+            // nothing.
+            automated: c.automated === true,
+          }))
+        : null,
+      hasMoreCollections: p.hasMoreCollections === true,
+      // §2.3: the price lives on ProductVariant, NOT in the attribute block —
+      // it is therefore NOT gated on attributesSyncedAt. Decimal has no place
+      // in a loader payload, so it goes over as a string.
+      defaultVariantPrice: p.variants?.[0]?.price != null ? String(p.variants[0].price) : null,
+      // §2.3 — SALES CHANNELS only. A product in a market catalog but on no
+      // channel is invisible exactly as if it sat nowhere, so counting the
+      // market row would hide the very state this row exists to reveal;
+      // `countsAsSalesChannel` is the one list both this and the commerce
+      // panel's badge read. `null` = never mirrored (see the include above),
+      // never 0 — the checklist paints 0 as the "invisible" warning.
+      publishedChannelCount: (p.publications?.length ?? 0) === 0
+        ? null
+        : p.publications.filter((pub: any) => pub.isPublished && countsAsSalesChannel(pub.catalogType))
+            .length,
+      // `undefined` on a row this loader did not count is NOT "one variant":
+      // the price field would then show for a product whose price it cannot
+      // represent. Readers treat anything but a number as unknown.
+      variantCount: typeof p._count?.variants === "number" ? p._count.variants : null,
     }));
 
     return {
@@ -268,7 +362,12 @@ export const loader = createContentLoader({
     const newFeaturesEnabled = !isProductionLocked();
     const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
     const showImageProcessingTab = canAccessImageProcessingTab(plan, newFeaturesEnabled);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings };
+    // §Phase 3.2 — the shop currency, as a suffix on the price field. Shop-wide
+    // and memoized per boot (changing it is a support-gated Shopify operation),
+    // so this costs one query per shop, not one per load.
+    const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
+    const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode };
   },
 });
 
@@ -304,7 +403,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -330,7 +429,11 @@ export default function ProductsPage() {
   const initialItemId = searchParams.get("select") || undefined;
   // Locale of the deep link (the SEO dashboard passes the language it was
   // showing). Validated against the shop's locales inside the editor hook.
-  const initialLocale = searchParams.get("locale") || undefined;
+  // NOT `?locale=` — Shopify appends the merchant's ADMIN UI language under
+  // that name on every embedded request, and useAppNavigation carries every
+  // param along, so reading it here opened the content editor in whatever
+  // language the admin happens to be in (see the initialLocale docstring).
+  const initialLocale = searchParams.get("contentLocale") || undefined;
 
   // Content-Freshness deep-link (PLAN_SEO_SUITE_COMPLETION.md §5.3): the
   // "Mit AI überarbeiten" button on the Freshness panel links here with
@@ -412,18 +515,26 @@ export default function ProductsPage() {
     primaryLocale,
     selectedMarketId: editor.state.selectedMarketId,
     revalidator,
+    // The sub-resource save has its own fetcher, so its detached
+    // re-translation is handed to the editor's ONE watcher from here.
+    onSaveResponse: editor.helpers.trackRetranslationTasks,
     showInfoBox,
     enabledLanguages: editor.state.enabledLanguages,
     strings: {
       optionsSavedSuccess: t.products.optionsSavedSuccess,
-      saveFailed: t.products.saveFailed,
+      translateFailed: t.errors.translationFailed,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
-      validationError: t.products.validationError,
       optionNameEmpty: t.products.optionNameEmpty,
       optionValuesEmpty: t.products.optionValuesEmpty,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
-      success: t.products.successTitle,
+      // One per failure code the option write paths return. Keyed by code so
+      // the server can stay in codes and this app can stay in three languages.
+      optionWarning_optionsNotConfirmed: t.products.optionWarningNotConfirmed,
+      optionWarning_optionsFailed: t.products.optionWarningFailed,
+      optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
+      optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
+      optionWarning_optionLastOne: t.products.optionWarningLastOne,
     },
   });
 
@@ -641,7 +752,7 @@ export default function ProductsPage() {
         const productId = editor.selectedItem.id;
         imageManagerState.handleApply(productId).then(err => {
           if (err) {
-            showInfoBox(err, "critical", t.products.galleryErrorTitle);
+            showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
           } else {
             showInfoBox(t.products.gallerySaveSuccess, "success");
             // Kick off background polling for 3D model previews. Shopify
@@ -776,6 +887,10 @@ export default function ProductsPage() {
           resourceId: selectedProductId,
           resourceType: "product",
           locale: primaryLocale,
+          // Not a reload the merchant pressed: the save lock must hold, or a
+          // translation written in the seconds before this lands is dropped by
+          // its delete-and-recreate of the translation rows.
+          trigger: "auto",
         },
         { method: "POST", action: "/api/sync-single-resource" }
       );
@@ -809,6 +924,30 @@ export default function ProductsPage() {
       subResources.handlers.resetForReload();
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
+
+  // A finished background re-translation reloaded the loader; the options and
+  // metafields card has to re-read too. Its own load effect short-circuits on
+  // `itemId::locale::market`, none of which a revalidation changes, so without
+  // this the refreshed sub-resource translations are fetched and never shown.
+  //
+  // `refreshTranslations`, NOT `resetForReload`: the reset only empties the
+  // load key, and the bump lands one commit AFTER the fresh item — the load
+  // effect has already run and returned, so nothing was re-read, while the
+  // empty key made the NEXT revalidation run the load effect's full reset and
+  // throw away unsaved option edits.
+  useEffect(() => {
+    if (editor.helpers.backgroundRefreshVersion === 0) return;
+    subResources.handlers.refreshTranslations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone
+  }, [editor.helpers.backgroundRefreshVersion]);
+
+  // The editor's own `hasChanges` does not see this card or the image
+  // manager, and a background refresh re-runs the loader both render from —
+  // so their unsaved work has to hold it back too.
+  const setExternalUnsavedChanges = editor.helpers.setExternalUnsavedChanges;
+  useEffect(() => {
+    setExternalUnsavedChanges(wrappedSubResourceState.hasChanges);
+  }, [wrappedSubResourceState.hasChanges, setExternalUnsavedChanges]);
 
   // Check for sync parameter and trigger background sync
   useEffect(() => {
@@ -844,7 +983,7 @@ export default function ProductsPage() {
 
       if (syncFetcher.data.success && syncFetcher.data.synced > 0 && isMountedRef.current) {
         const message = t.products.syncComplete.replace("{count}", String(syncFetcher.data.synced));
-        showInfoBox(message, "success", t.products.syncCompleteTitle);
+        showInfoBox(message, "success");
         // Reload to show new products
         window.location.reload();
       } else if (isMountedRef.current) {
@@ -859,7 +998,7 @@ export default function ProductsPage() {
       const message = error.startsWith("GraphQL error")
         ? (t.errors?.graphqlError || error)
         : error;
-      showInfoBox(message, "critical", t.common?.error || "Error");
+      showInfoBox(message, "critical");
     }
   }, [error, showInfoBox, t]);
 
@@ -894,6 +1033,7 @@ export default function ProductsPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={PRODUCTS_CONFIG}
+          currencyCode={currencyCode}
           items={products as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
@@ -943,7 +1083,7 @@ export default function ProductsPage() {
             onConfirm: async () => {
               const err = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
               if (err) {
-                showInfoBox(err, "critical", t.products.galleryErrorTitle);
+                showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
               } else {
                 showInfoBox(t.products.gallerySaveSuccess, "success");
                 revalidator.revalidate();
@@ -960,6 +1100,7 @@ export default function ProductsPage() {
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
+              onSaveResponse={editor.helpers.trackRetranslationTasks}
               productImages={
                 productImagesOverride.get(editor.selectedItem.id) ??
                 (editor.selectedItem.images ?? []).map((img: any) => ({
@@ -988,6 +1129,11 @@ export default function ProductsPage() {
               seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
+              // Media Shopify created on the last save but is still
+              // processing. Keeps the tile (and the media count) stable
+              // between the save and the moment the CDN URL appears.
+              settlingMedia={imageManagerState.settlingMedia}
+              onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
               primaryLocale={primaryLocale}

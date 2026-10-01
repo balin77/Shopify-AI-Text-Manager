@@ -10,11 +10,23 @@ import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import { markProductDeleted, isProductRecentlyDeleted } from '~/utils/product-delete-lock.server';
 import { withDbRaceRetry } from '~/utils/db-retry.server';
-import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
+import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
-import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
+import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale, translationWriteScope } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 import { syncProductVariantRows, type ShopifySyncVariant } from './product-variant-sync.server';
+import { PRODUCT_VIDEO_MEDIA_FIELDS, videoUploadDatesFromMedia } from './seo/video-schema.shared';
+import { persistVideoSchema } from './seo/video-schema.server';
+import {
+  PRODUCT_ATTRIBUTE_SELECTION,
+  PRODUCT_COLLECTIONS_SELECTION,
+  productAttributeColumns,
+  productCollectionRows,
+  type ShopifyProductAttributes,
+  type ShopifyProductCollections,
+} from './attribute-sync.shared';
+import { subResourceLockId, altTextLockId, altTextSyncShieldId, marketLayerLockId } from "./translations/translation-locks.shared";
+import { translationForeignLocales } from "./translations/stale-translations.shared";
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -46,13 +58,40 @@ interface TranslatableResourcesByIdsResponse {
   errors?: GraphQLError[];
 }
 
-/** Product media image from Shopify */
+/**
+ * Product media from Shopify. The selection asks for MediaImage AND (via
+ * PRODUCT_VIDEO_MEDIA_FIELDS) Video/ExternalVideo, so a node is one of two
+ * shapes: an image carries `image`, a video carries `createdAt`. Both stay
+ * optional rather than being split into a union — every existing reader tests
+ * for `image` and must keep compiling.
+ */
 interface ShopifyMediaImage {
   id: string;
   alt: string | null;
-  image: {
+  image?: {
     url: string;
   };
+  /** Only on Video / ExternalVideo — the file's creation date. */
+  createdAt?: string | null;
+}
+
+/** Media node that is certainly an IMAGE — the type guard every image path uses. */
+type ShopifyImageMedia = ShopifyMediaImage & { image: { url: string } };
+
+/**
+ * Image media of a product, videos excluded.
+ *
+ * Since the media selection also asks for Video/ExternalVideo, "has an id" is
+ * no longer enough to recognise an image — a video has one too, and letting it
+ * through would create ProductImage rows for videos and put video GIDs into
+ * the alt-text translation queries.
+ */
+function imageMediaNodes(
+  edges: GraphQLEdge<ShopifyMediaImage>[] | null | undefined,
+): ShopifyImageMedia[] {
+  return (edges ?? [])
+    .map((edge) => edge.node)
+    .filter((node): node is ShopifyImageMedia => !!node?.id && !!node.image?.url);
 }
 
 /** Product option value from Shopify */
@@ -81,7 +120,7 @@ interface ShopifyMetafield {
 }
 
 /** Product data from Shopify GraphQL */
-interface ShopifyProductData {
+interface ShopifyProductData extends ShopifyProductAttributes {
   id: string;
   title: string;
   descriptionHtml: string | null;
@@ -89,6 +128,8 @@ interface ShopifyProductData {
   status: string;
   productType: string | null;
   updatedAt: string;
+  /** PLAN_CONTENT_CREATION Phase 0 — membership window, see the shared module. */
+  collections?: ShopifyProductCollections | null;
   /** Variant window of the sync (Plan §5.1): first 100 only, NO pagination —
    * hasNextPage marks products whose remainder stays in the Shopify admin. */
   variants?: {
@@ -190,7 +231,7 @@ export class ProductSyncService {
                   handle
                   status
                   productType
-                  updatedAt
+                  updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
                   seo {
                     title
                     description
@@ -209,6 +250,7 @@ export class ProductSyncService {
                             url
                           }
                         }
+                        ${PRODUCT_VIDEO_MEDIA_FIELDS}
                       }
                     }
                   }
@@ -309,6 +351,13 @@ export class ProductSyncService {
       const hasMoreVariants = product.variants
         ? product.variants.pageInfo?.hasNextPage ?? false
         : undefined;
+      // PLAN_CONTENT_CREATION Phase 0. Same "only when delivered" rule as
+      // hasMoreVariants: an absent attribute block yields {} and leaves the
+      // stored values (and attributesSyncedAt) untouched — writing the
+      // defaults would erase what an earlier full sync established and would
+      // claim knowledge this response never carried.
+      const attributes = productAttributeColumns(product);
+      const membership = productCollectionRows(this.shop, product.id, product.collections);
       await tx.product.upsert({
         where: { shop_id: { shop: this.shop, id: product.id } },
         create: {
@@ -324,6 +373,8 @@ export class ProductSyncService {
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
           hasMoreVariants: hasMoreVariants ?? false,
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -338,16 +389,26 @@ export class ProductSyncService {
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
           ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
       });
 
+      // Collection membership: rebuilt per product, never accumulated. Skipped
+      // entirely when the query did not deliver the block (membership === null)
+      // — deleting then would report "in 0 collections" for data we never saw.
+      if (membership) {
+        await tx.productCollection.deleteMany({ where: { productId: product.id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      }
+
       // Save images
       if (cacheProductImages) {
-        const mediaImages = product.media?.edges
-          ?.filter((edge) => edge.node.id && edge.node.image?.url)
-          .map((edge) => edge.node) ?? [];
+        const mediaImages = imageMediaNodes(product.media?.edges);
 
         if (mediaImages.length > 0) {
           // Deleting ProductImage rows CASCADES away every
@@ -476,6 +537,27 @@ export class ProductSyncService {
       reportProgress();
     }
 
+    // Video upload dates → product metafield. AFTER the write loop, because
+    // the mirror column it diffs against lives on the rows just written; and
+    // as ONE pass over the fetched products rather than per batch, so the
+    // common case (nothing changed) costs a single indexed read and no
+    // Shopify call at all. Never throws — it is not the sync's job.
+    // A cancelled sync must not keep writing to Shopify — the pass talks to
+    // the Admin API for every changed product and would run to completion long
+    // after the client disconnected.
+    checkAborted();
+    if (synced > 0) {
+      onProgress?.({ overallPercent: 60, message: "Video-Daten werden aktualisiert…" });
+      await persistVideoSchema(
+        this.admin as never,
+        db,
+        allProducts.map((product) => ({
+          productId: product.id,
+          uploadDates: videoUploadDatesFromMedia(product.media?.edges),
+        })),
+      );
+    }
+
     // ==========================================
     // Phase 3: Bulk-fetch translations (60-100%)
     // ==========================================
@@ -485,7 +567,9 @@ export class ProductSyncService {
         onProgress?.({ overallPercent: 60, message: 'Fetching product translations...' });
 
         const shopLocales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
-        const nonPrimaryLocales = shopLocales.filter((l) => !l.primary && l.published);
+        // Every foreign locale, published or not — an unpublished one is a
+        // language being prepared, and its translations are real.
+        const nonPrimaryLocales = shopLocales.filter((l) => !l.primary);
         // Market-aware read-back: [] when scope/markets missing → global-only.
         const markets = await this.getMarkets();
 
@@ -499,6 +583,9 @@ export class ProductSyncService {
 
           // 3a. Product translations (60-80%)
           let localeIndex = 0;
+          /** The stale-translation gate's PRIMARY baselines, seeded create-only
+           *  from the first global pass (seedPrimaryDigestBaselines). */
+          let baselinesSeeded = false;
           for (const locale of nonPrimaryLocales) {
             localeIndex++;
             checkAborted();
@@ -553,6 +640,16 @@ export class ProductSyncService {
                   }
 
                   const resources = data.data?.translatableResourcesByIds?.edges ?? [];
+                  if (!baselinesSeeded && marketId === "") {
+                    await (await import("./translations/stale-translation-sync.server")).seedPrimaryDigestBaselines(
+                      this.shop,
+                      "Product",
+                      resources.map((edge) => ({
+                        resourceId: edge.node.resourceId,
+                        content: edge.node.translatableContent ?? [],
+                      })),
+                    );
+                  }
                   for (const edge of resources) {
                     const node = edge.node;
                     const digestMap = new Map<string, string>();
@@ -579,6 +676,9 @@ export class ProductSyncService {
                   logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
+              // Every batch of the global layer has now been offered to the
+              // seed once; the other locales carry the same primary digests.
+              if (marketId === "") baselinesSeeded = true;
             }
 
             if (allTranslations.length > 0) {
@@ -722,10 +822,7 @@ export class ProductSyncService {
           // 3c. Image alt-text translations (90-100%)
           const allMediaIds: string[] = [];
           for (const product of allProducts) {
-            const mediaImages = product.media?.edges
-              ?.filter((edge) => edge.node.id)
-              .map((edge) => edge.node.id) ?? [];
-            allMediaIds.push(...mediaImages);
+            allMediaIds.push(...imageMediaNodes(product.media?.edges).map((node) => node.id));
           }
 
           if (allMediaIds.length > 0) {
@@ -872,9 +969,31 @@ export class ProductSyncService {
   }
 
   /**
-   * Sync a single product with all its translations
+   * Sync ONE product.
+   *
+   * This WRITES the video-date metafield, webhook-driven runs included. That
+   * write changes the product and makes Shopify fire `products/update`, which
+   * lands in webhooks.products.tsx and calls this method again — but the pass
+   * is diff-driven against `Product.videoSchemaJson`, which the product upsert
+   * never touches, so the echo run finds nothing to write and the sequence
+   * ends after exactly one extra pass. Skipping it on the webhook path (what
+   * this did first) bought nothing and cost the case the feature exists for:
+   * a merchant who adds a video in the Shopify admin fires ONLY that webhook,
+   * and would have had no `uploadDate` until the next full catalog sync.
+   *
+   * @param options.reconcileTranslations  Opt-in: after the cache is written,
+   *   check whether the PRIMARY text changed outside this app and repair the
+   *   now-stale foreign translations (delete, or re-translate on Max — see
+   *   services/translations/stale-translation-sync.server.ts). Only change
+   *   events pass `true` (webhook, webhook retry/reconcile, an explicit
+   *   single-product reload); a full catalogue sync must never mass-purge
+   *   translations Shopify happens to flag outdated.
    */
-  async syncProduct(productId: string, forceSync = false): Promise<void> {
+  async syncProduct(
+    productId: string,
+    forceSync = false,
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ProductSync] Starting sync for product: ${productId}`);
 
     try {
@@ -936,29 +1055,32 @@ export class ProductSyncService {
       const allTranslations = translationResult.translations;
 
       // CRITICAL: Check if translation fetch was successful
-      const publishedLocales = foreignLocales.filter((l) => l.published);
+      const publishedLocales = foreignLocales;
       const expectedTranslations = publishedLocales.length > 0;
 
       if (expectedTranslations && allTranslations.length === 0) {
-        logger.error(`[ProductSync] 🔴 CRITICAL: No translations fetched for product with ${publishedLocales.length} published locales!`, {
+        const logContext = {
           productId,
           title: productData.title,
           publishedLocales: publishedLocales.map((l) => l.locale).join(', '),
           hadErrors: translationResult.hadErrors,
           errorCount: translationResult.errorCount,
-        });
+        };
 
         // Check if this might be a complete API failure
         // Use a percentage-based threshold: abort if ≥50% of locales failed.
         // Absolute counts (e.g. >= 2) are misleading: 2/3 (67%) and 2/10 (20%) are very different.
         const failureRate = translationResult.errorCount / publishedLocales.length;
         if (publishedLocales.length >= 2 && failureRate >= 0.5) {
-          logger.error(`[ProductSync] 🔴 ABORTING SYNC: ${translationResult.errorCount}/${publishedLocales.length} locales failed (${Math.round(failureRate * 100)}%) - refusing to delete existing translations`);
+          logger.error(`[ProductSync] 🔴 ABORTING SYNC: ${translationResult.errorCount}/${publishedLocales.length} locales failed (${Math.round(failureRate * 100)}%) - refusing to delete existing translations`, logContext);
           throw new Error(`Translation fetch failed for ${translationResult.errorCount}/${publishedLocales.length} locales - aborting to prevent data loss`);
         } else if (translationResult.hadErrors) {
-          logger.warn(`[ProductSync] ⚠️ Some locales failed (${translationResult.errorCount}), but continuing with partial data`);
+          logger.warn(`[ProductSync] ⚠️ No translations fetched and ${translationResult.errorCount} locale(s) failed — continuing with partial data`, logContext);
         } else {
-          logger.warn(`[ProductSync] ⚠️ Product might genuinely have no translations, continuing with sync`);
+          // Every locale answered cleanly with zero translations: the product
+          // simply isn't translated yet (new/test products). Not an error —
+          // logging it at error level produced false CRITICAL alarms in production.
+          logger.debug(`[ProductSync] Product has no translations in any of ${publishedLocales.length} published locale(s)`, logContext);
         }
       }
 
@@ -966,33 +1088,87 @@ export class ProductSyncService {
 
       // 4. Fetch image alt-text translations (API 2025-10+)
       const altFailedMarketIds = new Set<string>();
+      const altFailedGlobalLocales = new Set<string>();
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
         productData,
-        locales.filter((l) => !l.primary && l.published),
+        locales.filter((l) => !l.primary),
         markets,
-        altFailedMarketIds
+        altFailedMarketIds,
+        altFailedGlobalLocales
       );
       logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
       // 4b. Fetch sub-resource translations (options, option values, metafields)
       const subResFailedMarketIds = new Set<string>();
+      const subResFailedGlobalLocales = new Set<string>();
       const subResourceTranslations = await this.fetchSubResourceTranslations(
         productData,
-        locales.filter((l) => !l.primary && l.published),
+        locales.filter((l) => !l.primary),
         markets,
-        subResFailedMarketIds
+        subResFailedMarketIds,
+        subResFailedGlobalLocales
       );
       logger.debug(`[ProductSync] Fetched ${subResourceTranslations.length} sub-resource translations`);
 
-      // 5. Save to database
+      // 5. Save to database. The stale-translation baseline is read FIRST:
+      // saveToDatabase overwrites the digests the reconciliation compares
+      // against, and without that "before" state a primary change made outside
+      // the app is indistinguishable from one made years ago.
+      const previousDigests = options.reconcileTranslations
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
+            this.shop,
+            productId,
+            "Product",
+          )
+        : {};
       if (forceSync) {
         logger.info(`[ProductSync] [RELOAD] title="${productData.title || '(empty)'}", descLen=${(productData.descriptionHtml || '').length}, translations=${allTranslations.length}`);
       }
       await this.saveToDatabase(productData, allTranslations, imageAltTranslations, subResourceTranslations, forceSync, markets, {
         productFields: translationResult.failedMarketIds,
+        productFieldsGlobalLocales: translationResult.failedGlobalLocales,
         imageAlt: altFailedMarketIds,
+        imageAltGlobalLocales: altFailedGlobalLocales,
         subResources: subResFailedMarketIds,
+        subResourcesGlobalLocales: subResFailedGlobalLocales,
       });
+
+      // Video upload dates → product metafield. AFTER the save (the mirror
+      // column it diffs against was just written) and outside it, because this
+      // talks to Shopify rather than the database.
+      {
+        const { db } = await import("../db.server");
+        await persistVideoSchema(this.admin as never, db, [
+          {
+            productId: productData.id,
+            uploadDates: videoUploadDatesFromMedia(productData.media?.edges),
+          },
+        ]);
+      }
+
+      // Stale-translation reconciliation (change events only). Runs AFTER the
+      // cache write so a removal deletes the row that was just mirrored, and is
+      // best-effort by contract — it never fails the sync.
+      if (options.reconcileTranslations) {
+        const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+        await reconcileStaleTranslations({
+          client: this.admin,
+          shop: this.shop,
+          resourceId: productId,
+          resourceType: "Product",
+          contentKind: "product",
+          resourceTitle: productData.title,
+          translations: allTranslations,
+          primaryContent: translationResult.primaryContent,
+          previousDigests,
+          // The FILL: a key this sync proved moved is translated into every
+          // published language, not only into the ones that already carried a
+          // translation (stale-translations.shared.ts). A locale whose read
+          // FAILED is not an empty one — see unreadLocales.
+          foreignLocales: translationForeignLocales(locales),
+          unreadLocales: [...translationResult.failedGlobalLocales],
+        });
+      }
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
@@ -1012,14 +1188,14 @@ export class ProductSyncService {
     locales: ShopLocale[],
     markets: MarketInfo[] = [],
     /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
-    failedMarketIds?: Set<string>
+    failedMarketIds?: Set<string>,
+    /** OUT: locales whose GLOBAL read errored — same rule, global layer. */
+    failedGlobalLocales?: Set<string>
   ): Promise<Array<{ mediaId: string; locale: string; altText: string; marketId: string }>> {
     const altTranslations: Array<{ mediaId: string; locale: string; altText: string; marketId: string }> = [];
 
     // Get all media images from product
-    const mediaImages = productData.media?.edges
-      ?.filter((edge) => edge.node.id) // Filter out non-MediaImage types
-      .map((edge) => edge.node) || [];
+    const mediaImages = imageMediaNodes(productData.media?.edges);
 
     if (mediaImages.length === 0) {
       logger.debug(`[ProductSync] No media images found for alt-text translations`);
@@ -1055,13 +1231,15 @@ export class ProductSyncService {
 
           const data = await response.json();
 
-          if (data.errors) {
-            logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+          const edges = data.data?.translatableResourcesByIds?.edges;
+          if (data.errors || !edges) {
+            logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors?.[0]?.message ?? 'no translatableResourcesByIds');
             if (marketId) failedMarketIds?.add(marketId);
+            else failedGlobalLocales?.add(locale.locale);
             continue;
           }
 
-          const resources = data.data?.translatableResourcesByIds?.edges || [];
+          const resources = edges;
 
           let foundCount = 0;
           for (const edge of resources) {
@@ -1086,6 +1264,7 @@ export class ProductSyncService {
         } catch (error) {
           logger.warn(`[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
           if (marketId) failedMarketIds?.add(marketId);
+          else failedGlobalLocales?.add(locale.locale);
         }
       }
     }
@@ -1106,7 +1285,9 @@ export class ProductSyncService {
     locales: ShopLocale[],
     markets: MarketInfo[] = [],
     /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
-    failedMarketIds?: Set<string>
+    failedMarketIds?: Set<string>,
+    /** OUT: locales whose GLOBAL read errored — same rule, global layer. */
+    failedGlobalLocales?: Set<string>
   ): Promise<Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }>> {
     const results: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }> = [];
 
@@ -1159,13 +1340,15 @@ export class ProductSyncService {
 
           const data = await response.json();
 
-          if (data.errors) {
-            logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+          const edges = data.data?.translatableResourcesByIds?.edges;
+          if (data.errors || !edges) {
+            logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors?.[0]?.message ?? 'no translatableResourcesByIds');
             if (marketId) failedMarketIds?.add(marketId);
+            else failedGlobalLocales?.add(locale.locale);
             continue;
           }
 
-          const resources = data.data?.translatableResourcesByIds?.edges || [];
+          const resources = edges;
 
           let foundCount = 0;
           for (const edge of resources) {
@@ -1194,6 +1377,7 @@ export class ProductSyncService {
         } catch (error) {
           logger.warn(`[ProductSync] Failed to fetch sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
           if (marketId) failedMarketIds?.add(marketId);
+          else failedGlobalLocales?.add(locale.locale);
         }
       }
     }
@@ -1220,7 +1404,7 @@ export class ProductSyncService {
             handle
             status
             productType
-            updatedAt
+            updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
             seo {
               title
               description
@@ -1239,6 +1423,7 @@ export class ProductSyncService {
                       url
                     }
                   }
+                  ${PRODUCT_VIDEO_MEDIA_FIELDS}
                 }
               }
             }
@@ -1414,25 +1599,30 @@ export class ProductSyncService {
     errorCount: number;
     /** Markets whose fetch failed for at least one locale — their DB rows must not be wiped. */
     failedMarketIds: Set<string>;
+    failedGlobalLocales: Set<string>;
+    /** CURRENT primary values + digests, keyed by translatable-content key. */
+    primaryContent: PrimaryContentMap;
   }> {
     const allTranslations: ResolvedTranslation[] = [];
     const digestMap = new Map<string, string>();
+    const primaryContent: PrimaryContentMap = {};
     // errors[] drives the abort/data-loss heuristic in syncProduct and counts
     // GLOBAL-layer failures only (as before markets existed); market-layer
     // failures are tracked per market so saveToDatabase can exclude that
     // market's rows from the delete+recreate instead of wiping them.
     const errors: string[] = [];
     const failedMarketIds = new Set<string>();
+    /** Locales whose GLOBAL-layer read failed — their rows must survive the
+     *  rewrite, exactly like a failed market layer's. */
+    const failedGlobalLocales = new Set<string>();
     const skipped: string[] = [];
 
     logger.debug(`[ProductSync] Starting translation fetch for ${locales.length} locales, ${markets.length} market(s)`);
 
     for (const locale of locales) {
-      if (!locale.published) {
-        logger.debug(`[ProductSync] Skipping unpublished locale: ${locale.locale}`);
-        skipped.push(locale.locale);
-        continue;
-      }
+      // Unpublished locales are read like published ones (a language being
+      // prepared before launch) — skipping them made the save below delete
+      // their rows.
 
       for (const marketId of marketLayersForLocale(markets, locale.locale)) {
         logger.debug(`[ProductSync] Fetching translations for locale: ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);
@@ -1452,6 +1642,7 @@ export class ProductSyncService {
                     key
                     value
                     locale
+                    outdated
                   }
                 }
               }`,
@@ -1468,7 +1659,7 @@ export class ProductSyncService {
               locale: locale.locale,
             });
             if (marketId) failedMarketIds.add(marketId);
-            else errors.push(`${locale.locale}: ${(data.errors as GraphQLError[])[0].message}`);
+            else { failedGlobalLocales.add(locale.locale); errors.push(`${locale.locale}: ${(data.errors as GraphQLError[])[0].message}`); }
             // Continue with other locales instead of failing completely
             continue;
           }
@@ -1478,7 +1669,7 @@ export class ProductSyncService {
           if (!resource) {
             logger.warn(`[ProductSync] No translatable resource found for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);
             if (marketId) failedMarketIds.add(marketId);
-            else errors.push(`${locale.locale}: No translatable resource`);
+            else { failedGlobalLocales.add(locale.locale); errors.push(`${locale.locale}: No translatable resource`); }
             continue;
           }
 
@@ -1487,6 +1678,11 @@ export class ProductSyncService {
             for (const content of resource.translatableContent) {
               // Store digest for future updates - but DO NOT store as translation
               digestMap.set(content.key, content.digest);
+              // The PRIMARY value + digest, for the stale-translation
+              // reconciliation in syncProduct. Shopify only lists keys that
+              // have a value, so this map's key SET is itself the signal for
+              // "which primary fields are filled".
+              primaryContent[content.key] = { value: content.value ?? "", digest: content.digest };
             }
           }
 
@@ -1503,6 +1699,7 @@ export class ProductSyncService {
                 locale: translation.locale,
                 digest: digestMap.get(translation.key),
                 marketId,
+                outdated: translation.outdated,
               });
             }
 
@@ -1519,7 +1716,7 @@ export class ProductSyncService {
             locale: locale.locale,
           });
           if (marketId) failedMarketIds.add(marketId);
-          else errors.push(`${locale.locale}: ${message}`);
+          else { failedGlobalLocales.add(locale.locale); errors.push(`${locale.locale}: ${message}`); }
           // Continue to next locale
         }
       }
@@ -1548,6 +1745,8 @@ export class ProductSyncService {
       hadErrors: errors.length > 0,
       errorCount: errors.length,
       failedMarketIds,
+      failedGlobalLocales,
+      primaryContent,
     };
   }
 
@@ -1564,7 +1763,17 @@ export class ProductSyncService {
     forceSync = false,
     markets: MarketInfo[] = [],
     /** Per fetch pipeline: markets whose fetch errored — their rows survive untouched. */
-    failedMarkets: { productFields?: Set<string>; imageAlt?: Set<string>; subResources?: Set<string> } = {}
+    failedMarkets: {
+      productFields?: Set<string>;
+      /** Locales whose GLOBAL product-field read failed. */
+      productFieldsGlobalLocales?: Set<string>;
+      imageAlt?: Set<string>;
+      /** Locales whose GLOBAL alt-text read failed. */
+      imageAltGlobalLocales?: Set<string>;
+      subResources?: Set<string>;
+      /** Locales whose GLOBAL sub-resource read failed. */
+      subResourcesGlobalLocales?: Set<string>;
+    } = {}
   ) {
     const { db } = await import("../db.server");
 
@@ -1579,8 +1788,24 @@ export class ProductSyncService {
     // Tracked per fetch pipeline — product fields, image alt-text, and
     // sub-resources fail independently.
     const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !productFieldsFailed.has(m.id)));
+    // A locale whose GLOBAL read failed is absent from `translations` — not
+    // because it holds nothing, but because we did not see it. Deleting its
+    // rows anyway (the layer filter above only knows markets) wiped every
+    // translation of that locale locally on one throttled read, which the
+    // editors then show as empty and "add missing translations" treats as
+    // missing — overwriting live, possibly hand-written, values.
+    const failedGlobalLocales = [...(failedMarkets.productFieldsGlobalLocales ?? [])];
+    const keepFailedGlobal = failedGlobalLocales.length > 0
+      ? { NOT: { marketId: "", locale: { in: failedGlobalLocales } } }
+      : {};
     const altFetchedLayers = fetchedMarketLayers(markets.filter((m) => !imageAltFailed.has(m.id)));
-    const subResFetchedLayers = fetchedMarketLayers(markets.filter((m) => !subResourcesFailed.has(m.id)));
+    // The same global-locale rule for the two side pipelines, which fail
+    // independently of the product fields.
+    const altFailedGlobal = failedMarkets.imageAltGlobalLocales ?? new Set<string>();
+    const subResScope = translationWriteScope(
+      markets.filter((m) => !subResourcesFailed.has(m.id)),
+      failedMarkets.subResourcesGlobalLocales,
+    );
 
     // R4-DI5: do not resurrect a product that was deleted while this sync was
     // in flight (we fetched it from Shopify before a products/delete webhook
@@ -1628,7 +1853,15 @@ export class ProductSyncService {
     // cascade — no marketId scoping can protect them there. Snapshot them and
     // re-attach to the recreated images (matched by mediaId).
     const preservedAltRows = await db.productImageAltTranslation.findMany({
-      where: { image: { productId: productData.id }, marketId: { notIn: altFetchedLayers } },
+      where: {
+        image: { productId: productData.id },
+        OR: [
+          { marketId: { notIn: altFetchedLayers } },
+          // …and the global rows of a locale whose alt read FAILED: a failed
+          // read is not a removal, and the image recreate cascades them away.
+          ...(altFailedGlobal.size > 0 ? [{ marketId: "", locale: { in: [...altFailedGlobal] } }] : []),
+        ],
+      },
       select: { locale: true, altText: true, marketId: true, image: { select: { mediaId: true } } },
     });
 
@@ -1644,9 +1877,7 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values or failed market layers`);
     }
 
-    const mediaImages: ShopifyMediaImage[] = productData.media?.edges
-      ?.filter((edge) => edge.node.id && edge.node.image?.url)
-      .map((edge) => edge.node) || [];
+    const mediaImages: ShopifyImageMedia[] = imageMediaNodes(productData.media?.edges);
 
     // Use transaction to ensure all-or-nothing data consistency. Wrapped in
     // the race-retry: this is the webhook-driven sync that wipes+recreates
@@ -1666,6 +1897,10 @@ export class ProductSyncService {
       const hasMoreVariants = productData.variants
         ? productData.variants.pageInfo?.hasNextPage ?? false
         : undefined;
+      // PLAN_CONTENT_CREATION Phase 0 — see the bulk path for the "only when
+      // delivered" rule these two encode.
+      const attributes = productAttributeColumns(productData);
+      const membership = productCollectionRows(this.shop, productData.id, productData.collections);
       // Upsert product
       await tx.product.upsert({
         where: {
@@ -1687,6 +1922,8 @@ export class ProductSyncService {
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
           hasMoreVariants: hasMoreVariants ?? false,
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -1701,14 +1938,43 @@ export class ProductSyncService {
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
           ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
       });
 
+      // Collection membership — rebuilt per product; skipped when the block
+      // was not delivered (see the bulk path).
+      if (membership) {
+        await tx.productCollection.deleteMany({ where: { productId: productData.id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      }
+
       // Check if user recently saved translations for this product
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
-      const skipTranslationSync = !forceSync && isTranslationRecentlySaved(productData.id);
+      //
+      // The two PRIVATE repair locks count too. A sub-resource or alt-text
+      // repair deliberately does NOT claim the bare product id — that id gates
+      // the FIELD reconciliation, which must keep running — but its inline
+      // purge does remove rows this very block would otherwise re-insert from a
+      // read-back Shopify has not caught up with yet. Both consumers read the
+      // same helper, so the repair claims a key of its own and the shield asks
+      // for it by name (translation-locks.shared.ts).
+      const skipTranslationSync =
+        !forceSync &&
+        (isTranslationRecentlySaved(productData.id) ||
+          isTranslationRecentlySaved(subResourceLockId(productData.id)) ||
+          // A MARKET-layer sub-resource write carries its own key: the repair
+          // must not see it (it would abort a global run it cannot collide
+          // with), while the rewrite below deletes every fetched layer and has
+          // to. See translation-locks.shared.ts.
+          isTranslationRecentlySaved(marketLayerLockId(subResourceLockId(productData.id))) ||
+          isTranslationRecentlySaved(altTextLockId(productData.id)) ||
+          isTranslationRecentlySaved(altTextSyncShieldId(productData.id)));
 
       if (skipTranslationSync) {
         logger.info(`[ProductSync] Skipping translation sync - recently saved by user`, { productId: productData.id });
@@ -1725,10 +1991,10 @@ export class ProductSyncService {
         const existingTranslations = await tx.contentTranslation.findMany({
           // marketId-scoped: only rows of successfully fetched layers take part
           // in the digest comparison and the delete+recreate below.
-          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product", marketId: { in: fetchedLayers } },
+          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product", marketId: { in: fetchedLayers }, ...keepFailedGlobal },
           select: { locale: true, key: true, digest: true, marketId: true },
         });
-        const tkey = (locale: string, key: string, marketId: string) => `${marketId} ${locale} ${key}`;
+        const tkey = (locale: string, key: string, marketId: string) => `${marketId}\u0000${locale}\u0000${key}`;
         const everyIncomingHasDigest = validTranslations.length > 0 && validTranslations.every(t => !!t.digest);
         const everyStoredHasDigest = existingTranslations.length > 0 && existingTranslations.every(e => !!e.digest);
         const existingDigestByKey = new Map(existingTranslations.map(e => [tkey(e.locale, e.key, e.marketId), e.digest]));
@@ -1744,7 +2010,7 @@ export class ProductSyncService {
         // Delete old translations and recreate from Shopify — SCOPED to the
         // layers this run fetched, so un-fetched market rows survive.
         const deletedTranslations = await tx.contentTranslation.deleteMany({
-          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product", marketId: { in: fetchedLayers } }
+          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product", marketId: { in: fetchedLayers }, ...keepFailedGlobal }
         });
         logger.info(`[ProductSync] [RELOAD] Deleted ${deletedTranslations.count} old translations, will save ${validTranslations.length} fresh ones`);
 
@@ -1786,9 +2052,7 @@ export class ProductSyncService {
           // Rows of markets whose sub-resource fetch failed are dropped: their
           // old rows stay untouched (excluded from the delete scope below) and
           // a partial insert would collide with them on the unique key.
-          const freshSubResourceRows = subResourceTranslations.filter(
-            t => subResFetchedLayers.includes(t.marketId || "")
-          );
+          const freshSubResourceRows = subResourceTranslations.filter(t => subResScope.covers(t));
           const subResourceIds = [...new Set(freshSubResourceRows.map(t => t.resourceId))];
 
           if (subResourceIds.length > 0) {
@@ -1797,7 +2061,8 @@ export class ProductSyncService {
                 shop: this.shop,
                 resourceId: { in: subResourceIds },
                 resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
-                marketId: { in: subResFetchedLayers },
+                // Also keeps the global rows of a locale whose read failed.
+                ...subResScope.where,
               },
             });
             logger.debug(`[ProductSync] Deleted ${deletedSubTrans.count} old sub-resource translations`);
@@ -1886,6 +2151,7 @@ export class ProductSyncService {
             // Rows of failed market layers are dropped — the preserved
             // snapshot below carries those layers over instead.
             if (!altFetchedLayers.includes(altTrans.marketId || "")) continue;
+            if (!altTrans.marketId && altFailedGlobal.has(altTrans.locale)) continue;
             const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
             if (dbImageId) {
               await tx.productImageAltTranslation.create({
@@ -1997,6 +2263,13 @@ export class ProductSyncService {
       db.contentTranslation.deleteMany({
         where: { shop: this.shop, resourceId: productId },
       }),
+      // The stale-translation gate's primary baseline — polymorphic, no FK.
+      db.primaryDigestBaseline.deleteMany({
+        where: { shop: this.shop, resourceId: productId },
+      }),
+      db.autoTranslateRetry.deleteMany({
+        where: { shop: this.shop, resourceId: productId },
+      }),
       db.product.deleteMany({
         where: { shop: this.shop, id: productId },
       }),
@@ -2017,7 +2290,19 @@ export class ProductSyncService {
    * @param productId - Shopify product ID (can be numeric or GID format)
    * @param includeAllImages - If true, sync all images. If false, only featured image
    */
-  async syncSingleProduct(productId: string, includeAllImages: boolean = true): Promise<Record<string, unknown> | null> {
+  async syncSingleProduct(
+    productId: string,
+    includeAllImages: boolean = true,
+    /**
+     * `false` for a sync nobody pressed a button for — the product page's
+     * automatic "this product has no cached translations yet" fetch. Such a
+     * sync must respect the save lock: it reads Shopify when the product is
+     * SELECTED, and if the merchant translates a field in the seconds before it
+     * lands, its delete-and-recreate of the translation rows drops what was
+     * just written. Only an explicit reload may bypass the lock.
+     */
+    forceSync: boolean = true,
+  ): Promise<Record<string, unknown> | null> {
     logger.debug(`[ProductSync] Manual sync for product: ${productId} (images: ${includeAllImages ? "all" : "featured only"})`);
 
     // Convert to GID format if numeric
@@ -2027,7 +2312,7 @@ export class ProductSyncService {
 
     try {
       // Sync the product (forceSync=true bypasses save lock for manual reload)
-      await this.syncProduct(gid, /* forceSync */ true);
+      await this.syncProduct(gid, forceSync, { reconcileTranslations: true });
 
       // Fetch and update the product from database to return fresh data
       const { db } = await import("../db.server");

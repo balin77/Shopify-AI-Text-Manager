@@ -268,3 +268,74 @@
     /* never break the storefront */
   }
 })();
+
+/**
+ * ContentPilot AI-referral beacon — report a visit that arrived from an AI
+ * assistant (ChatGPT, Perplexity, Claude, Gemini, Copilot, ...) to the app
+ * proxy collector, so ContentPilot -> SEO -> KI-Suche can show whether AEO
+ * work produces arrivals at all.
+ *
+ * It rides in this asset rather than in structured-data.liquid because it is a
+ * MEASUREMENT, like the vitals above — the JSON-LD block is markup a merchant
+ * may legitimately turn off, and switching off structured data must not
+ * silently switch off the visit counter. Its own IIFE on purpose: the vitals
+ * collector returns early where PerformanceObserver is missing, and a referral
+ * is still worth counting on such a browser.
+ *
+ * Fires ONLY when the referrer host (or the landing URL's utm_source, which
+ * ChatGPT appends to the links it hands out) looks like one of those hosts, so
+ * an ordinary pageview sends nothing. The token list here is a cheap PREFILTER
+ * to keep normal traffic off the endpoint — the server re-classifies and is
+ * the authority, so a token missing here costs a missed visit, never a wrong
+ * one.
+ *
+ * Privacy: the beacon sends the landing path plus the referrer for
+ * classification; the server stores only the resulting source key and an
+ * aggregate day counter. No cookie, no identifier, nothing that is read back.
+ */
+(function () {
+  "use strict";
+  try {
+    var cfg = window.__cpWebVitals || {};
+    var url = cfg.referralEndpoint || "/apps/contentpilot/ai-referral";
+    var ref = document.referrer || "";
+    var utm = "";
+    try {
+      utm = new URLSearchParams(window.location.search).get("utm_source") || "";
+    } catch (e) {
+      /* no URLSearchParams: utm stays empty, the referrer still decides */
+    }
+    if (!ref && !utm) return;
+
+    var TOKENS = /chatgpt|openai|perplexity|claude\.ai|gemini\.google|copilot\.microsoft|grok\.com|x\.ai|deepseek|you\.com|poe\.com|mistral/i;
+    var refHost = "";
+    try {
+      refHost = ref ? new URL(ref).hostname : "";
+    } catch (e) {
+      /* unparseable referrer counts as none */
+    }
+    // Same-host navigation is the merchant's own storefront, never an arrival.
+    if (refHost && refHost === window.location.hostname) return;
+    if (!TOKENS.test(refHost) && !TOKENS.test(utm)) return;
+
+    var payload = JSON.stringify({
+      path: window.location.pathname,
+      referrer: ref,
+      utmSource: utm
+    });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(url, new Blob([payload], { type: "application/json" }));
+    } else {
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true
+      }).catch(function () {
+        /* beacon delivery is best-effort */
+      });
+    }
+  } catch (e) {
+    /* never break the storefront */
+  }
+})();

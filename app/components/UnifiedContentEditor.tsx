@@ -6,13 +6,38 @@
  */
 
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
+import { detailsFieldsForLocale, fieldCard } from "~/services/content-attributes.shared";
+import {
+  isDetailsEditorField,
+  isHalfHeightDetailsField,
+  splitDetailsFields,
+} from "~/config/details-layout";
+import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
+import { getReloadResourceType } from "~/utils/reload-resource-type";
+import { useCreateItem, createResultNeedsDetail } from "../hooks/useCreateItem";
+import type { CreatedItemInfo } from "../hooks/useCreateItem";
+import { CreateItemModal } from "./create/CreateItemModal";
+import { CreateResultBanner } from "./create/CreateResultBanner";
+import { CreateResourceChooser } from "./create/CreateResourceChooser";
+import type { CreatableResource, DeletableResource } from "../config/create-fields.config";
+import { useDeleteItem } from "../hooks/useDeleteItem";
+import { DeleteItemModal } from "./create/DeleteItemModal";
+import { useDuplicateItem } from "../hooks/useDuplicateItem";
+import { useRouteLoaderData } from "react-router";
+import { rulesAvailableOn, RULES_MIN_API_VERSION } from "../config/collection-rules.shared";
+import type { AttributeInput } from "../services/attribute-checklist.shared";
+import { DuplicateItemModal } from "./create/DuplicateItemModal";
+import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
+import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
+import type { ReactNode } from "react";
+import type { RenderedGroupField } from "../types/content-editor.types";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Banner, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLanguageBar";
+import { MarketPublicationNotice } from "./unified/MarketPublicationNotice";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
@@ -21,7 +46,7 @@ import { ReloadButton } from "./ReloadButton";
 import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
-import { SeoSidebar } from "./SeoSidebar";
+import { ItemSidebar } from "./ItemSidebar";
 import { SidebarTabBar } from "./SidebarTabBar";
 import {
   buildProductJsonLd,
@@ -40,7 +65,16 @@ import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import { countImagesWithAltForLocale } from "../utils/field-validation.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
+import { isGidOfResource } from "../config/create-fields.config";
+import {
+  metaobjectFieldValueFor,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "../services/metaobject-fields.shared";
 import { useI18n } from "../contexts/I18nContext";
+import { compareStrings } from "../utils/format";
+import { CommerceDataProvider } from "../contexts/CommerceDataContext";
+import { CommerceVariantsSection } from "./unified/CommerceVariantsSection";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
@@ -113,6 +147,17 @@ interface UnifiedContentEditorProps {
     totalCount: number;
     totalPages: number;
     search: string;
+    /**
+     * What is being paged, already translated and plural — "fields" when the
+     * caller says nothing.
+     *
+     * The theme pages really do page FIELDS. The metaobjects tab pages ENTRIES
+     * and each entry carries several fields, so the strip counted one thing and
+     * named another: "Showing 1-25 of 40 fields" over a list of forty entries,
+     * on the very page whose entries were already hard enough to tell from
+     * their details.
+     */
+    noun?: string;
   } | null;
 
   /** Optional: Handler for field page changes */
@@ -121,8 +166,85 @@ interface UnifiedContentEditorProps {
   /** Optional: Handler for field search */
   onFieldSearch?: (search: string) => void;
 
+  /** Placeholder for the search box above the fields — same reason as `noun`. */
+  fieldSearchPlaceholder?: string;
+
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
+
+  /**
+   * An action on the CONTAINER the listed items belong to — today the
+   * metaobject DEFINITION whose entries fill the page.
+   *
+   * A prop rather than a config flag because only the route knows the
+   * container's id, and `disabledReason` is a string rather than a boolean so
+   * a refusal always arrives with its cause: "why is this greyed out" is the
+   * question a bare disabled button never answers.
+   */
+  containerAction?: {
+    label: string;
+    onAction: () => void;
+    disabledReason?: string | null;
+  } | null;
+
+  /**
+   * Optional: wrap each GROUP of dynamic fields in the page's own chrome.
+   *
+   * Fields carrying the same `groupId` are handed over together, in order, and
+   * whatever comes back is rendered in their place. The metaobjects tab uses
+   * it to draw one CARD per entry (title, handle, swatch, delete) around that
+   * entry's controls -- chrome the generic editor has no business knowing
+   * about. Without this prop nothing changes: the fields render as a flat list
+   * exactly as before.
+   *
+   * Each entry carries its DEFINITION and its current VALUE next to the
+   * rendered node, not just the node: a page that wants to put one control
+   * somewhere else (the metaobjects card lifts the colour into its header)
+   * has to be able to pick it out BY KEY rather than by position, and to paint
+   * the live value beside it while the merchant is still typing.
+   */
+  renderFieldGroup?: (groupId: string, children: RenderedGroupField[]) => ReactNode;
+
+  /**
+   * Optional: values the create form opens with.
+   *
+   * The metaobjects tab uses it to preselect the TYPE the merchant is already
+   * looking at. The picker stays visible -- they may have meant a different
+   * type -- but asking again for something the page already knows is how the
+   * create button came to feel like a detour.
+   */
+  createPrefill?: Record<string, string>;
+
+  /**
+   * Optional: lock every dynamic field, with the page saying why elsewhere.
+   *
+   * The metaobjects tab uses it for a definition Shopify does not let this app
+   * write (§7.2). It is one flag rather than one per field because this page
+   * shows one definition at a time, and an editor that can save some of its
+   * controls and not others has to explain that per control -- which is the
+   * card's job, not the field's.
+   */
+  fieldsReadOnly?: boolean;
+
+  /**
+   * Optional: told after a successful create, INCLUDING when the cache sync
+   * failed (`synced: false`). The editor's own handling stays as it was; a page
+   * that keeps its own list (the metaobjects entries) needs to reload it, and
+   * "created but not synced" is precisely the case where it must NOT jump to
+   * the new object.
+   */
+  onItemCreated?: (info: { id: string; resource: string; synced: boolean; title: string | null }) => void;
+
+  /**
+   * Optional: the group ids to render, in order — INCLUDING groups that have
+   * no editable field at all.
+   *
+   * Deriving the order from the fields alone would drop exactly the entry with
+   * nothing editable on it, and an entry that silently disappears is the bug
+   * this whole page is being fixed for. With no value here the order comes
+   * from the fields themselves.
+   */
+  fieldGroupOrder?: string[];
 
   /** Optional: Remix revalidator for non-destructive data reload */
   revalidator?: { state: "idle" | "loading"; revalidate: () => void };
@@ -182,6 +304,12 @@ interface UnifiedContentEditorProps {
      * shared "" rows keep the nav list non-empty (PLAN_THEME_SELECTION_B_LITE). */
     needsThemeSync?: boolean;
   };
+  /** PLAN §Phase 3.2 — shop currency for the `money` field's suffix. Shop-wide,
+   *  so it is passed once rather than resolved per field. */
+  currencyCode?: string;
+  /** PLAN §Phase 3.1 — the Shopify API version this app talks to. The rule
+   *  editor needs 2026-07; below that it renders its reason instead. */
+  apiVersion?: string;
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -200,11 +328,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     hideItemListImages = false,
     hideItemListStatusBars = false,
     showItemListCategoryBadge = false,
+    currencyCode,
+    apiVersion,
     planLimit,
     fieldPagination,
+    fieldSearchPlaceholder,
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
+  containerAction,
+  renderFieldGroup,
+    createPrefill,
+    fieldsReadOnly = false,
+    onItemCreated,
+    fieldGroupOrder,
     revalidator,
     sortOptions,
     themeSelector,
@@ -285,18 +422,88 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     [helpers.validationVersion]
   );
 
+  // PLAN §Phase 3 — the shop's existing tags, for the `tags` field's
+  // autocomplete. Derived from the ALREADY-LOADED list rather than fetched:
+  // a tag vocabulary is worth suggesting precisely because it is in use, and
+  // the items on screen are the ones using it. Capped so a catalogue with
+  // thousands of one-off tags does not turn the picker into a wall.
+  const tagSuggestions = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>();
+    for (const item of items as unknown as Array<{ tags?: unknown }>) {
+      if (!Array.isArray(item?.tags)) continue;
+      for (const raw of item.tags as string[]) {
+        const tag = String(raw).trim();
+        if (!tag) continue;
+        const key = tag.toLowerCase();
+        const seen = counts.get(key);
+        if (seen) seen.count += 1;
+        else counts.set(key, { label: tag, count: 1 });
+      }
+    }
+    return [...counts.values()]
+      .sort((a, b) => b.count - a.count || compareStrings(a.label, b.label, locale))
+      .slice(0, 50)
+      .map((entry) => entry.label);
+  }, [items]);
+
+  // PLAN §2.4 — the SAME discriminator the sidebar checklist gates on, applied
+  // to the editable controls. `undefined` (a type with no attribute block, or a
+  // loader that does not carry the stamp) reads as known: only an explicit
+  // absence of the stamp means "these are the migration's defaults".
+  const itemAttributesKnown =
+    selectedItem && "attributesSyncedAt" in (selectedItem as unknown as Record<string, unknown>)
+      ? !!(selectedItem as unknown as { attributesSyncedAt?: unknown }).attributesSyncedAt
+      : undefined;
+
   const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
 
   // Combined reload handler: refresh main editor + sub-resources
+  /** Set once the registry below exists — `handleReloadComplete` is declared
+   *  before it and a ref is cheaper than reordering the whole component. */
+  const commerceSaveRef = useRef<(() => void) | null>(null);
+
   const handleReloadComplete = useCallback(() => {
     helpers.triggerDataRefresh();
     subResourceHandlers?.resetForReload?.();
+    // The stock panel reads LIVE from its own endpoint, so a cache refresh
+    // does not reach it. It used to carry a third Reload button for that;
+    // the signal goes down from the editor's buttons instead.
+    commerceSaveRef.current?.();
   }, [helpers, subResourceHandlers]);
 
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
+
+  /**
+   * The one field that decides whether an item is visible in the shop, lifted
+   * out of the field list and into the action bar — it is the answer merchants
+   * look for first, and hunting for it among twenty text fields is not that.
+   *
+   * Which field that IS differs per type, and two of the five have none:
+   *
+   *   products           `status`, four values. Only ACTIVE ⇄ DRAFT is a
+   *                      toggle; UNLISTED and ARCHIVED are real states this
+   *                      app must not silently overwrite, so the switch locks
+   *                      and says which state it is in.
+   *   pages, articles    `isPublished`, a true toggle.
+   *   collections        visibility lives in publications, which this app has
+   *                      no scope for — there is nothing honest to show.
+   *   blogs, policies,   no such field at all.
+   *   theme content
+   *
+   * Derived from the CONFIG rather than hardcoded per content type: a type
+   * that gains one of these fields gets the switch without anyone remembering.
+   */
+  const statusControl = useMemo(() => {
+    const has = (key: string) => fieldDefinitions.some((f) => f.key === key);
+    if (config.contentType === "products" && has("status")) {
+      return { fieldKey: "status", kind: "status" as const };
+    }
+    if (has("isPublished")) return { fieldKey: "isPublished", kind: "published" as const };
+    return null;
+  }, [config.contentType, fieldDefinitions]);
 
   // List-level "sync from Shopify" (discovery): trigger a real full sync of this
   // content type from Shopify, THEN revalidate so newly-created items appear in
@@ -308,6 +515,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // the empty-state distinguish "not synced yet" from "synced, genuinely empty"
   // (a theme can legitimately have 0 entries in a tab). Reset on theme switch.
   const [syncAttempted, setSyncAttempted] = useState(false);
+  /**
+   * What the last sync could NOT do.
+   *
+   * The sync services catch per item so one bad resource cannot stop the run,
+   * so an HTTP 200 says the route ran — not that anything was synced. This
+   * button used to check nothing but `res.ok`, which is how a run where every
+   * collection failed came back as a silent success: the merchant is told to
+   * sync, syncs, sees no error, and the editor still says the data is missing
+   * (the "unknown whether this collection picks its members by rule" case).
+   */
+  const [syncFailure, setSyncFailure] = useState<{ failed: number; error?: string } | null>(null);
   const handleSyncAll = useCallback(async () => {
     if (!revalidator) return;
     const ct = config.contentType;
@@ -322,16 +540,42 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       return;
     }
     setIsDiscovering(true);
+    setSyncFailure(null);
     try {
       const res = await fetch(endpoint, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json().catch(() => null)) as
+        | {
+            success?: boolean;
+            error?: string;
+            /** /api/sync-content — per content type. */
+            failures?: Record<string, { failed: number; error?: string }>;
+            /** /api/sync-products — its own per-product tally, on a 200. */
+            failed?: number;
+            errors?: string[];
+          }
+        | null;
+      // TWO endpoints, two shapes, and both report a partial failure with an
+      // HTTP 200 — the products route has always returned `failed`/`errors`
+      // and nothing ever read them.
+      const reported =
+        body?.success === false
+          ? { failed: -1, error: body.error }
+          : typeof body?.failed === "number" && body.failed > 0
+            ? { failed: body.failed, error: body.errors?.[0] }
+            : // The button syncs ONE content type, so the first entry is this tab's.
+              Object.values(body?.failures ?? {})[0];
+      if (reported) setSyncFailure(reported);
+      // "Not synced yet" may only become "genuinely empty" on the strength of
+      // a run that actually read something.
+      if (!reported) setSyncAttempted(true);
     } catch (err) {
       // Don't block the revalidate — the DB may still hold fresher data than the
       // current view even if the Shopify pull failed.
       console.error("[UnifiedContentEditor] sync-from-Shopify failed:", err);
+      setSyncFailure({ failed: -1, error: err instanceof Error ? err.message : String(err) });
     } finally {
       setIsDiscovering(false);
-      setSyncAttempted(true);
       revalidator.revalidate();
     }
   }, [revalidator, config.contentType]);
@@ -359,6 +603,327 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // showing the items (parity with Translate & Adapt). Server loader marks the
   // group with `embedTechnical` (theme-content-domain.server.ts).
   const isEmbedTechnical = !!(selectedItem as any)?.embedTechnical;
+
+  /**
+   * The stock/channels panel registers itself here, so the ONE save bar drives
+   * it alongside the content save and the sub-resource save. The panel keeps
+   * its own state and its own endpoint — a volatile quantity must not travel in
+   * the editor's value map — but it no longer carries a second Save button.
+   */
+  const commerceSave = useCommerceSaveRegistry();
+  commerceSaveRef.current = commerceSave.requestReload;
+
+  /**
+   * Which fields this locale/type actually shows, and how one of them renders.
+   *
+   * Hoisted out of the JSX because the list is now split across TWO cards: the
+   * item's TEXT stays in the main card, its merchandising attributes moved to a
+   * card of their own below the product options and metafields. One renderer,
+   * two call sites — duplicating the props of `UnifiedFieldRenderer` is how the
+   * two halves would start behaving differently.
+   */
+  const visibleFields = useMemo(() => {
+    return fieldDefinitions.filter((field) => {
+      // The status/visibility control lives in the action bar above — ONE
+      // control per value. Two of them on one screen invite the question which
+      // counts, and the answer ("both, they write the same field") is not one a
+      // merchant should have to work out.
+      if (statusControl && field.key === statusControl.fieldKey) return false;
+      return true;
+    });
+  }, [fieldDefinitions, statusControl]);
+
+  // Three splits, not two. The item's TEXT stays in the main card; the three
+  // fields Shopify's own admin groups under "Search engine listing" (SEO
+  // title, meta description, URL handle) get a card right below it; the
+  // merchandising attributes keep theirs at the bottom. `fieldCard` is the ONE
+  // rule that decides which — config-driven rather than a key list, so a
+  // dynamic field that happens to be called `handle` cannot fall into the
+  // search-engine card, and a field that swaps cards (the category up, the
+  // product type down) says so in one place instead of in three filters.
+  const contentFields = useMemo(
+    () => visibleFields.filter((f) => fieldCard(f) === "main"),
+    [visibleFields]
+  );
+  const searchEngineFields = useMemo(
+    () => visibleFields.filter((f) => fieldCard(f) === "searchEngine"),
+    [visibleFields]
+  );
+  const attributeFields = useMemo(() => visibleFields.filter((f) => fieldCard(f) === "details"), [visibleFields]);
+
+  // …and of those, the ones THIS locale can act on. A merchandising attribute
+  // has one value per item, so a translation showed a card of greyed boxes
+  // around the single field in it that is translatable — see
+  // `detailsFieldsForLocale`, which also explains why the category is not part
+  // of this. On a product the card keeps the product type; on the other types
+  // nothing is left and the card itself drops out below.
+  const detailsFields = useMemo(
+    () => detailsFieldsForLocale(attributeFields, state.currentLanguage === primaryLocale),
+    [attributeFields, state.currentLanguage, primaryLocale],
+  );
+
+  /** True when the line above hid something — the card then says so, once. */
+  const detailsHasHiddenFields = detailsFields.length < attributeFields.length;
+
+  // The Details card's two regions — the grid of boxes and the sales-channel
+  // aside. Derived from the ALREADY filtered list, so a field the editor
+  // hoists elsewhere (the status control moved into the action bar, the
+  // attributes a foreign locale cannot write) never reaches either of them.
+  const detailsLayout = useMemo(() => splitDetailsFields(detailsFields), [detailsFields]);
+
+  /**
+   * Primary-language editing writes to a theme file (themeFilesUpsert), which
+   * only exists for the `theme` domain. Read-only when that is off, when the
+   * rubric is a resource-backed theme-content family member (their original
+   * lives in the Shopify admin and the server rejects primary saves), or for
+   * app-embed technical fields, which are locked in every locale.
+   */
+  const isFieldReadOnly =
+    (isThemeContentType(config.contentType) &&
+      state.currentLanguage === primaryLocale &&
+      (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates")) ||
+    isEmbedTechnical ||
+    // §7.2 — the page knows this definition refuses our writes.
+    fieldsReadOnly;
+
+  // ── The product type derived from the category ──────────────────────────
+  //
+  // A merchant who files a product under "Home & Garden > Decor > Vases" has
+  // already said what it is; making them type "Vases" into a second field is
+  // asking the same question twice. So picking a category fills the product
+  // type — but ONLY when it is empty. It is the merchant's own wording, read
+  // by their rule-based collections and their theme filters, and overwriting
+  // it from a taxonomy leaf would quietly re-file products they had grouped
+  // on purpose.
+  //
+  // The LEAF, not the path: "Home & Garden > Decor > Vases" is unusable as a
+  // filter value, and in the Merchant Center every distinct path would be its
+  // own group.
+  const derivedProductTypeRef = useRef<{ itemId: string; value: string } | null>(null);
+  /** Falling-edge detector for the save — see the effect below. */
+  const wasSavingRef = useRef(false);
+
+  const handleCategoryPicked = (option: { name: string }) => {
+    if (config.contentType !== "products" || !selectedItem) return;
+    if ((helpers.getEditableValue("productType") || "").trim()) return;
+    const derived = option.name.trim();
+    if (!derived) return;
+    handlers.handleValueChange("productType", derived);
+    derivedProductTypeRef.current = { itemId: selectedItem.id, value: derived };
+  };
+
+  /**
+   * …and translates it, but only AFTER the save has landed.
+   *
+   * Not on the pick, and the reason is the §6.6 invalidation rule rather than
+   * a preference: a primary save DELETES the foreign translations of every
+   * field it changed. Translating first would write the translations and the
+   * save would then wipe exactly them — the feature would look like it worked
+   * once and then silently undo itself. So the derived value waits for its own
+   * primary write and is translated on top of it.
+   *
+   * Four guards, and each closes a way this could translate the wrong thing:
+   * the item must still be the one that was saved; the save must actually have
+   * gone through (a failed one leaves `hasChanges` standing, and the pick is
+   * still pending, so it waits for the next attempt); the field must still
+   * hold exactly what was derived, because a merchant who typed over it has
+   * said what they want and can press the translate button themselves; and the
+   * shop must have a target language at all — the handler would otherwise pop
+   * a warning box at somebody who never asked for a translation.
+   */
+  useEffect(() => {
+    const saving = state.isSavingCurrentItem;
+    const wasSaving = wasSavingRef.current;
+    wasSavingRef.current = saving;
+    if (!wasSaving || saving) return;
+
+    const pending = derivedProductTypeRef.current;
+    if (!pending) return;
+    if (!selectedItem || pending.itemId !== selectedItem.id) {
+      derivedProductTypeRef.current = null;
+      return;
+    }
+    // Still unsaved ⇒ the write did not land. Kept, not dropped: the next save
+    // is the one this was waiting for.
+    if (state.hasChanges) return;
+
+    derivedProductTypeRef.current = null;
+    if ((helpers.getEditableValue("productType") || "").trim() !== pending.value) return;
+    if (state.currentLanguage !== primaryLocale) return;
+    // The SAME list the handler filters on, so this cannot decide to fire on a
+    // selection the handler then refuses.
+    if (state.enabledLanguages.filter((l: string) => l !== primaryLocale).length === 0) return;
+
+    // `auto` — the merchant did not press anything. A provider that is not
+    // configured must not turn a save they just watched succeed into a red
+    // error box; the handler reports it as a warning naming the field instead.
+    handlers.handleTranslateFieldToAllLocales("productType", { auto: true });
+    // Driven by the save flag alone: adding the values it READS would re-run it
+    // on every keystroke, and the falling edge is the whole trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isSavingCurrentItem]);
+
+  const renderEditorField = (field: FieldDefinition) => (
+        <UnifiedFieldRenderer
+          key={field.key}
+          field={field}
+          value={helpers.getEditableValue(field.key)}
+          onChange={(value) => handlers.handleValueChange(field.key, value)}
+          onCategoryPicked={handleCategoryPicked}
+          suggestion={state.aiSuggestions[field.key]}
+          isPrimaryLocale={state.currentLanguage === primaryLocale}
+          isTranslated={helpers.isFieldTranslated(field.key)}
+          isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
+          isDataLoading={!state.isInitialDataReady}
+          sourceTextAvailable={!!selectedItem && !!getSourceText(selectedItem, field.key, primaryLocale)}
+          disableGeneration={isThemeContentType(config.contentType)}
+          isFallbackValue={state.fallbackFields?.has(field.key) || false}
+          fieldError={state.fieldErrors?.[field.key]}
+          readOnly={isFieldReadOnly}
+          embedTechnical={isEmbedTechnical}
+          selectedMarketId={state.selectedMarketId}
+          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? (userInstruction?: string) => handlers.handleGenerateAI(field.key, userInstruction) : undefined)}
+          onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
+          onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
+          onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
+          onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
+          onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
+          onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
+          onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
+          onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
+          onClear={isFieldReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
+          htmlMode={state.htmlModes[field.key] || "rendered"}
+          onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
+          shopLocales={shopLocales}
+          currentLanguage={state.currentLanguage}
+          primaryLocale={primaryLocale}
+          selectedItem={selectedItem}
+          contentType={config.contentType}
+          t={t}
+          state={state}
+          handlers={handlers}
+          fetcherState={fetcherState}
+          fetcherFormData={fetcherFormData}
+          validationOverlays={validationOverlays}
+          tagSuggestions={tagSuggestions}
+          attributesKnown={itemAttributesKnown}
+          currencyCode={currencyCode}
+          apiVersion={apiVersion}
+          onReloadAttributes={() => { void handleSyncAll(); }}
+        />
+  );
+
+  /**
+   * The Details card's layout: one grey card PER FIELD in a grid of boxes, and
+   * — where the type has one — the sales-channel panel beside it in a card of
+   * its own.
+   *
+   * As many columns as fit, because a vendor is one word and a template suffix
+   * is one file name; giving each the full width of the editor turned six short
+   * answers into six rows of mostly empty space. Which field takes which shape
+   * is `details-layout.ts`'s decision, and the sizes are tokens in
+   * responsive.css — `auto-fit` never makes more columns than there are fields,
+   * so the minimum only decides WHEN the row wraps.
+   *
+   * The grid counts in HALF rows: a field that is one bare control spans one,
+   * everything else spans two — and `splitDetailsFields` pairs two of those
+   * bare controls into ONE cell, stacked, so a vendor and a theme template sit
+   * under each other in the space one tag picker takes instead of opening two
+   * columns and leaving half of each empty.
+   */
+  const detailsCellClass = (cell: FieldDefinition[]) => {
+    // A stack is two half cards plus the grid's own gap between them, which is
+    // exactly one ordinary cell — so it takes the default two-row span and
+    // needs no span rule of its own, only the gap.
+    if (cell.length > 1) return "app-details-field--stack";
+    const [field] = cell;
+    return isHalfHeightDetailsField(field) ? "app-details-field--half" : undefined;
+  };
+
+  const renderDetailsFields = (layout: {
+    grid: FieldDefinition[][];
+    aside: FieldDefinition[];
+    editor: FieldDefinition[];
+  }) => (
+    <div
+      className={
+        // The collection's rule builder is a form of its own and takes every
+        // pixel past the one column of boxes beside it — not a SHARE of the
+        // row like the sales-channel panel takes. On the row rather than on
+        // either region, because the same grid is the wide one on a product.
+        layout.editor.length > 0 ? "app-details-layout app-details-layout--with-editor" : "app-details-layout"
+      }
+    >
+      <div className="app-details-layout__grid">
+        {layout.grid.map((cell) => (
+          <div key={cell[0].key} className={detailsCellClass(cell)}>
+            {cell.map((field) => (
+              <Card key={field.key} background="bg-surface-secondary" padding="300">
+                {renderEditorField(field)}
+              </Card>
+            ))}
+          </div>
+        ))}
+      </div>
+      {layout.editor.length > 0 && (
+        /* The rule builder, beside the boxes rather than across the whole card.
+           It used to span every column, which put the two bare controls on a
+           row of their own underneath with two columns of white next to them —
+           and a spanning cell keeps every track alive, so those columns could
+           not collapse into fewer, wider ones either. As a region it takes the
+           height of the row with it: the stack beside it stretches to match. */
+        <div className="app-details-layout__editor">
+          {layout.editor.map((field) => (
+            <Card key={field.key} background="bg-surface-secondary" padding="300">
+              {renderEditorField(field)}
+            </Card>
+          ))}
+        </div>
+      )}
+      {layout.aside.length > 0 && (
+        <div className="app-details-layout__aside">
+          {/* The channels, the regions and the B2B catalogs are ONE card: they
+              are three answers to "who can see this product", laid out as
+              columns of one panel, and splitting them would put the panel's own
+              heading row into three boxes. */}
+          <Card background="bg-surface-secondary" padding="300">
+            <BlockStack gap="400">
+              {layout.aside.map((field) => (
+                <div key={field.key}>{renderEditorField(field)}</div>
+              ))}
+            </BlockStack>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+
+  /** One dynamic field, with the product image gallery's replacement slot. */
+  const renderContentField = (field: FieldDefinition): ReactNode => {
+    if (field.type === "image-gallery" && imageGalleryReplacement) {
+      return <div key={field.key}>{imageGalleryReplacement}</div>;
+    }
+    return renderEditorField(field);
+  };
+
+  /**
+   * The dynamic fields, bucketed by `groupId`, in the order `fieldGroupOrder`
+   * names — or first-appearance order when it does not.
+   *
+   * `fieldGroupOrder` also contributes EMPTY groups: an entry whose fields are
+   * all read-only still gets its card, with the card saying why it is empty.
+   */
+  const groupedContentFields = useMemo((): Array<[string, FieldDefinition[]]> => {
+    const buckets = new Map<string, FieldDefinition[]>();
+    for (const id of fieldGroupOrder ?? []) buckets.set(id, []);
+    for (const field of contentFields) {
+      const id = field.groupId ?? field.key;
+      const bucket = buckets.get(id);
+      if (bucket) bucket.push(field);
+      else buckets.set(id, [field]);
+    }
+    return [...buckets.entries()];
+  }, [contentFields, fieldGroupOrder]);
 
   // Single-language shop: every translate / copy-to-all-locales action has no
   // target and would only ever produce a "no target languages" warning. The
@@ -444,6 +1009,272 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   };
   const finalPlanLimit = planLimit || defaultPlanLimit;
 
+  // ── PLAN_CONTENT_CREATION §1.1/§1.2 — the "+" button ────────────────────
+  // The tab declares WHAT it can create; the gate decides whether it may.
+  // Both refusals stay visible-and-disabled with their own reason: a hidden
+  // button reads as a missing feature, and "limit reached" shown to someone
+  // whose plan simply lacks the type sends them deleting things that will not
+  // help (§1.2).
+  const createResources = (config.createSupport?.resources ?? []) as CreatableResource[];
+  const [chooserOpen, setChooserOpen] = useState(false);
+  /**
+   * §2.5a — the shop's published locales minus the primary one.
+   *
+   * `state.enabledLanguages` is the merchant's per-session SELECTION and can be
+   * narrower; the create dialog's promise is "into all languages", so it uses
+   * the shop's own list. An empty result means the shop has one locale, which
+   * is what disables the checkbox rather than hiding it.
+   */
+  const createTargetLocales = useMemo(
+    () => shopLocales.filter((l) => !l.primary).map((l) => l.locale),
+    [shopLocales],
+  );
+
+  const createItem = useCreateItem({
+    plan,
+    resources: createResources,
+    atLimit: finalPlanLimit.isAtLimit,
+    targetLocales: createTargetLocales,
+    // The SOURCE language of that chained translation. From the SHOP's own list
+    // for the same reason `createTargetLocales` is: the create dialog's promise
+    // is about the shop, not about this session's language selection.
+    primaryLocale: shopLocales.find((l) => l.primary)?.locale,
+    // The chained translation lands in the DB after the create's own
+    // revalidation has already run, so the list needs a second look.
+    onTranslated: () => revalidator?.revalidate(),
+    texts: {
+      optionsFailed: t.content?.createOptionsFailed,
+      alreadyCreating: t.content?.createAlreadyRunning,
+      createFailed: t.content?.createModal?.createFailed,
+      // The same sentences the greyed-out button and the disabled type
+      // already use — the server's refusals reach the modal only on a direct
+      // POST or a race the client gate could not see, and both deserve the
+      // wording the merchant would have got a click earlier.
+      errorCodes: {
+        planContentType: t.content?.createPlanContentType,
+        planLimit: t.content?.createPlanLimit,
+        rulesUnavailable: (t.content?.rulesNeedApiUpgrade || "").replace("{version}", RULES_MIN_API_VERSION),
+        validation: t.content?.createInvalidPayload,
+        ruleValidation: t.content?.createInvalidRules,
+        requiredUnknown: t.content?.createTypeUnknownRequired,
+        unsupportedRequiredType: t.content?.createTypeUnsupportedFields,
+      },
+    },
+    onCreated: (info) => {
+      // A page with its own sub-list hears about EVERY create, synced or not:
+      // it is the "not synced" case that decides whether it may jump to the
+      // new object, so withholding it would leave that decision unmade.
+      onItemCreated?.({ id: info.id, resource: info.resource, synced: info.synced, title: info.title });
+      // §1.6: select the new item and refresh. When the cache sync failed the
+      // item is NOT in the list yet — the banner says so and offers a reload
+      // rather than pretending the create failed.
+      if (!info.synced) return;
+      // The metaobjects tab lists TYPES (`metaobject_type_<type>`), not
+      // entries, so the new entry's GID matches no row — selecting it would
+      // silently clear the selection. Refresh and leave the selection alone.
+      if (info.resource !== "metaobject") handleItemSelectRef.current(info.id);
+      revalidator?.revalidate();
+    },
+  });
+
+  /**
+   * The ordinary create reports through the InfoBox, like a delete and a
+   * duplicate — one sentence in the navigation strip, kept in the bell. Only
+   * a create with MORE to say keeps the banner (`createResultNeedsDetail`),
+   * and then the banner's own title carries this same sentence, so emitting
+   * it here as well would say it twice on one screen.
+   *
+   * Keyed on the created ID, not on the object: the chained translate-all
+   * appends a warning code to it seconds later, which mints a new object for
+   * the same create. Re-reporting that as a second success is what the ref
+   * prevents — the banner takes over from there.
+   *
+   * `created` is deliberately NOT dismissed on this path. It is invisible
+   * while nothing needs detail, and it is the state that late warning has to
+   * land on; clearing it here would drop a failed translation on the floor.
+   */
+  const reportedCreateIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const info: CreatedItemInfo | null = createItem.created;
+    if (!info || reportedCreateIdRef.current === info.id) return;
+    reportedCreateIdRef.current = info.id;
+    if (createResultNeedsDetail(info)) return;
+    showInfoBox(
+      (t.content?.createdTitle || "“{name}” was created").replace("{name}", info.title || info.id),
+      "success",
+    );
+  }, [createItem.created, showInfoBox, t.content?.createdTitle]);
+
+  /**
+   * §2.5a — the chained translate-all. Said rather than nowhere: the item is
+   * already created and selectable, so without a line the merchant watches
+   * its foreign fields fill in by themselves some seconds later.
+   *
+   * It reports HERE and not on the banner, so one create is one voice: the
+   * banner's title is the same "was created" sentence the InfoBox has just
+   * shown, and a plain create that happened to be translating raised both.
+   * The run's own failure comes back as a warning code, which is what puts
+   * the banner up — the InfoBox never claims the translation succeeded.
+   */
+  useEffect(() => {
+    if (!createItem.translating) return;
+    showInfoBox(
+      t.content?.createModal?.translatingAfterCreate || "Translating into your other languages…",
+      "info",
+    );
+  }, [createItem.translating, showInfoBox, t.content?.createModal?.translatingAfterCreate]);
+
+  // registerItems() sets context state on every call, and every consumer
+  // re-renders when it does. Depending that effect on a callback whose
+  // identity changes each render is therefore not a missing-dep nicety but an
+  // infinite loop. The handler goes through a ref so the effect can depend on
+  // VALUES only.
+  const handleAddItemRef = useRef<() => void>(() => {});
+  const stableAddItem = useCallback(() => handleAddItemRef.current(), []);
+
+  // The ONE delete path. Offered on the same tabs that can create — the types
+  // this app cannot create are exactly the ones Shopify has no delete API for.
+  // §1.4b — the rule editor needs `sources[]`, which exists from API 2026-07.
+  // Below that only manual collections are creatable, and the type choice says
+  // so instead of offering an editor whose payload would be refused.
+  const appData = useRouteLoaderData("routes/app") as
+    | { shopifyApiVersion?: string; autoTranslateActive?: boolean }
+    | undefined;
+  const rulesAvailable = rulesAvailableOn(appData?.shopifyApiVersion ?? "");
+
+  const deleteItem = useDeleteItem({
+    onDeleted: (target) => {
+      // The selection now points at something that no longer exists.
+      handleItemSelectRef.current("");
+      revalidator?.revalidate();
+      showInfoBox(
+        (t.content?.deletedMessage || "“{name}” was deleted.").replace("{name}", target.title || target.id),
+        "success"
+      );
+    },
+  });
+
+  /**
+   * Which resource a given item id IS — the blogs tab holds two kinds.
+   *
+   * `null` means "this item is not a deletable object", and that is a real
+   * answer, not a fallback: the metaobjects tab lists TYPES
+   * (`metaobject_type_<type>`), which have no delete API at all. It used to
+   * return the tab's single create-resource for ANY id, so the type row got a
+   * Delete button that reached `deleteContent` with a pseudo id and 400d —
+   * after the merchant had typed the type name into the confirmation. The id
+   * now has to carry the resource's own GID segment.
+   */
+  const resourceOfItem = useCallback(
+    (itemId: string): DeletableResource | null => {
+      if (itemId.includes("/Blog/")) return "blog";
+      if (itemId.includes("/Article/")) return "article";
+      const single = createResources.length === 1 ? createResources[0] : null;
+      if (single && isGidOfResource(itemId, single)) return single;
+      return null;
+    },
+    [createResources],
+  );
+
+  const handleDeleteItem = useCallback(
+    (itemId: string) => {
+      const resource = resourceOfItem(itemId);
+      if (!resource) return;
+      const item = unifiedItems.find((i) => i.id === itemId);
+      deleteItem.request({
+        id: itemId,
+        title: (item?.title as string) || itemId,
+        resource,
+      });
+    },
+    [resourceOfItem, unifiedItems, deleteItem],
+  );
+
+  // §1.9 — "create like this one". Products and collections duplicate
+  // SERVER-side (Shopify carries variants, media, metafields and publications
+  // across); the other types prefill the ordinary create form from the cache,
+  // because Shopify has no duplicate mutation for them and a copy is not a
+  // different operation.
+  const duplicateItem = useDuplicateItem({
+    onDuplicated: (outcome) => {
+      if (outcome.pending || !outcome.id) {
+        // Honest: the copy is still being assembled. Selecting it now would
+        // show an empty editor and invite a second duplicate.
+        showInfoBox(
+          t.content?.duplicatePending ||
+            "The copy is being created. Reload in a moment to see it.",
+          "info",
+        );
+        return;
+      }
+      handleItemSelectRef.current(outcome.id);
+      revalidator?.revalidate();
+    },
+  });
+
+  const handleDuplicateItem = useCallback(
+    (itemId: string) => {
+      const item = unifiedItems.find((i) => i.id === itemId);
+      const title = (item?.title as string) || "";
+      if (itemId.includes("/Product/")) {
+        duplicateItem.request({ sourceId: itemId, sourceTitle: title, resource: "product" });
+        return;
+      }
+      if (itemId.includes("/Collection/")) {
+        duplicateItem.request({ sourceId: itemId, sourceTitle: title, resource: "collection" });
+        return;
+      }
+      // Prefill path: page / article / blog. Straight into the create form
+      // with the source's values, through the ordinary createContent action.
+      const resource = itemId.includes("/Blog/")
+        ? "blog"
+        : itemId.includes("/Article/")
+          ? "article"
+          : itemId.includes("/Page/")
+            ? "page"
+            : null;
+      if (!resource) return;
+      const prefill: Record<string, string> = {};
+      const source = item as Record<string, unknown> | undefined;
+      if (title) prefill.title = `${title} (copy)`;
+      for (const [from, to] of [["body", "body"], ["summary", "summary"], ["description", "descriptionHtml"]] as const) {
+        const value = source?.[from];
+        if (typeof value === "string" && value) prefill[to] = value;
+      }
+      // Deliberately NOT copied: handle (it must be unique) and the SEO
+      // fields (a duplicated meta description is a duplicate-content finding
+      // in this app's own crawl report).
+      createItem.open(resource, prefill);
+    },
+    [unifiedItems, duplicateItem, createItem],
+  );
+
+
+  const handleAddItem = useCallback(() => {
+    if (createResources.length === 0) return;
+    // One creatable resource opens its form directly; the blogs tab has two
+    // (an article and the blog it lives in) and asks first.
+    if (createResources.length === 1) {
+      createItem.open(createResources[0], createPrefill);
+      return;
+    }
+    setChooserOpen(true);
+  }, [createResources, createItem, createPrefill]);
+  handleAddItemRef.current = handleAddItem;
+
+  const createDisabledReason = useMemo(() => {
+    if (createResources.length === 0 || createItem.anyAllowed) return null;
+    const refused = createItem.gates.find((g) => !g.gate.allowed)?.gate;
+    if (!refused || refused.allowed) return null;
+    if (refused.reason === "planContentType") {
+      return t.content?.createPlanContentType || "Your plan does not include this content type.";
+    }
+    if (refused.reason === "planLimit") {
+      return t.content?.createPlanLimit || "You have reached your plan's limit for this content type.";
+    }
+    return t.content?.createUnavailable || "Creating is not available here.";
+  }, [createResources.length, createItem.anyAllowed, createItem.gates, t.content]);
+
   // Default list item renderer (if custom renderListItem not provided)
   const defaultRenderListItem = (item: UnifiedItem, isSelected: boolean, isHovered: boolean) => {
     return (
@@ -462,7 +1293,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   // Default sidebar renderer
   const defaultRenderSidebar = (item: TranslatableContentItem, editableValues: Record<string, string>) => {
-    if (!config.showSeoSidebar) return null;
+    if (!config.showItemSidebar) return null;
 
     const itemAny = item as any;
     const isBlogContainer = !!itemAny.isBlogContainer;
@@ -553,8 +1384,68 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       : undefined;
     const keywordLocale = state.currentLanguage === primaryLocale ? "" : state.currentLanguage;
 
+    // ── PLAN_CONTENT_CREATION §2 — the attribute checklist ────────────────
+    // Only the four types that HAVE merchandising attributes; everything else
+    // gets no tab rather than an empty one.
+    const attributeResource =
+      config.contentType === "products" ? "product"
+      : config.contentType === "collections" ? "collection"
+      : config.contentType === "pages" ? "page"
+      : config.contentType === "blogs" && !isBlogContainer ? "article"
+      : null;
+
+    const attributes = attributeResource
+      ? (() => {
+          const row = item as unknown as Record<string, unknown>;
+          const checklistInput: AttributeInput = {
+            resource: attributeResource,
+            // THE gate. Absent on an item the route does not carry it on,
+            // which is the honest "we have not fetched this" rather than a
+            // pile of red findings (§2.4).
+            attributesSyncedAt: (row.attributesSyncedAt as string | null | undefined) ?? null,
+            status: (row.status as string | null | undefined) ?? null,
+            vendor: (row.vendor as string | null | undefined) ?? null,
+            productType: (row.productType as string | null | undefined) ?? null,
+            categoryName: (row.categoryName as string | null | undefined) ?? null,
+            tags: (row.tags as string[] | null | undefined) ?? null,
+            collectionCount: Array.isArray(row.collections) ? (row.collections as unknown[]).length : null,
+            hasMoreCollections: row.hasMoreCollections === true,
+            defaultVariantPrice: (row.defaultVariantPrice as string | null | undefined) ?? null,
+            sortOrder: (row.sortOrder as string | null | undefined) ?? null,
+            author: (row.author as string | null | undefined) ?? null,
+            isPublished: (row.isPublished as boolean | null | undefined) ?? null,
+            featuredImageUrl: (row.featuredImageUrl as string | null | undefined) ?? primaryImageUrl ?? null,
+            templateSuffix: (row.templateSuffix as string | null | undefined) ?? null,
+            // §2.3 — the sales-channel mirror `/api/product-commerce` writes.
+            // Named in Phase 4 as what a "completeness check" would read, and
+            // this is that check. Absent (`null`) until the panel has run once
+            // for this product, which is the honest unknown; the LIVE count
+            // supersedes it inside the sidebar the moment the panel loads.
+            publicationCount: (row.publishedChannelCount as number | null | undefined) ?? null,
+            // The three rows the item alone cannot answer — the sales-channel
+            // count, the price and the keyword — are filled in by the sidebar,
+            // which sits inside the commerce context and already loads the
+            // item's keywords for its own tab. Handing it the INPUT rather
+            // than finished rows keeps one place that turns data into status.
+          };
+          return {
+            input: checklistInput,
+            onReload: () => { void handleSyncAll(); },
+            // §2.4 — tags, vendor and category are not translatable, so acting
+            // on a finding here while a translation is selected would edit the
+            // primary value from a screen that says otherwise.
+            readOnlyReason:
+              state.currentLanguage !== primaryLocale
+                ? t.content?.attributesForeignLocale ||
+                  "These details exist once per item, not per language. Switch to the primary language to change them."
+                : null,
+          };
+        })()
+      : undefined;
+
     return (
-      <SeoSidebar
+      <ItemSidebar
+        attributes={attributes}
         title={editableValues.title || ""}
         description={editableValues.description || editableValues.body || ""}
         handle={editableValues.handle || ""}
@@ -569,6 +1460,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         resourceId={keywordResourceType ? item.id : undefined}
         resourceType={keywordResourceType}
         keywordLocale={keywordLocale}
+        contentLocale={state.currentLanguage}
         keywordLocaleName={
           shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage
         }
@@ -591,13 +1483,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       selectedItemId: state.selectedItemId,
       onItemSelect: (itemId: string) => handleItemSelectRef.current(itemId),
       resourceName: translatedResourceName,
+      // §1.2 — the SAME entry point on mobile. Without it the "+" lives only
+      // on the desktop list and creating is unreachable on a phone.
+      onAddItem: createResources.length > 0 ? stableAddItem : null,
+      addDisabledReason: createDisabledReason,
+      // The mobile mirror said `Add ${resourceName.singular}` in bare English,
+      // which on this tab named "Metaobject Type" -- the one object this app
+      // cannot create. It takes the same label the desktop bar shows.
+      addLabel: config.createSupport?.fromActionBar
+        ? t.content?.createEntryButtonLabel
+        : t.content?.createButtonLabel,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
         noResults: t.content?.noResults || "No items found",
         selectItem: t.content?.selectItem || `Select ${translatedResourceName.singular}`,
       },
     });
-  }, [unifiedItems, state.selectedItemId, translatedResourceName.singular, translatedResourceName.plural]);
+  }, [unifiedItems, state.selectedItemId, translatedResourceName.singular, translatedResourceName.plural, createResources.length, stableAddItem, createDisabledReason]);
 
   // Cleanup: clear items when component unmounts
   useEffect(() => {
@@ -608,7 +1510,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // reachable through the nav toggle. Tell the nav a sidebar exists (and take
   // the registration back on unmount — the toggle would otherwise survive onto
   // a page that has no sidebar at all).
-  const hasSidebar = !!selectedItem && !!config.showSeoSidebar;
+  const hasSidebar = !!selectedItem && !!config.showItemSidebar;
   const { open: sidebarPanelOpen, setAvailable: setSidebarPanelAvailable, close: closeSidebarPanel } = useSidebarPanel();
   useEffect(() => {
     setSidebarPanelAvailable(hasSidebar);
@@ -650,6 +1552,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // Tells every nested field/action whether translating is possible at all —
     // a single-language shop greys out the translate/copy-to-all buttons.
     <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
+    {/* The stock panel registers its save through this — see the save bar. */}
+    <commerceSave.Provider value={commerceSave.value}>
+    {/* One live load, one set of pending edits, one registration — consumed by
+        the channels field in the attributes card AND by the variants section
+        inside the variants card. Two loads would mean two `compareQuantity`
+        baselines for the same stock. */}
+    <CommerceDataProvider
+      productId={config.contentType === "products" ? String(selectedItem?.id ?? "") : ""}
+      isPrimaryLocale={state.currentLanguage === primaryLocale}
+      t={{
+        ...((t.content?.commerce ?? {}) as Record<string, string>),
+        warnings: (t.content?.commerceWarnings ?? {}) as Record<string, string>,
+        // The shared enum vocabulary — this panel's weight unit is the same
+        // kind of value as the status and sort-order options above.
+        enumLabels: (t.content?.enumLabels ?? {}) as Record<string, string>,
+      }}
+    >
     <Page fullWidth>
       <div
         // `sidebar-panel-open` only bites below 1100px, where it swaps the item
@@ -660,10 +1579,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         // would otherwise hide the editor for a frame while the sidebar column
         // is already unrendered — a blank content area until the effect below
         // resets `open` after paint.
-        // app-page-width-full states the width choice rather than leaving it
-        // implicit: the editor is a three-column workbench, so it takes the
-        // whole width (responsive.css :root owns the token).
-        className={`unified-content-editor-layout app-page-width-full${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
+        // The width class states the choice rather than leaving it implicit
+        // (responsive.css :root owns both tokens): WITH the item sidebar the
+        // editor is a three-column workbench and takes the whole width; WITHOUT
+        // it nothing caps the middle column and it just keeps growing on a wide
+        // screen, so the page is capped at --app-page-width-with-list — the
+        // item column PLUS the reading width, so the editor beside the list is
+        // as wide as an SEO page rather than that width minus the list.
+        // Left-aligned, so the item list stays flush with the gutter.
+        // Keyed on config, not on `hasSidebar`: the latter also drops when no
+        // item is selected, and the page must not change width on selection.
+        className={`unified-content-editor-layout ${config.showItemSidebar ? "app-page-width-full" : "app-page-width-start"}${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
         style={{
           // Fill the real available space via flexbox instead of a viewport
           // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is
@@ -677,7 +1603,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           flex: 1,
           minHeight: 0,
           display: "flex",
-          gap: "16px",
+          // The column gap is the page gutter — the same token, not a second
+          // 16px: --app-page-width-with-list is derived from it (responsive.css
+          // :root), so a gap that drifts would make the cap come out wrong.
+          gap: "var(--app-page-padding)",
           // Single source of truth for the page margin — shared with the
           // simple Polaris pages via responsive.css (.Polaris-Page padding).
           padding: "var(--app-page-padding)",
@@ -688,7 +1617,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         {/* Left Sidebar - Unified Item List (Desktop only via CSS) */}
         <div className="unified-item-list-container">
           <div className="desktop-only">
-            <UnifiedItemList
+            {/* Duplicate and Delete are NOT passed any more: they moved to the
+            editor's action bar. Above a LIST they looked like list actions
+            while acting on whichever row happened to be selected. */}
+        <UnifiedItemList
             items={unifiedItems}
           selectedItemId={state.selectedItemId}
           onItemSelect={handlers.handleItemSelect}
@@ -700,6 +1632,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
+          // Suppressed where the ACTION BAR carries create: the config comment
+          // argues that a "+" over a list of TYPES reads as "add a type", and
+          // leaving it standing next to the new button would have left exactly
+          // the click that lands in the wrong form.
+          showAddButton={createResources.length > 0 && !config.createSupport?.fromActionBar}
+          onAddItem={handleAddItem}
+          // Visible-but-disabled with the reason, the same as the mobile path.
+          // Labelling it without disabling it let a merchant fill in a whole
+          // form only to meet a 403 — and made the two entry points disagree.
+          addButtonDisabled={!!createDisabledReason}
+          addButtonLabel={createDisabledReason || t.content?.createButtonLabel || "Create"}
           onSyncAll={revalidator ? handleSyncAll : undefined}
           isSyncing={isDiscovering || revalidator?.state === "loading"}
           sortOptions={sortOptions}
@@ -745,20 +1688,38 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   both mounted and only toggled via CSS. */}
               <AppSaveBar
                 id="unified-content-editor-save-bar"
-                hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
-                loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
+                hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false) || commerceSave.hasChanges}
+                // The commerce panel is the THIRD writer on this button, and it
+                // has to report itself like the other two: its writes are
+                // several sequential Shopify calls, and a bar that looked
+                // untouched for those seconds is most of why a stock save read
+                // as having done nothing.
+                loading={
+                  state.isSavingCurrentItem ||
+                  (subResourceState?.isSaving ?? false) ||
+                  commerceSave.saving
+                }
                 onSave={() => {
                   // Guard against double-submit: a long-running image save
                   // (up to ~38s for big 3D models) must not fire a duplicate
                   // /api/update-variant-galleries POST (→ Shopify 422 on the
                   // duplicate productCreateMedia for the same staging URL).
-                  if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
+                  if (state.isSavingCurrentItem || subResourceState?.isSaving || commerceSave.saving) return;
                   handlers.handleSave();
                   subResourceHandlers?.saveSubResources?.();
+                  // Third writer, same button. Its failures surface INSIDE the
+                  // panel (a refused stock write names the number that moved),
+                  // so nothing is awaited here and nothing can fail the save.
+                  void commerceSave.save?.();
                 }}
                 onDiscard={() => {
                   handlers.handleDiscard();
                   subResourceHandlers?.resetChanges?.();
+                  // Third writer, same button — as with Save. Without this a
+                  // discarded quantity stayed in the input AND kept the bar
+                  // visible, and the next unrelated Save fired the stock write
+                  // the merchant thought they had dropped.
+                  commerceSave.discard();
                 }}
                 saveText={t.content?.save || "Save"}
                 discardText={t.content?.discardChanges || "Discard"}
@@ -783,22 +1744,98 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
-                  onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
-                  sendImageToAI={state.sendImageToAI}
-                  images={state.images}
-                  featuredImage={state.featuredImage ?? undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
-                  reloadResourceType={getResourceType(config.contentType)}
+                  reloadResourceType={getReloadResourceType(config.contentType, selectedItem.id)}
                   reloadLocale={state.currentLanguage}
                   onReloadComplete={handleReloadComplete}
                   revalidator={revalidator}
+                  // Mirror of the desktop action bar — see `statusControl`.
+                  // The status field is no longer in the form, so without this
+                  // a phone could not reach it at all.
+                  itemActions={{
+                    ...(statusControl && selectedItem
+                      ? (() => {
+                          const value = helpers.getEditableValue(statusControl.fieldKey);
+                          const checked =
+                            statusControl.kind === "status"
+                              ? value.toUpperCase() === "ACTIVE"
+                              : value !== "false";
+                          const foreign = state.currentLanguage !== primaryLocale;
+                          // The SAME discriminator as the desktop control. An
+                          // article cached before the attribute sync reads
+                          // `isPublished: true` from the schema default, and a
+                          // menu row saying "✓ Visible" would be that default
+                          // presented as an answer — one tap from unpublishing
+                          // an article whose state nobody ever measured.
+                          const known =
+                            statusControl.kind === "status" ||
+                            (selectedItem as { attributesSyncedAt?: string | null }).attributesSyncedAt != null;
+                          // UNLISTED / ARCHIVED are real states, and a two-way
+                          // menu row would overwrite them on one tap.
+                          const lockedStatus =
+                            statusControl.kind === "status" &&
+                            !["ACTIVE", "DRAFT"].includes(value.toUpperCase());
+                          const toggle = (t.content?.statusToggle ?? {}) as Record<string, string>;
+                          const enums = (t.content?.enumLabels ?? {}) as Record<string, string>;
+                          // The row NAMES the state rather than showing a
+                          // generic "Active" with a tick: on a phone there is
+                          // no second control to disambiguate it, and UNLISTED
+                          // rendered as unticked-Active is a lie.
+                          const stateWord =
+                            statusControl.kind === "status"
+                              ? enums[`status.${(value || "DRAFT").toUpperCase()}`] ?? value
+                              : checked
+                                ? toggle.published || "Visible"
+                                : toggle.hidden || "Hidden";
+                          return {
+                            statusLabel: known ? stateWord : toggle.unknown || "Status not loaded",
+                            statusChecked: known && checked,
+                            // Only the two-state half can be toggled from a
+                            // menu row; a four-value enum needs the Select in
+                            // the desktop bar, and the row says so instead of
+                            // pretending otherwise.
+                            statusDisabled: foreign || !known || lockedStatus,
+                            // Only the reasons the row CANNOT be tapped. The
+                            // state sentence ("visible in your shop — as long
+                            // as …") stays off the phone: the row already
+                            // names the state, and as a permanent second line
+                            // under the row it is the noise the desktop
+                            // tooltip exists to avoid. A disabled row without
+                            // its reason, on the other hand, is exactly what
+                            // the disabled-control rule forbids.
+                            statusHelp: foreign
+                              ? t.content?.attributesForeignLocale
+                              : !known
+                                ? toggle.unknown
+                                : lockedStatus
+                                  ? enums[`status.${value.toUpperCase()}`]
+                                  : undefined,
+                            onToggleStatus: () =>
+                              handlers.handleValueChange(
+                                statusControl.fieldKey,
+                                statusControl.kind === "status"
+                                  ? (checked ? "DRAFT" : "ACTIVE")
+                                  : (checked ? "false" : "true"),
+                              ),
+                          };
+                        })()
+                      : {}),
+                    ...(selectedItem && resourceOfItem(selectedItem.id) !== null
+                      ? {
+                          onDuplicate: () => handleDuplicateItem(selectedItem.id),
+                          duplicateLabel: t.content?.duplicateButtonLabel || "Duplicate",
+                          onDelete: () => handleDeleteItem(selectedItem.id),
+                          deleteLabel: t.content?.deleteButtonLabel || "Delete",
+                        }
+                      : {}),
+                  }}
                   t={{
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                    unpublishedLocaleSuffix: t.content?.unpublishedLanguageSuffix || "not published",
                     translateAll: t.content?.translateAll || "🌍 Translate All",
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
-                    sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
                     reloadItemTooltip: t.content?.reloadItemTooltip,
                     allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
                     marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
@@ -842,6 +1879,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     validationVersion={helpers.validationVersion}
                     t={{
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                      unpublishedLocaleSuffix: t.content?.unpublishedLanguageSuffix || "not published",
                       translateAll: t.content?.translateAll || "🌍 Translate All",
                       translating: t.content?.translating || "Translating...",
                       allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
@@ -891,15 +1929,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               🗑️ {t.content?.clearAll || "Clear All"}
                             </Button>
                           )}
-                          {/* Send Image to AI checkbox - only in main language for products/collections/blogs with images */}
-                          {(config.contentType === "products" || config.contentType === "collections" || config.contentType === "blogs") &&
-                           (state.images?.length > 0 || state.featuredImage?.url) && (
-                            <Checkbox
-                              label={t.content?.sendImageToAI || "📷 Send image to AI"}
-                              checked={state.sendImageToAI}
-                              onChange={handlers.handleToggleSendImageToAI}
-                            />
-                          )}
                         </>
                       ) : (
                         <>
@@ -930,24 +1959,157 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       )}
                     </InlineStack>
 
-                    {/* Right: Reload Button (Save/Discard handled by the native
-                        Shopify save bar — see AppSaveBar above) */}
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
-                      <ReloadButton
-                        resourceId={selectedItem.id}
-                        resourceType={getResourceType(config.contentType)}
-                        locale={state.currentLanguage}
-                        tooltip={t.content?.reloadItemTooltip}
-                        onReloadComplete={handleReloadComplete}
-                        onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
-                        revalidator={revalidator}
-                      />
-                      <HelpTooltip helpKey="mobileToolbarActions" position="below" />
-                    </div>
+                    {/* Right-hand half of the row: what happens to the ITEM —
+                        visible/not, copy it, delete it — followed immediately
+                        by create/reload. Only the translate/clear actions,
+                        which act on the item's TEXT, stay on the left, so the
+                        row reads as two blocks rather than three with a hole
+                        between them. Both halves used to live elsewhere: the
+                        switch among twenty fields, the two buttons over the
+                        item list, where they belonged to whichever row
+                        happened to be selected.
+
+                        This wrapper WRAPS (Polaris' default) while the reload
+                        block inside it stays `nowrap`: on a narrow desktop the
+                        reload block moves to a second line as a unit instead
+                        of the row overflowing its card. `gap="200"` is the
+                        reload block's own 0.5rem, so the seam between the two
+                        does not read as a third group. */}
+                    <InlineStack gap="200" blockAlign="center">
+                      {statusControl && selectedItem && (
+                        <ItemStatusSwitch
+                          kind={statusControl.kind}
+                          value={helpers.getEditableValue(statusControl.fieldKey)}
+                          onChange={(next) => handlers.handleValueChange(statusControl.fieldKey, next)}
+                          // Visibility exists once per item, not per language —
+                          // the same rule every other attribute follows.
+                          disabled={state.currentLanguage !== primaryLocale}
+                          disabledHint={
+                            state.currentLanguage !== primaryLocale
+                              ? t.content?.attributesForeignLocale
+                              : undefined
+                          }
+                          // `isPublished` defaults to TRUE on a row an older
+                          // sync wrote, so without this an unsynced draft would
+                          // present itself as visible.
+                          // A product's `status` is NOT part of the attribute
+                          // block — it is non-null in the schema and predates
+                          // it — so it is trustworthy on every row. Only the
+                          // `isPublished` half needs the discriminator.
+                          known={
+                            statusControl.kind === "status" ||
+                            (selectedItem as { attributesSyncedAt?: string | null }).attributesSyncedAt != null
+                          }
+                          optionLabels={(t.content?.enumLabels ?? {}) as Record<string, string>}
+                          t={(t.content?.statusToggle ?? {}) as Record<string, string>}
+                        />
+                      )}
+                      {selectedItem && resourceOfItem(selectedItem.id) !== null && (
+                        <>
+                          <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
+                            {t.content?.duplicateButtonLabel || "Duplicate"}
+                          </Button>
+                          <Button size="slim" tone="critical" onClick={() => handleDeleteItem(selectedItem.id)}>
+                            {t.content?.deleteButtonLabel || "Delete"}
+                          </Button>
+                        </>
+                      )}
+
+                      {/* Create / container delete / reload (Save and Discard
+                          are handled by the native Shopify save bar — see
+                          AppSaveBar above). */}
+                      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
+                        {/* Create, where the item list does not list what gets
+                            created — see `createSupport.fromActionBar`. It calls
+                            the SAME `handleAddItem` as the "+" above the list, so
+                            the resource chooser and the prefill still apply and
+                            there is no second create path. */}
+                        {config.createSupport?.fromActionBar && createResources.length > 0 && (
+                          <DisabledActionTooltip hint={createDisabledReason ?? undefined}>
+                            <Button
+                              size="slim"
+                              variant="primary"
+                              icon={PlusIcon}
+                              disabled={!!createDisabledReason}
+                              onClick={handleAddItem}
+                            >
+                              {t.content?.createEntryButtonLabel || "Add entry"}
+                            </Button>
+                          </DisabledActionTooltip>
+                        )}
+                        {/* Deleting the CONTAINER the entries live in — a
+                            metaobject definition. Supplied by the route, and
+                            DISABLED WITH ITS REASON rather than hidden wherever
+                            it cannot be done. */}
+                        {containerAction && (
+                          <DisabledActionTooltip hint={containerAction.disabledReason ?? undefined}>
+                            <Button
+                              size="slim"
+                              tone="critical"
+                              icon={DeleteIcon}
+                              disabled={!!containerAction.disabledReason}
+                              onClick={containerAction.onAction}
+                            >
+                              {containerAction.label}
+                            </Button>
+                          </DisabledActionTooltip>
+                        )}
+                        <ReloadButton
+                          resourceId={selectedItem.id}
+                          resourceType={getReloadResourceType(config.contentType, selectedItem.id)}
+                          locale={state.currentLanguage}
+                          tooltip={t.content?.reloadItemTooltip}
+                          onReloadComplete={handleReloadComplete}
+                          onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success")}
+                          revalidator={revalidator}
+                        />
+                        <HelpTooltip helpKey="mobileToolbarActions" position="below" />
+                      </div>
+                    </InlineStack>
                   </InlineStack>
                 </Card>
                 </div>
               </div>
+
+              {/* The market selector raises a question neither toolbar can
+                  answer: a product missing from the selected market's catalog
+                  cannot be seen there, so every translation made for that
+                  market is invisible by construction. OUTSIDE both toolbars on
+                  purpose — the desktop one is `display: none` below 769px
+                  while MobileToolbar offers the same selector, so a warning
+                  inside either half would be missing from the other. Products
+                  only (publications are a product thing here), and the
+                  component itself stays silent whenever the answer is not
+                  certain. */}
+              {config.contentType === "products" && (
+                <MarketPublicationNotice
+                  productId={String(selectedItem?.id ?? "")}
+                  selectedMarketId={state.selectedMarketId}
+                  marketName={state.markets?.find((m) => m.id === state.selectedMarketId)?.name ?? ""}
+                  notPublishedText={
+                    t.content?.market?.notPublishedInMarket ||
+                    "This product is not in the catalog of the market “{market}”, so nobody there can see it — translations for this market stay invisible until it is published there."
+                  }
+                />
+              )}
+
+              {/* A save handed foreign languages to a DETACHED re-translation.
+                  The watch already knows (the task ids come back with the save
+                  response, before the run's row exists), so say so here —
+                  otherwise the translations simply appear seconds later with
+                  nothing on screen to explain it, and a fast run is gone before
+                  the shop-wide task badge's next poll ever sees it. */}
+              {helpers.pendingRetranslationCount > 0 && (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <InlineStack gap="200" blockAlign="center" wrap={false}>
+                    <Spinner size="small" accessibilityLabel={t.content?.backgroundRetranslationRunning || "Translations are being updated in the background"} />
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t.content?.backgroundRetranslationRunning ||
+                        "Translations are being updated in the background — the fields reload as soon as they are done."}
+                    </Text>
+                  </InlineStack>
+                </div>
+              )}
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
@@ -973,7 +2135,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           onChange={(value) => {
                             setFieldSearchInput(value);
                           }}
-                          placeholder={t.content?.searchFields || "Search fields..."}
+                          placeholder={fieldSearchPlaceholder || t.content?.searchFields || "Search fields..."}
                           autoComplete="off"
                           prefix={<Icon source={SearchIcon} />}
                           clearButton
@@ -1004,7 +2166,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             <Text as="p" variant="bodySm" tone="subdued">
                               {t.content?.showingFields || "Showing"} {((fieldPagination.page - 1) * fieldPagination.limit) + 1}-
                               {Math.min(fieldPagination.page * fieldPagination.limit, fieldPagination.totalCount)} {t.content?.of || "of"}{" "}
-                              {fieldPagination.totalCount} {t.content?.fields || "fields"}
+                              {fieldPagination.totalCount} {fieldPagination.noun || t.content?.fields || "fields"}
                               {fieldPagination.search && (
                                 <> ({t.content?.filtered || "filtered"})</>
                               )}
@@ -1055,72 +2217,26 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       </div>
                     )}
 
-                    {/* Dynamic Fields */}
-                    {!isFieldsLoading && (() => {
-                      // Primary-language editing writes to a theme file
-                      // (themeFilesUpsert), which only exists for the `theme`
-                      // domain (contentType "templates"). It is read-only when:
-                      //  - themeFilesUpsert is not enabled (templates), OR
-                      //  - the rubric is a resource-backed theme-content family
-                      //    member (System/Versand/Abo-Pläne/Filter) — those have
-                      //    no theme file, so their original lives in Shopify admin
-                      //    and the server rejects primary saves for them.
-                      const isTemplatePrimaryReadOnly = isThemeContentType(config.contentType)
-                        && state.currentLanguage === primaryLocale
-                        && (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates");
-
-                      // App-embed technical fields are locked in every locale.
-                      const isFieldReadOnly = isTemplatePrimaryReadOnly || isEmbedTechnical;
-
-                      return fieldDefinitions.map((field) => {
-                        if (field.type === "image-gallery" && imageGalleryReplacement) {
-                          return <div key={field.key}>{imageGalleryReplacement}</div>;
-                        }
-                        return (
-                        <UnifiedFieldRenderer
-                          key={field.key}
-                          field={field}
-                          value={helpers.getEditableValue(field.key)}
-                          onChange={(value) => handlers.handleValueChange(field.key, value)}
-                          suggestion={state.aiSuggestions[field.key]}
-                          isPrimaryLocale={state.currentLanguage === primaryLocale}
-                          isTranslated={helpers.isFieldTranslated(field.key)}
-                          isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
-                          isDataLoading={!state.isInitialDataReady}
-                          sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
-                          disableGeneration={isThemeContentType(config.contentType)}
-                          isFallbackValue={state.fallbackFields?.has(field.key) || false}
-                          fieldError={state.fieldErrors?.[field.key]}
-                          readOnly={isFieldReadOnly}
-                          embedTechnical={isEmbedTechnical}
-                          selectedMarketId={state.selectedMarketId}
-                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? (userInstruction?: string) => handlers.handleGenerateAI(field.key, userInstruction) : undefined)}
-                          onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
-                          onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
-                          onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
-                          onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
-                          onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
-                          onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
-                          onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
-                          onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
-                          onClear={isFieldReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
-                          htmlMode={state.htmlModes[field.key] || "rendered"}
-                          onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
-                          shopLocales={shopLocales}
-                          currentLanguage={state.currentLanguage}
-                          primaryLocale={primaryLocale}
-                          selectedItem={selectedItem}
-                          contentType={config.contentType}
-                          t={t}
-                          state={state}
-                          handlers={handlers}
-                          fetcherState={fetcherState}
-                          fetcherFormData={fetcherFormData}
-                          validationOverlays={validationOverlays}
-                        />
-                        );
-                      });
-                    })()}
+                    {/* Dynamic Fields — the item's TEXT. Its merchandising
+                        attributes render in their own card further down.
+                        With `renderFieldGroup` the page wraps each group of
+                        them in its own chrome (the metaobjects tab draws one
+                        card per entry); without it this is the flat list it
+                        has always been. */}
+                    {!isFieldsLoading && !renderFieldGroup && contentFields.map(renderContentField)}
+                    {!isFieldsLoading && renderFieldGroup &&
+                      groupedContentFields.map(([groupId, fields]) => (
+                        <Fragment key={groupId}>
+                          {renderFieldGroup(
+                            groupId,
+                            fields.map((field) => ({
+                              field,
+                              value: helpers.getEditableValue(field.key),
+                              node: renderContentField(field),
+                            })),
+                          )}
+                        </Fragment>
+                      ))}
 
                     {/* Bottom Pagination (for easier navigation after scrolling) */}
                     {fieldPagination && fieldPagination.totalPages > 1 && onFieldPageChange && !isFieldsLoading && (
@@ -1159,12 +2275,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   </BlockStack>
                 </Card>
 
-                {/* Product Options Card */}
-                {config.contentType === "products" && subResourceState && subResourceHandlers &&
-                  selectedItem?.options && selectedItem.options.length > 0 && (
+                {/* Search engine listing — Shopify's own name for the trio of
+                    SEO title, meta description and URL handle. Directly below
+                    the text they summarise, and above the cards that describe
+                    the item rather than what it says. */}
+                {searchEngineFields.length > 0 && !isFieldsLoading && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <Card padding="400">
+                      <BlockStack gap="400">
+                        <Text as="h2" variant="headingMd">
+                          {t.content?.searchEngineListing || "Search engine listing"}
+                        </Text>
+                        {searchEngineFields.map((field) => renderEditorField(field))}
+                      </BlockStack>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Variants card. No `options.length > 0` gate: a product with
+                    only the default single variant has NO options (the loader
+                    drops Shopify's "Title" placeholder), and that is exactly
+                    the product for which "add a variant" is the point. The
+                    foreign-locale branch still renders nothing — there is no
+                    translation to make. */}
+                {config.contentType === "products" && subResourceState && subResourceHandlers && selectedItem && (
                   <div style={{ marginTop: "1rem" }}>
                     <OptionsField
-                      options={selectedItem.options}
+                      options={selectedItem.options ?? []}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
                       shopLocales={shopLocales}
@@ -1174,19 +2311,43 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onTranslateField={subResourceHandlers.translateOptionField}
                       onCopyField={subResourceHandlers.copyOptionField}
                       onCopyFieldToAllLocales={subResourceHandlers.copyOptionFieldToAllLocales}
+                      onCopyOptionToAllLocales={subResourceHandlers.copyOptionToAllLocales}
                       onOptionNameChange={subResourceHandlers.handleOptionNameChange}
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
                       onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
                       onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
                       primaryOptions={subResourceState.primaryOptionEdits}
+                      productId={selectedItem.id}
+                      savedNonce={subResourceState.savedNonce}
+                      footer={<CommerceVariantsSection />}
+                      valuesToAdd={subResourceState.optionValuesToAdd}
+                      linkedValuesToAdd={subResourceState.optionLinkedValuesToAdd}
+                      valuesToDelete={subResourceState.optionValuesToDelete}
+                      optionsToCreate={subResourceState.optionsToCreate}
+                      optionsToDelete={subResourceState.optionsToDelete}
+                      onAddOptionValue={subResourceHandlers.handleAddOptionValue}
+                      onAddLinkedOptionValue={subResourceHandlers.handleAddLinkedOptionValue}
+                      onRemoveLinkedOptionValue={subResourceHandlers.handleRemoveLinkedOptionValue}
+                      onRemoveOptionValue={subResourceHandlers.handleRemoveOptionValue}
+                      onEditPendingValue={subResourceHandlers.handleEditPendingValue}
+                      onCreateOption={subResourceHandlers.handleCreateOption}
+                      onCancelCreateOption={subResourceHandlers.handleCancelCreateOption}
+                      onDeleteOption={subResourceHandlers.handleDeleteOption}
+                      onReorderOptions={subResourceHandlers.handleReorderOptions}
+                      onReorderOptionValues={subResourceHandlers.handleReorderOptionValues}
                       translatingFieldIds={subResourceState.translatingFieldIds}
                       missingTranslationIds={optionMissingTranslationIds}
+                      translationBlockedIds={subResourceState.optionTranslationBlockedIds}
                       t={{
-                        title: t.products?.productOptions,
+                        title: t.products?.variantsTitle || t.products?.productOptions,
+                        titleNoVariants: t.products?.variantsTitleNoVariants,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.optionsEditInstructionPrimary,
                         translateButton: t.products?.translateEntireOption,
                         translateFieldButton: t.products?.translateFieldButton,
+                        translateSaveFirst: t.products?.optionTranslateSaveFirst,
+                        translateAllButton: t.products?.translate,
+                        copyAllButton: t.products?.copyToAllLocales,
                         linkedOptionHint: t.products?.linkedOptionHint,
                         linkedOptionHintBefore: t.products?.linkedOptionHintBefore,
                         linkedOptionHintAfter: t.products?.linkedOptionHintAfter,
@@ -1197,10 +2358,32 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         linkedNotEditableHintBefore: t.products?.linkedNotEditableHintBefore,
                         linkedNotEditableHintAfter: t.products?.linkedNotEditableHintAfter,
                         metaobjectsLinkText: t.products?.metaobjectsLinkText,
-                        optionPositionLabel: t.products?.optionPositionLabel,
                         clearButton: t.products?.clearButton,
                         copyButton: t.products?.copy,
                         copyToAllLocalesButton: t.products?.copyToAllLocales,
+                        addOption: t.products?.addOption,
+                        optionNamePlaceholder: t.products?.optionNamePlaceholder,
+                        deleteOption: t.products?.deleteOption,
+                        deleteOptionConfirm: t.products?.deleteOptionConfirm,
+                        deleteOptionTitle: t.products?.deleteOptionTitle,
+                        editMetaobject: t.products?.editMetaobject,
+                        choicesUnavailable: t.products?.choicesUnavailable,
+                        choicesAllUsed: t.products?.choicesAllUsed,
+                        choicesTruncated: t.products?.choicesTruncated,
+                        choicesSyncedAt: t.products?.choicesSyncedAt,
+                        loading: t.common?.loading,
+                        deleteValueTitle: t.products?.deleteValueTitle,
+                        deleteValueCount: t.products?.deleteValueCount,
+                        deleteValueUnknown: t.products?.deleteValueUnknown,
+                        pendingBadge: t.products?.pendingBadge,
+                        done: t.common?.done,
+                        cancel: t.common?.cancel,
+                        add: t.common?.add,
+                        valueLabel: t.products?.valueLabel,
+                        addValue: t.products?.addValue,
+                        removeValue: t.products?.removeValue,
+                        reorderValue: t.products?.reorderValue,
+                        reorderOption: t.products?.reorderOption,
                       }}
                     />
                   </div>
@@ -1228,6 +2411,46 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         translateButton: t.products?.translateMetafield,
                       }}
                     />
+                  </div>
+                )}
+
+                {/* Merchandising attributes — their own card, BELOW the
+                    options and metafields. They are facts ABOUT the item
+                    (status, vendor, tags, category, memberships, stock) rather
+                    than things it says, and mixed into the text fields they
+                    pushed the actual content off the first screen. */}
+                {detailsFields.length > 0 && !isFieldsLoading && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <Card padding="400">
+                      <BlockStack gap="400">
+                        <Text as="h2" variant="headingMd">
+                          {t.content?.attributesCardTitle || "Details"}
+                        </Text>
+                        {/* Said ONCE, in place of the boxes it replaces. A
+                            foreign locale no longer renders the attributes at
+                            all (`detailsFieldsForLocale`), and a card that
+                            simply got shorter between two language clicks
+                            reads as a bug or a plan gate — so the card names
+                            the reason where the fields were. */}
+                        {detailsHasHiddenFields && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.content?.attributesHiddenInTranslation ||
+                              "The other details here exist once per item, not per language — switch to the primary language to change them."}
+                          </Text>
+                        )}
+                        {/* One grey card per field. It used to be a subcard
+                            per SECTION, which put a heading reading
+                            "Theme-Vorlage" directly above a field labelled
+                            "Theme-Template" and drew three frames around six
+                            fields; the fields say what they are, and a word
+                            above them saying "Organisation" adds a line and no
+                            information. The sales-channel panel still draws its
+                            own heading, because that heading is the first
+                            COLUMN title of its three lists and only lines up
+                            with "Regionen" from inside them. */}
+                        {renderDetailsFields(detailsLayout)}
+                      </BlockStack>
+                    </Card>
                   </div>
                 )}
               </div>
@@ -1291,7 +2514,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Resizer handle between editor and sidebar */}
-        {selectedItem && config.showSeoSidebar && (
+        {selectedItem && config.showItemSidebar && (
           <div
             className="sidebar-resizer desktop-only"
             onMouseDown={handleResizerMouseDown}
@@ -1319,7 +2542,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         {/* Right: Optional Sidebar (Fixed). Hidden below 1100px via CSS — there
             it is reachable through the nav toggle, which makes this column
             replace the editor instead (`.sidebar-panel-open`). */}
-        {selectedItem && config.showSeoSidebar && (
+        {selectedItem && config.showItemSidebar && (
           <div
             ref={sidebarElRef}
             className="seo-sidebar-container"
@@ -1369,7 +2592,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 containerStyle={{ marginBottom: 4 }}
               />
             )}
-            <div style={{ flex: 1, overflowY: "auto" }}>
+            {/* `scrollbar-gutter: stable` — the tabs inside (score,
+                attributes, …) differ in height, so without a reserved gutter
+                the scrollbar appears and disappears while clicking through
+                them and the whole panel shifts sideways by its width. Same
+                rule as the page scroll containers in responsive.css. */}
+            <div style={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable" }}>
               {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
                 sidebarRenderer(selectedItem, state.editableValues)
               )}
@@ -1428,12 +2656,214 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 ? (t.content?.clearAllConfirmMessage ||
                   "Are you sure you want to clear all fields? This will remove all content from the current item. You will need to save the changes to make them permanent.")
                 : (t.content?.clearAllForLocaleConfirmMessage ||
-                  `Are you sure you want to clear all translations for ${shopLocales.find(l => l.locale === state.currentLanguage)?.name || state.currentLanguage}? This will remove all translated content for this language. You will need to save the changes to make them permanent.`)}
+                  "Are you sure you want to clear all translations for {language}? This will remove all translated content for this language. You will need to save the changes to make them permanent."
+                ).replace(
+                  "{language}",
+                  shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage,
+                )}
             </Text>
           </TextContainer>
         </Modal.Section>
       </Modal>
+
+      {/* §1.6 — the post-create box. Rendered even when the cache sync failed:
+          the object EXISTS, and calling that an error is what produces a
+          second click and a duplicate. */}
+      {duplicateItem.target && (
+        <DuplicateItemModal
+          open={!!duplicateItem.target}
+          onClose={duplicateItem.cancel}
+          sourceTitle={duplicateItem.target.sourceTitle}
+          newTitle={duplicateItem.newTitle}
+          onNewTitleChange={duplicateItem.setNewTitle}
+          onConfirm={duplicateItem.confirm}
+          submitting={duplicateItem.submitting}
+          error={duplicateItem.error}
+          t={t.content?.duplicateModal}
+        />
+      )}
+
+      {deleteItem.target && (
+        <DeleteItemModal
+          open={!!deleteItem.target}
+          onClose={deleteItem.cancel}
+          item={deleteItem.target}
+          onConfirm={deleteItem.confirm}
+          deleting={deleteItem.deleting}
+          error={deleteItem.error}
+          t={t.content?.deleteModal}
+        />
+      )}
+
+      {/* A sync that fixed nothing must not look like one that worked. The
+          count is what FAILED; `-1` means the run did not even get that far. */}
+      {syncFailure && (
+        <div style={{ padding: "0 1rem 1rem" }}>
+          <Banner
+            tone="warning"
+            title={t.content?.syncFailedTitle || "Not everything could be synced"}
+            onDismiss={() => setSyncFailure(null)}
+          >
+            <BlockStack gap="100">
+              <Text as="p">
+                {syncFailure.failed > 0
+                  ? (t.content?.syncFailedSome || "{count} item(s) could not be loaded from Shopify.").replace(
+                      "{count}",
+                      String(syncFailure.failed),
+                    )
+                  : t.content?.syncFailedAll || "The sync could not be completed."}
+              </Text>
+              {syncFailure.error && (
+                <Text as="p" variant="bodySm" tone="subdued">{syncFailure.error}</Text>
+              )}
+            </BlockStack>
+          </Banner>
+        </div>
+      )}
+
+      {/* Only where there is more to report than the success itself — the
+          plain case, and the chained translation, went out through the
+          InfoBox above. */}
+      {createItem.created && createResultNeedsDetail(createItem.created) && (
+        <div style={{ padding: "0 1rem 1rem" }}>
+          <CreateResultBanner
+            info={createItem.created}
+            onDismiss={createItem.dismissCreated}
+            // No undo. It was the §1.8 idea and it earned its removal: the
+            // thing that was just created is deletable from its own card, with
+            // the same confirmation, so a second path to the same delete only
+            // added a destructive button to a SUCCESS banner.
+            onReload={
+              createItem.created.synced
+                ? undefined
+                : () => {
+                    void handleSyncAll();
+                    createItem.dismissCreated();
+                  }
+            }
+            t={{
+              createdTitle: t.content?.createdTitle,
+              createdNotSyncedTitle: t.content?.createdNotSyncedTitle,
+              createdNotSyncedBody: t.content?.createdNotSyncedBody,
+              handleChanged: t.content?.createdHandleChanged,
+              reload: t.content?.reloadAllTooltip,
+              warnings: t.content?.createModal?.createWarnings,
+              notes: t.content?.createNotes,
+            }}
+          />
+        </div>
+      )}
+
+      {/* PLAN_CONTENT_CREATION §1.1/§1.4 — create flow. Rendered at the page
+          root so the modal is not clipped by the editor's overflow:hidden
+          columns. */}
+      {chooserOpen && (
+        <CreateResourceChooser
+          open={chooserOpen}
+          onClose={() => setChooserOpen(false)}
+          resources={createItem.gates}
+          onChoose={(resource) => {
+            setChooserOpen(false);
+            createItem.open(resource);
+          }}
+          labels={t.content?.createResourceLabels}
+          reasons={{
+            planContentType: t.content?.createPlanContentType,
+            planLimit: t.content?.createPlanLimit,
+            unavailable: t.content?.createUnavailable,
+          }}
+          title={t.content?.createChooserTitle}
+          cancel={t.content?.cancel}
+        />
+      )}
+
+      {createItem.openResource && (
+        <CreateItemModal
+          open={!!createItem.openResource}
+          defaultTranslateAfterwards={!!appData?.autoTranslateActive}
+          onClose={createItem.close}
+          resource={createItem.openResource}
+          initialValues={createItem.initialValues}
+          rulesAvailable={rulesAvailable}
+          currencyCode={currencyCode}
+          rulesUnavailableReason={
+            rulesAvailable
+              ? undefined
+              : (t.content?.rulesNeedApiUpgrade ||
+                  "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself."
+                ).replace("{version}", RULES_MIN_API_VERSION)
+          }
+          dynamicOptions={createItem.dynamicOptions}
+          extraFieldsByOption={createItem.extraFieldsByOption}
+          extraFieldsKey={createItem.openResource === "metaobject" ? "type" : undefined}
+          // Opened from a type's own page, the type is fixed by the page. It
+          // still travels in `initialValues` and is still submitted.
+          lockedFieldKeys={
+            createItem.openResource === "metaobject" && createItem.initialValues?.type ? ["type"] : undefined
+          }
+          blocked={
+            createItem.openResource === "article" && createItem.needsBlogFirst
+              ? {
+                  message:
+                    t.content?.createNeedsBlogFirst ||
+                    "This shop has no blog yet. A post has to live in one, so create the blog first.",
+                  actionLabel: t.content?.createResourceLabels?.blog || "Blog",
+                  onAction: () => createItem.open("blog"),
+                }
+              : null
+          }
+          onSubmit={createItem.create}
+          submitting={createItem.submitting}
+          error={createItem.error}
+          pendingNotice={createItem.pendingNotice}
+          fieldErrors={createItem.fieldErrors}
+          // The rule builder's strings live at the top level because the
+          // editor's own rule FIELD renders the same builder — one block, two
+          // surfaces, no drift.
+          t={{
+            ...(t.content?.createModal ?? {}),
+            rules: t.collectionRules,
+            // The modal titles itself "New {resource}". It used to interpolate
+            // the config's own slug, which is an English word on every locale;
+            // the chooser already carries translated resource names, so the
+            // title reads from the SAME block rather than a second one.
+            // With the type LOCKED, the dialog no longer shows which definition
+            // the entry lands in — so the title says it instead of the generic
+            // "Metaobject entry". Otherwise the resource's own name, as the
+            // chooser already translates it.
+            resourceLabel:
+              createItem.openResource === "metaobject" && createItem.initialValues?.type && selectedItem
+                ? selectedItem.title
+                : (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
+                    createItem.openResource
+                  ],
+            // The metaobject field controls (the taxonomy picker) live under
+            // `content`, not under `createModal`: the ENTRY editor renders the
+            // same controls and the strings must not exist twice.
+            content: t.content as unknown as Record<string, string>,
+            // The server sends a CODE for a disabled option; the sentences
+            // live here, where the merchant's language is known.
+            optionReasons: {
+              createTypeUnknownRequired: t.content?.createTypeUnknownRequired,
+              createTypeUnsupportedFields: t.content?.createTypeUnsupportedFields,
+            } as Record<string, string>,
+            // Same "one block, two surfaces" rule as the rule builder above:
+            // the editor's attribute fields render these very values, so the
+            // enum vocabulary lives at the top level and both read it.
+            options: t.content?.enumLabels,
+            aiWarnings: t.content?.createModal?.aiWarnings,
+          }}
+          // §2.5b/§2.5c — the AI prompts need a language NAME, and the modal
+          // has no locale state of its own. The shop's primary one, because
+          // that is the only language a create writes.
+          mainLanguage={shopLocales.find((l) => l.primary)?.name || primaryLocale}
+          hasSecondLocale={createTargetLocales.length > 0}
+          requiresSecondLanguageHint={t.common?.requiresSecondLanguage}
+        />
+      )}
     </Page>
+    </CommerceDataProvider>
+    </commerceSave.Provider>
     </LocaleAvailabilityProvider>
   );
 }
@@ -1467,14 +2897,21 @@ function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryL
     }
   }
 
-  // For metaobjects: fieldKey is a metaobject GID, look up the label field value
-  const itemWithMetaobjects = item as TranslatableContentItem & { metaobjects?: MetaobjectEntry[] };
-  if (fieldKey.startsWith("gid://shopify/Metaobject/") && itemWithMetaobjects.metaobjects && Array.isArray(itemWithMetaobjects.metaobjects)) {
-    const metaobj = itemWithMetaobjects.metaobjects.find((m) => m.id === fieldKey);
-    if (metaobj) {
-      const labelField = metaobj.fields?.find((f) => isMetaobjectLabelField(f.key));
-      return labelField?.value || metaobj.displayName || "";
-    }
+  // Metaobjects: the field key is `<Metaobject GID>#<field key>` (§6.1), so the
+  // ONE reader that understands that shape answers here too — a local lookup by
+  // bare GID would silently report "no source text" for every field and grey out
+  // every translate button on the page.
+  const itemWithMetaobjects = item as TranslatableContentItem & {
+    metaobjects?: MetaobjectEntry[];
+    fieldDefinitions?: MetaobjectDefinitionFieldLike[];
+  };
+  if (fieldKey.startsWith("gid://shopify/Metaobject/")) {
+    return metaobjectFieldValueFor(
+      itemWithMetaobjects.metaobjects as MetaobjectEntryLike[] | undefined,
+      itemWithMetaobjects.fieldDefinitions,
+      fieldKey,
+      isMetaobjectLabelField,
+    );
   }
 
   return "";
@@ -1512,20 +2949,3 @@ const SYNC_CONTENT_TYPE: Record<string, string> = {
   sellingPlans: "sellingPlans",
 };
 
-function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {
-  // The whole theme-content family (templates + system / delivery / sellingPlans
-  // / onlineStoreExtras) reloads through the single-group theme-content path
-  // (api.sync-single-resource → syncSingleThemeGroup, which is now domain-aware).
-  // Without this, non-templates rubrics posted their raw contentType and the
-  // route rejected it ("Unknown resource type: sellingPlans").
-  if (isThemeContentType(contentType)) return "templates";
-  const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy" | "templates"> = {
-    blogs: "article",
-    pages: "page",
-    policies: "policy",
-    collections: "collection",
-    products: "product",
-    templates: "templates",
-  };
-  return resourceTypeMap[contentType] || contentType as any;
-}

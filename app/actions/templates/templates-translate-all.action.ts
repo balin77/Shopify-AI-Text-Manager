@@ -1,6 +1,4 @@
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../../src/services/ai.service";
-import { tryDecryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
@@ -9,6 +7,9 @@ import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
+import { aiServiceFor } from "~/services/ai/ai-credentials.server";
+import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 
 export async function handleTranslateAll(
   ctx: TemplatesActionContext,
@@ -34,6 +35,14 @@ export async function handleTranslateAll(
     }
   }
 
+  // Compliance gate: whose key, consent, kill switch and budget — before a
+  // Task row exists (same as templates-translate-field).
+  const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+  const refusal = await aiRefusalResponse(settings, session.shop);
+  if (refusal) {
+    return refusal;
+  }
+
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -48,26 +57,12 @@ export async function handleTranslateAll(
   });
 
   try {
-    const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-
     await db.task.update({
       where: { id: task.id },
       data: { status: "running", progress: 5 },
     });
 
-    const aiService = new AIService(
-      toValidProvider(settings?.preferredProvider),
-      {
-        huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
-        geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
-        claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
-        openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
-        grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
-        deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
-      },
-      session.shop,
-      task.id
-    );
+    const aiService = aiServiceFor(settings, session.shop, task.id).service;
 
     const primaryLocale = getFormString(formData, "primaryLocale") || "en";
 
@@ -247,6 +242,8 @@ export async function handleTranslateAll(
       where: { id: task.id },
       data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
     });
+    const refused = managedRefusalResponseFromError(error, settings);
+    if (refused) return refused;
     return json({ success: false, error: msg }, { status: 500 });
   }
 }

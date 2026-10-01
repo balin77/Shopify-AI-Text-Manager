@@ -36,7 +36,8 @@ export type PlanCardRow =
   | "seoScoreHistory"
   | "seoSearchConsole"
   | "seoIndexNow"
-  | "seoScheduledAudit";
+  | "seoScheduledAudit"
+  | "seoScheduledCrawl";
 
 /**
  * The value each row shows, reduced to something comparable. Rows that render
@@ -62,6 +63,7 @@ const ROW_VALUE: Record<PlanCardRow, (config: PlanLimits) => string | number | n
     c.seo.gscProperties > 0 ? `${c.seo.gscProperties}×${c.seo.gscHistoryDays}` : null,
   seoIndexNow: (c) => c.seo.monthlyIndexNowSubmissions || null,
   seoScheduledAudit: (c) => (c.seo.scheduledAudit ? "on" : null),
+  seoScheduledCrawl: (c) => (c.seo.scheduledCrawl ? "on" : null),
 };
 
 /**

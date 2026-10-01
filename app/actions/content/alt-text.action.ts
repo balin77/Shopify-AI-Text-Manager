@@ -6,17 +6,20 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
+import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
 import { decryptApiKey } from "../../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import type { ContentEditorConfig } from "../../types/content-editor.types";
 import { logger } from "../../utils/logger.server";
 import { ShopifyApiGateway } from "../../services/shopify-api-gateway.service";
 import { getFormInt, getFormJSON, getFormString } from "../../utils/form-data.utils";
 import { isValidLocale } from "../../utils/validation";
 import { sanitizePromptInput } from "../../utils/prompt-sanitizer";
+import { resolveVisionPolicy } from "../../services/ai/vision-policy.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
@@ -25,6 +28,7 @@ import type { AISettings, AIInstructions } from "@prisma/client";
 import type { SeoLimits } from "../../utils/character-limits";
 import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -105,13 +109,23 @@ export async function saveImageAltTextPrimary(opts: {
   shop: string;
   mediaId: string;
   altText: string;
-}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string }> {
+}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string; retranslationTaskId?: string }> {
   const { admin, db, shop, mediaId, altText } = opts;
+  // The alt as it stood BEFORE this write — read first, because the cache write
+  // below replaces it (product-alt-repair.server.ts).
+  const { snapshotProductAlts, repairAltsAfterWrite } = await import(
+    "../../services/translations/product-alt-repair.server"
+  );
+  const snapshot = await snapshotProductAlts(db, shop, [mediaId]);
+  let stored = altText;
   try {
     const r = await admin.graphql(
       `#graphql
         mutation fileUpdate($files: [FileUpdateInput!]!) {
-          fileUpdate(files: $files) { userErrors { field message } }
+          fileUpdate(files: $files) {
+            files { id alt }
+            userErrors { field message }
+          }
         }`,
       { variables: { files: [{ id: mediaId, alt: altText }] } }
     );
@@ -120,6 +134,11 @@ export async function saveImageAltTextPrimary(opts: {
     if (userErrors.length > 0) {
       return { saved: false, userErrors: userErrors.map((e) => e.message) };
     }
+    // What Shopify STORED, where it says: the repair checks its read-back
+    // against this, and a normalised value compared with the raw input would
+    // read as a mismatch and decline the whole repair.
+    const echoed = (d.data?.fileUpdate?.files ?? []).find((f: { id?: string }) => f?.id === mediaId)?.alt;
+    if (typeof echoed === "string") stored = echoed;
   } catch (err: unknown) {
     logger.error("[saveImageAltText] fileUpdate error", { error: String(err) });
     return { saved: false, userErrors: [], apiError: String(err) };
@@ -127,12 +146,25 @@ export async function saveImageAltTextPrimary(opts: {
 
   await db.productImage.updateMany({
     where: { mediaId, product: { shop } },
-    data: { altText: altText || null, altTextModifiedAt: new Date() },
+    data: { altText: stored || null, altTextModifiedAt: new Date() },
   }).catch((e) => {
     logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
   });
 
-  return { saved: true, userErrors: [] };
+  // The foreign translations of the alt that just changed: re-translated with
+  // auto-translate on, otherwise the merchant's stored deletion answer. This
+  // path used to do neither — the product editor's save did, this one (the
+  // image manager's per-image save, and the SEO performance page's generator)
+  // did not, so an alt edited here was never translated anywhere.
+  const [retranslationTaskId] = await repairAltsAfterWrite({
+    gateway: new ShopifyApiGateway(admin as never, shop),
+    db,
+    shop,
+    snapshot,
+    written: [{ mediaId, alt: stored }],
+  });
+
+  return { saved: true, userErrors: [], ...(retranslationTaskId ? { retranslationTaskId } : {}) };
 }
 
 // ============================================================================
@@ -156,7 +188,14 @@ export async function handleGenerateAltText(
     language: mainLanguage,
   });
 
-  // Create task entry
+  // The client sends the product title it has on screen; the image manager's
+  // buttons do not always carry one, and an empty subject used to blank the
+  // Tasks card's whole resource row. Cached title as the fallback, and NO id
+  // fallback: the card renders the numeric id and the Shopify deep link off
+  // `resourceId` itself, so a GID here would be that fact spelled unreadably.
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId, productTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -164,7 +203,7 @@ export async function handleGenerateAltText(
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
-      resourceTitle: productTitle,
+      resourceTitle: taskResourceTitle,
       fieldType: `altText_${imageIndex}`,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -179,7 +218,24 @@ export async function handleGenerateAltText(
       data: { status: "queued", progress: 10 },
     });
 
-    const altText = await aiServiceWithTask.generateImageAltText(imageUrl, sanitizedProductTitle, prompt);
+    // §2.5e — the glossary applies to the ORIGINAL alt text too, not only to
+    // its translations. Same block as the `/api/ai` twin: this action is the
+    // OTHER entrance to the same feature.
+    const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
+    // The shop's own switch, and this is the site that most needed it: it was
+    // hardcoded `false`, so the image manager's "write an alt text" button
+    // described pictures it had never seen, however the merchant had set the
+    // (then per-editor) checkbox two clicks away.
+    const altText = await aiServiceWithTask.generateImageAltText(
+      imageUrl,
+      sanitizedProductTitle,
+      prompt,
+      resolveVisionPolicy(ctx.aiSettings).sendImages,
+      {
+        contextTexts: [sanitizedProductTitle],
+        locale: await resolveWrittenLocale(admin, session.shop, formData),
+      },
+    );
 
     await db.task.update({
       where: { id: task.id },
@@ -202,6 +258,8 @@ export async function handleGenerateAltText(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "generateAltText" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -214,7 +272,7 @@ export async function handleGenerateAllAltTexts(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<DataResponse> {
-  const { session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
+  const { admin, session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
 
   const imagesData = getFormJSON<Array<{ url: string }>>(formData, "imagesData");
   if (!imagesData) {
@@ -225,7 +283,14 @@ export async function handleGenerateAllAltTexts(
   const mainLanguage = getFormString(formData, "mainLanguage");
   const totalImages = imagesData.length;
 
-  // Create task entry
+  // The client sends the product title it has on screen; the image manager's
+  // buttons do not always carry one, and an empty subject used to blank the
+  // Tasks card's whole resource row. Cached title as the fallback, and NO id
+  // fallback: the card renders the numeric id and the Shopify deep link off
+  // `resourceId` itself, so a GID here would be that fact spelled unreadably.
+  const bulkTaskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId, productTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -233,7 +298,7 @@ export async function handleGenerateAllAltTexts(
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
-      resourceTitle: productTitle,
+      resourceTitle: bulkTaskResourceTitle,
       fieldType: "allAltTexts",
       progress: 0,
       total: totalImages,
@@ -252,6 +317,17 @@ export async function handleGenerateAllAltTexts(
 
     const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
 
+    // Read ONCE for the batch: one shop, one answer, and re-resolving it per
+    // image would suggest it could change mid-run.
+    const sendImagesToAI = resolveVisionPolicy(ctx.aiSettings).sendImages;
+
+    // One product, one language — resolved once for the whole batch (§2.5e).
+    const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
+    const writtenLocale = await resolveWrittenLocale(admin, session.shop, formData);
+
+    // A refusal part-way through: the alt texts generated before it are paid
+    // for and still valid, so they are returned rather than thrown away.
+    let stoppedBy: unknown = null;
     for (let i = 0; i < imagesData.length; i++) {
       const image = imagesData[i];
       try {
@@ -261,7 +337,10 @@ export async function handleGenerateAllAltTexts(
           aiInstructions,
           language: mainLanguage,
         });
-        const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt);
+        const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt, sendImagesToAI, {
+          contextTexts: [sanitizedProductTitle],
+          locale: writtenLocale,
+        });
         generatedAltTexts[i] = altText;
 
         const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);
@@ -270,6 +349,15 @@ export async function handleGenerateAllAltTexts(
           data: { progress: progressPercent, processed: i + 1 },
         });
       } catch (error: unknown) {
+        // A managed refusal refuses every remaining image identically — stop
+        // the run so the merchant sees why, instead of N empty alt texts. With
+        // nothing generated yet it fails the request with the refusal; after
+        // the first success it ends the loop and keeps what was delivered.
+        if (isManagedRefusal(error)) {
+          if (Object.keys(generatedAltTexts).length === 0) throw error;
+          stoppedBy = error;
+          break;
+        }
         logger.error("Failed to generate alt-text for image", {
           context: "UnifiedContent",
           imageIndex: i,
@@ -281,14 +369,22 @@ export async function handleGenerateAllAltTexts(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: stoppedBy ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({ generatedAltTexts }),
+        ...(stoppedBy ? { error: getFullErrorMessage(stoppedBy) } : {}),
       },
     });
 
-    return json({ actionType: "generateAllAltTexts", success: true, generatedAltTexts });
+    return json({
+      actionType: "generateAllAltTexts",
+      success: true,
+      generatedAltTexts,
+      // The machine code (`managed_ai_refused:<reason>`); the client's error
+      // translator phrases it in the merchant's language.
+      ...(stoppedBy ? { warning: getFullErrorMessage(stoppedBy) } : {}),
+    });
   } catch (error: unknown) {
     const errorMsg = getFullErrorMessage(error);
     await db.task.update({
@@ -299,6 +395,8 @@ export async function handleGenerateAllAltTexts(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "generateAllAltTexts" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -320,7 +418,14 @@ export async function handleTranslateAltText(
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Name the ITEM. This row stored a `resourceId` and no title at all, so the
+  // Tasks card rendered nothing for it — not even the Shopify link. No title
+  // reaches this handler on the wire, so the cached one is read here; the
+  // image is already named by `fieldType` ("Image N alt-text"), which is why
+  // the subject is the plain product name and not a composed string.
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -328,6 +433,7 @@ export async function handleTranslateAltText(
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
+      resourceTitle: taskResourceTitle,
       fieldType: `altText_${imageIndex}`,
       targetLocale,
       progress: 0,
@@ -380,6 +486,8 @@ export async function handleTranslateAltText(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAltText" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -402,8 +510,14 @@ export async function handleTranslateAltTextToAllLocales(
     return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
   }
 
-  const resourceTitle = productTitle
-    ? `${productTitle} – Bild ${imageIndex + 1}`
+  // Same fallback as its siblings: the form's title first, the cached one
+  // next. The image number stays in the composed string here because this
+  // row's `fieldType` is "all" and would otherwise never name the image.
+  const itemTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId, productTitle,
+  );
+  const resourceTitle = itemTitle
+    ? `${itemTitle} – Bild ${imageIndex + 1}`
     : `Bild ${imageIndex + 1}`;
 
   // Create task entry
@@ -596,6 +710,10 @@ export async function handleTranslateAltTextToAllLocales(
 
           // Only save to DB if Shopify succeeded
           if (shopifySaved) {
+            // The detached alt repair watches the MEDIA resource it is about to
+            // write (translation-locks.shared.ts); without this claim it never
+            // sees the merchant write and overwrites it minutes later.
+            markTranslationSaved(dbImage.mediaId);
             try {
               const existing = await db.productImageAltTranslation.findUnique({
                 where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
@@ -653,6 +771,8 @@ export async function handleTranslateAltTextToAllLocales(
         error: errorMsg,
       },
     });
+    const refused = managedRefusalResponseFromError(error, ctx.aiSettings, { actionType: "translateAltTextToAllLocales" });
+    if (refused) return refused;
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
@@ -706,12 +826,31 @@ export async function handleGenerateAltTextFromSku(
     return json({ success: false, error: "No variants with SKU found for these images" }, { status: 404 });
   }
 
+  // The alts BEFORE the write, for the translation repair below.
+  const { snapshotProductAlts, repairAltsAfterWrite } = await import(
+    "../../services/translations/product-alt-repair.server"
+  );
+  const snapshot = await snapshotProductAlts(ctx.db, ctx.session.shop, results.map((r) => r.mediaId));
+
   // 2. Alt-Text zu Shopify synchronisieren
-  await ctx.admin.graphql(`
+  const updateResponse = await ctx.admin.graphql(`#graphql
     mutation fileUpdate($files: [FileUpdateInput!]!) {
       fileUpdate(files: $files) { userErrors { field message } }
     }
   `, { variables: { files: results.map(r => ({ id: r.mediaId, alt: r.altText })) } });
+  const updateData = (await updateResponse.json()) as {
+    data?: { fileUpdate?: { userErrors?: Array<{ message: string }> } };
+    errors?: Array<{ message: string }>;
+  };
+  const updateErrors = [
+    ...(updateData.errors ?? []),
+    ...(updateData.data?.fileUpdate?.userErrors ?? []),
+  ];
+  if (updateErrors.length > 0) {
+    // `fileUpdate` applies the batch as a unit; nothing was written, so the
+    // cache is left alone and nothing is repaired.
+    return json({ success: false, error: updateErrors.map((e) => e.message).join("; ") }, { status: 502 });
+  }
 
   // 3. DB updaten
   // R4-DI7: scope by the owning product's shop. Shopify media GIDs are only
@@ -722,7 +861,21 @@ export async function handleGenerateAltTextFromSku(
     ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId, product: { shop: ctx.session.shop } }, data: { altText: r.altText } })
   ));
 
-  return json({ success: true, updated: results.length });
+  // The foreign alts of what changed — one run per product
+  // (product-alt-repair.server.ts); never fails the write.
+  const retranslationTaskIds = await repairAltsAfterWrite({
+    gateway: new ShopifyApiGateway(ctx.admin as never, ctx.session.shop),
+    db: ctx.db,
+    shop: ctx.session.shop,
+    snapshot,
+    written: results.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
+  });
+
+  return json({
+    success: true,
+    updated: results.length,
+    ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+  });
 }
 
 // ============================================================================
@@ -744,6 +897,7 @@ export async function handleSaveImageAltText(
   }
 
   let shopifySaved = false;
+  let retranslationTaskIds: string[] = [];
 
   if (!locale || locale === primaryLocale) {
     // Primary locale: fileUpdate + shop-scoped cache write (shared helper).
@@ -752,6 +906,7 @@ export async function handleSaveImageAltText(
       return json({ success: false, error: "Shopify API error" }, { status: 500 });
     }
     shopifySaved = result.saved;
+    retranslationTaskIds = result.retranslationTaskId ? [result.retranslationTaskId] : [];
   } else {
     // Foreign locale: use translationsRegister (needs digest from Shopify)
     let altDigest: string | undefined;
@@ -799,6 +954,11 @@ export async function handleSaveImageAltText(
     }
 
     if (shopifySaved) {
+      // Claim the MEDIA resource: a detached alt re-translation watches its own
+      // lock AND every resource it is about to write, so marking the image is
+      // both precise and enough — without it the AI would overwrite the value
+      // the merchant just accepted.
+      markTranslationSaved(mediaId);
       try {
         // R4-DI7: shop-scoped — an unscoped mediaId findFirst could resolve
         // another tenant's ProductImage (per-shop-unique GIDs can collide)
@@ -823,7 +983,11 @@ export async function handleSaveImageAltText(
     }
   }
 
-  return json({ actionType: "saveImageAltText", success: shopifySaved });
+  return json({
+    actionType: "saveImageAltText",
+    success: shopifySaved,
+    ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+  });
 }
 
 // ============================================================================

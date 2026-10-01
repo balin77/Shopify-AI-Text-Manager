@@ -7,7 +7,7 @@
  * external keyword API. The CRUD helpers persist one keyword per item/locale.
  */
 
-// TYPE-ONLY Prisma imports — this module is imported CLIENT-SIDE (SeoSidebar
+// TYPE-ONLY Prisma imports — this module is imported CLIENT-SIDE (ItemSidebar
 // uses analyzeOnPage), so a value import of @prisma/client would drag the
 // Prisma runtime into the browser bundle and break the vite build.
 import type { Prisma, PrismaClient } from "@prisma/client";
@@ -1151,13 +1151,13 @@ export async function addKeywordsToGroup(
     if (!keyword) continue;
     // The locale is owned by the group, not the entry (invariant).
     const locale = group.locale;
-    byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority });
+    byKey.set(`${keyword}\u0000${locale}`, { keyword, locale, priority: entry.priority });
   }
   if (byKey.size === 0) return { added: 0, alreadyInGroup: 0, skippedOverQuota: 0 };
   let normalized = Array.from(byKey.values());
   const texts = Array.from(new Set(normalized.map((e) => e.keyword)));
 
-  const keyOf = (k: { keyword: string; locale: string }) => `${k.keyword} ${k.locale}`;
+  const keyOf = (k: { keyword: string; locale: string }) => `${k.keyword}\u0000${k.locale}`;
   const loadIds = async (): Promise<Map<string, string>> => {
     const rows = await db.seoKeyword.findMany({
       where: { shop, keyword: { in: texts } },

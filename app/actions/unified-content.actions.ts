@@ -7,12 +7,12 @@
 
 import { data as json } from "react-router";
 import type { ActionFunctionArgs } from "react-router";
-import { AIService, toValidProvider } from "../../src/services/ai.service";
+import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
-import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
 import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
@@ -45,6 +45,11 @@ import {
   handleTranslateFieldToAllLocales,
 } from "./content/translation.action";
 import { handleUpdateContent } from "./content/content-update.action";
+import { handleCreateContent } from "./content/create.actions";
+import { handleDeleteContent } from "./content/delete.actions";
+import { handleDuplicateContent } from "./content/duplicate.actions";
+import { aiCredentialsFor } from "~/services/ai/ai-credentials.server";
+import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -52,6 +57,26 @@ import {
   handleTranslateSubResourceToAllLocales,
   handleSavePrimarySubResources,
 } from "./content/sub-resources.action";
+
+/**
+ * The actions of this handler that spend an AI call. The rest (load, save,
+ * create, delete, SKU-based alt texts) never reach a provider and must not be
+ * refused over a spent AI budget.
+ */
+export const AI_CONTENT_ACTIONS: ReadonlySet<string> = new Set([
+  "translateField",
+  "translateAll",
+  "translateAllForLocale",
+  "translateFieldToAllLocales",
+  "generateAltText",
+  "generateAllAltTexts",
+  "translateAltText",
+  "translateAltTextToAllLocales",
+  "translateSubResources",
+  "translateSubResourceToAllLocales",
+  "generateAIText",
+  "formatAIText",
+]);
 
 interface UnifiedContentActionsConfig {
   admin: AdminApiContext;
@@ -81,19 +106,36 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     return json({ success: false, error: "Missing required itemId" }, { status: 400 });
   }
 
+  // ── Managed-AI compliance gate ──────────────────────────────────────────────
+  // Whose key, consent, kill switch and budget — asked once, BEFORE any Task
+  // row or AI call, and only for the actions that reach an AI. A refusal used
+  // to surface as a raw 500 or as every locale silently "failed". The body
+  // echoes `actionType`/`fieldType` so the editor lands it where that action's
+  // own error lands (a field error for the single-field translations).
+  //
+  // It runs BEFORE the credentials below are built, and that order matters:
+  // a spent taster falls back to the merchant's own key inside the gate,
+  // which refreshes `aiSettings` in place — credentials resolved earlier
+  // would still be the managed ones and the first request would be refused.
+  if (AI_CONTENT_ACTIONS.has(action)) {
+    const fieldType = getFormString(formData, "fieldType");
+    const refusal = await aiRefusalFor(aiSettings, session.shop, {
+      actionType: action,
+      ...(fieldType ? { fieldType } : {}),
+    });
+    if (refusal) return refusal;
+  }
+
   // Initialize services
-  const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
+  // PLAN_MANAGED_AI_KEY §5 — whose key this call spends is the resolver's
+  // answer, not a config literal built here. Ten copies of those six
+  // decrypt lines are what made "the operator key has one reader"
+  // impossible to state.
+  const aiCredentials = aiCredentialsFor(aiSettings, session.shop);
+  const provider = aiCredentials.provider;
   // Cast aiInstructions to indexable type for dynamic field access
   const instructions = aiInstructions as Record<string, string | null> | null;
-  const serviceConfig = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
+  const serviceConfig = aiCredentials.config;
 
   // Update queue rate limits from settings
   const { AIQueueService } = await import("../../src/services/ai-queue.service");
@@ -143,6 +185,16 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     case "translateSubResources":            return handleTranslateSubResources(ctx, formData);
     case "translateSubResourceToAllLocales": return handleTranslateSubResourceToAllLocales(ctx, formData);
     case "savePrimarySubResources":          return handleSavePrimarySubResources(ctx, formData);
+    // PLAN_CONTENT_CREATION §1.5 — a CASE here, never a parallel route.
+    // Note it is the one action that runs WITHOUT an itemId: the resource it
+    // writes does not exist yet.
+    case "createContent":                    return handleCreateContent(ctx, formData);
+    // The app's ONE content delete. Two entrances share it: the item list's
+    // delete button and the post-create undo (§1.8).
+    case "deleteContent":                    return handleDeleteContent(ctx, formData);
+    // §1.9 — server-side only for product/collection; the other types prefill
+    // the create form from the cache and go through createContent.
+    case "duplicateContent":                 return handleDuplicateContent(ctx, formData);
   }
 
   // ── Remaining inline actions (loadTranslations, generateAIText, formatAIText) ─
@@ -179,7 +231,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const sanitizedContextDescription = sanitizePromptInput(contextDescription || "", { fieldType: "description", allowNewlines: true });
     const mainLanguage = getFormString(formData, "mainLanguage");
 
-    // Create task entry
+    // The client sends the title it has on screen; where it does not, the
+    // cached one is read rather than leaving the Tasks card with no subject
+    // and therefore no resource row at all.
+    const taskResourceTitle = await taskTitleOrFallback(
+      db, session.shop, contentConfig.resourceType, itemId, contextTitle,
+    );
     const task = await db.task.create({
       data: {
         shop: session.shop,
@@ -187,7 +244,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         status: "pending",
         resourceType: contentConfig.resourceType,
         resourceId: itemId,
-        resourceTitle: contextTitle,
+        resourceTitle: taskResourceTitle,
         fieldType,
         progress: 0,
         expiresAt: getTaskExpirationDate(),
@@ -210,6 +267,16 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
       // Create AI service with shop and taskId for queue management
       const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+
+      // §2.5e — the glossary applies to the ORIGINAL, not only to its
+      // translations. Same block as the `/api/ai` generation handler: this
+      // action is the OTHER entrance to the same feature, and a house term
+      // honoured on one of them only is worse than on neither.
+      const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
+      const glossary = {
+        contextTexts: [sanitizedContextTitle, sanitizedContextDescription, currentValue],
+        locale: await resolveWrittenLocale(admin, session.shop, formData),
+      };
 
       let generatedContent = "";
 
@@ -290,7 +357,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         // Merchant's per-request instruction — last word, outranks everything above.
         prompt = withUserInstruction(prompt, formData);
-        generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
+        generatedContent = await aiServiceWithTask.generateProductTitle(prompt, undefined, glossary);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
 
         if (field.type === "slug") {
@@ -359,7 +426,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Do NOT wrap the output in markdown code fences (\`\`\`). Output in ${mainLanguage}.`;
         // Merchant's per-request instruction — last word, outranks everything above.
         prompt = withUserInstruction(prompt, formData);
-        generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
+        generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt, undefined, glossary);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
       }
 
@@ -397,6 +464,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       } catch (updateErr) {
         console.error("Failed to update task status:", updateErr);
       }
+      const refused = managedRefusalResponseFromError(error, aiSettings, { actionType: action, fieldType });
+      if (refused) return refused;
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }
@@ -404,6 +473,14 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // ============================================================================
   // FORMAT AI TEXT
   // ============================================================================
+  //
+  // NO glossary directive here, deliberately (§2.5e). Both prompts below are
+  // preserve-only — "Do NOT add new information or rewrite the text", "Keep all
+  // words, sentences, and information intact" — and a terminology rule saying
+  // "refer to X as Y" is an instruction to change words. Two contradicting
+  // instructions in one prompt is how a formatting pass starts rewriting.
+  // The `/api/ai` improve path DOES get the glossary, because that one rewords
+  // on purpose; the difference is the prompt, not the button's name.
 
   if (action === "formatAIText") {
     const fieldType = getFormString(formData, "fieldType");
@@ -414,7 +491,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const sanitizedContextDescription = sanitizePromptInput(contextDescription || "", { fieldType: "description", allowNewlines: true });
     const mainLanguage = getFormString(formData, "mainLanguage");
 
-    // Create task entry
+    // The client sends the title it has on screen; where it does not, the
+    // cached one is read rather than leaving the Tasks card with no subject
+    // and therefore no resource row at all.
+    const formatTaskResourceTitle = await taskTitleOrFallback(
+      db, session.shop, contentConfig.resourceType, itemId, contextTitle,
+    );
     const task = await db.task.create({
       data: {
         shop: session.shop,
@@ -422,7 +504,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         status: "pending",
         resourceType: contentConfig.resourceType,
         resourceId: itemId,
-        resourceTitle: contextTitle,
+        resourceTitle: formatTaskResourceTitle,
         fieldType,
         progress: 0,
         expiresAt: getTaskExpirationDate(),
@@ -569,6 +651,8 @@ Allowed formatting changes:
       } catch (updateErr) {
         console.error("Failed to update task status:", updateErr);
       }
+      const refused = managedRefusalResponseFromError(error, aiSettings, { actionType: action, fieldType });
+      if (refused) return refused;
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }

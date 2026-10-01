@@ -44,3 +44,15 @@ export interface SnapshotHeaderView {
   pagesCrawled: number;
   totalDiscovered: number;
 }
+
+/**
+ * Per-page cap on collected JSON-LD `@type` values, for `jsonLdTypes` and
+ * `jsonLdAppTypes` alike.
+ *
+ * Shared rather than duplicated because two readers now depend on the SAME
+ * number: the crawl truncates at it, and the live audit refuses to read an
+ * equal app/total count as proof on a page that reached it — two truncated
+ * lists can match without meaning it. A second copy of this number would make
+ * that guard silently wrong the day one of them moved.
+ */
+export const MAX_JSON_LD_TYPES_PER_PAGE = 50;

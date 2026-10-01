@@ -51,6 +51,13 @@ describe("parseMoney (Plan §5.5/§12)", () => {
     expect(parseMoney("1,299.90")).toEqual({ ok: true, value: "1299.90" });
   });
 
+  it("completes a missing digit on either side of the separator", () => {
+    expect(parseMoney(".5")).toEqual({ ok: true, value: "0.50" });
+    expect(parseMoney("2.")).toEqual({ ok: true, value: "2.00" });
+    expect(parseMoney("2,")).toEqual({ ok: true, value: "2.00" });
+    expect(parseMoney(".")).toEqual({ ok: false, error: "invalid" });
+  });
+
   it("parses a plain integer: 1299 → 1299.00", () => {
     expect(parseMoney("1299")).toEqual({ ok: true, value: "1299.00" });
   });

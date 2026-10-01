@@ -40,7 +40,7 @@ export function HtmlFormattingToolbar({ onCommand }: HtmlFormattingToolbarProps)
         gap: "0.25rem",
         padding: "0.5rem 0.75rem",
         background: "#f6f6f7",
-        border: "1px solid #c9cccf",
+        border: "1px solid var(--app-field-border-color)",
         borderRadius: "8px 8px 0 0",
         minHeight: "52px",
       }}

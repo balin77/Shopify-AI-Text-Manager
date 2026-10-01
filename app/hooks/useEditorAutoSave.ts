@@ -6,7 +6,9 @@
  * changed fields / alt-text indices, and submitting them via safeSubmit.
  */
 
+import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType } from "~/utils/content-type-groups";
+import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
@@ -51,9 +53,17 @@ interface UseEditorAutoSaveProps {
     savedLocale: string | null;
     savedMarketId: string;
     savedItemId: string | null;
+    partial: PartialSave | null;
   }>>;
   justSubmittedRef: React.MutableRefObject<boolean>;
   fetcherRef: React.MutableRefObject<any>;
+  /** Staged by a caller right before `safeSubmit` for a PARTIAL save; taken
+   *  over here and bound to the request it belongs to. */
+  partialSaveRef: React.MutableRefObject<PartialSave | null>;
+  /** The partial description of the request IN FLIGHT (null = a full save). */
+  inFlightPartialRef: React.MutableRefObject<PartialSave | null>;
+  /** Until when the next data re-read keeps unsaved edits (see the editor). */
+  preserveEditsUntilRef: React.MutableRefObject<number>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -93,6 +103,9 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     saveQueueRef,
     justSubmittedRef,
     fetcherRef,
+    partialSaveRef,
+    inFlightPartialRef,
+    preserveEditsUntilRef,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -115,6 +128,17 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       formData.append(key, String(value));
     });
 
+    // A partial save is described by the caller just before this call; the
+    // description travels WITH its request (queue entry or in-flight slot),
+    // never in one shared slot a different response could consume.
+    const partial = partialSaveRef.current;
+    partialSaveRef.current = null;
+    if (partial) {
+      // The reload that follows this save re-reads the item; the fields it did
+      // NOT carry may hold unsaved input, which that pass must keep.
+      preserveEditsUntilRef.current = Date.now() + 30_000;
+    }
+
     if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current) {
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
       saveQueueRef.current.push({
@@ -123,9 +147,11 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         savedLocale: savedLocaleRef.current,
         savedMarketId: savedMarketIdRef.current,
         savedItemId: savedItemIdRef.current,
+        partial,
       });
       return;
     }
+    inFlightPartialRef.current = partial;
 
     try {
       justSubmittedRef.current = true;
@@ -226,12 +252,29 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
   // ---------------------------------------------------------------------------
   const getChangedAltTextIndices = useCallback((): number[] => {
     const item = selectedItemRef.current;
-    if (!item || !item.images) return [];
+    if (!item) return [];
 
     const changedIndices: number[] = [];
     for (const [indexStr, currentValue] of Object.entries(imageAltTextsRef.current)) {
       const index = parseInt(indexStr, 10);
-      const originalValue = item.images[index]?.altText || "";
+      // Index 0 falls back to `featuredImage` — the same rule `getImageAtIndex`
+      // follows, and not an edge case: a collection and an article load with
+      // `images: []` and their one image in `featuredImage`, so baselining
+      // against `images[0]` alone read every existing alt as "was empty".
+      // Setting or changing one still reported a change (anything differs from
+      // ""), but CLEARING one did not — and that is the save whose translations
+      // most need to go.
+      //
+      // The fallback is on a MISSING image, never on a missing alt TEXT: a
+      // product whose `images[0]` carries no alt would otherwise be baselined
+      // against the featured image's, and an edit that matches it would go
+      // unreported with its stale translations left standing.
+      const originalImage =
+        item.images?.[index] ??
+        (index === 0
+          ? (item as { featuredImage?: { altText?: string } }).featuredImage
+          : undefined);
+      const originalValue = originalImage?.altText || "";
       if (currentValue !== originalValue) {
         changedIndices.push(index);
       }
@@ -277,12 +320,31 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       }
     }
 
-    // If saving primary locale, include changed fields for translation deletion
-    // BUT: Skip this if we're in an accept-and-translate flow
+    // ── Two questions, two fields ─────────────────────────────────────────
+    // `changedFields` answers "which translations did this primary change make
+    // stale", and the accept-and-translate flow deliberately withholds it: it
+    // is about to write those very translations, so marking them stale would
+    // make them flash empty in between.
+    //
+    // PLAN §Phase 3 needs a DIFFERENT answer: which merchandising attributes
+    // did the merchant actually touch — because a primary save carries every
+    // field and the server cannot otherwise tell an edit from a passenger.
+    // Folding that into `changedFields` would have re-introduced the deletion
+    // this flow exists to avoid; withholding it would silently drop attribute
+    // edits while reporting success. So it travels on its own.
     const item = selectedItemRef.current;
-    if (locale === primaryLocale && item && !isAcceptAndTranslateFlowRef.current) {
+    if (locale === primaryLocale && item) {
       const changedFields = getChangedFields(valuesToSave);
-      if (changedFields.length > 0) {
+
+      const changedAttributes = changedFields.filter((fieldKey) => {
+        const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+        return !!field && isAttributeField(field);
+      });
+      if (changedAttributes.length > 0) {
+        formDataObj.changedAttributeFields = JSON.stringify(changedAttributes);
+      }
+
+      if (changedFields.length > 0 && !isAcceptAndTranslateFlowRef.current) {
         formDataObj.changedFields = JSON.stringify(changedFields);
 
         changedFields.forEach((fieldKey) => {

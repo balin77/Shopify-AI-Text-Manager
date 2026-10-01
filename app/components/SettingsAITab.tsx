@@ -21,6 +21,7 @@ import { HelpTooltip } from "./HelpTooltip";
 import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { CURATED_MODELS, DEFAULT_MODELS } from "../config/ai-models.config";
 import "../styles/RateLimitFields.css";
+import { ManagedAiCard, type ManagedAiCardProps } from "./ManagedAiCard";
 
 // Responsive label component that shows short version on small screens
 function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; shortText: string; helpKey?: string }) {
@@ -55,9 +56,8 @@ interface Settings {
   grokMaxRequestsPerMinute: number;
   deepseekMaxTokensPerMinute: number;
   deepseekMaxRequestsPerMinute: number;
-  // SEO fields are saved via SettingsSEOTab, but still included in full save payload
-  seoTitleSuffixEnabled?: boolean;
-  seoTitleSuffix?: string;
+  /** True when the loader did NOT send the key fields (managed mode). */
+  apiKeysWithheld?: boolean;
 }
 
 interface SettingsAITabProps {
@@ -65,9 +65,21 @@ interface SettingsAITabProps {
   fetcher: FetcherWithComponents<any>;
   t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  /** What the shop's managed-AI state is — see ManagedAiCard. */
+  managedAi?: ManagedAiCardProps extends infer P
+    ? P extends { fetcher: unknown; t: unknown }
+      ? Omit<P, "fetcher" | "t">
+      : never
+    : never;
 }
 
-export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
+export function SettingsAITab({
+  settings,
+  fetcher,
+  t,
+  onHasChangesChange,
+  managedAi,
+}: SettingsAITabProps) {
   const { dismissByKey } = useInfoBox();
   // Build per-provider setters that ALSO clear any active "corrupted API
   // key" warning for that provider. The warning is no longer actionable
@@ -85,6 +97,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
     { label: t.settings.providers.deepseek, value: "deepseek" },
   ];
 
+  const [keysWithheldAtMount] = useState(settings.apiKeysWithheld === true);
   const [huggingfaceKey, setHuggingfaceKey] = useState(settings.huggingfaceApiKey);
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey);
   const [claudeKey, setClaudeKey] = useState(settings.claudeApiKey);
@@ -99,6 +112,10 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   // the curated fallback list. Surfaced as a subtle hint under the model
   // dropdown so the merchant understands why the choices are limited.
   const [modelsFallbackReason, setModelsFallbackReason] = useState<null | 'no_api_key' | 'api_error' | 'invalid_key' | 'network'>(null);
+  // A model the provider's LIVE list no longer carries (retired). Kept
+  // selectable so a page load never rewrites the stored pair, but labelled —
+  // left unlabelled it looks like a working choice while every call 404s.
+  const [unavailableModel, setUnavailableModel] = useState<string | null>(null);
 
   // The model list arrives asynchronously AFTER the page renders, so anything
   // it writes back into state happens without the merchant touching anything.
@@ -138,13 +155,20 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         // provider. Doing that on mount marked the form as dirty and lit up the
         // Save button on a page nobody had edited yet.
         const current = selectedModelRef.current;
+        let missing: string | null = null;
         if (current && !options.some(o => o.value === current)) {
           const replacement = restoreModel !== null ? restoreModel : (data.defaultModel || '');
           if (replacement !== current) setSelectedModel(replacement);
           setAvailableModels(withModel(options, replacement));
+          // Only a LIVE list can say a model is gone; the curated fallback
+          // simply does not know every model a provider offers.
+          if (!data.fromFallback && replacement && !options.some(o => o.value === replacement)) {
+            missing = replacement;
+          }
         } else {
           setAvailableModels(options);
         }
+        setUnavailableModel(missing);
         setModelsFallbackReason(data.fromFallback ? (data.reason || 'api_error') : null);
       } else {
         // Endpoint responded with success=false (bad provider / auth). Use
@@ -200,7 +224,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   // global toast in the top nav was easy to miss, especially when a warn
   // banner stayed visible inside the card.
   const fieldErrors: Record<string, string> =
-    fetcher.data && !fetcher.data.success && fetcher.data.actionType === "saveSettings" && fetcher.data.fieldErrors
+    fetcher.data && !fetcher.data.success && fetcher.data.actionType === "saveAiKeys" && fetcher.data.fieldErrors
       ? (fetcher.data.fieldErrors as Record<string, string>)
       : {};
   const hasFieldErrors = Object.keys(fieldErrors).length > 0;
@@ -256,7 +280,10 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
 
     fetcher.submit(
       {
-        actionType: "saveSettings",
+        actionType: "saveAiKeys",
+        // Seeded at mount like the key state itself: "these key fields were
+        // withheld from me", so the server must not read their "" as delete.
+        keysWithheld: String(keysWithheldAtMount),
         huggingfaceApiKey: huggingfaceKey,
         geminiApiKey: geminiKey,
         claudeApiKey: claudeKey,
@@ -319,8 +346,29 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
     provider as AIProvider
   );
 
+  // PLAN_MANAGED_AI_KEY §8a — in managed mode the six key fields, the provider
+  // select, the model select and the per-provider rate limits are all noise:
+  // none of them affects anything, and a screen full of inert inputs invites
+  // the merchant to fill them in and wonder why nothing changes. The line
+  // saying how many keys are stored stays, with a Delete control — hiding the
+  // tab without that would leave "uninstall the app" as the only way to erase
+  // a credential they gave us.
+  // Hidden only under a PLAN with AI: there is no switch any more, the plan
+  // decides. A shop on the taster has no key by definition and MUST see the
+  // fields — adding a key is what takes it off the taster.
+  const keyFieldsHidden =
+    managedAi?.managedAiActive === true && managedAi.managedAiOffered === true;
+
   return (
     <>
+    {/* Only where this deployment OFFERS managed AI. While the feature is
+        switched off (MANAGED_AI_ENABLED) the card would describe something
+        that does not exist yet, which reads as a broken feature (and is one
+        in App Review). */}
+    {managedAi?.managedAiOffered && (
+      <ManagedAiCard {...managedAi} fetcher={fetcher} t={t} />
+    )}
+    {keyFieldsHidden ? null : (
     <Card>
       <BlockStack gap="500">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
@@ -333,7 +381,11 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             onDiscard={handleDiscard}
             saveText={t.products.saveChanges}
             discardText={t.content?.discardChanges || "Verwerfen"}
-            action="saveSettings"
+            action="saveAiKeys"
+            isSavingCurrentItem={
+              fetcher.state !== "idle" &&
+              fetcher.formData?.get("actionType") === "saveAiKeys"
+            }
             fetcherState={fetcher.state}
             fetcherFormData={fetcher.formData}
           />
@@ -388,13 +440,23 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   {modelsLoading && <Spinner size="small" />}
                 </InlineStack>
               }
-              options={availableModels.length > 0 ? availableModels : [{ label: t.settings.modelDefault, value: '' }]}
+              options={
+                availableModels.length > 0
+                  ? availableModels.map((o) =>
+                      o.value === unavailableModel
+                        ? { ...o, label: `${o.label} (${t.settings.modelUnavailable ?? "not available"})` }
+                        : o,
+                    )
+                  : [{ label: t.settings.modelDefault, value: '' }]
+              }
               value={selectedModel}
               onChange={setSelectedModel}
               disabled={modelsLoading}
               helpText={
                 modelsLoading
                   ? t.settings.loadingModels
+                  : unavailableModel && selectedModel === unavailableModel
+                  ? t.settings.modelUnavailableHelp ?? t.settings.modelHelp
                   : modelsFallbackReason
                   ? (t.settings as unknown as Record<string, string>)?.[`modelsFallback_${modelsFallbackReason}`] || t.settings.modelHelp
                   : t.settings.modelHelp
@@ -872,6 +934,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         </div>
       </BlockStack>
     </Card>
+    )}
   </>
   );
 }

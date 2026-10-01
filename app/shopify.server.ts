@@ -17,42 +17,48 @@ import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
 import { EncryptedPrismaSessionStorage } from "./utils/encrypted-session-storage.server";
 import { checkAndSyncSubscription } from "./services/billing.server";
+import {
+  DEFAULT_SHOPIFY_API_VERSION,
+  isSupportedApiVersion,
+  resolveApiVersionString,
+  type ShopifyApiVersionString,
+} from "./utils/api-version";
 
 /**
- * Map string API version (e.g., "2025-10") to ApiVersion enum
- * Falls back to October25 (2025-10) if not found or not set
+ * Map the pinned version STRING onto the SDK's ApiVersion enum.
  *
- * @shopify/shopify-api v13 removed the 2022-10 … 2024-07 enum members, so
- * those strings now fall through to the default instead of pinning a version
- * the SDK can no longer talk to.
+ * The list of supported strings and the default live in utils/api-version.ts,
+ * and this map is typed OVER that union — so a version added there without an
+ * enum member here (or vice versa) is a compile error, and the lookup below is
+ * statically known to hit. A `Record<string, ApiVersion>` would have made
+ * `versionMap[DEFAULT]` silently `undefined`, which hands the SDK its own
+ * LATEST version instead of the pin: the ungoverned version drift the plan
+ * (§1.0) exists to prevent.
+ *
+ * Which string wins is decided in ONE place, `resolveApiVersionString` — this
+ * function only translates. A second env-var read or a second fallback here is
+ * how the version the requests use and the version the cache *records* drift
+ * apart.
  */
+const VERSION_MAP: Record<ShopifyApiVersionString, ApiVersion> = {
+  "2024-10": ApiVersion.October24,
+  "2025-01": ApiVersion.January25,
+  "2025-04": ApiVersion.April25,
+  "2025-07": ApiVersion.July25,
+  "2025-10": ApiVersion.October25,
+  "2026-01": ApiVersion.January26,
+  "2026-04": ApiVersion.April26,
+  "2026-07": ApiVersion.July26,
+  "2026-10": ApiVersion.October26,
+  "unstable": ApiVersion.Unstable,
+};
+
 function getApiVersion(versionString?: string): ApiVersion {
-  const versionMap: Record<string, ApiVersion> = {
-    "2024-10": ApiVersion.October24,
-    "2025-01": ApiVersion.January25,
-    "2025-04": ApiVersion.April25,
-    "2025-07": ApiVersion.July25,
-    "2025-10": ApiVersion.October25,
-    "2026-01": ApiVersion.January26,
-    "2026-04": ApiVersion.April26,
-    "2026-07": ApiVersion.July26,
-    "2026-10": ApiVersion.October26,
-    "unstable": ApiVersion.Unstable,
-  };
-
-  const defaultVersion = ApiVersion.October25; // Default to 2025-10 for MEDIA_IMAGE translation support
-
-  if (!versionString) {
-    return defaultVersion;
+  const raw = versionString?.trim().toLowerCase();
+  if (raw && !isSupportedApiVersion(raw)) {
+    logger.warn(`[SHOPIFY.SERVER] Unknown API version "${versionString}", falling back to ${DEFAULT_SHOPIFY_API_VERSION}`);
   }
-
-  const version = versionMap[versionString.toLowerCase()];
-  if (!version) {
-    logger.warn(`[SHOPIFY.SERVER] Unknown API version "${versionString}", falling back to 2025-10`);
-    return defaultVersion;
-  }
-
-  return version;
+  return VERSION_MAP[resolveApiVersionString(versionString)];
 }
 
 // Get API version from environment variable
@@ -85,7 +91,11 @@ logger.debug(`[SHOPIFY.SERVER]  - NODE_ENV: ${process.env.NODE_ENV || "developme
 
 const scopes = (process.env.SHOPIFY_SCOPES || "").split(",").map(s => s.trim()).filter(Boolean);
 logger.info(`[SHOPIFY.SERVER] Parsed scopes (${scopes.length}): ${scopes.join(",")}`);
-logger.debug(`[SHOPIFY.SERVER] Using API version: ${selectedApiVersion}`);
+// INFO, not debug: a schema-level rejection from Shopify ("field is not
+// defined on X") is always a question about which version this process talks,
+// and the answer lives in a dashboard env var rather than in the repo — the
+// 2026-04 inventory rework cost every stock write before anyone could see it.
+logger.info(`[SHOPIFY.SERVER] Using API version: ${selectedApiVersion}`);
 
 const shopify = shopifyApp({
   apiKey,
@@ -181,6 +191,15 @@ import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
+import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
+import { TranslationDriftAutoRunService } from "./services/translations/translation-drift-auto-run.service";
+
+/**
+ * The managed-AI smoke test runs ONCE per process. It is a real provider call,
+ * so firing it per authenticated request would be a small standing bill and a
+ * lot of identical log lines.
+ */
+let managedSmokeTestFired = false;
 
 import { hostParamRejection } from "./utils/shopify-host-param.server";
 
@@ -236,6 +255,23 @@ const enhancedAuthenticate = {
     // waited for a human.
     IndexNowAutoSubmitService.getInstance().start();
     SeoAuditAutoRunService.getInstance().start();
+    SeoCrawlAutoRunService.getInstance().start();
+    // The change event Shopify does not send for pages, articles, blogs and
+    // policies — see translation-drift-auto-run.service.ts.
+    TranslationDriftAutoRunService.getInstance().start();
+
+    // PLAN_MANAGED_AI_KEY §9.6 — does the operator credential actually ANSWER?
+    // A table lookup cannot see a retired model id or a revoked key, and a
+    // managed mode pointing at one is a 100% failure rate for paying
+    // customers, discovered by them. Fired ONCE per process, not awaited: a
+    // provider having a bad minute while we deploy is not a reason to hold up
+    // a shop whose own key works.
+    if (!managedSmokeTestFired) {
+      managedSmokeTestFired = true;
+      void import("./services/ai/managed-smoke-test.server")
+        .then((m) => m.startManagedAiSmokeSchedule())
+        .catch(() => undefined);
+    }
 
     return { admin, session };
   }

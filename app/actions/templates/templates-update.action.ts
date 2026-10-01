@@ -2,6 +2,7 @@ import { data as json } from "react-router";
 import { ENABLE_THEME_PRIMARY_EDIT } from "~/config/constants";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
+import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
@@ -10,6 +11,7 @@ import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType, selectedThemeId } = ctx;
@@ -142,6 +144,11 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   }
 
   const skippedKeys: string[] = [];
+  /** The Task row this save handed the detached re-translation to — one group
+   *  for the whole theme group, so at most one. Theme content has no webhook
+   *  and no sync-side detection, so this response is the page's only chance to
+   *  learn that a run is under way. */
+  const retranslationTaskIds: string[] = [];
   const noDigestKeys: string[] = [];
   const failedDeleteKeys: string[] = [];
   const shopifyErrors: string[] = [];
@@ -381,6 +388,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               (t: { key: string }) => t.key
             )
           );
+          // Clearing a translation is a merchant write like any other, so an
+          // in-flight theme repair must abandon the rest rather than re-create
+          // what was just deleted. Claimed only once Shopify CONFIRMS it
+          // removed something — every other claim in this app waits for Shopify
+          // to hold the value, and aborting a run over a removal that silently
+          // no-opped would cost that run for nothing. Global layer only.
+          if (!marketId && removedKeys.size > 0) markTranslationSaved(resId);
+
           const notRemoved = keysToDelete.filter((k) => !removedKeys.has(k));
           if (notRemoved.length > 0) {
             logger.error("[TEMPLATES] Shopify returned no error but removed no translation for cleared keys", {
@@ -578,7 +593,19 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         // a theme whose default locale ≠ the shop's primary locale).
         const hasLocaleDefault = Array.from(keysByFilename.keys()).some(isLocaleDefaultFile);
         const filenames = Array.from(keysByFilename.keys());
-        if (hasLocaleDefault) filenames.push("locales/*.default.json");
+        // …and the primary language's OWN locale file. A theme whose default
+        // locale is not the shop's primary one (Dawn ships en.default.json, a
+        // German shop's texts live in de.json) serves the primary storefront
+        // from `locales/<primary>.json`, and that is where the value the
+        // merchant sees and edits sits. Writing the default file instead found
+        // no matching value, pushed nothing and failed every such save
+        // ("Primary locale save did not fully persist", pushedCount 0).
+        if (hasLocaleDefault) {
+          filenames.push("locales/*.default.json");
+          for (const name of new Set([`locales/${primaryLocale}.json`, `locales/${primaryLocale.toLowerCase()}.json`])) {
+            if (!filenames.includes(name)) filenames.push(name);
+          }
+        }
 
         logger.info("[TEMPLATES] Reading theme files from Shopify", {
           context: "Templates",
@@ -603,6 +630,132 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         const fileShopifyErrors: string[] = [];
         const leadingCommentRegex = /^\s*\/\*[\s\S]*?\*\/\s*/;
 
+        // A locale-content key IS a JSON path: `templates.404.title` is
+        // `templates["404"].title` in the locale file. Asking by path is exact,
+        // where the value search beside it matches the old text ANYWHERE and
+        // can rewrite a different key that happens to hold the same words
+        // ("Suchen", "Schliessen", an untranslated copy).
+        const pathOf = (key: string) => key.split(".");
+        const getByPath = (obj: unknown, key: string): unknown => {
+          let cursor: unknown = obj;
+          for (const part of pathOf(key)) {
+            if (!cursor || typeof cursor !== "object") return undefined;
+            cursor = (cursor as Record<string, unknown>)[part];
+          }
+          return cursor;
+        };
+        const replaceByPath = (
+          obj: unknown,
+          replacements: Map<string, { oldValue: string; newValue: string; keyHint: string }>,
+        ): Set<string> => {
+          const done = new Set<string>();
+          for (const [key, { oldValue, newValue }] of replacements) {
+            if (getByPath(obj, key) !== oldValue) continue;
+            const parts = pathOf(key);
+            const parent = getByPath(obj, parts.slice(0, -1).join(".")) as Record<string, unknown>;
+            parent[parts[parts.length - 1]] = newValue;
+            done.add(key);
+          }
+          return done;
+        };
+        // Per KEY, which locale file holds its old primary value at its own
+        // path — the exact constructed name, the primary language's own file,
+        // then the theme's default file, first match wins. A partial de.json
+        // serves some keys itself and leaves the rest to the default file, so
+        // one file per SAVE would miss every key of the other.
+        const assignLocaleKeysByPath = (
+          filename: string,
+          keys: string[],
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ): { groups: Map<string, { node: any; keys: string[] }>; unresolved: string[] } => {
+          const lower = (value: unknown) => (typeof value === "string" ? value.toLowerCase() : "");
+          const own = `locales/${primaryLocale.toLowerCase()}.json`;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const candidates: any[] = [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => lower(n.filename) === filename.toLowerCase()),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => lower(n.filename) === own),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => typeof n.filename === "string" && isLocaleDefaultFile(n.filename)),
+          ].filter((node, index, all) => node && all.indexOf(node) === index);
+          const parsed = candidates.map((node) => {
+            const raw = node?.body?.content ?? node?.body;
+            if (typeof raw !== "string") return undefined;
+            try {
+              return JSON.parse(raw.replace(leadingCommentRegex, ""));
+            } catch {
+              return undefined;
+            }
+          });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const groups = new Map<string, { node: any; keys: string[] }>();
+          const unresolved: string[] = [];
+          for (const key of keys) {
+            const oldValue = oldValueMap.get(key) ?? "";
+            const at = parsed.findIndex((json) => json !== undefined && getByPath(json, key) === oldValue);
+            if (at < 0) {
+              unresolved.push(key);
+              continue;
+            }
+            const node = candidates[at];
+            const group = groups.get(node.filename) ?? { node, keys: [] };
+            group.keys.push(key);
+            groups.set(node.filename, group);
+          }
+          return { groups, unresolved };
+        };
+
+        // Which locale file holds the primary values of `keys`: the exact
+        // constructed name first, then the primary language's own file, then
+        // the theme's default file — and among those the first that contains
+        // the most of the old values (checked on a throwaway parse, so the real
+        // replacement below still starts from the untouched content).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pickLocaleFileNode = (filename: string, keys: string[]): any => {
+          const lower = (value: unknown) => (typeof value === "string" ? value.toLowerCase() : "");
+          const own = `locales/${primaryLocale.toLowerCase()}.json`;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const candidates: any[] = [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => lower(n.filename) === filename.toLowerCase()),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => lower(n.filename) === own),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            fileNodes.find((n: any) => typeof n.filename === "string" && isLocaleDefaultFile(n.filename)),
+          ].filter((node, index, all) => node && all.indexOf(node) === index);
+          let best: { node: unknown; hits: number } | null = null;
+          for (const node of candidates) {
+            const raw = node?.body?.content ?? node?.body;
+            if (typeof raw !== "string") continue;
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(raw.replace(leadingCommentRegex, ""));
+            } catch {
+              continue;
+            }
+            const probe = new Map<string, { oldValue: string; newValue: string; keyHint: string }>();
+            for (const key of keys) {
+              const parts = key.split(".");
+              probe.set(key, { oldValue: oldValueMap.get(key) || "", newValue: "", keyHint: parts[parts.length - 1] });
+            }
+            const hits = replaceValuesInJson(parsed, probe).size;
+            if (!best || hits > best.hits) best = { node, hits };
+            if (hits === keys.length) break;
+          }
+          if (candidates.length > 1) {
+            logger.info("[TEMPLATES] Locale file chosen for primary values", {
+              context: "Templates",
+              requested: filename,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              chosen: (best?.node as any)?.filename ?? candidates[0]?.filename,
+              hits: best?.hits ?? 0,
+              keys: keys.length,
+            });
+          }
+          return best && best.hits > 0 ? best.node : candidates[0];
+        };
+
         // Build one themeFilesUpsert entry for a file. Kept free of outer failure
         // side-effects so it can be re-run for the autofix retry (it re-parses the
         // original Shopify content each call, so it is idempotent). When
@@ -613,6 +766,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           filename: string,
           keys: string[],
           normalizeSettings: boolean,
+          // A locale-file group already resolved PER KEY by JSON path (see
+          // `assignLocaleKeysByPath`): the node to write, and replace by path.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // `searchKeys`: keys of the SAME file that no path matched — searched
+          // by value in this one build, because two upsert entries for one
+          // file would each start from the original and the second would
+          // throw the first one's change away.
+          resolved?: { node: any; searchKeys?: Set<string> },
         ): {
           entry?: { filename: string; body: { type: string; value: string } };
           replacedKeys: string[];
@@ -626,13 +787,17 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           // theme may name it differently than our constructed name (casing, or a
           // different default locale), so fall back to the single *.default.json
           // node Shopify returned for the glob.
+          // For the default-locale file there can be TWO homes for a primary
+          // value — the primary language's own file, and the theme's default
+          // file — so the candidates are tried in that order and the one that
+          // actually holds the old values wins (see the filename list above).
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const fileNode =
-            fileNodes.find((n: any) => n.filename === filename) ??
-            (isLocaleDefaultFile(filename)
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              ? fileNodes.find((n: any) => typeof n.filename === "string" && isLocaleDefaultFile(n.filename))
-              : undefined);
+          const fileNode = resolved
+            ? resolved.node
+            : isLocaleDefaultFile(filename)
+            ? pickLocaleFileNode(filename, keys)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            : fileNodes.find((n: any) => n.filename === filename);
           const actualFilename: string = fileNode?.filename ?? filename;
 
           const rawContent = fileNode?.body?.content ?? fileNode?.body;
@@ -673,7 +838,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             replacements.set(key, { oldValue, newValue, keyHint });
           }
 
-          const replacedKeys = replaceValuesInJson(fileJson, replacements);
+          let replacedKeys: Set<string>;
+          if (resolved) {
+            const byPath = new Map([...replacements].filter(([k]) => !resolved.searchKeys?.has(k)));
+            const bySearch = new Map([...replacements].filter(([k]) => resolved.searchKeys?.has(k)));
+            replacedKeys = new Set([...replaceByPath(fileJson, byPath), ...replaceValuesInJson(fileJson, bySearch)]);
+          } else {
+            replacedKeys = replaceValuesInJson(fileJson, replacements);
+          }
           const missedKeys = keys.filter((k) => !replacedKeys.has(k));
 
           // Record the value that actually went into the file (post-normalization)
@@ -729,8 +901,38 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         // "autofix"/"error" push the merchant's HTML verbatim and only react on error.
         const filesToUpsert: Array<{ filename: string; body: { type: string; value: string } }> = [];
         const stagedKeys: string[] = [];
+        // Locale-file keys are resolved per key by path first; only what no
+        // file holds at its path falls back to the value search (a key whose
+        // path in the file differs from its translation key).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const passes: Array<{ filename: string; keys: string[]; resolved?: { node: any; searchKeys?: Set<string> } }> = [];
         for (const [filename, keys] of keysByFilename) {
-          const result = buildFileEntry(filename, keys, richtextMode === "normalize");
+          if (!isLocaleDefaultFile(filename)) {
+            passes.push({ filename, keys });
+            continue;
+          }
+          const { groups, unresolved } = assignLocaleKeysByPath(filename, keys);
+          const searchKeysByFile = new Map<string, Set<string>>();
+          if (unresolved.length > 0) {
+            const fallback = pickLocaleFileNode(filename, unresolved);
+            const shared = fallback && groups.get(fallback.filename);
+            if (shared) {
+              shared.keys.push(...unresolved);
+              searchKeysByFile.set(fallback.filename, new Set(unresolved));
+            } else {
+              passes.push({ filename, keys: unresolved });
+            }
+          }
+          for (const [actual, group] of groups) {
+            passes.push({
+              filename: actual,
+              keys: group.keys,
+              resolved: { node: group.node, searchKeys: searchKeysByFile.get(actual) },
+            });
+          }
+        }
+        for (const { filename, keys, resolved } of passes) {
+          const result = buildFileEntry(filename, keys, richtextMode === "normalize", resolved);
           if (result.error) {
             fileShopifyErrors.push(result.error);
             failedPrimaryKeys.push(...keys);
@@ -740,6 +942,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           // file (drifted content) — we could not locate it to replace, so it
           // cannot be saved. Report it instead of silently dropping it.
           if (result.missedKeys.length > 0) {
+            // Logged at WARN with the file: this used to reach the log only as
+            // the final summary line, which cannot tell a drifted value from a
+            // value that lives in a different file than the one searched.
+            logger.warn("[TEMPLATES] Old primary value not found in theme file", {
+              context: "Templates",
+              filename,
+              missedKeys: result.missedKeys,
+            });
             failedPrimaryKeys.push(...result.missedKeys);
             primarySaveErrors.push(
               `Could not locate the current value in the theme file for: ${result.missedKeys.slice(0, 5).join(", ")} (reload the content and try again)`
@@ -874,8 +1084,51 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // Only invalidate translations for fields whose primary value actually
     // changed on Shopify — a field that failed to save still has matching
     // primary content, so its translations must not be dropped.
+    // Merchant-switchable (Settings → Übersetzungen), failing OPEN.
+    const { loadTranslationChangePolicy } = await import(
+      "~/services/translations/translation-change-policy.server"
+    );
     const savedChangedFields = changedFields.filter((k) => pushedPrimaryKeys.has(k));
-    if (savedChangedFields.length > 0) {
+    const changePolicy =
+      savedChangedFields.length > 0 ? await loadTranslationChangePolicy(session.shop, db) : null;
+    // Theme content is repaired by THIS save or by nothing: no sync and no
+    // webhook in this app ever looks at a theme resource's translations. So
+    // with auto-translate on the block further down replaces the stale values
+    // and the deletion stands down — read through the policy, never written as
+    // `false`, because which of the two switches applies is that module's
+    // question. Without a known PRIMARY locale there is nothing to translate
+    // FROM, so that case keeps deleting.
+    // The locales are fetched FIRST, because the deletion decision depends on
+    // whether the repair can actually run: standing the purge down and then
+    // finding no locales left the stale theme translations live forever, on a
+    // surface nothing else revisits. The product path was restructured for
+    // exactly this.
+    let themeForeignLocales: string[] = [];
+    if (savedChangedFields.length > 0 && changePolicy?.autoTranslateExternalChanges) {
+      try {
+        const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
+        const localesData = await localesResponse.json();
+        themeForeignLocales = (localesData.data?.shopLocales || [])
+          .filter((l: { primary: boolean; published: boolean }) => !l.primary)
+          .map((l: { locale: string }) => l.locale);
+      } catch (localeError) {
+        // Non-fatal: the primary push has already succeeded.
+        logger.warn("[TEMPLATES] Could not load shop locales — falling back to the deletion", {
+          context: "Templates",
+          error: localeError instanceof Error ? localeError.message : String(localeError),
+        });
+      }
+    }
+    const retranslateTheme =
+      !!changePolicy?.autoTranslateExternalChanges &&
+      !!primaryLocale &&
+      themeForeignLocales.length > 0;
+    const purgeTheme =
+      !!changePolicy &&
+      (retranslateTheme
+        ? changePolicy.purgeOnPrimaryChange
+        : changePolicy.purgeUnreconciledSurfaces);
+    if (savedChangedFields.length > 0 && purgeTheme) {
       logger.debug("[TEMPLATES] Deleting translations for changed fields", {
         context: "Templates",
         keysToDelete: savedChangedFields,
@@ -894,10 +1147,40 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
       const localesData = await localesResponse.json();
       const foreignLocales = (localesData.data?.shopLocales || [])
-        .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+        .filter((l: { primary: boolean; published: boolean }) => !l.primary)
         .map((l: { locale: string }) => l.locale);
 
       if (foreignLocales.length > 0) {
+        // The MARKET overrides of these keys. Nothing re-translates one — every
+        // repair in this app writes global rows only — so once the theme text
+        // moves the override is as stale as the global row beside it, and a
+        // theme string has nothing else that ever revisits it.
+        try {
+          const { purgeMarketOverrides } = await import(
+            "~/services/translations/market-layer-purge.server"
+          );
+          const { themeTranslationMirror } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+          const marketGateway = new ShopifyApiGateway(admin, session.shop);
+          for (const [resId, keys] of changedKeysByResource) {
+            await purgeMarketOverrides({
+              gateway: marketGateway,
+              mirror: themeTranslationMirror(session.shop, groupId, domain),
+              refs: [{ resourceId: resId, resourceType: "OnlineStoreTheme" }],
+              locales: foreignLocales,
+              keys,
+              context: "theme",
+            });
+          }
+        } catch (marketError) {
+          logger.warn("[TEMPLATES] Market-override purge failed — those rows stay", {
+            context: "Templates",
+            error: marketError instanceof Error ? marketError.message : String(marketError),
+          });
+        }
+
         for (const [resId, keys] of changedKeysByResource) {
           try {
             const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
@@ -940,6 +1223,88 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
     }
 
+    // …or REPLACE them. One group for the whole save: a theme group's keys can
+    // sit on several theme resources, which is exactly the shape the repair is
+    // generic over — one Task row, one batched detection, one AI request per
+    // locale (chunked). Best-effort: the primary push has already succeeded, so
+    // nothing here may fail the save.
+    if (savedChangedFields.length > 0 && retranslateTheme) {
+      try {
+        const foreignLocales = themeForeignLocales;
+
+        {
+          const { reconcileAfterPrimarySave, themeTranslationMirror } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          const outcome = await reconcileAfterPrimarySave({
+            client: admin,
+            shop: session.shop,
+            // The GROUP is the theme group the merchant saved; each key names
+            // the theme resource its translation actually lives on.
+            resourceId,
+            resourceType: "OnlineStoreTheme",
+            // The AI prompt comes from `translateAs`; this only decides the
+            // Task BADGE, which must say "templates" and not "page". The row
+            // gets no LINK either way: the Tasks page derives that from the
+            // GID, and a theme group is not an item this app selects by id
+            // (`task-deep-link.shared.ts` answers null for it).
+            contentKind: "page",
+            taskResourceType: "templates",
+            resourceTitle: themeGroups?.find((g) => g.groupId === groupId)?.groupName || groupId,
+            // §5.2 cross-theme guard, the same one the foreign REGISTER path
+            // above applies: a stale or mis-scoped resource id would otherwise
+            // have translations written into a FOREIGN theme by this path while
+            // the sibling path in the very same request refuses the identical
+            // write. Theme-agnostic resources (no embedded theme id) and an
+            // unset selection are allowed, exactly as there.
+            changed: savedChangedFields
+              .map((key) => ({
+                resourceId: keyToResourceId.get(key) || resourceId,
+                resourceType: "OnlineStoreTheme",
+                key,
+                // A theme write lands in a FILE and is re-indexed afterwards,
+                // so the repair's read-back can still answer with the previous
+                // text. Naming what we pushed lets it tell that apart from a
+                // value it may translate — the normalised one, which is what
+                // the file actually holds.
+                expectedValue: pushedValueByKey.get(key) ?? updatedFields[key],
+              }))
+              .filter((entry) => {
+                const entryThemeId = extractThemeIdFromResourceId(entry.resourceId);
+                if (!selectedThemeId || !entryThemeId || entryThemeId === selectedThemeId) {
+                  return true;
+                }
+                logger.error("[TEMPLATES] Cross-theme re-translation blocked", {
+                  context: "Templates",
+                  resourceId: entry.resourceId,
+                  entryThemeId,
+                  selectedThemeId,
+                });
+                return false;
+              }),
+            foreignLocales,
+            policy: changePolicy!,
+            mirror: themeTranslationMirror(session.shop, groupId, domain),
+            translateAs: {
+              kind: "values",
+              context: "storefront theme texts",
+              sourceLocale: primaryLocale,
+            },
+          });
+          // Detached, so its Task id is the page's only handle on it. Theme
+          // content has no webhook and no sync-side detection, so without this
+          // nothing at all would tell the editor the new texts had landed.
+          if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
+        }
+      } catch (retranslateError) {
+        logger.warn("[TEMPLATES] Theme re-translation failed — translations kept", {
+          context: "Templates",
+          groupId,
+          error: retranslateError instanceof Error ? retranslateError.message : String(retranslateError),
+        });
+      }
+    }
+
     // Surface any primary fields that did NOT reach Shopify. Without this the
     // handler would fall through to success: true while the storefront kept the
     // old value — the silent-save bug on Theme-Standardinhalte (locale content).
@@ -954,7 +1319,16 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         pushedCount: pushedPrimaryKeys.size,
       });
       return json(
-        { success: false, error: message, actionType: "updateContent" },
+        {
+          success: false,
+          error: message,
+          actionType: "updateContent",
+          // The repair above has already started for the keys that DID land, so
+          // its ids travel even on this branch. Dropping them left a run
+          // nothing would ever wait for, on the one surface with neither a
+          // webhook nor a sync to notice later.
+          retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+        },
         { status: 500 }
       );
     }
@@ -976,6 +1350,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     for (const [key, value] of entriesToUpsert) {
       const keyResId = keyToResourceId.get(key) || resourceId;
       const keyThemeId = extractThemeIdFromResourceId(keyResId) ?? "";
+      // Claim the resource the merchant just translated, on the GLOBAL layer
+      // only: a detached theme re-translation writes global rows, so a MARKET
+      // override edit can never collide with it — and aborting the run over one
+      // would leave its remaining entries in neither list, on a surface nothing
+      // else revisits.
+      if (!marketId) markTranslationSaved(keyResId);
       dbOps.push(
         db.themeTranslation.upsert({
           where: {
@@ -1029,5 +1409,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     }
   }
 
-  return json({ success: true, actionType: "updateContent" });
+  return json({
+    success: true,
+    actionType: "updateContent",
+    retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+  });
 }

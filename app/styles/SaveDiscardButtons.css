@@ -5,7 +5,7 @@
 
 /* Optional: Add slim button styling if needed */
 .save-discard-buttons-container.slim-buttons .Polaris-Button {
-  min-height: 32px;
+  min-height: var(--app-control-height);
   padding: 0.5rem 1rem;
 }
 

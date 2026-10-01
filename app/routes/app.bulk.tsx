@@ -13,18 +13,28 @@
  * action instead (the task type keeps its historical name — renaming would
  * break running tasks), which runs it as a detached, heartbeat-updated Task.
  *
- * All grid state lives in the URL (?type=&locale=&market=&q=&f=&sort=&page=
+ * All grid state lives in the URL (?type=&gridLocale=&market=&q=&f=&sort=&page=
  * &pageSize=) and navigation goes through useAppNavigation() so the Shopify
- * session params (host/shop/embedded) survive.
+ * session params (host/shop/embedded) survive. The language is `gridLocale`
+ * and NOT `locale`: that name is Shopify's — it appends the merchant's ADMIN
+ * UI language under it on every embedded request, `resolveMerchantLocale`
+ * renders the app from it, and useAppNavigation carries it everywhere. Writing
+ * the grid's language there switched the whole admin UI for every merchant who
+ * had not stored an app language; reading it meant the grid opened in the
+ * admin's language.
  */
 
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useBackgroundTaskRefresh } from "../hooks/useBackgroundTaskRefresh";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Card, BlockStack, InlineStack, Text, TextField, Button, Select, Banner, Modal, Tooltip } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
+import { useThemeTemplateSuffixes } from "../hooks/useThemeTemplateSuffixes";
+import { templateResourceFor, type ThemeTemplateResource } from "../services/theme-templates.shared";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
 import { AppSaveBar } from "../components/AppSaveBar";
@@ -44,6 +54,7 @@ import {
   parseSortParam,
   serializeSortParam,
   resolveCellValue,
+  isPickerColumn,
   buildColumnsForType,
   isValidBulkDiffEntry,
   parseMoney,
@@ -51,7 +62,6 @@ import {
   applyPriceAction,
   BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
   BULK_COLUMNS_BY_TYPE,
-  BULK_FILTER_IDS,
   canonicalFieldNameForColumn,
   aiFieldKey,
   isListShapedColumn,
@@ -63,8 +73,7 @@ import {
   isFeaturedImageAltColumn,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
-  FILTER_IDS_BY_SET,
-  filterSetForType,
+  filterIdsForType,
   MAX_SYNC_SAVE,
   MAX_TASK_CALLS,
   MAX_BULK_TASK_ITEMS,
@@ -88,7 +97,10 @@ import {
 import {
   CSV_EXPORT_MAX_ROWS,
   CSV_IMPORT_MAX_BYTES,
+  CSV_IMPORT_MAX_ROWS,
+  decodeCsvBytes,
   delimiterForAppLanguage,
+  type CsvFileEncoding,
 } from "../services/bulk-editor/csv.shared";
 // Excel-paste rectangle + undo stack (§8.3/§8.4) — client-safe pure pieces.
 import {
@@ -118,7 +130,7 @@ import { CsvImportModal } from "../components/bulk-editor/CsvImportModal";
 // Type-only imports from the resource routes / server service — erased at
 // compile time, so nothing server-only reaches the client bundle.
 import type { BulkCsvExportPayload } from "./app.bulk.export";
-import type { CsvImportActionResult } from "./app.bulk.import";
+import type { CsvImportActionResult, CsvImportApplyActionResult } from "./app.bulk.import";
 import type { CsvImportPreview } from "../services/bulk-editor/csv-import.server";
 import { BulkLanguageBar, shouldRenderBulkLanguageBar } from "../components/bulk-editor/BulkLanguageBar";
 import { BulkCellMenu, type BulkCellActions } from "../components/bulk-editor/BulkCell";
@@ -126,6 +138,7 @@ import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
 import type { DataResponse } from "~/types/data-response";
+import { translationForeignLocales } from "~/services/translations/stale-translations.shared";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -290,7 +303,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const search = url.searchParams.get("q") || "";
   const filters = (url.searchParams.get("f") || "")
     .split(",")
-    .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
+    .filter((f): f is BulkFilterId => (filterIdsForType(type) as string[]).includes(f));
   const sort = parseSortParam(type, url.searchParams.get("sort"));
   // Image rows only: show just the pictures of ONE object. Validated as a GID
   // so a hand-crafted param can only ever narrow the result, never reshape the
@@ -309,7 +322,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     new ShopifyContentService(admin as never).loadMarkets().catch(() => ({ markets: [] })),
   ]);
   const locales = shopLocales
-    .filter((l) => l.published || l.primary)
+    // Unpublished locales are editable too: a language being prepared before
+    // launch is exactly where a grid of missing translations is needed.
     .sort((a, b) => Number(b.primary) - Number(a.primary))
     .map((l) => ({ locale: l.locale, name: l.name || l.locale, primary: l.primary }));
   const markets = marketsResult.markets.map((m) => ({ id: m.id, name: m.name }));
@@ -318,7 +332,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // "" (primary) instead of silently mislabeling primary content as a
   // translation; a market requires a foreign locale (primary is always
   // global) and must be one of the ACTIVE markets.
-  const rawLocale = url.searchParams.get("locale") || "";
+  // `gridLocale`, never `locale` — see the header note: `locale` is Shopify's
+  // admin-UI-language param. An old bookmark opens the primary language rather
+  // than a foreign one, because honouring the old name would be
+  // indistinguishable from honouring Shopify's.
+  const rawLocale = url.searchParams.get("gridLocale") || "";
   const locale = locales.some((l) => !l.primary && l.locale === rawLocale) ? rawLocale : "";
   const rawMarket = url.searchParams.get("market") || "";
   const marketId = locale !== "" && markets.some((m) => m.id === rawMarket) ? rawMarket : "";
@@ -371,7 +389,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       moType,
       // Primary-view "missing translation" (blue) colour needs the published
       // foreign locales (already loaded above).
-      foreignLocales: shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale),
+      foreignLocales: translationForeignLocales(shopLocales),
+      // The category column shows its names in the shop's language — the
+      // language the picker's list is in, too.
+      categoryLocale: shopLocales.find((l) => l.primary)?.locale ?? "",
     }),
     // Currency suffix for the money columns (Plan §5.2) — variant view only;
     // process-cached, so this is one query per shop per boot.
@@ -408,7 +429,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 type ActionResult =
-  | { ok: true; saved: number; failures: BulkFailure[] }
+  | {
+      ok: true;
+      saved: number;
+      failures: BulkFailure[];
+      /** Background re-translations this save started, and how many rows were
+       *  NOT re-translated because the per-save cap was reached. */
+      retranslation?: {
+        started: number;
+        translations: number;
+        skipped: number;
+        capped: number;
+        /** Task rows of this save's background runs — polled for the DISPLAY
+         *  refresh below, never for a write. */
+        taskIds?: string[];
+      };
+    }
   | { ok: false; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
@@ -456,12 +492,23 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   // Phase 4b: the published foreign locales are the target set for the
   // primary-save stale-translation invalidation (cached read).
   const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-  const foreignLocales = (await getCachedShopLocales(admin, shop).catch(() => []))
-    .filter((l) => l.published && !l.primary)
-    .map((l) => l.locale);
+  const shopLocalesForSave = await getCachedShopLocales(admin, shop).catch(() => []);
+  const foreignLocales = translationForeignLocales(shopLocalesForSave);
+  // The source language of the auto-translation's value prompts (option names,
+  // metafield values, alt texts). A failed lookup answers [] — never a wrong
+  // locale — and those surfaces then follow the stored deletion answer.
+  const primaryLocale = shopLocalesForSave.find((l) => l.primary)?.locale;
 
-  const result = await applyBulkDiff({ db, shop, admin, columnsByType, foreignLocales }, diff);
-  return json<ActionResult>({ ok: true, saved: result.saved, failures: result.failures });
+  const result = await applyBulkDiff(
+    { db, shop, admin, columnsByType, foreignLocales, primaryLocale },
+    diff,
+  );
+  return json<ActionResult>({
+    ok: true,
+    saved: result.saved,
+    failures: result.failures,
+    ...(result.retranslation ? { retranslation: result.retranslation } : {}),
+  });
 };
 
 /** Deep-link target per content type for the row's "open in editor" action.
@@ -499,7 +546,19 @@ const LEGACY_COLUMNS_STORAGE_KEY = "contentpilot:bulkMeta:columns";
  * grid for a type. Product defaults to a compact "image + meta" view to fit
  * on-screen without horizontal scrolling for the common case. */
 const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
-  product: ["image", "field.title", "field.productType", "field.handle", "field.seoTitle", "field.seoDescription"],
+  // `var.price` is visible from the start: "where is the price column" is what
+  // a merchant asks first, and the honest answer ("on the variant rows") was
+  // correct and unhelpful. On a product with several variants the cell says so
+  // rather than showing one of them.
+  product: [
+    "image",
+    "field.title",
+    "field.productType",
+    "var.price",
+    "field.handle",
+    "field.seoTitle",
+    "field.seoDescription",
+  ],
   variant: ["image", "productTitle", "variantTitle", "var.sku", "var.price", "var.compareAtPrice", "var.barcode"],
   collection: ["image", "field.title", "field.handle", "field.seoTitle", "field.seoDescription", "img.featuredAlt"],
   article: [
@@ -519,6 +578,34 @@ const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
   metaobject: ["moDisplayName", "moHandle"],
   image: ["image", "imageUsage", "position", "field.altText"],
 };
+
+/**
+ * A row type → the template family whose files `field.templateSuffix` offers.
+ *
+ * Goes through `templateResourceFor` rather than restating its answers, so the
+ * blog tab's one real subtlety cannot drift: `templates/article.*` renders ONE
+ * POST and `templates/blog.*` the post LIST, which is the distinction that
+ * function takes `isBlogContainer` for — and which the grid already has in the
+ * row type itself. Every other type maps to its content type; the four with no
+ * templates at all (variant, image, policy, metaobject) answer null and never
+ * ask.
+ */
+function templateResourceForRowType(type: BulkRowType): ThemeTemplateResource | null {
+  switch (type) {
+    case "product":
+      return templateResourceFor("products");
+    case "collection":
+      return templateResourceFor("collections");
+    case "page":
+      return templateResourceFor("pages");
+    case "article":
+      return templateResourceFor("blogs", { isBlogContainer: false });
+    case "blog":
+      return templateResourceFor("blogs", { isBlogContainer: true });
+    default:
+      return null;
+  }
+}
 
 /** Maps a legacy stored column name ("title", "image", "blogTitle") to the
  * descriptor id ("field.title", "image", "blogTitle"). */
@@ -584,6 +671,7 @@ export default function BulkEditor() {
   const data = useLoaderData<typeof loader>();
   const { gated, rows, allowedTypes, type, page, pageSize, total, search, filters, locale, marketId } = data;
   const { t, locale: uiLocale } = useI18n();
+  const { showInfoBox } = useInfoBox();
   const { handleNavigate } = useAppNavigation();
   const revalidator = useRevalidator();
   const b = t.bulkEditor;
@@ -599,6 +687,14 @@ export default function BulkEditor() {
   // shows the preview and, after confirmation, submits the returned diff
   // through the NORMAL save pipeline (submitDiff below).
   const importFetcher = useFetcher<CsvImportActionResult>();
+  /** A confirmed LARGE import (more than MAX_SYNC_SAVE cells): the file goes
+   * back to the server, which applies it as a background Task in batches. */
+  const importApplyFetcher = useFetcher<CsvImportApplyActionResult>();
+  /** The file text and the layer the open preview was built for — what a
+   * large import posts back on confirm, never the grid's CURRENT selection. */
+  const importRequestRef = useRef<{ csv: string; type: string; locale: string; market: string } | null>(null);
+  /** The request the in-flight `csvImportApply` was posted with. */
+  const postedImportRequestRef = useRef<{ csv: string; type: string; locale: string; market: string } | null>(null);
   /** Manual trigger for the media-library cache — the image view is empty
    * beyond product media until it has run once. */
   const syncMediaLibraryFetcher = useFetcher();
@@ -614,6 +710,27 @@ export default function BulkEditor() {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
   const [lastSavedCount, setLastSavedCount] = useState<number | null>(null);
+  const [lastRetranslation, setLastRetranslation] = useState<
+    {
+      started: number;
+      translations: number;
+      skipped: number;
+      capped: number;
+      taskIds?: string[];
+    } | null
+  >(null);
+  /**
+   * Task rows of background repairs this SESSION started that have not been
+   * seen finished yet — a union across saves, not the latest save's list.
+   *
+   * A merchant saves again while the previous save's runs are still working,
+   * and the second save may start no repair at all (a foreign-locale edit
+   * starts none). Watching only the newest list would drop the first save's
+   * ids and its translations would land with nothing reloading the grid, which
+   * is the empty foreign cell the watch exists to remove. Cleared when the
+   * watch reports every id finished.
+   */
+  const [watchedTaskIds, setWatchedTaskIds] = useState<string[]>([]);
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
   const [overBudgetBanner, setOverBudgetBanner] = useState(false);
@@ -624,11 +741,17 @@ export default function BulkEditor() {
   const [priceActionBanner, setPriceActionBanner] = useState<number | null>(null);
   // ── CSV export/import + paste/undo state (Phase 6) ───────────────────────
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportWarning, setExportWarning] = useState<string | null>(null);
   /** One-download guard: the effect below fires on every render while the
    * fetcher holds data — remember what was already downloaded. */
   const downloadedExportKeyRef = useRef<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importPreview, setImportPreview] = useState<CsvImportPreview | null>(null);
+  /** How the file under preview was decoded — a non-UTF-8 file is named in
+   * the dialog so the merchant checks its umlauts before saving. */
+  const [importEncoding, setImportEncoding] = useState<CsvFileEncoding>("utf8");
+  /** "Import started: N rows" — the large-import twin of queuedBanner. */
+  const [importStartedBanner, setImportStartedBanner] = useState<{ rows: number; cells: number } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   /** "12 × 3 cells pasted" feedback (§8.3) with its undo action. */
   const [pasteBanner, setPasteBanner] = useState<{
@@ -863,7 +986,8 @@ export default function BulkEditor() {
     return combos.size;
   }, [dirty, locale, marketId]);
 
-  const saving = saveFetcher.state !== "idle" || bulkFetcher.state !== "idle";
+  const saving =
+    saveFetcher.state !== "idle" || bulkFetcher.state !== "idle" || importApplyFetcher.state !== "idle";
 
   useEffect(() => {
     if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
@@ -903,6 +1027,22 @@ export default function BulkEditor() {
       });
       setLastFailures(saveFetcher.data.failures);
       setLastSavedCount(saveFetcher.data.saved);
+      setLastRetranslation(saveFetcher.data.retranslation ?? null);
+      // A save that wrote every cell it was given is reported by the nav
+      // InfoBox and nowhere else: it auto-hides, it keeps a row in the bell,
+      // and it is the strip every other successful save in this app already
+      // announces through. The banner below stays for what did NOT happen —
+      // rows that failed, and translations that were not re-created — which
+      // has to stand still next to the grid it is about. A capped or skipped
+      // re-translation does NOT suppress this line: the save itself
+      // succeeded, and the two statements are about different things.
+      if (saveFetcher.data.failures.length === 0) {
+        showInfoBox(t.common.successSaved, "success");
+      }
+      const startedTaskIds = saveFetcher.data.retranslation?.taskIds ?? [];
+      if (startedTaskIds.length > 0) {
+        setWatchedTaskIds((prev) => [...new Set([...prev, ...startedTaskIds])]);
+      }
       // Undo snapshots taken before the save describe a pre-save world —
       // popping one would resurrect just-saved values as dirty edits (§8.4).
       undoStackRef.current = [];
@@ -914,6 +1054,32 @@ export default function BulkEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveFetcher.state, saveFetcher.data]);
 
+  // The save above revalidates IMMEDIATELY, which is seconds before the first
+  // answer of a detached auto-translation run comes back — so the grid shows
+  // empty foreign cells for translations that are on their way, and switching
+  // languages while the run works reloads the same emptiness. Nothing else ever
+  // tells this page the run finished.
+  //
+  // So: watch the Task rows THIS save started, and reload the DISPLAY once they
+  // are done. A revalidation re-runs the loader and nothing else — `edits`, the
+  // accumulated baselines and the undo stack are the page's own state and stay
+  // exactly as they are, and no form is submitted. There is no autosave here,
+  // and there must never be one.
+  useBackgroundTaskRefresh(watchedTaskIds, ({ settled, follow }) => {
+    // Drop exactly what settled and pick up what a settled task pointed at (a
+    // large save runs inside a task of its own; its repairs are further rows).
+    // Never a wholesale reset: a save that landed while the watch was running
+    // has already added its ids.
+    const done = new Set(settled);
+    setWatchedTaskIds((prev) => [
+      ...new Set([...prev.filter((id) => !done.has(id)), ...follow]),
+    ]);
+    // Per batch, not once at the end: twenty-four of twenty-five groups
+    // finishing in half a minute must not keep showing empty cells until the
+    // slowest chain ends. The loader read is idempotent and display-only.
+    if (settled.length > 0) revalidator.revalidate();
+  });
+
   useEffect(() => {
     if (bulkFetcher.state !== "idle" || !bulkFetcher.data) return;
     if (bulkFetcher.data.success) {
@@ -924,6 +1090,14 @@ export default function BulkEditor() {
       // no way to retry. Merchant clears them explicitly via "Discard" once
       // the task completes.
       setQueuedBanner(true);
+      // A save too large for the request runs inside a `seoBulkMeta` task, and
+      // the auto-translation repairs it starts are named only in THAT task's
+      // result. Watching it is how the grid learns to reload for exactly the
+      // saves it matters most for.
+      if (bulkFetcher.data.taskId) {
+        const queuedId = bulkFetcher.data.taskId;
+        setWatchedTaskIds((prev) => [...new Set([...prev, queuedId])]);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkFetcher.state, bulkFetcher.data]);
@@ -963,6 +1137,20 @@ export default function BulkEditor() {
    * image preview modal show the same explanation. */
   const readOnlyTooltips: Record<CellReadOnlyReason, string> = {
     column: b.readOnlyTooltip,
+    // §3.6 — the merchant CAN clear this: a resync fills the block in. The
+    // reason says so rather than reading as a permanent restriction.
+    attributesNotSynced: b.readOnlyReasons.attributesNotSynced,
+    // §Phase 4 — same shape, different block and different discriminator
+    // (`commerceSyncedAt`), so a merchant is not sent to resync the wrong half.
+    commerceNotSynced: b.readOnlyReasons.commerceNotSynced,
+    missingInventoryItem: b.readOnlyReasons.missingInventoryItem,
+    // A product row's price cell. "Several variants" and "never cached" are
+    // two different answers, and one of them is a resync rather than a
+    // restriction.
+    multipleVariants: b.readOnlyReasons.multipleVariants,
+    variantsNotSynced: b.readOnlyReasons.variantsNotSynced,
+    priceNotSynced: b.readOnlyReasons.priceNotSynced,
+
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,
@@ -1053,6 +1241,26 @@ export default function BulkEditor() {
   /** Navigate with updated grid params (all state is in the URL, §3.3).
    * handleNavigate merges with the current params, so untouched ones —
    * including Shopify's host/shop/embedded — survive. */
+  /**
+   * "Open in editor" carries the grid's language, under the editor's OWN param
+   * name. It used to arrive by accident: the grid's `?locale=` was inherited by
+   * every navigation and the content routes read that same name — which is
+   * exactly the collision that made them open in the merchant's ADMIN UI
+   * language instead (see `initialLocale` in content-editor.types.ts). The
+   * primary locale is left off: it is what the editor opens in anyway, and a
+   * spelled-out one would take precedence over the language the merchant last
+   * worked in.
+   */
+  const editorLinkParams = (id: string) => {
+    const params = new URLSearchParams({ select: id });
+    // Derived here rather than reused from below: this helper is defined above
+    // the component's own `primaryLocaleCode`, and only ever CALLED from a
+    // click handler.
+    const primary = data.locales.find((l) => l.primary)?.locale ?? "";
+    if (locale && locale !== primary) params.set("contentLocale", locale);
+    return params;
+  };
+
   const navigateGrid = (overrides: Record<string, string>) => {
     setQueuedBanner(false);
     const params = new URLSearchParams();
@@ -1062,9 +1270,9 @@ export default function BulkEditor() {
 
   const handleTypeChange = (value: string) => {
     // Finding 13: prune the carried-over filter ids to the ones the NEW type
-    // actually speaks (same FILTER_IDS_BY_SET source the FilterBar renders
+    // actually speaks (same filterIdsForType source the FilterBar renders
     // from) — otherwise e.g. `missingSku` silently rides into a product view.
-    const validIds = FILTER_IDS_BY_SET[filterSetForType(value as BulkRowType)];
+    const validIds = filterIdsForType(value as BulkRowType);
     navigateGrid({
       type: value,
       page: "1",
@@ -1085,7 +1293,7 @@ export default function BulkEditor() {
   // (and the merchant's position) survive the switch (Plan §6.4). Selecting
   // the primary language clears the market (primary is always global).
   const handleLocaleChange = (value: string) =>
-    navigateGrid({ locale: value, ...(value === "" ? { market: "" } : {}) });
+    navigateGrid({ gridLocale: value, ...(value === "" ? { market: "" } : {}) });
   const handleMarketChange = (value: string) => navigateGrid({ market: value });
   const goToPage = (nextPage: number) => navigateGrid({ page: String(nextPage) });
   const handleSearchCommit = (q: string) => navigateGrid({ q, page: "1" });
@@ -1136,7 +1344,10 @@ export default function BulkEditor() {
       bulkFetcher.submit(
         {
           action: "seoBulkMeta",
-          contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[type],
+          // The diff's OWN row type, never the toolbar's: a confirmed CSV
+          // import whose preview was requested before a type switch still
+          // carries the rows it was built for.
+          contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[diffToSave[0].rowType],
           diff: JSON.stringify(diffToSave),
         },
         { method: "post", action: "/api/ai" },
@@ -1229,6 +1440,11 @@ export default function BulkEditor() {
     const editable = visibleRows.map((row) =>
       displayColumns.map((col) => {
         const resolved = resolveCellValue(row, col);
+        // A PICKER cell's value is a GID no clipboard carries — a pasted
+        // category name or collection title would only be refused by the save
+        // (or, for memberships, read as "leave everything" by a lenient
+        // parser). Treated like a read-only cell, so the rectangle flows past it.
+        if (isPickerColumn(col)) return false;
         return resolved.editable && (!isForeign || col.translatable);
       }),
     );
@@ -1283,6 +1499,7 @@ export default function BulkEditor() {
 
   const handleExport = () => {
     setExportError(null);
+    setExportWarning(null);
     const params = new URLSearchParams({
       type,
       locale,
@@ -1314,6 +1531,16 @@ export default function BulkEditor() {
       return;
     }
     if (!payload.csv || !payload.filename) return;
+    // Not an error — the file is delivered — but said NOW: a file too large to
+    // import back is otherwise discovered after the editing is done.
+    setExportWarning(
+      payload.exceedsImportLimit
+        ? b.csv.exportExceedsImport.replace(
+            "{max}",
+            String(Math.round(CSV_IMPORT_MAX_BYTES / (1024 * 1024))),
+          )
+        : null,
+    );
     const key = `${payload.filename}:${payload.generatedAt ?? 0}`;
     if (downloadedExportKeyRef.current === key) return;
     downloadedExportKeyRef.current = key;
@@ -1322,29 +1549,101 @@ export default function BulkEditor() {
     const a = document.createElement("a");
     a.href = url;
     a.download = payload.filename;
+    // Attached and revoked a tick later: Firefox and older Safari cancel a
+    // download whose object URL is revoked in the same task as the click.
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportFetcher.state, exportFetcher.data]);
 
   // ── CSV import (§8.2 — Pro; preview first, save through submitDiff) ──────
 
+  const importMaxMb = String(Math.round(CSV_IMPORT_MAX_BYTES / (1024 * 1024)));
+
+  /** The merchant-facing sentence for a refused preview OR a refused apply.
+   *  `request` is the layer that was POSTED — the scope-mismatch message names
+   *  it, not whatever the grid shows by the time the answer arrives. */
+  const importErrorText = (
+    result: Exclude<CsvImportActionResult | CsvImportApplyActionResult, { ok: true } | CsvImportPreview>,
+    request: { locale: string; market: string } | null,
+  ): string => {
+    switch (result.error) {
+      case "tooLarge":
+        return b.csv.fileTooLarge.replace("{max}", importMaxMb);
+      case "tooManyRows":
+        return b.csv.tooManyRows.replace("{max}", String(CSV_IMPORT_MAX_ROWS));
+      case "empty":
+        return b.csv.emptyFile;
+      case "noIdColumn":
+        return b.csv.noIdColumn;
+      case "badEncoding":
+        return b.csv.badEncoding;
+      case "scopeMismatch":
+        return b.csv.scopeMismatch
+          .replace("{file}", importScopeLabel(result.fileLocale, result.fileMarketId))
+          .replace(
+            "{view}",
+            request
+              ? importScopeLabel(request.locale, request.market)
+              : importScopeLabel(locale, isForeign ? marketId : ""),
+          );
+      case "gated":
+        return b.csv.importProTooltip;
+      case "alreadyRunning":
+        return b.csv.alreadyRunning;
+      case "noChanges":
+        return b.csv.preview.noChanges;
+      case "invalidLocale":
+        return result.message;
+      default:
+        return b.csv.importFailed;
+    }
+  };
+
+  /** "Deutsch (Primär)" / "Français" / "Français · Schweiz" — the layer a CSV
+   * import writes into, named in the preview and in a scope-mismatch refusal.
+   * An unknown code or market (a file from another shop) shows as-is. */
+  const importScopeLabel = (scopeLocale: string, scopeMarketId: string): string => {
+    const code = scopeLocale || data.locales.find((l) => l.primary)?.locale || "";
+    const language = localeNameByCode.get(code) ?? code;
+    const base = scopeLocale === "" ? `${language} ${b.primaryLocaleSuffix}` : language;
+    if (scopeMarketId === "") return base;
+    const market = data.markets.find((m) => m.id === scopeMarketId)?.name ?? scopeMarketId;
+    return `${base} · ${market}`;
+  };
+
   const handleImportFile = async (file: File) => {
     setImportError(null);
-    // UX pre-check only — the server re-enforces the byte cap (§8.2).
-    if (file.size > CSV_IMPORT_MAX_BYTES) {
-      setImportError(b.csv.fileTooLarge.replace("{max}", "5"));
+    // Unsaved grid edits and an import do not mix: the import diff is built
+    // against the DB, a successful save prunes every submitted key (dropping
+    // a pending grid edit of the same cell in favour of the file, silently)
+    // and clears the undo stack of edits that were never saved.
+    if (dirty.length > 0 || offPageEditCount > 0) {
+      setImportError(b.csv.unsavedEdits);
       return;
     }
-    const text = await file.text();
+    // Decoded HERE, not with file.text() (always UTF-8): Excel's default CSV
+    // format is Windows-1252, see decodeCsvBytes. The raw-size check only
+    // stops an absurd file before it is read; the real cap is measured on
+    // the DECODED text in UTF-8 — what the server measures — or a
+    // Windows-1252 file full of umlauts passes here and fails there, and a
+    // UTF-16 file (two bytes per letter) is refused for nothing.
+    if (file.size > CSV_IMPORT_MAX_BYTES * 2) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
+      return;
+    }
+    const { text, encoding } = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
+    if (new TextEncoder().encode(text).length > CSV_IMPORT_MAX_BYTES) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", importMaxMb));
+      return;
+    }
+    setImportEncoding(encoding);
+    const request = { csv: text, type, locale, market: isForeign ? marketId : "" };
+    importRequestRef.current = request;
     importFetcher.submit(
-      {
-        actionType: "csvImportPreview",
-        type,
-        locale,
-        market: isForeign ? marketId : "",
-        csv: text,
-      },
+      { actionType: "csvImportPreview", ...request },
       { method: "post", action: "/app/bulk/import" },
     );
   };
@@ -1355,33 +1654,49 @@ export default function BulkEditor() {
     if (result.ok) {
       setImportPreview(result);
     } else {
-      setImportError(
-        result.error === "tooLarge"
-          ? b.csv.fileTooLarge.replace("{max}", "5")
-          : result.error === "tooManyRows"
-            ? b.csv.tooManyRows.replace("{max}", "10000")
-            : result.error === "empty"
-              ? b.csv.emptyFile
-              : result.error === "noIdColumn"
-                ? b.csv.noIdColumn
-                : b.csv.importFailed,
-      );
+      setImportError(importErrorText(result, importRequestRef.current));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importFetcher.state, importFetcher.data]);
 
-  const importOverBudget = (importPreview?.estimatedCalls ?? 0) > MAX_TASK_CALLS;
-  // Finding 2: >MAX_SYNC_SAVE cells route to the task path, which caps one
-  // save at MAX_BULK_TASK_ITEMS cells — block the confirm (with the reason
-  // shown in the modal) instead of 400ing after a confirmed preview.
-  const importOverCellLimit = (importPreview?.cellsChanged ?? 0) > MAX_BULK_TASK_ITEMS;
-
+  // A small import goes through the grid's own save (≤ MAX_SYNC_SAVE cells,
+  // never near a cap); a larger one is applied server-side in batches, so
+  // neither the cell cap nor the call budget of ONE save applies to it.
   const handleImportConfirm = () => {
-    if (!importPreview || importOverBudget || importOverCellLimit) return;
-    const diff = importPreview.diff;
+    if (!importPreview || saving) return;
+    const preview = importPreview;
     setImportPreview(null);
-    submitDiff(diff);
+    if (!preview.applyInBackground) {
+      submitDiff(preview.diff);
+      return;
+    }
+    const request = importRequestRef.current;
+    if (!request) return;
+    postedImportRequestRef.current = request;
+    importApplyFetcher.submit(
+      { actionType: "csvImportApply", ...request },
+      { method: "post", action: "/app/bulk/import" },
+    );
   };
+
+  useEffect(() => {
+    if (importApplyFetcher.state !== "idle" || !importApplyFetcher.data) return;
+    const result = importApplyFetcher.data;
+    const posted = postedImportRequestRef.current;
+    if (result.ok) {
+      // Only the request THIS answer belongs to: a second file previewed while
+      // the first import was starting must keep its own.
+      if (importRequestRef.current === posted) importRequestRef.current = null;
+      setImportError(null);
+      setImportStartedBanner({ rows: result.rows, cells: result.cells });
+      // Same watch as a large grid save: the grid reloads when the import (and
+      // every auto-translation run it starts) has finished.
+      setWatchedTaskIds((prev) => [...new Set([...prev, result.taskId])]);
+      return;
+    }
+    setImportError(importErrorText(result, posted));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importApplyFetcher.state, importApplyFetcher.data]);
 
   // ── Price bulk actions (Plan §5.6) ───────────────────────────────────────
   // Applied to the CURRENT (filtered, loaded) selection — i.e. the rows the
@@ -1409,6 +1724,9 @@ export default function BulkEditor() {
     const next = { ...edits };
     for (const row of visibleRows) {
       if (row.type !== "variant") continue;
+      // A price the cache never received renders read-only ("price not
+      // loaded"); an action must not fill a cell the merchant cannot touch.
+      if (!row.price) continue;
       const current = currentPriceOf(row);
       if (action.id === "compareAtFromPrice") {
         if (current === null) continue;
@@ -1693,9 +2011,10 @@ export default function BulkEditor() {
    */
   const cellActionsFor = (row: BulkRow, column: ColumnDescriptor): BulkCellActions | undefined => {
     if (!resolveCellValue(row, column).editable) return undefined;
-    if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
-      return undefined;
-    }
+    // THE predicate, not a second list of input types: the grid reserves its
+    // action gutter on `columnCanHaveCellActions`, and a copy here had already
+    // drifted — it would have offered "Improve with AI" on a GID picker cell.
+    if (!columnCanHaveCellActions(column)) return undefined;
     // Improve is FIELD columns only — a metafield or option key would produce
     // a generic, weak prompt. The image row's alt cell is the exception: it
     // has its own image-aware generator (see handleCellImprove).
@@ -1802,6 +2121,41 @@ export default function BulkEditor() {
   const columnHeading = (col: ColumnDescriptor): string => bulkColumnHeading(col, b, data.currencyCode);
 
   const typeOptions = allowedTypes.map((rt) => ({ label: b.types[rt], value: rt }));
+
+  /**
+   * The published theme's template suffixes for the row type on screen.
+   *
+   * `field.templateSuffix` is the one select column whose vocabulary is not in
+   * the column universe: it is per shop and per resource family, so it is
+   * looked up at runtime through the SAME memoised fetch the single editor's
+   * `ThemeTemplateField` uses. A type with no templates (variant, image,
+   * policy, metaobject) never asks, and `undefined` — pending OR failed — makes
+   * the cell fall back to a text box rather than to an empty dropdown.
+   *
+   * Articles and blog containers template SEPARATELY (`templates/article.*` is
+   * one post, `templates/blog.*` the post list), which is exactly the
+   * distinction `templateResourceFor` draws for the blog tab; here the row type
+   * already says which of the two a row is.
+   */
+  /**
+   * Labels for every select column — `t.content.enumLabels`, the map the
+   * create modal and the single editor already render `status`, `sortOrder`
+   * and `weightUnit` from. The grid carried a second copy of the four status
+   * words until this; the empty theme-template suffix is the one key that map
+   * has no reason to hold, since only a grid cell offers "the default
+   * template" as a pickable value.
+   */
+  const enumLabels = useMemo(
+    () => ({
+      ...((t.content?.enumLabels ?? {}) as Record<string, string>),
+      "templateSuffix.": t.content?.themeTemplate?.defaultTemplate ?? "",
+    }),
+    [t],
+  );
+
+  const templateResource = templateResourceForRowType(type);
+  const templateSuffixesLoaded = useThemeTemplateSuffixes(templateResource);
+  const templateSuffixes = templateSuffixesLoaded?.ok ? templateSuffixesLoaded.suffixes : undefined;
 
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
@@ -1945,14 +2299,25 @@ export default function BulkEditor() {
     ...data.markets.map((m) => ({ label: m.name, value: m.id })),
   ];
 
+  /**
+   * Whether the last save needs a banner at all. A clean one does not — it is
+   * announced in the nav InfoBox (see the save effect above). Only what did
+   * NOT happen earns a strip above the grid.
+   */
+  const saveDeviation =
+    lastSavedCount !== null &&
+    (failedRowCount > 0 ||
+      (lastRetranslation?.capped ?? 0) > 0 ||
+      (lastRetranslation?.skipped ?? 0) > 0);
+
   // aria-live status for screen readers: announce save results (§2 ARIA).
+  // The clean save is NOT repeated here — the InfoBox strip carries its own
+  // role="status", so announcing it twice would read it out twice.
   const liveMessage =
-    lastSavedCount !== null
-      ? failedRowCount > 0
-        ? b.saveSuccessWithFailures
-            .replace("{saved}", String(lastSavedCount))
-            .replace("{failed}", String(failedRowCount))
-        : b.saveSuccess.replace("{count}", String(lastSavedCount))
+    lastSavedCount !== null && failedRowCount > 0
+      ? b.saveSuccessWithFailures
+          .replace("{saved}", String(lastSavedCount))
+          .replace("{failed}", String(failedRowCount))
       : "";
 
   // Uncapped by design (.app-page-width-full, responsive.css :root): the grid is
@@ -1993,6 +2358,13 @@ export default function BulkEditor() {
                 </div>
 
                 {queuedBanner && <Banner tone="success">{b.queuedBanner}</Banner>}
+                {importStartedBanner && (
+                  <Banner tone="success" onDismiss={() => setImportStartedBanner(null)}>
+                    {b.csv.importStarted
+                      .replace("{rows}", String(importStartedBanner.rows))
+                      .replace("{cells}", String(importStartedBanner.cells))}
+                  </Banner>
+                )}
                 {bulkError && <Banner tone="critical">{bulkError}</Banner>}
                 {saveError && <Banner tone="critical">{saveError}</Banner>}
                 {overBudgetBanner && (
@@ -2022,6 +2394,11 @@ export default function BulkEditor() {
                 {exportError && (
                   <Banner tone="critical" onDismiss={() => setExportError(null)}>
                     {exportError}
+                  </Banner>
+                )}
+                {exportWarning && (
+                  <Banner tone="warning" onDismiss={() => setExportWarning(null)}>
+                    {exportWarning}
                   </Banner>
                 )}
                 {importError && (
@@ -2096,13 +2473,36 @@ export default function BulkEditor() {
                     {b.priceActions.applied.replace("{count}", String(priceActionBanner))}
                   </Banner>
                 )}
-                {lastSavedCount !== null && (
-                  <Banner tone={failedRowCount > 0 ? "warning" : "success"}>
-                    {failedRowCount > 0
-                      ? b.saveSuccessWithFailures
-                          .replace("{saved}", String(lastSavedCount))
-                          .replace("{failed}", String(failedRowCount))
-                      : b.saveSuccess.replace("{count}", String(lastSavedCount))}
+                {saveDeviation && (
+                  <Banner tone="warning">
+                    <BlockStack gap="100">
+                      {failedRowCount > 0 && (
+                        <Text as="p" variant="bodySm">
+                          {b.saveSuccessWithFailures
+                            .replace("{saved}", String(lastSavedCount))
+                            .replace("{failed}", String(failedRowCount))}
+                        </Text>
+                      )}
+                      {/* Auto-translate is a Max feature that spends the
+                          merchant's own AI credit unattended, so a save that
+                          hit the cap says which rows it did NOT re-translate,
+                          because "everything is re-translated" plus silently
+                          empty fields on row 30 is not a state anyone can
+                          diagnose from the grid. */}
+                      {lastRetranslation && lastRetranslation.capped > 0 && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {b.retranslationCapped.replace("{count}", String(lastRetranslation.capped))}
+                        </Text>
+                      )}
+                      {/* A repair that could not start at all. Its stale
+                          translations are kept, and without this line nothing
+                          on screen would say so. */}
+                      {lastRetranslation && lastRetranslation.skipped > 0 && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {b.retranslationSkipped.replace("{count}", String(lastRetranslation.skipped))}
+                        </Text>
+                      )}
+                    </BlockStack>
                   </Banner>
                 )}
                 {bannerFailures.length > 0 && (
@@ -2192,6 +2592,7 @@ export default function BulkEditor() {
                       <Button
                         onClick={() => importFileRef.current?.click()}
                         loading={importFetcher.state !== "idle"}
+                        disabled={saving}
                       >
                         {b.csv.importButton}
                       </Button>
@@ -2225,7 +2626,7 @@ export default function BulkEditor() {
                   filters={filters}
                   onFiltersChange={handleFiltersChange}
                   showTranslationFilter={locale !== ""}
-                  filterSet={filterSetForType(type)}
+                  filterIds={filterIdsForType(type)}
                   pageSize={pageSize}
                   onPageSizeChange={handlePageSizeChange}
                   onlyChanged={onlyChanged}
@@ -2239,13 +2640,10 @@ export default function BulkEditor() {
                           : b.searchPlaceholder,
                     searchLabel: b.searchLabel,
                     filtersLabel: b.filtersLabel,
-                    filterMissingSeoTitle: b.filters.missingSeoTitle,
-                    filterMissingSeoDescription: b.filters.missingSeoDescription,
-                    filterMissingTranslation: b.filters.missingTranslation,
-                    filterMissingSku: b.filters.missingSku,
-                    filterMissingPrice: b.filters.missingPrice,
-                    filterCompareAtNotAbovePrice: b.filters.compareAtNotAbovePrice,
-                    filterMissingAltText: b.filters.missingAltText,
+                    filterLabels: b.filters,
+                    sectionTitles: b.filterSections,
+                    attributeFilterHint: b.filterAttributeHint,
+                    clearAll: b.filterClearAll,
                     pageSizeLabel: b.pageSizeLabel,
                     onlyChangedLabel: b.onlyChanged,
                   }}
@@ -2276,6 +2674,7 @@ export default function BulkEditor() {
                       translationStatus={cellTranslationStatus}
                       translationTooltip={cellTranslationTooltip}
                       notTranslatableTooltip={b.notTranslatableTooltip}
+                      unknownAttributeGhost={b.unknownAttributeGhost}
                       failuresByCell={cellFailuresForGrid}
                       rowLevelFailures={rowLevelFailures}
                       sort={sort}
@@ -2291,11 +2690,18 @@ export default function BulkEditor() {
                           // instead of sending a MediaImage gid as a product id.
                           ...(row.type === "image" && !row.productId
                             ? {}
-                            : { searchParams: new URLSearchParams({ select: row.productId ?? row.id }) }),
+                            : { searchParams: editorLinkParams(row.productId ?? row.id) }),
                         })
                       }
                       columnHeading={columnHeading}
-                      statusOptions={b.statusOptions}
+                      enumLabels={enumLabels}
+                      templateSuffixes={templateSuffixes}
+                      // An empty price cell on a multi-variant product carried
+                      // a tooltip nobody could reach: the pointer had nothing
+                      // to rest on. The placeholder is that something.
+                      readOnlyPlaceholders={b.readOnlyPlaceholders}
+                      categoryTexts={(t.content?.taxonomy ?? {}) as Record<string, string>}
+                      collectionsTexts={(t.content?.collectionsField ?? {}) as Record<string, string>}
                       handleWarning={b.handleWarning}
                       readOnlyTooltips={readOnlyTooltips}
                       sortButtonLabel={b.sortButtonLabel}
@@ -2356,7 +2762,7 @@ export default function BulkEditor() {
                         const row = previewRow;
                         setPreviewRow(null);
                         handleNavigate(TYPE_EDITOR_PATH[row.type], {
-                          searchParams: new URLSearchParams({ select: row.productId ?? row.id }),
+                          searchParams: editorLinkParams(row.productId ?? row.id),
                         });
                       },
                     },
@@ -2425,10 +2831,8 @@ export default function BulkEditor() {
                 const column = allColumns.find((c) => c.id === columnId);
                 return column ? columnHeading(column) : columnId;
               }}
-              overBudget={importOverBudget}
-              maxCalls={MAX_TASK_CALLS}
-              overCellLimit={importOverCellLimit}
-              maxCells={MAX_BULK_TASK_ITEMS}
+              targetLabel={importScopeLabel(locale, isForeign ? marketId : "")}
+              encoding={importEncoding}
               busy={saving}
               onConfirm={handleImportConfirm}
               onCancel={() => setImportPreview(null)}
@@ -2444,12 +2848,19 @@ export default function BulkEditor() {
                 rowErrorUnknownId: b.csv.preview.rowErrorUnknownId,
                 rowErrorUnknownHandle: b.csv.preview.rowErrorUnknownHandle,
                 rowErrorAmbiguousHandle: b.csv.preview.rowErrorAmbiguousHandle,
+                rowErrorDuplicateRow: b.csv.preview.rowErrorDuplicateRow,
+                target: b.csv.preview.target,
+                encodingNotice: b.csv.preview.encodingNotice,
+                damagedTitle: b.csv.preview.damagedTitle,
+                damagedHint: b.csv.preview.damagedHint,
+                damagedScientificNotation: b.csv.preview.damagedScientificNotation,
+                damagedLeadingZerosLost: b.csv.preview.damagedLeadingZerosLost,
+                damagedCellLimitTruncated: b.csv.preview.damagedCellLimitTruncated,
                 moreRowErrors: b.csv.preview.moreRowErrors,
                 changesHeading: b.csv.preview.changesHeading,
                 moreChanges: b.csv.preview.moreChanges,
                 emptyValue: b.csv.preview.emptyValue,
-                overBudget: b.budgetExceeded,
-                overCellLimit: b.cellLimitExceeded,
+                background: b.csv.preview.background,
                 apply: b.csv.preview.apply,
                 cancel: b.csv.preview.cancel,
               }}

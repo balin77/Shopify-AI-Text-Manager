@@ -6,11 +6,24 @@
  */
 
 import type { Session } from '@shopify/shopify-api';
-import { BILLING_PLANS, type BillingPlan, isPaidPlan } from '~/config/billing';
+import {
+  BILLING_PLANS,
+  MANAGED_BILLING_PLANS,
+  planConfigFor,
+  type BillingPlan,
+  type BillingAiMode,
+  type PlanConfig,
+  type ResolvedBillingPlan,
+  isPaidPlan,
+} from '~/config/billing';
 import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 import { cleanupCacheForPlan } from '~/utils/planCacheCleanup';
-import { resolveDevPlanMode, getDevForcedPlan } from '~/services/dev-plan-override.server';
+import {
+  resolveDevPlanMode,
+  getDevForcedPlan,
+  managedDevTestingEnabled,
+} from '~/services/dev-plan-override.server';
 import type { Plan } from '~/utils/planUtils';
 
 interface ShopifyAdminClient {
@@ -38,6 +51,31 @@ interface UserError {
  * Development stores should use test billing (no real charges).
  */
 async function isDevStore(admin: ShopifyAdminClient): Promise<boolean> {
+  // `=== true`, so an UNKNOWN answer keeps the historic behaviour here: a
+  // failed lookup means "not a dev store" for the BILLING question, which is
+  // the conservative direction (a real charge rather than a test one).
+  return (await detectPartnerDevelopment(admin)) === true;
+}
+
+/**
+ * Is this a Shopify partner DEVELOPMENT store? THREE-VALUED — `null` means the
+ * lookup failed and we do not know.
+ *
+ * The distinction did not matter while the only consumer was billing, where
+ * "do not know" and "no" want the same answer. It matters for managed AI
+ * (PLAN_MANAGED_AI_KEY §7a): such a shop can hold a Shopify-verified ACTIVE
+ * subscription that charges EUR 0, so treating an unknown as "not a dev store"
+ * hands it an uncapped operator budget — and `isDevStore`'s catch made those
+ * two indistinguishable, the `attributesSyncedAt` trap by another name.
+ *
+ * The answer is PERSISTED by the caller rather than asked per AI call: the
+ * credential resolver runs on detached paths that hold no admin client at all,
+ * where this lookup could only ever fail, which is precisely "uncapped" on the
+ * unattended paths the cap exists for.
+ */
+export async function detectPartnerDevelopment(
+  admin: ShopifyAdminClient
+): Promise<boolean | null> {
   try {
     const response = await admin.graphql(
       `#graphql
@@ -51,10 +89,11 @@ async function isDevStore(admin: ShopifyAdminClient): Promise<boolean> {
       `
     );
     const result = await response.json();
-    return result.data?.shop?.plan?.partnerDevelopment === true;
+    const value = result.data?.shop?.plan?.partnerDevelopment;
+    return typeof value === 'boolean' ? value : null;
   } catch (error) {
-    logger.warn('[Billing] Could not determine shop plan type, defaulting to non-test', { error });
-    return false;
+    logger.warn('[Billing] Could not determine shop plan type', { error });
+    return null;
   }
 }
 
@@ -107,9 +146,15 @@ export async function createSubscription(
   session: Session,
   plan: Exclude<BillingPlan, 'free'>,
   returnUrl: string,
-  hasExistingSubscription = false
+  hasExistingSubscription = false,
+  /**
+   * Which VARIANT of the plan — with the operator's AI included, or the
+   * merchant's own key. Defaults to `byo`, which is every existing caller and
+   * every existing subscription.
+   */
+  aiMode: BillingAiMode = 'byo'
 ) {
-  const planConfig = BILLING_PLANS[plan];
+  const planConfig = planConfigFor(plan, aiMode);
 
   // Use test billing for dev environments OR development/partner test stores
   // OR an explicitly allow-listed developer-owned shop on the public app
@@ -365,16 +410,44 @@ export function getTrialInfo(input: {
  * Anything that matches neither yields 'free' (logged) — we never guess.
  */
 export function getPlanFromSubscription(subscription: AppSubscription | null): BillingPlan {
-  if (!subscription) return 'free';
+  return resolveSubscription(subscription).plan;
+}
 
-  const paidPlans = Object.entries(BILLING_PLANS) as Array<
-    [Exclude<BillingPlan, 'free'>, (typeof BILLING_PLANS)[Exclude<BillingPlan, 'free'>]]
-  >;
+/**
+ * Both halves of what a subscription grants: the PLAN (entitlements) and the
+ * AI MODE (whose key) — PLAN_MANAGED_AI_KEY §7.
+ *
+ * The mode is a SECOND AXIS rather than four more plan values, so every
+ * `Record<Plan, …>` in the app keeps working; the candidate list is simply the
+ * two tables concatenated. Both halves come from the Shopify-VERIFIED
+ * subscription and from nowhere else — the same rule `subscriptionPlan`
+ * follows, and the reason a merchant cannot grant themselves managed AI by
+ * posting a form.
+ *
+ * Unchanged from the BYO-only version: an exact NAME match first, then the
+ * recurring PRICE, and anything matching neither yields free with a warning.
+ * We never guess. What the second table adds is a second way for the price
+ * fallback to be wrong, which is why no two products may share a price —
+ * asserted in tests/unit/managed-ai-margin.test.ts rather than remembered.
+ */
+export function resolveSubscription(subscription: AppSubscription | null): ResolvedBillingPlan {
+  const FREE: ResolvedBillingPlan = { plan: 'free', aiMode: 'byo' };
+  if (!subscription) return FREE;
+
+  type Candidate = [Exclude<BillingPlan, 'free'>, PlanConfig, BillingAiMode];
+  const candidates: Candidate[] = [
+    ...(Object.entries(BILLING_PLANS) as Array<[Exclude<BillingPlan, 'free'>, PlanConfig]>).map(
+      ([plan, cfg]) => [plan, cfg, 'byo'] as Candidate,
+    ),
+    ...(
+      Object.entries(MANAGED_BILLING_PLANS) as Array<[Exclude<BillingPlan, 'free'>, PlanConfig]>
+    ).map(([plan, cfg]) => [plan, cfg, 'managed'] as Candidate),
+  ];
 
   // 1. Exact name match (createSubscription always sets name = planConfig.name).
   const subName = subscription.name.trim().toLowerCase();
-  const byName = paidPlans.find(([, cfg]) => cfg.name.trim().toLowerCase() === subName);
-  if (byName) return byName[0];
+  const byName = candidates.find(([, cfg]) => cfg.name.trim().toLowerCase() === subName);
+  if (byName) return { plan: byName[0], aiMode: byName[2] };
 
   // 2. Price fallback — robust against a renamed subscription.
   const recurring = subscription.lineItems?.find(
@@ -383,15 +456,27 @@ export function getPlanFromSubscription(subscription: AppSubscription | null): B
   const amount = recurring?.plan.pricingDetails.price?.amount;
   if (amount != null) {
     const numeric = Number(amount);
-    const byPrice = paidPlans.find(([, cfg]) => cfg.price === numeric);
-    if (byPrice) return byPrice[0];
+    const byPrice = candidates.find(([, cfg]) => cfg.price === numeric);
+    if (byPrice) return { plan: byPrice[0], aiMode: byPrice[2] };
   }
 
   logger.warn('[Billing] Could not map subscription to a known plan — defaulting to free', {
     subscriptionName: subscription.name,
     priceAmount: amount ?? null,
   });
-  return 'free';
+  return FREE;
+}
+
+/**
+ * Shopify reports `currentPeriodEnd` as an ISO string. An unparseable or
+ * absent one yields null rather than a guessed date: the budget key then falls
+ * back to the calendar month, which is a known approximation, while a wrong
+ * period boundary is an invisible one.
+ */
+function parsePeriodEnd(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /**
@@ -399,12 +484,42 @@ export function getPlanFromSubscription(subscription: AppSubscription | null): B
  * Uses upsert so reinstalled shops without an existing AISettings row are handled
  * correctly instead of silently skipping the write.
  */
-export async function syncSubscriptionToDatabase(shop: string, plan: BillingPlan) {
+export async function syncSubscriptionToDatabase(
+  shop: string,
+  plan: BillingPlan,
+  /**
+   * Whether the VERIFIED subscription includes managed AI, and — when it does
+   * — when its current billing period ends.
+   *
+   * Both are mirrored here for the same reason `subscriptionPlan` is: they are
+   * entitlements, they come from Shopify, and nothing a merchant can post may
+   * write them. Omitted means "this caller did not establish it", which leaves
+   * the columns alone rather than clearing them — a partial sync must not be
+   * able to switch a paying shop's AI off.
+   */
+  managed?: { active: boolean; currentPeriodEnd?: Date | null; isTest?: boolean },
+) {
+  const managedFields =
+    managed === undefined
+      ? {}
+      : {
+          managedAiActive: managed.active,
+          ...(managed.currentPeriodEnd !== undefined
+            ? { managedAiPeriodEnd: managed.currentPeriodEnd }
+            : {}),
+          // §7a signal 2, mirrored so the resolver can read it without an
+          // admin client. A `test: true` subscription carries the managed
+          // variant's own name and price, so it resolves to managed and
+          // switches the entitlement on while charging nothing.
+          ...(managed.isTest !== undefined ? { subscriptionIsTest: managed.isTest } : {}),
+        };
+
   await prisma.aISettings.upsert({
     where: { shop },
-    update: { subscriptionPlan: plan },
-    create: { shop, subscriptionPlan: plan },
+    update: { subscriptionPlan: plan, ...managedFields },
+    create: { shop, subscriptionPlan: plan, ...managedFields },
   });
+
 }
 
 /**
@@ -484,9 +599,65 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   // is itself hard-gated (dev client_id + APP_ENV !== 'production'), so this
   // branch is provably dead in the public App-Store build. Cache is reconciled
   // exactly like a real plan change so downgrade edge cases are testable.
+  // PLAN_MANAGED_AI_KEY §7a — record whether this is a partner DEVELOPMENT
+  // store, three-valued, ONCE per shop.
+  //
+  // Three constraints shape where this sits, and the first two cuts each broke
+  // one. It cannot go above the dev-override short-circuit below: that path is
+  // guaranteed never to call Shopify (the custom-app distribution has no
+  // Billing API) and a test pins it. It cannot go inside
+  // `getCurrentSubscription`'s test-subscription branch either — that branch
+  // is reached only in production, only for a shop whose ONLY subscriptions
+  // are `test: true`, so every ordinary shop would keep `null` forever, which
+  // is the value that means "not capped".
+  //
+  // So it runs here, and only while the answer is UNKNOWN. That makes it one
+  // extra GraphQL query per shop per lifetime rather than one per navigation —
+  // `checkAndSyncSubscription` runs on the app.tsx loader, so an unconditional
+  // lookup here is a real cost on a real path.
+  //
+  // A failed lookup writes NOTHING rather than `false`: an answer established
+  // earlier survives a throttled sync, and "never determined" stays
+  // distinguishable from "no". The consequence is that it retries on the next
+  // sync, which is what we want.
+  if (existing && existing.partnerDevelopment === null) {
+    const partnerDevelopment = await detectPartnerDevelopment(admin);
+    if (partnerDevelopment !== null) {
+      await prisma.aISettings
+        .updateMany({ where: { shop }, data: { partnerDevelopment } })
+        .catch((error) => {
+          // Bookkeeping for a spend cap, never a reason to fail a plan sync.
+          logger.warn('[Billing] Could not record partnerDevelopment', { shop, error });
+        });
+    }
+  }
+
   const forced = await getDevForcedPlan(shop);
   if (forced) {
-    await syncSubscriptionToDatabase(shop, forced);
+    // No subscription object exists on this path at all, so nothing can say
+    // managed AI was bought: the custom-app build has no Billing API, and §7a
+    // caps such a shop anyway (signal 3). The one exception is the explicit
+    // TESTING opt-in (MANAGED_AI_ALLOW_DEV_BUILD), where the forced plan's
+    // "+ AI" choice stands in for the purchase so the paid flow — period
+    // budget, 80 % warning, wall, renewal — can be exercised before
+    // production. Its period end is SET ONCE and then walked forward in
+    // 30-day steps by `managedBudgetPeriod`, like a real renewal; a fresh
+    // end on every sync would mint a new budget key on every navigation.
+    const devManaged =
+      managedDevTestingEnabled() && forced !== 'free' && existing?.devForcedManagedAi === true;
+    const keptEnd =
+      devManaged && existing?.managedAiPeriodEnd ? existing.managedAiPeriodEnd : null;
+    await syncSubscriptionToDatabase(
+      shop,
+      forced,
+      devManaged
+        ? {
+            active: true,
+            currentPeriodEnd: keptEnd ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            isTest: false,
+          }
+        : { active: false, currentPeriodEnd: null },
+    );
     await reconcileCacheForVerifiedPlan(shop, previousPlan, forced);
     await maybeTriggerUpgradeResync(admin, shop, previousPlan, forced);
     return forced;
@@ -496,13 +667,29 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     const subscription = await getCurrentSubscription(admin, shop);
 
     if (!subscription || subscription.status !== 'ACTIVE') {
-      // No active subscription, downgrade to free
-      await syncSubscriptionToDatabase(shop, 'free');
+      // No active subscription, downgrade to free — and managed AI goes with
+      // it: the entitlement IS the subscription.
+      await syncSubscriptionToDatabase(shop, 'free', { active: false, currentPeriodEnd: null });
       await reconcileCacheForVerifiedPlan(shop, previousPlan, 'free');
       return 'free';
     }
 
-    const plan = getPlanFromSubscription(subscription);
+    const resolved = resolveSubscription(subscription);
+    const plan = resolved.plan;
+    const managedActive = resolved.aiMode === 'managed';
+
+    // Losing managed AI is not a quiet event, even though the fallback is the
+    // friendly one: the PLAN decides the mode (`wantsManagedAi`), so the next
+    // AI call spends the merchant's OWN key — or, without one, the taster if
+    // they consented, else refuses. That is the
+    // right behaviour (their work does not stop) and it must not be silent.
+    // §8's usage card is the merchant's half; this is ours.
+    if (!managedActive && existing?.managedAiActive === true) {
+      logger.info('[Billing] Managed AI entitlement ended — shop falls back to its own key', {
+        shop,
+        plan,
+      });
+    }
 
     // R4-DI4: ~6 callers (afterAuth, app.tsx loader on every navigation,
     // settings, billing.callback, webhooks.subscription + redelivery,
@@ -520,7 +707,13 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     });
     const transitioned = claim.count === 1;
 
-    await syncSubscriptionToDatabase(shop, plan);
+    await syncSubscriptionToDatabase(shop, plan, {
+      active: managedActive,
+      // Only meaningful while managed is on; Shopify reports the period end on
+      // the subscription itself.
+      currentPeriodEnd: managedActive ? parsePeriodEnd(subscription.currentPeriodEnd) : null,
+      isTest: subscription.test === true,
+    });
 
     // Trial-consumption is recorded HERE — at the Shopify-verified point, not
     // optimistically at the mutation call. We trust the returned subscription
@@ -543,6 +736,28 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     logger.error('Error checking subscription', { error });
     // On error, default to free to be safe. Deliberately NO cache cleanup here:
     // a transient Shopify API failure must not purge cached content.
+    //
+    // And deliberately NO managed argument: this caller established nothing,
+    // so the managed columns are left as they are rather than cleared. A
+    // transient API failure must not revoke an entitlement a merchant paid
+    // for.
+    //
+    // A shop with a VERIFIED managed entitlement keeps its PLAN too, and that
+    // exception is what §10 made necessary. The plan column is what sizes the
+    // managed budget, so writing `free` over it left a Max+AI shop holding
+    // `managedAiActive: true` with a zero period budget — which since the
+    // taster is not a refusal but a GRANT: one throttled lookup and the
+    // paying merchant either burns their one-time free trial or, having
+    // burnt it, is told their free trial is over. The old comment's "it
+    // costs nothing in the meantime" was true before there was anything
+    // below a period budget to fall to.
+    if (existing?.managedAiActive === true && existing.subscriptionPlan) {
+      logger.warn('[Billing] Subscription lookup failed — keeping the verified managed plan', {
+        shop,
+        plan: existing.subscriptionPlan,
+      });
+      return existing.subscriptionPlan as BillingPlan;
+    }
     await syncSubscriptionToDatabase(shop, 'free');
     return 'free';
   }

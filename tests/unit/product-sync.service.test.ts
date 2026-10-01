@@ -18,6 +18,13 @@ const mockDb = {
     deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     findUnique: vi.fn().mockResolvedValue(null),
   },
+  autoTranslateRetry: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  primaryDigestBaseline: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
   contentTranslation: {
     // No pre-existing rows → digest-skip (R3-H4) can't prove "unchanged",
     // so syncProduct falls through to the delete+recreate path the
@@ -166,6 +173,25 @@ describe('ProductSyncService', () => {
       });
     });
 
+    it('keeps the local rows of a locale whose GLOBAL read failed', async () => {
+      // One throttled read used to wipe that locale's whole mirror: its rows
+      // were deleted with the layer while none came back to recreate them.
+      const productId = 'gid://shopify/Product/123456789';
+      const inner = mockAdmin.graphql.getMockImplementation()!;
+      mockAdmin.graphql.mockImplementation(async (query: string, opts?: any) => {
+        if (query.includes('query getTranslations') && opts?.variables?.locale === 'fr' && !opts?.variables?.marketId) {
+          return { json: async () => ({ errors: [{ message: 'Throttled' }] }) } as any;
+        }
+        return inner(query, opts);
+      });
+
+      await service.syncProduct(productId);
+
+      const deletes = mockDb.contentTranslation.deleteMany.mock.calls.map((call: any[]) => call[0].where);
+      const rewrite = deletes.find((where: any) => where.resourceType === 'Product' && where.marketId);
+      expect(rewrite).toMatchObject({ NOT: { marketId: '', locale: { in: ['fr'] } } });
+    });
+
     it('sollte Image Alt-Text Übersetzungen speichern', async () => {
       const productId = 'gid://shopify/Product/123456789';
 
@@ -300,6 +326,11 @@ describe('ProductSyncService', () => {
       });
       expect(mockDb.product.deleteMany).toHaveBeenCalledWith({
         where: { shop: testShop, id: productId },
+      });
+      // The stale-translation gate's primary baseline is polymorphic and
+      // FK-less too, so the same delete has to take it.
+      expect(mockDb.primaryDigestBaseline.deleteMany).toHaveBeenCalledWith({
+        where: { shop: testShop, resourceId: productId },
       });
     });
   });

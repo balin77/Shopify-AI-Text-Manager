@@ -41,6 +41,7 @@ const PLANS: Plan[] = ["free", "basic", "pro", "max"];
 
 const matrix: Record<SeoFeature, Record<Plan, boolean>> = {
   scheduledAudit: { free: false, basic: false, pro: false, max: true },
+  scheduledCrawl: { free: false, basic: false, pro: false, max: true },
   scoreHistory: { free: false, basic: false, pro: true, max: true },
   keywords: { free: false, basic: true, pro: true, max: true },
   searchConsole: { free: false, basic: false, pro: true, max: true },
@@ -169,7 +170,7 @@ describe("SEO quota helpers", () => {
 
 describe("SEO gating does not touch the deliberate USPs", () => {
   it("never gates on locale count", () => {
-    // Locales are uncapped on every tier by design (ROADMAP §Limit-Review);
+    // Locales are uncapped on every tier by design (docs/reference/PRICING_AND_LIMITS.md §Limit-Review);
     // the SEO matrix must not smuggle a per-locale limit back in.
     const keys = Object.keys(getSeoLimits("free"));
     expect(keys.some((k) => /locale/i.test(k))).toBe(false);

@@ -13,8 +13,14 @@ import { isThemeContentType } from "~/utils/content-type-groups";
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
+import {
+  metaobjectFieldValueFor,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
+import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
   TranslatableContentItem,
   ContentEditorConfig,
@@ -43,12 +49,31 @@ export type ValueSource =
  * "@@<marketId>" so market overlays never collide with the global ones.
  */
 export function buildLocaleKey(locale: string, marketId: string): string {
-  return marketId ? `${locale}@@${marketId}` : locale;
+  return marketId ? `${locale}${LOCALE_MARKET_SEP}${marketId}` : locale;
 }
+
+/**
+ * The separator, as a constant rather than three string literals. A caller that
+ * has to RECOGNISE a market key — "is this overlay entry global?" — had no way
+ * to ask, wrote its own guess, and silently wiped the market overrides it meant
+ * to spare.
+ */
+export const LOCALE_MARKET_SEP = "@@";
 
 /** Same folding for deletedTranslationKeysRef entries (keyed by translationKey). */
 export function buildDeletedKey(translationKey: string, marketId: string): string {
-  return marketId ? `${translationKey}@@${marketId}` : translationKey;
+  return marketId ? `${translationKey}${LOCALE_MARKET_SEP}${marketId}` : translationKey;
+}
+
+/** A save that carried only SOME fields, in one locale (a single-field
+ *  translate, Accept & Translate). The response handling treats only these
+ *  values as saved: not the rest of the view, and not the view at all when the
+ *  merchant has switched to another locale meanwhile. */
+export interface PartialSave {
+  locale: string;
+  /** The market the save was scoped to ("" = global). */
+  marketId: string;
+  values: Record<string, string>;
 }
 
 export interface ResolvedField {
@@ -108,7 +133,8 @@ export interface UseUiDataLoaderReturn {
     translatedValue: string,
     targetLocale: string,
     currentEditableValues: Record<string, string>,
-    marketIdArg?: string
+    marketIdArg?: string,
+    viewing?: boolean
   ) => TransitionResult;
 
   /** After translateAll response (all fields → all locales) */
@@ -136,7 +162,9 @@ export interface UseUiDataLoaderReturn {
     /** Fields still inherited from global (current fallbackFields) — skipped when
      *  storing market overlays so a single-field market save doesn't drop the
      *  inherited styling on the rest. Ignored in the global context. */
-    inheritedFieldKeys?: Set<string>
+    inheritedFieldKeys?: Set<string>,
+    onlyKeys?: ReadonlySet<string> | null,
+    savedMarketId?: string
   ) => TransitionResult;
 
   /** After translateFieldToAllLocales callback (Accept & Translate) */
@@ -146,11 +174,21 @@ export interface UseUiDataLoaderReturn {
     currentLocale: string
   ) => TransitionResult;
 
+  /** A "copy to all languages" save did NOT land for these locales: drop the
+   *  value the copy wrote into the overlay for them, so the editor shows what
+   *  Shopify holds again instead of a value that was never saved. */
+  onCopyToLocalesFailed: (translationKey: string, locales: string[], copiedValue: string) => void;
+
   /** When switching to a different item */
   onItemSwitch: () => void;
 
   /** When user clicks ReloadButton */
   onRefresh: (itemId: string | null) => void;
+
+  /** After a BACKGROUND re-translation this save started has finished and the
+   *  loader has been re-read. See the implementation for why it clears exactly
+   *  these two refs and leaves the primary cache alone. */
+  onBackgroundRetranslation: () => void;
 
   /** After resolveAll() completes — sets unified baseline and keeps legacy refs in sync */
   onDataLoaded: (values: Record<string, string>) => void;
@@ -212,19 +250,25 @@ export function getItemFieldValue(
     return content?.value || "";
   }
 
-  // Metaobjects: Check metaobjects array
-  // fieldKey is the metaobject ID, find the metaobject and get its label field
-  const itemWithMetaobjects = item as { metaobjects?: MetaobjectEntry[] };
+  // Metaobjects: the field key is `<Metaobject GID>#<field key>` (§6.1). Only
+  // reached when no config was passed — METAOBJECTS_CONFIG has a getFieldValue
+  // and short-circuits above — but it answers through the SAME reader so the
+  // two cannot disagree about what a compound key means.
+  const itemWithMetaobjects = item as {
+    metaobjects?: MetaobjectEntry[];
+    fieldDefinitions?: MetaobjectDefinitionFieldLike[];
+  };
   if (itemWithMetaobjects.metaobjects && Array.isArray(itemWithMetaobjects.metaobjects)) {
-    const metaobject = itemWithMetaobjects.metaobjects.find((m) => m.id === fieldKey);
-    if (metaobject) {
-      // Find the label field (display_name, name, or label)
-      const labelField = metaobject.fields?.find((f) => isMetaobjectLabelField(f.key));
-      return labelField?.value || metaobject.displayName || "";
-    }
+    return metaobjectFieldValueFor(
+      itemWithMetaobjects.metaobjects as MetaobjectEntryLike[] | undefined,
+      itemWithMetaobjects.fieldDefinitions,
+      fieldKey,
+      isMetaobjectLabelField,
+    );
   }
 
   // Standard content types: Common field mappings
+  const row = item as unknown as Record<string, unknown>;
   const fieldMappings: Record<string, string> = {
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",
@@ -234,9 +278,82 @@ export function getItemFieldValue(
     body: item.body || "",
     summary: item.summary || "",
     productType: item.productType || "",
+    // ── PLAN §Phase 3 merchandising attributes ──────────────────────────────
+    // Every editor value is a STRING — `getChangedFields` compares strings —
+    // so the two non-string columns are flattened here, at the one place that
+    // turns an item into editable values, rather than in each control.
+    status: String(row.status ?? ""),
+    vendor: String(row.vendor ?? ""),
+    author: String(row.author ?? ""),
+    sortOrder: String(row.sortOrder ?? ""),
+    templateSuffix: String(row.templateSuffix ?? ""),
+    // Comma-joined, matching AttributeField's parse/serialize pair.
+    tags: Array.isArray(row.tags) ? (row.tags as string[]).join(", ") : "",
+    // `isPublished` defaults to TRUE in the schema, so a missing value must
+    // read as published — the same rule as the column's own default.
+    isPublished: row.isPublished === false ? "false" : "true",
+    // §3.1 — the rule sources, already parsed into the editor's model by the
+    // loader. JSON because every editor value is a string and change detection
+    // compares strings; an empty string means "no rules", which is a value the
+    // save acts on and not a missing one. That is exactly why the loader's
+    // `null` must NOT collapse into "": null means the row holds a model this
+    // editor may not touch (a `ruleSet` projection, an unsynced collection),
+    // and an empty builder over a collection that HAS rules would make its own
+    // emptiness true on the first save.
+    // §Phase 3.1 — the category travels as its GID, which is what the write
+    // path needs; the NAME is a label and lives on the item, not in this map.
+    category: typeof row.categoryId === "string" ? row.categoryId : "",
+    // §Phase 3.1 — membership as a comma-joined GID list, like every other
+    // value here. `null` means the row was never attribute-synced, and "" would
+    // read as "in no collections" — which the save would then act on.
+    collections: Array.isArray(row.collections)
+      ? (row.collections as Array<{ id?: string }>).map((c) => c.id ?? "").filter(Boolean).join(",")
+      : "",
+    collectionRules: Array.isArray(row.ruleSources)
+      ? JSON.stringify(row.ruleSources)
+      : RULES_UNREADABLE,
   };
 
   return fieldMappings[fieldKey] || "";
+}
+
+/**
+ * What a BACKGROUND refresh may put on screen: the freshly resolved server
+ * values, except in the fields the merchant has typed in and not saved.
+ *
+ * Pure and exported because it is the one rule of this whole mechanism that
+ * holds under every circumstance — the reload reads, it never writes, and it
+ * never eats input. The reload is already deferred while the editor is dirty
+ * (see `useUnifiedContentEditor`), so in practice this changes nothing; it
+ * exists for the keystroke that lands between that decision and the re-resolve.
+ *
+ * `previousBaseline` is the baseline the current input is dirty AGAINST, i.e.
+ * the one captured BEFORE `onDataLoaded` installs the new values. Comparing
+ * against the new one would find every field clean and quietly discard the
+ * edit.
+ *
+ * The caller must still set the baseline from `resolved`, NEVER from what this
+ * returns: the baseline is what change detection compares against, so writing a
+ * preserved edit into it would mark that edit as already saved and the merchant
+ * could never save it.
+ */
+export function preserveUnsavedEdits(
+  resolved: Record<string, string>,
+  current: Record<string, string>,
+  previousBaseline: Record<string, string>,
+): { values: Record<string, string>; preservedKeys: string[] } {
+  const values: Record<string, string> = { ...resolved };
+  const preservedKeys: string[] = [];
+  for (const key of Object.keys(current)) {
+    const value = current[key];
+    if (value === undefined) continue;
+    // A field the merchant never touched matches the baseline it was loaded
+    // with, and takes the server's new value. Anything else is their input.
+    if (value === previousBaseline[key]) continue;
+    values[key] = value;
+    preservedKeys.push(key);
+  }
+  return { values, preservedKeys };
 }
 
 // ============================================================================
@@ -302,6 +419,27 @@ export function useUiDataLoader(
       translationKey: string,
       locale: string
     ): ResolvedField => {
+      // ---- NOT TRANSLATABLE AT ALL (PLAN §Phase 3 attributes) ----
+      // An empty `translationKey` means Shopify stores ONE value for this
+      // field, not one per locale — status, vendor, tags, author, sort order.
+      // Sent down the foreign chain below it would match no market row, no
+      // override and no translation, and come back "" — so a foreign locale
+      // would show an ACTIVE product as DRAFT (a Polaris Select with value ""
+      // renders its first option) and a hidden page as visible. The control is
+      // read-only there and correctly says the value exists once per item; the
+      // one thing it must not do is show a value the item does not have.
+      if (!translationKey) {
+        const savedOverride = savedPrimaryValuesRef.current[item.id];
+        if (savedOverride && savedOverride[fieldKey] !== undefined) {
+          return { value: savedOverride[fieldKey], source: "savedPrimaryCache", isFallback: false };
+        }
+        return {
+          value: getItemFieldValue(item, fieldKey, primaryLocale, config),
+          source: "itemField",
+          isFallback: false,
+        };
+      }
+
       // ---- PRIMARY LOCALE ----
       if (locale === primaryLocale) {
         // 1. Check savedPrimaryCache
@@ -508,7 +646,11 @@ export function useUiDataLoader(
       // pass "" for globally-saved flows (e.g. Accept & Translate → all locales)
       // and the selected market for market-scoped saves. Defaults to the current
       // market so market-aware callers can omit it.
-      marketIdArg?: string
+      marketIdArg?: string,
+      // `false` when the merchant has switched away from `targetLocale` while
+      // the AI worked: the translation is still staged for that locale, but
+      // nothing on screen or in the baseline belongs to it any more.
+      viewing: boolean = true
     ): TransitionResult => {
       debugLog.transition(
         `onTranslateFieldComplete: field=${fieldKey} locale=${targetLocale} value="${translatedValue.substring(0, 40)}..."`
@@ -535,15 +677,22 @@ export function useUiDataLoader(
       localTranslationsRef.current[translationKey][localeKey] =
         translatedValue;
 
+      if (!viewing) {
+        return { updatedValues: null, clearedFallbackKeys: [], shouldMarkLoading: false };
+      }
+
       // 3. Compute updated values
       const updatedValues = {
         ...currentEditableValues,
         [fieldKey]: translatedValue,
       };
 
-      // 4. Update baselines (unified + legacy)
-      originalLoadedValuesRef.current = { ...updatedValues };
-      baselineValuesRef.current = { ...updatedValues };
+      // 4. Update baselines (unified + legacy) for THIS field only. The save
+      // that follows writes this one field; taking every current value as the
+      // baseline marked the merchant's unsaved edits in OTHER fields clean, so
+      // they were never sent and vanished at the next reload or item switch.
+      originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, [fieldKey]: translatedValue };
+      baselineValuesRef.current = { ...baselineValuesRef.current, [fieldKey]: translatedValue };
       setBaselineVersion((v) => v + 1);
 
       // 5. Template change detection
@@ -713,7 +862,15 @@ export function useUiDataLoader(
       savedLocale: string,
       editableValues: Record<string, string>,
       fieldDefinitions: FieldDefinition[],
-      inheritedFieldKeys?: Set<string>
+      inheritedFieldKeys?: Set<string>,
+      /** The fields the save actually CARRIED, when it was a partial one (a
+       *  single-field translate). Absent = every field. Overlaying the others
+       *  would stage the merchant's unsaved input as if it had been saved. */
+      onlyKeys?: ReadonlySet<string> | null,
+      /** The market the save was SUBMITTED under (savedMarketIdRef). The live
+       *  selection may have moved while it was in flight, and an overlay keyed
+       *  on it lands in the wrong market's view. */
+      savedMarketId?: string
     ): TransitionResult => {
       debugLog.transition(`onSaveComplete: locale=${savedLocale}`);
 
@@ -751,11 +908,12 @@ export function useUiDataLoader(
 
         // Market-fold the overlay locale key so the saved overlay is scoped to the
         // market it was saved under (matching the market-aware DB write).
-        const marketId = selectedMarketIdRef.current;
+        const marketId = savedMarketId ?? selectedMarketIdRef.current;
         const localeKey = buildLocaleKey(savedLocale, marketId);
 
         for (const fieldDef of fieldDefinitions) {
           if (fieldDef.type === "image-gallery") continue;
+          if (onlyKeys && !onlyKeys.has(fieldDef.key)) continue;
           const value = editableValues[fieldDef.key];
 
           // In a market context, only fields the save actually wrote as market
@@ -852,6 +1010,23 @@ export function useUiDataLoader(
     []
   );
 
+  const onCopyToLocalesFailed = useCallback(
+    (translationKey: string, locales: string[], copiedValue: string) => {
+      const overlay = localTranslationsRef.current[translationKey];
+      if (!overlay) return;
+      for (const locale of locales) {
+        // Only the copy's OWN value: anything written there since (the
+        // merchant typing in that locale) is not ours to take back. The copy
+        // writes the GLOBAL layer, i.e. the bare locale key.
+        if (overlay[locale] === copiedValue) delete overlay[locale];
+      }
+      debugLog.transition(
+        `onCopyToLocalesFailed: key=${translationKey} dropped ${locales.join(", ")}`
+      );
+    },
+    []
+  );
+
   /** When switching to a different item */
   const onItemSwitch = useCallback(() => {
     debugLog.transition("onItemSwitch: clearing all caches");
@@ -867,6 +1042,45 @@ export function useUiDataLoader(
     }
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
+  }, []);
+
+  /**
+   * The detached re-translation the merchant's own primary save started
+   * (`reconcileAfterPrimarySave`) has finished, and the loader has just been
+   * re-read. The SERVER now holds the truth about every foreign value of this
+   * item, and two of the overlays here would hide it.
+   *
+   * `deletedTranslationKeysRef` is the load-bearing one: a primary save adds
+   * every changed field's translation key to it ("show empty, even if a
+   * revalidation brings the value back"), which is exactly right while the
+   * server is deleting those translations — and exactly wrong the moment the AI
+   * has written new ones. Left standing it turns the feature into its own
+   * symptom: the languages the run just filled keep rendering empty, which is
+   * the complaint this whole mechanism answers. `onSaveComplete` clears it on
+   * the save response, so in practice it is already empty here; clearing it
+   * again costs nothing and means a future save path that keeps entries past
+   * its response cannot silently re-introduce the bug.
+   *
+   * `localTranslationsRef` is dropped for the same reason one level down: every
+   * value in it mirrors something the server already stores (a saved foreign
+   * value, or a translate-to-all-locales run that registered on Shopify before
+   * answering), so re-reading it from the loader can only be more current — and
+   * a stale entry for a locale the AI has just rewritten would win over the new
+   * text and be written straight back by the next save.
+   *
+   * `savedPrimaryValuesRef` is deliberately NOT touched: it holds what the
+   * merchant just saved in the PRIMARY locale, which the AI never writes and
+   * the loader may not have caught up with yet. `resolveAll` retires it by
+   * itself once the server agrees.
+   *
+   * Nothing here reads or writes `editableValues` — the caller owns the
+   * merchant's unsaved input, and the refresh is only ever allowed to run when
+   * there is none (see `useUnifiedContentEditor`).
+   */
+  const onBackgroundRetranslation = useCallback(() => {
+    debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
+    deletedTranslationKeysRef.current.clear();
+    localTranslationsRef.current = {};
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -897,8 +1111,10 @@ export function useUiDataLoader(
     onTranslateAllForLocaleComplete,
     onSaveComplete,
     onTranslateFieldToAllLocalesComplete,
+    onCopyToLocalesFailed,
     onItemSwitch,
     onRefresh,
+    onBackgroundRetranslation,
     refs: {
       localTranslationsRef,
       deletedTranslationKeysRef,

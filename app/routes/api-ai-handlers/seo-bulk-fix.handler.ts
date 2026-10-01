@@ -32,6 +32,8 @@ import { ShopifyContentService } from "../../../src/services/shopify-content.ser
 import type { AISettings, PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { featuredAltLockId } from "~/services/translations/translation-locks.shared";
 
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
@@ -196,6 +198,11 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
       type: "seoBulkFix",
       status: "running",
       resourceType: "seo",
+      // No `resourceId` — see the fix-all-for-item row below. This one has a
+      // second reason of its own: its subject is the PROBLEM ("meta
+      // description missing"), not the item, so a link on it would carry the
+      // merchant into one product's editor from a row that never names that
+      // product.
       resourceTitle: localeResolution.foreignLocale
         ? `${problemCode}:${localeResolution.foreignLocale}`
         : problemCode,
@@ -227,6 +234,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
           admin,
           items,
           foreignLocale: localeResolution.foreignLocale,
+          writtenLocale: localeResolution.writtenLocale,
           targetLanguageName: localeResolution.targetLanguageName,
         })
       : runSeoBulkFix(task.id, {
@@ -240,6 +248,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
           seoTitleMaxChars,
           seoLimits,
           foreignLocale: localeResolution.foreignLocale,
+          writtenLocale: localeResolution.writtenLocale,
           targetLanguageName: localeResolution.targetLanguageName,
         });
   void runner.catch(async (err: unknown) => {
@@ -383,6 +392,17 @@ async function handleFixAllForItem(
       type: "seoBulkFix",
       status: "running",
       resourceType: "seo",
+      // Deliberately NO `resourceId`, though this row names exactly one item
+      // and the Tasks page would then link it into its editor
+      // (`task-deep-link.shared.ts` derives that from the GID).
+      // `Task.resourceId` is not only a label: the content editor polls
+      // `/api/running-field-tasks?resourceId=` on every item it opens and
+      // seeds its per-field spinner store from whatever comes back, with no
+      // filter on the task TYPE. Storing it here would therefore also decide
+      // which of that product's fields are locked while this runs — a
+      // defensible answer, but a different question from "can the merchant
+      // click through to it", and one nobody has asked yet. Making these rows
+      // linkable means answering it on purpose.
       resourceTitle: `fixAllForItem:${itemType}:${itemId.split("/").pop()}${
         localeResolution.foreignLocale ? `:${localeResolution.foreignLocale}` : ""
       }`,
@@ -406,6 +426,7 @@ async function handleFixAllForItem(
     seoTitleMaxChars,
     seoLimits,
     foreignLocale: localeResolution.foreignLocale,
+    writtenLocale: localeResolution.writtenLocale,
     targetLanguageName: localeResolution.targetLanguageName,
   }).catch(async (err: unknown) => {
     logger.error("[API-AI] SEO fixAllForItem crashed", {
@@ -473,6 +494,11 @@ interface RunArgs {
    * mutations, and the prompt asks the AI to translate the primary value into
    * this locale while adapting to the SEO constraint. */
   foreignLocale: string;
+  /** The language the generated text will actually be IN — the foreign locale
+   *  when translating, the shop's primary one otherwise. `foreignLocale: ""`
+   *  cannot answer that: "" means primary, not "no language". §2.5e's glossary
+   *  directive needs the real code. */
+  writtenLocale: string;
   /** Human-readable target language name, e.g. "Spanish" — passed through to
    * the prompt. Falls back to the locale code if the name lookup returned
    * nothing. */
@@ -500,6 +526,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
     seoTitleMaxChars,
     seoLimits,
     foreignLocale,
+    writtenLocale,
     targetLanguageName,
   } = args;
   const isDuplicateBucket =
@@ -677,8 +704,14 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
           // how text-generation.handler.ts routes single-item generation.
           const generated = (
             field === "description"
-              ? await aiService.generateProductDescription(row.title, prompt)
-              : await aiService.generateProductTitle(prompt)
+              ? await aiService.generateProductDescription(row.title, prompt, undefined, {
+                  contextTexts: [row.title],
+                  locale: writtenLocale,
+                })
+              : await aiService.generateProductTitle(prompt, undefined, {
+                  contextTexts: [row.title],
+                  locale: writtenLocale,
+                })
           ).trim();
 
           // Guard against a silent clobber: a provider glitch that returns
@@ -758,8 +791,11 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
   }
 
   const finalStatus = succeeded.length === 0 ? "failed" : "completed";
+  // A machine code, translated at render time by `taskErrorText` (app/utils).
+  // The rejected-key note is a FLAG argument, so it is translated with the
+  // sentence instead of being English glued onto a German one.
   const failureSummary =
-    failed.length > 0 ? `${failed.length} of ${total} item(s) failed${authErrorSeen ? " (invalid AI API key)" : ""}` : null;
+    failed.length > 0 ? `items_failed:${failed.length}:${total}${authErrorSeen ? ":1" : ""}` : null;
 
   await db.task.update({
     where: { id: taskId },
@@ -832,11 +868,16 @@ interface AltTextRunArgs {
   items: { type: AuditType; id: string }[];
   /** See RunArgs.foreignLocale. */
   foreignLocale: string;
+  /** The language the generated text will actually be IN — the foreign locale
+   *  when translating, the shop's primary one otherwise. `foreignLocale: ""`
+   *  cannot answer that: "" means primary, not "no language". §2.5e's glossary
+   *  directive needs the real code. */
+  writtenLocale: string;
   targetLanguageName: string;
 }
 
 async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<void> {
-  const { db, settings, shop, admin, items, foreignLocale, targetLanguageName } = args;
+  const { db, settings, shop, admin, items, foreignLocale, writtenLocale, targetLanguageName } = args;
   const isForeign = foreignLocale.length > 0;
 
   const gateway = new ShopifyApiGateway(admin, shop);
@@ -1028,7 +1069,12 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
         prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${outputLanguage}.`;
 
         const altText = (
-          await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt)
+          // §2.5e — the merchant's forced terms apply to the original alt
+          // text as much as to its translations.
+          await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt, false, {
+            contextTexts: [sanitizedTitle],
+            locale: writtenLocale,
+          })
         ).trim();
         // Same guard the single-item runner has: an empty generation must not
         // be written. On the primary path it would CLEAR the alt text; on the
@@ -1104,7 +1150,7 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
   const finalStatus = succeeded.length === 0 ? "failed" : "completed";
   const failureSummary =
     failed.length > 0
-      ? `${failed.length} of ${total} image(s) failed${authErrorSeen ? " (invalid AI API key)" : ""}`
+      ? `images_failed:${failed.length}:${total}${authErrorSeen ? ":1" : ""}`
       : null;
 
   await db.task.update({
@@ -1158,6 +1204,13 @@ async function persistImageAltText(params: PersistImageAltTextArgs): Promise<voi
     }
     if (!mediaId) throw new Error("No Shopify MediaImage found for this product image");
 
+    // The alt BEFORE the write, for the translation repair below
+    // (product-alt-repair.server.ts) — every primary alt write gets it.
+    const { snapshotProductAlts, repairAltsAfterWrite } = await import(
+      "~/services/translations/product-alt-repair.server"
+    );
+    const altSnapshot = await snapshotProductAlts(db, shop, [mediaId]);
+
     const response = await gateway.graphql(
       `#graphql
         mutation seoAltFixProductUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
@@ -1190,6 +1243,15 @@ async function persistImageAltText(params: PersistImageAltTextArgs): Promise<voi
         data: { featuredImageAlt: altText, lastSyncedAt: new Date() },
       });
     }
+    // Shopify's echo where it gave one (one medium in, one out).
+    const echoedAlt = data.data?.productUpdateMedia?.media?.[0]?.alt;
+    await repairAltsAfterWrite({
+      gateway,
+      db,
+      shop,
+      snapshot: altSnapshot,
+      written: [{ mediaId, alt: typeof echoedAlt === "string" ? echoedAlt : altText }],
+    });
     return;
   }
 
@@ -1494,9 +1556,20 @@ async function persistField(params: PersistArgs): Promise<void> {
       } else if (field === "description") {
         inputPayload = { id, descriptionHtml: value };
       } else {
-        const seoInput: Record<string, string> = {};
-        seoInput[field === "seoTitle" ? "title" : "description"] = value;
-        inputPayload = { id, seo: seoInput };
+        // Shopify treats `seo` as a UNIT: sending `seo: { title }` alone CLEARS
+        // the existing description, and vice versa. This handler writes exactly
+        // ONE field per finding, so it is always the partial case — and
+        // `fixAllForItem` makes it worse, sending two single-sided writes in a
+        // row where only the last one survives, both reported as successes. The
+        // merge is the content service's, not a second copy of it: the
+        // failed-lookup branch (drop the missing side rather than send "") is
+        // the part that is easy to get wrong.
+        const preservedSeo = await contentService.buildPreservedSeo(
+          id,
+          field === "seoTitle" ? value : undefined,
+          field === "metaDescription" ? value : undefined,
+        );
+        inputPayload = { id, ...(preservedSeo ? { seo: preservedSeo } : {}) };
       }
       const response = await gateway.graphql(
         `#graphql
@@ -1538,8 +1611,14 @@ async function persistField(params: PersistArgs): Promise<void> {
           data: { descriptionHtml: value, lastSyncedAt: new Date() },
         });
       } else {
-        const seo = field === "seoTitle" ? { title: value } : { description: value };
-        await contentService.updateCollection(id, { seo });
+        // Same unit rule as the product branch above — `updateCollection` passes
+        // its `seo` through verbatim, so the merge has to happen here.
+        const preservedSeo = await contentService.buildPreservedSeo(
+          id,
+          field === "seoTitle" ? value : undefined,
+          field === "metaDescription" ? value : undefined,
+        );
+        await contentService.updateCollection(id, { ...(preservedSeo ? { seo: preservedSeo } : {}) });
         await db.collection.update({
           where: { shop_id: { shop, id } },
           data:
@@ -1610,6 +1689,11 @@ interface FixAllRunArgs {
   seoLimits: SeoLimits;
   /** See RunArgs.foreignLocale. */
   foreignLocale: string;
+  /** The language the generated text will actually be IN — the foreign locale
+   *  when translating, the shop's primary one otherwise. `foreignLocale: ""`
+   *  cannot answer that: "" means primary, not "no language". §2.5e's glossary
+   *  directive needs the real code. */
+  writtenLocale: string;
   targetLanguageName: string;
 }
 
@@ -1632,6 +1716,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
     seoTitleMaxChars,
     seoLimits,
     foreignLocale,
+    writtenLocale,
     targetLanguageName,
   } = args;
   const isForeign = foreignLocale.length > 0;
@@ -1667,7 +1752,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
         status: "failed",
         progress: 100,
         completedAt: new Date(),
-        error: "Item no longer exists in the content cache",
+        error: "item_missing",
       },
     });
     return;
@@ -1698,6 +1783,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
           mainLanguage,
           outputLanguage,
           foreignLocale,
+          writtenLocale,
           aiService,
           contentService,
           gateway,
@@ -1744,8 +1830,14 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
 
         const generated = (
           field === "description"
-            ? await aiService.generateProductDescription(row.title, prompt)
-            : await aiService.generateProductTitle(prompt)
+            ? await aiService.generateProductDescription(row.title, prompt, undefined, {
+                contextTexts: [row.title],
+                locale: writtenLocale,
+              })
+            : await aiService.generateProductTitle(prompt, undefined, {
+                contextTexts: [row.title],
+                locale: writtenLocale,
+              })
         ).trim();
 
         if (generated.length === 0) {
@@ -1819,7 +1911,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
   const finalStatus = succeeded.length === 0 ? "failed" : "completed";
   const failureSummary =
     failed.length > 0
-      ? `${failed.length} of ${total} fix(es) failed${authErrorSeen ? " (invalid AI API key)" : ""}`
+      ? `fixes_failed:${failed.length}:${total}${authErrorSeen ? ":1" : ""}`
       : null;
 
   await db.task.update({
@@ -1845,6 +1937,9 @@ interface AltTextForOneItemArgs {
   /** Language the AI writes the output in — equals mainLanguage for primary
    * runs, the target language name for foreign runs. */
   outputLanguage: string;
+  /** The locale CODE of that language (§2.5e). `outputLanguage` is a display
+   *  name and cannot key a glossary lookup. */
+  writtenLocale: string;
   /** "" (primary) or a foreign locale code. When non-empty, alt-text is saved
    * via translationsRegister on the image's own translatable resource plus the
    * matching DB mirror — MediaImage + `ProductImageAltTranslation` for product
@@ -1869,6 +1964,7 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
     aiInstructions,
     outputLanguage,
     foreignLocale,
+    writtenLocale,
     aiService,
     contentService,
     gateway,
@@ -2002,7 +2098,12 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
       }
       prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${outputLanguage}.`;
 
-      const altText = (await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt)).trim();
+      const altText = (
+        await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt, false, {
+          contextTexts: [sanitizedTitle],
+          locale: writtenLocale,
+        })
+      ).trim();
       if (altText.length === 0) throw new Error("AI returned an empty alt text");
 
       // Drop productTitle before handing off — persistImageAltText's
@@ -2156,15 +2257,30 @@ async function resolveTargetLocale(
   shop: string,
   requestedLocale: string,
 ): Promise<
-  | { error: null; foreignLocale: string; targetLanguageName: string }
-  | { error: string; foreignLocale: never; targetLanguageName: never }
+  // `writtenLocale` is the language the text will actually be IN — the
+  // foreign one when translating, the shop's primary one otherwise. §2.5e's
+  // glossary directive needs that, and `foreignLocale: ""` deliberately does
+  // not say it: "" means "primary", not "no language".
+  | { error: null; foreignLocale: string; targetLanguageName: string; writtenLocale: string }
+  | { error: string; foreignLocale: never; targetLanguageName: never; writtenLocale: never }
 > {
-  if (!requestedLocale) return { error: null, foreignLocale: "", targetLanguageName: "" };
+  // NOT wrapped in `.catch`. `getCachedShopLocales` already swallows non-401
+  // errors and resolves with []; it re-throws 401 ON PURPOSE so the request can
+  // re-authenticate (CLAUDE.md). The previous `.catch(() => [])` here predated
+  // this call being on the primary-locale path, and once it was, an expired
+  // session on the ordinary bulk fix turned into a silent run with the glossary
+  // off instead of a re-auth.
+  const locales = await getCachedShopLocales(admin, shop);
+  const primaryLocale = locales.find((l) => l.primary)?.locale ?? "";
 
-  const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
+  if (!requestedLocale) {
+    return { error: null, foreignLocale: "", targetLanguageName: "", writtenLocale: primaryLocale };
+  }
+
+  const shopLocales = locales;
   const primary = shopLocales.find((l) => l.primary);
   if (primary?.locale === requestedLocale) {
-    return { error: null, foreignLocale: "", targetLanguageName: primary.name ?? "" };
+    return { error: null, foreignLocale: "", targetLanguageName: primary.name ?? "", writtenLocale: primaryLocale };
   }
 
   const match = shopLocales.find(
@@ -2173,12 +2289,13 @@ async function resolveTargetLocale(
   if (!match) {
     return {
       error: `Locale "${requestedLocale}" isn't a published foreign locale for this shop — refusing to run to avoid rewriting primary content.`,
-    } as { error: string; foreignLocale: never; targetLanguageName: never };
+    } as { error: string; foreignLocale: never; targetLanguageName: never; writtenLocale: never };
   }
   return {
     error: null,
     foreignLocale: match.locale,
     targetLanguageName: match.name ?? match.locale,
+    writtenLocale: match.locale,
   };
 }
 
@@ -2516,6 +2633,13 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
       throw new Error(`No translatable digest for alt on ${imageResourceId}.`);
     }
     await registerAltTranslation(gateway, imageResourceId, locale, altText, digest);
+
+    // The single editor's featured-alt repair runs under its OWN key and
+    // watches the image resource it is about to write, so a claim on neither
+    // would let it overwrite this value (translation-locks.shared.ts). The
+    // product branch below claims for the same reason.
+    markTranslationSaved(featuredAltLockId(job.id));
+    markTranslationSaved(imageResourceId);
     await db.contentTranslation.upsert({
       where: {
         shop_resourceId_key_locale_marketId: {
@@ -2562,6 +2686,11 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
   }
 
   await registerAltTranslation(gateway, mediaId, locale, altText, digest);
+
+  // The detached alt repair watches the MEDIA resource it is about to write
+  // (translation-locks.shared.ts); without this claim it never sees the
+  // merchant's bulk fix and overwrites it minutes later.
+  markTranslationSaved(mediaId);
 
   await db.productImageAltTranslation.upsert({
     where: {

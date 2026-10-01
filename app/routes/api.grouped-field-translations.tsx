@@ -93,7 +93,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         type: "bulkTranslation",
         status: "running",
         resourceType: "Product",
-        resourceTitle: `${entry.fieldKey}: ${entry.sourceValue} → ${entry.targetLocale}`,
+        // The SOURCE VALUE alone. `fieldType` and `targetLocale` go into their
+        // own columns right below and the Tasks card and the completion toast
+        // render each of them with its own translated label — a composite
+        // title named the field a second time (raw), so the toast read
+        // 'Translation for Product type in "product_type: Vase -> fr"'.
+        resourceTitle: entry.sourceValue,
         fieldType: entry.fieldKey,
         targetLocale: entry.targetLocale,
         progress: 0,
