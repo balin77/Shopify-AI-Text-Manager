@@ -82,6 +82,10 @@ export type CompareCopy = {
     languagesLabel: string;
     productsLabel: string;
     aiLabel: string;
+    /** The volume row outside the translation topic: an AI quota, not translations. */
+    quotaLabel: string;
+    /** Under a plan's price where the provider limits who may use it. */
+    restrictions: Record<"devStoresOnly" | "freeThemesOnly", string>;
     enginesLabel: string;
     engines: {
       /** `{list}` is the provider names. */
@@ -90,6 +94,8 @@ export type CompareCopy = {
       shopify: string;
       vendor: string;
       unstated: string;
+      /** The same outside the translation topic: an AI model, not machine translation. */
+      unstatedModel: string;
       manual: string;
     };
     trialRow: string;
@@ -123,6 +129,14 @@ export type CompareCopy = {
       automaticOf: string;
       manualOnly: string;
       wordsOnce: string;
+      credits: string;
+      creditsMonth: string;
+      creditsOnce: string;
+      tokensOnce: string;
+      postsMonth: string;
+      descriptionsManual: string;
+      aiUpToProducts: string;
+      unlimitedAi: string;
       oncePerLanguage: string;
       oncePerLanguageOrOwnKey: string;
       noProductLimit: string;
@@ -149,6 +163,10 @@ export type CompareCopy = {
     perYear: string;
     free: string;
     onRequest: string;
+    /** Under a price range that follows the merchant's Shopify plan. */
+    byShopifyPlan: string;
+    /** Header name of such a plan. */
+    planByShopifyPlan: string;
     /** Currency, tax, annual discounts, AI costs — one sentence. */
     note: string;
   };

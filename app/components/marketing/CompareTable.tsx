@@ -253,7 +253,9 @@ export function CompareMatrix({
                       {stack((at) => {
                         if (pending(app)) return g.values.pending;
                         const { plan, isTop } = planAt(app, at);
-                        return `${plan.name}${isTop ? ` · ${g.topPlan}` : ""}`;
+                        // A plan priced by the merchant's Shopify plan has no name of its own.
+                        const name = plan.monthlyRange ? copy.pricing.planByShopifyPlan : plan.name;
+                        return `${name}${isTop ? ` · ${g.topPlan}` : ""}`;
                       })}
                     </span>
                   </>
@@ -332,6 +334,9 @@ export function CompareMatrix({
                         <span className="mk-compare-glance__price">
                           <PlanPrice plan={plan} table={COMPARE_PRICES[app]} copy={copy} locale={locale} />
                         </span>
+                        {plan.restriction ? (
+                          <span className="mk-compare-matrix__alt">{g.restrictions[plan.restriction]}</span>
+                        ) : null}
                         {alt ? <span className="mk-compare-matrix__alt">{alt}</span> : null}
                       </>
                     );
@@ -344,7 +349,13 @@ export function CompareMatrix({
               <tr key={key}>
                 <th scope="row">
                   <span className="mk-compare-table__label">
-                    {key === "languages" ? g.languagesLabel : key === "products" ? g.productsLabel : g.aiLabel}
+                    {key === "languages"
+                      ? g.languagesLabel
+                      : key === "products"
+                        ? g.productsLabel
+                        : topic === "translation"
+                          ? g.aiLabel
+                          : g.quotaLabel}
                   </span>
                 </th>
                 {visible.map((app) => (
@@ -378,10 +389,12 @@ export function CompareMatrix({
                     return (
                       <>
                         {engines
-                          ? enginesText(engines[Math.min(at, engines.length - 1)], copy)
+                          ? enginesText(engines[Math.min(at, engines.length - 1)], copy, topic)
                           : pending(app)
                             ? g.values.pending
-                            : g.engines.unstated}
+                            : topic === "translation"
+                              ? g.engines.unstated
+                              : g.engines.unstatedModel}
                         {alt ? <span className="mk-compare-matrix__alt">{alt}</span> : null}
                       </>
                     );
@@ -487,7 +500,7 @@ export function CompareMatrix({
   );
 }
 
-function enginesText(engines: PlanEngines, copy: CompareCopy): string {
+function enginesText(engines: PlanEngines, copy: CompareCopy, topic: CompareTopicId): string {
   const e = copy.glance.engines;
   switch (engines.kind) {
     case "ownKey":
@@ -501,7 +514,9 @@ function enginesText(engines: PlanEngines, copy: CompareCopy): string {
     case "vendor":
       return e.vendor;
     case "unstated":
-      return e.unstated;
+      // "Machine translation" is the translation topic's word; an AI writing
+      // app's engine is a model.
+      return topic === "translation" ? e.unstated : e.unstatedModel;
     case "manual":
       return e.manual;
   }

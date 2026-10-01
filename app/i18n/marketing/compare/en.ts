@@ -310,6 +310,7 @@ export const compareEn: CompareCopy = {
     ],
   },
   ourNotes: {
+    blogArticles: "One article from title and keyword; no blog planner",
     autoTranslate: "With your own AI key or AI included",
     aiProvider: "Six providers",
     imagesPerLanguage: "Not yet",
@@ -349,7 +350,7 @@ export const compareEn: CompareCopy = {
   strengthsHeading: "Where {name} is strong",
   ourEdgeHeading: "What ContentPilot adds",
   verdictHeading: "Which one fits you?",
-  checkedAt: "September 2026",
+  checkedAt: "October 2026",
   disclaimer:
     "Based on the providers' own App Store listings and help pages, as of {date}. Apps change quickly — check the current listing before you decide. “Not stated” means we could not find a clear answer, not that the feature is missing.",
   correction: "Spotted something out of date? Tell us and we will correct it.",
@@ -371,6 +372,11 @@ export const compareEn: CompareCopy = {
     languagesLabel: "Languages",
     productsLabel: "Products",
     aiLabel: "Translations",
+    quotaLabel: "AI quota",
+    restrictions: {
+      devStoresOnly: "Only for development and trial stores",
+      freeThemesOnly: "Only with free Shopify themes",
+    },
     enginesLabel: "AI providers",
     engines: {
       ownKey: "{list} — with your own key",
@@ -378,6 +384,7 @@ export const compareEn: CompareCopy = {
       shopify: "Shopify's machine translation",
       vendor: "The provider's own AI, not selectable",
       unstated: "Machine translation, engine not stated",
+      unstatedModel: "AI model not stated",
       manual: "None — manual translation only",
     },
     trialRow: "Free trial",
@@ -404,6 +411,14 @@ export const compareEn: CompareCopy = {
       automaticOf: "{auto} by AI, up to {total} in total",
       manualOnly: "Manual translation only",
       wordsOnce: "{n} words once, more as word packs",
+      credits: "{n} AI credits",
+      creditsMonth: "{n} AI credits / month",
+      creditsOnce: "{n} AI credits, one-time",
+      tokensOnce: "{n} AI tokens, one-time",
+      postsMonth: "{n} blog posts / month",
+      descriptionsManual: "{n} descriptions, started by hand",
+      aiUpToProducts: "AI for up to {n} products",
+      unlimitedAi: "Unlimited AI",
       oncePerLanguage: "Once per language, counted in products rather than words",
       oncePerLanguageOrOwnKey: "Once per language; unlimited with your own API key",
       noProductLimit: "No limit",
@@ -429,6 +444,8 @@ export const compareEn: CompareCopy = {
     perYear: "/ year",
     free: "Free",
     onRequest: "Price on request",
+    byShopifyPlan: "depending on your Shopify plan",
+    planByShopifyPlan: "By Shopify plan",
     note: "Monthly prices in the provider's own currency, before tax. Several providers are cheaper when billed yearly. With ContentPilot you either use your own AI key — then your AI provider bills the usage separately — or a plan with AI included.",
   },
   competitors: {
@@ -625,6 +642,422 @@ export const compareEn: CompareCopy = {
         followChanges: "Once the cache expires",
         seoToolkit: "Indexing and translated URLs",
         aiVisibility: "Translated pages readable by AI crawlers",
+      },
+    },
+    "avada-seo": {
+      kind: "SEO and page speed app for Shopify",
+      summary:
+        "Avada AI SEO combines image optimisation, speed modes, audits and technical SEO. ContentPilot adds SEO in every language, a live crawl, AI search and translation. Here is how they compare.",
+      about:
+        "Avada AI SEO is a broad technical SEO app with a focus on images and page speed: image compression and AI alt texts, speed modes that rework a copy of your theme, a store checklist and page audits with a score, structured data, a 404 manager with automatic redirects, sitemaps and Search Console reports. Blog posts, product descriptions and llms.txt live in separate Avada apps.",
+      strengths: [
+        "Image compression and AI alt texts, even on the free plan.",
+        "Speed modes with lazy loading and deferred scripts.",
+        "Structured data, 404 manager, sitemaps and a spreadsheet view for meta fields.",
+        "Internal link suggestions with AI anchor texts from Pro.",
+      ],
+      ourEdge: [
+        "SEO audit, score and AI fixes in every language of your store, plus translation in the same app.",
+        "A live crawl that finds broken links where they are, not just 404 addresses.",
+        "AI search in the same app: llms.txt and agents.md, AI crawlers, visits from AI assistants.",
+        "No changes to your theme code — speed stays a diagnosis.",
+      ],
+      verdict:
+        "Choose Avada if page speed tweaks and image optimisation are your priority and you are comfortable with an app changing a copy of your theme. Choose ContentPilot if you sell in several languages and want SEO, AI search and translation in one app.",
+      notes: {
+        brokenLinks: "404 addresses, not where the link is",
+        keywordTracking: "Search Console positions only",
+        indexNow: "Google and Bing indexing API",
+        localSeo: "Local SEO yes, backlinks not stated",
+        aiDiscoveryFiles: "llms.txt in a separate Avada app",
+        aiCrawlers: "robots.txt editor, AI bots not named",
+        seoPerLanguage: "No automatic translation",
+        siteCrawl: "Live page check in the audit",
+      },
+    },
+    storeseo: {
+      kind: "AI SEO app for Shopify",
+      summary:
+        "StoreSEO covers on-page SEO, schema, sitemaps and AI visibility, priced by number of products. ContentPilot adds SEO in every language from the first plan, a live crawl and translation. Here is how they compare.",
+      about:
+        "StoreSEO is an all-in-one SEO app with a strong focus on AI: an AI SEO agent, a connector for Claude and ChatGPT, on-page analysis, schema, sitemaps, image optimisation and keyword tools. Plans are tiered by products (25 to 10,000), images and AI credits; multilingual SEO starts at Growth.",
+      strengths: [
+        "llms.txt and agents.md on the free plan.",
+        "Tracks visits, orders and revenue from AI assistants, and brand mentions in AI answers.",
+        "Keyword research with search volume, and a rank tracker.",
+        "Bulk SEO with a choice of AI model, including Claude.",
+      ],
+      ourEdge: [
+        "SEO in every language on every plan, plus translation in the same app.",
+        "A live crawl with broken links, redirects and on-page checks.",
+        "A higher limit on the free plan: 50 products instead of 25.",
+        "A catalog check for AI shopping that includes GTIN.",
+      ],
+      verdict:
+        "Choose StoreSEO if measuring AI visibility and brand mentions matters most and your catalogue is small. Choose ContentPilot if you sell in several languages and want SEO, translation and AI content in one plan.",
+      notes: {
+        brokenLinks: "Named, not described",
+        redirects: "Bulk 301, no 404 detection",
+        indexNow: "Protocol not stated",
+        localSeo: "Local SEO yes, backlinks not stated",
+        catalogReadiness: "Score without GTIN",
+        structuredData: "Custom JSON-LD only on Free",
+      },
+    },
+    seowill: {
+      kind: "SEO and speed app for Shopify",
+      summary:
+        "SEOWILL bundles audits, rule-based meta and alt texts, speed tweaks, schema and an AI blog writer. ContentPilot adds AI-written SEO texts, SEO in every language and translation. Here is how they compare.",
+      about:
+        "SEOWILL (formerly SEOAnt) is an all-round package: audit, rule-based bulk optimisation of meta and alt texts, schema, speed optimisation applied to a copy of your theme, 404 redirects, keyword research, AI blog posts and a backlink exchange. The AI sits mostly in the content audit and the blog writer; meta and alt texts run on templates.",
+      strengths: [
+        "Many tools in one app at a low price.",
+        "Broad schema coverage, including FAQ, HowTo and LocalBusiness.",
+        "Keyword research with search volume and difficulty.",
+        "Speed modes and AMP, plus a backlink exchange and backlink audit.",
+      ],
+      ourEdge: [
+        "SEO titles, meta descriptions and alt texts written by AI, not by templates.",
+        "SEO in every language of your store, plus translation.",
+        "A live crawl that finds broken links where they are.",
+        "No changes to your theme code.",
+      ],
+      verdict:
+        "Choose SEOWILL if you want many SEO and speed tools at a low price and templates are enough for your meta texts. Choose ContentPilot if you want AI-written texts in every language and one app for SEO, translation and content.",
+      notes: {
+        metaAi: "Rules and templates",
+        bulkEditor: "Alt texts on Free, meta from Pro",
+        altText: "Templates, not AI",
+        seoPerLanguage: "Editing only, no translation",
+        brokenLinks: "Only 404s visitors hit",
+        sitemapControl: "HTML sitemap only",
+        indexNow: "Google only",
+        aiDiscoveryFiles: "llms.txt only",
+        siteCrawl: "Scan scope not stated",
+      },
+    },
+    tinyseo: {
+      kind: "SEO and image optimisation app for Shopify",
+      summary:
+        "TinySEO (formerly TinyIMG) is a low-cost speed and SEO package priced by images. ContentPilot adds AI texts in every language, SEO per language and translation. Here is how they compare.",
+      about:
+        "TinySEO comes from image optimisation and is now a low-cost speed-plus-SEO package: automatic image compression, alt text and file name templates, lazy loading and minifying in the theme, a site audit, JSON-LD, 404 redirects, llms.txt and agents.md, and Search Console reports. Plans are priced by images; AI credits are tight (10 to 1,000 a month).",
+      strengths: [
+        "Image compression, resizing and SEO-friendly file names.",
+        "Lazy loading and CSS/JS minifying.",
+        "IndexNow, llms.txt and agents.md from Advanced.",
+        "404 redirects with rules and wildcards.",
+      ],
+      ourEdge: [
+        "AI-written SEO texts and alt texts without a tight credit allowance.",
+        "SEO in every language of your store, plus translation.",
+        "A live crawl and internal link suggestions.",
+        "No changes to your theme code.",
+      ],
+      verdict:
+        "Choose TinySEO if image optimisation and speed tweaks are your priority on a small budget. Choose ContentPilot if you want AI texts in every language and one app for SEO, translation and content.",
+      notes: {
+        bulkEditor: "Meta in bulk from Advanced",
+        structuredData: "General form only on the free plan",
+        siteCrawl: "Site audit, fetch method not stated",
+        brokenLinks: "Conflicting statements",
+        internalLinks: "Orphan pages only",
+        keywordVolume: "AI keyword suggestions only",
+      },
+    },
+    booster: {
+      kind: "Autopilot SEO app for Shopify",
+      summary:
+        "Booster is the most-reviewed SEO app and works on autopilot: meta tags, alt texts, schema and 404 redirects. ContentPilot adds keyword tools, SEO per language and translation. Here is how they compare.",
+      about:
+        "Booster relies on an autopilot: once switched on it writes meta tags (templates or AI), alt texts, JSON-LD and 404 redirects automatically and reports a health score. Deeper tools — keyword research, speed, sitemap control, multiple languages — are missing or live in sister apps.",
+      strengths: [
+        "Install-and-forget autopilot for meta tags, alt texts and redirects.",
+        "AI alt texts and meta tags on the free plan for up to 250 products.",
+        "SEO score and health badge.",
+        "The most reviewed SEO app in the Shopify App Store.",
+      ],
+      ourEdge: [
+        "Keyword tracking with Search Console, internal links and a live crawl.",
+        "SEO in every language of your store, plus translation.",
+        "AI search: llms.txt and agents.md, AI crawlers, visits from AI assistants.",
+        "No autopilot that overwrites your work: AI changes are yours to accept.",
+      ],
+      verdict:
+        "Choose Booster if you want SEO to run on its own and do not need keyword or multilingual tools. Choose ContentPilot if you want control over the texts, SEO in every language and one app for SEO, translation and content.",
+      notes: {
+        bulkEditor: "Templates, 200 products per page",
+        brokenLinks: "Only 404s visitors hit",
+        sitemapControl: "Submission to Google only",
+        pageSpeed: "Data source not stated",
+        speedOptimization: "Separate Booster app",
+        keywordTracking: "Display only, no tracking",
+        localSeo: "Google Business Profile",
+        aiDiscoveryFiles: "llms.txt only",
+      },
+    },
+    "avada-blog": {
+      kind: "AI blog app for Shopify",
+      summary:
+        "Avada Blog writes and designs blog posts with AI. ContentPilot writes product texts, SEO fields and alt texts with the AI provider you choose, in every language. Here is how they compare.",
+      about:
+        "Avada Blog is a blog builder inside the Shopify admin with an AI writer: a prompt or a guided three-step flow (settings, outline, article) produces a post that you lay out in its own editor and sync to your Shopify blogs. It adds an SEO checklist, keyword research and an image generator. Product descriptions live in a separate Avada app.",
+      strengths: [
+        "Topic suggestions, full drafts and real-time SEO tips for blog posts.",
+        "Blog posts in several languages.",
+        "Keyword research for blog topics.",
+        "AI images for posts and a visual blog editor.",
+      ],
+      ourEdge: [
+        "Product descriptions, SEO fields and alt texts — not just blog posts.",
+        "Six AI providers to choose from, with your own key or AI included.",
+        "Translation into every language of your store, kept up to date.",
+        "SEO tools and variant images in the same plan.",
+      ],
+      verdict:
+        "Choose Avada Blog if blogging is your main content channel. Choose ContentPilot if you want product texts, SEO fields and translations written by AI, with the provider you choose.",
+      notes: {
+        aiProvider: "GPT and Claude in the changelog, current state unclear",
+        metaAi: "Blog posts only",
+        productDescriptions: "Separate Avada app",
+        bulkGeneration: "Summaries only",
+      },
+    },
+    profitonium: {
+      kind: "AI product description app for Shopify",
+      summary:
+        "Profitonium writes product descriptions, SEO fields and alt texts in bulk, with GPT, Claude or Gemini. ContentPilot adds your own key, translation into every language and SEO tools. Here is how they compare.",
+      about:
+        "Profitonium is a catalogue tool for product texts: pick products or collections, choose the fields (description, title, SEO title and meta, tags, alt text) and the language, add your instructions, check the credit estimate, generate, review and save. GPT, Claude and Gemini are available, optionally with the product image and web search as context.",
+      strengths: [
+        "Product descriptions, titles and SEO metadata in bulk.",
+        "A choice of GPT, Claude and Gemini models.",
+        "Texts generated automatically when new products are added.",
+        "Uses product images as input.",
+      ],
+      ourEdge: [
+        "Your own AI key at cost — no credits — or AI included in the plan.",
+        "Translates into every language of your store and keeps translations up to date.",
+        "SEO tools, a spreadsheet editor and variant images in the same plan.",
+        "Creates new products with AI, not only texts for existing ones.",
+      ],
+      verdict:
+        "Choose Profitonium if you mainly want product texts generated in bulk with a credit model. Choose ContentPilot if you want your own key, translations that stay up to date and one app for content, SEO and translation.",
+      notes: {
+        translateGenerated: "Generates in 30+ languages; storage not stated",
+      },
+    },
+    tapita: {
+      kind: "AI blog and GEO app for Shopify",
+      summary:
+        "Tapita writes and schedules SEO blog posts and tracks AI visibility. ContentPilot writes product texts, SEO fields and alt texts in every language. Here is how they compare.",
+      about:
+        "Tapita is a blog and content studio in the Shopify admin: a form with language, style, tone, business description, audience, keywords, title and outline produces an AI article that you edit in a drag-and-drop editor, illustrate with an AI image and publish or schedule. A content strategy suggests topic plans and writes posts in bulk.",
+      strengths: [
+        "Blog posts with over 18 writing styles and 40 tones.",
+        "A content calendar that schedules posts automatically.",
+        "GEO score and AI visibility tracking.",
+        "Featured images generated by AI.",
+      ],
+      ourEdge: [
+        "Product descriptions, SEO fields and alt texts — not just blog posts.",
+        "Six AI providers to choose from, with your own key or AI included.",
+        "Translation into every language of your store, kept up to date.",
+        "SEO tools and variant images in the same plan.",
+      ],
+      verdict:
+        "Choose Tapita if you want a blog that writes and publishes itself on a schedule. Choose ContentPilot if your product pages and their translations are the content that matters.",
+      notes: {
+        metaAi: "Blog posts only",
+      },
+    },
+    "essential-blog": {
+      kind: "AI blog writer for Shopify",
+      summary:
+        "Essential AI Blog writes SEO blog posts in 13 languages, priced by posts per month. ContentPilot writes product texts, SEO fields and alt texts with your own AI provider. Here is how they compare.",
+      about:
+        "Essential AI Blog is a lean AI blog writer: enter topic, keywords, tone, length and outline, and the app generates an article, optionally with an AI title image. The post lands in your Shopify blog (hidden by default) and works with any blog builder. It has no editor of its own and no access to products.",
+      strengths: [
+        "Blog posts in 13 languages.",
+        "Bulk blog generation.",
+        "AI featured images.",
+        "Works with any blog builder.",
+      ],
+      ourEdge: [
+        "Product descriptions, SEO fields and alt texts — the app has no product access.",
+        "Six AI providers to choose from, with your own key or AI included.",
+        "Translation into every language of your store, kept up to date.",
+        "SEO tools and variant images in the same plan.",
+      ],
+      verdict:
+        "Choose Essential AI Blog if you want a simple, low-cost way to publish regular blog posts. Choose ContentPilot if you want AI for your product content and its translations.",
+      notes: {
+        brandVoice: "Tone only",
+        translateGenerated: "Writes directly in 13 languages",
+      },
+    },
+    storeya: {
+      kind: "AI product description app for Shopify",
+      summary:
+        "StoreYa writes product descriptions, meta texts and a few blog posts with ChatGPT. ContentPilot adds your own instructions, a choice of AI provider and translation into every language. Here is how they compare.",
+      about:
+        "StoreYa's AI description app is a simple product text generator from an advertising company: pick a tone, generate descriptions one at a time or in bulk, meta titles and descriptions from Starter, plus a small number of blog posts with images and newsletter copy each month. Documentation is thin.",
+      strengths: [
+        "Product descriptions in bulk.",
+        "Meta titles and descriptions.",
+        "Blog posts with images and newsletter copy.",
+        "llms.txt on every plan.",
+      ],
+      ourEdge: [
+        "Your own instructions per field and a glossary, not only a tone.",
+        "Six AI providers to choose from, with your own key or AI included.",
+        "Translation into every language of your store, kept up to date.",
+        "SEO tools and variant images in the same plan.",
+      ],
+      verdict:
+        "Choose StoreYa if you want product descriptions generated quickly at a low price. Choose ContentPilot if you want texts in your own voice, in every language, with the AI provider you choose.",
+      notes: {
+        brandVoice: "Tone only",
+        aiImages: "Unclear whether generated by AI",
+        marketingTexts: "Newsletter only",
+        translateGenerated: "Generates in any language; writes no translations",
+      },
+    },
+    rubik: {
+      kind: "Variant image and swatch app for Shopify",
+      summary:
+        "Rubik assigns images to variants with AI and adds swatches, priced by number of products. ContentPilot adds bulk upload, WebP, AI alt texts in every language and the rest of the suite. Here is how they compare.",
+      about:
+        "Rubik assigns images, videos and 3D models to option values (stored in a metafield) and filters your theme's existing gallery; it also adds image and colour swatches on product pages and product cards. Assignment works by hand, with an AI matcher that reads titles, options, file names, alt texts and the image itself, or through an AI assistant.",
+      strengths: [
+        "AI assignment of images to variants, also via AI assistants.",
+        "Image and colour swatches on product and collection pages.",
+        "Works with all themes and page builders.",
+        "Shared images without duplicates.",
+      ],
+      ourEdge: [
+        "Bulk upload with WebP conversion in the same app.",
+        "AI alt texts, translated into every language of your store.",
+        "A key generator that keeps image assignment consistent across the catalogue.",
+        "Translation, SEO and AI content in the same plan.",
+      ],
+      verdict:
+        "Choose Rubik if swatches and AI-based image assignment are what you need. Choose ContentPilot if you want variant galleries together with image optimisation, alt texts and translation.",
+      notes: {
+        noLayoutShift: "Only “no impact on page speed” advertised",
+        zoomLightbox: "From the theme",
+        bulkUpload: "Separate app",
+        combinedListings: "Separate app",
+      },
+    },
+    "sa-variant-images": {
+      kind: "Variant image app for Shopify",
+      summary:
+        "SA Variant Image Automator filters your theme's gallery by variant, priced by your Shopify plan. ContentPilot adds bulk upload, WebP, AI alt texts and the rest of the suite. Here is how they compare.",
+      about:
+        "SA filters your theme's existing gallery without changing how it looks: images are dragged into variant buckets in the dashboard, the app re-orders the Shopify media accordingly and recognises the groups by their order. It is deliberately narrow — no swatches, no upload, no image editing. The price follows your Shopify plan; every plan has every feature.",
+      strengths: [
+        "Keeps your theme's zoom, video and 3D working.",
+        "Works with any theme, page builder or custom build.",
+        "Drag and drop into variant buckets.",
+        "Every feature on every plan.",
+      ],
+      ourEdge: [
+        "Bulk upload with WebP conversion in the same app.",
+        "AI alt texts, translated into every language of your store.",
+        "Automatic assignment by file name and SKU, with a key generator.",
+        "Translation, SEO and AI content in the same plan.",
+      ],
+      verdict:
+        "Choose SA if you only want your theme's gallery filtered by variant, with nothing else changed. Choose ContentPilot if you want variant galleries together with image optimisation, alt texts and translation.",
+      notes: {
+        noLayoutShift: "Only theme fidelity advertised",
+        zoomLightbox: "From the theme",
+        autoAssign: "By image order",
+        bulkUpload: "Conflicting statements",
+        swatchesProduct: "Separate app",
+        combinedListings: "Separate app",
+        altText: "Separate app",
+      },
+    },
+    "op-color-swatch": {
+      kind: "Swatch and variant image app for Shopify",
+      summary:
+        "OP Color Swatch turns variant dropdowns into swatches and shows only the selected variant's images. ContentPilot adds AI alt texts, bulk upload, WebP and the rest of the suite. Here is how they compare.",
+      about:
+        "OP Color Swatch is first of all a swatch app: it replaces your theme's variant dropdown with colour, image, card, pill, button or dropdown styles on product and collection pages. Variant images are grouped by their order in Shopify. Product groups combine related products on one page. The price follows your Shopify plan; every plan has every feature.",
+      strengths: [
+        "Colour and image swatches on product and collection pages.",
+        "Only the selected variant's images, also on collection cards.",
+        "Product groups that combine products on one page, each with its own URL.",
+        "Free setup and theme fixes by the vendor's team.",
+      ],
+      ourEdge: [
+        "Bulk upload with WebP conversion in the same app.",
+        "AI alt texts, translated into every language of your store.",
+        "Video and 3D in the variant gallery, with zoom and full screen.",
+        "Translation, SEO and AI content in the same plan.",
+      ],
+      verdict:
+        "Choose OP Color Swatch if swatches on product and collection pages are your main goal. Choose ContentPilot if you want variant galleries together with image optimisation, alt texts and translation.",
+      notes: {
+        noLayoutShift: "Help centre mentions a brief flash",
+        autoAssign: "By image order",
+        dragDrop: "Order set in the Shopify admin",
+        combinedListings: "Combining yes, splitting in a separate app",
+      },
+    },
+    "variant-image-wizard": {
+      kind: "Variant image and swatch app for Shopify",
+      summary:
+        "Variant Image Wizard combines a swatch configurator with a variant gallery at a very low price. ContentPilot adds AI alt texts, bulk upload, WebP and the rest of the suite. Here is how they compare.",
+      about:
+        "Variant Image Wizard combines a swatch configurator (image, colour, button or dropdown, with titles, tooltips and notes) with its own variant gallery including zoom and lightbox. Images are assigned per variant by drag and drop, and existing Shopify variant images can be imported. Free and Starter work with Shopify's free themes only.",
+      strengths: [
+        "Very low price.",
+        "Swatches, buttons and dropdowns with tooltips.",
+        "Its own gallery with zoom and lightbox.",
+        "Groups products as swatches (Pro).",
+      ],
+      ourEdge: [
+        "Works with any theme on every plan that includes the gallery.",
+        "AI alt texts, translated into every language of your store.",
+        "Automatic assignment by file name and SKU, with a key generator.",
+        "Translation, SEO and AI content in the same plan.",
+      ],
+      verdict:
+        "Choose Variant Image Wizard if you want swatches and variant images at the lowest price and use a Shopify free theme. Choose ContentPilot if you want variant galleries together with image optimisation, alt texts and translation.",
+      notes: {
+        autoAssign: "Imports Shopify variant images only",
+        bulkUpload: "Upload yes, bulk edit from Pro",
+        combinedListings: "Links products as swatches",
+      },
+    },
+    "gg-image-slider": {
+      kind: "Product gallery slider app for Shopify",
+      summary:
+        "GG Image Slider replaces your theme's product gallery with its own slider, with an option to show only the selected variant's images. ContentPilot adds automatic assignment, AI alt texts and the rest of the suite. Here is how they compare.",
+      about:
+        "GG Image Slider replaces your theme's product gallery with its own slider (thumbnails, zoom, lightbox, video, 3D). Showing only the selected variant's images is an option that relies on the order of your Shopify media. The price follows your Shopify plan.",
+      strengths: [
+        "A configurable slider with zoom, lightbox and pinch-to-zoom.",
+        "Video and 3D models, also in AR.",
+        "Optimised for swiping on mobile.",
+        "Low price.",
+      ],
+      ourEdge: [
+        "Assign images in the app, by drag and drop or automatically by file name and SKU.",
+        "Bulk upload with WebP conversion.",
+        "AI alt texts, translated into every language of your store.",
+        "Translation, SEO and AI content in the same plan.",
+      ],
+      verdict:
+        "Choose GG Image Slider if you mainly want a different product gallery. Choose ContentPilot if you want variant galleries together with image optimisation, alt texts and translation.",
+      notes: {
+        noLayoutShift: "Asynchronous loading advertised",
+        autoAssign: "By image order",
+        dragDrop: "Order set in the Shopify admin",
+        imageCompression: "Resizing only",
       },
     },
   },

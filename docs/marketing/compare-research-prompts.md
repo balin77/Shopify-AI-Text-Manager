@@ -7,6 +7,8 @@ Konkurrenz-Apps sind vorläufig aus `docs/reference/COMPETITIVE_ANALYSIS.md` §2
 erreichbar: `/de/compare/seo?preview`, `/de/compare/ai-content?preview`,
 `/de/compare/variant-images?preview`.
 
+**Veröffentlicht 2026-10-01:** alle drei Themen mit den recherchierten Werten eingetragen und `published: true` (live erst mit dem Merge nach `master`).
+
 **Erledigt 2026-10-01:** alle drei Aufträge ausgeführt, Ergebnisse in
 `docs/reference/COMPETITIVE_ANALYSIS.md` §2.2–2.4 und vollständig mit URL je Punkt unter
 `docs/reference/competitive-research/2026-10-01-{seo,variant-images,ai-content}.md`. Abweichungen

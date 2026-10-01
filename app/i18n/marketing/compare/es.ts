@@ -310,6 +310,7 @@ export const compareEs: CompareCopy = {
     ],
   },
   ourNotes: {
+    blogArticles: "Un artículo a partir de título y palabra clave; sin planificador de blog",
     autoTranslate: "Con su propia clave de IA o con IA incluida",
     aiProvider: "Seis proveedores",
     imagesPerLanguage: "Aún no",
@@ -349,7 +350,7 @@ export const compareEs: CompareCopy = {
   strengthsHeading: "Dónde destaca {name}",
   ourEdgeHeading: "Lo que añade ContentPilot",
   verdictHeading: "¿Cuál le conviene?",
-  checkedAt: "septiembre de 2026",
+  checkedAt: "octubre de 2026",
   disclaimer:
     "Basado en las fichas de la App Store y las páginas de ayuda de cada proveedor, a fecha de {date}. Las apps cambian rápido: consulte la ficha actual antes de decidir. «Sin datos» significa que no encontramos una respuesta clara, no que falte la función.",
   correction: "¿Algo está desactualizado? Escríbanos y lo corregimos.",
@@ -371,6 +372,11 @@ export const compareEs: CompareCopy = {
     languagesLabel: "Idiomas",
     productsLabel: "Productos",
     aiLabel: "Traducciones",
+    quotaLabel: "Cupo de IA",
+    restrictions: {
+      devStoresOnly: "Solo para tiendas de desarrollo y de prueba",
+      freeThemesOnly: "Solo con temas gratuitos de Shopify",
+    },
     enginesLabel: "Proveedores de IA",
     engines: {
       ownKey: "{list}: con su propia clave",
@@ -378,6 +384,7 @@ export const compareEs: CompareCopy = {
       shopify: "Traducción automática de Shopify",
       vendor: "IA propia del proveedor, no seleccionable",
       unstated: "Traducción automática, motor no indicado",
+      unstatedModel: "Modelo de IA no indicado",
       manual: "Ninguno: solo traducción manual",
     },
     trialRow: "Prueba gratuita",
@@ -404,6 +411,14 @@ export const compareEs: CompareCopy = {
       automaticOf: "{auto} con IA, hasta {total} en total",
       manualOnly: "Solo traducción manual",
       wordsOnce: "{n} palabras una sola vez, más en paquetes de palabras",
+      credits: "{n} créditos de IA",
+      creditsMonth: "{n} créditos de IA / mes",
+      creditsOnce: "{n} créditos de IA, una sola vez",
+      tokensOnce: "{n} tokens de IA, una sola vez",
+      postsMonth: "{n} artículos / mes",
+      descriptionsManual: "{n} descripciones, iniciadas a mano",
+      aiUpToProducts: "IA para hasta {n} productos",
+      unlimitedAi: "IA ilimitada",
       oncePerLanguage: "Una sola vez por idioma, contado en productos y no en palabras",
       oncePerLanguageOrOwnKey: "Una sola vez por idioma; ilimitado con su propia clave de API",
       noProductLimit: "Sin límite",
@@ -429,6 +444,8 @@ export const compareEs: CompareCopy = {
     perYear: "/ año",
     free: "Gratis",
     onRequest: "Precio a consultar",
+    byShopifyPlan: "según su plan de Shopify",
+    planByShopifyPlan: "Según el plan de Shopify",
     note: "Precios mensuales en la moneda del proveedor, sin impuestos. Varios proveedores son más baratos con pago anual. Con ContentPilot usa su propia clave de IA —y su proveedor de IA le factura el uso por separado— o un plan con IA incluida.",
   },
   competitors: {
@@ -625,6 +642,422 @@ export const compareEs: CompareCopy = {
         followChanges: "Cuando caduca la caché",
         seoToolkit: "Indexación y URL traducidas",
         aiVisibility: "Páginas traducidas legibles para rastreadores de IA",
+      },
+    },
+    "avada-seo": {
+      kind: "App de SEO y velocidad para Shopify",
+      summary:
+        "Avada AI SEO combina optimización de imágenes, modos de velocidad, auditorías y SEO técnico. ContentPilot añade SEO en todos los idiomas, un rastreo en vivo, búsqueda con IA y traducción. Así se comparan.",
+      about:
+        "Avada AI SEO es una app amplia de SEO técnico centrada en imágenes y velocidad: compresión de imágenes y textos alternativos con IA, modos de velocidad que modifican una copia de su tema, una lista de comprobación de la tienda y auditorías de página con puntuación, datos estructurados, un gestor de 404 con redirecciones automáticas, sitemaps e informes de Search Console. Los artículos, las descripciones de producto y llms.txt están en apps de Avada aparte.",
+      strengths: [
+        "Compresión de imágenes y textos alternativos con IA, ya en el plan gratuito.",
+        "Modos de velocidad con carga diferida y scripts aplazados.",
+        "Datos estructurados, gestor de 404, sitemaps y una vista de tabla para los campos meta.",
+        "Sugerencias de enlaces internos con textos de anclaje por IA desde Pro.",
+      ],
+      ourEdge: [
+        "Auditoría SEO, puntuación y correcciones con IA en todos los idiomas de su tienda, y traducción en la misma app.",
+        "Un rastreo en vivo que encuentra los enlaces rotos y dónde están, no solo direcciones 404.",
+        "Búsqueda con IA en la misma app: llms.txt y agents.md, rastreadores de IA, visitas desde asistentes de IA.",
+        "Sin cambios en el código de su tema: la velocidad queda como diagnóstico.",
+      ],
+      verdict:
+        "Elija Avada si la velocidad y la optimización de imágenes son su prioridad y acepta que una app modifique una copia de su tema. Elija ContentPilot si vende en varios idiomas y quiere SEO, búsqueda con IA y traducción en una sola app.",
+      notes: {
+        brokenLinks: "Direcciones 404, sin la página de origen",
+        keywordTracking: "Solo posiciones de Search Console",
+        indexNow: "API de indexación de Google y Bing",
+        localSeo: "SEO local sí, backlinks sin datos",
+        aiDiscoveryFiles: "llms.txt en otra app de Avada",
+        aiCrawlers: "Editor de robots.txt, sin nombrar bots de IA",
+        seoPerLanguage: "Sin traducción automática",
+        siteCrawl: "Comprobación en vivo dentro de la auditoría",
+      },
+    },
+    storeseo: {
+      kind: "App de SEO con IA para Shopify",
+      summary:
+        "StoreSEO cubre SEO on-page, schema, sitemaps y visibilidad en IA, por niveles según el número de productos. ContentPilot añade SEO en todos los idiomas desde el primer plan, un rastreo en vivo y traducción. Así se comparan.",
+      about:
+        "StoreSEO es una app de SEO todo en uno muy centrada en la IA: un agente de SEO con IA, conexión con Claude y ChatGPT, análisis on-page, schema, sitemaps, optimización de imágenes y herramientas de palabras clave. Los planes se escalonan por productos (de 25 a 10.000), imágenes y créditos de IA; el SEO multilingüe empieza en Growth.",
+      strengths: [
+        "llms.txt y agents.md en el plan gratuito.",
+        "Mide visitas, pedidos e ingresos desde asistentes de IA y menciones de la marca en respuestas de IA.",
+        "Investigación de palabras clave con volumen de búsqueda y seguimiento de posiciones.",
+        "SEO masivo eligiendo el modelo de IA, también Claude.",
+      ],
+      ourEdge: [
+        "SEO en todos los idiomas en cada plan, y traducción en la misma app.",
+        "Un rastreo en vivo con enlaces rotos, redirecciones y revisión on-page.",
+        "Un límite más alto en el plan gratuito: 50 productos en vez de 25.",
+        "Una revisión del catálogo para compras con IA que también comprueba el GTIN.",
+      ],
+      verdict:
+        "Elija StoreSEO si lo más importante es medir la visibilidad en IA y las menciones de su marca y su catálogo es pequeño. Elija ContentPilot si vende en varios idiomas y quiere SEO, traducción y textos con IA en un solo plan.",
+      notes: {
+        brokenLinks: "Solo mencionado, sin descripción",
+        redirects: "301 masivos, sin detección de 404",
+        indexNow: "Protocolo no indicado",
+        localSeo: "SEO local sí, backlinks sin datos",
+        catalogReadiness: "Puntuación sin GTIN",
+        structuredData: "En el plan gratuito solo JSON-LD propio",
+      },
+    },
+    seowill: {
+      kind: "App de SEO y velocidad para Shopify",
+      summary:
+        "SEOWILL reúne auditorías, textos meta y alternativos por reglas, optimización de velocidad, schema y un redactor de blog con IA. ContentPilot añade textos SEO escritos por IA, SEO en todos los idiomas y traducción. Así se comparan.",
+      about:
+        "SEOWILL (antes SEOAnt) es un paquete completo: auditoría, optimización masiva de textos meta y alternativos por reglas, schema, optimización de velocidad sobre una copia de su tema, redirecciones 404, investigación de palabras clave, artículos de blog con IA e intercambio de backlinks. La IA está sobre todo en la auditoría de contenido y en el redactor de blog; los textos meta y alternativos usan plantillas.",
+      strengths: [
+        "Muchas herramientas en una app a bajo precio.",
+        "Schema amplio, también FAQ, HowTo y LocalBusiness.",
+        "Investigación de palabras clave con volumen y dificultad.",
+        "Modos de velocidad y AMP, además de intercambio y auditoría de backlinks.",
+      ],
+      ourEdge: [
+        "Títulos SEO, metadescripciones y textos alternativos escritos por IA, no por plantillas.",
+        "SEO en todos los idiomas de su tienda, y traducción.",
+        "Un rastreo en vivo que encuentra los enlaces rotos y dónde están.",
+        "Sin cambios en el código de su tema.",
+      ],
+      verdict:
+        "Elija SEOWILL si quiere muchas herramientas de SEO y velocidad a bajo precio y le bastan plantillas para los textos meta. Elija ContentPilot si quiere textos escritos por IA en todos los idiomas y una sola app para SEO, traducción y contenido.",
+      notes: {
+        metaAi: "Reglas y plantillas",
+        bulkEditor: "Textos alternativos gratis, meta desde Pro",
+        altText: "Plantillas, no IA",
+        seoPerLanguage: "Solo edición, sin traducción",
+        brokenLinks: "Solo 404 visitados",
+        sitemapControl: "Solo sitemap HTML",
+        indexNow: "Solo Google",
+        aiDiscoveryFiles: "Solo llms.txt",
+        siteCrawl: "Alcance del escaneo no indicado",
+      },
+    },
+    tinyseo: {
+      kind: "App de SEO y optimización de imágenes para Shopify",
+      summary:
+        "TinySEO (antes TinyIMG) es un paquete económico de velocidad y SEO que se cobra por imágenes. ContentPilot añade textos con IA en todos los idiomas, SEO por idioma y traducción. Así se comparan.",
+      about:
+        "TinySEO viene de la optimización de imágenes y hoy es un paquete económico de velocidad y SEO: compresión automática de imágenes, plantillas para textos alternativos y nombres de archivo, carga diferida y minificación en el tema, auditoría del sitio, JSON-LD, redirecciones 404, llms.txt y agents.md e informes de Search Console. Se cobra por imágenes; los créditos de IA son escasos (de 10 a 1.000 al mes).",
+      strengths: [
+        "Compresión, redimensionado y nombres de archivo amigables para SEO.",
+        "Carga diferida y minificación de CSS y JS.",
+        "IndexNow, llms.txt y agents.md desde Advanced.",
+        "Redirecciones 404 con reglas y comodines.",
+      ],
+      ourEdge: [
+        "Textos SEO y alternativos escritos por IA sin un cupo de créditos escaso.",
+        "SEO en todos los idiomas de su tienda, y traducción.",
+        "Un rastreo en vivo y sugerencias de enlaces internos.",
+        "Sin cambios en el código de su tema.",
+      ],
+      verdict:
+        "Elija TinySEO si la optimización de imágenes y de velocidad con poco presupuesto es su prioridad. Elija ContentPilot si quiere textos con IA en todos los idiomas y una sola app para SEO, traducción y contenido.",
+      notes: {
+        bulkEditor: "Meta masivo desde Advanced",
+        structuredData: "En el plan gratuito solo datos generales",
+        siteCrawl: "Auditoría del sitio, método no indicado",
+        brokenLinks: "Datos contradictorios",
+        internalLinks: "Solo páginas huérfanas",
+        keywordVolume: "Solo sugerencias con IA",
+      },
+    },
+    booster: {
+      kind: "App de SEO en piloto automático para Shopify",
+      summary:
+        "Booster es la app de SEO con más reseñas y funciona en piloto automático: etiquetas meta, textos alternativos, schema y redirecciones 404. ContentPilot añade herramientas de palabras clave, SEO por idioma y traducción. Así se comparan.",
+      about:
+        "Booster se basa en un piloto automático: una vez activado, escribe etiquetas meta (plantillas o IA), textos alternativos, JSON-LD y redirecciones 404 de forma automática y muestra una puntuación de salud. Las herramientas más profundas —palabras clave, velocidad, control del sitemap, varios idiomas— faltan o están en apps hermanas.",
+      strengths: [
+        "Piloto automático para etiquetas meta, textos alternativos y redirecciones.",
+        "Textos alternativos y meta con IA en el plan gratuito para hasta 250 productos.",
+        "Puntuación SEO e insignia de salud.",
+        "La app de SEO con más reseñas de la Shopify App Store.",
+      ],
+      ourEdge: [
+        "Seguimiento de palabras clave con Search Console, enlaces internos y un rastreo en vivo.",
+        "SEO en todos los idiomas de su tienda, y traducción.",
+        "Búsqueda con IA: llms.txt y agents.md, rastreadores de IA, visitas desde asistentes de IA.",
+        "Ningún piloto automático que sobrescriba su trabajo: usted decide qué cambios de la IA aplicar.",
+      ],
+      verdict:
+        "Elija Booster si quiere que el SEO funcione solo y no necesita herramientas de palabras clave ni de varios idiomas. Elija ContentPilot si quiere controlar los textos, SEO en todos los idiomas y una sola app para SEO, traducción y contenido.",
+      notes: {
+        bulkEditor: "Plantillas, 200 productos por página",
+        brokenLinks: "Solo 404 visitados",
+        sitemapControl: "Solo envío a Google",
+        pageSpeed: "Fuente de datos no indicada",
+        speedOptimization: "App aparte de Booster",
+        keywordTracking: "Solo se muestran, sin seguimiento",
+        localSeo: "Perfil de Empresa de Google",
+        aiDiscoveryFiles: "Solo llms.txt",
+      },
+    },
+    "avada-blog": {
+      kind: "App de blog con IA para Shopify",
+      summary:
+        "Avada Blog escribe y diseña artículos de blog con IA. ContentPilot escribe textos de producto, campos SEO y textos alternativos con el proveedor de IA que usted elija, en todos los idiomas. Así se comparan.",
+      about:
+        "Avada Blog es un constructor de blogs dentro del admin de Shopify con un redactor de IA: un prompt o un proceso guiado en tres pasos (ajustes, esquema, artículo) crea una entrada que usted diseña en su propio editor y sincroniza con sus blogs de Shopify. Incluye una lista SEO, investigación de palabras clave y un generador de imágenes. Las descripciones de producto están en otra app de Avada.",
+      strengths: [
+        "Sugerencias de temas, borradores completos y consejos SEO en tiempo real para el blog.",
+        "Artículos en varios idiomas.",
+        "Investigación de palabras clave para temas de blog.",
+        "Imágenes con IA para las entradas y un editor visual.",
+      ],
+      ourEdge: [
+        "Textos de producto, campos SEO y textos alternativos, no solo artículos de blog.",
+        "Seis proveedores de IA a elegir, con su propia clave o con IA incluida.",
+        "Traducción a todos los idiomas de su tienda, siempre al día.",
+        "Herramientas SEO e imágenes de variantes en el mismo plan.",
+      ],
+      verdict:
+        "Elija Avada Blog si el blog es su principal canal de contenido. Elija ContentPilot si quiere que la IA escriba sus textos de producto, campos SEO y traducciones, con el proveedor que elija.",
+      notes: {
+        aiProvider: "GPT y Claude según el registro de cambios, estado actual poco claro",
+        metaAi: "Solo para artículos de blog",
+        productDescriptions: "App aparte de Avada",
+        bulkGeneration: "Solo resúmenes",
+      },
+    },
+    profitonium: {
+      kind: "App de descripciones de producto con IA",
+      summary:
+        "Profitonium escribe descripciones de producto, campos SEO y textos alternativos de forma masiva con GPT, Claude o Gemini. ContentPilot añade su propia clave, traducción a todos los idiomas y herramientas SEO. Así se comparan.",
+      about:
+        "Profitonium es una herramienta de catálogo para textos de producto: elija productos o colecciones, los campos (descripción, título, título SEO y meta, etiquetas, texto alternativo) y el idioma, añada sus instrucciones, revise la estimación de créditos, genere, revise y guarde. Puede elegir GPT, Claude y Gemini, con la imagen del producto y la búsqueda web como contexto si lo desea.",
+      strengths: [
+        "Descripciones, títulos y metadatos SEO de forma masiva.",
+        "Elección entre GPT, Claude y Gemini.",
+        "Textos generados automáticamente al añadir productos nuevos.",
+        "Usa las imágenes de producto como entrada.",
+      ],
+      ourEdge: [
+        "Su propia clave de IA a precio de coste —sin créditos— o IA incluida en el plan.",
+        "Traduce a todos los idiomas de su tienda y mantiene las traducciones al día.",
+        "Herramientas SEO, un editor de hoja de cálculo e imágenes de variantes en el mismo plan.",
+        "Crea productos nuevos con IA, no solo textos para los existentes.",
+      ],
+      verdict:
+        "Elija Profitonium si sobre todo quiere generar textos de producto en masa con un modelo de créditos. Elija ContentPilot si quiere su propia clave, traducciones siempre al día y una sola app para contenido, SEO y traducción.",
+      notes: {
+        translateGenerated: "Genera en más de 30 idiomas; dónde se guarda no se indica",
+      },
+    },
+    tapita: {
+      kind: "App de blog y GEO con IA para Shopify",
+      summary:
+        "Tapita escribe y programa artículos SEO y mide la visibilidad en IA. ContentPilot escribe textos de producto, campos SEO y textos alternativos en todos los idiomas. Así se comparan.",
+      about:
+        "Tapita es un estudio de blog y contenido en el admin de Shopify: un formulario con idioma, estilo, tono, descripción del negocio, público, palabras clave, título y esquema genera un artículo con IA que usted edita en un editor de arrastrar y soltar, ilustra con una imagen de IA y publica o programa. Una estrategia de contenido propone planes de temas y escribe entradas en masa.",
+      strengths: [
+        "Artículos con más de 18 estilos de escritura y 40 tonos.",
+        "Un calendario de contenido que publica entradas automáticamente.",
+        "Puntuación GEO y medición de la visibilidad en IA.",
+        "Imágenes destacadas con IA.",
+      ],
+      ourEdge: [
+        "Textos de producto, campos SEO y textos alternativos, no solo artículos de blog.",
+        "Seis proveedores de IA a elegir, con su propia clave o con IA incluida.",
+        "Traducción a todos los idiomas de su tienda, siempre al día.",
+        "Herramientas SEO e imágenes de variantes en el mismo plan.",
+      ],
+      verdict:
+        "Elija Tapita si quiere un blog que se escriba y publique solo según un calendario. Elija ContentPilot si sus páginas de producto y sus traducciones son el contenido que importa.",
+      notes: {
+        metaAi: "Solo para artículos de blog",
+      },
+    },
+    "essential-blog": {
+      kind: "Redactor de blog con IA para Shopify",
+      summary:
+        "Essential AI Blog escribe artículos SEO en 13 idiomas y se cobra por artículos al mes. ContentPilot escribe textos de producto, campos SEO y textos alternativos con su propio proveedor de IA. Así se comparan.",
+      about:
+        "Essential AI Blog es un redactor de blog con IA sencillo: introduzca tema, palabras clave, tono, longitud y esquema, y la app genera un artículo, con una imagen de portada por IA si lo desea. La entrada se guarda en su blog de Shopify (oculta por defecto) y funciona con cualquier constructor de blogs. No tiene editor propio ni acceso a los productos.",
+      strengths: [
+        "Artículos en 13 idiomas.",
+        "Artículos en masa.",
+        "Imágenes de portada con IA.",
+        "Funciona con cualquier constructor de blogs.",
+      ],
+      ourEdge: [
+        "Textos de producto, campos SEO y textos alternativos: la app no accede a los productos.",
+        "Seis proveedores de IA a elegir, con su propia clave o con IA incluida.",
+        "Traducción a todos los idiomas de su tienda, siempre al día.",
+        "Herramientas SEO e imágenes de variantes en el mismo plan.",
+      ],
+      verdict:
+        "Elija Essential AI Blog si quiere publicar artículos con regularidad de forma sencilla y económica. Elija ContentPilot si quiere IA para el contenido de sus productos y sus traducciones.",
+      notes: {
+        brandVoice: "Solo el tono",
+        translateGenerated: "Escribe directamente en 13 idiomas",
+      },
+    },
+    storeya: {
+      kind: "App de descripciones de producto con IA",
+      summary:
+        "StoreYa escribe descripciones de producto, textos meta y algunos artículos de blog con ChatGPT. ContentPilot añade instrucciones propias, la elección del proveedor de IA y traducción a todos los idiomas. Así se comparan.",
+      about:
+        "La app de IA de StoreYa es un generador sencillo de textos de producto de una empresa de publicidad: elija un tono, genere descripciones una a una o en masa, títulos y metadescripciones desde Starter, y cada mes algunos artículos con imágenes y textos de boletín. La documentación es escasa.",
+      strengths: [
+        "Descripciones de producto en masa.",
+        "Títulos y metadescripciones.",
+        "Artículos con imágenes y textos de boletín.",
+        "llms.txt en todos los planes.",
+      ],
+      ourEdge: [
+        "Instrucciones propias por campo y un glosario, no solo un tono.",
+        "Seis proveedores de IA a elegir, con su propia clave o con IA incluida.",
+        "Traducción a todos los idiomas de su tienda, siempre al día.",
+        "Herramientas SEO e imágenes de variantes en el mismo plan.",
+      ],
+      verdict:
+        "Elija StoreYa si quiere generar descripciones de producto rápido y barato. Elija ContentPilot si quiere textos con su propio tono, en todos los idiomas y con el proveedor de IA que elija.",
+      notes: {
+        brandVoice: "Solo el tono",
+        aiImages: "No está claro si las genera la IA",
+        marketingTexts: "Solo boletines",
+        translateGenerated: "Genera en cualquier idioma; no escribe traducciones",
+      },
+    },
+    rubik: {
+      kind: "App de imágenes por variante y muestras para Shopify",
+      summary:
+        "Rubik asigna imágenes a las variantes con IA y añade muestras, según el número de productos. ContentPilot añade carga masiva, WebP, textos alternativos con IA en todos los idiomas y el resto de la suite. Así se comparan.",
+      about:
+        "Rubik asigna imágenes, vídeos y modelos 3D a valores de opción (guardados en un metacampo) y filtra la galería existente de su tema; además añade muestras de imagen y color en páginas de producto y tarjetas. La asignación se hace a mano, con una IA que lee títulos, opciones, nombres de archivo, textos alternativos y la propia imagen, o mediante un asistente de IA.",
+      strengths: [
+        "Asignación de imágenes a variantes con IA, también desde asistentes de IA.",
+        "Muestras de imagen y color en páginas de producto y de colección.",
+        "Funciona con todos los temas y constructores de páginas.",
+        "Imágenes compartidas sin duplicados.",
+      ],
+      ourEdge: [
+        "Carga masiva con conversión a WebP en la misma app.",
+        "Textos alternativos con IA, traducidos a todos los idiomas de su tienda.",
+        "Un generador de claves que mantiene la asignación coherente en todo el catálogo.",
+        "Traducción, SEO y textos con IA en el mismo plan.",
+      ],
+      verdict:
+        "Elija Rubik si necesita muestras y una asignación de imágenes con IA. Elija ContentPilot si quiere galerías por variante junto con optimización de imágenes, textos alternativos y traducción.",
+      notes: {
+        noLayoutShift: "Solo anuncia «sin impacto en la velocidad»",
+        zoomLightbox: "Del tema",
+        bulkUpload: "App aparte",
+        combinedListings: "App aparte",
+      },
+    },
+    "sa-variant-images": {
+      kind: "App de imágenes por variante para Shopify",
+      summary:
+        "SA Variant Image Automator filtra la galería de su tema por variante y su precio depende de su plan de Shopify. ContentPilot añade carga masiva, WebP, textos alternativos con IA y el resto de la suite. Así se comparan.",
+      about:
+        "SA filtra la galería existente de su tema sin cambiar su aspecto: las imágenes se arrastran a grupos por variante en el panel, la app reordena los medios de Shopify en consecuencia y reconoce los grupos por su orden. Es deliberadamente limitada: sin muestras, sin carga de imágenes y sin edición. El precio sigue su plan de Shopify; todos los planes incluyen todas las funciones.",
+      strengths: [
+        "Mantiene el zoom, el vídeo y el 3D de su tema.",
+        "Funciona con cualquier tema, constructor de páginas o diseño propio.",
+        "Arrastrar y soltar en grupos por variante.",
+        "Todas las funciones en todos los planes.",
+      ],
+      ourEdge: [
+        "Carga masiva con conversión a WebP en la misma app.",
+        "Textos alternativos con IA, traducidos a todos los idiomas de su tienda.",
+        "Asignación automática por nombre de archivo y SKU, con generador de claves.",
+        "Traducción, SEO y textos con IA en el mismo plan.",
+      ],
+      verdict:
+        "Elija SA si solo quiere filtrar la galería de su tema por variante sin cambiar nada más. Elija ContentPilot si quiere galerías por variante junto con optimización de imágenes, textos alternativos y traducción.",
+      notes: {
+        noLayoutShift: "Solo anuncia fidelidad al tema",
+        zoomLightbox: "Del tema",
+        autoAssign: "Por el orden de las imágenes",
+        bulkUpload: "Datos contradictorios",
+        swatchesProduct: "App aparte",
+        combinedListings: "App aparte",
+        altText: "App aparte",
+      },
+    },
+    "op-color-swatch": {
+      kind: "App de muestras e imágenes por variante para Shopify",
+      summary:
+        "OP Color Swatch convierte los desplegables de variantes en muestras y muestra solo las imágenes de la variante elegida. ContentPilot añade textos alternativos con IA, carga masiva, WebP y el resto de la suite. Así se comparan.",
+      about:
+        "OP Color Swatch es ante todo una app de muestras: sustituye el desplegable de variantes de su tema por muestras de color, imagen, tarjeta, píldora, botón o desplegable en páginas de producto y de colección. Las imágenes por variante se agrupan según su orden en Shopify. Los grupos de productos reúnen productos relacionados en una página. El precio sigue su plan de Shopify; todos los planes incluyen todas las funciones.",
+      strengths: [
+        "Muestras de color e imagen en páginas de producto y de colección.",
+        "Solo las imágenes de la variante elegida, también en las tarjetas de colección.",
+        "Grupos que reúnen productos en una página, cada uno con su URL.",
+        "Configuración y ajustes del tema gratuitos por el equipo del proveedor.",
+      ],
+      ourEdge: [
+        "Carga masiva con conversión a WebP en la misma app.",
+        "Textos alternativos con IA, traducidos a todos los idiomas de su tienda.",
+        "Vídeo y 3D en la galería de variantes, con zoom y pantalla completa.",
+        "Traducción, SEO y textos con IA en el mismo plan.",
+      ],
+      verdict:
+        "Elija OP Color Swatch si su objetivo principal son las muestras en páginas de producto y de colección. Elija ContentPilot si quiere galerías por variante junto con optimización de imágenes, textos alternativos y traducción.",
+      notes: {
+        noLayoutShift: "La ayuda menciona un breve parpadeo",
+        autoAssign: "Por el orden de las imágenes",
+        dragDrop: "Orden en el admin de Shopify",
+        combinedListings: "Combinar sí, dividir en otra app",
+      },
+    },
+    "variant-image-wizard": {
+      kind: "App de imágenes por variante y muestras para Shopify",
+      summary:
+        "Variant Image Wizard combina un configurador de muestras con una galería por variante a un precio muy bajo. ContentPilot añade textos alternativos con IA, carga masiva, WebP y el resto de la suite. Así se comparan.",
+      about:
+        "Variant Image Wizard combina un configurador de muestras (imagen, color, botón o desplegable, con títulos, descripciones emergentes y avisos) con su propia galería por variante con zoom y lightbox. Las imágenes se asignan por variante arrastrando y soltando, y se pueden importar las imágenes de variante de Shopify. Free y Starter solo funcionan con los temas gratuitos de Shopify.",
+      strengths: [
+        "Precio muy bajo.",
+        "Muestras, botones y desplegables con descripciones emergentes.",
+        "Galería propia con zoom y lightbox.",
+        "Vincula productos como muestras (Pro).",
+      ],
+      ourEdge: [
+        "Funciona con cualquier tema, en todos los planes que incluyen la galería.",
+        "Textos alternativos con IA, traducidos a todos los idiomas de su tienda.",
+        "Asignación automática por nombre de archivo y SKU, con generador de claves.",
+        "Traducción, SEO y textos con IA en el mismo plan.",
+      ],
+      verdict:
+        "Elija Variant Image Wizard si quiere muestras e imágenes por variante al precio más bajo y usa un tema gratuito de Shopify. Elija ContentPilot si quiere galerías por variante junto con optimización de imágenes, textos alternativos y traducción.",
+      notes: {
+        autoAssign: "Solo importa las imágenes de variante de Shopify",
+        bulkUpload: "Carga sí, edición masiva desde Pro",
+        combinedListings: "Vincula productos como muestras",
+      },
+    },
+    "gg-image-slider": {
+      kind: "App de galería deslizante para Shopify",
+      summary:
+        "GG Image Slider sustituye la galería de producto de su tema por un carrusel propio y puede mostrar solo las imágenes de la variante elegida. ContentPilot añade asignación automática, textos alternativos con IA y el resto de la suite. Así se comparan.",
+      about:
+        "GG Image Slider sustituye la galería de producto de su tema por un carrusel propio (miniaturas, zoom, lightbox, vídeo, 3D). Mostrar solo las imágenes de la variante elegida es una opción que depende del orden de sus medios en Shopify. El precio sigue su plan de Shopify.",
+      strengths: [
+        "Un carrusel configurable con zoom, lightbox y zoom con los dedos.",
+        "Vídeos y modelos 3D, también en realidad aumentada.",
+        "Pensado para deslizar en el móvil.",
+        "Precio bajo.",
+      ],
+      ourEdge: [
+        "Asignar imágenes en la app, arrastrando o automáticamente por nombre de archivo y SKU.",
+        "Carga masiva con conversión a WebP.",
+        "Textos alternativos con IA, traducidos a todos los idiomas de su tienda.",
+        "Traducción, SEO y textos con IA en el mismo plan.",
+      ],
+      verdict:
+        "Elija GG Image Slider si sobre todo quiere otra galería de producto. Elija ContentPilot si quiere galerías por variante junto con optimización de imágenes, textos alternativos y traducción.",
+      notes: {
+        noLayoutShift: "Anuncia carga asíncrona",
+        autoAssign: "Por el orden de las imágenes",
+        dragDrop: "Orden en el admin de Shopify",
+        imageCompression: "Solo redimensionado",
       },
     },
   },
