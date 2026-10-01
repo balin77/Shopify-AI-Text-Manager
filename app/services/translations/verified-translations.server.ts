@@ -24,7 +24,7 @@ import {
   REMOVE_TRANSLATIONS,
 } from "../../graphql/content.mutations";
 import { logger } from "../../utils/logger.server";
-import { DIGEST_BATCH_CHUNK } from "../bulk-editor/columns.shared";
+import { DIGEST_BATCH_CHUNK } from "./translation-digest.shared";
 import { echoComparisonKey, findEchoFor } from "./translation-echo.shared";
 
 /** Minimal client: `ShopifyApiGateway` and `admin` both satisfy it. */

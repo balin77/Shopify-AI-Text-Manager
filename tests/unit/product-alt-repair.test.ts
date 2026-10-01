@@ -33,7 +33,7 @@ const removeAndVerifyAcrossLocales = vi.fn(async (_g: unknown, _id: string, _k: 
   userErrors: [],
 }));
 const removeAndVerify = vi.fn(async () => ({ confirmedKeys: new Set<string>(), userErrors: [] }));
-vi.mock("~/services/bulk-editor/translations.server", () => ({
+vi.mock("~/services/translations/verified-translations.server", () => ({
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP: "\u0000",

@@ -3,6 +3,8 @@
  * Centralizes all field-related string literals to prevent typos and improve refactoring
  */
 
+import { FIELD_TO_TRANSLATION_KEY } from '../services/translations/translation-keys.shared';
+
 export const SHOPIFY_TRANSLATION_KEYS = {
   TITLE: 'title',
   BODY: 'body',
@@ -32,18 +34,15 @@ export const CONTENT_TYPE_DESCRIPTION_KEY: Record<string, string> = {
  * Maps UI field names to Shopify translation keys
  */
 export const UI_FIELD_TO_TRANSLATION_KEY: Record<string, string> = {
-  title: SHOPIFY_TRANSLATION_KEYS.TITLE,
-  description: SHOPIFY_TRANSLATION_KEYS.BODY_HTML,
-  body_html: SHOPIFY_TRANSLATION_KEYS.BODY_HTML,
+  // Canonical map first, then the two deliberate differences: the Shopify
+  // keys themselves resolve to themselves (identity aliases), and a bare
+  // `body` stays `body` here (ShopPolicy) where the canonical map says body_html.
+  ...FIELD_TO_TRANSLATION_KEY,
   body: SHOPIFY_TRANSLATION_KEYS.BODY,
-  handle: SHOPIFY_TRANSLATION_KEYS.HANDLE,
-  seoTitle: SHOPIFY_TRANSLATION_KEYS.META_TITLE,
+  body_html: SHOPIFY_TRANSLATION_KEYS.BODY_HTML,
   meta_title: SHOPIFY_TRANSLATION_KEYS.META_TITLE,
-  metaDescription: SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION,
   meta_description: SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION,
-  productType: SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE,
   product_type: SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE,
-  summary: SHOPIFY_TRANSLATION_KEYS.SUMMARY,
 };
 
 /**

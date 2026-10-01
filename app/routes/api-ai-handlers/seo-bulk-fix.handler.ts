@@ -13,6 +13,8 @@
  * cache so the audit immediately reflects the fix on the next reload.
  */
 
+import { DIGEST_BATCH_CHUNK } from "../../services/translations/translation-digest.shared";
+import { FIELD_TO_TRANSLATION_KEY as CANONICAL_FIELD_TO_TRANSLATION_KEY } from "../../services/translations/translation-keys.shared";
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isAuthError, CONTENT_CONFIGS } from "./shared";
@@ -480,11 +482,11 @@ type TextField = Exclude<FixableField, "altText">;
  * translationsRegister and a ContentTranslation upsert. Body naming follows
  * ShopifyContentService's inconsistency note: for Product/Collection/Page/
  * Article the translation key is "body_html". */
-const FIELD_TO_TRANSLATION_KEY: Record<TextField, string> = {
-  title: "title",
-  description: "body_html",
-  seoTitle: "meta_title",
-  metaDescription: "meta_description",
+const TEXT_FIELD_TO_TRANSLATION_KEY: Record<TextField, string> = {
+  title: CANONICAL_FIELD_TO_TRANSLATION_KEY.title,
+  description: CANONICAL_FIELD_TO_TRANSLATION_KEY.description,
+  seoTitle: CANONICAL_FIELD_TO_TRANSLATION_KEY.seoTitle,
+  metaDescription: CANONICAL_FIELD_TO_TRANSLATION_KEY.metaDescription,
 };
 
 /** AuditType -> ContentTranslation.resourceType. Same map audit.service.ts
@@ -619,7 +621,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
     ? await loadTranslatableDigests(
         gateway,
         items.map((it) => it.id),
-        FIELD_TO_TRANSLATION_KEY[field],
+        TEXT_FIELD_TO_TRANSLATION_KEY[field],
       )
     : new Map<string, string>();
 
@@ -2226,7 +2228,6 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
  * generous, but `translatableResource` isn't free — each aliased selection
  * costs ~1 point. 50 stays well inside the per-request budget while cutting
  * a 100-item bucket down to 2 roundtrips instead of 100. */
-const DIGEST_BATCH_CHUNK = 50;
 
 /**
  * Batch-fetch translation digests for many resource GIDs at once. Uses
@@ -2440,7 +2441,7 @@ async function loadForeignFieldValue(
   id: string,
   field: TextField,
 ): Promise<string> {
-  const key = FIELD_TO_TRANSLATION_KEY[field];
+  const key = TEXT_FIELD_TO_TRANSLATION_KEY[field];
   const row = await db.contentTranslation.findFirst({
     where: {
       shop,
@@ -2483,7 +2484,7 @@ interface PersistForLocaleArgs {
  */
 async function persistFieldForLocale(params: PersistForLocaleArgs): Promise<void> {
   const { db, shop, type, id, field, value, locale, gateway, digest: prefetchedDigest } = params;
-  const key = FIELD_TO_TRANSLATION_KEY[field];
+  const key = TEXT_FIELD_TO_TRANSLATION_KEY[field];
   const resourceType = AUDIT_TYPE_TO_RESOURCE_TYPE[type];
 
   let digest = prefetchedDigest;

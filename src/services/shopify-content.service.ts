@@ -8,6 +8,7 @@ import { GET_TRANSLATIONS, GET_TRANSLATIONS_WITH_DIGESTS, GET_TRANSLATABLE_CONTE
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
 import { featuredAltLockId, marketLayerLockId } from '../../app/services/translations/translation-locks.shared';
+import { FIELD_TO_TRANSLATION_KEY, fieldTranslationKeyMap } from '../../app/services/translations/translation-keys.shared';
 import { collectRetranslationTaskIds } from '../../app/services/translations/retranslation-tasks.shared';
 import { echoComparisonKey, ECHO_PAIR_SEP } from '../../app/services/translations/translation-echo.shared';
 import type { VerifiedWriteResult, TranslationUserError } from '../../app/services/translations/verified-translations.server';
@@ -50,16 +51,7 @@ export interface ShopifyAdminClient {
  *
  * See also: docs/reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
  */
-export const FIELD_TO_TRANSLATION_KEY: Readonly<Record<string, string>> = {
-  title: 'title',
-  description: 'body_html',
-  body: 'body_html',
-  handle: 'handle',
-  seoTitle: 'meta_title',
-  metaDescription: 'meta_description',
-  productType: 'product_type',
-  summary: 'summary_html',
-};
+export { FIELD_TO_TRANSLATION_KEY, fieldTranslationKeyMap };
 
 /**
  * One string, comparable to another that may have been through a sanitizer.
@@ -72,12 +64,6 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-/** The field→key map with the single ShopPolicy exception applied
- * (description/body → "body" instead of "body_html"). */
-export function fieldTranslationKeyMap(resourceType: string): Readonly<Record<string, string>> {
-  if (resourceType !== 'ShopPolicy') return FIELD_TO_TRANSLATION_KEY;
-  return { ...FIELD_TO_TRANSLATION_KEY, description: 'body', body: 'body' };
-}
 
 
 /**

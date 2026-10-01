@@ -1,5 +1,6 @@
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useMemo } from "react";
+import { TRANSLATION_KEY_TO_FIELD } from "~/services/translations/translation-keys.shared";
 import type { TranslatableItem, Translation, ContentType, ShopLocale, ContentImage } from "~/types/content-editor.types";
 import {
   FIELD_CONFIGS,
@@ -38,17 +39,8 @@ export interface ValidationOverlays {
   deletedKeys?: Set<string>;
 }
 
-/** Maps Shopify translation keys to editor UI field keys stored in savedPrimaryValuesRef */
-const TRANSLATION_KEY_TO_FIELD_KEY: Record<string, string> = {
-  title: 'title',
-  body_html: 'description',
-  body: 'description',
-  handle: 'handle',
-  meta_title: 'seoTitle',
-  meta_description: 'metaDescription',
-  product_type: 'productType',
-  summary_html: 'summary',
-};
+/** Shopify translation key -> editor UI field key (the shared inverse map). */
+const TRANSLATION_KEY_TO_FIELD_KEY = TRANSLATION_KEY_TO_FIELD;
 
 // ============================================================================
 // Private Helpers

@@ -55,12 +55,6 @@ import type { TranslationChangePolicy } from "../translations/translation-change
 // TYPE only — the module is imported dynamically where it is used.
 import type { TranslationMirror } from "../translations/stale-translation-sync.server";
 import {
-  loadDigestsForRows,
-  fetchDigestsForResource,
-  registerAndVerify,
-  removeAndVerify,
-  removeAndVerifyAcrossLocales,
-  LOCALE_KEY_SEP,
   translationKeyForColumn,
   CONTENT_RESOURCE_TYPE_BY_ROW_TYPE,
   isSubResourceColumn,
@@ -69,8 +63,16 @@ import {
   EMPTY_SUB_RESOURCE_CACHE,
   type ProductSubResourceCache,
   type SubResourceTarget,
-  type TranslationInput,
 } from "./translations.server";
+import {
+  loadDigestsForRows,
+  fetchDigestsForResource,
+  registerAndVerify,
+  removeAndVerify,
+  removeAndVerifyAcrossLocales,
+  LOCALE_KEY_SEP,
+  type TranslationInput,
+} from "../translations/verified-translations.server";
 import { logger } from "../../utils/logger.server";
 import { redirectResourceFor, wasEverLive, type RedirectableResource } from "../seo/handle-redirect.shared";
 // The single editor parses tags with exactly this function — one rule, so the

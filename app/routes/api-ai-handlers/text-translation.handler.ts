@@ -1,4 +1,5 @@
 import { data as json } from "react-router";
+import { FIELD_TO_TRANSLATION_KEY } from "../../services/translations/translation-keys.shared";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
 import { errorMessage, errorStack, createAIService, isAuthError } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
@@ -785,15 +786,11 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
           }
           // Save to Shopify for products, collections, pages, etc.
           else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {
+            // Canonical map; a policy's bare `body` stays `body` (the former inline map did
+            // not move `description` for policies, so only `body` is overridden here).
             const fieldKeyMap: Record<string, string> = {
-              title: "title",
-              description: "body_html",
+              ...FIELD_TO_TRANSLATION_KEY,
               body: contentType === 'policies' ? "body" : "body_html",
-              handle: "handle",
-              seoTitle: "meta_title",
-              metaDescription: "meta_description",
-              productType: "product_type",
-              summary: "summary_html",
             };
             const shopifyKey = fieldKeyMap[fieldType] || fieldType;
 
@@ -1246,15 +1243,11 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
           // For products and other content types: Send to Shopify
           else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {
             // Map fieldType to Shopify key
+            // Canonical map; a policy's bare `body` stays `body` (the former inline map did
+            // not move `description` for policies, so only `body` is overridden here).
             const fieldKeyMap: Record<string, string> = {
-              title: "title",
-              description: "body_html",
+              ...FIELD_TO_TRANSLATION_KEY,
               body: contentType === 'policies' ? "body" : "body_html",
-              handle: "handle",
-              seoTitle: "meta_title",
-              metaDescription: "meta_description",
-              productType: "product_type",
-              summary: "summary_html",
             };
             const shopifyKey = fieldKeyMap[fieldType] || fieldType;
 

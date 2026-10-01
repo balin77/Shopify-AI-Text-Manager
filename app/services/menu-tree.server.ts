@@ -64,7 +64,7 @@ import {
   loadTranslationChangePolicy,
   type TranslationChangePolicy,
 } from "./translations/translation-change-policy.server";
-import { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } from "./bulk-editor/translations.server";
+import { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } from "./translations/verified-translations.server";
 import { logger } from "../utils/logger.server";
 import { isManagedRefusal } from "../../src/services/ai.service";
 import { collectRetranslationTaskIds } from "./translations/retranslation-tasks.shared";

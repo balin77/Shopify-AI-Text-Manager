@@ -43,7 +43,7 @@
  *   they wrote by hand.
  */
 
-import { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } from "../bulk-editor/translations.server";
+import { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } from "./verified-translations.server";
 import type { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { TranslationMirror, TranslationRef } from "./stale-translation-sync.server";
 import { logger } from "../../utils/logger.server";

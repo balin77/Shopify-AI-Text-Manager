@@ -10,7 +10,6 @@ import {
   LOCALE_KEY_SEP,
   type GraphqlClient,
 } from "~/services/translations/verified-translations.server";
-import * as bulk from "~/services/bulk-editor/translations.server";
 
 /**
  * Phase A of PLAN_TRANSLATION_WRITE_UNIFICATION: the verified helpers live in
@@ -34,15 +33,6 @@ function fakeClient(respond: (query: string, variables?: Record<string, unknown>
 
 const registerEcho = (translations: unknown[]) => ({
   data: { translationsRegister: { translations, userErrors: [] } },
-});
-
-describe("bulk-editor re-exports", () => {
-  it("exposes the very same functions", () => {
-    expect(bulk.registerAndVerify).toBe(registerAndVerify);
-    expect(bulk.removeAndVerify).toBe(removeAndVerify);
-    expect(bulk.removeAndVerifyAcrossLocales).toBe(removeAndVerifyAcrossLocales);
-    expect(bulk.LOCALE_KEY_SEP).toBe(LOCALE_KEY_SEP);
-  });
 });
 
 describe("case-insensitive locale matching (sent spelling wins)", () => {

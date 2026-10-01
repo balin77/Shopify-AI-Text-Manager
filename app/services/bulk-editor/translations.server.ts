@@ -351,19 +351,3 @@ export async function findInvalidLocaleOrMarket(
   }
   return null;
 }
-
-// ─── Verified register / remove / digests ──────────────────────────────────
-// Moved to the shared module (PLAN_TRANSLATION_WRITE_UNIFICATION Phase A);
-// re-exported under the same names so every existing import keeps working.
-export {
-  fetchDigestsForResource,
-  loadDigestsForRows,
-  registerAndVerify,
-  removeAndVerify,
-  removeAndVerifyAcrossLocales,
-  LOCALE_KEY_SEP,
-  type TranslationInput,
-  type TranslationUserError,
-  type VerifiedRemoveResult,
-  type VerifiedWriteResult,
-} from "../translations/verified-translations.server";

@@ -36,7 +36,7 @@ vi.mock("~/services/translations/translation-change-policy.server", () => ({
 vi.mock("~/services/translations/stale-translation-sync.server", () => ({
   reconcileAfterPrimarySave: (...args: unknown[]) => reconcileAfterPrimarySave(...args),
 }));
-vi.mock("~/services/bulk-editor/translations.server", () => ({
+vi.mock("~/services/translations/verified-translations.server", () => ({
   removeAndVerifyAcrossLocales: (...args: unknown[]) => removeAndVerifyAcrossLocales(...args),
   LOCALE_KEY_SEP: "\u0000",
 }));

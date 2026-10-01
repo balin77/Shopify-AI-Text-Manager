@@ -53,7 +53,7 @@ import { logger } from "../../utils/logger.server";
 import {
   fetchDigestsForResource,
   registerAndVerify,
-} from "../bulk-editor/translations.server";
+} from "../translations/verified-translations.server";
 import {
   eligibleAnchorText,
   htmlAlreadyLinksTo,

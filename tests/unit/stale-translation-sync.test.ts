@@ -140,7 +140,7 @@ vi.mock("../../app/services/ai/ai-credentials.server", async (importOriginal) =>
   };
 });
 
-vi.mock("../../app/services/bulk-editor/translations.server", () => ({
+vi.mock("../../app/services/translations/verified-translations.server", () => ({
   LOCALE_KEY_SEP: "\u0000",
   // The gap path: keys the folded multi-locale call did not echo go through
   // `removeAndVerify`, which RE-READS before giving up.

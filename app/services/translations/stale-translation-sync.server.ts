@@ -70,7 +70,7 @@ import {
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP,
-} from "../bulk-editor/translations.server";
+} from "./verified-translations.server";
 import {
   loadTranslationChangePolicy,
   type TranslationChangePolicy,

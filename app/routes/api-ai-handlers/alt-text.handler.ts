@@ -9,7 +9,6 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "~/utils/logger.server";
 import { resolveVisionPolicy } from "~/services/ai/vision-policy.shared";
-import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale, resolveWrittenLocale } from "./keyword-prompt";

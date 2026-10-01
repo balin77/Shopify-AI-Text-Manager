@@ -8,6 +8,7 @@
  * - Handles image alt-text updates for all locales
  */
 
+import { FIELD_TO_TRANSLATION_KEY as PRODUCT_KEYS, TRANSLATION_KEY_TO_FIELD } from "../../services/translations/translation-keys.shared";
 import { data as json } from "react-router";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
@@ -64,14 +65,7 @@ import type { RepairBudget } from "~/services/translations/repair-budget.server"
  * dirty by FIELD key (`unconfirmedClearedFields`); the product's body field is
  * `description` in the editor and `descriptionHtml` on the wire.
  */
-const FIELD_OF_PRODUCT_TRANSLATION_KEY: Readonly<Record<string, string>> = {
-  title: "title",
-  body_html: "description",
-  handle: "handle",
-  meta_title: "seoTitle",
-  meta_description: "metaDescription",
-  product_type: "productType",
-};
+const FIELD_OF_PRODUCT_TRANSLATION_KEY: Readonly<Record<string, string>> = TRANSLATION_KEY_TO_FIELD;
 
 interface UpdateProductParams {
   locale: string;
@@ -600,40 +594,40 @@ async function updateTranslatedProduct(
 
   // Only add non-empty translations that have a digest (meaning primary content exists)
   if (params.title && params.title.trim()) {
-    addTranslation("title", params.title);
+    addTranslation(PRODUCT_KEYS.title, params.title);
   } else if (params.title === "") {
     // Empty string means user wants to delete the translation
-    translationsToDelete.push("title");
+    translationsToDelete.push(PRODUCT_KEYS.title);
   }
 
   if (params.descriptionHtml && params.descriptionHtml.trim()) {
-    addTranslation("body_html", params.descriptionHtml);
+    addTranslation(PRODUCT_KEYS.description, params.descriptionHtml);
   } else if (params.descriptionHtml === "") {
-    translationsToDelete.push("body_html");
+    translationsToDelete.push(PRODUCT_KEYS.description);
   }
 
   if (params.handle && params.handle.trim()) {
-    addTranslation("handle", params.handle);
+    addTranslation(PRODUCT_KEYS.handle, params.handle);
   } else if (params.handle === "") {
-    translationsToDelete.push("handle");
+    translationsToDelete.push(PRODUCT_KEYS.handle);
   }
 
   if (params.seoTitle && params.seoTitle.trim()) {
-    addTranslation("meta_title", params.seoTitle);
+    addTranslation(PRODUCT_KEYS.seoTitle, params.seoTitle);
   } else if (params.seoTitle === "") {
-    translationsToDelete.push("meta_title");
+    translationsToDelete.push(PRODUCT_KEYS.seoTitle);
   }
 
   if (params.metaDescription && params.metaDescription.trim()) {
-    addTranslation("meta_description", params.metaDescription);
+    addTranslation(PRODUCT_KEYS.metaDescription, params.metaDescription);
   } else if (params.metaDescription === "") {
-    translationsToDelete.push("meta_description");
+    translationsToDelete.push(PRODUCT_KEYS.metaDescription);
   }
 
   if (params.productType && params.productType.trim()) {
-    addTranslation("product_type", params.productType);
+    addTranslation(PRODUCT_KEYS.productType, params.productType);
   } else if (params.productType === "") {
-    translationsToDelete.push("product_type");
+    translationsToDelete.push(PRODUCT_KEYS.productType);
   }
 
   // Retry: if any fields were skipped due to missing digest, re-fetch translatableContent

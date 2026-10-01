@@ -196,7 +196,7 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
     // skipped, by the single-locale re-read (a row Shopify never held is
     // "gone" there and confirms).
     const { removeAndVerify, removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
-      "../bulk-editor/translations.server"
+      "./verified-translations.server"
     );
     const confirmedByMedia = new Map<string, Set<string>>();
     for (const mediaId of mediaIds) {

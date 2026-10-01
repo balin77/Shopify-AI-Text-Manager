@@ -24,7 +24,7 @@
  */
 
 import type { ShopifyApiGateway } from "./shopify-api-gateway.service";
-import { registerAndVerify, removeAndVerify } from "./bulk-editor/translations.server";
+import { registerAndVerify, removeAndVerify } from "./translations/verified-translations.server";
 import { flattenMenuItems } from "./menu-translations.shared";
 import { logger } from "../utils/logger.server";
 import type { PrismaClient } from "@prisma/client";
