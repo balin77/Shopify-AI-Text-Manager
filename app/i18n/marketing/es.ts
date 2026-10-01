@@ -271,18 +271,6 @@ export const es: MarketingTranslation = {
     ],
   },
 
-  media: {
-    placeholder: "Imagen pendiente",
-    alt: {
-      "feature-ai": "Un campo con un texto generado y el botón de aceptar al lado",
-      "feature-translations": "La página 'añadir traducciones que faltan' con las casillas por idioma",
-      "feature-bulk": "La cuadrícula del editor masivo con un filtro aplicado y unas celdas editadas resaltadas",
-      "feature-seo": "El informe de rastreo: enlaces rotos, cadenas de redirección e indexabilidad en una vista",
-      "feature-aeo": "La sección de descubrimiento para IA con agents.md, llms.txt y el estado de los datos estructurados",
-      "feature-media": "El gestor de imágenes con textos alternativos en varios idiomas",
-      "feature-structure": "El editor de menús con un árbol de navegación anidado",
-    },
-  },
 
   guide: {
     title: "Guía",

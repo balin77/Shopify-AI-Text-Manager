@@ -271,18 +271,6 @@ export const de: MarketingTranslation = {
     ],
   },
 
-  media: {
-    placeholder: "Bild folgt",
-    alt: {
-      "feature-ai": "Ein Feld mit einem generierten Text und dem Übernehmen-Button daneben",
-      "feature-translations": "Die Seite 'Fehlende Übersetzungen ergänzen' mit den Checkboxen pro Sprache",
-      "feature-bulk": "Das Raster des Bulk-Editors mit einem gesetzten Filter und ein paar hervorgehobenen Zellen",
-      "feature-seo": "Der Crawl-Bericht: defekte Links, Weiterleitungsketten und Indexierbarkeit in einer Ansicht",
-      "feature-aeo": "Der KI-Discovery-Bereich mit agents.md, llms.txt und dem Status der strukturierten Daten",
-      "feature-media": "Die Bildverwaltung mit Alt-Texten in mehreren Sprachen",
-      "feature-structure": "Der Menü-Editor mit einem verschachtelten Navigationsbaum",
-    },
-  },
 
   guide: {
     title: "Anleitung",

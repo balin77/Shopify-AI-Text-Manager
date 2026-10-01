@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { HomeVideoSlot } from "../../config/marketing-videos";
+import type { SiteVideoSlot } from "../../config/marketing-videos";
 import type { MarketingTranslation } from "../../i18n/marketing";
 import { VideoSlot } from "./VideoSlot";
 
 export interface StoryStep {
-  slot: HomeVideoSlot;
+  slot: SiteVideoSlot;
   title: string;
   body: string;
 }

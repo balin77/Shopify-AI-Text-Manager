@@ -9,7 +9,7 @@ import {
   requireMarketingLocale,
 } from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
-import { MediaSlot } from "../components/marketing/MediaSlot";
+import { VideoSlot } from "../components/marketing/VideoSlot";
 import type { GuideCategoryId } from "../config/marketing-guide";
 import { localizedPath } from "../services/marketing-locale.shared";
 
@@ -101,9 +101,8 @@ export default function MarketingFeatures() {
             </div>
             <div className="mk-feature__media">
               {/* No cast: the group ids are literal in en.ts, so a feature
-                  without an image slot fails typecheck instead of rendering
-                  an <img> with no alt text. */}
-              <MediaSlot slot={`feature-${group.id}`} t={t} />
+                  without a video slot fails typecheck. */}
+              <VideoSlot slot={`feature-${group.id}`} title={group.title} t={t} />
             </div>
           </section>
         ))}

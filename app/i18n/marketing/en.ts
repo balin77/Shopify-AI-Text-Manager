@@ -59,8 +59,8 @@ export const en = {
         title: "Gets found",
         body: "A crawl of your own storefront, an on-page report, structured data, redirect chains, sitemap control, IndexNow — plus the newer half nobody has covered yet: what AI assistants read when they answer a question about your shop.",
       },
-      // Exactly three: the scroll story has three image slots, and a fourth
-      // pillar here must fail typecheck instead of silently sharing a picture.
+      // Exactly three: the scroll story has three video slots, and a fourth
+      // pillar here must fail typecheck instead of silently sharing a video.
     ] as [Pillar, Pillar, Pillar],
   },
 
@@ -284,19 +284,6 @@ export const en = {
     ],
   },
 
-  media: {
-    placeholder: "Image to come",
-    /** What each screenshot should SHOW — the brief for whoever captures it, and the alt text once it exists. */
-    alt: {
-      "feature-ai": "A field with a generated text and the accept button next to it",
-      "feature-translations": "The 'add missing translations' page with the per-language checkboxes",
-      "feature-bulk": "The bulk editor grid with a filter set and a few edited cells highlighted",
-      "feature-seo": "The crawl report: broken links, redirect chains and indexability in one view",
-      "feature-aeo": "The AI-discovery section showing agents.md, llms.txt and the structured-data status",
-      "feature-media": "The image manager with alt texts in several languages",
-      "feature-structure": "The menu editor with a nested navigation tree",
-    },
-  },
 
   guide: {
     title: "Guide",

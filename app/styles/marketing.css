@@ -496,15 +496,9 @@ a.mk-badge:hover {
   background: var(--mk-border-strong);
 }
 
-.mk-media__img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 /* The empty state is a page with nothing on it, not a grey box with a
-   warning: it has the proportions of the screenshot that will replace it,
-   and a faint label so the layout can be reviewed while every slot is still
+   warning: it has the proportions of the video that will replace it, and a
+   faint label so the layout can be reviewed while every slot is still
    empty. The diagonal hatching is what keeps it from reading as a broken
    image. */
 .mk-media__empty {
