@@ -69,7 +69,7 @@ try {
   serverLogger.error("[server.js] Failed to load rate-limit-cjs.cjs: " + e.message);
   // Provide no-op middleware so server can still start
   const noop = (req, res, next) => next();
-  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, webhookRateLimit: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
+  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookRateLimit: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
 }
 
 const {
@@ -245,6 +245,13 @@ app.use('/app/settings', strictRateLimit);
 app.use('/api/sync-products', bulkOperationRateLimit);
 app.use('/api/sync-content', bulkOperationRateLimit);
 
+// The editors' JSON doors for their plain-fetch saves (copy to all languages,
+// option translate/copy). They used to post to the content PAGE routes, so they
+// belong to the content limit below, not to the general /api one: a copy on a
+// shop with many languages fires one request per locale, and sharing the 100/min
+// /api budget with every other API call turned routine clicks into 429s.
+const CONTENT_EDITOR_API_PATHS = ['/api/content-editor-action', '/api/product-sub-resources'];
+
 // Content page rate limiting — applied to form submissions (save, copy, translate).
 // Uses a permissive 200/min limit because these pages mix AI and non-AI operations
 // and routine copy/save clicks must not be throttled. The /api/ai route has its
@@ -255,7 +262,8 @@ app.use((req, res, next) => {
       contentType.includes('multipart/form-data')) {
     if (req.path.includes('/app/products') ||
         req.path.includes('/app/content') ||
-        req.path.includes('/app/collections')) {
+        req.path.includes('/app/collections') ||
+        CONTENT_EDITOR_API_PATHS.includes(req.path)) {
       return contentActionRateLimit(req, res, next);
     }
   }
@@ -271,7 +279,9 @@ app.use('/api', (req, res, next) => {
   // Skip rate limiting for these endpoints - they have exponential backoff in the client
   const excludedPaths = [
     '/running-tasks-count',
-    '/recently-completed-tasks'
+    '/recently-completed-tasks',
+    // Limited by contentActionRateLimit above instead (CONTENT_EDITOR_API_PATHS).
+    ...CONTENT_EDITOR_API_PATHS.map((p) => p.slice('/api'.length)),
   ];
 
   if (excludedPaths.includes(req.path)) {
