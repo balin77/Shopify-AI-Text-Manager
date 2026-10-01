@@ -867,6 +867,19 @@ export function useProductSubResources({
         ) {
           touchOverlay();
         }
+        // A confirmed removal of a MARKET override leaves the market inheriting
+        // the global value, but the loaded item still carries the removed market
+        // row and would resurface it on the next locale/market switch: re-read.
+        const removedMarketOverride =
+          !!sentSave.marketLayer &&
+          Object.entries(sentSave.values).some(
+            ([resourceId, fields]) =>
+              !failedResources.includes(resourceId) &&
+              Object.values(fields || {}).some((value) => value === ""),
+          );
+        if (removedMarketOverride && revalidator && revalidator.state === "idle") {
+          revalidator.revalidate();
+        }
       }
 
       if (failedResources.length > 0) {
