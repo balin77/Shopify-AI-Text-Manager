@@ -69,7 +69,7 @@ export const guideEn: GuideCopy = {
 
     "ai-providers": {
       title: "AI providers and API keys",
-      summary: "The app uses your own AI access. How to connect a provider and choose a model and limits.",
+      summary: "AI can be included in your plan, or you use your own access. How both work, and how to choose a model and limits.",
       sections: [
         {
           heading: "Your own key",
@@ -80,6 +80,15 @@ export const guideEn: GuideCopy = {
             "Create an account with a provider and generate an API key.",
             "In the app, open Settings → AI API access and enter the key for that provider.",
             "Choose your preferred provider and model, then save.",
+          ],
+        },
+        {
+          heading: "AI included in your plan",
+          paragraphs: [
+            "Instead of your own key, you can choose a plan with AI included. Under Settings → Plan, turn on “With AI included” at the top: the cards then show the price with AI and roughly how much work it covers. You change your plan as usual with the button on the card.",
+            "Which AI is used is decided by your plan alone: with an AI plan, the app works with the included AI. Without one, it uses your own key as soon as one is stored. If you have neither, you can try the included AI once for free.",
+            "Before the included AI works, you confirm once under Settings → AI API access that your content may be sent to the named AI providers for this. That is also where you see how much of the included volume you have used in the current billing period.",
+            "When the volume is used up, the app continues with your own key if you have stored one. Otherwise it continues in the next billing period. Translations are never deleted just because the volume ran out.",
           ],
         },
         {
