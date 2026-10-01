@@ -27,7 +27,7 @@ import { getPlanDisplayName } from "../utils/planUtils";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useVariantImageManager } from "../hooks/useVariantImageManager";
 import { VariantImageManager } from "../components/image-manager/VariantImageManager";
-import { BlockStack, Spinner, Text } from "@shopify/polaris";
+import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
@@ -376,7 +376,11 @@ export const loader = createContentLoader({
     const localizedImagesEmbedUrl = apiKey
       ? `https://${ctx.session.shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/localized-media`
       : null;
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl };
+    // The PLAN gate alone, not the image manager's on/off setting: replacements
+    // keep showing on the storefront when the merchant switches the image
+    // manager off, so the card that lists and removes them must stay too.
+    const showLocalizedImages = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled);
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages };
   },
 });
 
@@ -412,7 +416,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -1107,7 +1111,6 @@ export default function ProductsPage() {
             },
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
-            <BlockStack gap="400">
             <VariantImageManager
               productId={editor.selectedItem.id}
               onSaveResponse={editor.helpers.trackRetranslationTasks}
@@ -1155,6 +1158,9 @@ export default function ProductsPage() {
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
             />
+          ) : undefined}
+          imageGalleryAddon={showLocalizedImages && editor.selectedItem ? (
+            <>
             {/* Keyed on the product and on the image list the manager last
                 confirmed, so an image added or removed there is reflected
                 here without a page reload. */}
@@ -1166,7 +1172,7 @@ export default function ProductsPage() {
               currentLanguage={editor.state.currentLanguage}
               embedActivationUrl={localizedImagesEmbedUrl}
             />
-            </BlockStack>
+            </>
           ) : undefined}
         />
       </div>

@@ -172,7 +172,7 @@ export function ThemeImageField({
           onAdd={handleAdd}
           uploadCommitMode="queue"
           initialKind="image"
-          disallowModel
+          imagesOnly
           title={tx.pickerTitle.replace("{locale}", currentLanguage ?? "")}
         />
       )}

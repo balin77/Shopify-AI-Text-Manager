@@ -68,7 +68,7 @@ Die Konkurrenz (EZ Product Image Translate, LangShop, Transcy) tauscht Produktbi
 
 **Phase-2-Vorbereitung:** Herkunft `a` und Quell-Stempel `s` sind ab dem ersten Eintrag gesetzt; der Editor zeigt „Original wurde geändert“, wenn die aktuelle URL des Originals vom Stempel abweicht, und „Original nicht mehr vorhanden“ für Einträge, deren Medium fehlt. Die Schreibfunktion nimmt `origin` als Parameter — die KI-Bildübersetzung ruft später dieselbe Funktion mit `origin: "ai"`.
 
-**Bekannte Grenzen (gesagt, nicht versteckt):** Kanal-Feeds (Google, Shop-App, KI-Kanäle) zeigen das Original. Ohne aktiviertes App-Embed passiert im Storefront nur `og:image`/JSON-LD (wenn diese Embeds aktiv sind). Das Original wird geladen, bevor es ersetzt wird (Bandbreite, kein sichtbares Flackern dank Prehide; Failsafe nach 3 s). Zwei gleichzeitige Bearbeitungen desselben Produkts: die spätere gewinnt. Ein Ersatzbild, das in Shopify „Dateien“ gelöscht wird, bleibt im Metafeld und zeigt im Shop ein fehlendes Bild (nicht erkannt). Die Karte hängt am Bild-Manager und verschwindet, wenn dieser in den Einstellungen ausgeschaltet ist, während der Shop die Ersatzbilder weiter zeigt. Theme-Bild in der Marktansicht: Wird dort das globale Sprachbild angezeigt (geerbt), nimmt „Originalbild verwenden“ nichts weg — es entfernt nur eine eigene Marktwahl. Ein Upload, den Shopify nicht innerhalb von ~9 s verarbeitet, wird nicht erneut hochgeladen; die Datei liegt bereits in „Dateien“ und wird von dort gewählt.
+**Bekannte Grenzen:** vollständig gelistet in §4 „Nicht abgedeckte Fälle“.
 
 ### Phase 1b — Produktbilder pro Sprache (über unsere Galerie)
 
@@ -86,12 +86,46 @@ Die Konkurrenz (EZ Product Image Translate, LangShop, Transcy) tauscht Produktbi
 4. Staged Upload, als Ersatzbild der Sprache eintragen (`origin: ai`).
 5. Wird das Original ersetzt, gilt das übersetzte Bild über den Quell-Stempel als veraltet.
 
-## 4. Offene Punkte
+## 4. Nicht abgedeckte Fälle (bewusst, Stand 2026-10-01)
 
-1. Plan-Zuordnung: vorerst an denselben Plan-Schalter wie der Bild-Manager gebunden (`variantImageManager`, ab Pro). Mengenbegrenzung: keine.
-2. Kollektionen/Artikel, Kollektionskacheln, Warenkorb: später, falls gewünscht.
+Damit niemand annimmt, was nicht gebaut ist. Jeder Punkt sagt, was der Händler sieht.
 
-## 5. Quellen
+**Wo das Ersatzbild NICHT erscheint**
+1. **Produktkacheln** auf Kollektions-, Such- und Startseite, im Warenkorb, in Mini-Carts, Quick-View-Dialogen und „Ähnliche Produkte“-Blöcken: zeigen das Original. Das Embed tauscht nur auf der Produktseite, weil nur dort die Ersatzliste des Produkts im Seitenkopf steht.
+2. **Kanal-Feeds** (Google Shopping, Shop-App, Facebook/Instagram, KI-Kanäle) und die **Bestellbestätigung/E-Mails**: lesen die nativen Produktmedien, nie unser Metafeld.
+3. **Ohne aktiviertes App-Embed „Images per language“**: im Shop kein Tausch. `og:image` und JSON-LD werden trotzdem ersetzt, sofern deren eigene Embeds aktiv sind — Galerie und Teilen-Bild können sich dann unterscheiden.
+4. **Bilder, die ein Theme als CSS-Hintergrund** (`background-image`) oder in einem `<canvas>` zeichnet, und **Zoom-/Lightbox-Skripte**, die die Bild-URL aus einem eigenen JavaScript-Objekt statt aus dem DOM lesen: werden nicht erkannt.
+5. **Bilder fremder Hosts** (Bild-CDNs anderer Apps, Page-Builder mit eigenem CDN): bewusst nicht angefasst — nur Shopify-Bild-URLs werden getauscht.
+
+**Was der Händler nicht tun kann**
+6. **Nur 1:1-Ersatz.** Kein Ausblenden eines Bildes in einer Sprache, keine zusätzlichen Bilder, keine andere Reihenfolge.
+7. **Nur Produkte und Theme.** Kollektionsbild, Artikel-/Blogbild, Seitenbilder, Varianten-Galeriebilder als eigene Einheit (sie werden nur getauscht, wenn sie dieselbe Datei wie ein ersetztes Produktbild sind), Metaobjekt-Dateifelder und Bilder in Rich-Text-Beschreibungen sind nicht abgedeckt.
+8. **Kein Ersatzbild, das selbst ein Bild desselben Produkts ist** (keine Ketten/Zyklen).
+9. **Keine Videos und 3D-Modelle** als Ersatz — der Auswahldialog bietet in diesem Modus nur Bilder an. Shopifys native Galerie KANN Videos (eigene und YouTube/Vimeo) und 3D-Modelle zeigen; der Grund ist ein anderer: der Tausch ersetzt die Adresse in einem vorhandenen `<img>`. Ein Video oder 3D-Modell ist ein anderes Element (`<video>`, `<iframe>`, `<model-viewer>`, je Theme in eigener Hülle mit Abspiel-Knopf), das sich nicht per Adresse in ein Bild verwandeln lässt; `og:image` und das JSON-LD-Bild nehmen ohnehin nur Bilder, und eine Theme-Bildeinstellung speichert nur Bilder. Ein späteres „Videos je Sprache“ wäre ein eigenes Feature (Video → Video: die Quelle eines Shopify-Videos ließe sich analog tauschen, ein YouTube-Link wäre eine andere Einbettung).
+10. **Keine Massenpflege**: keine Spalte im Bulk-Editor, kein CSV-Import/-Export der Ersatzbilder, kein „für alle Sprachen dasselbe Bild“.
+11. **Höchstens 200 Ersatzbild-Einträge pro Produkt** (alle Sprachen × Märkte zusammen), weil alle Einträge im Seitenkopf mitgeliefert werden.
+
+**Was nicht erkannt wird**
+12. **Ersatzbild in Shopify „Dateien“ gelöscht**: bleibt im Metafeld, im Shop erscheint ein fehlendes Bild. Nicht erkannt, nicht gemeldet.
+13. **Original ersetzt** (neue Datei unter gleichem Medium): wird als „Original wurde geändert“ angezeigt, das Ersatzbild bleibt aber aktiv, bis der Händler handelt.
+14. **Original gelöscht**: Ersatzbilder ohne Original werden in der Karte gesondert gelistet und können gelöscht werden; im Shop sind sie wirkungslos.
+15. **Sprache aus dem Shop entfernt**: ihre Einträge bleiben im Metafeld (wirkungslos), die Karte zeigt sie nicht mehr in der Sprachauswahl.
+16. **Zwei gleichzeitige Bearbeitungen desselben Produkts**: die spätere gewinnt.
+17. **Theme-Bilder sind NICHT gemessen** (Changelog-Aussage). Bis die Probe auf einem echten Shop JA sagt, ist offen, ob ein anderes Theme-Bild im Shop tatsächlich ausgeliefert wird.
+18. **Theme-Bild in der Marktansicht**: wird dort das geerbte Sprachbild für alle Märkte gezeigt, nimmt „Originalbild verwenden“ nichts weg — es entfernt nur eine eigene Marktwahl.
+
+**Technische Rest-Effekte**
+19. Das Original wird vom Browser geladen, bevor es ersetzt wird (Bandbreite, nicht sichtbar dank Vorab-Ausblendung; nach spätestens 3 s wird die Ausblendung in jedem Fall aufgehoben).
+20. Ein Upload, den Shopify nicht innerhalb von ~9 s verarbeitet, wird nicht doppelt hochgeladen; der Händler wählt die Datei kurz danach aus der Bibliothek.
+
+**Behoben (2026-10-01):** Die Karte „Bilder je Sprache“ hing am Bild-Manager und verschwand, wenn dieser in den Einstellungen ausgeschaltet war, während der Shop die Ersatzbilder weiter zeigte. Sie hängt jetzt nur am Tarif und erscheint unter der Bildergalerie des Produkts — mit oder ohne Bild-Manager. Der Storefront-Tausch war nie vom Varianten-Galerie-Embed abhängig: er arbeitet auch auf der nativen Theme-Galerie. Hochladen geht dort über denselben Datei-Dialog wie im Bild-Manager, im Modus „nur Bilder“.
+
+## 5. Offene Punkte
+
+1. Plan-Zuordnung: vorerst an denselben Plan-Schalter wie der Bild-Manager gebunden (`variantImageManager`, ab Pro) — der Tarif, nicht die Ein/Aus-Einstellung des Bild-Managers. Mengenbegrenzung: nur die technische (200 Einträge pro Produkt).
+2. Kandidaten aus §4, falls gewünscht: Kollektionskacheln/Warenkorb (§4.1), Kollektions-/Artikelbilder (§4.7), Erkennung gelöschter Ersatzdateien (§4.12).
+
+## 6. Quellen
 
 - Shopify Changelog: Online store media localizable to different languages/markets — https://shopify.dev/changelog/online-store-media-localizable-to-different-languages-markets
 - Übersetzbare Section-Setting-Typen (inkl. `image_picker`) — https://joeybabcock.me/blog/shopify/shopify-translate-adapt-which-input-types-are-translatable/

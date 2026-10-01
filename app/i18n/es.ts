@@ -1922,6 +1922,7 @@ export const es: Translation = {
     browseFilesFilterImages: "Imágenes",
     browseFilesFilterVideos: "Vídeos",
     browseFilesFilterModels: "Modelos 3D",
+    browseFilesImagesOnly: "Aquí solo se pueden usar imágenes. Los vídeos y modelos 3D no se han subido.",
     browseFilesNoModelsInVariant: "Los modelos 3D solo pueden añadirse a la galería del producto, no a una variante.",
     browseFilesSearchPlaceholder: "Buscar por nombre de archivo…",
     browseFilesAddSelected: "Añadir selección",

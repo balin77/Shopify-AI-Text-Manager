@@ -482,7 +482,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Imágenes de producto",
           paragraphs: [
-            "En la página de producto, debajo del gestor de imágenes, encontrarás la tarjeta «Imágenes por idioma». Allí eliges idioma y mercado y defines un reemplazo para cada imagen del producto. El cambio se guarda al instante.",
+            "En la página de producto, debajo de las imágenes del producto, encontrarás la tarjeta «Imágenes por idioma», también si el gestor de imágenes está desactivado. Elige los reemplazos de tus archivos o sube otros nuevos; solo se ofrecen imágenes. Allí eliges idioma y mercado y defines un reemplazo para cada imagen del producto. El cambio se guarda al instante.",
             "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Images per language» (la tarjeta enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
           ],
           list: [

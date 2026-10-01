@@ -487,7 +487,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Produktbilder",
           paragraphs: [
-            "Auf der Produktseite finden Sie unter dem Bild-Manager die Karte „Bilder je Sprache“. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert.",
+            "Auf der Produktseite finden Sie unter den Produktbildern die Karte „Bilder je Sprache“ — auch wenn der Bild-Manager ausgeschaltet ist. Ersatzbilder wählen Sie aus Ihren Dateien oder laden sie neu hoch; angeboten werden dabei nur Bilder. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert.",
             "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images per language“ (die Karte verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
           ],
           list: [

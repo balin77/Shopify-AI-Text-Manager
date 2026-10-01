@@ -482,7 +482,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "Product images",
           paragraphs: [
-            "On the product page, below the image manager, you find the “Images per language” card. Choose the language and market there and set a replacement for each product image. The change is saved right away.",
+            "On the product page, below the product images, you find the “Images per language” card — also when the image manager is switched off. Pick replacements from your files or upload new ones; only images are offered. Choose the language and market there and set a replacement for each product image. The change is saved right away.",
             "For your store to show the replacements, turn on the “Images per language” app embed once (the card links straight to it). The images are replaced in the product page gallery and in the image shown when the link is shared and to search engines.",
           ],
           list: [

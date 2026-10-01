@@ -261,6 +261,14 @@ interface UnifiedContentEditorProps {
   /** Optional: replaces the image-gallery field for Pro/Max users */
   imageGalleryReplacement?: React.ReactNode;
 
+  /**
+   * Optional: rendered directly BELOW the image-gallery field, whichever of
+   * the two (the replacement or the default gallery) is showing. Exists so a
+   * card about the product's images ("images per language") does not hang off
+   * the image manager and vanish when the merchant switches that off.
+   */
+  imageGalleryAddon?: React.ReactNode;
+
   /** Optional: Variant Image Manager für Pro/Max */
   showImageManager?: boolean;
 
@@ -350,6 +358,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     showImageManager,
     imageManager,
     imageGalleryReplacement,
+    imageGalleryAddon,
     extraMissingPrimaryIds,
   } = props;
 
@@ -900,8 +909,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   /** One dynamic field, with the product image gallery's replacement slot. */
   const renderContentField = (field: FieldDefinition): ReactNode => {
-    if (field.type === "image-gallery" && imageGalleryReplacement) {
-      return <div key={field.key}>{imageGalleryReplacement}</div>;
+    if (field.type === "image-gallery" && (imageGalleryReplacement || imageGalleryAddon)) {
+      return (
+        <BlockStack key={field.key} gap="400">
+          {imageGalleryReplacement ?? renderEditorField(field)}
+          {imageGalleryAddon}
+        </BlockStack>
+      );
     }
     return renderEditorField(field);
   };

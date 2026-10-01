@@ -309,7 +309,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
           onAdd={handlePicked}
           uploadCommitMode="queue"
           initialKind="image"
-          disallowModel
+          imagesOnly
           currentProductId={productId}
           title={tx.pickerTitle.replace("{locale}", getLocalizedLanguageName(locale, appLocale))}
         />

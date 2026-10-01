@@ -1942,6 +1942,7 @@ export const en: Translation = {
     browseFilesFilterImages: "Images",
     browseFilesFilterVideos: "Videos",
     browseFilesFilterModels: "3D models",
+    browseFilesImagesOnly: "Only images can be used here. Videos and 3D models were not uploaded.",
     browseFilesNoModelsInVariant: "3D models can only be added to the product gallery, not to a variant.",
     browseFilesSearchPlaceholder: "Search by filename…",
     browseFilesAddSelected: "Add selected",

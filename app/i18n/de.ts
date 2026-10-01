@@ -1943,6 +1943,7 @@ export const de = {
     browseFilesFilterImages: "Bilder",
     browseFilesFilterVideos: "Videos",
     browseFilesFilterModels: "3D-Modelle",
+    browseFilesImagesOnly: "Hier können nur Bilder verwendet werden. Videos und 3D-Modelle wurden nicht hochgeladen.",
     browseFilesNoModelsInVariant: "3D-Modelle können nur zur Produktgalerie hinzugefügt werden, nicht zu einer Variante.",
     browseFilesSearchPlaceholder: "Nach Dateinamen suchen…",
     browseFilesAddSelected: "Auswahl hinzufügen",
