@@ -15,7 +15,7 @@
  * for both, so a page the route knows is exactly a page the client sends.
  */
 
-import { saveAnswerFailed } from "./per-locale-saves.shared";
+import { PLAN_REFUSED, isPlanRefusal, saveAnswerFailed } from "./per-locale-saves.shared";
 
 export const CONTENT_EDITOR_ACTION_ENDPOINT = "/api/content-editor-action";
 
@@ -57,7 +57,8 @@ export function contentEditorActionPage(pathname: string): ContentEditorActionPa
 /**
  * Posts one editor save and says whether it landed.
  *
- * `true` / `false` when the answer could be read; `null` when it cannot be
+ * `true` / `false` when the answer could be read (`PLAN_REFUSED` for the
+ * plan gate's 403); `null` when it cannot be
  * known -- a page this list does not name goes to its own route as before,
  * whose HTML answer says nothing, and a caller must not report THAT as a
  * failure. The page's own path and query travel along so the action runs on
@@ -66,7 +67,7 @@ export function contentEditorActionPage(pathname: string): ContentEditorActionPa
 export async function postContentEditorSave(
   formData: FormData,
   location: { pathname: string; search: string } = window.location,
-): Promise<boolean | null> {
+): Promise<boolean | null | typeof PLAN_REFUSED> {
   const page = contentEditorActionPage(location.pathname);
   if (!page) {
     try {
@@ -79,7 +80,7 @@ export async function postContentEditorSave(
   formData.set("_page", `${page}${location.search}`);
   try {
     const response = await fetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: formData });
-    if (!response.ok) return false;
+    if (!response.ok) return (await isPlanRefusal(response)) ? PLAN_REFUSED : false;
     // A save can answer `success: true` and still name what it refused
     // (`failedAltTextIndices`): that is a failure for the caller too.
     const body = await response.json().catch(() => null);

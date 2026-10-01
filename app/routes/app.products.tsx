@@ -502,6 +502,7 @@ export default function ProductsPage() {
       translateFailed: t.errors.translationFailed,
       copied: t.common.copied,
       copyFailedLocales: t.common.copyFailedLocales,
+      upgradeRequired: t.content.upgradeRequired,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
       optionNameEmpty: t.products.optionNameEmpty,

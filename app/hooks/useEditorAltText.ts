@@ -29,7 +29,7 @@ import type {
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
-import { runPerLocaleSaves, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 
 // ---------------------------------------------------------------------------
 // Prop / return types
@@ -376,7 +376,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
     // The answer is READ (content-action-endpoint.shared.ts), so a locale that
     // did not save is named instead of reported as copied.
-    runPerLocaleSaves(targetLocales, (locale) => {
+    runPerLocaleSavesDetailed(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "updateContent");
       fd.set("itemId", capturedItemId);
@@ -384,7 +384,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       fd.set("primaryLocale", primaryLocale);
       fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
       return postContentEditorSave(fd);
-    }).then((failed) => {
+    }).then(({ failed, gated }) => {
       // Take back what the copy wrote up front for those locales: the
       // overlay outranks the loaded alt texts, so left in place the editor
       // went on showing a value that was never saved. Only the copy's own
@@ -395,7 +395,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           delete forLocale[imageIndex];
         }
       }
-      const outcome = copyOutcomeMessage(failed, t.common ?? {});
+      const outcome = copyOutcomeMessage(failed, { ...(t.common ?? {}), upgradeRequired: String(t.content?.upgradeRequired ?? "") || undefined }, gated);
       showInfoBox(outcome.text, outcome.tone);
     }).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);

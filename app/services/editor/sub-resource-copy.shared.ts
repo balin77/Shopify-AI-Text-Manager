@@ -2,11 +2,11 @@
  * The sub-resource (option / option value) "copy to all languages" saves: how
  * one locale's answer is read, and how the optimistic overlay is taken back.
  *
- * Import-free apart from the per-locale helper, so the hook and the tests
+ * Client-safe; imports only the per-locale helper, so the hook and the tests
  * share it.
  */
 
-import { saveAnswerFailed } from "./per-locale-saves.shared";
+import { PLAN_REFUSED, isPlanRefusal, saveAnswerFailed } from "./per-locale-saves.shared";
 
 /**
  * Posts one JSON-answering save and says whether it fully landed: HTTP ok,
@@ -17,10 +17,10 @@ export async function postJsonSave(
   url: string,
   formData: FormData,
   fetchImpl: typeof fetch = fetch,
-): Promise<boolean> {
+): Promise<boolean | typeof PLAN_REFUSED> {
   try {
     const response = await fetchImpl(url, { method: "POST", body: formData });
-    if (!response.ok) return false;
+    if (!response.ok) return (await isPlanRefusal(response)) ? PLAN_REFUSED : false;
     return !saveAnswerFailed(await response.json().catch(() => null));
   } catch {
     return false;
