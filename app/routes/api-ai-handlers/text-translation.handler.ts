@@ -14,7 +14,12 @@ import { parseMetaobjectFieldKey } from "~/services/metaobject-fields.shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { resolveTaskResourceTitle } from "~/services/tasks/resource-title.server";
 import { logger } from "~/utils/logger.server";
-import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
+import {
+  registerAndVerify,
+  mirrorConfirmedContentTranslations,
+  type VerifiedWriteResult,
+} from "~/services/translations/verified-translations.server";
+import type { PrismaClient } from "@prisma/client";
 import { GroupedFieldTranslationService } from "../../../src/services/grouped-field-translation.service";
 import { isGroupedFieldKey } from "~/utils/grouped-field.utils";
 import { writeCookieBannerTranslations } from "~/utils/cookie-banner-availability.server";
@@ -48,7 +53,7 @@ async function registerTemplateFieldTranslation(params: {
   value: string;
   locale: string;
   digest: string;
-}): Promise<{ accepted: boolean; error?: string }> {
+}): Promise<{ accepted: boolean; error?: string; value?: string }> {
   const { admin, session, resourceId, key, value, locale, digest } = params;
   const input = [{ key, value, locale, translatableContentDigest: digest }];
 
@@ -61,18 +66,64 @@ async function registerTemplateFieldTranslation(params: {
     return { accepted: res.ok, error: res.error };
   }
 
-  const response = await admin.graphql(TRANSLATE_CONTENT, {
-    variables: { resourceId, translations: input },
-  });
-  const data = (await response.json()) as ShopifyGraphQLResponse;
-  if (data.errors && data.errors.length > 0) {
-    return { accepted: false, error: JSON.stringify(data.errors) };
+  // Verified register: userErrors alone prove nothing, Shopify must ECHO the key.
+  const verified = await registerAndVerify(admin, resourceId, input);
+  if (!verified.confirmedKeys.has(key)) {
+    return {
+      accepted: false,
+      error:
+        verified.userErrors.length > 0
+          ? JSON.stringify(verified.userErrors)
+          : "Shopify did not store the translation although it reported no error",
+    };
   }
-  const userErrors = data.data?.translationsRegister?.userErrors ?? [];
-  if (userErrors.length > 0) {
-    return { accepted: false, error: JSON.stringify(userErrors) };
+  return { accepted: true, value: verified.confirmedValues.get(key) };
+}
+
+const CONTENT_RESOURCE_TYPE: Record<string, string> = {
+  products: "Product",
+  collections: "Collection",
+  pages: "Page",
+  blogs: "Article",
+  policies: "ShopPolicy",
+};
+
+/**
+ * Mirror a CONFIRMED content translation (value = what Shopify stored, digest =
+ * the one the write used). Its own failure never un-confirms the write: Shopify
+ * echoed the key, so the translation is live whether or not our DB blinked.
+ */
+async function mirrorConfirmedField(params: {
+  db: PrismaClient;
+  shop: string;
+  resourceId: string;
+  contentType: string;
+  locale: string;
+  key: string;
+  value: string;
+  digest: string;
+  verified: VerifiedWriteResult;
+}): Promise<void> {
+  const { db, shop, resourceId, contentType, locale, key, value, digest, verified } = params;
+  try {
+    await mirrorConfirmedContentTranslations(db, {
+      shop,
+      resourceId,
+      resourceType: CONTENT_RESOURCE_TYPE[contentType] || "Product",
+      locale,
+      sent: [{ key, value }],
+      result: verified,
+      digests: new Map([[key, digest]]),
+    });
+  } catch (dbError: unknown) {
+    logger.error("[API-AI] Confirmed translation could not be mirrored to the DB", {
+      context: "AI",
+      error: errorMessage(dbError),
+      resourceId,
+      key,
+      locale,
+    });
   }
-  return { accepted: true };
 }
 
 export async function handleTranslateField(ctx: AIActionContext): Promise<DataResponse> {
@@ -619,6 +670,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             // Use the correct resourceId for this specific field key
             const fieldResourceId = templateKeyToResourceId.get(fieldType) || templateResourceId;
             let batchShopifyAccepted = false;
+            let themeStoredValue = translatedValue;
 
             if (!fieldResourceId) {
               logger.error("[API-AI] Batch: No resourceId found for template field", {
@@ -664,6 +716,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 rejectedFields[locale].push(fieldType);
               } else {
                 batchShopifyAccepted = true;
+                themeStoredValue = result.value ?? translatedValue;
+                translations[locale] = themeStoredValue;
               }
               } // end if digest
             } catch (shopifyError: unknown) {
@@ -697,7 +751,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     // Heal the domain too: a row written before this fix (or by a
                     // path that omitted domain) may sit under the default "theme".
                     domain: templateDomain,
-                    value: translatedValue,
+                    value: themeStoredValue,
                     updatedAt: new Date()
                   },
                   create: {
@@ -708,7 +762,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     themeId: extractThemeIdFromResourceId(fieldResourceId) ?? "",
                     locale: locale,
                     key: fieldType,
-                    value: translatedValue
+                    value: themeStoredValue
                   }
                 });
                 logger.debug("[API-AI] Batch: Saved template translation", {
@@ -772,73 +826,34 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 continue;
               }
 
-              const translationInput = [{
-                key: shopifyKey,
-                value: translatedValue,
-                locale: locale,
-                translatableContentDigest: digest
-              }];
+              // Verified register: userErrors alone prove nothing, Shopify must ECHO the key.
+              const verified = await registerAndVerify(admin, itemId, [
+                { key: shopifyKey, value: translatedValue, locale, translatableContentDigest: digest },
+              ]);
 
-              const shopifyResponse = await admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
+              if (!verified.confirmedKeys.has(shopifyKey)) {
+                logger.error("[API-AI] Batch: Shopify did not confirm the translation", {
+                  context: "AI",
+                  userErrors: verified.userErrors,
+                  locale,
+                  shopifyKey
+                });
+                if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                rejectedFields[locale].push(fieldType);
+              } else {
+                // What Shopify STORED is what the editor gets and what is mirrored.
+                translations[locale] = verified.confirmedValues.get(shopifyKey) ?? translatedValue;
+                await mirrorConfirmedField({
+                  db,
+                  shop: session.shop,
                   resourceId: itemId,
-                  translations: translationInput
-                }
-              });
-
-              const shopifyData = await shopifyResponse.json() as ShopifyGraphQLResponse;
-              let shopifyRejected = false;
-
-              if (shopifyData.errors && shopifyData.errors.length > 0) {
-                logger.error("[API-AI] Batch: GraphQL error saving translation", {
-                  context: "AI",
-                  errors: shopifyData.errors,
+                  contentType,
                   locale,
-                  shopifyKey
+                  key: shopifyKey,
+                  value: translatedValue,
+                  digest,
+                  verified,
                 });
-                if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                rejectedFields[locale].push(fieldType);
-                shopifyRejected = true;
-              } else if ((shopifyData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
-                logger.error("[API-AI] Batch: Shopify rejected translation", {
-                  context: "AI",
-                  errors: shopifyData.data?.translationsRegister?.userErrors,
-                  locale,
-                  shopifyKey
-                });
-                if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                rejectedFields[locale].push(fieldType);
-                shopifyRejected = true;
-              }
-
-              if (!shopifyRejected) {
-                // Only save to local DB when Shopify actually accepted
-                const resourceTypeMap: Record<string, string> = {
-                  products: "Product", collections: "Collection",
-                  pages: "Page", blogs: "Article", policies: "ShopPolicy",
-                };
-                await db.contentTranslation.upsert({
-                  where: {
-                    shop_resourceId_key_locale_marketId: {
-                      marketId: "",
-                      shop: session.shop,
-                      resourceId: itemId,
-                      key: shopifyKey,
-                      locale,
-                    },
-                  },
-                  update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
-                  create: {
-                    shop: session.shop,
-                    resourceId: itemId,
-                    resourceType: resourceTypeMap[contentType] || "Product",
-                    key: shopifyKey,
-                    value: translatedValue,
-                    locale,
-                    digest,
-                  },
-                });
-
                 logger.debug("[API-AI] Batch: Saved translation to Shopify + DB", {
                   context: "AI",
                   resourceId: itemId,
@@ -854,6 +869,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 locale,
                 fieldType
               });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
             }
           }
           // Save to Shopify for metaobjects.
@@ -865,6 +882,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             const parsedMetaKey = parseMetaobjectFieldKey(fieldType);
             const metaobjectGid = parsedMetaKey?.metaobjectId ?? '';
             let batchMetaAccepted = false;
+            let metaStoredValue = translatedValue;
             let metaLabelKey = parsedMetaKey?.fieldKey ?? '';
 
             try {
@@ -888,36 +906,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               } else {
                 const digest = metaDigests!.get(metaLabelKey)!;
 
-                const translationInput = [{
-                  key: metaLabelKey,
-                  value: translatedValue,
-                  locale: locale,
-                  translatableContentDigest: digest
-                }];
+                const verified = await registerAndVerify(admin, metaobjectGid, [
+                  { key: metaLabelKey, value: translatedValue, locale, translatableContentDigest: digest },
+                ]);
 
-                const metaResponse = await admin.graphql(TRANSLATE_CONTENT, {
-                  variables: {
-                    resourceId: metaobjectGid,
-                    translations: translationInput
-                  }
-                });
-
-                const metaData = await metaResponse.json() as ShopifyGraphQLResponse;
-
-                if (metaData.errors && metaData.errors.length > 0) {
-                  logger.error("[API-AI] Batch: GraphQL error saving metaobject translation", {
+                if (!verified.confirmedKeys.has(metaLabelKey)) {
+                  logger.error("[API-AI] Batch: Shopify did not confirm the metaobject translation", {
                     context: "AI",
-                    errors: metaData.errors,
-                    locale,
-                    metaobjectGid,
-                    metaLabelKey
-                  });
-                  if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                  rejectedFields[locale].push(fieldType);
-                } else if ((metaData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
-                  logger.error("[API-AI] Batch: Shopify rejected metaobject translation", {
-                    context: "AI",
-                    errors: metaData.data?.translationsRegister?.userErrors,
+                    userErrors: verified.userErrors,
                     locale,
                     metaobjectGid,
                     metaLabelKey
@@ -926,6 +922,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                   rejectedFields[locale].push(fieldType);
                 } else {
                   batchMetaAccepted = true;
+                  metaStoredValue = verified.confirmedValues.get(metaLabelKey) ?? translatedValue;
+                  translations[locale] = metaStoredValue;
                 }
               }
             } catch (shopifyError: unknown) {
@@ -957,12 +955,12 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     metaobjectId: metaobjectGid,
                     type: metaType,
                     key: metaLabelKey,
-                    value: translatedValue,
+                    value: metaStoredValue,
                     locale,
                     outdated: false
                   },
                   update: {
-                    value: translatedValue,
+                    value: metaStoredValue,
                     outdated: false,
                     updatedAt: new Date()
                   }
@@ -1108,6 +1106,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             // Use the correct resourceId for this specific field key
             const fieldResourceId = templateKeyToResourceId.get(fieldType) || templateResourceId;
             let seqShopifyAccepted = false;
+            let themeStoredValue = translatedValue;
 
             if (!fieldResourceId) {
               logger.error("[API-AI] No resourceId found for template field", {
@@ -1153,6 +1152,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 rejectedFields[locale].push(fieldType);
               } else {
                 seqShopifyAccepted = true;
+                themeStoredValue = result.value ?? translatedValue;
+                translations[locale] = themeStoredValue;
                 logger.info("[API-AI] SUCCESS - Translation saved to Shopify", {
                   context: "AI",
                   resourceId: fieldResourceId,
@@ -1194,7 +1195,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     // Heal the domain too: a row written before this fix (or by a
                     // path that omitted domain) may sit under the default "theme".
                     domain: templateDomain,
-                    value: translatedValue,
+                    value: themeStoredValue,
                     updatedAt: new Date()
                   },
                   create: {
@@ -1205,7 +1206,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     themeId: extractThemeIdFromResourceId(fieldResourceId) ?? "",
                     locale: locale,
                     key: fieldType,
-                    value: translatedValue
+                    value: themeStoredValue
                   }
                 });
                 logger.info("[API-AI] Saved template translation to DB", {
@@ -1267,74 +1268,34 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 continue;
               }
 
-              const translationInput = [{
-                key: shopifyKey,
-                value: translatedValue,
-                locale: locale,
-                translatableContentDigest: digest
-              }];
+              // Verified register: userErrors alone prove nothing, Shopify must ECHO the key.
+              const verified = await registerAndVerify(admin, itemId, [
+                { key: shopifyKey, value: translatedValue, locale, translatableContentDigest: digest },
+              ]);
 
-              const response = await admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
-                  resourceId: itemId,
-                  translations: translationInput
-                }
-              });
-
-              const data = await response.json() as ShopifyGraphQLResponse;
-              let seqRejected = false;
-
-              if (data.errors && data.errors.length > 0) {
-                logger.error("[API-AI] GraphQL error saving translation for " + contentType, {
+              if (!verified.confirmedKeys.has(shopifyKey)) {
+                logger.error("[API-AI] Shopify did not confirm the translation for " + contentType, {
                   context: "AI",
-                  errors: data.errors,
-                  locale,
-                  shopifyKey
-                });
-                if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                rejectedFields[locale].push(fieldType);
-                seqRejected = true;
-              } else if ((data.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
-                logger.error("[API-AI] Shopify rejected translation for " + contentType, {
-                  context: "AI",
-                  errors: data.data?.translationsRegister?.userErrors,
+                  userErrors: verified.userErrors,
                   locale,
                   fieldType,
                   shopifyKey
                 });
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
-                seqRejected = true;
-              }
-
-              if (!seqRejected) {
-                // Only save to local DB when Shopify accepted
-                const resourceTypeMap: Record<string, string> = {
-                  products: "Product", collections: "Collection",
-                  pages: "Page", blogs: "Article", policies: "ShopPolicy",
-                };
-                await db.contentTranslation.upsert({
-                  where: {
-                    shop_resourceId_key_locale_marketId: {
-                      marketId: "",
-                      shop: session.shop,
-                      resourceId: itemId,
-                      key: shopifyKey,
-                      locale,
-                    },
-                  },
-                  update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
-                  create: {
-                    shop: session.shop,
-                    resourceId: itemId,
-                    resourceType: resourceTypeMap[contentType] || "Product",
-                    key: shopifyKey,
-                    value: translatedValue,
-                    locale,
-                    digest,
-                  },
+              } else {
+                translations[locale] = verified.confirmedValues.get(shopifyKey) ?? translatedValue;
+                await mirrorConfirmedField({
+                  db,
+                  shop: session.shop,
+                  resourceId: itemId,
+                  contentType,
+                  locale,
+                  key: shopifyKey,
+                  value: translatedValue,
+                  digest,
+                  verified,
                 });
-
                 logger.debug("[API-AI] Saved translation to Shopify + DB for " + contentType, {
                   context: "AI",
                   resourceId: itemId,
@@ -1350,6 +1311,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 locale,
                 fieldType
               });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
             }
           }
           // For metaobjects `fieldType` is the compound key `<GID>#<field key>`
@@ -1358,6 +1321,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             const parsedMetaKey = parseMetaobjectFieldKey(fieldType);
             const metaobjectGid = parsedMetaKey?.metaobjectId ?? '';
             let seqMetaAccepted = false;
+            let metaStoredValue = translatedValue;
             let metaLabelKey = parsedMetaKey?.fieldKey ?? '';
 
             try {
@@ -1380,36 +1344,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               } else {
                 const digest = metaDigests!.get(metaLabelKey)!;
 
-                const translationInput = [{
-                  key: metaLabelKey,
-                  value: translatedValue,
-                  locale: locale,
-                  translatableContentDigest: digest
-                }];
+                const verified = await registerAndVerify(admin, metaobjectGid, [
+                  { key: metaLabelKey, value: translatedValue, locale, translatableContentDigest: digest },
+                ]);
 
-                const metaResponse = await admin.graphql(TRANSLATE_CONTENT, {
-                  variables: {
-                    resourceId: metaobjectGid,
-                    translations: translationInput
-                  }
-                });
-
-                const metaData = await metaResponse.json() as ShopifyGraphQLResponse;
-
-                if (metaData.errors && metaData.errors.length > 0) {
-                  logger.error("[API-AI] GraphQL error saving metaobject translation", {
+                if (!verified.confirmedKeys.has(metaLabelKey)) {
+                  logger.error("[API-AI] Shopify did not confirm the metaobject translation", {
                     context: "AI",
-                    errors: metaData.errors,
-                    locale,
-                    metaobjectGid,
-                    metaLabelKey
-                  });
-                  if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                  rejectedFields[locale].push(fieldType);
-                } else if ((metaData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
-                  logger.error("[API-AI] Shopify rejected metaobject translation", {
-                    context: "AI",
-                    errors: metaData.data?.translationsRegister?.userErrors,
+                    userErrors: verified.userErrors,
                     locale,
                     metaobjectGid,
                     metaLabelKey
@@ -1418,12 +1360,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                   rejectedFields[locale].push(fieldType);
                 } else {
                   seqMetaAccepted = true;
-                  logger.info("[API-AI] SUCCESS - Metaobject translation saved to Shopify", {
-                    context: "AI",
-                    metaobjectGid,
-                    metaLabelKey,
-                    locale
-                  });
+                  metaStoredValue = verified.confirmedValues.get(metaLabelKey) ?? translatedValue;
+                  translations[locale] = metaStoredValue;
                 }
               }
             } catch (shopifyError: unknown) {
@@ -1455,12 +1393,12 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     metaobjectId: metaobjectGid,
                     type: metaType,
                     key: metaLabelKey,
-                    value: translatedValue,
+                    value: metaStoredValue,
                     locale,
                     outdated: false
                   },
                   update: {
-                    value: translatedValue,
+                    value: metaStoredValue,
                     outdated: false,
                     updatedAt: new Date()
                   }
@@ -1516,6 +1454,13 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
       }
     } // End of sequential translation if block
 
+    // A locale whose write Shopify did not confirm was never saved: it must not
+    // reach the editor as a saved translation. (A skipSaveLocales entry is
+    // translate-and-return by design and was never written, so it stays.)
+    for (const locale of Object.keys(translations)) {
+      if (rejectedFields[locale]?.includes(fieldType)) delete translations[locale];
+    }
+
     // No locale produced a real translation → the whole operation failed
     // (e.g. an invalid AI API key returning 401 for every locale, or all
     // batch chunks broke). Previously this still marked the task "completed"
@@ -1526,7 +1471,9 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
       const firstError = aiResponses.find((r) => r.response.startsWith("ERROR:"))?.response;
       const failMsg = (firstError
         ? firstError.replace(/^ERROR:\s*/, "")
-        : "Translation failed for all locales").trim();
+        : Object.keys(rejectedFields).length > 0
+          ? "Shopify did not store the translation for any language"
+          : "Translation failed for all locales").trim();
       logger.error("[API-AI] translateFieldToAllLocales produced no translations — failing loudly", {
         context: "AI",
         fieldType,
@@ -1544,7 +1491,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: Object.keys(rejectedFields).length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify(aiResponses, null, 2), // Store all AI responses

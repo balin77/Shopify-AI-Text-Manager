@@ -34,6 +34,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { featuredAltLockId } from "~/services/translations/translation-locks.shared";
+import { findEchoFor } from "~/services/translations/translation-echo.shared";
 
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
@@ -2473,7 +2474,7 @@ async function persistFieldForLocale(params: PersistForLocaleArgs): Promise<void
   // (app-embed-translationsregister-silent-noop) call out for other write
   // paths. Never mirror to DB if Shopify didn't echo the key back.
   const echoed = registerData.data?.translationsRegister?.translations ?? [];
-  const accepted = echoed.some((t) => t.key === key && t.locale === locale);
+  const accepted = !!findEchoFor(echoed, { key, locale });
   if (!accepted) {
     throw new Error(
       `Shopify accepted the mutation but did not echo the translation for key "${key}" in ${locale} — nothing was saved.`,
@@ -2594,7 +2595,7 @@ async function registerAltTranslation(
     throw new Error(userErrors[0].message);
   }
   const echoed = registerData.data?.translationsRegister?.translations ?? [];
-  const accepted = echoed.some((t) => t.key === "alt" && t.locale === locale);
+  const accepted = !!findEchoFor(echoed, { key: "alt", locale });
   if (!accepted) {
     throw new Error(
       `Shopify accepted the mutation but did not echo the alt translation in ${locale} — nothing was saved.`,

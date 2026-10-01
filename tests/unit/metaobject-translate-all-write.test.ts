@@ -120,13 +120,41 @@ describe("metaobject translate-all", () => {
     expect(db.metaobjectTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it("CURRENT: reads no register result - userErrors still mirror and report success", async () => {
+  it("userErrors / an unechoed register: nothing mirrored, entries reported as rejected", async () => {
     shopify.userErrors = [{ message: "nope" }];
     shopify.echo = () => [];
-    const { ctx, formData, db } = makeCtx();
+    const { ctx, formData, db, taskUpdates } = makeCtx();
     const r = await handleTranslateAll(ctx, formData);
     expect(body(r).success).toBe(true);
+    expect(body(r).rejectedFields).toEqual({ en: [FIELD], fr: [FIELD] });
+    expect(body(r).translations).toEqual({ en: {}, fr: {} });
+    expect(db.metaobjectTranslation.upsert).not.toHaveBeenCalled();
+    expect(taskUpdates.at(-1).status).toBe("completed_with_errors");
+  });
+
+  it("a partial echo mirrors only the confirmed locale, with the value Shopify stored", async () => {
+    shopify.echo = (v) => (v.translations[0].locale === "fr" ? [{ key: "name", locale: "FR", value: "Stocke" }] : []);
+    const { ctx, formData, db } = makeCtx();
+    const r = await handleTranslateAll(ctx, formData);
+    expect(body(r).rejectedFields).toEqual({ en: [FIELD] });
+    expect(body(r).translations).toEqual({ en: {}, fr: { [FIELD]: "Stocke" } });
+    expect(db.metaobjectTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(db.metaobjectTranslation.upsert.mock.calls[0][0].create).toMatchObject({ locale: "fr", value: "Stocke" });
+  });
+
+  it("a thrown register is a rejection, not a mirrored translation", async () => {
+    shopify.throwOnRegister = true;
+    const { ctx, formData, db } = makeCtx();
+    const r = await handleTranslateAll(ctx, formData);
+    expect(Object.keys(body(r).rejectedFields).sort()).toEqual(["en", "fr"]);
+    expect(db.metaobjectTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a confirmed write stays when only our mirror fails", async () => {
+    const { ctx, formData, db } = makeCtx();
+    db.metaobjectTranslation.upsert.mockRejectedValue(new Error("db down"));
+    const r = await handleTranslateAll(ctx, formData);
     expect(body(r).rejectedFields).toEqual({});
-    expect(db.metaobjectTranslation.upsert).toHaveBeenCalledTimes(2);
+    expect(body(r).translations).toEqual({ en: { [FIELD]: "Hello" }, fr: { [FIELD]: "Salut" } });
   });
 });

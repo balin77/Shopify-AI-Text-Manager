@@ -2,7 +2,11 @@ import { data as json, type ActionFunctionArgs, type LoaderFunctionArgs } from "
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { GroupedFieldTranslationService } from "../../src/services/grouped-field-translation.service";
-import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
+import {
+  registerWithDigests,
+  mirrorConfirmedContentTranslations,
+} from "~/services/translations/verified-translations.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { isGroupedFieldKey } from "~/utils/grouped-field.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -113,79 +117,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     for (let i = 0; i < products.length; i++) {
       const product = products[i];
       try {
-        // Resolve digest for this product's productType field.
-        const digestResponse = await admin.graphql(
-          `#graphql
-            query getTranslatableContent($resourceId: ID!) {
-              translatableResource(resourceId: $resourceId) {
-                resourceId
-                translatableContent { key digest }
-              }
-            }
-          `,
-          { variables: { resourceId: product.id } },
-        );
-        const digestData = await digestResponse.json();
-        const translatable = digestData.data?.translatableResource?.translatableContent ?? [];
-        const digest = translatable.find((c: { key: string; digest?: string }) => c.key === shopifyKey)?.digest;
+        // Verified register: digest read, key sent, and the key must be ECHOED
+        // back -- userErrors: [] alone is the silent no-op. A product with no
+        // digest for the field is never sent and never mirrored.
+        const verified = await registerWithDigests(admin, product.id, entry.targetLocale, [
+          { key: shopifyKey, value: trimmed },
+        ]);
 
-        if (!digest) {
-          logger.warn("[grouped-field-translations] No digest, skipping product", {
-            productId: product.id,
-            shopifyKey,
-          });
+        if (!verified.confirmedKeys.has(shopifyKey)) {
+          const failure = { productId: product.id, shopifyKey, userErrors: verified.userErrors };
+          if (verified.noDigest.includes(shopifyKey)) {
+            logger.warn("[grouped-field-translations] No digest, skipping product", failure);
+          } else {
+            logger.error("[grouped-field-translations] Shopify did not confirm re-sync", failure);
+          }
           failed++;
           continue;
         }
 
-        const writeResp = await admin.graphql(TRANSLATE_CONTENT, {
-          variables: {
-            resourceId: product.id,
-            translations: [
-              {
-                key: shopifyKey,
-                value: trimmed,
-                locale: entry.targetLocale,
-                translatableContentDigest: digest,
-              },
-            ],
-          },
-        });
-        const writeData = (await writeResp.json()) as {
-          data?: { translationsRegister?: { userErrors?: Array<{ field?: string[]; message: string }> } };
-          errors?: Array<{ message: string }>;
-        };
-        const userErrors = writeData.data?.translationsRegister?.userErrors ?? [];
-        if ((writeData.errors?.length ?? 0) > 0 || userErrors.length > 0) {
-          logger.error("[grouped-field-translations] Shopify rejected re-sync", {
-            productId: product.id,
-            userErrors,
-            graphqlErrors: writeData.errors,
-          });
-          failed++;
-          continue;
-        }
+        // Claim the product only once Shopify confirmed: a webhook sync reading
+        // a lagging answer must not undo what was just written.
+        markTranslationSaved(product.id);
 
-        await db.contentTranslation.upsert({
-          where: {
-            shop_resourceId_key_locale_marketId: {
-              marketId: "",
-              shop,
-              resourceId: product.id,
-              key: shopifyKey,
-              locale: entry.targetLocale,
-            },
-          },
-          update: { value: trimmed, digest, resourceType: "Product" },
-          create: {
-            shop,
-            resourceId: product.id,
-            resourceType: "Product",
-            key: shopifyKey,
-            value: trimmed,
-            locale: entry.targetLocale,
-            digest,
-          },
+        await mirrorConfirmedContentTranslations(db, {
+          shop,
+          resourceId: product.id,
+          resourceType: "Product",
+          locale: entry.targetLocale,
+          sent: [{ key: shopifyKey, value: trimmed }],
+          result: verified,
+          digests: verified.digests,
         });
         synced++;
       } catch (err) {

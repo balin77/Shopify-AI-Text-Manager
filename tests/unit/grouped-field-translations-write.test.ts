@@ -55,7 +55,7 @@ const dbMock = vi.hoisted(() => ({
     })),
     update: vi.fn(async () => ({})),
   },
-  task: { create: vi.fn(async () => ({ id: "task1" })), update: vi.fn(async () => ({})) },
+  task: { create: vi.fn(async () => ({ id: "task1" })), update: vi.fn(async (_a: any) => ({})) },
   contentTranslation: { upsert: vi.fn(async (a: any) => a) },
 }));
 vi.mock("../../app/db.server", () => ({ db: dbMock }));
@@ -112,15 +112,28 @@ describe("grouped-field update re-sync", () => {
     expect(dbMock.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it("CURRENT: an unechoed register (no userErrors) is mirrored and counted as synced", async () => {
+  it("an unechoed register (no userErrors) is NOT mirrored, is counted failed and claims no lock", async () => {
     shopify.echo = () => [];
     const r = await call();
-    expect(body(r)).toMatchObject({ synced: 2, failed: 0 });
-    expect(dbMock.contentTranslation.upsert).toHaveBeenCalledTimes(2);
+    expect(body(r)).toMatchObject({ ok: true, synced: 0, failed: 2 });
+    expect(dbMock.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(markSaved).not.toHaveBeenCalled();
+    expect(dbMock.task.update.mock.calls.at(-1)![0].data.status).toBe("completed_with_errors");
   });
 
-  it("CURRENT: no translation-save lock is claimed", async () => {
+  it("a partial echo mirrors and claims only the confirmed product", async () => {
+    shopify.echo = (v) =>
+      v.resourceId === "gid://shopify/Product/1" ? [{ key: "product_type", locale: "FR", value: "Stored" }] : [];
+    const r = await call();
+    expect(body(r)).toMatchObject({ synced: 1, failed: 1 });
+    expect(dbMock.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+    const arg = dbMock.contentTranslation.upsert.mock.calls[0][0];
+    expect(arg.create).toMatchObject({ resourceId: "gid://shopify/Product/1", locale: "fr", value: "Stored", digest: "d1" });
+    expect(markSaved.mock.calls).toEqual([["gid://shopify/Product/1"]]);
+  });
+
+  it("claims the translation-save lock of every confirmed product", async () => {
     await call();
-    expect(markSaved).not.toHaveBeenCalled();
+    expect(markSaved.mock.calls.map((c) => c[0])).toEqual(["gid://shopify/Product/1", "gid://shopify/Product/2"]);
   });
 });

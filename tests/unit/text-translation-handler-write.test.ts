@@ -134,6 +134,17 @@ describe("batch path (short field) on a content type", () => {
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 
+  it("an unechoed register is NOT mirrored; the stored value of an echoed one is", async () => {
+    ai();
+    shopify.echo = (v) => (v.translations[0].locale === "en" ? [{ key: "title", locale: "en", value: "Stored" }] : []);
+    const { ctx, db } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(body(r).translations).toEqual({ en: "Stored" });
+    expect(body(r).rejectedFields).toEqual({ fr: ["title"] });
+    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.upsert.mock.calls[0][0].create).toMatchObject({ locale: "en", value: "Stored" });
+  });
+
   it("skips Shopify and the mirror when there is no digest", async () => {
     ai();
     shopify.digests = {};
@@ -168,14 +179,41 @@ describe("sequential path (long field) on a content type", () => {
     expect(Object.keys(body(r).rejectedFields).sort()).toEqual(["en", "fr"]);
   });
 
-  it("CURRENT: a register that echoes nothing (no userErrors) is mirrored anyway", async () => {
+  it("a register that echoes nothing (no userErrors) is NOT mirrored and fails the call", async () => {
     ai();
     shopify.echo = () => [];
+    const { ctx, db, taskUpdates } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(body(r).success).toBe(false);
+    expect(status(r)).toBe(502);
+    expect(Object.keys(body(r).rejectedFields).sort()).toEqual(["en", "fr"]);
+    expect(taskUpdates.at(-1).status).toBe("failed");
+  });
+
+  it("a partial echo mirrors only the echoed locale, drops the other from the answer and warns", async () => {
+    ai();
+    shopify.echo = (v) => (v.translations[0].locale === "en" ? [{ key: "body_html", locale: "EN", value: "Stored" }] : []);
+    const { ctx, db, taskUpdates } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(body(r).success).toBe(true);
+    expect(body(r).translations).toEqual({ en: "Stored" });
+    expect(body(r).rejectedFields).toEqual({ fr: ["description"] });
+    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+    const arg = db.contentTranslation.upsert.mock.calls[0][0];
+    expect(arg.create).toMatchObject({ locale: "en", value: "Stored", digest: "dB" });
+    expect(taskUpdates.at(-1).status).toBe("completed_with_errors");
+  });
+
+  it("a thrown register is a rejection, not a silent skip", async () => {
+    ai();
+    shopify.echo = () => {
+      throw new Error("boom");
+    };
     const { ctx, db } = makeCtx("products", PRODUCT, form);
     const r = await handleTranslateFieldToAllLocales(ctx);
-    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(2);
-    expect(body(r).success).toBe(true);
-    expect(body(r).rejectedFields).toEqual({});
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(body(r).success).toBe(false);
   });
 });
 
@@ -197,12 +235,23 @@ describe("sequential path on a metaobject field", () => {
     });
   });
 
-  it("CURRENT: an unechoed register is mirrored anyway", async () => {
+  it("an unechoed register is NOT mirrored and fails the call", async () => {
     ai();
     shopify.echo = () => [];
     const { ctx, db } = makeCtx("metaobjects", "metaobject_type_vase", form);
-    await handleTranslateFieldToAllLocales(ctx);
-    expect(db.metaobjectTranslation.upsert).toHaveBeenCalledTimes(2);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(db.metaobjectTranslation.upsert).not.toHaveBeenCalled();
+    expect(body(r).success).toBe(false);
+  });
+
+  it("mirrors the value Shopify stored and only for the echoed locale", async () => {
+    ai();
+    shopify.echo = (v) => (v.translations[0].locale === "fr" ? [{ key: "name", locale: "fr", value: "Stocke" }] : []);
+    const { ctx, db } = makeCtx("metaobjects", "metaobject_type_vase", form);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(body(r).translations).toEqual({ fr: "Stocke" });
+    expect(db.metaobjectTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(db.metaobjectTranslation.upsert.mock.calls[0][0].create).toMatchObject({ locale: "fr", value: "Stocke" });
   });
 });
 
@@ -221,11 +270,12 @@ describe("sequential path on theme content", () => {
     expect(db.themeTranslation.upsert).toHaveBeenCalledTimes(2);
   });
 
-  it("CURRENT: an unechoed register is mirrored anyway", async () => {
+  it("an unechoed register is NOT mirrored and fails the call", async () => {
     ai();
     shopify.echo = () => [];
     const { ctx, db } = makeCtx("templates", "group_g", form, { themeRows });
-    await handleTranslateFieldToAllLocales(ctx);
-    expect(db.themeTranslation.upsert).toHaveBeenCalledTimes(2);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(db.themeTranslation.upsert).not.toHaveBeenCalled();
+    expect(body(r).success).toBe(false);
   });
 });

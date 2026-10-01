@@ -74,13 +74,14 @@ describe("restoreLinkTranslations echo", () => {
     expect(out.restored).toBe(1);
   });
 
-  it("CURRENT: a differently-cased locale in the echo is NOT matched", async () => {
+  it("a differently-cased locale in the echo is the same translation (pt-BR sent, pt-br echoed)", async () => {
     const db = makeDb();
     const out = await restoreLinkTranslations(
       gatewayEchoing((s) => exact(s).map((e) => (e.locale === "pt-BR" ? { ...e, locale: "pt-br" } : e))),
       db, "s", captured,
     );
-    expect(out.restored).toBe(1);
-    expect(out.failed).toHaveLength(1);
+    expect(out).toEqual({ restored: 2, failed: [] });
+    const first = db.contentTranslation.upsert.mock.calls[0][0];
+    expect(first.where.shop_resourceId_key_locale_marketId.locale).toBe("pt-BR");
   });
 });
