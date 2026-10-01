@@ -2,7 +2,7 @@ import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { type Plan } from "../config/plans";
-import { consumeImageOperations } from "../utils/imageOperations.server";
+import { getMonthlyImageOperationsLimit } from "../utils/planUtils";
 
 /**
  * Materializes a staging-area asset (returned by /api/staged-upload + a
@@ -37,19 +37,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "resourceUrl required" }, { status: 400 });
   }
 
-  // Same gate as /api/staged-upload: each materialised file is one billable
-  // image operation, and this route is directly POST-reachable.
+  // Directly POST-reachable, so it asks the plan -- but it does NOT consume
+  // an image operation. Every caller (the file picker, the metaobject file
+  // field, localized images, the 3D preview) materialises a file it has just
+  // uploaded through /api/staged-upload, which already charged that one
+  // operation; charging again here counted every upload twice. What is left
+  // to refuse is a plan with no image operations at all: it cannot have staged
+  // the file, so a request here can only be someone feeding the shop's Files
+  // library from outside.
   const settings = await db.aISettings.findUnique({
     where: { shop: session.shop },
     select: { subscriptionPlan: true },
   });
   const plan = (settings?.subscriptionPlan || "free") as Plan;
-  const quota = await consumeImageOperations(session.shop, plan, 1);
-  if (!quota.allowed) {
-    return json(
-      { error: "Monthly image-operation limit reached", code: "IMAGE_QUOTA_EXCEEDED", limit: quota.limit },
-      { status: 422 },
-    );
+  if (getMonthlyImageOperationsLimit(plan) === 0) {
+    return json({ error: "gated", code: "IMAGE_QUOTA_EXCEEDED", limit: 0 }, { status: 403 });
   }
 
   const createRes = await admin.graphql(
