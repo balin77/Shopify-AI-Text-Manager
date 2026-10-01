@@ -608,6 +608,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const preserveEditsUntilRef = useRef(0);
   // Ref to track the fieldKey of a pending copy save so we can clear its loading state on response
   const pendingCopyFieldKeyRef = useRef<string | null>(null);
+  // Item the in-flight field copy was started for (savedItemIdRef is nulled on item change).
+  const pendingCopyFieldItemIdRef = useRef<string | null>(null);
 
   // Forwarding-Refs for functions defined later (Ref-Forwarding-Pattern for circular dep)
   const buildFieldsForSaveRef = useRef<(v: Record<string, string>, l: string) => Record<string, string>>(() => ({}));
@@ -648,7 +650,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
-    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef,
+    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, rollbackCopyAltText, discardCopyAltRecord, altBaselineSnapshot, getPendingCopyAltItemId,
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
@@ -669,6 +671,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     backgroundRefreshVersion,
     buildFieldsForSave: (v, l) => buildFieldsForSaveRef.current(v, l),
     safeSubmit: (data, opts) => safeSubmitRef.current(data, opts),
+    savedItemIdRef,
     savedLocaleRef,
     savedMarketIdRef,
     isSavePendingRef,
@@ -1921,8 +1924,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // (bulk / Accept & Translate) or after a mid-save market switch.
         const savedMarketId = savedMarketIdRef.current;
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
+          const mirrorFailed: number[] = Array.isArray(fetcher.data?.failedAltTextIndices)
+            ? fetcher.data.failedAltTextIndices
+            : [];
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
+            if (mirrorFailed.includes(index)) continue;
             if (item.images[index]) {
               if (!item.images[index].altTextTranslations) {
                 item.images[index].altTextTranslations = [];
@@ -1942,7 +1949,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       // Update originalAltTexts immediately after saving to reset change detection
-      setOriginalAltTexts({ ...imageAltTextsRef.current });
+      // (a failed copy's index keeps its previous baseline, see altBaselineSnapshot)
+      setOriginalAltTexts(altBaselineSnapshot(
+        Array.isArray(fetcher.data.failedAltTextIndices) ? fetcher.data.failedAltTextIndices : []
+      ));
       debugLog.response(' Updated originalAltTexts:', { ...imageAltTextsRef.current });
 
       // Clear the saved locale ref after processing
@@ -1977,8 +1987,42 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       inFlightPartialRef.current = null;
 
       // Guard: check if the item that was saved is still the currently-selected item.
-      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      const savedItemId = savedItemIdRef.current;
+      const isSavedItemCurrent = savedItemId === selectedItemIdRef.current;
       savedItemIdRef.current = null; // Always clean up — we've processed this response
+
+      // A copy ("Übertragen") save is settled by THIS response whichever item is
+      // on screen now. Resolve it before the item-changed return: stale pending
+      // refs would make the next unrelated save report as a copy and keep the
+      // spinner alive. The server may answer success with failed alt indices —
+      // that copy did not persist, so its optimistic value is rolled back.
+      const copyFailedAlts: number[] = Array.isArray(fetcher.data.failedAltTextIndices)
+        ? fetcher.data.failedAltTextIndices
+        : [];
+      // Taken BEFORE the rollback clears its pending record, and reused for the
+      // later baseline write, so that write cannot override the rollback.
+      const altBaselineAfterCopy = altBaselineSnapshot(copyFailedAlts);
+      const copyFieldItemId = pendingCopyFieldItemIdRef.current ?? savedItemId;
+      const copyAltItemId = getPendingCopyAltItemId() ?? savedItemId;
+      pendingCopyFieldItemIdRef.current = null;
+      let wasCopySave = !!pendingCopyFieldKeyRef.current || pendingCopyAltTextIndexRef.current !== null;
+      let copyAltFailed = false;
+      if (pendingCopyFieldKeyRef.current) {
+        if (copyFieldItemId) markOperationFailed(copyFieldItemId, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+      }
+      if (pendingCopyAltTextIndexRef.current !== null) {
+        const copyIndex = pendingCopyAltTextIndexRef.current;
+        if (copyAltItemId) markOperationFailed(copyAltItemId, `altText_${copyIndex}`);
+        pendingCopyAltTextIndexRef.current = null;
+        if (copyFailedAlts.includes(copyIndex)) {
+          copyAltFailed = true;
+          rollbackCopyAltText();
+        } else {
+          discardCopyAltRecord();
+        }
+      }
+      if (copyAltFailed) wasCopySave = false; // reported as a failed copy, not "copied"
 
       if (!isSavedItemCurrent) {
         debugLog.response(' Item changed during save — skipping response application for wrong item');
@@ -2226,17 +2270,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Check if any alt-text indices failed to save to Shopify
       const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
-      // If this save was triggered by a copy action, clear the field loading state.
-      const wasCopySave = !!pendingCopyFieldKeyRef.current;
-      if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
-        markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
-        pendingCopyFieldKeyRef.current = null;
-      }
-      if (pendingCopyAltTextIndexRef.current !== null && selectedItemIdRef.current) {
-        markOperationFailed(selectedItemIdRef.current, `altText_${pendingCopyAltTextIndexRef.current}`);
-        pendingCopyAltTextIndexRef.current = null;
-      }
-
       // If this save was triggered by a translate action, the translate callback already
       // showed its own success toast — only show warnings/errors here, skip the generic "Changes saved".
       const wasTranslateSave = isSaveFromTranslateRef.current;
@@ -2319,7 +2352,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       // Update original alt-texts to match current values (so hasChanges becomes false)
-      setOriginalAltTexts({ ...imageAltTextsRef.current });
+      setOriginalAltTexts(altBaselineAfterCopy);
 
       // For templates: Do NOT eagerly update originalTemplateValuesRef here.
       // Using the current editableValues would incorrectly bake in any manual edits
@@ -2387,9 +2420,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Clear a copy ("Übertragen") spinner on failure too — otherwise the field's
       // buttons keep spinning forever after a failed Shopify save.
-      if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
-        markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
+      // Keyed on the item the copy was SAVED for, not the one on screen now.
+      if (pendingCopyFieldKeyRef.current) {
+        const failedFieldItemId = pendingCopyFieldItemIdRef.current ?? savedItemIdRef.current;
+        if (failedFieldItemId) markOperationFailed(failedFieldItemId, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
+        pendingCopyFieldItemIdRef.current = null;
+      }
+      if (pendingCopyAltTextIndexRef.current !== null) {
+        const failedAltItemId = getPendingCopyAltItemId() ?? savedItemIdRef.current;
+        if (failedAltItemId) {
+          markOperationFailed(failedAltItemId, `altText_${pendingCopyAltTextIndexRef.current}`);
+        }
+        pendingCopyAltTextIndexRef.current = null;
+        rollbackCopyAltText();
       }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
@@ -2414,6 +2458,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       inFlightPartialRef.current = null;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
+
+      // A refused copy must not leave its spinner behind either.
+      // Keyed on the item the copy was SAVED for, not the one on screen now.
+      if (pendingCopyFieldKeyRef.current) {
+        const failedFieldItemId = pendingCopyFieldItemIdRef.current ?? savedItemIdRef.current;
+        if (failedFieldItemId) markOperationFailed(failedFieldItemId, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+        pendingCopyFieldItemIdRef.current = null;
+      }
+      if (pendingCopyAltTextIndexRef.current !== null) {
+        const failedAltItemId = getPendingCopyAltItemId() ?? savedItemIdRef.current;
+        if (failedAltItemId) {
+          markOperationFailed(failedAltItemId, `altText_${pendingCopyAltTextIndexRef.current}`);
+        }
+        pendingCopyAltTextIndexRef.current = null;
+        rollbackCopyAltText();
+      }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;
@@ -2613,6 +2674,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     currentLanguageRef,
     selectedMarketIdRef,
     pendingCopyFieldKeyRef,
+    pendingCopyFieldItemIdRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
     initialLoadSuccessfulRef,

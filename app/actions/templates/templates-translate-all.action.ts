@@ -4,12 +4,12 @@ import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
 import { aiServiceFor } from "~/services/ai/ai-credentials.server";
-import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
-import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
+import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 
 export async function handleTranslateAll(
   ctx: TemplatesActionContext,
@@ -30,7 +30,9 @@ export async function handleTranslateAll(
   // Deduplicate
   const uniqueContent = new Map<string, TranslatableField>();
   for (const item of allContent) {
-    if (!uniqueContent.has(item.key) && item.value) {
+    // An image reference is a file choice, not text: the AI's answer would be
+    // a broken reference written to the storefront (theme-image-reference.shared.ts).
+    if (!uniqueContent.has(item.key) && item.value && !isThemeMediaValue(item.value)) {
       uniqueContent.set(item.key, item);
     }
   }
@@ -38,7 +40,7 @@ export async function handleTranslateAll(
   // Compliance gate: whose key, consent, kill switch and budget — before a
   // Task row exists (same as templates-translate-field).
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const refusal = await aiRefusalResponse(settings, session.shop);
+  const refusal = await aiRefusalFor(settings, session.shop, { actionType });
   if (refusal) {
     return refusal;
   }
@@ -242,8 +244,8 @@ export async function handleTranslateAll(
       where: { id: task.id },
       data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
     });
-    const refused = managedRefusalResponseFromError(error, settings);
+    const refused = managedRefusalResponseFromError(error, settings, { actionType });
     if (refused) return refused;
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, error: msg, actionType }, { status: 500 });
   }
 }

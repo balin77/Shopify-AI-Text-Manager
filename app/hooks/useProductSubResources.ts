@@ -24,16 +24,21 @@ import {
   useTranslatingSubResourceIds,
 } from "./useAIOperationsStore";
 import type { OptionTranslation } from "../components/unified/OptionsField";
-import type { TranslatableContentItem } from "../types/content-editor.types";
+import type { TranslatableContentItem, TranslationStrings } from "../types/content-editor.types";
+import { translateErrorMessage } from "../utils/editor-error-messages";
 import { buildLocaleKey } from "./useUiDataLoader";
+import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { postJsonSave, rollbackSubResourceCopy } from "../services/editor/sub-resource-copy.shared";
+import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
  * page route, and a plain POST to it is answered with the rendered HTML
  * document, so the JSON this hook reads never arrives -- every successful
- * translate then reported "failed". See api.product-sub-resources.tsx.
+ * translate then reported "failed". It is the one content-editor door; each
+ * request names `/app/products` as its page (see api.content-editor-action.tsx).
  */
-const SUB_RESOURCE_ENDPOINT = "/api/product-sub-resources";
+const SUB_RESOURCE_ENDPOINT = CONTENT_EDITOR_ACTION_ENDPOINT;
 
 /** Response shape from sub-resource API actions */
 interface SubResourceFetcherData {
@@ -157,6 +162,11 @@ interface UseProductSubResourcesStrings {
   optionsSavedSuccess?: string;
   /** Fallback when a sub-resource translate fails without a server message. */
   translateFailed?: string;
+  /** "Copied" / "Copying failed for: {locales}" -- the copy to all languages reports per locale. */
+  copied?: string;
+  copyFailedLocales?: string;
+  /** Shown instead of the locale list when the plan gate refused the copy. */
+  upgradeRequired?: string;
   saveFailedOptions?: string;
   saveFailedItems?: string;
   optionNameEmpty?: string;
@@ -1242,7 +1252,7 @@ export function useProductSubResources({
     }
 
     try {
-      const resp = await fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
+      const resp = await fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: setContentEditorPage(fd, "/app/products") });
       const data = await resp.json().catch(() => null) as SubResourceFetcherData | null;
       if (data?.success && data.translations) {
         applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
@@ -1252,8 +1262,17 @@ export function useProductSubResources({
       // for a managed-AI refusal (budget, taster, consent) it is already
       // localised and names the way out.
       if (!data || data.success === false) {
-        const message = typeof (data as { error?: unknown } | null)?.error === "string"
+        const rawMessage = typeof (data as { error?: unknown } | null)?.error === "string"
           ? String((data as { error?: unknown }).error)
+          : "";
+        // The plan refusal arrives as the code "gated": map it through the
+        // editor's one translator so it reads as the upgrade message. The hook
+        // only holds message strings, so hand it the slice it can use.
+        const message = rawMessage
+          ? translateErrorMessage(rawMessage, {
+              content: { upgradeRequired: strings.upgradeRequired },
+              errors: {},
+            } as unknown as TranslationStrings)
           : "";
         showInfoBox?.(message || strings.translateFailed || "Translation failed", "critical");
         return;
@@ -1269,7 +1288,7 @@ export function useProductSubResources({
     } finally {
       markSubResourceCompleted(resourceId, fieldId);
     }
-  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings.translateFailed]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings.translateFailed, strings.upgradeRequired]);
 
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);
@@ -1810,23 +1829,28 @@ export function useProductSubResources({
 
     markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
 
-    const saves = targetLocales.map(locale => {
+    // The answer is READ: a locale whose save was refused (or only partly
+    // applied) is named, and the overlay value written up front is taken back
+    // for it, instead of the copy being reported as done.
+    void runPerLocaleSavesDetailed(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "saveSubResourceTranslations");
       fd.set("locale", locale);
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
-    });
-
-    Promise.all(saves).finally(() => {
+      return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
+    }).then(({ failed, gated }) => {
+      rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, [{ resourceId, value: primaryValue }]);
+      const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);
+      showInfoBox?.(outcome.text, outcome.tone);
+    }).finally(() => {
       markSubResourceCompleted(capturedItemId, fieldId);
       if (revalidator && revalidator.state === "idle") {
         revalidator.revalidate();
       }
     });
-  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds, showInfoBox, strings.copied, strings.copyFailedLocales, strings.upgradeRequired]);
 
   const copyOptionToAllLocales = useCallback((optionId: string) => {
     // Copies the CACHED primary text, so the same rule as translating holds.
@@ -1871,23 +1895,28 @@ export function useProductSubResources({
 
     markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
 
-    const saves = targetLocales.map(locale => {
+    // The answer is READ: a locale whose save was refused (or only partly
+    // applied) is named, and the overlay value written up front is taken back
+    // for it, instead of the copy being reported as done.
+    void runPerLocaleSavesDetailed(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "saveSubResourceTranslations");
       fd.set("locale", locale);
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
-    });
-
-    Promise.all(saves).finally(() => {
+      return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
+    }).then(({ failed, gated }) => {
+      rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, entries);
+      const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);
+      showInfoBox?.(outcome.text, outcome.tone);
+    }).finally(() => {
       markSubResourceCompleted(capturedItemId, fieldId);
       if (revalidator && revalidator.state === "idle") {
         revalidator.revalidate();
       }
     });
-  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds, showInfoBox, strings.copied, strings.copyFailedLocales, strings.upgradeRequired]);
 
   return {
     state: {

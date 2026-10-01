@@ -237,8 +237,9 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
   const saveTemplate = useCallback(
     async (pos: TemplatePosition, locale: string, value: string) => {
+      let saved = false;
       try {
-        await fetch("/api/alt-text-templates", {
+        const res = await fetch("/api/alt-text-templates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -249,9 +250,14 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
             template: value,
           }),
         });
+        const body = (await res.json().catch(() => null)) as { success?: boolean } | null;
+        saved = res.ok && body?.success !== false;
       } catch {}
+      if (!saved) {
+        showInfoBox(im?.altTemplateSaveFailed ?? "The alt text template could not be saved. Please try again.", "critical");
+      }
     },
-    [productId]
+    [productId, im, showInfoBox]
   );
 
   const handleTemplateChange = useCallback(
@@ -307,15 +313,24 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const handleRemovePosition = useCallback(
     async (positionIndex: number) => {
       const pos = positions[positionIndex];
+      let deleted = false;
       try {
-        await fetch(
+        const res = await fetch(
           `/api/alt-text-templates?productId=${encodeURIComponent(productId)}&position=${pos.position}`,
           { method: "DELETE" }
         );
+        const body = (await res.json().catch(() => null)) as { success?: boolean } | null;
+        deleted = res.ok && body?.success !== false;
       } catch {}
+      if (!deleted) {
+        // The row stays: removing it here would show a template as gone that
+        // is still stored and would come back on the next load.
+        showInfoBox(im?.altTemplateDeleteFailed ?? "The alt text template could not be deleted. Please try again.", "critical");
+        return;
+      }
       setPositions((prev) => prev.filter((_, i) => i !== positionIndex));
     },
-    [positions, productId]
+    [positions, productId, im, showInfoBox]
   );
 
   const insertVariable = useCallback(

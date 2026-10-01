@@ -86,16 +86,15 @@ describe("clear-all-for-locale save wiring", () => {
  * save, both translate auto-saves and the alt-text generate-all auto-save), so
  * the rule is pinned rather than re-reviewed.
  *
- * NOT in scope: `app/hooks/useEditorAltText.ts`, whose seven save sites carry
- * the same gap. That hook is not handed `savedItemIdRef` at all — closing it
- * means threading a new prop, which is a change of its own and is deliberately
- * left open rather than silently half-done here.
+ * `useEditorAltText.ts` is covered too (it is handed `savedItemIdRef`), which
+ * is what stops a single alt-text copy from spinning forever.
  */
 describe("every save site claims its item", () => {
   const FILES = [
     "useFieldHandlers.ts",
     "useUnifiedContentEditor.ts",
     "useEditorAutoSave.ts",
+    "useEditorAltText.ts",
   ];
   // A claim may sit a few lines up, behind the comment explaining it.
   const LOOKBACK = 15;

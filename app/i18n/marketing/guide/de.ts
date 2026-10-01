@@ -156,6 +156,7 @@ export const guideDe: GuideCopy = {
             "Varianten-Galerie — zeigt pro Variante die passenden Bilder.",
             "Sprach- und Länderauswahl — ein Umschalter auf Basis von Shopifys eigener Lokalisierung.",
             "Direktübersetzungen — übersetzt Texte anderer Apps.",
+            "Bilder und Videos je Sprache — zeigt die Produktbilder und -videos, die Sie pro Sprache oder Markt ersetzt haben.",
             "Web Vitals — misst die Ladezeit bei echten Besuchern.",
           ],
         },
@@ -466,6 +467,63 @@ export const guideDe: GuideCopy = {
       ],
       tips: [
         "Ändern Sie einen Theme-Text in der Hauptsprache, werden seine Übersetzungen nach Ihrer Einstellung gelöscht oder neu übersetzt — genau wie bei Produkten.",
+        "Bilder im Theme erscheinen als Bildvorschau. Pro Sprache und Markt können Sie ein anderes Bild wählen — siehe „Andere Bilder und Videos je Sprache“.",
+      ],
+    },
+
+    "images-per-language": {
+      title: "Andere Bilder und Videos je Sprache",
+      summary:
+        "Zeigen Sie Kundinnen und Kunden in einer Sprache oder einem Markt ein anderes Bild — zum Beispiel ein Banner oder Produktfoto mit übersetzter Beschriftung.",
+      sections: [
+        {
+          heading: "Wofür",
+          paragraphs: [
+            "Texte lassen sich übersetzen, Text in einem Bild nicht. Ein Banner mit „Sale“ oder ein Produktfoto mit deutscher Beschriftung sieht in jeder Sprache gleich aus. Mit „Bilder und Videos je Sprache“ legen Sie für eine Sprache — und auf Wunsch nur für einen bestimmten Markt — ein anderes Bild fest. Es ersetzt das Original 1:1; alle anderen Sprachen sehen weiterhin das Originalbild.",
+          ],
+        },
+        {
+          heading: "Theme-Bilder",
+          paragraphs: [
+            "Bilder in Ihrem Theme (zum Beispiel ein Banner auf der Startseite) finden Sie unter Inhalte → Theme bei den Texten des jeweiligen Abschnitts. Statt eines Textfeldes sehen Sie dort eine Vorschau des Bildes.",
+            "Ob Ihr Theme das Bild der gewählten Sprache anzeigt, hängt vom Theme ab. Prüfen Sie nach dem Speichern Ihren Shop in dieser Sprache; manche Themes zeigen unter Umständen weiterhin das Originalbild.",
+          ],
+          steps: [
+            "Oben die Sprache wählen — und, falls das Bild nur in einem Markt anders sein soll, den Markt.",
+            "Beim Bild auf „Bild für diese Sprache wählen“ klicken und ein Bild aus Ihren Dateien wählen oder hochladen.",
+            "Speichern. Mit „Originalbild verwenden“ nehmen Sie die Auswahl wieder zurück.",
+          ],
+        },
+        {
+          heading: "Produktbilder",
+          paragraphs: [
+            "Auf der Produktseite finden Sie unter den Produktbildern die Karte „Bilder und Videos je Sprache“ — auch wenn der Bild-Manager ausgeschaltet ist. Ersatzbilder wählen Sie aus Ihren Dateien oder laden sie neu hoch; angeboten wird dabei nur, was das Original ersetzen kann. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
+            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images and videos per language“ (die Karte verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
+          ],
+          list: [
+            "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
+            "Ändern Sie später das Originalbild, weist die Karte darauf hin, damit Sie prüfen können, ob das Ersatzbild noch passt.",
+            "Wird ein Originalbild aus dem Produkt gelöscht, listet die Karte seine Ersatzbilder separat auf, damit Sie sie entfernen können. Das gilt ebenso für Ersatzbilder zu einem Markt oder einer Sprache, die es im Shop nicht mehr gibt oder die nicht mehr aktiv sind.",
+          ],
+        },
+        {
+          heading: "Videos",
+          paragraphs: [
+            "In derselben Karte ersetzen Sie auch die Videos eines Produkts pro Sprache und Markt — zum Beispiel durch eine vertonte Fassung. Ein in Shopify hochgeladenes Video ersetzen Sie durch ein anderes hochgeladenes Video (aus Ihren Dateien oder neu hochgeladen), ein YouTube- oder Vimeo-Video durch einen anderen YouTube- oder Vimeo-Link. Ein Bild lässt sich nicht durch ein Video ersetzen und umgekehrt; 3D-Modelle werden nicht ersetzt.",
+            "Neu hochgeladene Videos verarbeitet Shopify einige Minuten lang. Erscheint ein Hinweis dazu, wählen Sie das Video kurz danach aus Ihren Dateien.",
+            "Videos in den Theme-Einstellungen (zum Beispiel ein Video-Abschnitt auf der Startseite) tragen Sie pro Sprache als anderen Link ein; die KI verändert sie nicht.",
+          ],
+        },
+        {
+          heading: "Was nicht ersetzt wird",
+          paragraphs: [
+            "Produktkacheln in Kollektionen, der Warenkorb sowie Feeds für Google Shopping, die Shop-App und andere Verkaufskanäle zeigen weiterhin das Original. Bei Videos bleibt die Beschreibung des Videos für Suchmaschinen beim Original. Für Kollektions- und Blogbilder gibt es diese Funktion noch nicht.",
+          ],
+        },
+      ],
+      tips: [
+        "Die KI übersetzt oder verändert keine Bilder. Bei Theme-Bildern bieten die Übersetzen-Knöpfe deshalb nichts an — ein Bild behalten Sie, bis Sie ein anderes wählen.",
+        "Ein Bild, das in einer Sprache gleich bleiben soll, zählt nicht als fehlende Übersetzung.",
       ],
     },
 
@@ -672,7 +730,7 @@ export const guideDe: GuideCopy = {
           ],
         },
       ],
-      tips: [
+      tips: ["Lässt sich eine Datei nicht hochladen, wird sie in einer Meldung genannt und nicht hinzugefügt — laden Sie sie danach erneut hoch.", 
         "Die Zuordnung passiert beim Hochladen. Spätere Umbenennungen der Dateien ändern an der Zuordnung nichts.",
       ],
     },

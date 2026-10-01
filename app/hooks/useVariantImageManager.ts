@@ -31,6 +31,8 @@ export function useVariantImageManager() {
   const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(new Set());
   const [activeAction, setActiveAction] = useState<"copy" | "move" | null>(null);
   const [isApplying, setIsApplying] = useState(false);
+  // A product-image delete is in flight in VariantImageManager; the editor's Save is blocked meanwhile.
+  const [isDeletingImages, setIsDeletingImages] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<"seo" | "images">("seo");
   const [activeImageSubTab, setActiveImageSubTab] = useState<"bulkUpload" | "bulkAltText">("bulkUpload");
   const [variantReloadCounter, setVariantReloadCounter] = useState(0);
@@ -282,7 +284,10 @@ export function useVariantImageManager() {
       });
       const data = await res.json();
       if (!data.success) {
-        return (data.errors as string[]).join(", ");
+        // The route answers `errors` (a list) for a refused write, but a transport or
+        // auth failure carries `error` (one string) or nothing readable at all.
+        if (Array.isArray(data.errors)) return (data.errors as string[]).join(", ");
+        return typeof data.error === "string" && data.error ? data.error : `HTTP ${res.status}`;
       }
       // Server may have rejected a subset of external-video URLs (client and
       // server validation can drift on edge cases — whitespace, trailing
@@ -466,6 +471,8 @@ export function useVariantImageManager() {
     activeAction,
     setActiveAction,
     isApplying,
+    isDeletingImages,
+    setIsDeletingImages,
     activeRightTab,
     setActiveRightTab,
     activeImageSubTab,

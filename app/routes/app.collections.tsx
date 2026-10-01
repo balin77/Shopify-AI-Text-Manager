@@ -5,13 +5,11 @@
  * Compare to app.collections.old.tsx - we went from ~990 lines to ~130 lines (87% reduction!)
  */
 
-import { type ActionFunctionArgs } from "react-router";
+import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
-import { authenticate } from "../shopify.server";
 import { editableSourcesFromEnvelope, withoutRawTrees } from "../config/collection-rules.shared";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
-import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { COLLECTIONS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -171,28 +169,7 @@ export const loader = createContentLoader({
 // ACTION - Handle all actions via unified handler
 // ============================================================================
 
-export const action = async (args: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(args.request);
-  const formData = await args.request.formData();
-
-  // Load AI settings
-  const { db } = await import("../db.server");
-  const [aiSettings, aiInstructions] = await Promise.all([
-    db.aISettings.findUnique({ where: { shop: session.shop } }),
-    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
-  ]);
-
-  // Use unified action handler
-  return handleUnifiedContentActions({
-    admin,
-    session,
-    formData,
-    contentConfig: COLLECTIONS_CONFIG,
-    db,
-    aiSettings,
-    aiInstructions,
-  });
-};
+export const action = makeContentRouteAction({ config: COLLECTIONS_CONFIG, planContentType: "collections" });
 
 // ============================================================================
 // COMPONENT - Just configuration, no logic!

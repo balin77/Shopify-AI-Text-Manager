@@ -55,4 +55,79 @@ describe("onCopyToLocalesFailed", () => {
     act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
     expect(value(result.current, "fr")).toBe("Mon titre");
   });
+
+  it("puts back the deleted marker the copy cleared", () => {
+    const { result } = setup();
+    // The merchant had emptied the French title (deleted marker), then copied.
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+
+    act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(true);
+    expect(value(result.current, "fr")).toBe("");
+  });
+
+  it("does not invent a deleted marker that was never there", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
+
+  it("keeps the marker cleared when only SOME locales failed", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel", it: "Titel" }, "de");
+    });
+    act(() =>
+      result.current.onCopyToLocalesFailed("title", ["fr"], "Titel", {
+        itemUnchanged: true,
+        allLocalesFailed: false,
+      }),
+    );
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
+
+  it("does not restore the marker when the item changed meanwhile", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    act(() =>
+      result.current.onCopyToLocalesFailed("title", ["fr"], "Titel", {
+        itemUnchanged: false,
+        allLocalesFailed: true,
+      }),
+    );
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
+
+  it("forgets a cleared marker on item switch, so a later failure cannot resurrect it", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+      result.current.onItemSwitch();
+    });
+    act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
+
+  it("does not touch the overlay when the item changed meanwhile", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    act(() =>
+      result.current.onCopyToLocalesFailed("title", ["fr"], "Titel", { itemUnchanged: false }),
+    );
+    expect(result.current.refs.localTranslationsRef.current.title?.fr).toBe("Titel");
+  });
 });

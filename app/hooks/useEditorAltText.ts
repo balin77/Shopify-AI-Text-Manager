@@ -29,6 +29,7 @@ import type {
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
+import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 
 // ---------------------------------------------------------------------------
 // Prop / return types
@@ -59,6 +60,8 @@ interface UseEditorAltTextProps {
   backgroundRefreshVersion?: number;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
+  /** Item the in-flight save belongs to; the save-response handler bails without it. */
+  savedItemIdRef: React.MutableRefObject<string | null>;
   savedLocaleRef: React.MutableRefObject<string | null>;
   savedMarketIdRef: React.MutableRefObject<string>;
   isSavePendingRef: React.MutableRefObject<boolean>;
@@ -108,6 +111,11 @@ interface UseEditorAltTextReturn {
   handleTranslateAllAltTexts: () => void;
   /** Ref to pending copy index so save-response handler can clear loading state */
   pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
+  /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
+  rollbackCopyAltText: () => void;
+  discardCopyAltRecord: () => void;
+  altBaselineSnapshot: (failedIndices?: number[]) => Record<number, string>;
+  getPendingCopyAltItemId: () => string | null;
   handleTranslateAllAltTextsForLocale: () => void;
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
@@ -135,6 +143,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     backgroundRefreshVersion = 0,
     buildFieldsForSave,
     safeSubmit,
+    savedItemIdRef,
     savedLocaleRef,
     savedMarketIdRef,
     isSavePendingRef,
@@ -160,11 +169,23 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
   const imageAltTextsRef = useLatestRef(imageAltTexts);
   const originalAltTextsRef = useLatestRef(originalAltTexts);
+  const currentLanguageRef = useLatestRef(currentLanguage);
+  const selectedMarketIdRefAlt = useLatestRef(selectedMarketId);
 
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
   // Track image index of an in-flight copy save so save-response handler can clear loading
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
+  // What the in-flight copy wrote into the overlay, so a failure can undo exactly that.
+  const copyOverlayRollbackRef = useRef<{
+    itemId: string;
+    key: string;
+    index: number;
+    value: string;
+    prevField: string | undefined;
+    prevOriginal: string | undefined;
+    prevOverlay: string | undefined;
+  } | null>(null);
   // Per-locale overlay for copy operations — eliminates stale window on locale switch
   // structure: { locale: { imageIndex: altText } }
   const localAltTextOverlayRef = useRef<Record<string, Record<number, string>>>({});
@@ -289,6 +310,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     }
 
     const newAltTexts = { ...imageAltTexts, [imageIndex]: sourceAltText };
+    const prevField = imageAltTexts[imageIndex];
+    const prevOriginal = originalAltTexts[imageIndex];
     setImageAltTexts(newAltTexts);
     setOriginalAltTexts(newAltTexts);
 
@@ -298,7 +321,17 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!localAltTextOverlayRef.current[copyOverlayKey]) {
       localAltTextOverlayRef.current[copyOverlayKey] = {};
     }
+    const prevOverlay = localAltTextOverlayRef.current[copyOverlayKey][imageIndex];
     localAltTextOverlayRef.current[copyOverlayKey][imageIndex] = sourceAltText;
+    copyOverlayRollbackRef.current = {
+      itemId: selectedItemId,
+      key: copyOverlayKey,
+      index: imageIndex,
+      value: sourceAltText,
+      prevField,
+      prevOriginal,
+      prevOverlay,
+    };
 
     markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
     pendingCopyAltTextIndexRef.current = imageIndex;
@@ -313,13 +346,82 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
+    savedItemIdRef.current = selectedItemId;
     savedLocaleRef.current = currentLanguage;
     savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
     isSaveFromTranslateRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
 
-    showInfoBox(t.common?.copied ?? "Copied", "success");
+    // Feedback is deferred to the save-response handler (see
+    // pendingCopyAltTextIndexRef in useUnifiedContentEditor.ts), so the box
+    // reflects the actual Shopify result and not an optimistic guess.
+  };
+
+  // The visible field and baseline may be restored only while the screen still
+  // shows the item, locale and market the copy ran on, and the index still
+  // holds the copied value (a later edit stays).
+  const canRestoreVisibleCopy = (
+    pending: NonNullable<typeof copyOverlayRollbackRef.current>,
+  ) =>
+    selectedItemIdRef.current === pending.itemId &&
+    buildLocaleKey(currentLanguageRef.current, selectedMarketIdRefAlt.current) === pending.key;
+
+  /** Item the in-flight alt copy was started for (independent of savedItemIdRef). */
+  const getPendingCopyAltItemId = () => copyOverlayRollbackRef.current?.itemId ?? null;
+
+  /** Baseline snapshot for a save response: current alt texts, except that an
+   *  index whose copy FAILED (and will be rolled back) keeps its previous
+   *  original, so the later non-functional baseline write cannot override
+   *  the rollback. */
+  const altBaselineSnapshot = (failedIndices: number[] = []): Record<number, string> => {
+    const base = { ...imageAltTextsRef.current };
+    const pending = copyOverlayRollbackRef.current;
+    if (
+      pending &&
+      // Only while that copy is still the save being answered: a record left
+      // over from an earlier copy must never rewrite a later save's baseline.
+      pendingCopyAltTextIndexRef.current === pending.index &&
+      failedIndices.includes(pending.index) &&
+      canRestoreVisibleCopy(pending) &&
+      base[pending.index] === pending.value
+    ) {
+      if (pending.prevOriginal === undefined) delete base[pending.index];
+      else base[pending.index] = pending.prevOriginal;
+    }
+    return base;
+  };
+
+  /** A copy that LANDED: forget its rollback record, or a later unrelated
+   *  save would still be read through it. */
+  const discardCopyAltRecord = () => {
+    copyOverlayRollbackRef.current = null;
+  };
+
+  const rollbackCopyAltText = () => {
+    const pending = copyOverlayRollbackRef.current;
+    copyOverlayRollbackRef.current = null;
+    if (!pending) return;
+    const entry = localAltTextOverlayRef.current[pending.key];
+    // Only undo our own write: a later edit or copy under the same key stays.
+    if (entry && entry[pending.index] === pending.value) {
+      if (pending.prevOverlay === undefined) delete entry[pending.index];
+      else entry[pending.index] = pending.prevOverlay;
+    }
+    // Item or locale/market changed: the visible state belongs to someone else.
+    if (!canRestoreVisibleCopy(pending)) return;
+    const restore = (
+      prev: Record<number, string>,
+      previous: string | undefined,
+    ): Record<number, string> => {
+      if (prev[pending.index] !== pending.value) return prev;
+      const next = { ...prev };
+      if (previous === undefined) delete next[pending.index];
+      else next[pending.index] = previous;
+      return next;
+    };
+    setImageAltTexts((prev) => restore(prev, pending.prevField));
+    setOriginalAltTexts((prev) => restore(prev, pending.prevOriginal));
   };
 
   const handleCopyAltTextToAllLocales = (imageIndex: number) => {
@@ -351,41 +453,29 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
     markOperationActive(capturedItemId, `altText_${imageIndex}`, "copyToAllLocales");
 
-    const saves = targetLocales.map(locale => {
+    // The answer is READ (content-action-endpoint.shared.ts), so a locale that
+    // did not save is named instead of reported as copied.
+    runPerLocaleSavesDetailed(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "updateContent");
       fd.set("itemId", capturedItemId);
       fd.set("locale", locale);
       fd.set("primaryLocale", primaryLocale);
       fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
-      // The answer is READ now (content-action-endpoint.shared.ts), so a
-      // locale that did not save is named instead of reported as copied.
-      return postContentEditorSave(fd).then((ok) => (ok === false ? locale : null));
-    });
-
-    Promise.all(saves).then((results) => {
-      const failed = results.filter((l): l is string => l !== null);
-      if (failed.length > 0) {
-        // Take back what the copy wrote up front for those locales: the
-        // overlay outranks the loaded alt texts, so left in place the editor
-        // went on showing a value that was never saved. Only the copy's own
-        // value -- anything written there since is not ours to remove.
-        for (const locale of failed) {
-          const forLocale = localAltTextOverlayRef.current[locale];
-          if (forLocale && forLocale[imageIndex] === sourceAltText) {
-            delete forLocale[imageIndex];
-          }
+      return postContentEditorSave(fd);
+    }).then(({ failed, gated }) => {
+      // Take back what the copy wrote up front for those locales: the
+      // overlay outranks the loaded alt texts, so left in place the editor
+      // went on showing a value that was never saved. Only the copy's own
+      // value -- anything written there since is not ours to remove.
+      for (const locale of failed) {
+        const forLocale = localAltTextOverlayRef.current[locale];
+        if (forLocale && forLocale[imageIndex] === sourceAltText) {
+          delete forLocale[imageIndex];
         }
-        showInfoBox(
-          String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
-            "{locales}",
-            failed.map((l) => l.toUpperCase()).join(", "),
-          ),
-          "critical",
-        );
-      } else {
-        showInfoBox(t.common?.copied ?? "Copied", "success");
       }
+      const outcome = copyOutcomeMessage(failed, { ...(t.common ?? {}), upgradeRequired: String(t.content?.upgradeRequired ?? "") || undefined }, gated);
+      showInfoBox(outcome.text, outcome.tone);
     }).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);
       if (revalidatorRef.current.state === 'idle') {
@@ -446,6 +536,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
               Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
               formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
+              savedItemIdRef.current = itemId;
               savedLocaleRef.current = currentLanguage;
               savedMarketIdRef.current = selectedMarketId;
               isSavePendingRef.current = true;
@@ -761,6 +852,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Add the new image alt-texts
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
+    savedItemIdRef.current = selectedItemId;
     savedLocaleRef.current = currentLanguage;
     savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
@@ -812,6 +904,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           primaryLocale,
         };
         foreignForm.imageAltTexts = JSON.stringify(newAltTexts);
+        savedItemIdRef.current = requestItemId;
         savedLocaleRef.current = L;
         savedMarketIdRef.current = "";
         isSavePendingRef.current = true;
@@ -864,6 +957,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             // the FOREIGN alt-text (held in imageAltTextsRef) into the primary
             // in-memory image (a leak). The server still persists this as the
             // primary base alt-text via the form `locale` field.
+            // Same item as save A, which already claimed it.
+            savedItemIdRef.current = requestItemId;
             isSavePendingRef.current = true;
             isSaveFromTranslateRef.current = true;
             safeSubmit(primaryForm, { method: "POST" });
@@ -928,6 +1023,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       };
       Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
       formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+      savedItemIdRef.current = selectedItemId;
       savedLocaleRef.current = primaryLocale;
       savedMarketIdRef.current = "";
       isSavePendingRef.current = true;
@@ -949,6 +1045,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     };
     Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+    savedItemIdRef.current = selectedItemId;
     savedLocaleRef.current = primaryLocale;
     savedMarketIdRef.current = "";
     isSavePendingRef.current = true;
@@ -1097,6 +1194,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleCopyAltText,
     handleCopyAltTextToAllLocales,
     pendingCopyAltTextIndexRef,
+    rollbackCopyAltText,
+    discardCopyAltRecord,
+    altBaselineSnapshot,
+    getPendingCopyAltItemId,
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts,

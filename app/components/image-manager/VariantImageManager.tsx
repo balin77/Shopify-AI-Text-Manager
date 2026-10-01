@@ -1,4 +1,5 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { captureRemoved, reinsertRemoved, deleteOutcome, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
@@ -15,6 +16,7 @@ import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
+import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -135,6 +137,11 @@ interface VariantImageManagerProps {
   /** Reports the settling media that has since shown up (or belongs to another
    *  product) so the hook can drop it from its list. */
   onSettlingMediaResolved?: (mediaIds: string[]) => void;
+  /** Reports whether a product-image delete is in flight. The parent blocks
+   *  the editor's Save meanwhile: the optimistic exclusion is already emitted,
+   *  so a save during a delete that then fails would clear variant main images
+   *  on Shopify for media that still exists. */
+  onDeletingChange?: (deleting: boolean) => void;
   resetKey?: number;
   variantReloadKey?: number;
   currentLanguage?: string;
@@ -195,6 +202,7 @@ export function VariantImageManager({
   settlingMedia,
   onSettlingMediaResolved,
   resetKey,
+  onDeletingChange,
   variantReloadKey,
   currentLanguage,
   primaryLocale,
@@ -269,6 +277,8 @@ export function VariantImageManager({
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
+  // A media write (delete, upload) the server refused; shown above the gallery.
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   // GIDs (mediaId) of images currently being converted; cleared when done.
   // Tracked by GID rather than URL because Shopify CDN URLs can change query params between
@@ -281,6 +291,11 @@ export function VariantImageManager({
   const prevUnsettledKeyRef = useRef("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ urls: string[]; affectedVariantCount: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  useEffect(() => {
+    onDeletingChange?.(isDeleting);
+  }, [isDeleting]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Never leave the parent's save blocked if this component goes away mid-delete.
+  useEffect(() => () => onDeletingChange?.(false), []); // eslint-disable-line react-hooks/exhaustive-deps
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentImagesRef = useRef<ProductImageRef[]>([]);
   const isConvertingWebPRef = useRef(false);
@@ -319,6 +334,11 @@ export function VariantImageManager({
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
+  // True once the sync effect has emitted a non-empty pending state to the parent.
+  const emittedPendingRef = useRef(false);
+  // Always the CURRENT product, so an in-flight delete can tell the merchant switched away.
+  const productIdRef = useRef(productId);
+  productIdRef.current = productId;
   // Monotonic token guarding against out-of-order /api/product-variants responses:
   // a fast product switch can leave an earlier request in flight that resolves AFTER
   // the newer one, overwriting the current product's variants with stale data.
@@ -378,6 +398,8 @@ export function VariantImageManager({
     setPendingGalleryOrder({});
     pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
+    setMediaError(null);
+    setWebpError(null);
     dirtyUrlsRef.current.clear();
     onDirtyChange?.(false);
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -598,7 +620,18 @@ export function VariantImageManager({
     // change but immediately returns early, so onPendingChange is never
     // called → the hook never sees the new media → hasPendingImageChanges
     // stays false → Save button stays disabled.
-    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) return;
+    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) {
+      // Everything went back to "no change" (e.g. a refused delete rolled the
+      // optimistic exclusion back). The parent still holds what we emitted
+      // last, so re-sync it explicitly or the next Save replays stale pending
+      // state (clearing a variant main image that was never deleted).
+      if (emittedPendingRef.current) {
+        emittedPendingRef.current = false;
+        onPendingChange?.([], pendingMediaOrderRef.current, [], []);
+      }
+      return;
+    }
+    emittedPendingRef.current = true;
 
     // Track variants with no featured image so backend keeps all GIDs in the metafield
     // and never promotes fileGids[0] to become mediaId on Shopify.
@@ -2079,22 +2112,73 @@ export function VariantImageManager({
     const gids = urls.map(url => urlToGid[url]).filter(Boolean) as string[];
     const urlSet = new Set(urls);
     const gidSet = new Set(gids);
+    const startedProductId = productId;
+    const switchedAway = () => productIdRef.current !== startedProductId;
 
     setIsDeleting(true);
     setDeleteConfirm(null);
+    // What the optimistic removal takes out, with its positions, so a refused
+    // delete can put exactly those entries back into whatever the state has
+    // become meanwhile (a whole-state snapshot would discard edits made while
+    // the request was in flight).
+    // Staged resourceUrls of removed queued tiles: a tile dragged into a variant
+    // gallery sits there under its staging URL, which no GID lookup resolves.
+    const removedQueuedRefs = queuedResourceUrls(pendingProductNewMedia, urls);
+    // Positions are taken from the list AFTER those refs are stripped: that is
+    // the list a refused delete reinserts into, and positions counted with the
+    // staging refs still in it would put a restored image one slot late.
+    const strippedGalleries = stripRefsFromGalleries(pendingVariantGalleries, removedQueuedRefs);
+    const removedFromGalleries: Record<string, RemovedEntry<string>[]> = {};
+    for (const v of variants) {
+      const removed = captureRemoved(strippedGalleries[v.id] ?? v.galleryFileGids, gid => gidSet.has(gid));
+      if (removed.length > 0) removedFromGalleries[v.id] = removed;
+    }
+    const originalOrder = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
+    const orderWasUnset = pendingProductImageOrder === null;
+    const originalGalleries: Record<string, string[] | undefined> = {};
+    for (const v of variants) originalGalleries[v.id] = pendingVariantGalleries[v.id];
+    const removedSelection: Array<[string, string | null]> = [];
+    for (const url of urls) {
+      const key = `product::${url}`;
+      if (selectedGalleryItems.has(key)) removedSelection.push([key, selectedGalleryItems.get(key) ?? null]);
+    }
+    // Queued tiles are removed for good (never restored by a failed Shopify delete).
+    const queuedUrls = new Set(pendingProductNewMedia.map(m => m.previewUrl).filter((u): u is string => !!u));
+    const removedFromOrder = captureRemoved(originalOrder, url => urlSet.has(url) && !queuedUrls.has(url));
+    const removedFromRefreshed = captureRemoved(effectiveProductImages, img => urlSet.has(img.url) && !queuedUrls.has(img.url));
+    const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
+    const addedExcludedIds = variantsWithDeletedMainImage.map(v => v.id).filter(id => !locallyExcludedMainGids.has(id));
 
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
-      const next = { ...p };
+      // A copy: with nothing to strip the helper hands back `p` itself, and the
+      // loop below must never write into the previous state object.
+      const next = { ...stripRefsFromGalleries(p, removedQueuedRefs) };
+      const queuedRefSet = new Set(removedQueuedRefs);
       for (const v of variants) {
-        const current = p[v.id] ?? v.galleryFileGids;
+        // Read the STRIPPED list: starting from `p` here wrote a removed
+        // queued tile's staging URL back whenever the same delete also took a
+        // saved image out of this variant.
+        const current = next[v.id] ?? v.galleryFileGids;
         const filtered = current.filter(gid => !gidSet.has(gid));
         if (filtered.length !== current.length) next[v.id] = filtered;
+        // A list the strip returned to exactly the stored gallery is no change
+        // at all; keeping the key would light Save up for a no-op write.
+        const stored = v.galleryFileGids;
+        const now = next[v.id];
+        if (
+          now &&
+          now.length === stored.length &&
+          now.every((g, i) => g === stored[i]) &&
+          (p[v.id] ?? []).some(ref => queuedRefSet.has(ref))
+        ) {
+          delete next[v.id];
+        }
       }
       return next;
     });
-    // Variants whose featured image was deleted — exclude from gallery and unset on Shopify
-    const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
+    // Variants whose featured image was deleted: exclude from gallery now,
+    // unset on Shopify only after the delete is confirmed.
     setLocallyExcludedMainGids(s => {
       const next = new Set(s);
       variantsWithDeletedMainImage.forEach(v => next.add(v.id));
@@ -2105,38 +2189,103 @@ export function VariantImageManager({
       return base.filter(url => !urlSet.has(url));
     });
     setRefreshedProductImages(effectiveProductImages.filter(img => !urlSet.has(img.url)));
-    // A deleted node can never turn up in shopifyMediaMap, so a settling
-    // entry for it would keep its tile on screen forever — draggable into a
-    // variant gallery with a GID that no longer exists. Retire it here.
-    if (gids.length > 0) onSettlingMediaResolved?.(gids);
     setSelectedGalleryItems(m => {
       const next = new Map(m);
       urls.forEach(url => next.delete(`product::${url}`));
       return next;
     });
+    // Queued (not yet uploaded) tiles: deleting one removes it from the upload queue.
+    const removedQueued = pendingProductNewMedia.filter(m => m.previewUrl && urlSet.has(m.previewUrl));
+    if (removedQueued.length > 0) setPendingProductNewMedia(list => removePendingNewMedia(list, urls));
 
+    let deleteOk = false;
+    let clearOk: boolean | null = null;
     try {
-      const deleteFetch = fetch("/api/delete-product-images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, mediaIds: gids }),
-      });
+      if (gids.length === 0) {
+        // Only queued (not yet uploaded) ghost tiles: nothing exists on Shopify
+        // to delete, and the route answers 400 for an empty list.
+        deleteOk = true;
+      } else {
+        const deleteRes = await fetch("/api/delete-product-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productId: startedProductId, mediaIds: gids }),
+        });
+        const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
+        deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false;
+      }
       // Shopify does not automatically clear a variant's image when the referenced media is
-      // deleted. Explicitly unset mediaId for all affected variants in the same round-trip.
+      // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,
+      // so a refused delete changes nothing on Shopify.
       const clearMainImageIds = variantsWithDeletedMainImage.map(v => v.id);
-      const clearFetch = clearMainImageIds.length > 0
-        ? fetch("/api/update-variant-galleries", {
+      if (deleteOk && clearMainImageIds.length > 0) {
+        try {
+          const clearRes = await fetch("/api/update-variant-galleries", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ productId, clearVariantMainImages: clearMainImageIds }),
-          })
-        : Promise.resolve();
-      await Promise.all([deleteFetch, clearFetch]);
+            body: JSON.stringify({ productId: startedProductId, clearVariantMainImages: clearMainImageIds }),
+          });
+          const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
+          clearOk = clearRes.ok && !!clearBody && clearBody.success !== false;
+        } catch {
+          clearOk = false;
+        }
+      }
     } catch {
-      // non-critical: local state already reflects deletion
+      deleteOk = false;
+    }
+    if (switchedAway()) { setIsDeleting(false); return; }
+    const outcome = deleteOutcome(deleteOk, clearOk);
+    if (outcome === "deleteFailed") {
+      setPendingVariantGalleries(p => {
+        const next = { ...p };
+        for (const v of variants) {
+          const removed = removedFromGalleries[v.id];
+          if (!removed) continue;
+          const restored = reinsertRemoved(p[v.id] ?? v.galleryFileGids, removed);
+          const base = originalGalleries[v.id] ?? v.galleryFileGids;
+          const sameAs = (list: readonly string[]) =>
+            restored.length === list.length && restored.every((g, i) => g === list[i]);
+          // Back to the pre-delete list: restore the prior presence/absence so
+          // a no-op does not light up the Save button. Equal to the STORED
+          // gallery is a no-op too -- the pre-delete list may have differed only
+          // by a queued tile's staging ref, which this delete removed for good.
+          if ((sameAs(base) && originalGalleries[v.id] === undefined) || sameAs(v.galleryFileGids)) delete next[v.id];
+          else next[v.id] = restored;
+        }
+        return next;
+      });
+      setLocallyExcludedMainGids(s => {
+        const next = new Set(s);
+        addedExcludedIds.forEach(id => next.delete(id));
+        return next;
+      });
+      setPendingProductImageOrder(curr => {
+        if (!curr) return curr;
+        const restored = reinsertRemoved(curr, removedFromOrder);
+        if (orderWasUnset && restored.length === originalOrder.length && restored.every((u, i) => u === originalOrder[i])) return null;
+        return restored;
+      });
+      setSelectedGalleryItems(m => {
+        const next = new Map(m);
+        for (const [k, v] of removedSelection) if (!next.has(k)) next.set(k, v);
+        return next;
+      });
+      setRefreshedProductImages(curr => (curr ? reinsertRemoved(curr, removedFromRefreshed, (a, b) => a.url === b.url) : curr));
+      // A queued tile is removed for good even when the Shopify delete failed.
+      setMediaError(t.imageManager.mediaDeleteFailed);
+    } else {
+      // A deleted node can never turn up in shopifyMediaMap, so a settling
+      // entry for it would keep its tile on screen forever. Retire it only now
+      // that the delete is confirmed.
+      if (gids.length > 0) {
+        onSettlingMediaResolved?.(gids);
+        pendingMediaOrderRef.current = pendingMediaOrderRef.current.filter(o => !gidSet.has(o.mediaId));
+      }
+      if (outcome === "clearFailed") setMediaError(t.imageManager.mediaClearMainFailed);
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -2202,6 +2351,8 @@ export function VariantImageManager({
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         const res = await fetch("/api/staged-upload", {
@@ -2214,27 +2365,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // See FilePickerModal — PUT (image) vs multipart POST (video/3D).
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           setPendingVariantGalleries(p => {
@@ -2251,13 +2387,19 @@ export function VariantImageManager({
           });
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, [variants, urlToGid, locallyExcludedMainGids]);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [variants, urlToGid, locallyExcludedMainGids, t]);
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         // Classify so we (a) know what to push into pendingProductNewMedia
@@ -2274,30 +2416,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // PUT (image) vs multipart POST (video/3D). The previous always-PUT
-          // path produced a 405 against video / model staged targets, so a
-          // drag-drop .glb to the product-gallery placeholder silently
-          // failed and the merchant saw the modal close with nothing saved.
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           // Push the typed shape — bare resourceUrl strings would survive the
@@ -2309,10 +2433,14 @@ export function VariantImageManager({
           setPendingProductNewMedia(p => [...p, { resourceUrl, kind, previewUrl }]);
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, []);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [t]);
 
   // Watch altTextFetcher for AI generate / translate results → auto-save result
   useEffect(() => {
@@ -2497,6 +2625,11 @@ export function VariantImageManager({
           paddingRight: isExpanded ? 0 : 4,
         }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {mediaError && (
+        <Banner tone="critical" onDismiss={() => setMediaError(null)}>
+          <p>{mediaError}</p>
+        </Banner>
+      )}
       {webpError && (
         <Banner tone="critical" onDismiss={() => setWebpError(null)}>
           <p>{webpError}</p>

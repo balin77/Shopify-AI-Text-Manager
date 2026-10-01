@@ -153,6 +153,7 @@ export const guideEn: GuideCopy = {
             "Variant gallery — shows the matching images for each variant.",
             "Language and country selector — a switcher built on Shopify's own localization.",
             "Direct translations — translates text from other apps.",
+            "Images and videos per language — shows the product images and videos you replaced per language or market.",
             "Web Vitals — measures page speed for real visitors.",
           ],
         },
@@ -461,6 +462,63 @@ export const guideEn: GuideCopy = {
       ],
       tips: [
         "If you change a theme text in the primary language, its translations are deleted or re-translated according to your setting — just like products.",
+        "Images in the theme appear as an image preview. You can choose a different image per language and market — see “Different images and videos per language”.",
+      ],
+    },
+
+    "images-per-language": {
+      title: "Different images and videos per language",
+      summary:
+        "Show customers in a language or market a different image — for example a banner or product photo with translated text on it.",
+      sections: [
+        {
+          heading: "What it is for",
+          paragraphs: [
+            "Text can be translated, text inside an image cannot. A banner saying “Sale” or a product photo with German labels looks the same in every language. With “Images and videos per language” you choose a different image for a language — and, if you like, only for one market. It replaces the original one to one; every other language keeps seeing the original.",
+          ],
+        },
+        {
+          heading: "Theme images",
+          paragraphs: [
+            "Images in your theme (for example a banner on the home page) are under Content → Theme, among the texts of their section. Instead of a text field you see a preview of the image.",
+            "Whether your theme shows the image of the chosen language depends on the theme. After saving, check your store in that language; some themes may keep showing the original image.",
+          ],
+          steps: [
+            "Choose the language at the top — and, if the image should only differ in one market, the market.",
+            "Click “Choose image for this language” at the image and pick an image from your files or upload one.",
+            "Save. “Use original image” takes the choice back.",
+          ],
+        },
+        {
+          heading: "Product images",
+          paragraphs: [
+            "On the product page, below the product images, you find the “Images and videos per language” card — also when the image manager is switched off. Pick replacements from your files or upload new ones; only what can replace the original is offered. Choose the language and market there and set a replacement for each product image. The change is saved right away. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
+            "For your store to show the replacements, turn on the “Images and videos per language” app embed once (the card links straight to it). The images are replaced in the product page gallery and in the image shown when the link is shared and to search engines.",
+          ],
+          list: [
+            "A replacement for a specific market takes precedence over the replacement for “All markets”.",
+            "If you change the original image later, the card points it out so you can check whether the replacement still fits.",
+            "If an original image is deleted from the product, the card lists its replacements separately so you can remove them. The same goes for replacements for a market or language that no longer exists in your store or is no longer active.",
+          ],
+        },
+        {
+          heading: "Videos",
+          paragraphs: [
+            "In the same card you also replace a product's videos per language and market — for example with a dubbed version. A video uploaded to Shopify is replaced by another uploaded video (from your files or uploaded new), a YouTube or Vimeo video by another YouTube or Vimeo link. An image cannot be replaced by a video or the other way round; 3D models are not replaced.",
+            "Shopify processes a newly uploaded video for a few minutes. If a note says so, pick the video from your files a little later.",
+            "Videos in the theme settings (for example a video section on the home page) are entered per language as a different link; the AI does not change them.",
+          ],
+        },
+        {
+          heading: "What is not replaced",
+          paragraphs: [
+            "Product cards in collections, the cart, and feeds for Google Shopping, the Shop app and other sales channels keep showing the original. For videos, the description of the video for search engines stays with the original. Collection and blog images are not covered yet.",
+          ],
+        },
+      ],
+      tips: [
+        "The AI does not translate or change images. That is why the translate buttons offer nothing for theme images — an image stays until you choose another one.",
+        "An image that stays the same in a language does not count as a missing translation.",
       ],
     },
 
@@ -664,7 +722,7 @@ export const guideEn: GuideCopy = {
           ],
         },
       ],
-      tips: ["The assignment happens at upload. Renaming the files later changes nothing about it."],
+      tips: ["If a file cannot be uploaded, it is named in a message and is not added — upload it again afterwards.", "The assignment happens at upload. Renaming the files later changes nothing about it."],
     },
 
     "alt-texts": {

@@ -11,14 +11,12 @@
  * - Minimal code (~150 lines vs 779 lines)
  */
 
-import { type ActionFunctionArgs } from "react-router";
+import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
-import { authenticate } from "../shopify.server";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
-import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { PRODUCTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -36,6 +34,7 @@ import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
+import { LocalizedImagesCard } from "~/components/localized-images/LocalizedImagesCard";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -367,7 +366,19 @@ export const loader = createContentLoader({
     // so this costs one query per shop, not one per load.
     const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
     const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode };
+    // "Images per language" (PLAN_LOCALIZED_IMAGES Phase 1b) rides on the
+    // image manager's gate; its storefront half is the `localized-media` app
+    // embed, activated through the theme editor's deep link (api key, never
+    // the extension uid — see SettingsSetupTab).
+    const apiKey = (process.env.SHOPIFY_API_KEY || "").trim();
+    const localizedImagesEmbedUrl = apiKey
+      ? `https://${ctx.session.shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/localized-media`
+      : null;
+    // The PLAN gate alone, not the image manager's on/off setting: replacements
+    // keep showing on the storefront when the merchant switches the image
+    // manager off, so the card that lists and removes them must stay too.
+    const showLocalizedImages = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled);
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages };
   },
 });
 
@@ -375,35 +386,14 @@ export const loader = createContentLoader({
 // ACTION - Handle all actions via unified handler
 // ============================================================================
 
-export const action = async (args: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(args.request);
-  const formData = await args.request.formData();
-
-  // Load AI settings
-  const { db } = await import("../db.server");
-  const [aiSettings, aiInstructions] = await Promise.all([
-    db.aISettings.findUnique({ where: { shop: session.shop } }),
-    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
-  ]);
-
-  // Use unified action handler (handles text fields + images)
-  return handleUnifiedContentActions({
-    admin,
-    session,
-    formData,
-    contentConfig: PRODUCTS_CONFIG,
-    db,
-    aiSettings,
-    aiInstructions,
-  });
-};
+export const action = makeContentRouteAction({ config: PRODUCTS_CONFIG, planContentType: "products" });
 
 // ============================================================================
 // COMPONENT - Simple, unified approach (like Collections)
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -523,6 +513,9 @@ export default function ProductsPage() {
     strings: {
       optionsSavedSuccess: t.products.optionsSavedSuccess,
       translateFailed: t.errors.translationFailed,
+      copied: t.common.copied,
+      copyFailedLocales: t.common.copyFailedLocales,
+      upgradeRequired: t.content.upgradeRequired,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
       optionNameEmpty: t.products.optionNameEmpty,
@@ -741,12 +734,15 @@ export default function ProductsPage() {
     // active during the wait, the merchant double-clicked, and the second
     // POST hit /api/update-variant-galleries with the same staging URL
     // (duplicate productCreateMedia → Shopify 422).
-    isSaving: subResources.state.isSaving || imageManagerState.isApplying,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying]);
+    isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
     saveSubResources: () => {
+      // A product-image delete is in flight: saving now could clear variant
+      // main images for media that survives a failed delete.
+      if (imageManagerStateRef.current.isDeletingImages) return;
       subResources.handlers.saveSubResources();
       if (hasPendingImageChanges && editor.selectedItem) {
         const productId = editor.selectedItem.id;
@@ -1117,6 +1113,7 @@ export default function ProductsPage() {
               onSetAction={imageManagerState.setActiveAction}
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
+              onDeletingChange={imageManagerState.setIsDeletingImages}
               onExternalVideosChange={imageManagerState.setPendingExternalVideos}
               onThreeDModelsChange={imageManagerState.setPendingVariant3dModels}
               onThreeDPreviewsChange={imageManagerState.setPendingVariant3dPreviews}
@@ -1145,6 +1142,21 @@ export default function ProductsPage() {
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
             />
+          ) : undefined}
+          imageGalleryAddon={showLocalizedImages && editor.selectedItem ? (
+            <>
+            {/* Keyed on the product and on the image list the manager last
+                confirmed, so an image added or removed there is reflected
+                here without a page reload. */}
+            <LocalizedImagesCard
+              key={`${editor.selectedItem.id}:${imageManagerState.resetCounter}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}`}
+              productId={editor.selectedItem.id}
+              shopLocales={shopLocales}
+              markets={markets ?? []}
+              currentLanguage={editor.state.currentLanguage}
+              embedActivationUrl={localizedImagesEmbedUrl}
+            />
+            </>
           ) : undefined}
         />
       </div>

@@ -27,6 +27,18 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return taskErrorText(refusal[0], t) ?? errorMessage;
   }
 
+  // A plan refusal travels as the code "gated" (planGateRefusal, 403).
+  if (errorMessage === "gated") {
+    const content = t.content as Record<string, string> | undefined;
+    return content?.upgradeRequired || "Upgrade required";
+  }
+
+  // An AI path refused a theme image/video value (themeMediaRefusalBody).
+  if (errorMessage === "themeMediaValue") {
+    const li = (t as unknown as { localizedImages?: { errors?: Record<string, string> } }).localizedImages;
+    return li?.errors?.themeMediaValue || errorMessage;
+  }
+
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys

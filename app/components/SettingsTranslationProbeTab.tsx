@@ -15,6 +15,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { Card, Text, BlockStack, Button, Banner, InlineStack, Checkbox } from "@shopify/polaris";
 import { MarketProbeCard } from "./MarketProbeCard";
+import { ThemeImageProbeCard } from "./ThemeImageProbeCard";
 
 interface KeyStats {
   prefix: string;
@@ -1507,6 +1508,7 @@ export function SettingsTranslationProbeTab() {
       <IndexNowProbeCard />
 
       <RedirectLocaleProbeCard />
+      <ThemeImageProbeCard />
 
       <MenuTranslationProbeCard />
 

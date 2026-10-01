@@ -177,7 +177,12 @@ export interface UseUiDataLoaderReturn {
   /** A "copy to all languages" save did NOT land for these locales: drop the
    *  value the copy wrote into the overlay for them, so the editor shows what
    *  Shopify holds again instead of a value that was never saved. */
-  onCopyToLocalesFailed: (translationKey: string, locales: string[], copiedValue: string) => void;
+  onCopyToLocalesFailed: (
+    translationKey: string,
+    locales: string[],
+    copiedValue: string,
+    opts?: { itemUnchanged?: boolean; allLocalesFailed?: boolean },
+  ) => void;
 
   /** When switching to a different item */
   onItemSwitch: () => void;
@@ -373,6 +378,8 @@ export function useUiDataLoader(
    *  Entries are market-folded via buildDeletedKey() so a market-specific clear
    *  does not blank the global value (and vice-versa). */
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
+  // Keys whose "deleted" marker the last copy-to-all-locales cleared (see onCopyToLocalesFailed).
+  const clearedDeletedByCopyRef = useRef<Set<string>>(new Set());
 
   /** Currently-selected market ("" = global). Held in a ref so resolve()/the
    *  transition methods can read it without bloating their useCallback deps. The
@@ -985,9 +992,14 @@ export function useUiDataLoader(
         `onTranslateFieldToAllLocalesComplete: key=${translationKey} ${localeCount} locales`
       );
 
-      // 1. Clear deleted key
+      // 1. Clear deleted key (remembered, so a copy that then FAILS can put
+      //    the marker back: the merchant had cleared this field and Shopify
+      //    still holds that state).
       if (deletedTranslationKeysRef.current.has(translationKey)) {
         deletedTranslationKeysRef.current.delete(translationKey);
+        clearedDeletedByCopyRef.current.add(translationKey);
+      } else {
+        clearedDeletedByCopyRef.current.delete(translationKey);
       }
 
       // 2. Store in localTranslationsRef (overlay — replaces item mutation)
@@ -1011,7 +1023,28 @@ export function useUiDataLoader(
   );
 
   const onCopyToLocalesFailed = useCallback(
-    (translationKey: string, locales: string[], copiedValue: string) => {
+    (
+      translationKey: string,
+      locales: string[],
+      copiedValue: string,
+      opts?: { itemUnchanged?: boolean; allLocalesFailed?: boolean },
+    ) => {
+      // The copy cleared this key's "deleted" marker on the way in. The marker
+      // is per KEY, not per locale: it goes back only when the item is still
+      // the one the copy ran on AND no locale took the value (a partial copy
+      // did write a translation, so the field is no longer deleted).
+      const hadCleared = clearedDeletedByCopyRef.current.delete(translationKey);
+      if (
+        hadCleared &&
+        locales.length > 0 &&
+        opts?.itemUnchanged !== false &&
+        opts?.allLocalesFailed !== false
+      ) {
+        deletedTranslationKeysRef.current.add(translationKey);
+      }
+      // The overlay belongs to the item now on screen: after an item switch it
+      // is the NEW item's, and the copy's value is not ours to take from it.
+      if (opts?.itemUnchanged === false) return;
       const overlay = localTranslationsRef.current[translationKey];
       if (!overlay) return;
       for (const locale of locales) {
@@ -1031,6 +1064,7 @@ export function useUiDataLoader(
   const onItemSwitch = useCallback(() => {
     debugLog.transition("onItemSwitch: clearing all caches");
     deletedTranslationKeysRef.current.clear();
+    clearedDeletedByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 
@@ -1042,6 +1076,7 @@ export function useUiDataLoader(
     }
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
+    clearedDeletedByCopyRef.current.clear();
   }, []);
 
   /**
@@ -1080,6 +1115,7 @@ export function useUiDataLoader(
   const onBackgroundRetranslation = useCallback(() => {
     debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
     deletedTranslationKeysRef.current.clear();
+    clearedDeletedByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 

@@ -13,7 +13,7 @@ import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";
 
 export const loader = makeThemeDomainLoader("system", "SYSTEM");
-export const action = makeThemeContentRouteAction("system");
+export const action = makeThemeContentRouteAction("system", "system");
 
 export default function SystemPage() {
   const data = useLoaderData<typeof loader>();
