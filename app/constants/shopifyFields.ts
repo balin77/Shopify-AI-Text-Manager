@@ -11,7 +11,10 @@ export const SHOPIFY_TRANSLATION_KEYS = {
   META_TITLE: 'meta_title',
   META_DESCRIPTION: 'meta_description',
   PRODUCT_TYPE: 'product_type',
-  SUMMARY: 'summary',
+  // Shopify's key for an article's summary is `summary_html` (content-fields.config.tsx,
+  // FIELD_TO_TRANSLATION_KEY). The bare `summary` matched no translation row, so the
+  // missing-translation marker on a summary could never clear.
+  SUMMARY: 'summary_html',
 } as const;
 
 /**
