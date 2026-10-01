@@ -481,6 +481,7 @@ export const guideEn: GuideCopy = {
           heading: "Theme images",
           paragraphs: [
             "Images in your theme (for example a banner on the home page) are under Content → Theme, among the texts of their section. Instead of a text field you see a preview of the image.",
+            "Whether your theme shows the image of the chosen language depends on the theme. After saving, check your store in that language; some themes may keep showing the original image.",
           ],
           steps: [
             "Choose the language at the top — and, if the image should only differ in one market, the market.",
@@ -491,13 +492,13 @@ export const guideEn: GuideCopy = {
         {
           heading: "Product images",
           paragraphs: [
-            "On the product page, below the product images, you find the “Images and videos per language” card — also when the image manager is switched off. Pick replacements from your files or upload new ones; only what can replace the original is offered. Choose the language and market there and set a replacement for each product image. The change is saved right away.",
+            "On the product page, below the product images, you find the “Images and videos per language” card — also when the image manager is switched off. Pick replacements from your files or upload new ones; only what can replace the original is offered. Choose the language and market there and set a replacement for each product image. The change is saved right away. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
             "For your store to show the replacements, turn on the “Images and videos per language” app embed once (the card links straight to it). The images are replaced in the product page gallery and in the image shown when the link is shared and to search engines.",
           ],
           list: [
             "A replacement for a specific market takes precedence over the replacement for “All markets”.",
             "If you change the original image later, the card points it out so you can check whether the replacement still fits.",
-            "If an original image is deleted from the product, the card lists its replacements separately so you can remove them.",
+            "If an original image is deleted from the product, the card lists its replacements separately so you can remove them. The same goes for replacements for a market or language that no longer exists in your store or is no longer active.",
           ],
         },
         {

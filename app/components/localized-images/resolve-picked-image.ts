@@ -17,17 +17,39 @@ import type { AddedItem } from "../image-manager/FilePickerModal";
 
 export type PickedImage = { fileId: string; url: string };
 
-export type PickFailure = { error: string; code?: "stillProcessing" };
+/**
+ * Machine codes, rendered in the merchant's language by the callers through
+ * `t.localizedImages.errors`; `error` stays an English fallback for a log or
+ * an unknown code.
+ */
+export type PickFailureCode =
+  | "stillProcessing"
+  | "noImageSelected"
+  | "noVideoSelected"
+  | "linkNotFile"
+  | "onlyImagesForImage"
+  | "onlyVideosForVideo"
+  | "fileNoUrl";
+
+export type PickFailure = { error: string; code?: PickFailureCode };
 
 export async function resolvePickedMedia(
   item: AddedItem | undefined,
   kind: "image" | "video",
 ): Promise<PickedImage | PickFailure> {
-  if (!item) return { error: kind === "image" ? "No image selected" : "No video selected" };
-  if (item.source === "external_url") return { error: "A link is not a file" };
-  if (item.kind !== kind) return { error: kind === "image" ? "Only images can replace an image" : "Only videos can replace a video" };
+  if (!item) {
+    return kind === "image"
+      ? { error: "No image selected", code: "noImageSelected" }
+      : { error: "No video selected", code: "noVideoSelected" };
+  }
+  if (item.source === "external_url") return { error: "A link is not a file", code: "linkNotFile" };
+  if (item.kind !== kind) {
+    return kind === "image"
+      ? { error: "Only images can replace an image", code: "onlyImagesForImage" }
+      : { error: "Only videos can replace a video", code: "onlyVideosForVideo" };
+  }
   if (item.source === "library") {
-    if (!item.gid || !item.assetUrl) return { error: "The file has no URL yet" };
+    if (!item.gid || !item.assetUrl) return { error: "The file has no URL yet", code: "fileNoUrl" };
     return { fileId: item.gid, url: item.assetUrl };
   }
   try {

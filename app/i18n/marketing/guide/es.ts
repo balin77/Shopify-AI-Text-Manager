@@ -481,6 +481,7 @@ export const guideEs: GuideCopy = {
           heading: "Imágenes del tema",
           paragraphs: [
             "Las imágenes de tu tema (por ejemplo un banner en la página de inicio) están en Contenido → Tema, entre los textos de su sección. En lugar de un campo de texto ves una vista previa de la imagen.",
+            "Que tu tema muestre la imagen del idioma elegido depende del tema. Tras guardar, comprueba tu tienda en ese idioma; algunos temas pueden seguir mostrando la imagen original.",
           ],
           steps: [
             "Elige el idioma arriba y, si la imagen solo debe cambiar en un mercado, el mercado.",
@@ -491,13 +492,13 @@ export const guideEs: GuideCopy = {
         {
           heading: "Imágenes de producto",
           paragraphs: [
-            "En la página de producto, debajo de las imágenes del producto, encontrarás la tarjeta «Imágenes y vídeos por idioma», también si el gestor de imágenes está desactivado. Elige los reemplazos de tus archivos o sube otros nuevos; solo se ofrece lo que puede reemplazar al original. Allí eliges idioma y mercado y defines un reemplazo para cada imagen del producto. El cambio se guarda al instante.",
+            "En la página de producto, debajo de las imágenes del producto, encontrarás la tarjeta «Imágenes y vídeos por idioma», también si el gestor de imágenes está desactivado. Elige los reemplazos de tus archivos o sube otros nuevos; solo se ofrece lo que puede reemplazar al original. Allí eliges idioma y mercado y defines un reemplazo para cada imagen del producto. El cambio se guarda al instante. Usa una imagen con las mismas proporciones que la original: la tienda mantiene el marco de la original, así que otro formato se recorta o deja huecos.",
             "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Images and videos per language» (la tarjeta enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
           ],
           list: [
             "Un reemplazo para un mercado concreto tiene prioridad sobre el reemplazo para «Todos los mercados».",
             "Si más adelante cambias la imagen original, la tarjeta te avisa para que compruebes si el reemplazo sigue siendo adecuado.",
-            "Si se elimina una imagen original del producto, la tarjeta muestra sus reemplazos aparte para que puedas borrarlos.",
+            "Si se elimina una imagen original del producto, la tarjeta muestra sus reemplazos aparte para que puedas borrarlos. Lo mismo ocurre con los reemplazos de un mercado o idioma que ya no existe en tu tienda o ya no está activo.",
           ],
         },
         {

@@ -33,6 +33,12 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return content?.upgradeRequired || "Upgrade required";
   }
 
+  // An AI path refused a theme image/video value (themeMediaRefusalBody).
+  if (errorMessage === "themeMediaValue") {
+    const li = (t as unknown as { localizedImages?: { errors?: Record<string, string> } }).localizedImages;
+    return li?.errors?.themeMediaValue || errorMessage;
+  }
+
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys

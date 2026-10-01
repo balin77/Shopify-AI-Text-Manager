@@ -237,6 +237,32 @@ export function parseLocalizedMediaValue(raw: unknown): LocalizedMediaEntry[] {
   return out;
 }
 
+/**
+ * True when the stored metafield holds something this app did not write: a
+ * value that is not blank but is not our shape either (not JSON, no `e` list),
+ * or whose list has entries yet none of them parses. `custom.localized_media`
+ * is in the MERCHANT'S namespace, so another app or a hand edit may have put a
+ * different document there, and the write replaces the whole value: refusing
+ * is the only way not to destroy it. Our own empty value (`{"v":1,"e":[]}`)
+ * is not foreign, and neither is a blank one.
+ */
+export function isForeignLocalizedMediaValue(raw: unknown): boolean {
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw === "string" && raw.trim() === "") return false;
+  let data: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return true;
+    }
+  }
+  const list = (data as { e?: unknown } | null)?.e;
+  if (!Array.isArray(list)) return true;
+  if (list.length === 0) return false;
+  return parseLocalizedMediaValue(data).length === 0;
+}
+
 export function serializeLocalizedMedia(entries: LocalizedMediaEntry[]): string {
   return JSON.stringify({ v: 1, e: entries });
 }
