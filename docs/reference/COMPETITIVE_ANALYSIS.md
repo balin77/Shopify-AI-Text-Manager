@@ -421,6 +421,85 @@ je App) ist dadurch ersetzt; ihre Werte für T Lab, langify, GTranslate und Hext
 
 ### 2.2 SEO-Apps
 
+#### Aktueller Stand (2026-10-01) — fünf SEO-Apps mit Planstufen
+
+Geprüft gegen App-Store-Einträge, Preisseiten und Hilfe-Center (Agent, Rohtext der Seiten, alle
+am 01.10. abgerufen; Plan-Tabellen mit Icon-Häkchen zellenweise aus dem HTML gelesen). Volle
+Belegtabellen mit URL je Punkt:
+[competitive-research/2026-10-01-seo.md](competitive-research/2026-10-01-seo.md). Grundlage für
+`SEO_ROWS` in [marketing-compare.ts](../../app/config/marketing-compare.ts). Der eigene
+Funktionsstand steht weiter in
+[SEO_COMPETITIVE_ANALYSIS_2026-08.md](SEO_COMPETITIVE_ANALYSIS_2026-08.md).
+
+**Kandidaten** (App-Store-Kategorie SEO, alle 58 Seiten, 1.067 Apps, nach Bewertungszahl): Booster
+5.487 · Avada AI SEO 4.681 · SEOLab 2.779 · Tapita 2.626 · TinySEO 2.520 · SearchPie 2.440 ·
+SEOWILL 1.810 · … StoreSEO 759 (Platz 10) · **Yoast nur 176**. **Yoast gehört nicht mehr zu den
+großen SEO-Apps und wird nicht eingetragen** (Beleg bleibt in der Belegdatei); an seine Stelle
+tritt **Avada AI SEO Image Optimizer** (Nachtrag 2026-10-01, in der Tabelle unten). Eingetragen
+werden damit: Avada AI SEO, StoreSEO, SEOWILL, TinySEO, Booster. SEOLab (2.779), Tapita (2.626)
+und SearchPie (2.440) sind größer als StoreSEO, aber nicht recherchiert — StoreSEO bleibt drin,
+weil es bei KI-Sichtbarkeit der stärkste Gegner ist. TinyIMG heißt
+jetzt **TinySEO**, SEOAnt **SEOWILL**; `seo-booster` im App Store ist SearchPie, nicht Booster.
+
+| | Avada AI SEO | StoreSEO | SEOWILL | TinySEO | Booster |
+|---|---|---|---|---|---|
+| Bewertung | 4.9 (4.681) | 4.9 (759) | 4.8 (1.810) | 5.0 (2.520) | 4.8 (5.487) |
+| Built for Shopify | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Pläne (USD/Monat) | Free · Pro 34,95 · Enterprise 99 (+ Bundle 49 und Multistore nur Hilfe-Center) | Free · Lite 14,99 · Essential 39,99 · Growth 99,99 (nur Website) · Advanced 249,99 | Free · Pro 29,99 · Premium 59,99 | Pay as you go (gratis) · Beginner 14 · Advanced 23 · Expert 49 (+ Yearly 8/Monat nur Website) | Free · Pro 39 · Premium 69 (+ Concierge 199 nur Website) |
+| Grenzen | Free 100 Bilder, 20 Audits, 100 KI-Credits; Pro unbegrenzt + 1.000 Credits/Monat; Enterprise 10.000 | 25 / 100 / 250 / 1.000 / 10.000 Produkte; 200 → 50.000 KI-Credits | KI-Credits 30 / 200 / 500 pro Monat; Bilder 50 / 2.000 / 6.000 | Bilder 50 → 15.000/Monat; KI-Credits 10 → 1.000/Monat | KI-Alt/-Meta Free bis 250 Produkte; sonst „unlimited“ |
+| Testzeit | 7 Tage | 7 Tage | 7 Tage | ? | 14 Tage |
+| 1 KI-Titel/Meta | ✅ Free (Hilfe; ein Artikel sagt erst ab Pro) | ✅ Free (Modellwahl inkl. Claude) | ⚠️ Regeln/Vorlagen, KI nicht eindeutig | ✅ Free (manuell), automatisch ab Advanced | ✅ Free bis 250 (Hilfe) / Pro (Store) |
+| 2 Massen-Editor | ✅ Tabellenansicht für Meta, Handle, Alt; KI-„Optimize in bulk“ alle Pläne | ✅ Free | ✅ Alt Free, Meta Pro (regelbasiert) | ⚠️ ab Advanced | ⚠️ Vorlagen, 200/Seite |
+| 3 KI-Alt-Texte | ✅ Free (Hilfe) / Pro (Store) | ✅ Free | ⚠️ nur Vorlagen | ? (nur Vorlagen dokumentiert) | ✅ Free bis 250 |
+| 4 JSON-LD | ✅ Free (Org, LocalBusiness, Product inkl. Versand/Rückgabe, Reviews, Breadcrumb, Article, ItemList) | ✅ ab Lite (+ FAQ, LocalBusiness) | ✅ ab Pro (breit, inkl. FAQ, HowTo, LocalBusiness, Return Policy) | ✅ ab Beginner (Product, Breadcrumb, Return/Shipping) | ✅ ab Pro (Typen nicht aufgeführt, nicht editierbar) |
+| 5 Audit mit Score | ✅ Free (20 Seiten), KI-Audit-Agent Enterprise | ✅ Free | ✅ Free | ✅ Free (50 Seiten) | ✅ Free |
+| 6 SEO in Übersetzungen | ✅ mehrsprachiger Audit + Meta je Sprache ab Pro (keine automatische Übersetzung) | ✅ ab Growth (Store: Advanced) | ✅ bearbeiten (keine Übersetzung) | ? | ? |
+| 7 Live-Crawl | ⚠️ Live-Seiten-Check im Audit, Link-Scan ab Pro; kein freier Crawl | ? | ⚠️ SEO-Checker, Umfang unklar | ⚠️ Site Audit, Abrufweise unklar | ⚠️ „scans your live site“ (Titel, Meta, OG) |
+| 8 Kaputte Links | ⚠️ 404-URLs per Scan + GSC-Import, Fundstelle ?, Free | ⚠️ nur Stichwort | ⚠️ nur von Besuchern aufgerufene 404 | ⚠️ widersprüchlich (Hilfe: „doesn't actively scan“) | ⚠️ nur aufgerufene 404 |
+| 9 404 / Weiterleitungen | ✅ Erkennung Free, automatisch ab Pro | ⚠️ Massen-301, keine 404-Erkennung | ✅ automatisch, ab Pro | ✅ automatisch, ab Advanced | ✅ automatisch (auf Startseite), ab Pro |
+| 10 Interne Verlinkung | ✅ Vorschläge mit KI-Ankertext, ab Pro | ? | ✅ „AI Internal Linking“ ab Premium | ⚠️ nur verwaiste Seiten | ? |
+| 11 Sitemap steuern | ✅ HTML Free, XML mit Ausschluss ab Pro | ✅ XML + HTML, Free | ⚠️ nur HTML-Sitemap | ✅ HTML + noindex, ab Advanced | ⚠️ nur Einreichung (Pro/Premium widersprüchlich) |
+| 12 Ladezeit messen | ✅ PageSpeed Free; Nutzerdaten widersprüchlich | ? | ✅ Speed Score (keine Nutzerdaten) | ? | ⚠️ Dashboard, Quelle ? |
+| 13 Ladezeit per Theme-Eingriff | ✅ Lazy Load, Defer, Critical CSS (Basic Free / Turbo Pro / Rocket Enterprise; Minify seit 08/2026 eingestellt) | ? | ✅ Lazy Load, Critical CSS, Minify (auf Theme-Kopie), ab Free/Pro/Premium | ✅ Lazy Load, Minify, Preload | ❌ („not designed to optimize page speed“, Schwester-App) |
+| 14 Bilder komprimieren / WebP | ✅ Kompression Free (100 Bilder); WebP nur im Upload-Werkzeug | ✅ Kompression; WebP nicht genannt | ✅ Kompression; WebP ❌ | ✅ Kompression; WebP liefert Shopify | ✅ ab Premium; WebP ? |
+| 15 Search Console | ✅ Free (KI-Insights ab Pro) | ✅ ab Lite | ✅ ab Pro | ✅ (erweitert ab Expert) | ✅ ab Premium |
+| 16 Keyword-Tracking | ⚠️ nur GSC-Positionen | ✅ Free (5) → 1.000 | ✅ ab Pro (nur Website) | ✅ über GSC, ab Expert | ⚠️ Anzeige, kein Tracking |
+| 17 Suchvolumen / Difficulty | ✅ Free (Hilfe) / Pro (Plantabelle) | ✅ Volumen + Paid-KD, Free | ✅ Volumen + KD, Free | ⚠️ nur KI-Vorschläge | ? |
+| 18 IndexNow | ⚠️ Google- und Bing-Indexing-API, ab Pro | ⚠️ „Instant Indexing“, Protokoll ? | ⚠️ nur Google | ✅ ab Advanced | ? |
+| 19 Local SEO / Backlinks | ✅ LocalBusiness Free; Backlinks ? | ✅ Local ab Lite; Backlinks ? | ✅ Local ab Pro, Backlink-Audit ab Premium | ? | ⚠️ Google Business Profile ab Premium |
+| 20 llms.txt / agents.md | ? (llms.txt in Schwester-App „Avada AEO“) | ✅ beides, Free | ✅ llms.txt ab Pro; agents.md ? | ✅ beides, ab Advanced | ⚠️ llms.txt (auch eigene App); agents.md ? |
+| 21 KI-Crawler in robots.txt | ⚠️ robots.txt-Editor je User-Agent ab Pro, KI-Bots nicht genannt | ? | ? | ? | ? |
+| 22 KI-Referrals / -Sichtbarkeit | ? | ✅ Referrals, KI-Umsatz ab Lite, Markensichtbarkeit ab Essential | ⚠️ nur Audit „AI visibility opportunities“ | ? | ? |
+| 23 Katalog-Check KI-Shopping | ? | ⚠️ „Agentic Discovery Score“ ohne GTIN | ? | ? | ? (keine Google-Shopping-Funktionen) |
+
+Legende wie §2.1 (✅ ja · ⚠️ teilweise · ❌ nein · ? keine Angabe).
+
+**Widersprüche:** Booster — KI-Alt/-Meta laut Hilfe ab Free (bis 250 Produkte), laut Store ab
+Pro; Sitemap Store Pro, Website/Hilfe Premium. TinySEO — Lazy Load/Preload je nach Quelle ab
+Beginner oder Advanced; KI-Metadaten Website alle Pläne, Store ab Advanced; Kaputte-Links-Scan
+widersprüchlich. SEOWILL — Plannamen Pro/Premium vs. Essentials/Professional; llms.txt und
+interne Verlinkung nur im Store, Rank-Tracker/Backlink-Audit/AMP nur auf der Website. StoreSEO —
+mehrsprachiges SEO laut Store nur Advanced, laut Website/Doku ab Growth. Avada — KI-Alt-Texte Store ab Pro, Hilfe ab Free;
+KI-Meta-Credits je nach Artikel 100/1.000 statt 1.000/10.000; Speed im Free-Plan laut Plantabelle ✖️,
+laut Store und Hilfe enthalten. Yoast (nicht eingetragen) — Vergleichstabelle
+auf yoast.com führt Weiterleitungen, interne Links, XML-Sitemap und Local SEO als „Not available
+in Yoast SEO for Shopify“; mehrere 1-Stern-Bewertungen 08/2026 wegen gelöschter Theme-Einstellungen.
+
+**Was wir daraus lernen:** Bei keiner der fünf belegt sind eine **GTIN-Prüfung** für KI-Shopping
+und ein **echter Crawl auf kaputte Links samt Fundstelle** (SEOWILL, TinySEO, Booster sehen nur
+404s, die Besucher aufrufen; Avada scannt 404-URLs ohne Fundstelle). **KI-Crawler in robots.txt**
+steuert keine ausdrücklich — Avada hat nur einen allgemeinen robots.txt-Editor ab Pro.
+**Ladezeit aus echten Nutzerdaten** ist nur bei Avada erwähnt, und dort widersprüchlich. Das sind
+unsere klarsten Abgrenzungen. **StoreSEO ist der stärkste Gegner** bei KI-Sichtbarkeit (llms.txt
++ agents.md gratis, KI-Referrals und -Umsatz ab $14,99, Markensichtbarkeit in KI-Antworten) —
+Markensichtbarkeit haben wir nicht. **Avada ist der breiteste** bei Technik-SEO (Tabellen-Editor,
+interne Links mit KI-Ankern, XML-Sitemap mit Ausschluss, mehrsprachiger Audit) und verlagert
+llms.txt in eine Schwester-App. **Speed per Theme-Eingriff** (Avada, SEOWILL, TinySEO) bleibt
+bei uns ein bewusstes Nicht-Ziel. Mehrsprachiges SEO bieten Avada (ab $34,95, ohne Übersetzung),
+StoreSEO (ab $99,99) und SEOWILL (nur Bearbeiten) — bei uns Teil des Kerns.
+
+#### Historische Tabelle (Stand 01/2026)
+
 > ⚠️ **Veraltet (Tabelle aus 01/2026).** Die ❌-Zeilen unten sind seit dem SEO-Tab-Ausbau
 > (07/2026) und den Erweiterungen danach fast alle geschlossen — JSON-LD, Rich Snippets, GSC,
 > Broken-Link-Detection, Sitemap, Keyword-Research und der manuelle Bulk-Editor sind live.
@@ -483,6 +562,62 @@ Die ursprüngliche SEO-Tabelle (§2.2) stammt aus 01/2026 und verpasst den **def
 
 ### 2.3 AI Content Generator Apps
 
+#### Aktueller Stand (2026-10-01) — die fünf größten KI-Text-Apps
+
+Geprüft gegen App-Store-Einträge, Preisseiten und Hilfe-Center (Agent, Rohtext der Seiten,
+alle am 01.10. abgerufen). Volle Belegtabellen mit URL je Punkt:
+[competitive-research/2026-10-01-ai-content.md](competitive-research/2026-10-01-ai-content.md).
+Grundlage für `AI_CONTENT_ROWS` in [marketing-compare.ts](../../app/config/marketing-compare.ts).
+
+**Auswahl:** die fünf Apps mit den meisten Bewertungen, deren Hauptzweck KI-Text ist (organische
+Treffer der App-Store-Suche, Werbeplätze herausgefiltert). **Diese fünf werden auf der
+Vergleichsseite eingetragen. Smartli (3.8, 64) und WritePilot (4.0, 25) werden nicht
+eingetragen** — thematisch passend, aber weit hinter Platz 5; sie stehen nur noch in der
+historischen Tabelle unten. SEO-Suiten mit
+KI-Funktion (SEOWILL, Booster, Avada SEO Suite …) gehören zu §2.2. Alle fünf tragen „Built for
+Shopify“. **Drei der fünf sind reine Blog-Apps**; Produkttexte schreiben nur Profitonium und
+StoreYa.
+
+| | Avada Blog SEO AEO Content | AI Product Description‑ChatGPT (Profitonium) | Tapita GEO Studio & AI Blog | Essential AI SEO: AI Blog Post | ChatGPT‑AI Product Description (StoreYa) |
+|---|---|---|---|---|---|
+| Bewertung | 4.9 (570) | 4.9 (530) | 4.9 (484) | 5.0 (423) | 4.8 (372) |
+| Schwerpunkt | Blog | Produkttexte | Blog / GEO | Blog | Produkttexte |
+| Pläne (USD/Monat) | Free · Pro 14,90 · Bundle 49 | Free · Basic 19 · Standard 49 · Catalog 129 (nur Store) · Pro 249 | Store: nur „Free“; Website: Free · Pro 9,99 (+5/30/60 je Shopify-Plan) | Free · Starter 9,99 · Essential 29,99 · Professional 99,99 | Free · Starter 15 · Pro 30 · Elite 100 |
+| KI-Kontingent | Tokens: 200k einmalig / 1 Mio. pro Monat, Zukauf | Credits/Monat: 100 / 2.000 / 11.000 / 40.000 / 110.000 | Credits: 50 einmalig / 250 pro Monat | Blogposts/Monat: 3 / 30 / 100 / 300 | Free 120 Beschreibungen manuell; Credits/Monat 2.500 / 12.000 / 120.000 |
+| Testzeit | 7 Tage (Pro) | ? | ? | ? | ? |
+| 1 Wahl des KI-Modells | ⚠️ GPT-5.1/5.2, Claude 3.7 — nur Changelog Jan/Feb 2026, seit „unified AI engine“ (05/2026) unklar | ✅ GPT, Claude, Gemini (Store + grok); mehr ab Standard | ? | ? | ? (nur GPT-Modelle unter „Works with“) |
+| 2 Eigener API-Key | ? | ? | ? | ? | ? |
+| 3 KI im Preis | ✅ ab Free | ✅ ab Free | ✅ ab Free | ✅ ab Free | ✅ ab Free |
+| 4 Eigene Anweisungen / Tonalität | ✅ ab Free (Anweisung, Ton, Knowledge Base) | ✅ ab Basic | ✅ (18 Stile, 40 Töne) | ⚠️ nur Ton | ⚠️ nur Tonwahl |
+| 5 Produktbeschreibungen | ? (eigene App „Avada Product Copy“) | ✅ ab Free | ? | ❌ kein Produktzugriff | ✅ ab Free (manuell, 120) |
+| 6 SEO-Titel / Meta | ⚠️ nur Blogposts, ab Pro | ✅ ab Basic | ⚠️ nur Blog | ? | ✅ ab Starter |
+| 7 Alt-Texte | ? | ✅ (Plan ?) | ? | ? | ? |
+| 8 Blogartikel | ✅ ab Free | ? | ✅ ab Free | ✅ ab Free | ✅ ab Free (1×), Starter 8/Monat |
+| 9 KI sieht das Produktbild | ? | ✅ (Store: „Pro Features“) | ? | ? | ? |
+| 10 Bilder erzeugen | ✅ (Replicate, 10k Tokens je Bild) | ? | ✅ | ✅ ab Starter | ⚠️ „post images“, ob KI unklar |
+| 11 Werbung / E-Mail / Social | ? | ? | ? | ? | ⚠️ nur Newsletter, ab Starter |
+| 12 Massen-Generierung | ⚠️ nur TL;DR, ab Pro | ✅ ab Basic (+ Automatik bei Import, Flow) | ✅ Content-Strategie (Pro; Changelog: „Starter“) | ✅ ab Starter | ✅ ab Starter |
+| 13 Neue Produkte anlegen | ? | ? | ? | ❌ | ? |
+| 14 Übersetzen / in Shopify-Übersetzungen | ⚠️ Posts übersetzen ab Pro; Schreibrecht „translations“, Ablage ? | ⚠️ 30+ Sprachen generieren; Ablage ? | ⚠️ ab Pro; Ablage ? | ⚠️ in 13 Sprachen generieren, kein Schreibrecht auf Übersetzungen | ⚠️ „any language“, kein Schreibrecht auf Übersetzungen |
+
+Legende wie §2.1 (✅ ja · ⚠️ teilweise · ❌ nein · ? keine Angabe). „Ablage ?“ = ob die App in
+Shopifys Übersetzungsspeicher schreibt, sagt keine Quelle; das Schreibrecht „translations“ im
+Store-Datenzugriff ist nur ein Indiz.
+
+**Widersprüche:** Essential — Website „completely free, with no paid plan required“, Store drei
+Bezahlpläne. Tapita — Store nur „Free“, Website Pro 9,99 $, Changelog nennt einen „Starter
+plan“, den keine Preisseite kennt. Profitonium — Catalog-Plan und grok nur im Store. StoreYa —
+keine eigene Preisseite, ein Hilfeartikel von 2023.
+
+**Was wir daraus lernen:** Bei Produkttexten sind Modellwahl (nur Profitonium), Bild als
+KI-Eingabe (nur Profitonium) und Alt-Texte (nur Profitonium) selten; einen eigenen API-Key bietet
+keine der fünf belegt an — dort liegen wir mit sechs Anbietern und eigenem Key allein. Alle fünf
+rechnen KI im Preis ab (Credits/Tokens), das ist der Gegenpunkt zu unserem Key-Modell (siehe
+§2.1 D, „+ AI“-Variante). Blog-Generierung ist der Kern von drei der fünf Marktführer — bei uns
+fehlt sie weiter (§4 Phase 2.2).
+
+#### Historische Tabelle (Stand 01–07/2026)
+
 | Feature | Unsere App | ChatGPT-AI | WritePilot | Smartli |
 |---------|------------|------------|------------|---------|
 | Multi-Provider AI | ✅ 6 | ❌ 1 | ❌ 1 | ❌ 1 |
@@ -528,6 +663,59 @@ die native Shopify-Galerie unverändert).
 > Modus `lightbox`/`hover`/`none`, Thumbnail-Position/-Layout, Mobile-Thumbs,
 > `media_fit`, `constrain_to_viewport` werden aus Dawn übernommen). Die
 > Feature-Vergleichstabelle unten bezieht sich auf den App-Embed.
+
+#### Aktueller Stand (2026-10-01) — die fünf Variantenbild-Apps
+
+Geprüft gegen App-Store-Einträge, Preisseiten und Hilfe-Center (Agent, Rohtext der Seiten,
+alle am 01.10. abgerufen). Volle Belegtabellen mit URL je Punkt:
+[competitive-research/2026-10-01-variant-images.md](competitive-research/2026-10-01-variant-images.md).
+Grundlage für `VARIANT_IMAGE_ROWS` in [marketing-compare.ts](../../app/config/marketing-compare.ts).
+Diese Tabelle **ersetzt** den Funktions-Vergleich und die Preistabelle von 06/2026 weiter unten.
+
+**Kandidaten:** alle fünf gehören weiter zu den größten Apps mit „mehrere Bilder pro Variante“
+als Kern (Kategorie „Product variants“, 529 Apps). **OP Color Swatch Variant Images
+(OPTIS / BSS Commerce, 5.0 / 798, Built for Shopify)** ist größer als NS und zeigt ebenfalls nur
+die Bilder der gewählten Option — **sie wird eingetragen und ersetzt NS**. **NS** (heute „N Color
+Swatches Variant Image“, 4.4 / 143) **wird nicht eingetragen**; ihr Beleg bleibt in der
+Belegdatei. GLO (1.867) und Color Swatch King (3.190) sind reine Swatch-Apps und gehören nicht
+in diesen Vergleich. Eingetragen werden damit: Rubik, SA, OP Color Swatch, Variant Image Wizard,
+GG Image Slider.
+
+| | Rubik | SA Variant Image Automator | OP Color Swatch | Variant Image Wizard | GG Image Slider |
+|---|---|---|---|---|---|
+| Bewertung | 5.0 (486) | 4.9 (766) | 5.0 (798) | 4.7 (224) | 4.8 (176) |
+| Built for Shopify | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Pläne (USD/Monat) | Free (1 Produkt) · 25 (100) · 50 (1.000) · 75 (∞) | nach Shopify-Plan: 5 · 14,90 · 29,90 · 49,90 · 99,90 (alle Funktionen überall) | nach Shopify-Plan: 11,90 · 29,90 · 49,90 · 99,90 (Free nur Dev-/Trial-/Partner-Shops; laut Store alle Funktionen überall) | Free (5 Produkte) · Starter 4,99 · Pro 7,99 | Store: Free · 5,99 · 9,99 · 17,99 nach Shopify-Plan; Website: Free · PRO 8,99 |
+| Testzeit | 7 Tage | Store 30 / Hilfe 14 Tage | 30 Tage (+ 72 h „Exploration Mode“) | 14 Tage | 7 Tage |
+| 1 Mehrere Bilder pro Variante | ✅ ab Free | ✅ | ✅ ab Basic | ✅ ab Free (Free/Starter nur Gratis-Themes) | ✅ ab erstem Bezahlplan |
+| 2 Nur Bilder der Variante | ✅ | ✅ | ✅ ab Basic (seit 08/2026 auch auf Kollektionskarten) | ✅ | ✅ |
+| 3 Kein Flackern beworben | ⚠️ nur „no impact on page speed“ | ⚠️ nur Theme-Treue | ❌ nicht beworben; Doku räumt kurzes Aufblitzen der Ausgangsvariante ein | ? | ⚠️ nur asynchrones Laden |
+| 4 Zoom / Lightbox | ⚠️ vom Theme | ⚠️ nur vom Theme | ? | ✅ eigene Galerie | ✅ ab Bezahlplan |
+| 5 Video / 3D | ✅ | ✅ | ? | ✅ ab Pro | ✅ (Video ab Bezahlplan) |
+| 6 Automatisch zuweisen | ✅ KI (Titel, Option, Dateiname, Alt-Text, Bildinhalt) + Galerie-Reihenfolge + MCP | ⚠️ Bildreihenfolge + Variantenbild | ⚠️ nur Bildreihenfolge im Shopify-Admin, keine KI (Website: „no manual mapping“) | ⚠️ nur Import der Shopify-Variantenbilder | ⚠️ Bildreihenfolge + Variantenbild |
+| 7 Erzeugt Schlüssel/SKUs | ? | ? | ? | ? | ? |
+| 8 Drag & Drop | ✅ | ✅ | ? (Reihenfolge nur im Shopify-Admin) | ✅ | ❌ (nur Reihenfolge im Shopify-Admin) |
+| 9 Massen-Upload | ❌ (eigene App „Smart Bulk Image Upload“) | ⚠️ Widerspruch: Store „Bulk upload“, Hilfe „does not upload“ | ? (Bulk nur für Swatch-Werte und Gruppen) | ⚠️ Upload ja, Bulk-Edit ab Pro | ❌ |
+| 10 Swatches Produktseite | ✅ | ❌ (eigene App Swatch King) | ✅ ab Basic | ✅ ab Free | ? |
+| 11 Swatches Kollektion | ✅ (nicht konfigurierte Produkte ab Starter) | ❌ | ✅ ab Basic | ? | ? |
+| 12 Combined listings / Aufteilen | ❌ (eigene App) | ❌ (eigene App) | ⚠️ Kombinieren ab Basic (Product Groups); Aufteilen nur Schwester-App OPTIS Combined Listings | ⚠️ Gruppieren ab Pro | ? |
+| 13 Komprimieren / WebP | ? | ❌ | ? | ? | ⚠️ nur Größenanpassung |
+| 14 KI-Alt-Texte | ? | ❌ (eigene App „Variant Alt Text King“) | ? | ? | ? |
+| 15 Alt-Texte übersetzen | ? | ? | ? (übersetzt nur Swatch- und Gruppentexte) | ? | ? |
+
+**Widersprüche:** Rubik — KI-Kontingent Starter: Store „1k images monthly“, Preisseite „500 AI
+images a month“. SA — Testzeit 30 (Store, Preisseite) gegen 14 Tage (Hilfe); „Bulk upload“ im
+Store gegen „does not upload … product images“ in der Hilfe. GG — vier Pläne nach Shopify-Plan
+im Store, ein „PRO $8.99“ auf der Website. OP Color Swatch — Store „all features on every plan“,
+Hilfe nennt Premium-Ausnahmen (randloser Button, Zweifarb-Swatch); Bestandskunden vor dem
+20.01.2026 erhalten Product Groups und Variantenbilder erst nach Upgrade; Website-Karte
+„ADVANCED & PLUS $49.90“, obwohl Plus $99,90 kostet.
+
+**Korrekturen gegenüber 06/2026:** SA hat Drag & Drop (war ❌) und ist Built for Shopify (war
+❌), ebenso GG; Zoom/Lightbox stellt bei Rubik und SA das Theme, nicht die App. Die Lücken-Liste
+unten bleibt gültig: **Swatches** sind weiter das Leitfeature der Kategorie, und
+**Schlüssel-Generator, Komprimierung/WebP, KI-Alt-Texte und deren Übersetzung** hat keine der
+fünf belegt in derselben App — StarApps und Rubik verkaufen sie, wo überhaupt, als eigene Apps.
 
 #### Wie unsere Bulk-Auto-Zuweisung funktioniert
 
@@ -1115,6 +1303,15 @@ laden + in `vars`-Objekt reichen).
 - [Smartli (ChatGPT: 9 AI Tools)](https://apps.shopify.com/smartli-ai-product-description)
 - [SEO On: AI Product Description](https://apps.shopify.com/ai-product-copy)
 
+### Primärquellen-Prüfung 2026-10-01 (SEO, Variantenbilder, KI-Texte)
+Je Punkt die belegende URL in den drei Belegdateien:
+[SEO](competitive-research/2026-10-01-seo.md) ·
+[Variantenbilder](competitive-research/2026-10-01-variant-images.md) ·
+[KI-Texte](competitive-research/2026-10-01-ai-content.md). App-Store-Einträge:
+- SEO: [Avada AI SEO](https://apps.shopify.com/avada-seo-suite) · [StoreSEO](https://apps.shopify.com/storeseo) · [SEOWILL](https://apps.shopify.com/seo-master) · [TinySEO](https://apps.shopify.com/smart-image-optimizer) · [Booster](https://apps.shopify.com/booster-apps-seo-optimizer) · nicht eingetragen: [Yoast](https://apps.shopify.com/yoast-seo)
+- Variantenbilder: [Rubik](https://apps.shopify.com/rubik-variant-images) · [SA](https://apps.shopify.com/variant-image-automator) · [OP Color Swatch](https://apps.shopify.com/optis-color-swatch-variants) · [Variant Image Wizard](https://apps.shopify.com/variant-image-wizard) · [GG Image Slider](https://apps.shopify.com/product-gallery-slider) · nicht eingetragen: [NS](https://apps.shopify.com/ns-product-variants-options)
+- KI-Texte: [Avada Blog](https://apps.shopify.com/seoon-blog) · [Profitonium](https://apps.shopify.com/automated-description-writing) · [Tapita AI Blog](https://apps.shopify.com/tapita-ai-seo-blog-builder) · [Essential AI Blog](https://apps.shopify.com/essential-seo-ai-blog-writer) · [StoreYa](https://apps.shopify.com/product-description-ai)
+
 ### Marktanalysen
 - [Best Shopify AI Tools 2026](https://txtcartapp.com/blog/best-shopify-ai-tools/)
 - [Best Translation Apps for Shopify 2026](https://blog.adnabu.com/shopify/best-translation-apps-for-shopify/)
@@ -1127,6 +1324,7 @@ laden + in `vars`-Objekt reichen).
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-10-01 | **§2.2, §2.3, §2.4 neu erhoben** gegen App Store, Preisseiten und Hilfe-Center (Agent, Rohtext, Aufträge aus `docs/marketing/compare-research-prompts.md`), je mit Planstufen und „ab Plan“; volle Belege unter `competitive-research/2026-10-01-*.md`. Befunde: **Yoast** (176 Bewertungen) ist keine große SEO-App mehr → durch **Avada AI SEO** ersetzt (nachrecherchiert); **Smartli/WritePilot** fallen aus den Top 5 der KI-Text-Apps (die sind Avada Blog, Profitonium, Tapita, Essential, StoreYa — drei davon reine Blog-Apps); **OP Color Swatch** (798) ist größer als NS → ersetzt NS (nachrecherchiert). Nicht eingetragen werden Yoast, NS, Smartli, WritePilot (Belege bleiben, markiert). Bei keiner SEO-App belegt: KI-Crawler in robots.txt, GTIN-Check, Nutzer-Ladezeiten, echter Link-Crawl. §2.4: SA hat Drag & Drop, SA und GG sind Built for Shopify. |
 | 2026-09-30 | T Lab, Langify und GTranslate ergänzt (§2.1 Nachtrag), geprüft gegen App Store, Preisseiten und Hilfe-Center; auf `/compare` per `+` zuschaltbar |
 | 2026-01-27 | Initiale Erstellung der Wettbewerbsanalyse |
 | 2026-05-18 | Preise/Ratings Mai 2026; Image Compression als ✅ (WebP ab Pro) korrigiert; §3.5 Gap-Kontext & Priorisierung ergänzt (Status: nicht eingeplant, Bugs zuerst) |

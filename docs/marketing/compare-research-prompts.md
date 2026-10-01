@@ -7,6 +7,20 @@ Konkurrenz-Apps sind vorläufig aus `docs/reference/COMPETITIVE_ANALYSIS.md` §2
 erreichbar: `/de/compare/seo?preview`, `/de/compare/ai-content?preview`,
 `/de/compare/variant-images?preview`.
 
+**Erledigt 2026-10-01:** alle drei Aufträge ausgeführt, Ergebnisse in
+`docs/reference/COMPETITIVE_ANALYSIS.md` §2.2–2.4 und vollständig mit URL je Punkt unter
+`docs/reference/competitive-research/2026-10-01-{seo,variant-images,ai-content}.md`. Abweichungen
+von den Kandidatenlisten unten (Ersatz jeweils nachrecherchiert, gleicher Tag):
+
+| Thema | wird eingetragen | wird NICHT eingetragen |
+|---|---|---|
+| SEO (`SEO_COMPETITORS`) | Avada AI SEO Image Optimizer, StoreSEO, SEOWILL, TinySEO (früher TinyIMG), Booster | Yoast (176 Bewertungen) |
+| Variantenbilder (`VARIANT_IMAGE_COMPETITORS`) | Rubik, SA Variant Image Automator, OP Color Swatch Variant Images, Variant Image Wizard, GG Image Slider | NS / N Color Swatches (143) |
+| KI-Texte (`AI_CONTENT_COMPETITORS`) | Avada Blog, Profitonium, Tapita AI Blog, Essential AI Blog, StoreYa | Smartli (64), WritePilot (25) |
+
+Die Belege der nicht eingetragenen Apps bleiben in den Belegdateien (markiert). Offen bleibt das
+Eintragen in `marketing-compare.ts` (IDs, `*_ROWS`, `byPlan`) und die i18n-Texte.
+
 Jeder Auftrag unten ist in sich vollständig und kann einem Agenten einzeln gegeben werden. Die
 Punkte in Teil B entsprechen **eins zu eins** den Tabellenzeilen – bitte die Nummerierung nicht
 ändern, dann lassen sich die Antworten direkt übernehmen.
@@ -128,6 +142,23 @@ schreiben, `published: true` setzen, `COMPETITIVE_ANALYSIS.md` nachführen.
 > SEO-Audit-Apps zählen nicht. **Smartli** und **WritePilot** sind unsere bisherigen Kandidaten –
 > nimm sie auf, wenn sie dazugehören, und sag es, wenn nicht. Nenne die fünf mit Bewertungszahl und
 > recherchiere dann jede davon.
+
+**Ergebnis 2026-10-01 — diese fünf werden eingetragen** (`AI_CONTENT_COMPETITORS` in
+`marketing-compare.ts` ersetzt `smartli`/`writepilot` durch sie):
+
+| App | Bewertung | App Store | Schwerpunkt |
+|---|---|---|---|
+| Avada Blog SEO AEO Content | 4.9 (570) | https://apps.shopify.com/seoon-blog | Blog |
+| AI Product Description‑ChatGPT (Profitonium) | 4.9 (530) | https://apps.shopify.com/automated-description-writing | Produkttexte |
+| Tapita GEO Studio & AI Blog | 4.9 (484) | https://apps.shopify.com/tapita-ai-seo-blog-builder | Blog / GEO |
+| Essential AI SEO: AI Blog Post | 5.0 (423) | https://apps.shopify.com/essential-seo-ai-blog-writer | Blog |
+| ChatGPT‑AI Product Description (StoreYa) | 4.8 (372) | https://apps.shopify.com/product-description-ai | Produkttexte |
+
+**Nicht eingetragen:** Smartli (3.8, 64 Bewertungen) und WritePilot (4.0, 25) — thematisch
+passend, aber weit hinter Platz 5. Ebenfalls nicht: SEO-Suiten mit KI-Funktion (SEOWILL, Booster,
+Avada SEO Suite …, gehören zu Auftrag 1) und Übersetzungs-Apps. Nächste Kandidaten, falls eine
+der fünf wegfällt: Bloggle (337, eher Blog-Baukasten), GPTLab (284, eher KI-Sichtbarkeit), AI Blog
+Agent (228).
 >
 > [Gemeinsame Regeln oben einfügen]
 >
