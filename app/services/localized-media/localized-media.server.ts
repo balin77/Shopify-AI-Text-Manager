@@ -48,7 +48,8 @@ import {
   externalVideoKey,
   isSafeEmbedUrl,
   isSafeExternalThumbnail,
-  videoKeyFromUrl,
+  videoKeyFromSources,
+  isVideoMime,
   type LocalizedVideoSource,
   type LocalizedMediaEntry,
   type LocalizedMediaOrigin,
@@ -161,9 +162,12 @@ export function toProductMediaItem(n: RawMediaNode): ProductMediaItem | null {
   }
   if (n.mediaContentType === "VIDEO") {
     const sources = n.sources ?? [];
-    const key = sources.map((src) => videoKeyFromUrl(src.url)).find((k): k is string => !!k) ?? null;
+    const key = videoKeyFromSources(sources.map((src) => src.url));
     const preview = n.preview?.image?.url ?? "";
-    return { id: n.id, kind: "video", url: preview, alt: n.alt ?? null, key, poster: safePoster(preview), stamp: sources[0]?.url ?? "" };
+    // Stamped with the KEY, not a source URL: Shopify adds renditions after
+    // processing and does not promise their order, so a URL stamp would report
+    // "the original changed" about a video nobody touched.
+    return { id: n.id, kind: "video", url: preview, alt: n.alt ?? null, key, poster: safePoster(preview), stamp: key ?? "" };
   }
   if (n.mediaContentType === "EXTERNAL_VIDEO") {
     const parsed = n.originUrl ? parseExternalVideoUrl(n.originUrl) : null;
@@ -297,10 +301,13 @@ async function videoReplacement(graphql: Graphql, source: ProductMediaItem, medi
   if (!file.node) return { ok: false, code: "invalidFile" };
   if (file.node.fileStatus && file.node.fileStatus !== "READY") return { ok: false, code: "fileNotReady" };
   const sources: LocalizedVideoSource[] = (file.node.sources ?? [])
-    .filter((src) => isShopifyCdnUrl(src.url) && typeof src.mimeType === "string")
+    .filter((src) => isShopifyCdnUrl(src.url) && isVideoMime(src.mimeType))
     .map((src) => ({ u: src.url, t: src.mimeType }));
-  if (sources.length === 0) return { ok: false, code: "fileNotReady" };
-  const key = sources.map((src) => videoKeyFromUrl(src.u)).find((k): k is string => !!k);
+  // The same MIME rule the parse applies: a source the next read would drop
+  // must not be written either, or the echo check compares two lists that
+  // both lost it and confirms a write the storefront then plays differently.
+  if (sources.length === 0) return { ok: false, code: (file.node.sources ?? []).length ? "invalidFile" : "fileNotReady" };
+  const key = videoKeyFromSources(sources.map((src) => src.u));
   if (!key) return { ok: false, code: "invalidFile" };
   if (key === source.key) return { ok: false, code: "sameFile" };
   if (media.some((mm) => mm.kind === "video" && mm.key === key)) return { ok: false, code: "replacementIsOriginal" };

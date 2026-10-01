@@ -255,7 +255,12 @@ describe("videos per language", () => {
   it("derives the storefront key of every kind", async () => {
     const { toProductMediaItem } = await import("../../app/services/localized-media/localized-media.server");
     const nodes = videoRead().product.media.nodes;
-    expect(toProductMediaItem(nodes[1] as never)).toMatchObject({ kind: "video", key: KEY, poster: "poster.jpg" });
+    expect(toProductMediaItem(nodes[1] as never)).toMatchObject({ kind: "video", key: KEY, poster: "poster.jpg", stamp: KEY });
+    // The rendition (vp) directory wins over the original upload (o/v).
+    expect(toProductMediaItem({ id: VID, mediaContentType: "VIDEO", sources: [
+      { url: `https://cdn.shopify.com/videos/c/o/v/${KEY2}.mp4`, mimeType: "video/mp4" },
+      { url: `https://cdn.shopify.com/videos/c/vp/${KEY}/${KEY}.m3u8`, mimeType: "application/x-mpegURL" },
+    ] } as never)?.key).toBe(KEY);
     expect(toProductMediaItem(nodes[2] as never)).toMatchObject({ kind: "external", key: "youtube.AAAAAAAAAAA", poster: "yt.jpg" });
   });
 

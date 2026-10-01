@@ -284,6 +284,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
                       {hit?.entry.a === "ai" && <Badge tone="info">{tx.aiOrigin}</Badge>}
                     </InlineStack>
                     {stale && <Text as="p" variant="bodySm" tone="caution">{tx.staleOriginal}</Text>}
+                    {hit?.entry.x && !hit.entry.u && <Text as="p" variant="bodySm" tone="subdued">{tx.posterKept}</Text>}
                     <InlineStack gap="200">
                       <DisabledActionTooltip hint={blockedHint}>
                         <Button size="slim" onClick={() => openReplace(m)} disabled={disabled || !m.key || busySlot !== null} loading={busy}>

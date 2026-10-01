@@ -72,7 +72,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // JPEGs are tiny (<100KB), so processing is usually done within a few
   // seconds — but a busy ingestion queue can take longer. Bail with a
   // 504 after ~9s; the client retries on next save.
-  const waits = [0, 600, 1200, 2000, 3000, 4000];
+  // A VIDEO is transcoded before it has a playable source and routinely takes
+  // longer than an image; waiting ~30s instead of ~11s turns most small clips
+  // into a direct success instead of a "pick it from the library later".
+  const waits = contentType === "VIDEO"
+    ? [0, 1000, 2000, 3000, 4000, 5000, 5000, 5000, 5000]
+    : [0, 600, 1200, 2000, 3000, 4000];
   let cdnUrl: string | null = null;
   for (const ms of waits) {
     if (ms > 0) await new Promise((r) => setTimeout(r, ms));

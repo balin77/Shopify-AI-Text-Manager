@@ -122,7 +122,7 @@ Damit niemand annimmt, was nicht gebaut ist. Jeder Punkt sagt, was der Händler 
 
 **Nur Videos**
 21. **Strukturierte Daten**: das `VideoObject` im JSON-LD beschreibt weiter das Original-Video (Inhalt, Vorschaubild, Datum). Nur der Spieler und sein Vorschaubild auf der Seite werden getauscht.
-22. **Vimeo-Ersatz ohne Vorschaubild**: Vimeo liefert ohne API-Aufruf kein Vorschaubild; vor dem Abspielen bleibt das Vorschaubild des Originals stehen.
+22. **Vimeo-Ersatz (oder Ersatzvideo) ohne Vorschaubild**: Vimeo liefert ohne API-Aufruf kein Vorschaubild; vor dem Abspielen bleibt das Vorschaubild des Originals stehen — auch wenn es Text in der Originalsprache zeigt. Die Karte sagt das beim Eintrag.
 23. **Schlüssel eines hochgeladenen Videos NICHT gemessen**: das Video wird im Shop am Hash-Verzeichnis seiner Adressen erkannt (`/videos/c/vp/<hash>/`), abgelesen an der Admin-API, nicht an einem echten Storefront gemessen. Ein Video ohne erkennbaren Schlüssel wird in der Karte gelistet, aber nicht zum Ersetzen angeboten — eine falsche Annahme kostet eine Verweigerung, nie einen falschen Tausch.
 24. **Spieler, die ihre Adresse nicht im DOM tragen** (Themes, die Videos per JavaScript-Objekt oder eigenem Player-Skript laden, Vimeo-/YouTube-Widgets anderer Apps): werden nicht erkannt.
 25. **Videos in Varianten-Galerien als eigene Einträge** (`custom.variant_external_videos`): nicht abgedeckt; nur Produktmedien.
@@ -140,6 +140,8 @@ Gleiches Modell wie die Bilder: ein Eintrag im Metafeld `custom.localized_media`
 - **Auswahl in der Karte:** hochgeladenes Video über denselben Datei-Dialog wie im Bild-Manager (nur Videos), YouTube/Vimeo über ein Link-Feld; Upload eines Videos legt die Datei in Shopify „Dateien“ an.
 - **Theme:** Videoeinstellungen (Datei oder YouTube-/Vimeo-Link) werden von der KI ausgenommen und zählen nicht als fehlende Übersetzung; pro Sprache trägt der Händler im Textfeld einen anderen Link bzw. eine andere Referenz ein.
 - **Nicht abgedeckt:** §4.21–26.
+- **Review-Befunde (2026-10-01), behoben:** Dawn schleift ein YouTube-Video mit `playlist=<Original-ID>` — der Tausch richtet jetzt jeden Parameter, der die Original-ID nennt, auf den Ersatz (sonst lief nach dem Ersatz das Originalvideo). Das Metafeld ist für den Shop UNVERTRAUENSWÜRDIG (jede App mit Metafeld-Zugriff kann es schreiben): das Asset prüft eine Einbettungsadresse erneut gegen die zwei Player-Formen, bevor sie in ein `iframe` kommt, und jede andere Adresse auf `https:`. Der datenschutzfreundliche Host `youtube-nocookie.com` bleibt erhalten. Die Probe misst nur noch Bildeinstellungen (YouTube-Links aus den Social-Media-Einstellungen hätten sonst ein „JA“ zu Bildern vorgetäuscht) und listet Videowerte getrennt. Ein Video wird über das `vp/`-Verzeichnis erkannt (bevorzugt vor `o/v/`), und sein „Original geändert“-Stempel ist der Schlüssel, nicht eine Quell-Adresse, deren Reihenfolge Shopify nicht zusagt.
+- **Verhaltensänderung, bewusst:** Ein Metafeld- oder Theme-Wert, der nur ein YouTube-/Vimeo-Link ist, wird von der automatischen Nachübersetzung nicht mehr übersetzt (abgelehnt statt umgeschrieben); bei geändertem Original entscheidet die gespeicherte Löschantwort des Händlers.
 
 ## 5. Offene Punkte
 

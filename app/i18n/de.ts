@@ -5482,6 +5482,7 @@ export const de = {
     retry: "Erneut laden",
     replacedCount: "{n} ersetzt",
     aiOrigin: "Von der KI erstellt",
+    posterKept: "Der Ersatz hat kein eigenes Vorschaubild: Vor dem Abspielen bleibt das Vorschaubild des Originals sichtbar.",
     badgeVideo: "Video",
     badgeExternal: "YouTube/Vimeo",
     cannotReplace: "Dieses Medium kann im Shop nicht zuverlässig erkannt und deshalb nicht ersetzt werden.",

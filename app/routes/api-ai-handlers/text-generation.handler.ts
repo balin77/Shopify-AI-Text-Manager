@@ -155,7 +155,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   const fieldType = getFormString(formData, "fieldType");
   const currentValue = getFormString(formData, "currentValue");
   if (isThemeMediaValue(currentValue)) {
-    return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+    return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
   }
   const contextTitle = getFormString(formData, "contextTitle") || "";
   const sanitizedContextTitle = sanitizePromptInput(contextTitle, { fieldType: "title" });
@@ -434,7 +434,7 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
   const fieldType = getFormString(formData, "fieldType");
   const currentValue = getFormString(formData, "currentValue");
   if (isThemeMediaValue(currentValue)) {
-    return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+    return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
   }
   const contextTitle = getFormString(formData, "contextTitle") || "";
   const sanitizedContextTitle = sanitizePromptInput(contextTitle, { fieldType: "title" });

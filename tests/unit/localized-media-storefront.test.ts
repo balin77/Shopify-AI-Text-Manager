@@ -99,6 +99,33 @@ describe("localized-media.js", () => {
     expect(frame.getAttribute("src")).toBe("https://player.vimeo.com/video/123456789?autoplay=1&rel=0");
   });
 
+  it("points the theme's playlist (Dawn's loop) at the replacement, not the original", () => {
+    setup(
+      `<iframe id="f" src="https://www.youtube.com/embed/AAAAAAAAAAA?autoplay=1&loop=1&playlist=AAAAAAAAAAA"></iframe>`,
+      { l: "fr", k: "", e: [{ o: "youtube.AAAAAAAAAAA", l: "fr", k: "", x: "e", p: "", u: "", r: "https://www.youtube.com/embed/BBBBBBBBBBB" }] },
+    );
+    const src = document.getElementById("f")!.getAttribute("src")!;
+    expect(src).toContain("/embed/BBBBBBBBBBB");
+    expect(src).toContain("playlist=BBBBBBBBBBB");
+    expect(src).not.toContain("AAAAAAAAAAA");
+  });
+
+  it("keeps the privacy-enhanced YouTube host", () => {
+    setup(
+      `<iframe id="f" src="https://www.youtube-nocookie.com/embed/AAAAAAAAAAA"></iframe>`,
+      { l: "fr", k: "", e: [{ o: "youtube.AAAAAAAAAAA", l: "fr", k: "", x: "e", p: "", u: "", r: "https://www.youtube.com/embed/BBBBBBBBBBB" }] },
+    );
+    expect(document.getElementById("f")!.getAttribute("src")).toBe("https://www.youtube-nocookie.com/embed/BBBBBBBBBBB");
+  });
+
+  it("never writes a hand-edited embed address that is not a player", () => {
+    setup(
+      `<iframe id="f" src="https://www.youtube.com/embed/AAAAAAAAAAA"></iframe>`,
+      { l: "fr", k: "", e: [{ o: "youtube.AAAAAAAAAAA", l: "fr", k: "", x: "e", p: "", u: "", r: "javascript:alert(1)" }] },
+    );
+    expect(document.getElementById("f")!.getAttribute("src")).toBe("https://www.youtube.com/embed/AAAAAAAAAAA");
+  });
+
   it("leaves another app's image with the same filename alone", () => {
     setup(`<img id="a" src="https://images.other-cdn.example/shirt.jpg">`, {
       l: "fr", k: "",

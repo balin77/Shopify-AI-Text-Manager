@@ -53,18 +53,29 @@
   function put(target, key, value, isMarket) {
     if (!target[key] || isMarket) target[key] = value;
   }
+  // The island is the RAW metafield, and anything with metafield access can
+  // write it — not only this app. Whatever ends up in an iframe's src or a
+  // video source is therefore checked here again: an embed address must be one
+  // of the two player shapes, every other URL https.
+  var SAFE_EMBED = /^https:\/\/(www\.youtube\.com\/embed\/[A-Za-z0-9_-]{11}|player\.vimeo\.com\/video\/\d{6,12})$/;
+  function isHttps(u) {
+    return typeof u === "string" && /^https:\/\//.test(u);
+  }
   (data.e || []).forEach(function (e) {
     if (!e || !e.o || String(e.l || "").toLowerCase() !== locale) return;
     var k = e.k ? String(e.k) : "";
     if (k && k !== market) return;
     var key = String(e.o).toLowerCase();
     if (!e.x) {
-      if (e.u) put(map, key, e.u, !!k);
+      if (isHttps(e.u)) put(map, key, e.u, !!k);
       return;
     }
-    if (e.p && e.u) put(map, String(e.p).toLowerCase(), e.u, !!k);
-    if (e.x === "v" && Array.isArray(e.w) && e.w.length) put(videoMap, String(e.o), e.w, !!k);
-    if (e.x === "e" && e.r) put(embedMap, key, e.r, !!k);
+    if (e.p && isHttps(e.u)) put(map, String(e.p).toLowerCase(), e.u, !!k);
+    if (e.x === "v" && Array.isArray(e.w)) {
+      var sources = e.w.filter(function (w) { return w && isHttps(w.u) && typeof w.t === "string"; });
+      if (sources.length) put(videoMap, String(e.o), sources, !!k);
+    }
+    if (e.x === "e" && SAFE_EMBED.test(String(e.r || ""))) put(embedMap, key, e.r, !!k);
   });
   if (!Object.keys(map).length && !Object.keys(videoMap).length && !Object.keys(embedMap).length) return unhide();
   // Every URL this script wrote. A replacement is never rewritten again, even
@@ -189,11 +200,11 @@
     var m;
     if (host === "youtube.com" || host === "youtube-nocookie.com") {
       m = /^\/embed\/([A-Za-z0-9_-]{11})/.exec(url.pathname);
-      return m ? { key: "youtube." + m[1].toLowerCase(), url: url } : null;
+      return m ? { key: "youtube." + m[1].toLowerCase(), id: m[1], url: url } : null;
     }
     if (host === "player.vimeo.com") {
       m = /^\/video\/(\d{6,12})/.exec(url.pathname);
-      return m ? { key: "vimeo." + m[1], url: url } : null;
+      return m ? { key: "vimeo." + m[1], id: m[1], url: url } : null;
     }
     return null;
   }
@@ -207,7 +218,20 @@
       var hit = embedKeyOf(v);
       var target = hit && embedMap[hit.key];
       if (!target) return;
-      var next = target + (hit.url.search || "");
+      var out = new URL(target);
+      var newId = out.pathname.split("/").pop();
+      // The privacy-enhanced host the theme (or merchant) chose stays.
+      if (/youtube-nocookie\.com$/.test(hit.url.hostname) && out.hostname === "www.youtube.com") {
+        out.hostname = "www.youtube-nocookie.com";
+      }
+      // The theme's own query is kept (autoplay, controls, loop…) — but every
+      // parameter that NAMES the original video is pointed at the replacement:
+      // Dawn loops with `playlist=<original id>`, which would otherwise play
+      // the original-language video right after the replacement.
+      hit.url.searchParams.forEach(function (value, name) {
+        out.searchParams.set(name, value === hit.id ? newId : value);
+      });
+      var next = out.toString();
       written.add(next);
       frame.setAttribute(a, next);
     });

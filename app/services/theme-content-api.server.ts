@@ -250,7 +250,7 @@ export async function handleThemeContentActionResponse(opts: {
       const fieldKey = getFormString(formData, "fieldKey");
       const currentValue = getFormString(formData, "currentValue");
       if (isThemeMediaValue(currentValue)) {
-        return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+        return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
       }
       const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
       const aiService = buildAIService(settings, session.shop);
@@ -277,7 +277,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         return json({ success: false, error: "No source text available" }, { status: 400 });
       }
       if (isThemeMediaValue(sourceText)) {
-        return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+        return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
       }
 
       const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });

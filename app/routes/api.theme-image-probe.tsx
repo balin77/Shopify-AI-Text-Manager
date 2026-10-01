@@ -56,7 +56,12 @@ export interface ThemeImageProbeReport {
   shop: string;
   scannedRows: number;
   imageKeysByResourceType: Record<string, number>;
+  /** Video choices (a video reference or ANY YouTube/Vimeo link — social links included), counted apart. */
+  videoValuesByResourceType: Record<string, number>;
+  /** Image samples only: the write check is about `image_picker`, nothing else. */
   samples: ImageSample[];
+  /** Up to five video values, to show which SPELLING a shop's video settings use (unmeasured). */
+  videoSamples: ImageSample[];
   live: { resourceId: string; key: string; reportedAsTranslatable: boolean; digest: string | null; value: string | null } | null;
   writes: WriteCheck[];
   verdict: string[];
@@ -158,16 +163,25 @@ export async function action({ request }: ActionFunctionArgs) {
     select: { resourceId: true, resourceType: true, translatableContent: true },
   });
   const byType: Record<string, number> = {};
+  const videoByType: Record<string, number> = {};
   const samples: ImageSample[] = [];
+  const videoSamples: ImageSample[] = [];
   for (const row of rows) {
     const items = Array.isArray(row.translatableContent) ? (row.translatableContent as Array<{ key?: string; value?: string }>) : [];
     for (const item of items) {
-      // Images AND video choices (a video reference or a YouTube/Vimeo link):
-      // the sample list shows which spelling a shop's video settings use,
-      // which is the one thing about them that is not measured.
-      if (!item?.key || !isThemeMediaValue(item.value)) continue;
-      byType[row.resourceType] = (byType[row.resourceType] ?? 0) + 1;
-      if (samples.length < 5) samples.push({ resourceId: row.resourceId, resourceType: row.resourceType, key: item.key, value: String(item.value) });
+      if (!item?.key) continue;
+      const sampleRow = { resourceId: row.resourceId, resourceType: row.resourceType, key: item.key, value: String(item.value) };
+      if (isThemeImageReference(item.value)) {
+        byType[row.resourceType] = (byType[row.resourceType] ?? 0) + 1;
+        if (samples.length < 5) samples.push(sampleRow);
+      } else if (isThemeMediaValue(item.value)) {
+        // Counted APART and never written: any YouTube/Vimeo link matches
+        // (every Dawn theme carries social links), and a plain url setting
+        // proves nothing about image_picker. Listed only to show which
+        // spelling a shop's video settings use, which is not measured.
+        videoByType[row.resourceType] = (videoByType[row.resourceType] ?? 0) + 1;
+        if (videoSamples.length < 5) videoSamples.push(sampleRow);
+      }
     }
   }
 
@@ -177,7 +191,9 @@ export async function action({ request }: ActionFunctionArgs) {
     shop: session.shop,
     scannedRows: rows.length,
     imageKeysByResourceType: byType,
+    videoValuesByResourceType: videoByType,
     samples,
+    videoSamples,
     live: null,
     writes: [],
     verdict,
@@ -192,7 +208,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ report });
   }
 
-  const sample = samples.find((x) => isThemeImageReference(x.value)) ?? samples[0];
+  const sample = samples[0];
   const live = await gql<{ translatableResource: { translatableContent: { key: string; value: string | null; digest: string | null }[] } | null }>(
     graphql, READ_RESOURCE, { id: sample.resourceId },
   );

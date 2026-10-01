@@ -5445,6 +5445,7 @@ export const es: Translation = {
     retry: "Volver a cargar",
     replacedCount: "{n} reemplazadas",
     aiOrigin: "Creada por IA",
+    posterKept: "El reemplazo no tiene imagen de vista previa propia: antes de reproducirse, sigue viéndose la del original.",
     badgeVideo: "Vídeo",
     badgeExternal: "YouTube/Vimeo",
     cannotReplace: "Este medio no se puede reconocer de forma fiable en tu tienda, por lo que no se puede reemplazar.",

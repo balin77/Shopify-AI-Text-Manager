@@ -112,6 +112,21 @@ export function externalVideoKey(host: string, id: string): string | null {
 
 const VIDEO_MIME = /^(video\/[a-z0-9.+-]+|application\/x-mpegurl|application\/vnd\.apple\.mpegurl)$/i;
 
+/** The one MIME rule for a stored video source — the write applies the SAME rule the parse does. */
+export function isVideoMime(mime: unknown): boolean {
+  return typeof mime === "string" && VIDEO_MIME.test(mime);
+}
+
+/**
+ * A video's key from its source list, preferring the `vp/` (rendition)
+ * directory the storefront renders over the `o/v/` original upload — whether
+ * the two share a hash is NOT measured, and the storefront plays renditions.
+ */
+export function videoKeyFromSources(urls: Array<string | null | undefined>): string | null {
+  const vp = urls.find((u) => !!u && /\/videos\/c\/vp\//.test(u));
+  return videoKeyFromUrl(vp) ?? urls.map((u) => videoKeyFromUrl(u)).find((k): k is string => !!k) ?? null;
+}
+
 /** The only two embed shapes the storefront swap writes into an iframe. */
 export function isSafeEmbedUrl(url: unknown): url is string {
   return typeof url === "string" && (
@@ -208,7 +223,7 @@ export function parseLocalizedMediaValue(raw: unknown): LocalizedMediaEntry[] {
       out.push(base);
     } else if (e.x === "v") {
       const sources = Array.isArray(e.w)
-        ? e.w.filter((s): s is LocalizedVideoSource => !!s && isShopifyCdnUrl(s.u) && typeof s.t === "string" && VIDEO_MIME.test(s.t))
+        ? e.w.filter((s): s is LocalizedVideoSource => !!s && isShopifyCdnUrl(s.u) && isVideoMime(s.t))
         : [];
       if (poster === null || sources.length === 0) continue;
       if (base.u !== "" && !isShopifyCdnUrl(base.u)) continue;

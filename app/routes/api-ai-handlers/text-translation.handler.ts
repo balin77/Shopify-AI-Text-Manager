@@ -89,7 +89,7 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<DataRe
   // A theme image reference is a file choice: translating it writes a broken
   // reference. Any content type — the value decides, not the surface.
   if (isThemeMediaValue(sourceText)) {
-    return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+    return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
   }
 
   if (!isValidLocale(targetLocale)) {
@@ -290,7 +290,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
   // A theme image reference is a file choice: translating it writes a broken
   // reference. Any content type — the value decides, not the surface.
   if (isThemeMediaValue(sourceText)) {
-    return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+    return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
   }
 
   const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];

@@ -24,7 +24,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
     return json({ success: false, error: "No source text available" }, { status: 400 });
   }
   if (isThemeMediaValue(sourceText)) {
-    return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+    return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
   }
 
   // Compliance gate: whose key, consent, kill switch and budget — before a
@@ -160,7 +160,7 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
     return json({ success: false, error: "No source text available" }, { status: 400 });
   }
   if (isThemeMediaValue(sourceText)) {
-    return json({ success: false, error: "Images are not translated or rewritten by the AI.", code: "themeImageReference" }, { status: 400 });
+    return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
   }
 
   const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];

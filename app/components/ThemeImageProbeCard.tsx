@@ -66,6 +66,11 @@ export function ThemeImageProbeCard() {
               Scanned {report.scannedRows} cached theme rows. Image keys per type:{" "}
               {Object.entries(report.imageKeysByResourceType).map(([k, n]) => `${k} ${n}`).join(", ") || "none"}
             </Text>
+            {(report.videoSamples ?? []).length > 0 && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                Video values (counted apart, never written): {(report.videoSamples ?? []).map((v) => v.value).join(" · ")}
+              </Text>
+            )}
             {report.samples.map((s, i) => (
               <Text as="p" variant="bodySm" key={i}>
                 <code>{s.key}</code> = <code>{s.value}</code> ({s.resourceType})

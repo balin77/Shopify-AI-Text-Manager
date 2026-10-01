@@ -5460,6 +5460,7 @@ export const en: Translation = {
     retry: "Reload",
     replacedCount: "{n} replaced",
     aiOrigin: "Created by AI",
+    posterKept: "The replacement has no preview image of its own: before playback, the original's preview image stays visible.",
     badgeVideo: "Video",
     badgeExternal: "YouTube/Vimeo",
     cannotReplace: "This medium cannot be recognised reliably in your store, so it cannot be replaced.",
