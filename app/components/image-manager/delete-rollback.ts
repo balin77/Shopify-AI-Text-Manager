@@ -54,3 +54,28 @@ export function removePendingNewMedia<T extends { previewUrl?: string }>(
   const set = new Set(previewUrls);
   return list.filter(m => !(m.previewUrl && set.has(m.previewUrl)));
 }
+
+/** Resource (staging) URLs of the queued media whose local preview is among `previewUrls`. */
+export function queuedResourceUrls<T extends { resourceUrl?: string; previewUrl?: string }>(
+  list: readonly T[],
+  previewUrls: Iterable<string>,
+): string[] {
+  const set = new Set(previewUrls);
+  return list
+    .filter(m => m.previewUrl && set.has(m.previewUrl) && m.resourceUrl)
+    .map(m => m.resourceUrl as string);
+}
+
+/** Removes `refs` from every gallery entry; entries that do not contain any keep their identity. */
+export function stripRefsFromGalleries(
+  galleries: Record<string, string[]>,
+  refs: Iterable<string>,
+): Record<string, string[]> {
+  const set = new Set(refs);
+  if (set.size === 0) return galleries;
+  const next: Record<string, string[]> = {};
+  for (const [id, list] of Object.entries(galleries)) {
+    next[id] = list.some(r => set.has(r)) ? list.filter(r => !set.has(r)) : list;
+  }
+  return next;
+}

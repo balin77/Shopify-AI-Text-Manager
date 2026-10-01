@@ -119,4 +119,15 @@ describe("onCopyToLocalesFailed", () => {
     act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
     expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
   });
+
+  it("does not touch the overlay when the item changed meanwhile", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    act(() =>
+      result.current.onCopyToLocalesFailed("title", ["fr"], "Titel", { itemUnchanged: false }),
+    );
+    expect(result.current.refs.localTranslationsRef.current.title?.fr).toBe("Titel");
+  });
 });

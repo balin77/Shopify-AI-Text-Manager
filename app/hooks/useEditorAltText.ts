@@ -113,6 +113,8 @@ interface UseEditorAltTextReturn {
   pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
   /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
   rollbackCopyAltText: () => void;
+  altBaselineSnapshot: (failedIndices?: number[]) => Record<number, string>;
+  getPendingCopyAltItemId: () => string | null;
   handleTranslateAllAltTextsForLocale: () => void;
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
@@ -166,6 +168,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
   const imageAltTextsRef = useLatestRef(imageAltTexts);
   const originalAltTextsRef = useLatestRef(originalAltTexts);
+  const currentLanguageRef = useLatestRef(currentLanguage);
+  const selectedMarketIdRefAlt = useLatestRef(selectedMarketId);
 
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
@@ -173,6 +177,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
   // What the in-flight copy wrote into the overlay, so a failure can undo exactly that.
   const copyOverlayRollbackRef = useRef<{
+    itemId: string;
     key: string;
     index: number;
     value: string;
@@ -318,6 +323,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     const prevOverlay = localAltTextOverlayRef.current[copyOverlayKey][imageIndex];
     localAltTextOverlayRef.current[copyOverlayKey][imageIndex] = sourceAltText;
     copyOverlayRollbackRef.current = {
+      itemId: selectedItemId,
       key: copyOverlayKey,
       index: imageIndex,
       value: sourceAltText,
@@ -351,6 +357,37 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // reflects the actual Shopify result and not an optimistic guess.
   };
 
+  // The visible field and baseline may be restored only while the screen still
+  // shows the item, locale and market the copy ran on, and the index still
+  // holds the copied value (a later edit stays).
+  const canRestoreVisibleCopy = (
+    pending: NonNullable<typeof copyOverlayRollbackRef.current>,
+  ) =>
+    selectedItemIdRef.current === pending.itemId &&
+    buildLocaleKey(currentLanguageRef.current, selectedMarketIdRefAlt.current) === pending.key;
+
+  /** Item the in-flight alt copy was started for (independent of savedItemIdRef). */
+  const getPendingCopyAltItemId = () => copyOverlayRollbackRef.current?.itemId ?? null;
+
+  /** Baseline snapshot for a save response: current alt texts, except that an
+   *  index whose copy FAILED (and will be rolled back) keeps its previous
+   *  original, so the later non-functional baseline write cannot override
+   *  the rollback. */
+  const altBaselineSnapshot = (failedIndices: number[] = []): Record<number, string> => {
+    const base = { ...imageAltTextsRef.current };
+    const pending = copyOverlayRollbackRef.current;
+    if (
+      pending &&
+      failedIndices.includes(pending.index) &&
+      canRestoreVisibleCopy(pending) &&
+      base[pending.index] === pending.value
+    ) {
+      if (pending.prevOriginal === undefined) delete base[pending.index];
+      else base[pending.index] = pending.prevOriginal;
+    }
+    return base;
+  };
+
   const rollbackCopyAltText = () => {
     const pending = copyOverlayRollbackRef.current;
     copyOverlayRollbackRef.current = null;
@@ -361,8 +398,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       if (pending.prevOverlay === undefined) delete entry[pending.index];
       else entry[pending.index] = pending.prevOverlay;
     }
-    // The visible field and its baseline were set to the copied value at copy
-    // time. Restore them only where they still hold it (a later edit stays).
+    // Item or locale/market changed: the visible state belongs to someone else.
+    if (!canRestoreVisibleCopy(pending)) return;
     const restore = (
       prev: Record<number, string>,
       previous: string | undefined,
@@ -1148,6 +1185,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleCopyAltTextToAllLocales,
     pendingCopyAltTextIndexRef,
     rollbackCopyAltText,
+    altBaselineSnapshot,
+    getPendingCopyAltItemId,
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts,

@@ -1042,6 +1042,9 @@ export function useUiDataLoader(
       ) {
         deletedTranslationKeysRef.current.add(translationKey);
       }
+      // The overlay belongs to the item now on screen: after an item switch it
+      // is the NEW item's, and the copy's value is not ours to take from it.
+      if (opts?.itemUnchanged === false) return;
       const overlay = localTranslationsRef.current[translationKey];
       if (!overlay) return;
       for (const locale of locales) {

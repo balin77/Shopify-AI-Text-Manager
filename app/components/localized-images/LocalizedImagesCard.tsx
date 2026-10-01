@@ -245,9 +245,11 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
       (shopLocales.length > 0 && !foreign.has(e.l)),
     );
   }, [entries, mediaIds, markets, foreignLocales, shopLocales]);
+  const orphanSet = useMemo(() => new Set(orphans), [orphans]);
   const countFor = useCallback(
-    (loc: string) => entries.filter((e) => e.l === normalizeLocale(loc) && mediaIds.has(e.m)).length,
-    [entries, mediaIds],
+    (loc: string) =>
+      entries.filter((e) => e.l === normalizeLocale(loc) && mediaIds.has(e.m) && !orphanSet.has(e)).length,
+    [entries, mediaIds, orphanSet],
   );
 
   const languageOptions = foreignLocales.map((l) => {

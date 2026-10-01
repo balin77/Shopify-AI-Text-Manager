@@ -1,5 +1,5 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { captureRemoved, reinsertRemoved, deleteOutcome, removePendingNewMedia, type RemovedEntry } from "./delete-rollback";
+import { captureRemoved, reinsertRemoved, deleteOutcome, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
@@ -2142,9 +2142,13 @@ export function VariantImageManager({
     const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
     const addedExcludedIds = variantsWithDeletedMainImage.map(v => v.id).filter(id => !locallyExcludedMainGids.has(id));
 
+    // Staged resourceUrls of removed queued tiles: a tile dragged into a variant
+    // gallery sits there under its staging URL, which no GID lookup resolves.
+    const removedQueuedRefs = queuedResourceUrls(pendingProductNewMedia, urls);
+
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
-      const next = { ...p };
+      const next = stripRefsFromGalleries(p, removedQueuedRefs);
       for (const v of variants) {
         const current = p[v.id] ?? v.galleryFileGids;
         const filtered = current.filter(gid => !gidSet.has(gid));

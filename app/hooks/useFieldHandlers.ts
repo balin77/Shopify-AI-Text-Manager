@@ -106,6 +106,7 @@ export interface FieldHandlerProps {
   selectedMarketIdRef: { current: string };
   /** Tracks the fieldKey of a copy save so the response handler can clear the loading state. */
   pendingCopyFieldKeyRef: { current: string | null };
+  pendingCopyFieldItemIdRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
   initialLoadSuccessfulRef: { current: boolean };
@@ -260,6 +261,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     currentLanguageRef,
     selectedMarketIdRef,
     pendingCopyFieldKeyRef,
+    pendingCopyFieldItemIdRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
     initialLoadSuccessfulRef,
@@ -1954,6 +1956,7 @@ const handleCopyField = (fieldKey: string): void => {
 
   markOperationActive(selectedItemId, fieldKey, "copy");
   pendingCopyFieldKeyRef.current = fieldKey;
+  pendingCopyFieldItemIdRef.current = selectedItemId;
 
   savedLocaleRef.current = currentLanguage;
   savedMarketIdRef.current = selectedMarketId;

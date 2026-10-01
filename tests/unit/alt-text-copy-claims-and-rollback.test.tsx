@@ -41,7 +41,7 @@ function setup() {
     suggestionScope: { resourceId: item.id, locale: "fr", marketId: "" },
   };
   const hook = renderHook(() => useEditorAltText(props));
-  return { hook, refs, safeSubmit };
+  return { hook, refs, safeSubmit, props };
 }
 
 describe("single alt-text copy", () => {
@@ -67,5 +67,46 @@ describe("single alt-text copy", () => {
     hook.result.current.localAltTextOverlayRef.current["fr"][0] = "Neu getippt";
     act(() => hook.result.current.rollbackCopyAltText());
     expect(hook.result.current.localAltTextOverlayRef.current["fr"][0]).toBe("Neu getippt");
+  });
+
+  it("failed copy restores field AND baseline to the previous values", () => {
+    const { hook } = setup();
+    act(() => hook.result.current.setImageAltTexts({ 0: "alt vorher" }));
+    act(() => hook.result.current.setOriginalAltTexts({ 0: "alt vorher" }));
+    act(() => hook.result.current.handleCopyAltText(0));
+    expect(hook.result.current.imageAltTexts[0]).toBe("Quelle");
+    // snapshot used by the later baseline write already carries the rollback
+    expect(hook.result.current.altBaselineSnapshot([0])[0]).toBe("alt vorher");
+    act(() => hook.result.current.rollbackCopyAltText());
+    expect(hook.result.current.imageAltTexts[0]).toBe("alt vorher");
+    expect(hook.result.current.originalAltTexts[0]).toBe("alt vorher");
+  });
+
+  it("exposes the copy's own item id independent of savedItemIdRef", () => {
+    const { hook, refs } = setup();
+    act(() => hook.result.current.handleCopyAltText(0));
+    refs.savedItemIdRef.current = null;
+    expect(hook.result.current.getPendingCopyAltItemId()).toBe("gid://shopify/Product/1");
+  });
+
+  it("rollback leaves the visible field alone after an item switch", () => {
+    const { hook, props } = setup();
+    act(() => hook.result.current.handleCopyAltText(0));
+    props.selectedItemIdRef.current = "gid://shopify/Product/2";
+    act(() => hook.result.current.rollbackCopyAltText());
+    expect(hook.result.current.imageAltTexts[0]).toBe("Quelle");
+    expect(hook.result.current.localAltTextOverlayRef.current["fr"]?.[0]).toBeUndefined();
+  });
+
+  it("rollback leaves the visible field alone after a locale switch", () => {
+    const { hook, props } = setup();
+    act(() => hook.result.current.handleCopyAltText(0));
+    props.currentLanguage = "es";
+    hook.rerender();
+    // the locale switch itself resets the field; put the same text back by hand
+    act(() => hook.result.current.setImageAltTexts({ 0: "Quelle" }));
+    act(() => hook.result.current.rollbackCopyAltText());
+    expect(hook.result.current.imageAltTexts[0]).toBe("Quelle");
+    expect(hook.result.current.localAltTextOverlayRef.current["fr"]?.[0]).toBeUndefined();
   });
 });
