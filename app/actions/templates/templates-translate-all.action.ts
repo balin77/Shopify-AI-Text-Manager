@@ -119,11 +119,23 @@ export async function handleTranslateAll(
       }
     >();
     const shopifySkippedKeys: string[] = [];
+    // Keys that were translated but are NOT stored (no digest, unechoed, failed
+    // batch), per locale. Reported in the shape the client already renders
+    // (`rejectedFields`); they never stay in `translations`.
+    const rejectedFields: Record<string, string[]> = {};
+    const reject = (locale: string, key: string) => {
+      (rejectedFields[locale] ||= []);
+      if (!rejectedFields[locale].includes(key)) rejectedFields[locale].push(key);
+      delete translations[locale]?.[key];
+    };
+    const skippedByLocale = new Map<string, string[]>();
 
     for (const { key, locale, value, resId } of pendingUpserts) {
       const digest = digestMap.get(key);
       if (!digest) {
         shopifySkippedKeys.push(key);
+        reject(locale, key);
+        skippedByLocale.set(locale, [...(skippedByLocale.get(locale) ?? []), key]);
         continue;
       }
       const batchKey = `${resId}::${locale}`;
@@ -143,6 +155,11 @@ export async function handleTranslateAll(
 
     const successfulUpserts: Array<{ key: string; locale: string; value: string; resId: string }> = [];
     const failedBatches: string[] = [];
+    for (const [locale, keys] of skippedByLocale) {
+      failedBatches.push(
+        `no translatable-content digest (${locale}) [${keys.slice(0, 5).join(", ")}]`,
+      );
+    }
 
     for (const [, batch] of shopifyBatches) {
       try {
@@ -183,7 +200,7 @@ export async function handleTranslateAll(
           // The response reports what Shopify stored.
           translations[input.locale][input.key] = verified.confirmedValues.get(input.key) ?? input.value;
         }
-        for (const input of unconfirmed) delete translations[input.locale]?.[input.key];
+        for (const input of unconfirmed) reject(input.locale, input.key);
       } catch (shopifyError) {
         const errorMsg = shopifyError instanceof Error ? shopifyError.message : String(shopifyError);
         logger.error("[TEMPLATES] translateAll: translationsRegister failed", {
@@ -193,7 +210,7 @@ export async function handleTranslateAll(
           locale: batch.locale,
         });
         failedBatches.push(`${batch.resId} (${batch.locale}): ${errorMsg}`);
-        for (const input of batch.inputs) delete translations[input.locale]?.[input.key];
+        for (const input of batch.inputs) reject(input.locale, input.key);
       }
     }
 
@@ -242,7 +259,19 @@ export async function handleTranslateAll(
         ...(failedBatches.length > 0 ? { error: failedBatches.join("; ").substring(0, 1000) } : {}),
       },
     });
-    const failures = failedBatches.length > 0 ? { failures: failedBatches } : {};
+    // A locale that had entries to store but got none confirmed is a failed
+    // locale for the client; partially stored locales are reported per field.
+    const locales = new Set(pendingUpserts.map((u) => u.locale));
+    const failedLocales = [...locales].filter(
+      (l) => !successfulUpserts.some((u) => u.locale === l),
+    );
+    const failures = failedBatches.length > 0
+      ? {
+          failures: failedBatches,
+          rejectedFields,
+          ...(failedLocales.length > 0 ? { failedLocales } : {}),
+        }
+      : {};
 
     if (actionType === "translateAllForLocale") {
       return json({

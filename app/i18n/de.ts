@@ -574,6 +574,7 @@ export const de = {
     altTextPartialLocales: "Alt-Text für Bild {imageNumber} teilweise übersetzt. Sprache(n) {failedLocales} konnten nicht gespeichert werden. Bitte erneut versuchen oder synchronisieren.",
     translatePartialLocales: "Übersetzung teilweise abgeschlossen: {successCount}/{totalCount} Sprache(n) erfolgreich. Sprache(n) {failedLocales} fehlgeschlagen.",
     translateRejectedFields: "Einige Felder konnten nicht auf Shopify gespeichert werden: {details}. Der übersetzte Inhalt wurde generiert, aber von Shopify abgelehnt.",
+    translationPurgeUnconfirmed: "Der Text wurde gespeichert, aber einige Übersetzungen davon konnten auf Shopify nicht entfernt werden und wurden behalten. Bitte prüfen Sie diese.",
     translateAllSuccess: "Erfolgreich in {count} Sprache(n) übersetzt.",
     translateLocaleError: "Übersetzung nach {locale} fehlgeschlagen. Bitte versuche es erneut.",
     translateLocaleSuccess: "Erfolgreich nach {locale} übersetzt.",

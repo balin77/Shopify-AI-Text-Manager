@@ -13,6 +13,7 @@ import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { findEchoFor } from "~/services/translations/translation-echo.shared";
+import { unconfirmedPurgeKeys } from "~/services/translations/purge-warning.shared";
 import {
   removeAndVerify,
   removeVerifiedWithGapReread,
@@ -157,6 +158,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   const retranslationTaskIds: string[] = [];
   /** Primary-change purge steps that did not complete: their translation rows were KEPT. */
   const purgeWarnings: string[] = [];
+  let unconfirmedKeys: string[] = [];
   const noDigestKeys: string[] = [];
   const failedDeleteKeys: string[] = [];
   const shopifyErrors: string[] = [];
@@ -1188,6 +1190,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         // Local rows per resource: a gap is only re-read where a local row
         // exists (a pair with no row has nothing to delete locally).
         let localRows: Array<{ resourceId: string; key: string; locale: string }> = [];
+        let localRowsKnown = true;
         try {
           localRows = await db.themeTranslation.findMany({
             where: { shop: session.shop, groupId: groupId, key: { in: savedChangedFields }, domain: domain, marketId: "" },
@@ -1199,15 +1202,20 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             error: rowsError instanceof Error ? rowsError.message : String(rowsError),
           });
           localRows = [];
+          localRowsKnown = false;
         }
 
         for (const [resId, keys] of changedKeysByResource) {
           try {
-            const localPairs = new Set(
-              localRows
-                .filter((row) => row.resourceId === resId)
-                .map((row) => `${row.locale}${LOCALE_KEY_SEP}${row.key}`),
-            );
+            // Unknown local rows => undefined: every gap is re-read (an empty
+            // Set would mean "no local row anywhere" and skip every re-read).
+            const localPairs = localRowsKnown
+              ? new Set(
+                  localRows
+                    .filter((row) => row.resourceId === resId)
+                    .map((row) => `${row.locale}${LOCALE_KEY_SEP}${row.key}`),
+                )
+              : undefined;
             // One call for all locales, then the re-read ONLY for a locale with a
             // gap: Shopify echoes what it DELETED, so a DB-only row comes back
             // empty and would otherwise never be removable.
@@ -1253,7 +1261,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       try {
         if (foreignLocales && foreignLocales.length === 0) {
           const deleteResult = await db.themeTranslation.deleteMany({
-            where: { shop: session.shop, groupId: groupId, key: { in: savedChangedFields }, domain: domain, marketId: "" },
+            where: {
+              shop: session.shop,
+              groupId: groupId,
+              key: { in: savedChangedFields },
+              domain: domain,
+              marketId: "",
+              resourceId: { in: [...changedKeysByResource.keys()] },
+            },
           });
           logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
         } else if (confirmedRemovals.length > 0) {
@@ -1275,6 +1290,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           error: deleteError instanceof Error ? deleteError.message : String(deleteError),
         });
       }
+      unconfirmedKeys = unconfirmedPurgeKeys(purgeWarnings, changedKeysByResource, savedChangedFields);
     } else {
       logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
     }
@@ -1444,7 +1460,16 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     if (keysToDelete.length > 0) {
       dbOps.push(
         db.themeTranslation.deleteMany({
-          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale, domain: domain, marketId },
+          where: {
+            shop: session.shop,
+            groupId: groupId,
+            locale: locale,
+            domain: domain,
+            marketId,
+            // Scoped by the resource each key lives on: the same key on
+            // another theme's resource is not this save's to delete.
+            OR: keysToDelete.map((key) => ({ resourceId: keyToResourceId.get(key) || resourceId, key })),
+          },
         })
       );
     }
@@ -1471,6 +1496,6 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
     // The primary write succeeded; these translations could not be confirmed
     // removed on Shopify and were kept.
-    ...(purgeWarnings.length > 0 ? { warnings: ["translationPurgeUnconfirmed"], unconfirmedPurge: purgeWarnings } : {}),
+    ...(purgeWarnings.length > 0 ? { warnings: ["translationPurgeUnconfirmed"], unconfirmedPurge: purgeWarnings, unconfirmedPurgeKeys: unconfirmedKeys } : {}),
   });
 }

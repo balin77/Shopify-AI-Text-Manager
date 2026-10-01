@@ -57,6 +57,10 @@ const shopify = {
   removeUserErrors: [] as { message: string }[],
   /** locale -> keys still carrying a translation (for the re-read) */
   present: {} as Record<string, string[]>,
+  /** `${locale}|${marketId}` -> keys; wins over `present` when it has the entry */
+  presentByMarket: {} as Record<string, string[]>,
+  rereadVars: [] as any[],
+  failLocales: false,
   registers: [] as any[],
   removes: [] as any[],
   rereads: 0,
@@ -80,7 +84,8 @@ function makeAdmin() {
       }
       if (query.includes("verifyTranslationRemoval")) {
         shopify.rereads++;
-        const keys = shopify.present[v.locale] ?? [];
+        shopify.rereadVars.push(v);
+        const keys = shopify.presentByMarket[`${v.locale}|${v.marketId ?? ""}`] ?? shopify.present[v.locale] ?? [];
         return {
           json: async () => ({
             data: { translatableResource: { translations: keys.map((key) => ({ key, value: "x", market: null })) } },
@@ -88,6 +93,7 @@ function makeAdmin() {
         };
       }
       if (query.includes("shopLocales")) {
+        if (shopify.failLocales) throw new Error("locales down");
         return {
           json: async () => ({
             data: {
@@ -150,7 +156,7 @@ function makeDb(rows: any[] = []) {
   return { db, taskUpdates };
 }
 
-function makeCtx(over: { formEntries?: Record<string, string>; rows?: any[] } = {}) {
+function makeCtx(over: { formEntries?: Record<string, string>; rows?: any[]; content?: any[] } = {}) {
   const { db, taskUpdates } = makeDb(over.rows);
   const admin = makeAdmin();
   const formData = new FormData();
@@ -159,7 +165,7 @@ function makeCtx(over: { formEntries?: Record<string, string>; rows?: any[] } = 
     groupId: "g",
     groupName: "Hero",
     resourceId: RES,
-    translatableContent: [{ key: KEY, value: "Alt", digest: "d1" }],
+    translatableContent: over.content ?? [{ key: KEY, value: "Alt", digest: "d1" }],
   };
   const ctx = {
     admin,
@@ -187,6 +193,9 @@ beforeEach(() => {
   shopify.removeEchoes = true;
   shopify.removeUserErrors = [];
   shopify.present = {};
+  shopify.presentByMarket = {};
+  shopify.rereadVars = [];
+  shopify.failLocales = false;
   shopify.registers = [];
   shopify.removes = [];
   shopify.rereads = 0;
@@ -306,6 +315,57 @@ describe("handleTranslateAll", () => {
   });
 });
 
+describe("handleTranslateAll - digest-less keys and client report shape", () => {
+  const KEY2 = "section.index.json.hero.sub";
+  const form = { targetLocales: JSON.stringify(["en"]), targetLocale: "en", primaryLocale: "de" };
+  const content = [
+    { key: KEY, value: "Alt", digest: "d1" },
+    { key: KEY2, value: "Sub" },
+  ];
+
+  it("a digest-less key is neither returned as a translation nor mirrored, and is reported", async () => {
+    translateChunked.mockResolvedValue({ en: { [KEY]: "Hello", [KEY2]: "Sub-en" } });
+    const { ctx, db, taskUpdates } = makeCtx({ formEntries: form, content });
+    const r = await handleTranslateAll(ctx, "translateAll");
+    expect(body(r).success).toBe(true);
+    expect(body(r).translations.en).toEqual({ [KEY]: "Hello" });
+    expect(body(r).rejectedFields).toEqual({ en: [KEY2] });
+    expect(body(r).failedLocales).toBeUndefined();
+    expect(db.themeTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(taskUpdates.at(-1).status).toBe("completed_with_errors");
+    expect(taskUpdates.at(-1).error).toContain("digest");
+  });
+
+  it("unconfirmed keys are reported per locale and a wholly unconfirmed locale is failedLocales", async () => {
+    translateChunked.mockResolvedValue({ en: { [KEY]: "Hello" }, fr: { [KEY]: "Salut" } });
+    shopify.registerStores = (v) => (v.translations[0].locale === "en" ? null : []);
+    const { ctx } = makeCtx({ formEntries: { ...form, targetLocales: JSON.stringify(["en", "fr"]) } });
+    const r = await handleTranslateAll(ctx, "translateAll");
+    expect(body(r).rejectedFields).toEqual({ fr: [KEY] });
+    expect(body(r).failedLocales).toEqual(["fr"]);
+  });
+
+  it("every key digest-less: fails with a real reason, not an empty one", async () => {
+    translateChunked.mockResolvedValue({ en: { [KEY2]: "Sub-en" } });
+    const { ctx, db, taskUpdates } = makeCtx({ formEntries: form, content: [{ key: KEY2, value: "Sub" }] });
+    const r = await handleTranslateAll(ctx, "translateAll");
+    expect(status(r)).toBe(500);
+    expect(body(r).error).not.toMatch(/all translations: $/);
+    expect(body(r).error).toContain("digest");
+    expect(db.themeTranslation.upsert).not.toHaveBeenCalled();
+    expect(taskUpdates.at(-1).status).toBe("failed");
+  });
+
+  it("translateAllForLocale reports digest-less keys the same way", async () => {
+    translateChunked.mockResolvedValue({ en: { [KEY]: "Hello", [KEY2]: "Sub-en" } });
+    const { ctx } = makeCtx({ formEntries: form, content });
+    const r = await handleTranslateAll(ctx, "translateAllForLocale");
+    expect(body(r).translations).toEqual({ [KEY]: "Hello" });
+    expect(body(r).targetLocale).toBe("en");
+    expect(body(r).rejectedFields).toEqual({ en: [KEY2] });
+  });
+});
+
 describe("handleUpdateContent - foreign locale", () => {
   const base = { locale: "en", primaryLocale: "de" };
 
@@ -348,6 +408,29 @@ describe("handleUpdateContent - foreign locale", () => {
     const { ctx, db } = makeCtx({ formEntries: { ...base, [KEY]: "", changedFields: JSON.stringify([KEY]) } });
     await expect(handleUpdateContent(ctx)).rejects.toThrow(/did not remove/);
     expect(db.themeTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("echoed clear deletes scoped by resourceId, locale and marketId", async () => {
+    const { ctx, db } = makeCtx({ formEntries: { ...base, [KEY]: "", changedFields: JSON.stringify([KEY]) } });
+    await handleUpdateContent(ctx);
+    const where = db.themeTranslation.deleteMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ groupId: "g", locale: "en", domain: "theme", marketId: "" });
+    expect(where.OR).toEqual([{ resourceId: RES, key: KEY }]);
+  });
+
+  it("a market-scoped unechoed clear re-reads THAT market and deletes only that market's row", async () => {
+    const MARKET = "gid://shopify/Market/5";
+    shopify.removeEchoes = false;
+    // the global layer still carries the key; only the market layer is empty
+    shopify.present = { en: [KEY] };
+    shopify.presentByMarket = { [`en|${MARKET}`]: [] };
+    const { ctx, db } = makeCtx({
+      formEntries: { ...base, marketId: MARKET, [KEY]: "", changedFields: JSON.stringify([KEY]) },
+    });
+    const r = await handleUpdateContent(ctx);
+    expect(body(r).success).toBe(true);
+    expect(shopify.rereadVars.map((v) => v.marketId)).toEqual([MARKET]);
+    expect(db.themeTranslation.deleteMany.mock.calls[0][0].where.marketId).toBe(MARKET);
   });
 
   it("matches the register echo case-insensitively on the locale", async () => {
@@ -414,6 +497,49 @@ describe("handleUpdateContent - primary change purge", () => {
     expect(body(r).unconfirmedPurge).toEqual([RES]);
   });
 
+  it("an unknown shop-locale list keeps every row and warns", async () => {
+    shopify.failLocales = true;
+    const { ctx, db } = makeCtx({ formEntries: form });
+    const r = await handleUpdateContent(ctx);
+    expect(body(r).success).toBe(true);
+    expect(shopify.removes).toHaveLength(0);
+    expect(db.themeTranslation.deleteMany).not.toHaveBeenCalled();
+    expect(body(r).warnings).toEqual(["translationPurgeUnconfirmed"]);
+    expect(body(r).unconfirmedPurge).toEqual(["locales"]);
+    expect(body(r).unconfirmedPurgeKeys).toEqual([KEY]);
+  });
+
+  it("zero foreign locales: local delete is scoped by the changed resource ids", async () => {
+    const { ctx, db, admin } = makeCtx({ formEntries: form });
+    const orig = admin.graphql.getMockImplementation()!;
+    admin.graphql.mockImplementation(async (q: string, o?: any) => {
+      if (q.includes("shopLocales")) {
+        return { json: async () => ({ data: { shopLocales: [{ locale: "de", primary: true, published: true }] } }) };
+      }
+      return orig(q, o);
+    });
+    await handleUpdateContent(ctx);
+    expect(shopify.removes).toHaveLength(0);
+    const where = db.themeTranslation.deleteMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ groupId: "g", domain: "theme", marketId: "", resourceId: { in: [RES] } });
+  });
+
+  it("a failed local-row read re-reads every gap (unknown rows are not 'no rows')", async () => {
+    shopify.removeEchoes = false;
+    shopify.present = { en: [], fr: [] };
+    const { ctx, db } = makeCtx({ formEntries: form });
+    db.themeTranslation.findMany.mockRejectedValue(new Error("db down"));
+    const r = await handleUpdateContent(ctx);
+    expect(body(r).success).toBe(true);
+    expect(shopify.rereads).toBe(2);
+    expect(db.themeTranslation.deleteMany.mock.calls[0][0].where.OR).toEqual(
+      expect.arrayContaining([
+        { resourceId: RES, key: KEY, locale: "en" },
+        { resourceId: RES, key: KEY, locale: "fr" },
+      ]),
+    );
+  });
+
   it("a throwing removal never fails the primary write and deletes nothing", async () => {
     const { ctx, db, admin } = makeCtx({ formEntries: form });
     const orig = admin.graphql.getMockImplementation()!;
@@ -424,5 +550,8 @@ describe("handleUpdateContent - primary change purge", () => {
     const r = await handleUpdateContent(ctx);
     expect(body(r).success).toBe(true);
     expect(db.themeTranslation.deleteMany).not.toHaveBeenCalled();
+    expect(body(r).warnings).toEqual(["translationPurgeUnconfirmed"]);
+    expect(body(r).unconfirmedPurge).toEqual([RES]);
+    expect(body(r).unconfirmedPurgeKeys).toEqual([KEY]);
   });
 });

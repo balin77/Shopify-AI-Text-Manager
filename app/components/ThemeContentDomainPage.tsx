@@ -14,6 +14,7 @@
  * makeThemeContentRouteAction); direct fetches hit `apiBasePath`.
  */
 
+import { keysSafeToInvalidate } from "~/services/translations/purge-warning.shared";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useFetcher, useRevalidator } from "react-router";
 import { Banner } from "@shopify/polaris";
@@ -731,14 +732,25 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             }
           });
 
-          if (changedKeys.size > 0) {
+          // Keys whose removal Shopify did not confirm are still live there (and
+          // kept locally): dropping them from the cache would show them missing.
+          const saveData = fetcher.data as { warnings?: string[]; unconfirmedPurgeKeys?: string[] };
+          if (saveData.warnings?.includes("translationPurgeUnconfirmed")) {
+            showInfoBox(
+              String(t.content?.translationPurgeUnconfirmed || "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."),
+              "warning"
+            );
+          }
+          const invalidated = keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
+
+          if (invalidated.size > 0) {
             setLoadedTranslations(prev => {
               const groupCache = prev[selectedGroupId];
               if (!groupCache) return prev;
 
               const newGroupCache: Record<string, ThemeTranslationRecord[]> = {};
               for (const [locale, translations] of Object.entries(groupCache)) {
-                newGroupCache[locale] = translations.filter(t => !changedKeys.has(t.key));
+                newGroupCache[locale] = translations.filter(t => !invalidated.has(t.key));
               }
 
               return { ...prev, [selectedGroupId]: newGroupCache };
@@ -749,7 +761,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             if (refGroup) {
               const newRefGroup: Record<string, ThemeTranslationRecord[]> = {};
               for (const [locale, translations] of Object.entries(refGroup)) {
-                newRefGroup[locale] = translations.filter(t => !changedKeys.has(t.key));
+                newRefGroup[locale] = translations.filter(t => !invalidated.has(t.key));
               }
               loadedTranslationsRef.current = {
                 ...loadedTranslationsRef.current,
@@ -792,7 +804,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         });
       }
     }
-  }, [fetcher.data, selectedGroupId, loadedThemes, editor.state.editableValues, editor.state.currentLanguage, primaryLocale]);
+  }, [fetcher.data, selectedGroupId, loadedThemes, editor.state.editableValues, editor.state.currentLanguage, primaryLocale, showInfoBox, t]);
 
   // Track processed translation responses to prevent duplicate cache updates
   const processedTranslationRef = useRef<unknown>(null);
