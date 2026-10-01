@@ -146,6 +146,12 @@ interface VariantImageManagerProps {
   variantReloadKey?: number;
   currentLanguage?: string;
   primaryLocale?: string;
+  /**
+   * The market whose translation layer the open foreign language shows ("" or
+   * absent = the global layer). Foreign alt texts are read from and saved to
+   * THAT layer; "translate to all languages" stays global, like the editor's.
+   */
+  selectedMarketId?: string;
   productTitle?: string;
   enabledLanguages?: string[];
   onDirtyChange?: (isDirty: boolean) => void;
@@ -206,6 +212,7 @@ export function VariantImageManager({
   variantReloadKey,
   currentLanguage,
   primaryLocale,
+  selectedMarketId = "",
   productTitle,
   enabledLanguages = [],
   onDirtyChange,
@@ -419,13 +426,17 @@ export function VariantImageManager({
     form.append("action", "loadImageAltTranslations");
     form.append("productId", productId);
     form.append("locale", currentLanguage);
+    if (selectedMarketId) form.append("marketId", selectedMarketId);
     translationsFetcher.submit(form, { method: "post" });
-  }, [currentLanguage, productId, variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, productId, variantReloadKey, selectedMarketId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply loaded translations to localAltTexts (mediaId → url → altText)
   useEffect(() => {
     const data = translationsFetcher.data;
     if (!data || data.actionType !== "loadImageAltTranslations") return;
+    // An answer for another market (a stale response after a switch) is not
+    // this view's layer.
+    if ((data.marketId ?? "") !== selectedMarketId) return;
     const altTexts: Record<string, string> = data.altTexts ?? {};
     setLocalAltTexts(prev => {
       const next = { ...prev };
@@ -2447,6 +2458,10 @@ export function VariantImageManager({
     const data = altTextFetcher.data;
     if (!data || data === prevAltFetcherData.current) return;
     prevAltFetcherData.current = data;
+    if (data.errorCode === "imageNotFound") {
+      setMediaError(t.imageManager.altImageNotFound);
+      return;
+    }
     const idx = data.imageIndex as number | undefined;
     const url = idx !== undefined ? effectiveProductImages[idx]?.url : undefined;
     if (url) {
@@ -2460,6 +2475,7 @@ export function VariantImageManager({
           form.append("mediaId", mediaId);
           form.append("altText", data.altText);
           if (currentLanguage) form.append("locale", currentLanguage);
+          if (selectedMarketId && currentLanguage && currentLanguage !== primaryLocale) form.append("marketId", selectedMarketId);
           if (primaryLocale) form.append("primaryLocale", primaryLocale);
           saveAltTextFetcher.submit(form, { method: "post" });
         }
@@ -2474,6 +2490,7 @@ export function VariantImageManager({
           form.append("mediaId", mediaId);
           form.append("altText", data.translatedAltText);
           if (currentLanguage) form.append("locale", currentLanguage);
+          if (selectedMarketId && currentLanguage && currentLanguage !== primaryLocale) form.append("marketId", selectedMarketId);
           if (primaryLocale) form.append("primaryLocale", primaryLocale);
           saveAltTextFetcher.submit(form, { method: "post" });
         }
@@ -2497,11 +2514,12 @@ export function VariantImageManager({
     form.append("mediaId", mediaId);
     form.append("altText", altText);
     if (currentLanguage) form.append("locale", currentLanguage);
+    if (selectedMarketId && currentLanguage && currentLanguage !== primaryLocale) form.append("marketId", selectedMarketId);
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     saveAltTextFetcher.submit(form, { method: "post" });
     dirtyUrlsRef.current.delete(url);
     if (dirtyUrlsRef.current.size === 0) onDirtyChange?.(false);
-  }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher, onDirtyChange]);
+  }, [urlToGid, currentLanguage, primaryLocale, selectedMarketId, saveAltTextFetcher, onDirtyChange]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
@@ -2529,21 +2547,31 @@ export function VariantImageManager({
     altTextFetcher.submit(form, { method: "post" });
   }, [productId, effectiveProductImages, currentLanguage, altTextFetcher]);
 
+  // GLOBAL layer by design, like the editor's own "translate to all languages":
+  // it never carries a market. The image is named by its MEDIA id -- a position
+  // in this live list is not one in the database, and the server refuses an id
+  // it cannot find instead of writing to another image.
   const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
+    const mediaId = urlToGid[url] ?? effectiveProductImages[imageIndex]?.mediaId;
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) return;
+    if (!mediaId || !mediaId.startsWith("gid://")) {
+      setMediaError(t.imageManager.altImageNotFound);
+      return;
+    }
     const form = new FormData();
     form.append("action", "translateAltTextToAllLocales");
     form.append("itemId", productId);
     form.append("productId", productId);
-    form.append("imageIndex", String(Math.max(0, imageIndex)));
+    form.append("mediaId", mediaId);
+    if (imageIndex >= 0) form.append("imageIndex", String(imageIndex));
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocales", JSON.stringify(targetLocales));
     form.append("productTitle", productTitle ?? "");
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, enabledLanguages, primaryLocale, altTextFetcher]);
+  }, [productId, effectiveProductImages, urlToGid, enabledLanguages, primaryLocale, altTextFetcher, t]);
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 

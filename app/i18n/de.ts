@@ -1889,6 +1889,7 @@ export const de = {
     mediaDeleteFailed: "Die Bilder konnten nicht gelöscht werden. Sie wurden wiederhergestellt.",
     mediaClearMainFailed: "Die Bilder wurden gelöscht, aber das Hauptbild einer Variante konnte nicht entfernt werden. Bitte die Variante in Shopify prüfen.",
     uploadFailedFiles: "Upload fehlgeschlagen für: {files}. Diese Dateien wurden nicht hinzugefügt.",
+    altImageNotFound: "Dieses Bild wurde am Produkt nicht mehr gefunden (es wird evtl. noch hochgeladen oder wurde gelöscht). Lade die Seite neu und versuche es erneut.",
     altTemplateSaveFailed: "Die Alt-Text-Vorlage konnte nicht gespeichert werden. Bitte erneut versuchen.",
     altTemplateDeleteFailed: "Die Alt-Text-Vorlage konnte nicht gelöscht werden. Bitte erneut versuchen.",
     expand: "Vergrößern ↓",

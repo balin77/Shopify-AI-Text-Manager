@@ -1136,6 +1136,7 @@ export default function ProductsPage() {
               onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
+              selectedMarketId={editor.state.selectedMarketId}
               primaryLocale={primaryLocale}
               productTitle={editor.selectedItem.title}
               enabledLanguages={shopLocales.map((l: any) => l.locale)}

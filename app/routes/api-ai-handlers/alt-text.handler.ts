@@ -15,6 +15,7 @@ import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale, resolveWrittenLocale } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { ALT_IMAGE_NOT_FOUND, pickProductImage } from "~/services/product-image-pick.shared";
 
 /**
  * Alt-text requirement line for the item's primary keyword. The shipped default
@@ -536,6 +537,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   const { session, admin, db, settings, formData, contentType, itemId } = ctx;
 
   const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
+  const requestedMediaId = getFormString(formData, "mediaId") || "";
   const sourceAltText = getFormString(formData, "sourceAltText");
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const primaryLocale = getFormString(formData, "primaryLocale");
@@ -570,6 +572,24 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       { success: false, error: `Invalid target locale(s): ${invalidLocales.join(", ")}` },
       { status: 400 },
     );
+  }
+
+  // The medium is resolved by its id BEFORE any AI work is spent: a client
+  // position is not a DB position, and an image that cannot be found is
+  // refused, never replaced by another one.
+  let resolvedDbImage: { mediaId: string | null } | undefined;
+  if (productId && contentType === 'products') {
+    const preloaded = await db.product.findUnique({
+      where: { shop_id: { shop: session.shop, id: productId } },
+      include: { images: { orderBy: { position: 'asc' } } },
+    });
+    resolvedDbImage = pickProductImage(preloaded?.images, { mediaId: requestedMediaId, imageIndex });
+    if (requestedMediaId && !resolvedDbImage) {
+      return json(
+        { success: false, errorCode: ALT_IMAGE_NOT_FOUND, error: "Image not found on this product" },
+        { status: 404 },
+      );
+    }
   }
 
   // Create task entry (prompts will be saved by AI service via savePromptToTask)
@@ -699,14 +719,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
-      const dbProduct = await db.product.findUnique({
-        where: { shop_id: { shop: session.shop, id: productId } },
-        include: {
-          images: { orderBy: { position: 'asc' } },
-        },
-      });
-
-      const dbImage = dbProduct?.images?.[imageIndex];
+      const dbImage = resolvedDbImage;
 
       if (!dbImage?.mediaId) {
         logger.warn("[API-AI] No mediaId for image - cannot save alt-text translations to Shopify", {

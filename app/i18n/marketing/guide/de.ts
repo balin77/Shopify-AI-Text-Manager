@@ -761,7 +761,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Übersetzen",
           paragraphs: [
-            "Alt-Texte werden wie jedes andere Feld in alle Sprachen übersetzt und nach denselben Regeln aufgefrischt, wenn sich das Original ändert.",
+            "Alt-Texte werden wie jedes andere Feld in alle Sprachen übersetzt und nach denselben Regeln aufgefrischt, wenn sich das Original ändert. Ist im Editor ein Markt gewählt, zeigt der Bildmanager die Alt-Texte dieses Marktes (hat der Markt keinen eigenen, den der Sprache) und speichert Änderungen nur für diesen Markt. „In alle Sprachen übersetzen“ schreibt immer den Text der Sprache selbst, den auch Märkte ohne eigenen Text verwenden.",
           ],
         },
       ],
