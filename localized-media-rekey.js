@@ -37,6 +37,10 @@ export function rekeyLocalizedMediaValue(raw, oldMediaId, newMediaId, newUrl) {
   if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.e)) {
     return { changed: false, reason: "foreign" };
   }
+  // Same rule as TS isForeignLocalizedMediaValue: entries present but none of
+  // the shape this app writes (o, m, l strings) means someone else's document.
+  const usable = (e) => e && typeof e === "object" && isSafeFilename(e.o) && typeof e.m === "string" && e.m && typeof e.l === "string" && e.l && typeof e.k === "string";
+  if (data.e.length > 0 && !data.e.some(usable)) return { changed: false, reason: "foreign" };
   const hit = (e) => e && typeof e === "object" && e.x === undefined && e.m === oldMediaId;
   if (!data.e.some(hit)) return { changed: false, reason: "no-entries" };
   if (!oldMediaId || !newMediaId || oldMediaId === newMediaId) return { changed: false, reason: "bad-ids" };
@@ -53,25 +57,61 @@ export function rekeyLocalizedMediaValue(raw, oldMediaId, newMediaId, newUrl) {
 
 const NS = "custom";
 const KEY = "localized_media";
+const DEADLINE_MS = 20000;
+
+// No compareDigest precedent in this repo and the 2026-07 field name is
+// unconfirmed, so concurrent conversions of one product are serialised here
+// instead (the worker runs in one process). Cross-process races stay open.
+const chains = new Map();
+function serialise(productId, job) {
+  const prev = chains.get(productId) || Promise.resolve();
+  const run = prev.then(job, job);
+  const tail = run.catch(() => {});
+  chains.set(productId, tail);
+  tail.then(() => { if (chains.get(productId) === tail) chains.delete(productId); });
+  return run;
+}
+
+function canonical(v) {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
+function sameJson(a, b) {
+  try { return canonical(JSON.parse(a)) === canonical(JSON.parse(b)); } catch { return false; }
+}
 
 async function gql(fetchFn, shopifyApiUrl, headers, query, variables, label) {
-  const res = await fetchFn(shopifyApiUrl, { method: "POST", headers, body: JSON.stringify({ query, variables }) }, label);
-  if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
-  const body = await res.json();
-  if (body.errors) throw new Error(`${label} errors: ${JSON.stringify(body.errors).slice(0, 300)}`);
-  return body.data;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetchFn(shopifyApiUrl, { method: "POST", headers, body: JSON.stringify({ query, variables }) }, label);
+    if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
+    const body = await res.json();
+    if (body.errors) {
+      const throttled = JSON.stringify(body.errors).includes("THROTTLED");
+      if (throttled && attempt === 0) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+      throw new Error(`${label} errors: ${JSON.stringify(body.errors).slice(0, 300)}`);
+    }
+    return body.data;
+  }
 }
 
 /**
- * Never throws. Returns a short outcome string for the log.
- * `fetchUrl` resolves the new medium's CDN URL (null while still processing);
- * it is only called when the product really holds entries for the old medium.
+ * Never throws. Returns a short outcome string for the log. `resolvedUrl` is
+ * the worker's already resolved URL (or null); `fetchUrl` is at most ONE extra
+ * lookup. Only called into the URL lookup when the product holds entries.
  */
-export async function rekeyLocalizedMediaAfterConversion({
-  fetchFn, shopifyApiUrl, headers, productId, oldMediaId, newMediaId, fetchUrl, sleep, attempts = 4, delayMs = 2500,
-}) {
+export function rekeyLocalizedMediaAfterConversion(opts) {
+  const { productId } = opts;
+  if (!productId) return Promise.resolve("skipped: missing ids");
+  let timer;
+  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve("failed: deadline exceeded"), DEADLINE_MS); });
+  const work = serialise(productId, () => doRekey(opts));
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
+async function doRekey({ fetchFn, shopifyApiUrl, headers, productId, oldMediaId, newMediaId, resolvedUrl, fetchUrl, sleep, delayMs = 2000 }) {
   try {
-    if (!productId || !oldMediaId || !newMediaId) return "skipped: missing ids";
+    if (!oldMediaId || !newMediaId) return "skipped: missing ids";
     const read = await gql(
       fetchFn, shopifyApiUrl, headers,
       `query($id: ID!) { product(id: $id) { metafield(namespace: "custom", key: "localized_media") { value } } }`,
@@ -81,10 +121,10 @@ export async function rekeyLocalizedMediaAfterConversion({
     const probe = rekeyLocalizedMediaValue(raw, oldMediaId, newMediaId, "https://cdn.shopify.com/x/probe.webp");
     if (!probe.changed) return `skipped: ${probe.reason}`;
 
-    let url = null;
-    for (let i = 0; i < attempts && !url; i++) {
+    let url = resolvedUrl || null;
+    if (!url) {
+      await (sleep ? sleep(delayMs) : new Promise((r) => setTimeout(r, delayMs)));
       url = await fetchUrl();
-      if (!url && i < attempts - 1) await (sleep ? sleep(delayMs) : new Promise((r) => setTimeout(r, delayMs)));
     }
     if (!url) return "orphaned: new media URL unavailable";
     const next = rekeyLocalizedMediaValue(raw, oldMediaId, newMediaId, url);
@@ -92,16 +132,16 @@ export async function rekeyLocalizedMediaAfterConversion({
 
     const data = await gql(
       fetchFn, shopifyApiUrl, headers,
-      `mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { ownerId namespace key value } userErrors { field message } } }`,
+      `mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { namespace key value owner { ... on Product { id } } } userErrors { field message } } }`,
       { m: [{ ownerId: productId, namespace: NS, key: KEY, type: "json", value: next.value }] },
       "localized media write",
     );
     const errs = data?.metafieldsSet?.userErrors ?? [];
     if (errs.length) return `failed: userErrors ${JSON.stringify(errs).slice(0, 300)}`;
     const echoed = (data?.metafieldsSet?.metafields ?? []).find(
-      (m) => m && m.ownerId === productId && m.namespace === NS && m.key === KEY,
+      (m) => m && m.owner && m.owner.id === productId && m.namespace === NS && m.key === KEY,
     );
-    if (!echoed || echoed.value !== next.value) return "failed: not confirmed by echo";
+    if (!echoed || !sameJson(echoed.value, next.value)) return "failed: not confirmed by echo";
     return `rekeyed ${next.count} entr${next.count === 1 ? "y" : "ies"}`;
   } catch (err) {
     return `failed: ${err && err.message ? err.message : String(err)}`;

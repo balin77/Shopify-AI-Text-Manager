@@ -47,6 +47,10 @@ describe("rekeyLocalizedMediaValue", () => {
     const r = js.rekeyLocalizedMediaValue(JSON.stringify({ v: 1, e: [e({ m: "gid://shopify/MediaImage/5" })] }), OLD, NEW, URL2);
     expect(r).toEqual({ changed: false, reason: "no-entries" });
   });
+  it("treats a list with no usable entry as foreign", () => {
+    const raw = JSON.stringify({ v: 1, e: [{ m: OLD, foo: 1 }] });
+    expect(js.rekeyLocalizedMediaValue(raw, OLD, NEW, URL2).reason).toBe("foreign");
+  });
   it("refuses an unsafe new filename", () => {
     const raw = JSON.stringify({ v: 1, e: [e({})] });
     expect(js.rekeyLocalizedMediaValue(raw, OLD, NEW, "https://cdn.shopify.com/x/a\"b.png").reason).toBe("unsafe-filename");
@@ -63,7 +67,7 @@ describe("rekeyLocalizedMediaAfterConversion", () => {
       let data: any;
       if (!query.includes("mutation")) data = { product: { metafield: stored === null ? null : { value: stored } } };
       else if (echo === "errors") data = { metafieldsSet: { metafields: [], userErrors: [{ message: "x" }] } };
-      else data = { metafieldsSet: { metafields: echo === "ok" ? [{ ownerId: "p", namespace: "custom", key: "localized_media", value: variables.m[0].value }] : [], userErrors: [] } };
+      else data = { metafieldsSet: { metafields: echo === "ok" ? [{ owner: { id: "p" }, namespace: "custom", key: "localized_media", value: JSON.stringify(JSON.parse(variables.m[0].value), null, 1) }] : [], userErrors: [] } };
       return { ok: true, json: async () => ({ data }) };
     };
     return { calls, fetchFn };
@@ -72,12 +76,25 @@ describe("rekeyLocalizedMediaAfterConversion", () => {
     const m = mk(stored, echo);
     return m.fetchFn && js.rekeyLocalizedMediaAfterConversion({
       fetchFn: m.fetchFn, shopifyApiUrl: "u", headers: {}, productId: "p", oldMediaId: OLD, newMediaId: NEW,
-      fetchUrl: async () => url, sleep: async () => {}, attempts: 2,
+      resolvedUrl: null, fetchUrl: async () => url, sleep: async () => {},
     }).then((r: string) => ({ r, calls: m.calls }));
   };
   const stored = JSON.stringify({ v: 1, e: [e({})] });
   it("writes and confirms by echo", async () => {
     expect(await run(stored, "ok", URL2)).toEqual({ r: "rekeyed 1 entry", calls: ["read", "write"] });
+  });
+  it("serialises concurrent runs for one product", async () => {
+    let stored = JSON.stringify({ v: 1, e: [e({}), e({ m: "gid://shopify/MediaImage/3", o: "b.png" })] });
+    const fetchFn = async (_u: string, o: any) => {
+      const { query, variables } = JSON.parse(o.body);
+      await new Promise((r) => setTimeout(r, 5));
+      if (!query.includes("mutation")) return { ok: true, json: async () => ({ data: { product: { metafield: { value: stored } } } }) };
+      stored = variables.m[0].value;
+      return { ok: true, json: async () => ({ data: { metafieldsSet: { metafields: [{ owner: { id: "p" }, namespace: "custom", key: "localized_media", value: stored }], userErrors: [] } } }) };
+    };
+    const go = (o: string, n: string, u: string) => js.rekeyLocalizedMediaAfterConversion({ fetchFn, shopifyApiUrl: "u", headers: {}, productId: "p", oldMediaId: o, newMediaId: n, resolvedUrl: u, fetchUrl: async () => null });
+    await Promise.all([go(OLD, NEW, URL2), go("gid://shopify/MediaImage/3", "gid://shopify/MediaImage/4", "https://cdn.shopify.com/s/c.webp")]);
+    expect(JSON.parse(stored).e.map((x: any) => x.m)).toEqual([NEW, "gid://shopify/MediaImage/4"]);
   });
   it("no entries: one read, no write", async () => {
     expect(await run(null, "ok", URL2)).toEqual({ r: "skipped: empty", calls: ["read"] });

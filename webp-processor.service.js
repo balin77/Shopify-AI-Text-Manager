@@ -946,7 +946,8 @@ export class WebPProcessorService {
           productId,
           oldMediaId: mediaId,
           newMediaId,
-          fetchUrl: () => (resolvedUrl ? Promise.resolve(resolvedUrl) : fetchNewMediaUrl(shopifyApiUrl, headers, newMediaId)),
+          resolvedUrl,
+          fetchUrl: () => fetchNewMediaUrl(shopifyApiUrl, headers, newMediaId),
         });
         console.log(`[WebPProcessor] Localized media re-key for ${mediaId} -> ${newMediaId}: ${outcome}`);
       }
