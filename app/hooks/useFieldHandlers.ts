@@ -36,6 +36,7 @@ import type {
 import type { TransitionResult } from "./useUiDataLoader";
 import { aiImageCandidates } from "../services/ai/vision-policy.shared";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
+import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 
 // ============================================================================
 // TYPES
@@ -1981,7 +1982,11 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   const capturedItemId = selectedItemId;
   markOperationActive(capturedItemId, fieldKey, "copyToAllLocales");
 
+  // Sequential, as before. The answer is READ now (see
+  // content-action-endpoint.shared.ts): "copied" is said once every locale
+  // confirmed, and a locale that did not is named instead of hidden.
   const runSaves = async () => {
+    const failed: string[] = [];
     for (const locale of targetLocales) {
       const fd = new FormData();
       fd.set("action", "updateContent");
@@ -1989,18 +1994,24 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
       fd.set("locale", locale);
       fd.set("primaryLocale", primaryLocale);
       fd.set(fieldKey, primaryValue);
-      try {
-        await fetch(window.location.pathname, { method: "POST", body: fd });
-      } catch {
-        // individual locale save failure is non-critical
-      }
+      if ((await postContentEditorSave(fd)) === false) failed.push(locale);
     }
     markOperationFailed(capturedItemId, fieldKey);
+    if (failed.length > 0) {
+      showInfoBox(
+        String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
+          "{locales}",
+          failed.map((l) => l.toUpperCase()).join(", "),
+        ),
+        "critical",
+      );
+    } else {
+      showInfoBox(t.common?.copied ?? "Copied", "success");
+    }
   };
-  runSaves();
+  void runSaves();
 
   onTranslateToAllLocalesComplete?.(fieldKey, translations);
-  showInfoBox(t.common?.copied ?? "Copied", "success");
 };
 
   return {

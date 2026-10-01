@@ -2055,6 +2055,7 @@ export const en: Translation = {
     close: "Close",
     clear: "Clear",
     copied: "Copied",
+    copyFailedLocales: "Copying failed for: {locales}. Please reload the page and try again.",
     copiedToShopify: "Successfully transferred to Shopify",
     loadMore: "Load more",
     loading: "Loading...",

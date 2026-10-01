@@ -2035,6 +2035,7 @@ export const es: Translation = {
     close: "Cerrar",
     clear: "Limpiar",
     copied: "Copiado",
+    copyFailedLocales: "No se pudo copiar a: {locales}. Recarga la página e inténtalo de nuevo.",
     copiedToShopify: "Transferido correctamente a Shopify",
     loadMore: "Cargar más",
     loading: "Cargando...",

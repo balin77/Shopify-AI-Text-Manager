@@ -28,6 +28,7 @@ import type {
   TranslationStrings,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
+import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 
 // ---------------------------------------------------------------------------
 // Prop / return types
@@ -357,17 +358,30 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       fd.set("locale", locale);
       fd.set("primaryLocale", primaryLocale);
       fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
-      return fetch(window.location.pathname, { method: "POST", body: fd });
+      // The answer is READ now (content-action-endpoint.shared.ts), so a
+      // locale that did not save is named instead of reported as copied.
+      return postContentEditorSave(fd).then((ok) => (ok === false ? locale : null));
     });
 
-    Promise.all(saves).finally(() => {
+    Promise.all(saves).then((results) => {
+      const failed = results.filter((l): l is string => l !== null);
+      if (failed.length > 0) {
+        showInfoBox(
+          String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
+            "{locales}",
+            failed.map((l) => l.toUpperCase()).join(", "),
+          ),
+          "critical",
+        );
+      } else {
+        showInfoBox(t.common?.copied ?? "Copied", "success");
+      }
+    }).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);
       if (revalidatorRef.current.state === 'idle') {
         try { revalidatorRef.current.revalidate(); } catch {}
       }
     });
-
-    showInfoBox(t.common?.copied ?? "Copied", "success");
   };
 
   const handleTranslateAltText = (imageIndex: number) => {
