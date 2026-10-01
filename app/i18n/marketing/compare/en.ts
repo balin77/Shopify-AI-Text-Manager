@@ -398,7 +398,7 @@ export const compareEn: CompareCopy = {
       },
       engines: "With AI included: {list}",
     },
-    addApp: "Add an app to the comparison",
+    addApp: "Compare more apps",
     removeApp: "Hide {name} from the comparison",
     strengthsGroup: "Strengths",
     strengthsRow: "Where the app is strong",

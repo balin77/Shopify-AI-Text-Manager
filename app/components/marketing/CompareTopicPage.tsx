@@ -37,19 +37,25 @@ function TopicNav({
 }) {
   const topics = visibleTopics(preview);
   if (topics.length < 2) return null;
+  // The switch leads the page: the one-plan-covers-everything sentence first,
+  // the topics right under it as large tabs, the topic's own heading after.
+  // Below a big h1 the tabs read as page chrome and went unnoticed.
   return (
-    <nav className="mk-compare-topics" aria-label={copy.topics.nav}>
-      {topics.map((id) => (
-        <Link
-          key={id}
-          className="mk-compare-topics__link"
-          aria-current={id === current ? "page" : undefined}
-          to={`${localizedPath(locale, topicPath(id))}${preview ? "?preview" : ""}`}
-        >
-          {copy.topics.items[id].tab}
-        </Link>
-      ))}
-    </nav>
+    <div className="mk-compare-hub">
+      <p className="mk-compare-hub__suite">{copy.topics.suite}</p>
+      <nav className="mk-compare-topics" aria-label={copy.topics.nav}>
+        {topics.map((id) => (
+          <Link
+            key={id}
+            className="mk-compare-topics__link"
+            aria-current={id === current ? "page" : undefined}
+            to={`${localizedPath(locale, topicPath(id))}${preview ? "?preview" : ""}`}
+          >
+            {copy.topics.items[id].tab}
+          </Link>
+        ))}
+      </nav>
+    </div>
   );
 }
 
@@ -81,11 +87,10 @@ export function CompareTopicPage({
         <div className="mk-shell">
           <TopicNav copy={copy} locale={locale} current={topic} preview={preview} />
           {!config.published ? <p className="mk-compare-preview">{copy.topics.preview}</p> : null}
-          <div className="mk-section__head">
+          <div className="mk-section__head mk-compare-head">
             <h1>{title}</h1>
             <p className="mk-lead">{intro}</p>
           </div>
-          {visibleTopics(preview).length > 1 ? <p className="mk-compare-suite">{copy.topics.suite}</p> : null}
 
           {/* Keyed by topic: switching topics starts a fresh table rather than
               carrying one topic's hidden columns into the next. */}

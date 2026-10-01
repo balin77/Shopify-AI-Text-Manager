@@ -1907,35 +1907,70 @@ a.mk-badge:hover {
 
 /* Underlined tabs rather than pills: the pills below them pick a LEVEL of
    the table, and two rows of identical-looking pills read as one control. */
+/* The topic switch leads the page, in a box of its own: the suite sentence,
+   then one large tab per topic. */
+.mk-compare-hub {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: clamp(28px, 4vw, 40px);
+  padding: clamp(16px, 2.5vw, 22px);
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface);
+}
+
+.mk-shell .mk-compare-hub__suite {
+  margin: 0;
+  font-size: clamp(1.0625rem, 1.8vw, 1.25rem);
+  font-weight: 650;
+  line-height: 1.4;
+  color: var(--mk-text);
+}
+
 .mk-compare-topics {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 20px;
-  margin-bottom: 28px;
-  border-bottom: 1px solid var(--mk-border);
+  gap: 8px;
 }
 
 .mk-compare-topics__link {
-  padding: 10px 2px;
-  margin-bottom: -1px;
+  padding: 10px 18px;
+  border: 1px solid var(--mk-border-strong);
+  border-radius: 999px;
+  background: var(--mk-bg);
+  font-size: 1rem;
   font-weight: 600;
-  color: var(--mk-text-muted);
+  color: var(--mk-text);
   text-decoration: none;
-  border-bottom: 2px solid transparent;
 }
 
 .mk-compare-topics__link:hover {
-  color: var(--mk-text);
+  border-color: var(--mk-text-muted);
 }
 
 .mk-compare-topics__link[aria-current="page"] {
-  color: var(--mk-text);
-  border-bottom-color: var(--mk-brand);
+  border-color: var(--mk-text);
+  background: var(--mk-text);
+  color: var(--mk-bg);
 }
 
 .mk-compare-topics__link:focus-visible {
   outline: 2px solid var(--mk-brand);
   outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .mk-compare-topics__link {
+    padding: 8px 14px;
+    font-size: 0.9375rem;
+  }
+}
+
+/* The topic's heading sits under the switch, so it is a size smaller than a
+   landing page's. */
+.mk-compare-head h1 {
+  font-size: clamp(1.75rem, 3.6vw, 2.375rem);
 }
 
 .mk-shell > .mk-compare-preview {
@@ -1945,11 +1980,6 @@ a.mk-badge:hover {
   border-radius: var(--mk-radius-sm);
   background: var(--mk-surface-2);
   font-size: 0.9375rem;
-}
-
-.mk-shell > .mk-compare-suite {
-  margin: -8px 0 0;
-  font-weight: 600;
 }
 
 /* ── Plan by plan ─────────────────────────────────────────────────────── */
@@ -1971,8 +2001,10 @@ a.mk-badge:hover {
   top: var(--mk-compare-header);
   z-index: 4;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
   padding: 8px 0 12px;
   background: var(--mk-bg);
 }
@@ -2027,28 +2059,40 @@ a.mk-badge:hover {
 
 /* The `+` column: as narrow as its button, only there while an app is
    hidden, its menu opening leftwards into the table. */
-.mk-compare-matrix__table .mk-compare-matrix__add-cell {
-  width: 56px;
-  min-width: 56px;
-  padding-inline: 8px;
-}
-
 .mk-compare-matrix__add {
   position: relative;
+  flex: none;
 }
 
 .mk-compare-matrix__add-button {
   font: inherit;
-  font-size: 1.25rem;
+  font-size: 0.9375rem;
   font-weight: 600;
-  line-height: 1;
-  width: 36px;
-  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
   border-radius: 999px;
   border: 1px dashed var(--mk-border-strong);
   background: var(--mk-surface);
   color: var(--mk-text);
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.mk-compare-matrix__add-button > span[aria-hidden="true"] {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.mk-compare-matrix__add-count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mk-surface-2);
+  font-size: 0.8125rem;
+  text-align: center;
 }
 
 .mk-compare-matrix__add-button:hover,
@@ -2171,9 +2215,31 @@ a.mk-badge:hover {
   /* One scrolling line each instead of three wrapped ones: the sticky bar
      must not eat half a phone screen. */
   .mk-compare-levels {
+    flex: 1 1 0;
+    min-width: 0;
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
+  }
+
+  /* On a phone the add button keeps its `+` and the count; the words are in
+     its title and accessible name. */
+  .mk-compare-controls {
+    flex-wrap: nowrap;
+  }
+
+  .mk-compare-matrix__add-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .mk-compare-matrix__add-button {
+    gap: 6px;
+    padding: 0 10px;
   }
 
   .mk-compare-controls .mk-compare-levels__button {
@@ -2231,6 +2297,20 @@ a.mk-badge:hover {
 
 .mk-compare-matrix__table td {
   min-width: 140px;
+}
+
+/* The default selection should fit a laptop screen without scrolling, so a
+   long app name and a price range wrap rather than widen their column. */
+.mk-compare-matrix__table thead th {
+  white-space: normal;
+}
+
+.mk-compare-matrix__table .mk-compare-glance__price {
+  white-space: normal;
+}
+
+.mk-nowrap {
+  white-space: nowrap;
 }
 
 /* One app against ours: fixed layout, so both answer columns are the same

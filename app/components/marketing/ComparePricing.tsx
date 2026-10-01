@@ -34,7 +34,9 @@ export function PlanPrice({
     const [low, high] = plan.monthlyRange;
     return (
       <>
-        {formatComparePrice(low, currency, locale)}–{formatComparePrice(high, currency, locale)}{" "}
+        {/* Each end stays whole; a narrow column breaks after the dash. */}
+        <span className="mk-nowrap">{formatComparePrice(low, currency, locale)}–</span>
+        <span className="mk-nowrap">{formatComparePrice(high, currency, locale)}</span>{" "}
         <span className="mk-compare-prices__unit">{copy.pricing.perMonth}</span>
         <span className="mk-compare-matrix__alt">{copy.pricing.byShopifyPlan}</span>
       </>

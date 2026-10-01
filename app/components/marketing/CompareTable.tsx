@@ -113,9 +113,11 @@ export function CompareMatrix({
     setShown((current) => [...current, app]);
     setAddOpen(false);
   };
-  // The `+` column exists only while there is something to add back.
+  // The add button sits in the sticky controls, beside the level picker, so
+  // it is visible however wide the table gets; it exists only while there is
+  // something to add back.
   const addColumn = hidden.length > 0;
-  const columns = 1 + visible.length + (addColumn ? 1 : 0);
+  const columns = 1 + visible.length;
   const [addOpen, setAddOpen] = useState(false);
   const addRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -136,8 +138,6 @@ export function CompareMatrix({
   useEffect(() => {
     if (!addColumn) setAddOpen(false);
   }, [addColumn]);
-  /** Filler cell of the `+` column in every body row. */
-  const addFiller = addColumn ? <td className="mk-compare-matrix__add-cell" aria-hidden="true" /> : null;
   const levelLabel = (i: number) => (i === 0 ? g.freeLevel : g.level.replace("{n}", String(i)));
 
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -228,6 +228,33 @@ export function CompareMatrix({
               </button>
             ))}
           </div>
+          {addColumn ? (
+            <div className="mk-compare-matrix__add" ref={addRef}>
+              <button
+                type="button"
+                className="mk-compare-matrix__add-button"
+                title={g.addApp}
+                aria-expanded={addOpen}
+                aria-haspopup="menu"
+                onClick={() => setAddOpen((open) => !open)}
+              >
+                <span aria-hidden="true">+</span>
+                <span className="mk-compare-matrix__add-text">{g.addApp}</span>
+                <span className="mk-compare-matrix__add-count">{hidden.length}</span>
+              </button>
+              {addOpen ? (
+                <ul className="mk-compare-matrix__add-menu" role="menu" aria-label={g.addApp}>
+                  {hidden.map((app) => (
+                    <li key={app} role="none">
+                      <button type="button" role="menuitem" onClick={() => show(app)}>
+                        {appName(app)}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
       <div
@@ -282,34 +309,6 @@ export function CompareMatrix({
                   </th>
                 );
               })}
-              {addColumn ? (
-                <th scope="col" className="mk-compare-matrix__add-cell">
-                  <div className="mk-compare-matrix__add" ref={addRef}>
-                    <button
-                      type="button"
-                      className="mk-compare-matrix__add-button"
-                      title={g.addApp}
-                      aria-label={g.addApp}
-                      aria-expanded={addOpen}
-                      aria-haspopup="menu"
-                      onClick={() => setAddOpen((open) => !open)}
-                    >
-                      +
-                    </button>
-                    {addOpen ? (
-                      <ul className="mk-compare-matrix__add-menu" role="menu" aria-label={g.addApp}>
-                        {hidden.map((app) => (
-                          <li key={app} role="none">
-                            <button type="button" role="menuitem" onClick={() => show(app)}>
-                              {appName(app)}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-                </th>
-              ) : null}
             </tr>
           </thead>
 
@@ -343,7 +342,6 @@ export function CompareMatrix({
                   })}
                 </td>
               ))}
-              {addFiller}
             </tr>
             {topicConfig.planRows.map((key) => (
               <tr key={key}>
@@ -373,7 +371,6 @@ export function CompareMatrix({
                     })}
                   </td>
                 ))}
-                {addFiller}
               </tr>
             ))}
             {topicConfig.showEngines ? (
@@ -401,7 +398,6 @@ export function CompareMatrix({
                   })}
                 </td>
               ))}
-              {addFiller}
             </tr>
             ) : null}
             <tr>
@@ -422,7 +418,6 @@ export function CompareMatrix({
                   </td>
                 );
               })}
-              {addFiller}
             </tr>
           </tbody>
 
@@ -455,7 +450,6 @@ export function CompareMatrix({
                       })}
                     </td>
                   ))}
-                  {addFiller}
                 </tr>
               ))}
             </tbody>
@@ -488,7 +482,6 @@ export function CompareMatrix({
                   })()}
                 </td>
               ))}
-              {addFiller}
             </tr>
           </tbody>
         </table>
