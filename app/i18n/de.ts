@@ -4655,6 +4655,7 @@ export const de = {
     noSourceAltText: "Kein Quell-Alternativtext vorhanden",
     noAltTextData: "Keine Alternativtext-Daten bereitgestellt",
     noTargetLocalesOrImages: "Keine Zielsprachen oder Bilder angegeben",
+    translateStoreFailedAll: "Shopify hat die Übersetzung für keine Sprache gespeichert",
     unknownError: "Unbekannter Fehler",
 
     // Sync errors

@@ -17,6 +17,7 @@ import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -148,7 +149,12 @@ async function translateMetaobjectEntries(params: {
           where: { shop_id: { shop: session.shop, id: metaobjectId } },
           select: { type: true },
         });
-        if (!cached) continue;
+        if (!cached) {
+          // Unknown to this shop's cache: nothing was written, so the AI value
+          // must not be returned as saved.
+          reject(locale, compound);
+          continue;
+        }
 
         // Fetch digest for THIS field. `translatableContent` only lists keys
         // that have a primary value, so a missing digest means the source field
@@ -157,9 +163,24 @@ async function translateMetaobjectEntries(params: {
           variables: { resourceId: metaobjectId },
         });
         const digestData = await digestResponse.json();
-        const tc = digestData.data?.translatableResource?.translatableContent || [];
-        const digestEntry = tc.find((c: { key: string; digest: string | null }) => c.key === fieldKey);
-        if (!digestEntry?.digest) continue;
+        const resource = digestData.data?.translatableResource;
+        if (!resource || !Array.isArray(resource.translatableContent)) {
+          // A failed / inconclusive read proves nothing about the source field.
+          reject(locale, compound);
+          continue;
+        }
+        const digestEntry = resource.translatableContent.find(
+          (c: { key: string; digest: string | null }) => c.key === fieldKey,
+        );
+        if (!digestEntry) {
+          // Genuinely empty source field: nothing to translate, nothing saved.
+          delete allTranslations[locale]?.[compound];
+          continue;
+        }
+        if (!digestEntry.digest) {
+          reject(locale, compound);
+          continue;
+        }
 
         // Verified register: userErrors alone prove nothing, Shopify must ECHO the
         // key. A write it did not store is reported and NOT mirrored.
@@ -178,6 +199,7 @@ async function translateMetaobjectEntries(params: {
           continue;
         }
         writeConfirmed = true;
+        markTranslationSaved(metaobjectId);
         const storedValue = verified.confirmedValues.get(fieldKey) ?? translatedValue;
         allTranslations[locale][compound] = storedValue;
 

@@ -4633,6 +4633,7 @@ export const en: Translation = {
     noSourceAltText: "No source alt-text available",
     noAltTextData: "No alt-text data provided",
     noTargetLocalesOrImages: "No target locales or images specified",
+    translateStoreFailedAll: "Shopify did not store the translation for any language",
     unknownError: "Unknown error",
 
     // Sync errors

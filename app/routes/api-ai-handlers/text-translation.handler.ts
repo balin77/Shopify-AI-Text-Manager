@@ -14,6 +14,7 @@ import { parseMetaobjectFieldKey } from "~/services/metaobject-fields.shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { resolveTaskResourceTitle } from "~/services/tasks/resource-title.server";
 import { logger } from "~/utils/logger.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import {
   registerAndVerify,
   mirrorConfirmedContentTranslations,
@@ -718,6 +719,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 batchShopifyAccepted = true;
                 themeStoredValue = result.value ?? translatedValue;
                 translations[locale] = themeStoredValue;
+                markTranslationSaved(fieldResourceId); // confirmed global write
               }
               } // end if digest
             } catch (shopifyError: unknown) {
@@ -843,6 +845,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               } else {
                 // What Shopify STORED is what the editor gets and what is mirrored.
                 translations[locale] = verified.confirmedValues.get(shopifyKey) ?? translatedValue;
+                markTranslationSaved(itemId); // confirmed global write
                 await mirrorConfirmedField({
                   db,
                   shop: session.shop,
@@ -924,6 +927,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                   batchMetaAccepted = true;
                   metaStoredValue = verified.confirmedValues.get(metaLabelKey) ?? translatedValue;
                   translations[locale] = metaStoredValue;
+                  markTranslationSaved(metaobjectGid); // confirmed global write
                 }
               }
             } catch (shopifyError: unknown) {
@@ -1007,6 +1011,18 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
     // Sequential translation for long fields OR if batch failed
     if (!isShortField || Object.keys(translations).length === 0) {
+      // Entering because the short-field batch produced nothing usable: its
+      // rejections describe a pass that is being replaced. Drop them for this
+      // field so a locale the sequential pass then CONFIRMS is not deleted from
+      // `translations` by the rejected-filter below; a locale that fails again
+      // is re-added by the sequential pass itself.
+      if (isShortField) {
+        for (const locale of targetLocales) {
+          const kept = (rejectedFields[locale] ?? []).filter((f) => f !== fieldType);
+          if (kept.length > 0) rejectedFields[locale] = kept;
+          else delete rejectedFields[locale];
+        }
+      }
       // Long, non-slug fields: fetch ALL locales in one batched/chunked AI call
       // up front, then read each locale's value inside the loop below — the
       // per-locale Shopify/DB persistence stays untouched. Slug fields keep
@@ -1154,6 +1170,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 seqShopifyAccepted = true;
                 themeStoredValue = result.value ?? translatedValue;
                 translations[locale] = themeStoredValue;
+                markTranslationSaved(fieldResourceId); // confirmed global write
                 logger.info("[API-AI] SUCCESS - Translation saved to Shopify", {
                   context: "AI",
                   resourceId: fieldResourceId,
@@ -1285,6 +1302,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 rejectedFields[locale].push(fieldType);
               } else {
                 translations[locale] = verified.confirmedValues.get(shopifyKey) ?? translatedValue;
+                markTranslationSaved(itemId); // confirmed global write
                 await mirrorConfirmedField({
                   db,
                   shop: session.shop,
@@ -1362,6 +1380,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                   seqMetaAccepted = true;
                   metaStoredValue = verified.confirmedValues.get(metaLabelKey) ?? translatedValue;
                   translations[locale] = metaStoredValue;
+                  markTranslationSaved(metaobjectGid); // confirmed global write
                 }
               }
             } catch (shopifyError: unknown) {
@@ -1472,7 +1491,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
       const failMsg = (firstError
         ? firstError.replace(/^ERROR:\s*/, "")
         : Object.keys(rejectedFields).length > 0
-          ? "Shopify did not store the translation for any language"
+          ? "translateStoreFailedAll"
           : "Translation failed for all locales").trim();
       logger.error("[API-AI] translateFieldToAllLocales produced no translations — failing loudly", {
         context: "AI",

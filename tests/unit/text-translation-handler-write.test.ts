@@ -23,6 +23,12 @@ vi.mock("~/services/theme-selection.server", () => ({
   resolveSelectedThemeId: vi.fn(async () => null),
 }));
 
+const markSaved = vi.hoisted(() => vi.fn());
+vi.mock("~/utils/translation-save-lock.server", async (orig) => ({
+  ...(await orig<typeof import("~/utils/translation-save-lock.server")>()),
+  markTranslationSaved: markSaved,
+}));
+
 import { handleTranslateFieldToAllLocales } from "../../app/routes/api-ai-handlers/text-translation.handler";
 
 const PRODUCT = "gid://shopify/Product/1";
@@ -105,6 +111,7 @@ beforeEach(() => {
   shopify.userErrors = [];
   shopify.digests = { title: "dT", body_html: "dB", [THEME_KEY]: "dTheme", name: "dN" };
   shopify.registers = [];
+  markSaved.mockReset();
   for (const fn of Object.values(aiMock)) fn.mockReset();
 });
 
@@ -277,5 +284,41 @@ describe("sequential path on theme content", () => {
     const r = await handleTranslateFieldToAllLocales(ctx);
     expect(db.themeTranslation.upsert).not.toHaveBeenCalled();
     expect(body(r).success).toBe(false);
+  });
+});
+
+describe("phase G review fixes", () => {
+  const form = { fieldType: "title", sourceText: "Hallo", targetLocales: LOCALES, primaryLocale: "de" };
+
+  it("batch yields nothing, sequential confirms: success with the confirmed translations", async () => {
+    aiMock.translateShortFieldsBatch.mockResolvedValue({});
+    aiMock.translateFieldsToLocalesChunked.mockResolvedValue({ en: { title: "Hello" }, fr: { title: "Salut" } });
+    const { ctx } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(status(r)).toBe(200);
+    expect(body(r)).toMatchObject({ success: true, translations: { en: "Hello", fr: "Salut" } });
+    expect(body(r).rejectedFields ?? {}).toEqual({});
+  });
+
+  it("claims the resource only on a confirmed write", async () => {
+    aiMock.translateShortFieldsBatch.mockResolvedValue({ en: { title: "Hello" }, fr: { title: "Salut" } });
+    shopify.echo = () => [];
+    const a = makeCtx("products", PRODUCT, form);
+    await handleTranslateFieldToAllLocales(a.ctx);
+    expect(markSaved).not.toHaveBeenCalled();
+
+    shopify.echo = undefined;
+    const b = makeCtx("products", PRODUCT, form);
+    await handleTranslateFieldToAllLocales(b.ctx);
+    expect(markSaved).toHaveBeenCalledWith(PRODUCT);
+  });
+
+  it("every failed locale yields the localized error code", async () => {
+    aiMock.translateShortFieldsBatch.mockResolvedValue({ en: { title: "Hello" }, fr: { title: "Salut" } });
+    shopify.echo = () => [];
+    const { ctx } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(status(r)).toBe(502);
+    expect(body(r).error).toBe("translateStoreFailedAll");
   });
 });

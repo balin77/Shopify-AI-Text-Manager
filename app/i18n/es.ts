@@ -4618,6 +4618,7 @@ export const es: Translation = {
     noSourceAltText: "No hay texto alternativo de origen disponible",
     noAltTextData: "No se proporcionaron datos de texto alternativo",
     noTargetLocalesOrImages: "No se especificaron idiomas de destino o imágenes",
+    translateStoreFailedAll: "Shopify no guardó la traducción para ningún idioma",
     unknownError: "Error desconocido",
 
     // Sync errors

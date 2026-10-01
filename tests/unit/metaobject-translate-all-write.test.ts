@@ -20,6 +20,9 @@ vi.mock("~/utils/ai-refusal-response.server", () => ({
   managedRefusalResponseFromError: vi.fn(() => null),
 }));
 
+const markSaved = vi.hoisted(() => vi.fn());
+vi.mock("~/utils/translation-save-lock.server", () => ({ markTranslationSaved: markSaved }));
+
 import { handleTranslateAll } from "../../app/actions/content/translation.action";
 
 const shopify = {
@@ -90,6 +93,7 @@ beforeEach(() => {
   shopify.digest = "dN";
   shopify.registers = [];
   shopify.throwOnRegister = false;
+  markSaved.mockReset();
   translateProduct.mockReset();
   translateProduct.mockResolvedValue({ en: { entry_0: "Hello" }, fr: { entry_0: "Salut" } });
 });
@@ -115,9 +119,12 @@ describe("metaobject translate-all", () => {
   it("does not register or mirror an entry whose field has no digest (nothing to translate)", async () => {
     shopify.digest = null;
     const { ctx, formData, db } = makeCtx();
-    await handleTranslateAll(ctx, formData);
+    const r = await handleTranslateAll(ctx, formData);
     expect(shopify.registers).toHaveLength(0);
     expect(db.metaobjectTranslation.upsert).not.toHaveBeenCalled();
+    expect(body(r).translations).toEqual({ en: {}, fr: {} });
+    expect(body(r).rejectedFields).toEqual({});
+    expect(markSaved).not.toHaveBeenCalled();
   });
 
   it("userErrors / an unechoed register: nothing mirrored, entries reported as rejected", async () => {
@@ -156,5 +163,37 @@ describe("metaobject translate-all", () => {
     const r = await handleTranslateAll(ctx, formData);
     expect(body(r).rejectedFields).toEqual({});
     expect(body(r).translations).toEqual({ en: { [FIELD]: "Hello" }, fr: { [FIELD]: "Salut" } });
+  });
+
+  it("a cache miss is rejected, not returned as saved", async () => {
+    const { ctx, formData, db } = makeCtx();
+    db.metaobject.findUnique.mockResolvedValue(null);
+    const r = await handleTranslateAll(ctx, formData);
+    expect(shopify.registers).toHaveLength(0);
+    expect(body(r).translations).toEqual({ en: {}, fr: {} });
+    expect(body(r).rejectedFields).toEqual({ en: [FIELD], fr: [FIELD] });
+  });
+
+  it("an unreadable translatable resource is rejected, not treated as empty", async () => {
+    const { ctx, formData } = makeCtx();
+    const g = (ctx as any).admin.graphql;
+    (ctx as any).admin.graphql = vi.fn(async (q: string, o?: any) =>
+      q.includes("translatableContent") && !q.includes("translationsRegister")
+        ? { json: async () => ({ data: { translatableResource: null } }) }
+        : g(q, o));
+    const r = await handleTranslateAll(ctx, formData);
+    expect(body(r).translations).toEqual({ en: {}, fr: {} });
+    expect(body(r).rejectedFields).toEqual({ en: [FIELD], fr: [FIELD] });
+  });
+
+  it("claims the metaobject only on confirmed writes", async () => {
+    shopify.echo = () => [];
+    const a = makeCtx();
+    await handleTranslateAll(a.ctx, a.formData);
+    expect(markSaved).not.toHaveBeenCalled();
+    shopify.echo = undefined;
+    const b = makeCtx();
+    await handleTranslateAll(b.ctx, b.formData);
+    expect(markSaved).toHaveBeenCalledWith(META);
   });
 });

@@ -39,6 +39,11 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return li?.errors?.themeMediaValue || errorMessage;
   }
 
+  // Every locale was translated but Shopify confirmed none of the writes.
+  if (errorMessage === "translateStoreFailedAll") {
+    return errors?.translateStoreFailedAll || "Shopify did not store the translation for any language";
+  }
+
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys

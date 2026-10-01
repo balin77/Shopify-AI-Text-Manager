@@ -139,15 +139,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // a lagging answer must not undo what was just written.
         markTranslationSaved(product.id);
 
-        await mirrorConfirmedContentTranslations(db, {
-          shop,
-          resourceId: product.id,
-          resourceType: "Product",
-          locale: entry.targetLocale,
-          sent: [{ key: shopifyKey, value: trimmed }],
-          result: verified,
-          digests: verified.digests,
-        });
+        // Shopify confirmed: a mirror failure never turns this into a failure
+        // (the next sync corrects the local row).
+        try {
+          await mirrorConfirmedContentTranslations(db, {
+            shop,
+            resourceId: product.id,
+            resourceType: "Product",
+            locale: entry.targetLocale,
+            sent: [{ key: shopifyKey, value: trimmed }],
+            result: verified,
+            digests: verified.digests,
+          });
+        } catch (mirrorErr) {
+          logger.error("[grouped-field-translations] Confirmed write but local mirror failed", {
+            productId: product.id,
+            error: mirrorErr instanceof Error ? mirrorErr.message : String(mirrorErr),
+          });
+        }
         synced++;
       } catch (err) {
         logger.error("[grouped-field-translations] Exception during re-sync", {
