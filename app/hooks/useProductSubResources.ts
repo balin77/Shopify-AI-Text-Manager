@@ -24,7 +24,8 @@ import {
   useTranslatingSubResourceIds,
 } from "./useAIOperationsStore";
 import type { OptionTranslation } from "../components/unified/OptionsField";
-import type { TranslatableContentItem } from "../types/content-editor.types";
+import type { TranslatableContentItem, TranslationStrings } from "../types/content-editor.types";
+import { translateErrorMessage } from "../utils/editor-error-messages";
 import { buildLocaleKey } from "./useUiDataLoader";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { postJsonSave, rollbackSubResourceCopy } from "../services/editor/sub-resource-copy.shared";
@@ -1261,8 +1262,17 @@ export function useProductSubResources({
       // for a managed-AI refusal (budget, taster, consent) it is already
       // localised and names the way out.
       if (!data || data.success === false) {
-        const message = typeof (data as { error?: unknown } | null)?.error === "string"
+        const rawMessage = typeof (data as { error?: unknown } | null)?.error === "string"
           ? String((data as { error?: unknown }).error)
+          : "";
+        // The plan refusal arrives as the code "gated": map it through the
+        // editor's one translator so it reads as the upgrade message. The hook
+        // only holds message strings, so hand it the slice it can use.
+        const message = rawMessage
+          ? translateErrorMessage(rawMessage, {
+              content: { upgradeRequired: strings.upgradeRequired },
+              errors: {},
+            } as unknown as TranslationStrings)
           : "";
         showInfoBox?.(message || strings.translateFailed || "Translation failed", "critical");
         return;
@@ -1278,7 +1288,7 @@ export function useProductSubResources({
     } finally {
       markSubResourceCompleted(resourceId, fieldId);
     }
-  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings.translateFailed]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings.translateFailed, strings.upgradeRequired]);
 
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);

@@ -78,4 +78,45 @@ describe("onCopyToLocalesFailed", () => {
     act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
     expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
   });
+
+  it("keeps the marker cleared when only SOME locales failed", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel", it: "Titel" }, "de");
+    });
+    act(() =>
+      result.current.onCopyToLocalesFailed("title", ["fr"], "Titel", {
+        itemUnchanged: true,
+        allLocalesFailed: false,
+      }),
+    );
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
+
+  it("does not restore the marker when the item changed meanwhile", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    act(() =>
+      result.current.onCopyToLocalesFailed("title", ["fr"], "Titel", {
+        itemUnchanged: false,
+        allLocalesFailed: true,
+      }),
+    );
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
+
+  it("forgets a cleared marker on item switch, so a later failure cannot resurrect it", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+      result.current.onItemSwitch();
+    });
+    act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
 });

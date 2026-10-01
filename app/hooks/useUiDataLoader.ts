@@ -177,7 +177,12 @@ export interface UseUiDataLoaderReturn {
   /** A "copy to all languages" save did NOT land for these locales: drop the
    *  value the copy wrote into the overlay for them, so the editor shows what
    *  Shopify holds again instead of a value that was never saved. */
-  onCopyToLocalesFailed: (translationKey: string, locales: string[], copiedValue: string) => void;
+  onCopyToLocalesFailed: (
+    translationKey: string,
+    locales: string[],
+    copiedValue: string,
+    opts?: { itemUnchanged?: boolean; allLocalesFailed?: boolean },
+  ) => void;
 
   /** When switching to a different item */
   onItemSwitch: () => void;
@@ -1018,10 +1023,23 @@ export function useUiDataLoader(
   );
 
   const onCopyToLocalesFailed = useCallback(
-    (translationKey: string, locales: string[], copiedValue: string) => {
-      // The copy cleared this key's "deleted" marker on the way in; it did not
-      // land, so the field is still deleted.
-      if (clearedDeletedByCopyRef.current.delete(translationKey) && locales.length > 0) {
+    (
+      translationKey: string,
+      locales: string[],
+      copiedValue: string,
+      opts?: { itemUnchanged?: boolean; allLocalesFailed?: boolean },
+    ) => {
+      // The copy cleared this key's "deleted" marker on the way in. The marker
+      // is per KEY, not per locale: it goes back only when the item is still
+      // the one the copy ran on AND no locale took the value (a partial copy
+      // did write a translation, so the field is no longer deleted).
+      const hadCleared = clearedDeletedByCopyRef.current.delete(translationKey);
+      if (
+        hadCleared &&
+        locales.length > 0 &&
+        opts?.itemUnchanged !== false &&
+        opts?.allLocalesFailed !== false
+      ) {
         deletedTranslationKeysRef.current.add(translationKey);
       }
       const overlay = localTranslationsRef.current[translationKey];
@@ -1043,6 +1061,7 @@ export function useUiDataLoader(
   const onItemSwitch = useCallback(() => {
     debugLog.transition("onItemSwitch: clearing all caches");
     deletedTranslationKeysRef.current.clear();
+    clearedDeletedByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 
@@ -1054,6 +1073,7 @@ export function useUiDataLoader(
     }
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
+    clearedDeletedByCopyRef.current.clear();
   }, []);
 
   /**
@@ -1092,6 +1112,7 @@ export function useUiDataLoader(
   const onBackgroundRetranslation = useCallback(() => {
     debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
     deletedTranslationKeysRef.current.clear();
+    clearedDeletedByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 
