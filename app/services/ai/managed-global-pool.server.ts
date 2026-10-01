@@ -22,6 +22,7 @@
  */
 
 import { logger } from "../../utils/logger.server";
+import { notifyOps } from "../ops-alert.server";
 import { currentAiUsagePeriod } from "./usage-meter.server";
 
 export type ManagedPool = "paid" | "taster";
@@ -186,6 +187,7 @@ export async function failoverBudgetExhausted(
       select: { failoverMicros: true },
     });
     const spent = rows.reduce((n, row) => n + Number(row.failoverMicros ?? 0), 0);
+    alertFailoverBudget(spent, limit, period);
     if (spent >= limit) {
       logger.error(
         `[ManagedAI] The global failover budget for ${period} is spent ` +
@@ -205,6 +207,26 @@ export async function failoverBudgetExhausted(
   }
 }
 
+/**
+ * Tell the operator as the failover budget fills — 50 %, 90 % and spent, once
+ * each per calendar month. Spent is the moment managed AI starts failing for
+ * every merchant whose default provider is down.
+ */
+function alertFailoverBudget(spent: number, limit: number, period: string): void {
+  const share = spent / limit;
+  const step = share >= 1 ? 100 : share >= 0.9 ? 90 : share >= 0.5 ? 50 : 0;
+  if (step === 0) return;
+  notifyOps(
+    `failover-budget:${period}:${step}`,
+    `${step === 100 ? "🚨" : "⚠️"} Enthaltene KI: Ausfall-Budget ${period} zu ${Math.round(share * 100)} % verbraucht ` +
+      `(${(spent / 1e6).toFixed(2)} von ${(limit / 1e6).toFixed(2)} EUR).` +
+      (step === 100
+        ? " Fällt das Hauptmodell jetzt aus, bekommen die Händler keine KI mehr."
+        : " Das Hauptmodell fällt offenbar öfter aus — Railway-Logs prüfen."),
+    { throttleMs: Number.POSITIVE_INFINITY },
+  );
+}
+
 /** Warn once per process per pool+period when a pool crosses its alert line. */
 const alerted = new Set<string>();
 export const POOL_ALERT_THRESHOLD = 0.5;
@@ -214,6 +236,15 @@ export function alertIfPoolLow(status: GlobalPoolStatus): void {
   const share = status.spentMicros / status.limitMicros;
   if (share < POOL_ALERT_THRESHOLD) return;
   const key = `${status.pool}:${status.period}`;
+  // Asked on EVERY crossing, not behind the log-once set: its own throttle
+  // sends it once, and hands the slot back when the post fails.
+  notifyOps(
+    `pool:${key}`,
+    `⚠️ Enthaltene KI: Gesamtbudget "${status.pool}" ${status.period} zu ${Math.round(share * 100)} % verbraucht ` +
+      `(${(status.spentMicros / 1e6).toFixed(2)} von ${(status.limitMicros / 1e6).toFixed(2)} EUR). ` +
+      `Bei 100 % antwortet die enthaltene KI für alle Händler in diesem Topf bis Monatsende nicht mehr.`,
+    { throttleMs: Number.POSITIVE_INFINITY },
+  );
   if (alerted.has(key)) return;
   alerted.add(key);
   logger.error(

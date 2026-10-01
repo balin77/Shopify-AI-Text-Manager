@@ -9,6 +9,7 @@ import { classifyFailover, statusOf } from '../../app/services/ai/managed-failov
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
 import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
+import { notifyOps } from '../../app/services/ops-alert.server';
 import { DEFAULT_MODELS, resolveModelId } from '../../app/config/ai-models.config';
 
 /** Retired model ids already logged by this process — one warning each, not one per call. */
@@ -3111,6 +3112,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       to: delegate.provider,
       reason,
     });
+    notifyOps(
+      `failover:${this.provider}`,
+      `⚠️ Enthaltene KI: Anfragen werden an den Ausweichanbieter ${delegate.provider} statt an ${this.provider} geschickt ` +
+        `(Grund: ${reason}). Das kostet ein Vielfaches und zählt gegen das Ausfall-Budget.`,
+    );
     if (served) served.provider = delegate.provider;
 
     // The fallback's breaker is recorded here, success AND health failure, or

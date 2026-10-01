@@ -25,7 +25,10 @@
  */
 
 import { logger } from "../../utils/logger.server";
+import { notifyOps } from "../ops-alert.server";
+import { isDevAppBuild, managedDevTestingEnabled } from "../dev-plan-override.server";
 import {
+  isManagedAiEnabled,
   managedAiAvailable,
   readManagedCredential,
   PROVIDER_KEY_FIELD,
@@ -81,11 +84,32 @@ async function probe(role: ManagedRole): Promise<SmokeResult | null> {
   }
 }
 
+/** Which roles failed on the previous run — so a recovery can be reported. */
+const failedLastRun = new Set<ManagedRole>();
+
 /**
  * Run the smoke test. Never throws, never blocks, and returns what it found so
  * a caller (or a test) can assert on it.
  */
 export async function runManagedAiSmokeTest(): Promise<SmokeResult[]> {
+  // Switched on, allowed in this build, but no usable DEFAULT credential
+  // (missing, unknown/unpriced/unconsented provider): asked BEFORE the gate
+  // below, because `managedAiAvailable` answers false for exactly this case
+  // and the most useful misconfiguration alert would otherwise never fire.
+  if (
+    isManagedAiEnabled() &&
+    !(isDevAppBuild() && !managedDevTestingEnabled()) &&
+    readManagedCredential("default") === null
+  ) {
+    logger.error(
+      "[ManagedAI] MANAGED_AI_ENABLED is true but no usable default credential is configured — every managed call will refuse.",
+    );
+    notifyOps(
+      "smoke:default:missing",
+      "🚨 Enthaltene KI: MANAGED_AI_ENABLED ist an, aber MANAGED_AI_PROVIDER / _MODEL / _API_KEY fehlen oder sind ungültig. Jeder Aufruf wird abgelehnt.",
+    );
+    return [];
+  }
   // `managedAiAvailable`, not the bare flag: it also refuses the dev/custom-
   // app build, which must never spend the operator key (§7a) — not even once
   // per boot for a probe.
@@ -96,6 +120,7 @@ export async function runManagedAiSmokeTest(): Promise<SmokeResult[]> {
     const result = await probe(role);
     if (!result) {
       if (role === "default") {
+        // Unreachable after the check above; kept as the log of last resort.
         logger.error(
           "[ManagedAI] MANAGED_AI_ENABLED is true but no default credential is configured — every managed call will refuse.",
         );
@@ -110,7 +135,30 @@ export async function runManagedAiSmokeTest(): Promise<SmokeResult[]> {
 
     if (result.ok) {
       logger.info(`[ManagedAI] Smoke test OK: ${result.role} ${result.provider}/${result.model}`);
-    } else if (result.role === "default") {
+      if (failedLastRun.delete(result.role)) {
+        notifyOps(
+          `smoke:recovered:${result.role}`,
+          `✅ Enthaltene KI: ${roleLabel(result.role)} (${result.provider}/${result.model}) antwortet wieder.`,
+          { throttleMs: 0 },
+        );
+      }
+    } else {
+      failedLastRun.add(result.role);
+      notifyOps(
+        `smoke:${result.role}`,
+        result.role === "default"
+          ? `🚨 Enthaltene KI: Das HAUPTMODELL ${result.provider}/${result.model} antwortet nicht.\n` +
+              `Fehler: ${result.error}\n` +
+              `Händler auf der enthaltenen KI laufen jetzt über den teureren Ausweichanbieter (solange dessen Budget reicht). ` +
+              `Ist das Modell abgeschaltet, in Railway MANAGED_AI_MODEL auf den Nachfolger setzen und neu deployen.`
+          : `⚠️ Enthaltene KI: Der AUSWEICHANBIETER ${result.provider}/${result.model} antwortet nicht.\n` +
+              `Fehler: ${result.error}\n` +
+              `Das Hauptmodell läuft noch, aber ein Ausfall davon wäre jetzt ein Ausfall der enthaltenen KI. ` +
+              `In Railway MANAGED_AI_FALLBACK_MODEL bzw. den Schlüssel prüfen.`,
+      );
+    }
+    if (result.ok) continue;
+    if (result.role === "default") {
       logger.error(
         `[ManagedAI] Smoke test FAILED for the default credential (${result.provider}/${result.model}): ${result.error}. ` +
           `Managed AI is configured but does not work — every paying merchant on it fails 100% of the time. ` +
@@ -124,4 +172,28 @@ export async function runManagedAiSmokeTest(): Promise<SmokeResult[]> {
     }
   }
   return results;
+}
+
+function roleLabel(role: ManagedRole): string {
+  return role === "default" ? "Das Hauptmodell" : "Der Ausweichanbieter";
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+let scheduled = false;
+
+/**
+ * Run the smoke test now and then once a day, for the life of the process.
+ * A model can be retired between two deploys; a check that only runs at boot
+ * would learn of it at the next deploy, after the failover pool had paid for
+ * every call in between. Idempotent; the timer does not keep the process
+ * alive.
+ */
+export function startManagedAiSmokeSchedule(): void {
+  if (scheduled) return;
+  scheduled = true;
+  void runManagedAiSmokeTest().catch(() => undefined);
+  const timer = setInterval(() => {
+    void runManagedAiSmokeTest().catch(() => undefined);
+  }, DAY_MS);
+  timer.unref?.();
 }
