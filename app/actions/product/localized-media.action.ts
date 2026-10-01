@@ -50,8 +50,11 @@ export async function handleLocalizedMediaAction(
   if (ctx.contentConfig.resourceType !== "Product") {
     return json({ ok: false, code: "badRequest" }, { status: 400 });
   }
+  // The plan gates only NEW replacements. Replacements already written keep
+  // serving on the storefront after a downgrade, so Load and Remove must stay
+  // possible on every plan or the merchant could never take them down again.
   const plan = (ctx.aiSettings?.subscriptionPlan || "free") as Plan;
-  if (!canAccessVariantImageManagerInEnv(plan, !isProductionLocked())) {
+  if (action === "localizedMediaSet" && !canAccessVariantImageManagerInEnv(plan, !isProductionLocked())) {
     return json({ ok: false, code: "gated", success: false, error: "gated", actionType: action }, { status: 403 });
   }
 
@@ -62,7 +65,9 @@ export async function handleLocalizedMediaAction(
   if (action === "localizedMediaLoad") {
     const result = await readProductLocalizedMedia(graphql, productId);
     if (!result.ok) return json(result, { status: result.code === "notFound" ? 404 : 502 });
-    return json({ ok: true, entries: result.entries, media: result.media });
+    // `foreignValue`: the metafield holds data this app did not write, so
+    // nothing in it can be listed or changed here; the client says so.
+    return json({ ok: true, entries: result.entries, media: result.media, foreignValue: result.foreignValue });
   }
 
   const sourceMediaId = getFormString(formData, "sourceMediaId");
@@ -84,8 +89,14 @@ export async function handleLocalizedMediaAction(
   // the service reads as "cannot confirm" and refuses.
   const [shopLocales, marketsResult] = await Promise.all([
     getCachedShopLocales(ctx.admin, ctx.session.shop),
-    new ShopifyContentService(ctx.admin as never).loadMarkets(),
+    // Only a market-scoped write needs the market list.
+    marketId ? new ShopifyContentService(ctx.admin as never).loadMarkets() : Promise.resolve({ markets: [] }),
   ]);
+  // `loadMarkets` answers [] on a failed lookup too: a market was named and
+  // none came back, so say "could not read", never "not an active market".
+  if (marketId && marketsResult.markets.length === 0) {
+    return json({ ok: false, code: "readFailed" }, { status: 502 });
+  }
   const result = await setLocalizedMedia({
     graphql,
     productId,

@@ -269,10 +269,17 @@ try {
 // and routine copy/save clicks must not be throttled. The /api/ai route has its
 // own strict 30/min AI limit for direct AI API calls.
 app.use((req, res, next) => {
-  const contentType = req.headers['content-type'] || '';
+  // The editors' JSON door is excluded from the general /api limiter below,
+  // so it is limited HERE whatever its Content-Type says (a request with an
+  // odd or missing one would otherwise hit no limiter at all).
+  if (CONTENT_EDITOR_API_PATHS.includes(req.path)) {
+    return contentActionRateLimit(req, res, next);
+  }
+  // Media types are case-insensitive ("Multipart/Form-Data" is valid).
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
   if (contentType.includes('application/x-www-form-urlencoded') ||
       contentType.includes('multipart/form-data')) {
-    if (isContentPagePath(req.path) || CONTENT_EDITOR_API_PATHS.includes(req.path)) {
+    if (isContentPagePath(req.path)) {
       return contentActionRateLimit(req, res, next);
     }
   }

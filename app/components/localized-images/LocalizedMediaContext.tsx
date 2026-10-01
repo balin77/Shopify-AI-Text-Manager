@@ -5,9 +5,10 @@
  *
  * Mounted by the product page only, around the editor: other content types
  * have no provider, so `useLocalizedMediaState()` answers null there and the
- * galleries render nothing of it. Gated on the PLAN by the page (never on the
- * image manager's on/off), because replacements keep serving on the storefront
- * when the manager is switched off.
+ * galleries render nothing of it. Never gated on the image manager's on/off, nor
+ * on the PLAN (a plan below the feature gets a remove-only view): replacements
+ * keep serving on the storefront when the manager is switched off or the plan
+ * is downgraded, so they must stay removable.
  */
 import { createContext, useContext, useEffect, type MutableRefObject, type ReactNode } from "react";
 import type { MarketInfo, ShopLocale } from "../../types/content-editor.types";
@@ -30,6 +31,7 @@ export function LocalizedMediaProvider({
   embedActivationUrl,
   reloadKey,
   enabled,
+  canReplace,
   draftsPendingRef,
   children,
 }: {
@@ -40,8 +42,10 @@ export function LocalizedMediaProvider({
   selectedMarketId?: string;
   embedActivationUrl?: string | null;
   reloadKey?: string;
-  /** The plan gate, and a product being selected. */
+  /** A product being selected. */
   enabled: boolean;
+  /** The plan allows new replacements (false = remove-only view). */
+  canReplace?: boolean;
   /** Mirrors "unsaved drafts exist" for the page's item-switch guard (the drafts live here, below the page's hooks). */
   draftsPendingRef?: MutableRefObject<boolean>;
   children: ReactNode;
@@ -53,6 +57,7 @@ export function LocalizedMediaProvider({
     currentLanguage,
     selectedMarketId,
     enabled,
+    canReplace,
     reloadKey,
     embedActivationUrl,
   });

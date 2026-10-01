@@ -15,11 +15,12 @@
  * In the PRIMARY locale it is a preview: the original is chosen in Shopify's
  * theme editor, which is where every theme setting's primary value lives.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Banner, BlockStack, Button, InlineStack, Text } from "@shopify/polaris";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
 import { FieldLabel } from "../unified/FieldChrome";
 import { useI18n } from "../../contexts/I18nContext";
+import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { resolvePickedImage } from "./resolve-picked-image";
 import {
   filenameFromCdnUrl,
@@ -78,11 +79,18 @@ export function ThemeImageField({
   readOnly,
   currentLanguage,
 }: ThemeImageFieldProps) {
-  const { t } = useI18n();
+  const { t, locale: appLocale } = useI18n();
   const tx = t.localizedImages;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The language showing NOW: a pick that resolves after a switch belongs to
+  // the language it was made in, so it is dropped rather than written into the
+  // one on screen. The error banner is per language as well.
+  const languageRef = useRef(currentLanguage);
+  languageRef.current = currentLanguage;
+  useEffect(() => { setError(null); }, [currentLanguage]);
 
   // A value equal to the primary reference is the original shining through
   // (whether the editor resolved a fallback or a translation repeats it).
@@ -91,11 +99,13 @@ export function ThemeImageField({
   const url = useImageUrl(shownFilename);
 
   const handleAdd = useCallback(async (items: AddedItem[]) => {
+    const startedIn = languageRef.current;
     setPickerOpen(false);
     setError(null);
     setBusy(true);
     const picked = await resolvePickedImage(items.find((i) => i.source !== "external_url") ?? items[0]);
     setBusy(false);
+    if (languageRef.current !== startedIn) return;
     if ("error" in picked) {
       const known = picked.code ? (tx.errors as Record<string, string>)[picked.code] : undefined;
       setError(known ?? tx.fileFailed.replace("{error}", picked.error));
@@ -174,7 +184,7 @@ export function ThemeImageField({
           uploadCommitMode="queue"
           initialKind="image"
           imagesOnly
-          title={tx.pickerTitle.replace("{locale}", currentLanguage ?? "")}
+          title={tx.pickerTitle.replace("{locale}", currentLanguage ? getLocalizedLanguageName(currentLanguage, appLocale) : "")}
         />
       )}
     </BlockStack>

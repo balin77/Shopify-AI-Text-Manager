@@ -21,6 +21,16 @@ export interface StagedUploadTarget {
   parameters?: Array<{ name: string; value: string }> | null;
 }
 
+/**
+ * The whole transfer's budget: two minutes plus a second per 100 KB (a slow
+ * ~100 KB/s uplink still finishes), at most 30 minutes. Without a timeout a
+ * stalled connection leaves the upload "uploading" for ever.
+ */
+export function uploadTimeoutMs(sizeBytes: number): number {
+  const ms = 120_000 + Math.ceil(Math.max(0, sizeBytes) / 100_000) * 1000;
+  return Math.min(ms, 30 * 60_000);
+}
+
 /** Rejects with the HTTP status in the message on a non-2xx answer, and on a network error, abort or timeout. */
 export function uploadToStagedTarget(
   target: StagedUploadTarget,
@@ -51,9 +61,11 @@ export function uploadToStagedTarget(
       if (filename) form.append("file", file, filename);
       else form.append("file", file);
       xhr.open("POST", target.url);
+      xhr.timeout = uploadTimeoutMs(file.size);
       xhr.send(form);
     } else {
       xhr.open("PUT", target.url);
+      xhr.timeout = uploadTimeoutMs(file.size);
       xhr.setRequestHeader("Content-Type", file.type);
       xhr.send(file);
     }
