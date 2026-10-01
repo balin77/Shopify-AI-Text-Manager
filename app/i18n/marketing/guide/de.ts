@@ -498,19 +498,19 @@ export const guideDe: GuideCopy = {
         {
           heading: "Produktbilder",
           paragraphs: [
-            "Auf der Produktseite finden Sie unter den Produktbildern die Karte „Bilder und Videos je Sprache“ — auch wenn der Bild-Manager ausgeschaltet ist. Ersatzbilder wählen Sie aus Ihren Dateien oder laden sie neu hoch; angeboten wird dabei nur, was das Original ersetzen kann. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
-            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images and videos per language“ (die Karte verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
+            "Ein Ersatzbild legen Sie direkt in der Bildergalerie des Produkts fest — auch wenn der Bild-Manager ausgeschaltet ist. In der Hauptsprache gibt es dafür nichts Besonderes. Schalten Sie auf eine Fremdsprache (und, wenn Sie wollen, auf einen Markt) um, wählen Sie ein Bild in der Galerie an und drücken Sie unter der Galerie auf „Ersatzbild wählen oder hochladen“. Das Ersatzbild wählen Sie aus Ihren Dateien oder laden es neu hoch; angeboten wird dabei nur, was das Original ersetzen kann. Die Änderung wird sofort gespeichert. Mit „Ändern“ wählen Sie ein anderes Ersatzbild, mit „Entfernen“ gilt wieder das Original. In der Galerie zeigen die Bilder weiterhin das Original; ein Bild, das in dieser Sprache ersetzt ist, erkennen Sie an dem kleinen runden Symbol in seiner linken oberen Ecke. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
+            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images and videos per language“ (der Hinweis unter der Galerie verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
           ],
           list: [
             "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
-            "Ändern Sie später das Originalbild, weist die Karte darauf hin, damit Sie prüfen können, ob das Ersatzbild noch passt.",
-            "Wird ein Originalbild aus dem Produkt gelöscht, listet die Karte seine Ersatzbilder separat auf, damit Sie sie entfernen können. Das gilt ebenso für Ersatzbilder zu einem Markt oder einer Sprache, die es im Shop nicht mehr gibt oder die nicht mehr aktiv sind.",
+            "Ändern Sie später das Originalbild, weist der Bereich unter der Galerie darauf hin, damit Sie prüfen können, ob das Ersatzbild noch passt.",
+            "Wird ein Originalbild aus dem Produkt gelöscht, listet die Galerie seine Ersatzbilder separat auf, damit Sie sie entfernen können. Das gilt ebenso für Ersatzbilder zu einem Markt oder einer Sprache, die es im Shop nicht mehr gibt oder die nicht mehr aktiv sind.",
           ],
         },
         {
           heading: "Videos",
           paragraphs: [
-            "In derselben Karte ersetzen Sie auch die Videos eines Produkts pro Sprache und Markt — zum Beispiel durch eine vertonte Fassung. Ein in Shopify hochgeladenes Video ersetzen Sie durch ein anderes hochgeladenes Video (aus Ihren Dateien oder neu hochgeladen), ein YouTube- oder Vimeo-Video durch einen anderen YouTube- oder Vimeo-Link. Ein Bild lässt sich nicht durch ein Video ersetzen und umgekehrt; 3D-Modelle werden nicht ersetzt.",
+            "Auf demselben Weg ersetzen Sie auch die Videos eines Produkts pro Sprache und Markt — zum Beispiel durch eine vertonte Fassung. Ein in Shopify hochgeladenes Video ersetzen Sie durch ein anderes hochgeladenes Video (aus Ihren Dateien oder neu hochgeladen), ein YouTube- oder Vimeo-Video durch einen anderen YouTube- oder Vimeo-Link. Ein Bild lässt sich nicht durch ein Video ersetzen und umgekehrt; 3D-Modelle werden nicht ersetzt.",
             "Neu hochgeladene Videos verarbeitet Shopify einige Minuten lang. Erscheint ein Hinweis dazu, wählen Sie das Video kurz danach aus Ihren Dateien.",
             "Videos in den Theme-Einstellungen (zum Beispiel ein Video-Abschnitt auf der Startseite) tragen Sie pro Sprache als anderen Link ein; die KI verändert sie nicht.",
           ],
