@@ -63,6 +63,14 @@ export interface SubResourceState {
   /** Incremented on every landed save. The variants card drops its cached
    *  variant counts on it — a save that added a value moved the matrix. */
   savedNonce: number;
+  /**
+   * Options whose primary text may not be translated right now: the merchant
+   * changed the option (a renamed name or value, a value added or removed) and
+   * has not saved, or saved and the item has not been reloaded yet. The
+   * translate request sends the CACHED text as its source, so translating in
+   * either window translates the text the merchant just replaced.
+   */
+  optionTranslationBlockedIds: Set<string>;
   /** Primary locale metafield edits keyed by metafield GID → value */
   primaryMetafieldEdits: Record<string, string>;
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
@@ -281,6 +289,9 @@ export function useProductSubResources({
   // Primary locale editing state
   const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, { name: string; values: string[] }>>({});
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
+  /** True from a landed save of the options until the reload that follows it
+   *  has finished — see `optionTranslationBlockedIds`. */
+  const [awaitingOptionReload, setAwaitingOptionReload] = useState(false);
 
   // Shared state
   // translatingFieldIds is now derived from the global AI operations store
@@ -769,6 +780,9 @@ export function useProductSubResources({
         // Trigger revalidation to reload fresh data from DB/Shopify
         // This ensures new option value GIDs and updated values are loaded
         if (revalidator && revalidator.state === "idle") {
+          // Until it lands, the item still carries the text from BEFORE the
+          // save, and that is what a translate would send as its source.
+          setAwaitingOptionReload(true);
           revalidator.revalidate();
         }
       }
@@ -1033,6 +1047,52 @@ export function useProductSubResources({
     setHasChanges(true);
   }, []);
 
+  // The reload a landed save started has finished: whatever it brought back is
+  // the text Shopify holds now, so the options may be translated again. Keyed
+  // on the TRANSITION, because the save sets the flag while the revalidator is
+  // still idle.
+  const revalidatorState = revalidator?.state ?? "idle";
+  const previousRevalidatorStateRef = useRef(revalidatorState);
+  useEffect(() => {
+    const previous = previousRevalidatorStateRef.current;
+    previousRevalidatorStateRef.current = revalidatorState;
+    if (previous !== "idle" && revalidatorState === "idle") {
+      setAwaitingOptionReload(false);
+    }
+  }, [revalidatorState]);
+
+  /**
+   * See `SubResourceState.optionTranslationBlockedIds`. Every translate entry
+   * point builds its source from `selectedItem` — the text as it was LOADED —
+   * and the server translates exactly what it is sent, so an option that does
+   * not read the same on screen as in the cache must not be translated. Any
+   * pending change counts, structural ones included: a value added but not
+   * saved has no id and would be left out, one removed would be translated.
+   */
+  const optionTranslationBlockedIds = useMemo((): Set<string> => {
+    const blocked = new Set<string>();
+    for (const opt of selectedItem?.options || []) {
+      if (awaitingOptionReload) {
+        blocked.add(opt.id);
+        continue;
+      }
+      const edit = primaryOptionEdits[opt.id];
+      const textChanged = !!edit && (
+        edit.name !== opt.name ||
+        opt.values.some((v, i) => (edit.values[i] ?? v.name) !== v.name)
+      );
+      if (
+        textChanged ||
+        (optionValuesToAdd[opt.id]?.length ?? 0) > 0 ||
+        (optionLinkedValuesToAdd[opt.id]?.length ?? 0) > 0 ||
+        (optionValuesToDelete[opt.id]?.length ?? 0) > 0
+      ) {
+        blocked.add(opt.id);
+      }
+    }
+    return blocked;
+  }, [selectedItem, awaitingOptionReload, primaryOptionEdits, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete]);
+
   const buildSourceData = useCallback((filterOptionId?: string, filterMetafieldId?: string) => {
     if (!selectedItem) return [];
 
@@ -1040,6 +1100,9 @@ export function useProductSubResources({
 
     for (const opt of selectedItem.options || []) {
       if (filterOptionId && opt.id !== filterOptionId) continue;
+      // Its cached text is not the text on screen — see the set above. A
+      // translate-all leaves it out rather than translating the old wording.
+      if (optionTranslationBlockedIds.has(opt.id)) continue;
       sourceData.push({
         resourceId: opt.id,
         resourceType: "ProductOption",
@@ -1075,7 +1138,7 @@ export function useProductSubResources({
     }
 
     return sourceData;
-  }, [selectedItem]);
+  }, [selectedItem, optionTranslationBlockedIds]);
 
   // Merge a translations map ({ resourceId: { key: value } }) into option/metafield state.
   const applyTranslationsToState = useCallback((
@@ -1183,7 +1246,7 @@ export function useProductSubResources({
   }, [buildSourceData, selectedItem?.id, runIndividualTranslate]);
 
   const translateOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
-    if (!selectedItem) return;
+    if (!selectedItem || optionTranslationBlockedIds.has(optionId)) return;
 
     const option = selectedItem.options?.find(o => o.id === optionId);
     if (!option) return;
@@ -1217,7 +1280,7 @@ export function useProductSubResources({
     // Own request lifecycle (not the shared fetcher) so concurrent translates
     // each clear their own spinner. See runIndividualTranslate.
     void runIndividualTranslate(fieldId, sourceData);
-  }, [selectedItem, runIndividualTranslate]);
+  }, [selectedItem, runIndividualTranslate, optionTranslationBlockedIds]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
     if (isPrimaryLocale || !selectedItem) return;
@@ -1667,7 +1730,8 @@ export function useProductSubResources({
   }, [selectedItem, currentLanguage, selectedMarketId, fetcher, handleOptionNameChange, handleOptionValueChange]);
 
   const copyOptionFieldToAllLocales = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
-    if (!selectedItem) return;
+    // Copies the CACHED primary text, so the same rule as translating holds.
+    if (!selectedItem || optionTranslationBlockedIds.has(optionId)) return;
     const option = selectedItem.options?.find(o => o.id === optionId);
     if (!option) return;
 
@@ -1722,7 +1786,7 @@ export function useProductSubResources({
         revalidator.revalidate();
       }
     });
-  }, [selectedItem, primaryLocale, enabledLanguages, revalidator]);
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
 
   return {
     state: {
@@ -1736,6 +1800,7 @@ export function useProductSubResources({
       optionsToDelete,
       optionValueOrder,
       savedNonce,
+      optionTranslationBlockedIds,
       primaryMetafieldEdits,
       translatingFieldIds,
       fallbackResourceIds,

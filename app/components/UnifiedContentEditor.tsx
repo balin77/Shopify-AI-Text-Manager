@@ -2336,6 +2336,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onReorderOptionValues={subResourceHandlers.handleReorderOptionValues}
                       translatingFieldIds={subResourceState.translatingFieldIds}
                       missingTranslationIds={optionMissingTranslationIds}
+                      translationBlockedIds={subResourceState.optionTranslationBlockedIds}
                       t={{
                         title: t.products?.variantsTitle || t.products?.productOptions,
                         titleNoVariants: t.products?.variantsTitleNoVariants,
@@ -2343,6 +2344,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         editInstructionPrimary: t.products?.optionsEditInstructionPrimary,
                         translateButton: t.products?.translateEntireOption,
                         translateFieldButton: t.products?.translateFieldButton,
+                        translateSaveFirst: t.products?.optionTranslateSaveFirst,
                         linkedOptionHint: t.products?.linkedOptionHint,
                         linkedOptionHintBefore: t.products?.linkedOptionHintBefore,
                         linkedOptionHintAfter: t.products?.linkedOptionHintAfter,

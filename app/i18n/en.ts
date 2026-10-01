@@ -130,6 +130,7 @@ export const en: Translation = {
     // Product option header. Keep short — on a phone the button shares its row
     // with "Option N" and the metaobject badge.
     translateEntireOption: "Translate option",
+    optionTranslateSaveFirst: "Save first — otherwise the previous text would be translated.",
     translateMetafield: "Translate",
     linkedOptionHint: "The values of this option are metaobjects and can be translated under Metaobjects.",
     linkedOptionHintBefore: "The values of this option are metaobjects and can be translated under ",

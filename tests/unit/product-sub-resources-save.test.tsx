@@ -11,7 +11,7 @@
  * So these tests do not inspect state; they read the submitted FormData.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
 const submit = vi.fn();
@@ -414,5 +414,93 @@ describe("an option deleted in the same save", () => {
 
     expect(JSON.parse(submitted().optionsChanges)[OPTION]).toBeUndefined();
     expect(JSON.parse(submitted().optionsToDelete)).toEqual([OPTION]);
+  });
+});
+
+describe("translating an option never sends the text the merchant replaced", () => {
+  // The translate request carries the CACHED text as its source and the server
+  // translates exactly that, so every window in which the screen and the
+  // cache disagree has to be closed — before the save, and after it until the
+  // reload has landed.
+  const revalidator = { state: "idle", revalidate: vi.fn() };
+  const fetchSpy = vi.fn(async () => ({ json: async () => ({ success: true }) }));
+
+  function setupWithReload() {
+    return renderHook(
+      ({ current, reload }: { current: unknown; reload: string }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          revalidator: { ...revalidator, state: reload },
+          enabledLanguages: ["de", "en"],
+        } as never),
+      { initialProps: { current: selectedItem, reload: "idle" } },
+    );
+  }
+
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    revalidator.revalidate.mockClear();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("translates an untouched option", () => {
+    const { result } = setupWithReload();
+    expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
+    act(() => result.current.handlers.translateOption(OPTION));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses while a rename is unsaved — name or value", () => {
+    const { result } = setupWithReload();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+    act(() => result.current.handlers.handlePrimaryOptionValuesChange(SECOND, ["M"]));
+
+    expect([...result.current.state.optionTranslationBlockedIds].sort()).toEqual([OPTION, SECOND].sort());
+    act(() => result.current.handlers.translateOption(OPTION));
+    act(() => result.current.handlers.translateOptionField(SECOND, "value", 0));
+    act(() => result.current.handlers.copyOptionFieldToAllLocales(OPTION, "name"));
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // The third option was not touched and stays translatable.
+    act(() => result.current.handlers.translateOption(THIRD));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not count a rename typed back to the saved text", () => {
+    const { result } = setupWithReload();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Colour"));
+    expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(false);
+  });
+
+  it("refuses while a value is added or removed and not saved", () => {
+    const { result } = setupWithReload();
+    act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
+    act(() => result.current.handlers.handleRemoveOptionValue(SECOND, "gid://shopify/ProductOptionValue/2"));
+    expect([...result.current.state.optionTranslationBlockedIds].sort()).toEqual([OPTION, SECOND].sort());
+  });
+
+  it("stays refused after the save until the reload has landed", () => {
+    const { result, rerender } = setupWithReload();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+    act(() => result.current.handlers.saveSubResources());
+
+    // The save lands: the edits are cleared, but the item still says "Colour".
+    fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+    rerender({ current: selectedItem, reload: "idle" });
+    expect(revalidator.revalidate).toHaveBeenCalled();
+    expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
+    act(() => result.current.handlers.translateOption(OPTION));
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // The reload runs and finishes with the saved text.
+    rerender({ current: selectedItem, reload: "loading" });
+    expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
+    rerender({ current: selectedItem, reload: "idle" });
+    expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
   });
 });

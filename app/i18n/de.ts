@@ -125,6 +125,7 @@ export const de = {
     // Kopfzeile einer Produktoption. Kurz halten — auf dem Handy teilt sich der
     // Button die Zeile mit "Option N" und dem Metaobjekt-Badge.
     translateEntireOption: "Option übersetzen",
+    optionTranslateSaveFirst: "Erst speichern – sonst würde der bisherige Text übersetzt.",
     translateMetafield: "Übersetzen",
     linkedOptionHint: "Die Werte dieser Option sind Metaobjekte und können unter Metaobjekte übersetzt werden.",
     linkedOptionHintBefore: "Die Werte dieser Option sind Metaobjekte und können unter ",

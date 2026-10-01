@@ -1005,6 +1005,12 @@ export const guideEn: GuideCopy = {
           ],
         },
         {
+          heading: "Translating options",
+          paragraphs: [
+            "Below every option in the variants section — even when it is collapsed — “Translate option” translates the option name and its values into every language. An option with a blue background is still missing a translation in at least one language. If you changed an option, save first: the button stays locked until the change is saved, so the old text is never translated.",
+          ],
+        },
+        {
           heading: "Visibility",
           paragraphs: [
             "An active product is not automatically visible: it also has to be published to a sales channel. The app shows in which channels, regions and B2B catalogues a product appears.",

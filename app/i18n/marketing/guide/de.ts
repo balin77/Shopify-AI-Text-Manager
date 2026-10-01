@@ -1018,6 +1018,12 @@ export const guideDe: GuideCopy = {
           ],
         },
         {
+          heading: "Optionen übersetzen",
+          paragraphs: [
+            "Unter jeder Option im Varianten-Bereich — auch im zugeklappten Zustand — übersetzt „Option übersetzen“ den Optionsnamen und seine Werte in alle Sprachen. Ist eine Option blau unterlegt, fehlt ihr in mindestens einer Sprache noch eine Übersetzung. Haben Sie eine Option geändert, speichern Sie zuerst: Bis die Änderung gespeichert ist, bleibt der Button gesperrt, damit nicht der alte Text übersetzt wird.",
+          ],
+        },
+        {
           heading: "Sichtbarkeit",
           paragraphs: [
             "Ein aktives Produkt ist nicht automatisch sichtbar: Es muss auch in einem Vertriebskanal veröffentlicht sein. Die App zeigt, in welchen Kanälen, Regionen und B2B-Katalogen ein Produkt erscheint.",

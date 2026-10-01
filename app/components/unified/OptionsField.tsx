@@ -128,6 +128,10 @@ interface OptionsFieldProps {
    *  Only used in primary locale view to show blue highlight. */
   missingTranslationIds?: Set<string>;
 
+  /** Options whose translate button is locked: their text on screen is not
+   *  the saved text yet, and the translation would use the old one. */
+  translationBlockedIds?: Set<string>;
+
   /** Translation strings */
   t?: {
     title?: string;
@@ -143,6 +147,8 @@ interface OptionsFieldProps {
      *  Not shown for metaobject-linked options — see the header comment. */
     translateButton?: string;
     translateFieldButton?: string;
+    /** Tooltip on a translate button locked by unsaved option changes. */
+    translateSaveFirst?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
     linkedOptionHintBefore?: string;
@@ -220,6 +226,7 @@ export function OptionsField({
   onReorderOptionValues,
   translatingFieldIds = new Set(),
   missingTranslationIds,
+  translationBlockedIds,
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
@@ -283,6 +290,8 @@ export function OptionsField({
         onOpenMetaobjects={navigateToMetaobjects}
         onTranslate={onTranslate}
         translatingFieldIds={translatingFieldIds}
+        missingTranslationIds={missingTranslationIds}
+        translationBlockedIds={translationBlockedIds}
         savedNonce={savedNonce}
         footer={footer}
         t={t as Record<string, string | undefined>}

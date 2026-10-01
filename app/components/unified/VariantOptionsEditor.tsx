@@ -121,6 +121,7 @@ import {
   type OptionValueSwatch,
 } from "../../services/product-option-swatch.shared";
 import type { OptionData } from "./OptionsField";
+import "../../styles/AIEditableField.css";
 
 /**
  * The colour chip in front of a value.
@@ -335,6 +336,12 @@ export interface VariantOptionsEditorProps {
   onOpenMetaobjects?: (option: OptionData) => void;
   onTranslate?: (optionId: string) => void;
   translatingFieldIds?: Set<string>;
+  /** Option and option-value GIDs with a translation missing in at least one
+   *  foreign locale — tinted blue, like every other primary field. */
+  missingTranslationIds?: Set<string>;
+  /** Options whose translate button is locked because their text on screen is
+   *  not the saved text yet — see `SubResourceState.optionTranslationBlockedIds`. */
+  translationBlockedIds?: Set<string>;
   /** Bumped whenever a save lands. The variant counts are re-fetched: a save
    *  that added a value multiplied the matrix, and the next delete dialog must
    *  not name the number from before it. */
@@ -376,6 +383,8 @@ export function VariantOptionsEditor({
   onOpenMetaobjects,
   onTranslate,
   translatingFieldIds = new Set(),
+  missingTranslationIds,
+  translationBlockedIds,
   savedNonce = 0,
   footer,
   t = {},
@@ -546,6 +555,46 @@ export function VariantOptionsEditor({
     setValueOrder({});
     setChoices({});
   }, [savedNonce]);
+
+  /** Whether the option's name or any of its values lacks a translation. */
+  const optionMissesTranslation = (option: OptionData) =>
+    !!missingTranslationIds &&
+    (missingTranslationIds.has(option.id) || option.values.some((v) => !!v.id && missingTranslationIds.has(v.id)));
+
+  /**
+   * "Translate into every language", under the option's values — open or
+   * closed, so translating never requires opening the editor. A linked
+   * option's values live in the metaobjects, so for it the request carries the
+   * name alone. Locked while the option's text is unsaved (or saved and not
+   * reloaded yet): the request would carry the OLD text as its source.
+   */
+  const renderTranslateRow = (option: OptionData) => {
+    if (!onTranslate) return null;
+    const blocked = !!translationBlockedIds?.has(option.id);
+    const hint = singleLocaleHint ?? (blocked ? t.translateSaveFirst || "Save first" : undefined);
+    return (
+      // A click here must not open (or close) the card it sits in.
+      <div onClick={(event) => event.stopPropagation()}>
+        <InlineStack align="end">
+          <DisabledActionTooltip hint={hint}>
+            <Button
+              size="slim"
+              onClick={() => onTranslate(option.id)}
+              loading={translatingFieldIds.has(`${option.id}:entire`)}
+              disabled={!!hint}
+            >
+              🌍 {t.translateButton || "Translate option"}
+            </Button>
+          </DisabledActionTooltip>
+        </InlineStack>
+      </div>
+    );
+  };
+
+  /** The blue "a translation is missing" tint on a primary text field. Only a
+   *  SAVED field with text can be missing one: a pending value has no GID. */
+  const missingClass = (id: string | undefined, text: string) =>
+    `ai-editable-field-wrapper ${id && text && missingTranslationIds?.has(id) ? "bg-missing-translation" : ""}`;
 
   const nameOf = (option: OptionData) =>
     primaryOptions[option.id]?.name !== undefined ? primaryOptions[option.id].name : option.name;
@@ -863,7 +912,10 @@ export function VariantOptionsEditor({
           if (!isOpen) {
             return (
               <SortableItem key={option.id} id={option.id} style={{ cursor: "pointer" }}>
-                <Card background="bg-surface-secondary" padding="300">
+                <Card
+                  background={optionMissesTranslation(option) ? "bg-surface-info" : "bg-surface-secondary"}
+                  padding="300"
+                >
                   <InlineStack gap="300" blockAlign="start" wrap={false}>
                     {/* The grip, and nothing else, starts the drag: the rest
                         of the card opens the option on click, and it holds the
@@ -926,6 +978,7 @@ export function VariantOptionsEditor({
                             );
                           })}
                         </InlineStack>
+                        {renderTranslateRow(option)}
                       </BlockStack>
                     </div>
                   </InlineStack>
@@ -941,27 +994,16 @@ export function VariantOptionsEditor({
             <SortableItem key={option.id} id={option.id} disabled>
               <Card padding="300">
               <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="p" variant="bodyMd" fontWeight="semibold">
-                    {t.optionNameLabel || "Option name"}
-                  </Text>
-                  {onTranslate && !option.isLinked && (
-                    <DisabledActionTooltip hint={singleLocaleHint}>
-                      <Button
-                        size="slim"
-                        onClick={() => onTranslate(option.id)}
-                        loading={translatingFieldIds.has(`${option.id}:entire`)}
-                        disabled={!!singleLocaleHint}
-                      >
-                        {t.translateButton || "Translate option"}
-                      </Button>
-                    </DisabledActionTooltip>
-                  )}
-                </InlineStack>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">
+                  {t.optionNameLabel || "Option name"}
+                </Text>
 
                 {/* Capped: an option name is two words, and left to itself a
                     Polaris field fills the whole editor column. */}
-                <div style={{ maxWidth: "var(--app-short-field-width)" }}>
+                <div
+                  className={missingClass(option.id, nameOf(option))}
+                  style={{ maxWidth: "var(--app-short-field-width)" }}
+                >
                   <TextField
                     label={t.optionNameLabel || "Option name"}
                     labelHidden
@@ -1144,7 +1186,7 @@ export function VariantOptionsEditor({
                       <InlineStack gap="100" blockAlign="center" wrap={false}>
                         <DragHandle label={reorderValueLabel(value.name)} />
                         <Swatch swatch={resolveSwatch(value.name, swatches[value.id], { isColourOption })} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className={missingClass(value.id, value.name)} style={{ flex: 1, minWidth: 0 }}>
                           <TextField
                             label={t.valueLabel || "Value"}
                             labelHidden
@@ -1238,6 +1280,8 @@ export function VariantOptionsEditor({
                     </InlineStack>
                   </BlockStack>
                 )}
+
+                {renderTranslateRow(option)}
 
                 <InlineStack align="space-between" blockAlign="center">
                   <Button

@@ -1005,6 +1005,12 @@ export const guideEs: GuideCopy = {
           ],
         },
         {
+          heading: "Traducir opciones",
+          paragraphs: [
+            "Debajo de cada opción en la sección de variantes — también cuando está plegada — «Traducir opción» traduce el nombre de la opción y sus valores a todos los idiomas. Una opción con fondo azul aún no tiene traducción en al menos un idioma. Si has cambiado una opción, guarda primero: el botón permanece bloqueado hasta que el cambio se guarda, para que nunca se traduzca el texto anterior.",
+          ],
+        },
+        {
           heading: "Visibilidad",
           paragraphs: [
             "Un producto activo no es automáticamente visible: también tiene que estar publicado en un canal de venta. La app muestra en qué canales, regiones y catálogos B2B aparece un producto.",

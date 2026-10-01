@@ -780,3 +780,76 @@ describe("VariantOptionsEditor — members of a predefined option", () => {
     expect(spies.onRemoveValue).toHaveBeenCalledWith(OPTION, "gid://shopify/ProductOptionValue/1");
   });
 });
+
+describe("VariantOptionsEditor — translating an option into every language", () => {
+  it("offers the translate button on a COLLAPSED card, without opening it", () => {
+    const onTranslate = vi.fn();
+    ui({ onTranslate });
+
+    // Still collapsed: no input on screen, and yet one button per option.
+    expect(screen.queryAllByRole("textbox").length).toBe(0);
+    const buttons = screen.getAllByRole("button", { name: /Translate option/i });
+    expect(buttons.length).toBe(2);
+
+    fireEvent.click(buttons[0]);
+    expect(onTranslate).toHaveBeenCalledWith(OPTION);
+    // The click translates; it does not open the card it sits in.
+    expect(screen.queryAllByRole("textbox").length).toBe(0);
+  });
+
+  it("offers it on a metaobject-linked option too", () => {
+    const onTranslate = vi.fn();
+    ui({
+      onTranslate,
+      options: [{ ...options[0], isLinked: true }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Translate option/i }));
+    expect(onTranslate).toHaveBeenCalledWith(OPTION);
+  });
+
+  it("keeps it below the values once the card is open", () => {
+    const onTranslate = vi.fn();
+    ui({ onTranslate });
+    fireEvent.click(screen.getByText("Colour"));
+
+    const button = screen.getAllByRole("button", { name: /Translate option/i })[0];
+    const lastValue = (screen.getAllByRole("textbox") as HTMLInputElement[]).find((b) => b.value === "Blue")!;
+    // Later in document order = rendered underneath the values.
+    expect(lastValue.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("locks it while the option's text is not the saved text", () => {
+    const onTranslate = vi.fn();
+    ui({
+      onTranslate,
+      translationBlockedIds: new Set([OPTION]),
+      t: { translateSaveFirst: "Save first" },
+    });
+
+    const [colour, size] = screen.getAllByRole("button", { name: /Translate option/i }) as HTMLButtonElement[];
+    // Polaris marks a disabled button with `aria-disabled`, not `disabled`.
+    expect(colour.getAttribute("aria-disabled")).toBe("true");
+    expect(size.getAttribute("aria-disabled")).not.toBe("true");
+    fireEvent.click(colour);
+    expect(onTranslate).not.toHaveBeenCalled();
+  });
+
+  it("tints a collapsed card, and the fields of an open one, where a translation is missing", () => {
+    const { container } = ui({
+      onTranslate: vi.fn(),
+      missingTranslationIds: new Set([OPTION, "gid://shopify/ProductOptionValue/2"]),
+    });
+
+    // Collapsed: the whole Colour card is tinted, Size is not.
+    const cards = [...container.querySelectorAll("[data-sortable-id]")] as HTMLElement[];
+    const colourCard = cards.find((c) => c.getAttribute("data-sortable-id") === OPTION)!;
+    const sizeCard = cards.find((c) => c.getAttribute("data-sortable-id") === SECOND)!;
+    expect(colourCard.innerHTML).toContain("bg-surface-info");
+    expect(sizeCard.innerHTML).not.toContain("bg-surface-info");
+
+    // Open: the name and the one value lacking a translation, and only those.
+    fireEvent.click(screen.getByText("Colour"));
+    const tinted = [...container.querySelectorAll(".bg-missing-translation input")] as HTMLInputElement[];
+    expect(tinted.map((b) => b.value).sort()).toEqual(["Blue", "Colour"]);
+  });
+});

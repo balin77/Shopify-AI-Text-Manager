@@ -126,6 +126,7 @@ export const es: Translation = {
     // Cabecera de una opción de producto. Mantener corto — en el móvil el botón
     // comparte fila con "Opción N" y la etiqueta de metaobjeto.
     translateEntireOption: "Traducir opción",
+    optionTranslateSaveFirst: "Guarda primero; si no, se traduciría el texto anterior.",
     translateMetafield: "Traducir",
     linkedOptionHint: "Los valores de esta opción son metaobjetos y se pueden traducir en Metaobjetos.",
     linkedOptionHintBefore: "Los valores de esta opción son metaobjetos y se pueden traducir en ",
