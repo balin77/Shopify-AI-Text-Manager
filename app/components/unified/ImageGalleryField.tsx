@@ -26,7 +26,7 @@ import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { useLocalizedMediaContext } from "../localized-images/LocalizedMediaContext";
 import { ReplacedMediaBadge } from "../localized-images/ReplacedMediaBadge";
-import { LocalizedMediaReplacePanel, LocalizedMediaOrphanNotice } from "../localized-images/LocalizedMediaReplacePanel";
+import { LocalizedMediaReplacePanel } from "../localized-images/LocalizedMediaReplacePanel";
 import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
 import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
 
@@ -506,7 +506,6 @@ export function ImageGalleryField({
       {!isFreePlan && localized?.active && images && images[selectedImageIndex]?.mediaId && (
         <LocalizedMediaReplacePanel mediaId={images[selectedImageIndex].mediaId as string} />
       )}
-      <LocalizedMediaOrphanNotice />
     </BlockStack>
   );
 }

@@ -388,7 +388,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
             outline is already spoken for by "selected" and "main image").
             Top-left, below the host badge of an external video. */}
         {isReplaced && replacedLabel && (
-          <ReplacedMediaBadge label={replacedLabel} top={kind === "external_video" && meta?.externalHost ? 22 : 4} />
+          <ReplacedMediaBadge label={replacedLabel} top={(kind === "external_video" && meta?.externalHost) || isProcessing || isPending ? 22 : 4} />
         )}
 
         {/* Selection checkmark */}

@@ -128,6 +128,7 @@ Damit niemand annimmt, was nicht gebaut ist. Jeder Punkt sagt, was der Händler 
 24. **Spieler, die ihre Adresse nicht im DOM tragen** (Themes, die Videos per JavaScript-Objekt oder eigenem Player-Skript laden, Vimeo-/YouTube-Widgets anderer Apps): werden nicht erkannt.
 25. **Videos in Varianten-Galerien als eigene Einträge** (`custom.variant_external_videos`): nicht abgedeckt; nur Produktmedien.
 26. **Hochgeladenes Ersatzvideo**: Shopify verarbeitet Videos länger als die Anlage wartet; der Händler wählt es kurz danach aus der Bibliothek. Theme-Videoeinstellungen (Video-Datei oder YouTube-/Vimeo-Link) bekommen keine Auswahl wie die Bilder, nur ein Textfeld ohne KI — die Schreibweise der Video-Referenz im Theme ist nicht gemessen (die Probe listet sie).
+27. **Märkte im Editor**: Der Markt folgt jetzt der Marktauswahl des Editors, und die blendet Märkte aus, deren Sprachen die aktuelle Sprache nicht enthalten — für so einen Markt lässt sich hier kein eigener Ersatz festlegen (nur „Alle Märkte“); bestehende Einträge dafür bleiben im Shop aktiv.
 
 **Behoben (2026-10-01):** Die Karte „Bilder je Sprache“ hing am Bild-Manager und verschwand, wenn dieser in den Einstellungen ausgeschaltet war, während der Shop die Ersatzbilder weiter zeigte. Sie hängt jetzt nur am Tarif und erscheint unter der Bildergalerie des Produkts — mit oder ohne Bild-Manager. Der Storefront-Tausch war nie vom Varianten-Galerie-Embed abhängig: er arbeitet auch auf der nativen Theme-Galerie. Hochladen geht dort über denselben Datei-Dialog wie im Bild-Manager, im Modus „nur Bilder“.
 

@@ -1038,7 +1038,7 @@ export default function ProductsPage() {
       embedActivationUrl={localizedImagesEmbedUrl}
       // The image list the manager last confirmed: an image added or removed
       // there is reflected in the next foreign-language view without a reload.
-      reloadKey={editor.selectedItem ? `${imageManagerState.resetCounter}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}` : ""}
+      reloadKey={editor.selectedItem ? `${imageManagerState.resetCounter}:${(imageManagerState.settlingMedia ?? []).length}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}` : ""}
     >
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>

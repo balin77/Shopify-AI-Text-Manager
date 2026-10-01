@@ -5448,6 +5448,7 @@ export const en: Translation = {
     pickerTitle: "Choose image for {locale}",
     fileFailed: "The image could not be used: {error}",
     embedHint: "For your store to show the replacements, turn on the app embed “Images and videos per language” in the theme editor.",
+    videosTitle: "Videos and links",
     openEmbed: "Open app embed",
     panelTitle: "Replacement for {language}",
     panelTitleMarket: "Replacement for {language} · {market}",

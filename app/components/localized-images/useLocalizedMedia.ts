@@ -27,6 +27,7 @@ import type { MarketInfo, ShopLocale } from "../../types/content-editor.types";
 import {
   findOrphanEntries,
   isForeignShopLocale,
+  isStaleAnswer,
   replacedMediaIds,
   type LocalizedMediaItem,
 } from "./localized-media-view.shared";
@@ -56,7 +57,7 @@ async function callLocalizedMedia(action: string, fields: Record<string, string>
   return { status: res.status, body };
 }
 
-export type LocalizedMediaNotice = { tone: "success" | "critical"; text: string; scope: "panel" | "orphan" };
+export type LocalizedMediaNotice = { tone: "success" | "critical"; text: string; scope: "panel" | "orphan"; mediaId?: string };
 
 export interface UseLocalizedMediaArgs {
   productId: string;
@@ -93,26 +94,37 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   const [busySlot, setBusySlot] = useState<string | null>(null);
   const [notice, setNotice] = useState<LocalizedMediaNotice | null>(null);
   const loadStartedRef = useRef(false);
+  // The product the editor shows NOW: answers for another one are dropped.
+  const productIdRef = useRef(productId);
+  productIdRef.current = productId;
+  const loadInFlightForRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
+    const startedFor = productId;
+    loadInFlightForRef.current = startedFor;
     setLoading(true);
     setLoadError(false);
     try {
-      const { status, body } = await callLocalizedMedia("localizedMediaLoad", { productId });
+      const { status, body } = await callLocalizedMedia("localizedMediaLoad", { productId: startedFor });
+      if (isStaleAnswer(startedFor, productIdRef.current)) return;
       if (status < 200 || status >= 300 || !body.ok) throw new Error("load");
       setEntries(body.entries ?? []);
       setMedia(body.media ?? []);
       setLoaded(true);
     } catch {
-      setLoadError(true);
+      if (!isStaleAnswer(startedFor, productIdRef.current)) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (loadInFlightForRef.current === startedFor) loadInFlightForRef.current = null;
+      if (!isStaleAnswer(startedFor, productIdRef.current)) setLoading(false);
     }
   }, [productId]);
 
   // A different product starts from nothing.
   useEffect(() => {
     loadStartedRef.current = false;
+    loadInFlightForRef.current = null;
+    setLoading(false);
+    setBusySlot(null);
     setLoaded(false);
     setLoadError(false);
     setEntries([]);
@@ -124,11 +136,22 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   // language is showing, else on the next visit to one). What is on screen
   // stays until the new answer lands.
   const prevReloadKeyRef = useRef(reloadKey);
+  const prevReloadProductRef = useRef(productId);
   useEffect(() => {
+    const productMoved = prevReloadProductRef.current !== productId;
+    prevReloadProductRef.current = productId;
     if (prevReloadKeyRef.current === reloadKey) return;
     prevReloadKeyRef.current = reloadKey;
+    // A product switch bumps the key too, but its own load is what runs; and a
+    // read for this product that is already on the way needs no second one.
+    if (productMoved || loadInFlightForRef.current === productId) return;
     loadStartedRef.current = false;
-  }, [reloadKey]);
+  }, [reloadKey, productId]);
+
+  // A notice belongs to the language and market it was raised in.
+  useEffect(() => {
+    setNotice(null);
+  }, [currentLanguage, selectedMarketId]);
 
   // ONE load per product, on the first foreign language. Never in the primary
   // locale, and not again when switching between foreign ones.
@@ -150,48 +173,52 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     slot: string,
     okText: string,
     scope: "panel" | "orphan",
+    mediaId?: string,
   ) => {
+    const startedFor = productId;
     setBusySlot(slot);
     setNotice(null);
     try {
-      const { status, body } = await callLocalizedMedia(action, { productId, ...payload });
+      const { status, body } = await callLocalizedMedia(action, { productId: startedFor, ...payload });
+      if (isStaleAnswer(startedFor, productIdRef.current)) return;
       if (status < 200 || status >= 300 || !body.ok) {
-        setNotice({ tone: "critical", text: errorText(body.code ?? body.error, body.message || `HTTP ${status}`), scope });
+        setNotice({ tone: "critical", text: errorText(body.code ?? body.error, body.message || `HTTP ${status}`), scope, mediaId });
         return;
       }
       // The server's answer after the write is what gets shown.
       if (body.entries) setEntries(body.entries);
       if (body.media) setMedia(body.media);
-      setNotice({ tone: "success", text: okText, scope });
+      setNotice({ tone: "success", text: okText, scope, mediaId });
     } catch (e) {
-      setNotice({ tone: "critical", text: tx.saveFailed.replace("{error}", e instanceof Error ? e.message : String(e)), scope });
+      if (isStaleAnswer(startedFor, productIdRef.current)) return;
+      setNotice({ tone: "critical", text: tx.saveFailed.replace("{error}", e instanceof Error ? e.message : String(e)), scope, mediaId });
     } finally {
-      setBusySlot(null);
+      if (!isStaleAnswer(startedFor, productIdRef.current)) setBusySlot(null);
     }
   }, [productId, tx, errorText]);
 
   const setFile = useCallback(
     (sourceMediaId: string, fileId: string) =>
-      post("localizedMediaSet", { sourceMediaId, locale, marketId: selectedMarketId, fileId }, sourceMediaId, tx.saved, "panel"),
+      post("localizedMediaSet", { sourceMediaId, locale, marketId: selectedMarketId, fileId }, sourceMediaId, tx.saved, "panel", sourceMediaId),
     [post, locale, selectedMarketId, tx],
   );
   const setLink = useCallback(
     (sourceMediaId: string, externalUrl: string) =>
-      post("localizedMediaSet", { sourceMediaId, locale, marketId: selectedMarketId, externalUrl }, sourceMediaId, tx.saved, "panel"),
+      post("localizedMediaSet", { sourceMediaId, locale, marketId: selectedMarketId, externalUrl }, sourceMediaId, tx.saved, "panel", sourceMediaId),
     [post, locale, selectedMarketId, tx],
   );
   const removeOwn = useCallback(
     (sourceMediaId: string) =>
-      post("localizedMediaRemove", { sourceMediaId, locale, marketId: selectedMarketId }, sourceMediaId, tx.removedToast, "panel"),
+      post("localizedMediaRemove", { sourceMediaId, locale, marketId: selectedMarketId }, sourceMediaId, tx.removedToast, "panel", sourceMediaId),
     [post, locale, selectedMarketId, tx],
   );
   const removeEntry = useCallback((e: LocalizedMediaEntry) => {
     const gid = e.k ? `gid://shopify/Market/${e.k}` : "";
     return post("localizedMediaRemove", { sourceMediaId: e.m, locale: e.l, marketId: gid }, `${e.m}|${e.l}|${e.k}`, tx.removedToast, "orphan");
   }, [post, tx]);
-  const reportFailure = useCallback((code: string | undefined, fallback: string) => {
+  const reportFailure = useCallback((mediaId: string, code: string | undefined, fallback: string) => {
     setBusySlot(null);
-    setNotice({ tone: "critical", text: errorText(code, fallback), scope: "panel" });
+    setNotice({ tone: "critical", text: errorText(code, fallback), scope: "panel", mediaId });
   }, [errorText]);
 
   const mediaById = useMemo(() => new Map(media.map((m) => [m.id, m])), [media]);

@@ -29,6 +29,7 @@ export function ReplacedMediaBadge({ label, size = 20, top = 4, left = 4 }: { la
         alignItems: "center",
         justifyContent: "center",
         overflow: "hidden",
+        pointerEvents: "none",
         boxShadow: "0 1px 2px rgba(0,0,0,0.3)",
       }}
     >

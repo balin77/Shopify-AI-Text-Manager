@@ -8,6 +8,7 @@
  * medium; the state lives in LocalizedMediaContext.
  */
 import { useCallback, useState } from "react";
+import { ReplacedMediaBadge } from "./ReplacedMediaBadge";
 import { Badge, Banner, BlockStack, Button, InlineStack, Modal, Spinner, Text, TextField } from "@shopify/polaris";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
@@ -69,7 +70,7 @@ export function LocalizedMediaReplacePanel({ mediaId }: { mediaId: string }) {
     try {
       const picked = await resolvePickedMedia(items.find((i) => i.source !== "external_url") ?? items[0], kind);
       if ("error" in picked) {
-        reportFailure(picked.code, picked.error);
+        reportFailure(mediaId, picked.code, picked.error);
         return;
       }
       await setFile(mediaId, picked.fileId);
@@ -117,7 +118,14 @@ export function LocalizedMediaReplacePanel({ mediaId }: { mediaId: string }) {
   if (!m) {
     // Saved on Shopify but not reported yet (still processing), or added after
     // the last read: said, never silently offered.
-    return <div style={box}><Text as="p" variant="bodySm" tone="subdued">{tx.notYetAvailable}</Text></div>;
+    return (
+      <div style={box}>
+        <InlineStack gap="200" blockAlign="center">
+          <Text as="p" variant="bodySm" tone="subdued">{tx.notYetAvailable}</Text>
+          <Button size="slim" variant="plain" loading={state.loading} onClick={() => void state.load()}>{tx.retry}</Button>
+        </InlineStack>
+      </div>
+    );
   }
 
   const hit = resolveLocalizedMedia(state.entries, m.id, state.locale, state.marketNumeric);
@@ -130,7 +138,7 @@ export function LocalizedMediaReplacePanel({ mediaId }: { mediaId: string }) {
   // storefront, so it is not offered — said, not hidden.
   const blockedHint = m.key ? undefined : tx.cannotReplace;
   const replaceLabel = m.kind === "external" ? tx.replaceLink : m.kind === "video" ? tx.replaceVideo : tx.replace;
-  const notice = state.notice && state.notice.scope === "panel" ? state.notice : null;
+  const notice = state.notice && state.notice.scope === "panel" && state.notice.mediaId === mediaId ? state.notice : null;
 
   const openReplace = () => {
     if (m.kind === "external") {
@@ -258,5 +266,63 @@ export function LocalizedMediaOrphanNotice() {
         {notice && <Text as="p" variant="bodySm" tone={notice.tone === "critical" ? "critical" : "success"}>{notice.text}</Text>}
       </BlockStack>
     </Banner>
+  );
+}
+
+/**
+ * Videos (and YouTube/Vimeo links) of the product as small selectable tiles, for
+ * the PLAIN gallery, which only lists images: without them a video could not be
+ * replaced while the image manager is off. Foreign locale only; the same panel
+ * and the same corner mark as the image manager's gallery. Also carries the
+ * orphan notice, so it shows for a product with no images too.
+ */
+export function LocalizedMediaPlainExtras() {
+  const ctx = useLocalizedMediaContext();
+  const { t, locale: appLocale } = useI18n();
+  const [selected, setSelected] = useState<string | null>(null);
+  const state = ctx?.state;
+  if (!ctx || !state || !state.active) return null;
+  const videos = state.media.filter((m) => m.kind !== "image");
+  const selectedId = selected && videos.some((m) => m.id === selected) ? selected : null;
+  const mark = t.localizedImages.replacedMark.replace("{language}", getLocalizedLanguageName(state.rawLocale, appLocale));
+  return (
+    <BlockStack gap="300">
+      {videos.length > 0 && (
+        <BlockStack gap="200">
+          <Text as="h4" variant="headingSm">{t.localizedImages.videosTitle}</Text>
+          <InlineStack gap="200">
+            {videos.map((m) => {
+              const on = m.id === selectedId;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  aria-pressed={on}
+                  title={m.alt ?? m.kind}
+                  onClick={() => setSelected(on ? null : m.id)}
+                  style={{
+                    position: "relative",
+                    width: 72,
+                    height: 72,
+                    padding: 0,
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    background: "var(--p-color-bg-surface-secondary)",
+                    border: on ? "3px solid #005bd3" : "2px solid var(--app-surface-border-color)",
+                    borderRadius: 8,
+                  }}
+                >
+                  {m.url && <img src={`${m.url}${m.url.includes("?") ? "&" : "?"}width=160`} alt={m.alt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                  <span aria-hidden style={{ position: "absolute", right: 4, bottom: 2, fontSize: 12, color: "#fff", textShadow: "0 0 3px #000" }}>▶</span>
+                  {state.replaced.has(m.id) && <ReplacedMediaBadge label={mark} />}
+                </button>
+              );
+            })}
+          </InlineStack>
+          {selectedId && <LocalizedMediaReplacePanel mediaId={selectedId} />}
+        </BlockStack>
+      )}
+      <LocalizedMediaOrphanNotice />
+    </BlockStack>
   );
 }

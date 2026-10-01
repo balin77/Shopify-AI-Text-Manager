@@ -78,3 +78,12 @@ export function isForeignShopLocale(
   if (!locale) return false;
   return shopLocales.some((l) => l.locale === locale && !l.primary);
 }
+
+/**
+ * An answer that arrives after the editor moved to another product belongs to
+ * the old one and must neither fill the new product's lists nor clear its
+ * loading/busy state.
+ */
+export function isStaleAnswer(startedFor: string, current: string): boolean {
+  return startedFor !== current;
+}

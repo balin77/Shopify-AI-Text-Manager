@@ -5470,6 +5470,7 @@ export const de = {
     pickerTitle: "Bild für {locale} wählen",
     fileFailed: "Das Bild konnte nicht übernommen werden: {error}",
     embedHint: "Damit der Shop die Ersatzbilder und -videos zeigt, aktiviere im Theme-Editor die App-Einbettung „Images and videos per language“.",
+    videosTitle: "Videos und Links",
     openEmbed: "App-Einbettung öffnen",
     panelTitle: "Ersatz für {language}",
     panelTitleMarket: "Ersatz für {language} · {market}",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   findOrphanEntries,
   isForeignShopLocale,
+  isStaleAnswer,
   replacedMediaIds,
 } from "../../app/components/localized-images/localized-media-view.shared";
 import type { LocalizedMediaEntry } from "../../app/services/localized-media/localized-media.shared";
@@ -62,5 +63,12 @@ describe("isForeignShopLocale", () => {
     expect(isForeignShopLocale("fr", locales)).toBe(false);
     expect(isForeignShopLocale(undefined, locales)).toBe(false);
     expect(isForeignShopLocale("de", [])).toBe(false);
+  });
+});
+
+describe("isStaleAnswer", () => {
+  it("is stale only when the editor moved to another product", () => {
+    expect(isStaleAnswer("p1", "p1")).toBe(false);
+    expect(isStaleAnswer("p1", "p2")).toBe(true);
   });
 });

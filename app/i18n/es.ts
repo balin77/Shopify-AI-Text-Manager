@@ -5433,6 +5433,7 @@ export const es: Translation = {
     pickerTitle: "Elegir imagen para {locale}",
     fileFailed: "No se pudo usar la imagen: {error}",
     embedHint: "Para que tu tienda muestre los reemplazos, activa la inserción de app “Images and videos per language” en el editor de temas.",
+    videosTitle: "Vídeos y enlaces",
     openEmbed: "Abrir inserción de app",
     panelTitle: "Reemplazo para {language}",
     panelTitleMarket: "Reemplazo para {language} · {market}",
