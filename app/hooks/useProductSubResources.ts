@@ -420,6 +420,11 @@ export function useProductSubResources({
     setOptionsToDelete([]);
     setOptionOrder(null);
     setOptionValueOrder({});
+    // And the primary text edits: `hasChanges` goes above, so an edit left
+    // here had no save bar any more, yet came back on returning to the same
+    // product -- shown in the card and locking its translate button behind a
+    // "save first" nothing could satisfy.
+    setPrimaryOptionEdits({});
     // Note: translatingFieldIds is now in the global AI operations store
     // and should NOT be cleared on item change — it's resource-specific.
 
@@ -781,8 +786,10 @@ export function useProductSubResources({
         // This ensures new option value GIDs and updated values are loaded
         if (revalidator && revalidator.state === "idle") {
           // Until it lands, the item still carries the text from BEFORE the
-          // save, and that is what a translate would send as its source.
-          setAwaitingOptionReload(true);
+          // save, and that is what a translate would send as its source. Only
+          // a PRIMARY save moves that text; a foreign one changes nothing a
+          // translate reads.
+          if (isPrimaryLocale) setAwaitingOptionReload(true);
           revalidator.revalidate();
         }
       }
@@ -1060,6 +1067,28 @@ export function useProductSubResources({
       setAwaitingOptionReload(false);
     }
   }, [revalidatorState]);
+
+  // Two more ways out, because a lock nothing releases is worse than the bug
+  // it prevents: the item the reload brings back is a NEW object (if React
+  // batched "loading" and "idle" into one commit, the transition above is
+  // never seen), and a bound on how long the reload may take at all.
+  const itemWhenAwaitingRef = useRef<typeof selectedItem>(null);
+  useEffect(() => {
+    if (!awaitingOptionReload) {
+      itemWhenAwaitingRef.current = null;
+      return;
+    }
+    if (itemWhenAwaitingRef.current === null) {
+      itemWhenAwaitingRef.current = selectedItem;
+    } else if (itemWhenAwaitingRef.current !== selectedItem) {
+      setAwaitingOptionReload(false);
+    }
+  }, [awaitingOptionReload, selectedItem]);
+  useEffect(() => {
+    if (!awaitingOptionReload) return;
+    const timer = setTimeout(() => setAwaitingOptionReload(false), 20_000);
+    return () => clearTimeout(timer);
+  }, [awaitingOptionReload]);
 
   /**
    * See `SubResourceState.optionTranslationBlockedIds`. Every translate entry

@@ -427,16 +427,16 @@ describe("translating an option never sends the text the merchant replaced", () 
 
   function setupWithReload() {
     return renderHook(
-      ({ current, reload }: { current: unknown; reload: string }) =>
+      ({ current, reload, language = "de" }: { current: unknown; reload: string; language?: string }) =>
         useProductSubResources({
           selectedItem: current,
-          currentLanguage: "de",
+          currentLanguage: language,
           primaryLocale: "de",
           showInfoBox,
           revalidator: { ...revalidator, state: reload },
           enabledLanguages: ["de", "en"],
         } as never),
-      { initialProps: { current: selectedItem, reload: "idle" } },
+      { initialProps: { current: selectedItem as unknown, reload: "idle" } as { current: unknown; reload: string; language?: string } },
     );
   }
 
@@ -501,6 +501,40 @@ describe("translating an option never sends the text the merchant replaced", () 
     rerender({ current: selectedItem, reload: "loading" });
     expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
     rerender({ current: selectedItem, reload: "idle" });
+    expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
+  });
+
+  it("releases the lock when the reloaded item arrives, even unseen loading", () => {
+    // React may commit "loading" and "idle" together; the new item object is
+    // the second witness that the reload has landed.
+    const { result, rerender } = setupWithReload();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+    act(() => result.current.handlers.saveSubResources());
+    fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+    rerender({ current: selectedItem, reload: "idle" });
+    expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
+
+    rerender({ current: { ...(selectedItem as object) }, reload: "idle" });
+    expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
+  });
+
+  it("does not lock anything after a FOREIGN save", () => {
+    const { result, rerender } = setupWithReload();
+    rerender({ current: selectedItem, reload: "idle", language: "en" });
+    fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+    rerender({ current: selectedItem, reload: "idle", language: "en" });
+    expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
+  });
+
+  it("drops an unsaved rename when the language changes, so no lock outlives its save bar", () => {
+    const { result, rerender } = setupWithReload();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+    expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
+
+    rerender({ current: selectedItem, reload: "idle", language: "en" });
+    rerender({ current: selectedItem, reload: "idle", language: "de" });
+    expect(result.current.state.hasChanges).toBe(false);
+    expect(result.current.state.primaryOptionEdits).toEqual({});
     expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
   });
 });
