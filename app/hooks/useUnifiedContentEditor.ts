@@ -50,6 +50,7 @@ import { readLastSelectedId } from "../utils/last-selected-item";
 import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
+import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -1897,12 +1898,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // A partial save overlays exactly what it SENT — from its own values,
       // not the live view, which may meanwhile show another locale.
       const partial = inFlightPartialRef.current;
+      // A cleared field whose removal Shopify did NOT confirm still holds its
+      // translation there: it is not accepted into the saved cache, so it keeps
+      // its overlay and stays dirty for a retry.
+      const unconfirmedCleared = unconfirmedClearedFieldSet(fetcher.data);
+      const onlyKeys = unconfirmedClearedOnlyKeys(
+        partial ? new Set(Object.keys(partial.values)) : null,
+        effectiveFieldDefinitions.map((f) => f.key),
+        unconfirmedCleared,
+      );
       const result = dataLoader.onSaveComplete(
         savedLocale,
         partial ? { ...editableValues, ...partial.values } : editableValues,
         effectiveFieldDefinitions,
         fallbackFieldsRef.current,
-        partial ? new Set(Object.keys(partial.values)) : null,
+        onlyKeys,
         savedMarketIdRef.current
       );
 
@@ -2036,6 +2046,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // NOTE: Do NOT use savedLocaleRef here — it is cleared to null by the "Update item
       // object after saving" useEffect (which runs first, at line ~1376). Instead, detect
       // primary locale by checking for a savedPrimaryValuesRef snapshot (only set for primary saves).
+      const baselineBeforeSave = baselineValuesRef.current;
       {
         const currentItemId = selectedItemIdRef.current;
         if (currentItemId) {
@@ -2066,6 +2077,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
+            setBaselineVersion(v => v + 1);
+          }
+          // Fields whose clear was not confirmed keep their PREVIOUS baseline,
+          // so they still read as changed and the merchant can save again.
+          const keptDirty = unconfirmedClearedFieldSet(fetcher.data);
+          if (keptDirty.size > 0) {
+            const restored = { ...baselineValuesRef.current };
+            for (const key of keptDirty) {
+              if (key in baselineBeforeSave) restored[key] = baselineBeforeSave[key];
+              else delete restored[key];
+            }
+            baselineValuesRef.current = restored;
             setBaselineVersion(v => v + 1);
           }
         }

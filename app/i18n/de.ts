@@ -187,6 +187,8 @@ export const de = {
     saveFailed: "Speichern fehlgeschlagen",
     saveFailedOptions: "{count} Option(en) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",
     saveFailedItems: "{count} Element(e) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",
+    translateSubResourcesFailed: "{count} Feld(er) konnte(n) in Shopify nicht gespeichert werden.",
+    subResourceNotTranslatable: "Dieses Feld kann in Shopify nicht übersetzt werden.",
     optionNameEmpty: "Optionsname darf nicht leer sein",
     optionValuesEmpty: "Optionswerte dürfen nicht leer sein",
     metafieldValuesEmpty: "Metafeld-Werte dürfen nicht leer sein",

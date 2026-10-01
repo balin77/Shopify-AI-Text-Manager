@@ -1149,6 +1149,8 @@ export class ShopifyContentService {
       const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
       const translationsToDelete: string[] = [];
       const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
+      /** Shopify translation key -> the FIELD key that carried it, for reporting. */
+      const fieldOfTranslationKey: Record<string, string> = {};
 
       // Map UI field names to Shopify translatable content keys — the ONE
       // canonical map (see FIELD_TO_TRANSLATION_KEY at the top of this file
@@ -1194,6 +1196,7 @@ export class ShopifyContentService {
         } else if (value === "") {
           // Empty string means user cleared the translation — mark for deletion
           translationsToDelete.push(translationKey);
+          fieldOfTranslationKey[translationKey] = field;
         }
       }
 
@@ -1441,8 +1444,9 @@ export class ShopifyContentService {
 
       // Article/Collection image alt-text translations live on a separate translatable
       // resource (ArticleImage / CollectionImage). Best-effort: failures don't fail the save.
+      let featuredAltWarning: string | undefined;
       if (updates.imageAltText !== undefined && (resourceType === 'Collection' || resourceType === 'Article')) {
-        await this.saveImageAltTextTranslation({
+        const altResult = await this.saveImageAltTextTranslation({
           resourceId,
           resourceType,
           locale,
@@ -1450,6 +1454,13 @@ export class ShopifyContentService {
           shop,
           db,
         });
+        // The rest of the save is real, so this is a warning and not a failure,
+        // but a register Shopify did not echo (or a clear it did not confirm)
+        // is never reported as a clean save.
+        if (!altResult.saved) {
+          featuredAltWarning = `The image alt text translation was NOT saved in Shopify (${altResult.reason ?? 'unknown'}) — please try again.`;
+          loggers.translation('warn', '[updateContent] Featured image alt translation not saved', { resourceId, locale, reason: altResult.reason });
+        }
       }
 
       // What the merchant hears. This path has exactly two channels and both
@@ -1468,6 +1479,7 @@ export class ShopifyContentService {
       // live. A cleared field (`translationsToDelete`) is a removal with its
       // own confirmation path and does not make an unconfirmed write partial.
       const warnings: string[] = [];
+      if (featuredAltWarning) warnings.push(featuredAltWarning);
       if (dbOnlyTranslations.length > 0) {
         const fieldNames = dbOnlyTranslations.map((t) => t.key).join(", ");
         warnings.push(`Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`);
@@ -1499,7 +1511,18 @@ export class ShopifyContentService {
         warnings.unshift(message);
       }
 
-      if (warnings.length > 0) return { success: true, warning: warnings.join(" ") };
+      if (warnings.length > 0) {
+        // FIELD keys whose clear Shopify did not confirm: the page keeps them
+        // dirty instead of caching them as saved-empty.
+        const unconfirmedClearedFields = unconfirmedRemovals
+          .map((key) => fieldOfTranslationKey[key])
+          .filter((field): field is string => !!field);
+        return {
+          success: true,
+          warning: warnings.join(" "),
+          ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
+        };
+      }
 
       return { success: true };
     } else {
@@ -1796,6 +1819,7 @@ export class ShopifyContentService {
       // Delete translations for changed fields across ALL foreign locales.
       // With the purge off the old translations stay and Shopify flags them
       // "outdated" in its own editor instead.
+      let purgeWarning: string | undefined;
       if (purgeChangedFields && changedTranslationKeys.length > 0 && foreignLocales.length > 0) {
         // The MARKET overrides of the same keys. Nothing re-translates one — the
         // repair writes global rows only, deliberately — so once the primary
@@ -1831,49 +1855,60 @@ export class ShopifyContentService {
         // -- digest null, written on purpose -- is never echoed, and this is how
         // it is ever cleared). The local delete below covers ONLY the confirmed
         // (locale, key) pairs: an unconfirmed removal keeps its row.
-        let localPairs: Set<string> | undefined;
+        // The primary write above already SUCCEEDED: a transport / GraphQL
+        // error here must not turn it into a failed save. The rows stay (an
+        // unconfirmed removal never deletes locally) and the merchant is told.
         try {
-          const localRows: Array<{ locale: string; key: string }> = await db.contentTranslation.findMany({
-            where: {
-              shop,
-              resourceId,
-              resourceType,
-              marketId: "",
-              key: { in: changedTranslationKeys },
-              locale: { in: foreignLocales },
-            },
-            select: { locale: true, key: true },
+          let localPairs: Set<string> | undefined;
+          try {
+            const localRows: Array<{ locale: string; key: string }> = await db.contentTranslation.findMany({
+              where: {
+                shop,
+                resourceId,
+                resourceType,
+                marketId: "",
+                key: { in: changedTranslationKeys },
+                locale: { in: foreignLocales },
+              },
+              select: { locale: true, key: true },
+            });
+            localPairs = new Set(localRows.map((row) => localeKeyPair(row.locale, row.key)));
+          } catch {
+            // Unknown local rows: every gap is re-read instead.
+            localPairs = undefined;
+          }
+          const removal = await this.deleteAllTranslationsForKeys({
+            resourceId,
+            translationKeys: changedTranslationKeys,
+            foreignLocales,
+            localPairs,
           });
-          localPairs = new Set(localRows.map((row) => localeKeyPair(row.locale, row.key)));
-        } catch {
-          // Unknown local rows: every gap is re-read instead.
-          localPairs = undefined;
-        }
-        const removal = await this.deleteAllTranslationsForKeys({
-          resourceId,
-          translationKeys: changedTranslationKeys,
-          foreignLocales,
-          localPairs,
-        });
 
-        // Delete from database (single batch call instead of N×M loop).
-        // Scoped to global (marketId "") because that is what the removal above
-        // sent; the MARKET layer was handled separately, before it, and needs
-        // its own echo per market to be deleted safely.
-        const { confirmedPairsWhere } = await import('../../app/services/translations/verified-translations.server');
-        const confirmedWhere = confirmedPairsWhere(removal.confirmedPairs, changedTranslationKeys, foreignLocales);
-        if (confirmedWhere) {
-          await db.contentTranslation.deleteMany({
-            where: { shop, resourceId, resourceType, marketId: "", ...confirmedWhere },
-          });
-        }
-        if (removal.unconfirmedPairs.length > 0) {
-          loggers.translation('warn', '[updateContent] Primary-change purge: Shopify did not confirm every removal — those rows stay', {
-            resourceId, resourceType, unconfirmed: removal.unconfirmedPairs.length,
-          });
-        }
+          // Delete from database (single batch call instead of N×M loop).
+          // Scoped to global (marketId "") because that is what the removal above
+          // sent; the MARKET layer was handled separately, before it, and needs
+          // its own echo per market to be deleted safely.
+          const { confirmedPairsWhere } = await import('../../app/services/translations/verified-translations.server');
+          const confirmedWhere = confirmedPairsWhere(removal.confirmedPairs, changedTranslationKeys, foreignLocales);
+          if (confirmedWhere) {
+            await db.contentTranslation.deleteMany({
+              where: { shop, resourceId, resourceType, marketId: "", ...confirmedWhere },
+            });
+          }
+          if (removal.unconfirmedPairs.length > 0) {
+            loggers.translation('warn', '[updateContent] Primary-change purge: Shopify did not confirm every removal — those rows stay', {
+              resourceId, resourceType, unconfirmed: removal.unconfirmedPairs.length,
+            });
+          }
 
-        loggers.translation('info', `Deleted translations for fields: ${changedFields!.join(', ')}`);
+          loggers.translation('info', `Deleted translations for fields: ${changedFields!.join(', ')}`);
+        } catch (purgeError: unknown) {
+          purgeWarning = 'Saved, but the old translations of the changed fields could not be removed in Shopify. They were kept.';
+          loggers.translation('error', '[updateContent] Primary-change purge failed — saved primary kept, translation rows kept', {
+            resourceId, resourceType,
+            error: purgeError instanceof Error ? purgeError.message : String(purgeError),
+          });
+        }
       }
 
       // §6.6 for the FEATURED-IMAGE ALT — the third translation shape
@@ -2028,11 +2063,16 @@ export class ShopifyContentService {
       // A rejected attribute is NOT a failed save — everything else went
       // through — but it is not a silent drop either. Saying nothing is how a
       // merchant discovers weeks later that a sort order never took.
+      const primaryWarnings: string[] = [];
       if (rejectedAttributes && rejectedAttributes.length > 0) {
+        primaryWarnings.push(`Saved, but these details could not be applied because their value was not recognised: ${rejectedAttributes.join(", ")}.`);
+      }
+      if (purgeWarning) primaryWarnings.push(purgeWarning);
+      if (primaryWarnings.length > 0) {
         return {
           success: true,
           item: updatedResource,
-          warning: `Saved, but these details could not be applied because their value was not recognised: ${rejectedAttributes.join(", ")}.`,
+          warning: primaryWarnings.join(" "),
           retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
         };
       }

@@ -357,6 +357,9 @@ describe('updateContent — foreign locale, a CLEARED field', () => {
     const result: any = await clear(admin, db, { updates: { title: '', body: '' } });
     expect(result.success).toBe(true);
     expect(result.warning).toContain('body_html');
+    // The FIELD key (not the Shopify key) whose clear was not confirmed, so the
+    // page keeps that field dirty instead of caching it as saved-empty.
+    expect(result.unconfirmedClearedFields).toEqual(['body']);
     expect(db.contentTranslation.deleteMany.mock.calls[0][0].where.key).toEqual({ in: ['title'] });
   });
 });
@@ -469,6 +472,21 @@ describe('updateContent — primary-change purge (Page, merchant purge switch on
     const db = makeDb([]);
     await savePage(admin, db);
     expect(admin.rereads).toHaveLength(0);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('a transport error in the purge does NOT fail the primary write: rows kept, warning added', async () => {
+    const inner = makePurgeAdmin();
+    const admin = {
+      graphql: vi.fn(async (query: string, options?: any) => {
+        if (query.includes('translationsRemove')) throw new Error('socket hang up');
+        return inner.graphql(query, options);
+      }),
+    };
+    const db = makeDb([{ locale: 'fr', key: 'title' }]);
+    const result: any = await savePage(admin, db);
+    expect(result.success).toBe(true);
+    expect(result.warning).toMatch(/could not be removed/);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -617,5 +635,46 @@ describe('saveImageAltTextTranslation', () => {
     const db = makeDb();
     expect(await run(admin, db, 'Rot')).toEqual({ saved: true });
     expect(db.contentTranslation.upsert.mock.calls[0][0].create).toMatchObject({ value: 'Rot (normalised)', digest: 'dg-alt' });
+  });
+});
+
+describe('updateContent -- foreign save of a featured image alt', () => {
+  const collectionId = 'gid://shopify/Collection/61';
+  const imageId = 'gid://shopify/CollectionImage/62';
+  function makeAdmin(register: any) {
+    const graphql = vi.fn(async (query: string) => ({
+      ok: true,
+      json: async () => {
+        if (query.includes('getFeaturedImageId')) return { data: { collection: { image: { id: imageId } } } };
+        if (query.includes('translationsRegister')) return register;
+        return { data: { translatableResource: { translatableContent: [{ key: 'alt', value: 'Alt', digest: 'dg-alt', locale: 'de' }] } } };
+      },
+    }));
+    return { graphql };
+  }
+  const makeDb = () =>
+    ({
+      $transaction: vi.fn(async (fn: any) => fn({ contentTranslation: { upsert: vi.fn(), deleteMany: vi.fn() } })),
+      contentTranslation: { upsert: vi.fn().mockResolvedValue({}), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    }) as any;
+  const save = (admin: any, db: any) =>
+    new ShopifyContentService(admin as never).updateContent({
+      resourceId: collectionId, resourceType: 'Collection', locale: 'fr', primaryLocale: 'de',
+      updates: { imageAltText: 'Chaise' }, db, shop,
+    } as any);
+
+  it('an alt register Shopify did not echo is a WARNING on the save, not a silent success', async () => {
+    const admin = makeAdmin({ data: { translationsRegister: { userErrors: [], translations: [] } } });
+    const db = makeDb();
+    const result: any = await save(admin, db);
+    expect(result.success).toBe(true);
+    expect(result.warning).toMatch(/alt text translation was NOT saved/);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it('an echoed alt register adds no warning', async () => {
+    const admin = makeAdmin({ data: { translationsRegister: { userErrors: [], translations: [{ key: 'alt', locale: 'fr', value: 'Chaise' }] } } });
+    const result: any = await save(admin, makeDb());
+    expect(result).toEqual({ success: true });
   });
 });
