@@ -1545,9 +1545,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     const foreignLocales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale as string);
     const subRT: Record<string, Array<{ key: string; value: string; locale: string }>> =
       (selectedItem as any).subResourceTranslations || {};
+    // A translate / copy writes into the hook's overlay first; the loaded item
+    // only catches up on the next reload (skipped while the revalidator is
+    // busy), so the marker must read the overlay too or it stays blue for a
+    // translation that exists. Global layer only: the key is the bare locale.
+    const overlay = subResourceState?.localOverlay || {};
+    const overlayHas = (locale: string, resourceId: string) => !!overlay[locale]?.[resourceId]?.["name"];
     for (const option of selectedItem.options) {
       if (!option.name) continue;
       const nameMissing = foreignLocales.some((locale) => {
+        if (overlayHas(locale, option.id)) return false;
         const t = (subRT[option.id] || []).find((x) => x.key === "name" && x.locale === locale);
         return !t || !t.value;
       });
@@ -1556,6 +1563,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         for (const value of option.values) {
           if (!value.name || !value.id) continue;
           const valueMissing = foreignLocales.some((locale) => {
+            if (overlayHas(locale, value.id)) return false;
             const t = (subRT[value.id] || []).find((x) => x.key === "name" && x.locale === locale);
             return !t || !t.value;
           });

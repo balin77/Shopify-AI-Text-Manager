@@ -189,6 +189,7 @@ export const en: Translation = {
     gallerySaveError: "Gallery could not be saved.",
     // Sub-resource (options/metafields) toast messages
     optionsSavedSuccess: "Options and metafields saved successfully",
+    optionTranslatedAll: "Translation saved for all languages",
     saveFailed: "Save Failed",
     saveFailedOptions: "Failed to save {count} option(s). Changes have been reverted to original values.",
     saveFailedItems: "Failed to save {count} item(s). Changes have been reverted to original values.",

@@ -184,6 +184,7 @@ export const de = {
     gallerySaveError: "Galerie konnte nicht gespeichert werden.",
     // Sub-resource (options/metafields) toast messages
     optionsSavedSuccess: "Optionen und Metafelder erfolgreich gespeichert",
+    optionTranslatedAll: "Übersetzung für alle Sprachen gespeichert",
     saveFailed: "Speichern fehlgeschlagen",
     saveFailedOptions: "{count} Option(en) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",
     saveFailedItems: "{count} Element(e) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",

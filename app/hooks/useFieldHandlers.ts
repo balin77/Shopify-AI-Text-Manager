@@ -9,7 +9,7 @@
 import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
@@ -186,6 +186,11 @@ export interface FieldHandlers {
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
+  /** The single-field Copy's save was refused: take back the overlay value,
+   *  the baselines and the visible value it wrote up front. */
+  rollbackCopyField: () => void;
+  /** The copy LANDED: forget its rollback record. */
+  discardCopyFieldRecord: () => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
   handleAcceptSuggestion: (fieldKey: string) => void;
@@ -210,7 +215,27 @@ export interface FieldHandlers {
 // HOOK
 // ============================================================================
 
+/** What a single-field Copy wrote before its save answered, and what was
+ *  there before, so a refused save can put the real stored value back. */
+interface CopyFieldRollback {
+  itemId: string;
+  fieldKey: string;
+  translationKey: string;
+  localeKey: string;
+  deletedKey: string;
+  locale: string;
+  marketId: string;
+  value: string;
+  prevOverlay: string | undefined;
+  hadDeletedMarker: boolean;
+  prevBaseline: string | undefined;
+  prevOriginalLoaded: string | undefined;
+  prevEditable: string | undefined;
+  wasFallback: boolean;
+}
+
 export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
+  const copyFieldRollbackRef = useRef<CopyFieldRollback | null>(null);
   // Local to this hook: the keyword-insertion run spans several fields, so
   // no single field's own AI-loading flag describes it.
   const [isInsertingKeywords, setIsInsertingKeywords] = useState(false);
@@ -1920,6 +1945,29 @@ const handleCopyField = (fieldKey: string): void => {
   const primaryValue = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
   if (!primaryValue) return;
 
+  // Remember what is about to be overwritten (see CopyFieldRollback).
+  {
+    const copyMarketId = selectedMarketIdRef.current;
+    const copyLocaleKey = buildLocaleKey(currentLanguage, copyMarketId);
+    const copyDeletedKey = buildDeletedKey(field.translationKey, copyMarketId);
+    copyFieldRollbackRef.current = {
+      itemId: selectedItemId,
+      fieldKey,
+      translationKey: field.translationKey,
+      localeKey: copyLocaleKey,
+      deletedKey: copyDeletedKey,
+      locale: currentLanguage,
+      marketId: copyMarketId,
+      value: primaryValue,
+      prevOverlay: localTranslationsRef.current[field.translationKey]?.[copyLocaleKey],
+      hadDeletedMarker: deletedTranslationKeysRef.current.has(copyDeletedKey),
+      prevBaseline: baselineValuesRef.current[fieldKey],
+      prevOriginalLoaded: originalLoadedValuesRef.current[fieldKey],
+      prevEditable: editableValuesRef.current[fieldKey],
+      wasFallback: fallbackFieldsRef.current.has(fieldKey),
+    };
+  }
+
   const transResult = dataLoader.onTranslateFieldComplete(
     fieldKey,
     field.translationKey,
@@ -1975,6 +2023,67 @@ const handleCopyField = (fieldKey: string): void => {
   // Success/error feedback is deferred to the save-response handler so the
   // InfoBox reflects the actual Shopify result (see pendingCopyFieldKeyRef in
   // useUnifiedContentEditor.ts), not an optimistic guess.
+};
+
+const discardCopyFieldRecord = (): void => {
+  copyFieldRollbackRef.current = null;
+};
+
+const rollbackCopyField = (): void => {
+  const rec = copyFieldRollbackRef.current;
+  copyFieldRollbackRef.current = null;
+  if (!rec) return;
+
+  // The overlay and the "deleted" marker are data, keyed by item-independent
+  // translation key: undo only OUR write (a later edit under the key stays).
+  const overlay = localTranslationsRef.current[rec.translationKey];
+  if (overlay && overlay[rec.localeKey] === rec.value) {
+    if (rec.prevOverlay === undefined) delete overlay[rec.localeKey];
+    else overlay[rec.localeKey] = rec.prevOverlay;
+  }
+  if (rec.hadDeletedMarker) deletedTranslationKeysRef.current.add(rec.deletedKey);
+
+  // Everything below is what the merchant SEES: only while that is still the
+  // item, locale and market the copy ran on.
+  const stillThere =
+    selectedItemRef.current?.id === rec.itemId &&
+    currentLanguageRef.current === rec.locale &&
+    selectedMarketIdRef.current === rec.marketId;
+  if (!stillThere) return;
+
+  const restoreKey = (map: Record<string, string>, previous: string | undefined) => {
+    const next = { ...map };
+    if (previous === undefined) delete next[rec.fieldKey];
+    else next[rec.fieldKey] = previous;
+    return next;
+  };
+  if (baselineValuesRef.current[rec.fieldKey] === rec.value) {
+    baselineValuesRef.current = restoreKey(baselineValuesRef.current, rec.prevBaseline);
+    setBaselineVersion((v) => v + 1);
+  }
+  if (originalLoadedValuesRef.current[rec.fieldKey] === rec.value) {
+    originalLoadedValuesRef.current = restoreKey(originalLoadedValuesRef.current, rec.prevOriginalLoaded);
+  }
+  if (isThemeContentType(config.contentType) && originalTemplateValuesRef.current[rec.fieldKey] === rec.value) {
+    // The copy mirrored its value into the template baseline too; without a
+    // recorded predecessor, the stored (pre-copy) value is the field's own.
+    if (rec.prevOriginalLoaded !== undefined) {
+      originalTemplateValuesRef.current = restoreKey(originalTemplateValuesRef.current, rec.prevOriginalLoaded);
+    }
+    setTemplateValuesVersion((v) => v + 1);
+  }
+  // The visible value goes back only while it still holds the copied text.
+  if (editableValuesRef.current[rec.fieldKey] === rec.value) {
+    setEditableValues((prev) =>
+      prev[rec.fieldKey] === rec.value
+        ? { ...prev, [rec.fieldKey]: rec.prevEditable ?? "" }
+        : prev,
+    );
+    if (rec.wasFallback) {
+      fallbackFieldsRef.current.add(rec.fieldKey);
+      setFallbackFields((prev) => new Set(prev).add(rec.fieldKey));
+    }
+  }
 };
 
 const handleCopyFieldToAllLocales = (fieldKey: string): void => {
@@ -2043,6 +2152,8 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
     handleTranslateField,
     handleTranslateFieldToAllLocales,
     handleCopyField,
+    rollbackCopyField,
+    discardCopyFieldRecord,
     handleCopyFieldToAllLocales,
     handleTranslateAll,
     handleAcceptSuggestion,

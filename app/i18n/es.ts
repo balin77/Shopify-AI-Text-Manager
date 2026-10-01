@@ -185,6 +185,7 @@ export const es: Translation = {
     gallerySaveError: "No se pudo guardar la galería.",
     // Sub-resource (options/metafields) toast messages
     optionsSavedSuccess: "Opciones y metadatos guardados correctamente",
+    optionTranslatedAll: "Traducción guardada para todos los idiomas",
     saveFailed: "Error al guardar",
     saveFailedOptions: "No se pudo guardar {count} opción/opciones. Los cambios han sido revertidos a los valores originales.",
     saveFailedItems: "No se pudo guardar {count} elemento(s). Los cambios han sido revertidos a los valores originales.",

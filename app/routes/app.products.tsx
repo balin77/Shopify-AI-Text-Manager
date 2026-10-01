@@ -514,6 +514,8 @@ export default function ProductsPage() {
     enabledLanguages: editor.state.enabledLanguages,
     strings: {
       optionsSavedSuccess: t.products.optionsSavedSuccess,
+      optionTranslatedAll: t.products.optionTranslatedAll,
+      translationPurgeUnconfirmed: t.content.translationPurgeUnconfirmed,
       translateFailed: t.errors.translationFailed,
       copied: t.common.copied,
       copyFailedLocales: t.common.copyFailedLocales,
