@@ -710,3 +710,50 @@ describe('handleLoadSubResourceTranslations — read-back backfill', () => {
     expect(created.name.digest).toBeNull();
   });
 });
+
+/**
+ * The early validation refusals answer 400 WITHOUT having reached the handler's
+ * try: the client reads `actionType` (and `fieldId`) to decide whose spinner to
+ * clear and which message to show. Without them a refused load left the hook's
+ * `isLoading` stuck and a refused translate cleared every spinner.
+ */
+describe('early 400s carry the actionType (and fieldId) of the request', () => {
+  const w = () => installAdmin();
+  const answer = async (promise: Promise<unknown>) => {
+    const r: any = await promise;
+    return { body: body(r), status: r?.init?.status };
+  };
+
+  it('load: invalid locale and invalid resource id', async () => {
+    const world = w();
+    const a = await answer(handleLoadSubResourceTranslations(makeCtx(world.admin, makeDb()), form({ locale: '!!', resourceIds: '[]' })));
+    expect(a.status).toBe(400);
+    expect(a.body).toMatchObject({ success: false, actionType: 'loadSubResourceTranslations' });
+    const b = await answer(
+      handleLoadSubResourceTranslations(makeCtx(world.admin, makeDb()), form({ locale: 'fr', resourceIds: JSON.stringify(['not-a-gid']) })),
+    );
+    expect(b.status).toBe(400);
+    expect(b.body).toMatchObject({ success: false, actionType: 'loadSubResourceTranslations' });
+  });
+
+  it('save: invalid locale', async () => {
+    const a = await answer(handleSaveSubResourceTranslations(makeCtx(w().admin, makeDb()), form({ locale: '!!' })));
+    expect(a.status).toBe(400);
+    expect(a.body).toMatchObject({ success: false, actionType: 'saveSubResourceTranslations' });
+  });
+
+  it('translate: invalid target locale echoes the fieldId', async () => {
+    const a = await answer(
+      handleTranslateSubResources(makeCtx(w().admin, makeDb()), form({ targetLocale: '!!', fieldId: 'option-1' })),
+    );
+    expect(a.status).toBe(400);
+    expect(a.body).toMatchObject({ success: false, actionType: 'translateSubResources', fieldId: 'option-1' });
+  });
+
+  it('primary save: invalid product id', async () => {
+    const a = await answer(handleSavePrimarySubResources(makeCtx(w().admin, makeDb()), form({ productId: 'nope' })));
+    expect(a.status).toBe(400);
+    expect(a.body).toMatchObject({ success: false, actionType: 'savePrimarySubResources' });
+  });
+});
+

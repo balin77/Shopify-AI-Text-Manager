@@ -435,13 +435,40 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     expect(result.success).toBe(true);
   });
 
-  it('refuses an alt Shopify did not ECHO: nothing is mirrored and no translation is touched', async () => {
-    // userErrors: [] describes a call Shopify accepted, not one it acted on.
+  it('an alt Shopify did not ECHO fails ONLY the alt: the other fields stay saved, the alt is not mirrored or repaired', async () => {
+    // userErrors: [] describes a call Shopify accepted, not one it acted on. The
+    // same mutation carried the title, which Shopify already wrote - throwing
+    // here failed a save that mostly succeeded and skipped the title's mirror.
     echoedAlt = 'Alter Alt-Text';
-    await expect(save()).rejects.toThrow(/did not confirm the image alt text/);
+    policy.autoTranslateExternalChanges = true;
+    retranslate.calls = [];
+    const result = (await save()) as any;
 
-    expect(db.collection.update).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.failedAltTextIndices).toEqual([0]);
+    expect(String(result.warning)).toMatch(/did not confirm the image alt text/);
+    // The title IS mirrored; the alt is left out of the mirror.
+    expect(db.collection.update).toHaveBeenCalledTimes(1);
+    const data = db.collection.update.mock.calls[0][0].data;
+    expect(data.title).toBe('C');
+    expect('imageAltText' in data).toBe(false);
+    // No featured-alt invalidation or repair for a primary that did not change.
     expect(removeAcrossLocales.calls).toEqual([]);
+    expect(retranslate.calls.some((c: any) => c.changed?.[0]?.key === 'alt')).toBe(false);
+  });
+
+  it('a repair budget that is spent starts NO featured-alt run and keeps the stored deletion answer', async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    policy.purgeUnreconciledSurfaces = true;
+    retranslate.calls = [];
+    const take = vi.fn().mockReturnValue(false);
+    await save({ repairBudget: { take } });
+
+    expect(take).toHaveBeenCalledWith('featuredAlt', collectionId);
+    expect(retranslate.calls).toEqual([]);
+    // The stored deletion answer applies, exactly like a refused bulk-editor group.
+    expect(removeAcrossLocales.calls).toHaveLength(1);
   });
 });
 
@@ -583,6 +610,43 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
     expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({
       shop, resourceId: pageId, marketId: '', locale: { in: ['fr'] },
     });
+  });
+
+  it('a spent repair budget starts no run and falls back to the stored deletion answer (Page)', async () => {
+    const take = vi.fn().mockReturnValue(false);
+    await savePage({ repairBudget: { take } });
+
+    expect(take).toHaveBeenCalledWith('content', pageId);
+    expect(retranslate.calls).toEqual([]);
+    // purgeUnreconciledSurfaces is true in this describe: the page's old
+    // translations are removed, as the same save did before auto-translate.
+    expect(removedFromShopify).toHaveLength(1);
+  });
+
+  it('a budget with room changes nothing: the run starts', async () => {
+    const take = vi.fn().mockReturnValue(true);
+    await savePage({ repairBudget: { take } });
+
+    expect(retranslate.calls).toHaveLength(1);
+    expect(removedFromShopify).toEqual([]);
+  });
+
+  it('a Collection past the budget keeps its translations (the purge answer auto-translate forces off)', async () => {
+    const take = vi.fn().mockReturnValue(false);
+    await service.updateContent({
+      resourceId: 'gid://shopify/Collection/3',
+      resourceType: 'Collection',
+      locale: 'de',
+      primaryLocale: 'de',
+      updates: { title: 'C' },
+      changedFields: ['title'],
+      db: { ...db, collection: { update: vi.fn().mockResolvedValue({}) } },
+      shop,
+      repairBudget: { take },
+    });
+
+    expect(retranslate.calls).toEqual([]);
+    expect(removedFromShopify).toEqual([]);
   });
 
   it('repairs a Collection here too — its webhook cannot prove a change on a row with no translations', async () => {

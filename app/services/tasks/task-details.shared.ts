@@ -396,6 +396,16 @@ const seoBulkFix: Summariser = (blob) => {
         : { labelKey: "failed", value: "0" },
     );
   }
+  // The rows whose detached re-translation the task's budget refused (they
+  // followed the stored deletion answer instead) - the bulk editor's own
+  // `retranslation.capped`, worded by the same line. Non-zero only.
+  const retranslation = blob.retranslation;
+  if (retranslation && typeof retranslation === "object" && !Array.isArray(retranslation)) {
+    const capped = (retranslation as Blob).capped;
+    if (typeof capped === "number" && capped > 0) {
+      lines.push({ labelKey: "retranslationsCapped", value: String(capped), tone: "warning" });
+    }
+  }
 
   const failures: TaskFailureLine[] = [];
   if (Array.isArray(blob.failed)) {

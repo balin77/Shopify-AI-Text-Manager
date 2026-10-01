@@ -56,6 +56,7 @@ import { isValidLocale, safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
 import type { DataResponse } from "~/types/data-response";
 import { readDataPayload, readDataStatus } from "~/utils/data-response";
+import type { RepairBudget } from "~/services/translations/repair-budget.server";
 
 /**
  * Shopify translation key -> the editor's FIELD key, for the keys a foreign
@@ -112,7 +113,10 @@ interface UpdateProductParams {
 export async function handleUpdateProduct(
   context: ActionContext,
   formData: FormData,
-  productId: string
+  productId: string,
+  /** A bulk caller's budget of detached re-translation runs — see
+   *  repair-budget.server.ts. Absent for the editor (one save, one run). */
+  options?: { repairBudget?: RepairBudget },
 ): Promise<DataResponse> {
   const { db } = await import("~/db.server");
 
@@ -235,7 +239,7 @@ export async function handleUpdateProduct(
       const savedAltTextIndices = changedAltTextIndices.filter(
         (index) => !failedAltTextIndices.includes(index),
       );
-      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, savedAltTextIndices, context.session.shop, changedAttributeFields);
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, savedAltTextIndices, context.session.shop, changedAttributeFields, options?.repairBudget);
     }
 
     // If alt-text saves failed, merge warning into the response
@@ -912,6 +916,7 @@ async function updatePrimaryProduct(
   /** §Phase 3 — the attributes the merchant actually touched. Empty ⇒ write
    *  none of them; see the gate below for why that is the safe default. */
   changedAttributeFields: string[] = [],
+  repairBudget?: RepairBudget,
 ): Promise<DataResponse> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
@@ -1347,8 +1352,16 @@ async function updatePrimaryProduct(
   // The product's OWN fields need the same list when the auto-translation is on
   // — the repair below translates into every published foreign locale — so the
   // one lookup serves both. It stays gated on there being something to do.
+  //
+  // A bulk caller (the SEO "Fix with AI" task) hands in a budget of detached
+  // runs: past it the product's own fields start no run and keep what they
+  // have - the deletion answer here is `purgeOnPrimaryChange`, which the
+  // auto-translation forces off, exactly the bulk editor's refused content
+  // group - and the `products/update` webhook is the only reconciler left.
   const contentRepairPossible =
-    changedFields.length > 0 && !!changePolicy?.autoTranslateExternalChanges;
+    changedFields.length > 0 &&
+    !!changePolicy?.autoTranslateExternalChanges &&
+    (!repairBudget || repairBudget.take("content", productId));
   if ((changedAltTextIndices.length > 0 || contentRepairPossible) && changePolicy) {
     try {
       const { fetchShopLocales } = await import("~/services/sync-utils");

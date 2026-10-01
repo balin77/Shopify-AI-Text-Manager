@@ -565,8 +565,11 @@ export function useProductSubResources({
     lastProcessedDataRef.current = data;
 
     if (!data.success) {
+      // The fetcher serves one request at a time, so ANY failed answer ends a
+      // load that may have been in flight - including one with no `actionType`
+      // (a plan refusal, a proxy error), which used to leave `isLoading` stuck.
+      setIsLoading(false);
       if (data.actionType === "loadSubResourceTranslations") {
-        setIsLoading(false);
         return;
       }
       // A request that failed as a whole (server error, plan refusal, managed

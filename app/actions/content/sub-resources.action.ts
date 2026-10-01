@@ -43,7 +43,7 @@ export async function handleLoadSubResourceTranslations(
 
   const locale = getFormString(formData, "locale");
   if (!locale || !isValidLocale(locale)) {
-    return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+    return json({ success: false, actionType: "loadSubResourceTranslations", error: "Invalid locale format" }, { status: 400 });
   }
 
   try {
@@ -61,7 +61,7 @@ export async function handleLoadSubResourceTranslations(
     // Validate all GIDs
     for (const rid of resourceIds) {
       if (!isValidShopifyGID(rid)) {
-        return json({ success: false, error: `Invalid resource ID: ${rid}` }, { status: 400 });
+        return json({ success: false, actionType: "loadSubResourceTranslations", error: `Invalid resource ID: ${rid}` }, { status: 400 });
       }
     }
 
@@ -192,7 +192,7 @@ export async function handleSaveSubResourceTranslations(
 
   const locale = getFormString(formData, "locale");
   if (!locale || !isValidLocale(locale)) {
-    return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+    return json({ success: false, actionType: "saveSubResourceTranslations", error: "Invalid locale format" }, { status: 400 });
   }
 
   // Market GID for a market-specific override; "" = global (all markets).
@@ -380,7 +380,10 @@ export async function handleTranslateSubResources(
 
   const targetLocale = getFormString(formData, "targetLocale");
   if (!targetLocale || !isValidLocale(targetLocale)) {
-    return json({ success: false, error: "Invalid target locale" }, { status: 400 });
+    return json(
+      { success: false, actionType: "translateSubResources", fieldId: getFormString(formData, "fieldId"), error: "Invalid target locale" },
+      { status: 400 },
+    );
   }
 
   const sourceDataJson = getFormString(formData, "sourceData");
@@ -897,7 +900,7 @@ export async function handleSavePrimarySubResources(
   const productId = getFormString(formData, "productId");
 
   if (!productId || !isValidShopifyGID(productId)) {
-    return json({ success: false, error: "Invalid product ID" }, { status: 400 });
+    return json({ success: false, actionType: "savePrimarySubResources", error: "Invalid product ID" }, { status: 400 });
   }
 
   // Hoisted out of the try: a save that fails half way has still started the

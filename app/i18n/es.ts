@@ -577,6 +577,7 @@ export const es: Translation = {
     translateLocaleRejectedFields: "Traducción a {locale} parcialmente completada. Campo(s) {fields} no pudieron guardarse en Shopify.",
     translateSkippedFields: "Algunos campos fueron omitidos porque el valor traducido es idéntico al idioma principal: {details}.",
     altTextSavePartialImages: "Cambios guardados, pero el texto alt para imagen(es) {failedImages} no pudo guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
+    altTextSavePartialItem: "Cambios guardados, pero el texto alt de la imagen ({failedImages}) no pudo guardarse en Shopify. Por favor, inténtalo de nuevo.",
     unconfirmedFieldsWarning: "Shopify no confirmó el guardado de: {fields}. Estos campos NO se guardaron: tu texto sigue en los campos, inténtalo de nuevo.",
     skippedFieldsSamePrimary: "No guardado: {fields} es idéntico al del idioma principal. Una URL traducida necesita un valor distinto.",
     altTextTranslateAllPartialImages: "Textos alt guardados para {successCount}/{totalCount} imagen(es) en {languageCount} idioma(s). Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",

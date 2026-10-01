@@ -27,7 +27,7 @@ vi.mock('../../src/services/shopify-content.service', () => ({
   },
 }));
 
-import { persistField, persistImageAltText } from '../../app/routes/api-ai-handlers/seo-bulk-fix.handler';
+import { persistField, persistFields, persistImageAltText } from '../../app/routes/api-ai-handlers/seo-bulk-fix.handler';
 
 const admin = { graphql: vi.fn() } as never;
 const db = {} as never;
@@ -105,6 +105,52 @@ describe('persistField routes a primary write through the editor save paths', ()
     ).rejects.toThrow(/primary language/);
     expect(updateContent).not.toHaveBeenCalled();
     expect(handleUpdateProduct).not.toHaveBeenCalled();
+  });
+});
+
+describe('persistFields: several fields of one item are ONE editor save', () => {
+  it('product: one handleUpdateProduct naming every field (and forwarding the budget)', async () => {
+    const repairBudget = { take: vi.fn(), overflowOwners: new Set<string>(), maxGroups: 25 };
+    await persistFields({
+      ...base,
+      type: 'product',
+      id: 'gid://shopify/Product/1',
+      fields: { title: 'T', seoTitle: 'S' },
+      repairBudget,
+    });
+    expect(handleUpdateProduct).toHaveBeenCalledTimes(1);
+    const [, form, , options] = handleUpdateProduct.mock.calls[0];
+    expect(JSON.parse(String((form as FormData).get('changedFields')))).toEqual(['title', 'seoTitle']);
+    expect((form as FormData).get('title')).toBe('T');
+    expect((form as FormData).get('seoTitle')).toBe('S');
+    expect(options).toEqual({ repairBudget });
+  });
+
+  it('article: one updateContent with the merged updates and every key in changedFields', async () => {
+    await persistFields({
+      ...base,
+      type: 'article',
+      id: 'gid://x/1',
+      fields: { description: 'Body', metaDescription: 'M' },
+    });
+    expect(updateContent).toHaveBeenCalledTimes(1);
+    expect(updateContent.mock.calls[0][0]).toMatchObject({
+      updates: { body: 'Body', metaDescription: 'M' },
+      changedFields: ['description', 'metaDescription'],
+    });
+  });
+});
+
+describe('persistImageAltText: a featured alt Shopify did not echo is a failure of the item', () => {
+  it('failedAltTextIndices [0] on a success:true answer throws (the alt IS the fix)', async () => {
+    updateContent.mockResolvedValue({ success: true, failedAltTextIndices: [0], warning: 'Saved, but the image alt text was not: nope' });
+    await expect(
+      persistImageAltText({
+        ...base,
+        job: { type: 'collection', id: 'gid://x/9', imageUrl: 'https://cdn.example/a.jpg' },
+        altText: 'Ein Stuhl',
+      }),
+    ).rejects.toThrow(/image alt text/);
   });
 });
 

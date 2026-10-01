@@ -227,4 +227,39 @@ describe("repairAltsAfterWrite — the per-image paths", () => {
     const call = (reconcileAfterPrimarySave.mock.calls[0] as unknown as [Record<string, unknown>])[0];
     expect(call.lockId).toBe("p1#altText:gid://shopify/MediaImage/1");
   });
+
+  it("a spent repair budget starts NO run and follows the stored deletion answer", async () => {
+    const { gateway, db } = deps();
+    policy.purgeUnreconciledSurfaces = true;
+    const take = vi.fn(() => false);
+    const ids = await repairAltsAfterWrite({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      snapshot,
+      written: [{ mediaId: "gid://shopify/MediaImage/1", alt: "neu" }],
+      repairBudget: { take },
+    });
+    policy.purgeUnreconciledSurfaces = false;
+    // One group per (product, medium): the per-image save's own run.
+    expect(take).toHaveBeenCalledWith("productAlt", "p1", "gid://shopify/MediaImage/1");
+    expect(reconcileAfterPrimarySave).not.toHaveBeenCalled();
+    expect(ids).toEqual([]);
+    // The stored answer applied instead: the stale alt translations were purged.
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalled();
+  });
+
+  it("a budget with room changes nothing", async () => {
+    const { gateway, db } = deps();
+    const take = vi.fn(() => true);
+    const ids = await repairAltsAfterWrite({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      snapshot,
+      written: [{ mediaId: "gid://shopify/MediaImage/1", alt: "neu" }],
+      repairBudget: { take },
+    });
+    expect(ids).toEqual(["t1"]);
+  });
 });

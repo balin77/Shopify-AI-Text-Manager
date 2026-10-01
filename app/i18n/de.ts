@@ -582,6 +582,7 @@ export const de = {
     translateLocaleRejectedFields: "Übersetzung nach {locale} teilweise abgeschlossen. Feld(er) {fields} konnten nicht auf Shopify gespeichert werden.",
     translateSkippedFields: "Einige Felder wurden übersprungen, da der übersetzte Wert mit der Hauptsprache identisch ist: {details}.",
     altTextSavePartialImages: "Änderungen gespeichert, aber Alt-Text für Bild(er) {failedImages} konnte(n) nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
+    altTextSavePartialItem: "Änderungen gespeichert, aber der Alt-Text des Bildes ({failedImages}) konnte nicht auf Shopify gespeichert werden. Bitte versuche es erneut.",
     unconfirmedFieldsWarning: "Shopify hat das Speichern nicht bestätigt: {fields}. Diese Felder wurden NICHT gespeichert – dein Text steht noch in den Feldern, bitte versuche es erneut.",
     skippedFieldsSamePrimary: "Nicht gespeichert: {fields} ist identisch mit der Hauptsprache. Eine übersetzte URL braucht einen anderen Wert.",
     altTextTranslateAllPartialImages: "Alt-Texte für {successCount}/{totalCount} Bild(er) in {languageCount} Sprache(n) gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",

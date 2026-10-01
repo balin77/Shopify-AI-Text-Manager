@@ -2369,9 +2369,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
+        // "Sync the product again" is product advice: a collection's or an
+        // article's featured image has no product to sync, so those pages get
+        // the neutral sentence.
         const altMessage = String(
-          t.content?.altTextSavePartialImages ||
-            "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
+          config.contentType === "products"
+            ? t.content?.altTextSavePartialImages ||
+                "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again."
+            : t.content?.altTextSavePartialItem ||
+                "Changes saved, but the alt text of the image ({failedImages}) could not be saved to Shopify. Please try again.",
         ).replace("{failedImages}", failedList);
         showInfoBox(...withRedirect(serverWarning ? `${altMessage} ${serverWarning}` : altMessage, "warning"));
       } else if (serverWarning) {
