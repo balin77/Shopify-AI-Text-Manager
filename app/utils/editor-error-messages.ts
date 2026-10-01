@@ -27,6 +27,12 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return taskErrorText(refusal[0], t) ?? errorMessage;
   }
 
+  // A plan refusal travels as the code "gated" (planGateRefusal, 403).
+  if (errorMessage === "gated") {
+    const content = t.content as Record<string, string> | undefined;
+    return content?.upgradeRequired || "Upgrade required";
+  }
+
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys

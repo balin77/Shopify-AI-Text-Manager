@@ -1,4 +1,5 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { captureRemoved, reinsertRemoved, deleteOutcome, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
@@ -2085,15 +2086,22 @@ export function VariantImageManager({
 
     setIsDeleting(true);
     setDeleteConfirm(null);
-    // What the optimistic removal below replaces, so a refused delete can put
-    // the images back instead of leaving the gallery showing a state Shopify
-    // never reached.
-    const snapshot = {
-      galleries: pendingVariantGalleries,
-      excludedMain: locallyExcludedMainGids,
-      order: pendingProductImageOrder,
-      refreshed: refreshedProductImages,
-    };
+    // What the optimistic removal takes out, with its positions, so a refused
+    // delete can put exactly those entries back into whatever the state has
+    // become meanwhile (a whole-state snapshot would discard edits made while
+    // the request was in flight).
+    const removedFromGalleries: Record<string, RemovedEntry<string>[]> = {};
+    for (const v of variants) {
+      const removed = captureRemoved(pendingVariantGalleries[v.id] ?? v.galleryFileGids, gid => gidSet.has(gid));
+      if (removed.length > 0) removedFromGalleries[v.id] = removed;
+    }
+    const removedFromOrder = captureRemoved(
+      pendingProductImageOrder ?? effectiveProductImages.map(i => i.url),
+      url => urlSet.has(url),
+    );
+    const removedFromRefreshed = captureRemoved(effectiveProductImages, img => urlSet.has(img.url));
+    const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
+    const addedExcludedIds = variantsWithDeletedMainImage.map(v => v.id).filter(id => !locallyExcludedMainGids.has(id));
 
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
@@ -2105,8 +2113,8 @@ export function VariantImageManager({
       }
       return next;
     });
-    // Variants whose featured image was deleted — exclude from gallery and unset on Shopify
-    const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
+    // Variants whose featured image was deleted: exclude from gallery now,
+    // unset on Shopify only after the delete is confirmed.
     setLocallyExcludedMainGids(s => {
       const next = new Set(s);
       variantsWithDeletedMainImage.forEach(v => next.add(v.id));
@@ -2117,55 +2125,69 @@ export function VariantImageManager({
       return base.filter(url => !urlSet.has(url));
     });
     setRefreshedProductImages(effectiveProductImages.filter(img => !urlSet.has(img.url)));
-    // A deleted node can never turn up in shopifyMediaMap, so a settling
-    // entry for it would keep its tile on screen forever — draggable into a
-    // variant gallery with a GID that no longer exists. Retire it here.
-    if (gids.length > 0) onSettlingMediaResolved?.(gids);
     setSelectedGalleryItems(m => {
       const next = new Map(m);
       urls.forEach(url => next.delete(`product::${url}`));
       return next;
     });
 
-    let deleteFailed = false;
-    let clearFailed = false;
+    let deleteOk = false;
+    let clearOk: boolean | null = null;
     try {
-      const deleteFetch = fetch("/api/delete-product-images", {
+      const deleteRes = await fetch("/api/delete-product-images", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, mediaIds: gids }),
       });
+      const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
+      deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false;
       // Shopify does not automatically clear a variant's image when the referenced media is
-      // deleted. Explicitly unset mediaId for all affected variants in the same round-trip.
+      // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,
+      // so a refused delete changes nothing on Shopify.
       const clearMainImageIds = variantsWithDeletedMainImage.map(v => v.id);
-      const clearFetch = clearMainImageIds.length > 0
-        ? fetch("/api/update-variant-galleries", {
+      if (deleteOk && clearMainImageIds.length > 0) {
+        try {
+          const clearRes = await fetch("/api/update-variant-galleries", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ productId, clearVariantMainImages: clearMainImageIds }),
-          })
-        : null;
-      const [deleteRes, clearRes] = await Promise.all([deleteFetch, clearFetch]);
-      const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
-      deleteFailed = !deleteRes.ok || !deleteBody || deleteBody.success === false;
-      if (clearRes) {
-        const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
-        clearFailed = !clearRes.ok || !clearBody || clearBody.success === false;
+          });
+          const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
+          clearOk = clearRes.ok && !!clearBody && clearBody.success !== false;
+        } catch {
+          clearOk = false;
+        }
       }
     } catch {
-      deleteFailed = true;
+      deleteOk = false;
     }
-    if (deleteFailed) {
-      setPendingVariantGalleries(snapshot.galleries);
-      setLocallyExcludedMainGids(snapshot.excludedMain);
-      setPendingProductImageOrder(snapshot.order);
-      setRefreshedProductImages(snapshot.refreshed);
+    const outcome = deleteOutcome(deleteOk, clearOk);
+    if (outcome === "deleteFailed") {
+      setPendingVariantGalleries(p => {
+        const next = { ...p };
+        for (const v of variants) {
+          const removed = removedFromGalleries[v.id];
+          if (removed) next[v.id] = reinsertRemoved(p[v.id] ?? v.galleryFileGids, removed);
+        }
+        return next;
+      });
+      setLocallyExcludedMainGids(s => {
+        const next = new Set(s);
+        addedExcludedIds.forEach(id => next.delete(id));
+        return next;
+      });
+      setPendingProductImageOrder(curr => (curr ? reinsertRemoved(curr, removedFromOrder) : curr));
+      setRefreshedProductImages(curr => (curr ? reinsertRemoved(curr, removedFromRefreshed, (a, b) => a.url === b.url) : curr));
       setMediaError(t.imageManager.mediaDeleteFailed);
-    } else if (clearFailed) {
-      setMediaError(t.imageManager.mediaClearMainFailed);
+    } else {
+      // A deleted node can never turn up in shopifyMediaMap, so a settling
+      // entry for it would keep its tile on screen forever. Retire it only now
+      // that the delete is confirmed.
+      if (gids.length > 0) onSettlingMediaResolved?.(gids);
+      if (outcome === "clearFailed") setMediaError(t.imageManager.mediaClearMainFailed);
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, refreshedProductImages, t]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
