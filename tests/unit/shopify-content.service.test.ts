@@ -251,6 +251,8 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
   let admin: { graphql: ReturnType<typeof vi.fn> };
   let service: ShopifyContentService;
   let db: any;
+  /** What Shopify's `collectionUpdate` echoes as `image.altText` (the echo rule). */
+  let echoedAlt: string | null = 'Neuer Alt-Text';
 
   function makeCollectionAdmin() {
     const graphql = vi.fn(async (query: string) => ({
@@ -272,7 +274,12 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
           };
         }
         return {
-          data: { collectionUpdate: { collection: { id: collectionId, title: 'C' }, userErrors: [] } },
+          data: {
+            collectionUpdate: {
+              collection: { id: collectionId, title: 'C', image: { altText: echoedAlt } },
+              userErrors: [],
+            },
+          },
         };
       },
     }));
@@ -285,6 +292,7 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     policy.autoTranslateExternalChanges = false;
     removeAcrossLocales.calls = [];
     removeAcrossLocales.confirms = null;
+    echoedAlt = 'Neuer Alt-Text';
     admin = makeCollectionAdmin();
     service = new ShopifyContentService(admin as never);
     db = {
@@ -425,6 +433,15 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     const result = await save();
 
     expect(result.success).toBe(true);
+  });
+
+  it('refuses an alt Shopify did not ECHO: nothing is mirrored and no translation is touched', async () => {
+    // userErrors: [] describes a call Shopify accepted, not one it acted on.
+    echoedAlt = 'Alter Alt-Text';
+    await expect(save()).rejects.toThrow(/did not confirm the image alt text/);
+
+    expect(db.collection.update).not.toHaveBeenCalled();
+    expect(removeAcrossLocales.calls).toEqual([]);
   });
 });
 
@@ -744,7 +761,40 @@ describe('ShopifyContentService.updateContent() — the foreign-locale save is j
     const result = await save(admin, db, { title: 'Caja Kumiko', handle: 'caja-kumiko' });
 
     expect(result.success).toBe(true);
-    expect(String((result as any).warning)).toContain('handle');
+    // The save names the FIELD (not the Shopify key) so the page can keep it
+    // dirty and word the message in the merchant's language.
+    expect((result as any).unconfirmedFields).toEqual(['handle']);
+    expect((result as any).warning).toBeUndefined();
+    expect(mirrored(db)).toEqual({ title: 'Caja Kumiko' });
+  });
+
+  it('a save where NOTHING was echoed names the unconfirmed fields on the failure too', async () => {
+    const admin = makeAdmin({ data: { translationsRegister: { userErrors: [], translations: [] } } });
+    const db = makeDb();
+
+    const result: any = await save(admin, db, { title: 'Caja Kumiko' });
+
+    expect(result.success).toBe(false);
+    expect(result.unconfirmedFields).toEqual(['title']);
+  });
+
+  it('reports a foreign handle equal to the primary one instead of skipping it silently', async () => {
+    // The primary handle of the sample resource is `kumiko-box`.
+    const admin = makeAdmin((variables: any) => ({
+      data: {
+        translationsRegister: {
+          userErrors: [],
+          translations: (variables.translations ?? []).map((t: any) => ({ locale: t.locale, key: t.key, value: t.value })),
+        },
+      },
+    }));
+    const db = makeDb();
+
+    const result: any = await save(admin, db, { title: 'Caja Kumiko', handle: 'kumiko-box' });
+
+    expect(result.success).toBe(true);
+    expect(result.skippedFields).toEqual(['handle']);
+    // The rest of the save is real and was mirrored; the handle was not.
     expect(mirrored(db)).toEqual({ title: 'Caja Kumiko' });
   });
 

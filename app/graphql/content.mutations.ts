@@ -119,6 +119,9 @@ export const UPDATE_COLLECTION = `#graphql
         descriptionHtml
         sortOrder
         templateSuffix
+        image {
+          altText
+        }
         seo {
           title
           description

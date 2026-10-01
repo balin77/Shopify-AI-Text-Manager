@@ -35,6 +35,7 @@ import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { featuredAltLockId } from "~/services/translations/translation-locks.shared";
 import { findEchoFor } from "~/services/translations/translation-echo.shared";
+import { readDataPayload } from "~/utils/data-response";
 
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
@@ -746,6 +747,8 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
               value: generated,
               contentService,
               gateway,
+              admin,
+              primaryLocale: writtenLocale,
             });
           }
 
@@ -1101,6 +1104,8 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
             altText,
             contentService,
             gateway,
+            admin,
+            primaryLocale: writtenLocale,
           });
         }
 
@@ -1180,9 +1185,11 @@ interface PersistImageAltTextArgs {
   altText: string;
   contentService: ShopifyContentService;
   gateway: ShopifyApiGateway;
+  admin: AdminApiContext;
+  primaryLocale: string;
 }
 
-async function persistImageAltText(params: PersistImageAltTextArgs): Promise<void> {
+export async function persistImageAltText(params: PersistImageAltTextArgs): Promise<void> {
   const { db, shop, job, altText, contentService, gateway } = params;
 
   if (job.type === "product") {
@@ -1256,21 +1263,27 @@ async function persistImageAltText(params: PersistImageAltTextArgs): Promise<voi
     return;
   }
 
-  if (job.type === "collection") {
-    await contentService.updateCollection(job.id, { image: { altText } });
-    await db.collection.update({
-      where: { shop_id: { shop, id: job.id } },
-      data: { imageAltText: altText, lastSyncedAt: new Date() },
-    });
-    return;
-  }
-
-  if (job.type === "article") {
-    await contentService.updateArticle(job.id, { image: { altText } });
-    await db.article.update({
-      where: { shop_id: { shop, id: job.id } },
-      data: { imageAltText: altText, lastSyncedAt: new Date() },
-    });
+  if (job.type === "collection" || job.type === "article") {
+    // The editor's own save, for the same reason as `persistField`: it checks
+    // the ECHOED image alt before mirroring, and runs the featured-alt
+    // follow-up (invalidation per the purge policy, or the re-translation under
+    // auto-translate, market overrides included). Index 0 is the featured image.
+    if (!params.primaryLocale) {
+      throw new Error("The shop's primary language could not be determined - nothing was saved.");
+    }
+    const editorService = new ShopifyContentService(params.admin as any);
+    const result = (await editorService.updateContent({
+      resourceId: job.id,
+      resourceType: job.type === "collection" ? "Collection" : "Article",
+      locale: params.primaryLocale,
+      primaryLocale: params.primaryLocale,
+      updates: { imageAltText: altText },
+      db,
+      shop,
+      changedFields: [],
+      changedAltTextIndices: [0],
+    })) as { success?: boolean; error?: string } | undefined;
+    if (result?.success === false) throw new Error(result.error || "Update failed");
     return;
   }
 }
@@ -1538,142 +1551,83 @@ interface PersistArgs {
   value: string;
   contentService: ShopifyContentService;
   gateway: ShopifyApiGateway;
+  /** The raw Admin client: the single editor's save path (and with it the
+   *  translation repair) is built on it, not on the gateway. */
+  admin: AdminApiContext;
+  /** The shop's primary locale. A primary write without one is refused:
+   *  the follow-up (purge or re-translation) cannot be decided without it. */
+  primaryLocale: string;
+}
+
+/** The form field name each editor FIELD key travels under on the product action. */
+const PRODUCT_FORM_FIELD: Record<TextField, string> = {
+  title: "title",
+  description: "descriptionHtml",
+  seoTitle: "seoTitle",
+  metaDescription: "metaDescription",
+};
+
+/** The flat `updates` key the content service reads each editor FIELD from, per type. */
+function contentUpdatesFor(type: "collection" | "page" | "article", field: TextField, value: string): Record<string, string> {
+  // Page and Collection read the body from `description`, an Article from `body`.
+  const key = field === "description" && type === "article" ? "body" : field;
+  return { [key]: value };
 }
 
 /**
  * Save the generated value to Shopify (where supported) and the DB content
- * cache, mirroring how the single-item editor persists the same field.
+ * cache, mirroring how the single-item editor persists the same field — and
+ * running the same FOLLOW-UP the editor runs, because this write changes the
+ * PRIMARY text: the foreign translations of it are purged or re-translated per
+ * the merchant's policy (`isPurgeOnPrimaryChangeEnabled` /
+ * `reconcileAfterPrimarySave`, market overrides included). That follow-up is
+ * not re-implemented here: products go through the product editor's own
+ * `handleUpdateProduct` and collections / pages / articles through the content
+ * service's `updateContent`, so the write, its echo checks, its cache mirror and
+ * the repair are the editor's, and a rule added there reaches this path too.
+ * The follow-up is non-fatal inside those functions: it never fails the write.
  */
-async function persistField(params: PersistArgs): Promise<void> {
-  const { db, shop, type, id, field, value, contentService, gateway } = params;
+export async function persistField(params: PersistArgs): Promise<void> {
+  const { db, shop, type, id, field, value, admin, primaryLocale } = params;
 
-  switch (type) {
-    case "product": {
-      // Minimal partial productUpdate — only the field that changed is sent,
-      // so every omitted input is left untouched by Shopify.
-      let inputPayload: Record<string, unknown>;
-      if (field === "title") {
-        inputPayload = { id, title: value };
-      } else if (field === "description") {
-        inputPayload = { id, descriptionHtml: value };
-      } else {
-        // Shopify treats `seo` as a UNIT: sending `seo: { title }` alone CLEARS
-        // the existing description, and vice versa. This handler writes exactly
-        // ONE field per finding, so it is always the partial case — and
-        // `fixAllForItem` makes it worse, sending two single-sided writes in a
-        // row where only the last one survives, both reported as successes. The
-        // merge is the content service's, not a second copy of it: the
-        // failed-lookup branch (drop the missing side rather than send "") is
-        // the part that is easy to get wrong.
-        const preservedSeo = await contentService.buildPreservedSeo(
-          id,
-          field === "seoTitle" ? value : undefined,
-          field === "metaDescription" ? value : undefined,
-        );
-        inputPayload = { id, ...(preservedSeo ? { seo: preservedSeo } : {}) };
-      }
-      const response = await gateway.graphql(
-        `#graphql
-          mutation seoBulkFixProductUpdate($input: ProductInput!) {
-            productUpdate(input: $input) {
-              userErrors { field message }
-            }
-          }`,
-        { variables: { input: inputPayload } },
-      );
-      const data = (await response.json()) as {
-        data?: { productUpdate?: { userErrors?: { field?: string; message: string }[] } };
-      };
-      const userErrors = data.data?.productUpdate?.userErrors ?? [];
-      if (userErrors.length > 0) throw new Error(userErrors[0].message);
-
-      const dbData =
-        field === "seoTitle"
-          ? { seoTitle: value, lastSyncedAt: new Date() }
-          : field === "metaDescription"
-            ? { seoDescription: value, lastSyncedAt: new Date() }
-            : field === "description"
-              ? { descriptionHtml: value, lastSyncedAt: new Date() }
-              : { title: value, lastSyncedAt: new Date() };
-      await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
-      break;
-    }
-    case "collection": {
-      if (field === "title") {
-        await contentService.updateCollection(id, { title: value });
-        await db.collection.update({
-          where: { shop_id: { shop, id } },
-          data: { title: value, lastSyncedAt: new Date() },
-        });
-      } else if (field === "description") {
-        await contentService.updateCollection(id, { descriptionHtml: value });
-        await db.collection.update({
-          where: { shop_id: { shop, id } },
-          data: { descriptionHtml: value, lastSyncedAt: new Date() },
-        });
-      } else {
-        // Same unit rule as the product branch above — `updateCollection` passes
-        // its `seo` through verbatim, so the merge has to happen here.
-        const preservedSeo = await contentService.buildPreservedSeo(
-          id,
-          field === "seoTitle" ? value : undefined,
-          field === "metaDescription" ? value : undefined,
-        );
-        await contentService.updateCollection(id, { ...(preservedSeo ? { seo: preservedSeo } : {}) });
-        await db.collection.update({
-          where: { shop_id: { shop, id } },
-          data:
-            field === "seoTitle"
-              ? { seoTitle: value, lastSyncedAt: new Date() }
-              : { seoDescription: value, lastSyncedAt: new Date() },
-        });
-      }
-      break;
-    }
-    case "page": {
-      // Page body lives in `body` (not descriptionHtml); everything else
-      // maps 1:1 to the updatePage signature.
-      const pageInput =
-        field === "seoTitle"
-          ? { seoTitle: value }
-          : field === "metaDescription"
-            ? { seoDescription: value }
-            : field === "description"
-              ? { body: value }
-              : { title: value };
-      await contentService.updatePage(id, pageInput);
-      await db.page.update({
-        where: { shop_id: { shop, id } },
-        data: { ...pageInput, lastSyncedAt: new Date() },
-      });
-      break;
-    }
-    case "article": {
-      // Article SEO title/description are stored the same way as Page/Blog —
-      // as global.title_tag/description_tag metafields, written inline by
-      // updateArticle() (see ShopifyContentService.updateArticle). Body
-      // uses `body`, matching Page.
-      const articleInput =
-        field === "seoTitle"
-          ? { seoTitle: value }
-          : field === "metaDescription"
-            ? { seoDescription: value }
-            : field === "description"
-              ? { body: value }
-              : { title: value };
-      await contentService.updateArticle(id, articleInput);
-      const articleDbData =
-        field === "seoTitle"
-          ? { seoTitle: value, lastSyncedAt: new Date() }
-          : field === "metaDescription"
-            ? { seoDescription: value, lastSyncedAt: new Date() }
-            : field === "description"
-              ? { body: value, lastSyncedAt: new Date() }
-              : { title: value, lastSyncedAt: new Date() };
-      await db.article.update({ where: { shop_id: { shop, id } }, data: articleDbData });
-      break;
-    }
+  if (!primaryLocale) {
+    throw new Error("The shop's primary language could not be determined - nothing was saved.");
   }
+
+  if (type === "product") {
+    // Minimal partial save: only the field that changed is sent, so every
+    // omitted input is left untouched by Shopify. The partial `seo` merge, the
+    // echo check and the cache mirror live in the editor's update path.
+    const { handleUpdateProduct } = await import("~/actions/product/update.actions");
+    const form = new FormData();
+    form.set("locale", primaryLocale);
+    form.set("primaryLocale", primaryLocale);
+    form.set(PRODUCT_FORM_FIELD[field], value);
+    form.set("changedFields", JSON.stringify([field]));
+    const response = await handleUpdateProduct(
+      { admin, session: { shop } } as unknown as Parameters<typeof handleUpdateProduct>[0],
+      form,
+      id,
+    );
+    const payload = await readDataPayload<{ success?: boolean; error?: string }>(response);
+    if (payload?.success === false) throw new Error(payload.error || "Product update failed");
+    return;
+  }
+
+  // The content service on the RAW admin client: its repair wraps the client in
+  // a gateway of its own.
+  const editorService = new ShopifyContentService(admin as any);
+  const result = (await editorService.updateContent({
+    resourceId: id,
+    resourceType: type === "collection" ? "Collection" : type === "page" ? "Page" : "Article",
+    locale: primaryLocale,
+    primaryLocale,
+    updates: contentUpdatesFor(type, field, value),
+    db,
+    shop,
+    changedFields: [field],
+  })) as { success?: boolean; error?: string } | undefined;
+  if (result?.success === false) throw new Error(result.error || "Update failed");
 }
 
 // ─── "Fix all issues for one item" runner ──────────────────────────────────
@@ -1866,6 +1820,8 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
             value: generated,
             contentService,
             gateway,
+            admin,
+            primaryLocale: writtenLocale,
           });
           // Refresh the in-memory row so a later code in the loop (e.g.
           // seoTitleMissing after titleLength) reads the new title instead
@@ -1960,6 +1916,7 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
   const {
     db,
     shop,
+    admin,
     itemType,
     itemId,
     aiInstructions,
@@ -2129,6 +2086,8 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
           altText,
           contentService,
           gateway,
+          admin,
+          primaryLocale: writtenLocale,
         });
       }
     } catch (err: unknown) {

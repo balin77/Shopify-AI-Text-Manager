@@ -201,6 +201,27 @@ export interface DeleteTranslationsResult {
 /** `${locale}\0${key}` -- the pair spelling `removeAndVerify*` confirms by. */
 const localeKeyPair = (locale: string, key: string): string => `${locale}${ECHO_PAIR_SEP}${key}`;
 
+/**
+ * The echo rule for a collection's / article's FEATURED-IMAGE alt: the mutation
+ * answers `userErrors: []` for a call it accepted, and only the echoed
+ * `image.altText` says what Shopify STORED. A missing or different echo throws
+ * BEFORE the DB mirror, so the cache never claims an alt Shopify does not hold
+ * and no translation repair runs for a primary that did not change.
+ * `""` and null are the same "no alt".
+ */
+function assertFeaturedAltEchoed(
+  resource: { image?: { altText?: string | null } | null } | null | undefined,
+  sent: string,
+): void {
+  if (!resource || !('image' in resource)) {
+    throw new Error('Shopify did not confirm the image alt text (no echo) - please try again.');
+  }
+  const stored = (resource.image?.altText ?? '').trim();
+  if (stored !== (sent ?? '').trim()) {
+    throw new Error('Shopify did not confirm the image alt text (it stored a different value) - please try again.');
+  }
+}
+
 export class ShopifyContentService {
   private admin: ShopifyAdminClient;
 
@@ -1139,6 +1160,8 @@ export class ShopifyContentService {
       const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
       /** Shopify translation key -> the FIELD key that carried it, for reporting. */
       const fieldOfTranslationKey: Record<string, string> = {};
+      /** FIELD keys the save deliberately did not write (a handle equal to the primary one). */
+      const skippedFields: string[] = [];
 
       // Map UI field names to Shopify translatable content keys — the ONE
       // canonical map (see FIELD_TO_TRANSLATION_KEY at the top of this file
@@ -1148,11 +1171,15 @@ export class ShopifyContentService {
       for (const [field, value] of Object.entries(updates)) {
         const translationKey = keyMapping[field];
         if (!translationKey) continue;
+        fieldOfTranslationKey[translationKey] = field;
 
         // Reject handle translations that are identical to the primary locale handle —
         // duplicate slugs across locales cause Shopify routing conflicts.
         if (field === 'handle' && value && valueMap['handle'] && value.trim() === valueMap['handle'].trim()) {
           loggers.translation('warn', `[updateContent] Skipping handle for locale '${locale}' — same as primary locale handle`);
+          // Reported, not swallowed: the field stays dirty on the page and the
+          // merchant is told why (localized there, from this field key).
+          skippedFields.push(field);
           continue;
         }
 
@@ -1184,7 +1211,6 @@ export class ShopifyContentService {
         } else if (value === "") {
           // Empty string means user cleared the translation — mark for deletion
           translationsToDelete.push(translationKey);
-          fieldOfTranslationKey[translationKey] = field;
         }
       }
 
@@ -1432,7 +1458,7 @@ export class ShopifyContentService {
 
       // Article/Collection image alt-text translations live on a separate translatable
       // resource (ArticleImage / CollectionImage). Best-effort: failures don't fail the save.
-      let featuredAltWarning: string | undefined;
+      let featuredAltFailed = false;
       if (updates.imageAltText !== undefined && (resourceType === 'Collection' || resourceType === 'Article')) {
         const altResult = await this.saveImageAltTextTranslation({
           resourceId,
@@ -1446,7 +1472,10 @@ export class ShopifyContentService {
         // but a register Shopify did not echo (or a clear it did not confirm)
         // is never reported as a clean save.
         if (!altResult.saved) {
-          featuredAltWarning = `The image alt text translation was NOT saved in Shopify (${altResult.reason ?? 'unknown'}) — please try again.`;
+          // Reported through the SAME channel a product's failed alt uses
+          // (`failedAltTextIndices`, index 0 = the featured image): the page
+          // words it in the merchant's language and keeps that alt dirty.
+          featuredAltFailed = true;
           loggers.translation('warn', '[updateContent] Featured image alt translation not saved', { resourceId, locale, reason: altResult.reason });
         }
       }
@@ -1467,14 +1496,23 @@ export class ShopifyContentService {
       // live. A cleared field (`translationsToDelete`) is a removal with its
       // own confirmation path and does not make an unconfirmed write partial.
       const warnings: string[] = [];
-      if (featuredAltWarning) warnings.push(featuredAltWarning);
       if (dbOnlyTranslations.length > 0) {
         const fieldNames = dbOnlyTranslations.map((t) => t.key).join(", ");
         warnings.push(`Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`);
       }
 
+      // FIELD keys of the writes Shopify did not echo, mapped back from the
+      // translation keys through the canonical map. The page keeps exactly
+      // these dirty with the typed text and words the message in the
+      // merchant's language from its own field labels; a key that maps to no
+      // field falls back to the English text below.
+      const unconfirmedFields = [
+        ...new Set(unconfirmedKeys.map((key) => fieldOfTranslationKey[key]).filter((f): f is string => !!f)),
+      ];
+      const unmappedUnconfirmedKeys = unconfirmedKeys.filter((key) => !fieldOfTranslationKey[key]);
+
       if (unconfirmedKeys.length > 0) {
-        const names = unconfirmedKeys.join(", ");
+        const names = (unmappedUnconfirmedKeys.length > 0 ? unmappedUnconfirmedKeys : unconfirmedKeys).join(", ");
         const message = `Shopify accepted the save but did not confirm storing (${names}). Those fields were NOT saved and were not cached locally — please try again.`;
         if (confirmedTranslations.length === 0) {
           // A digest-less local row on the same save is not evidence that
@@ -1482,9 +1520,11 @@ export class ShopifyContentService {
           // never went there — so it does not soften this verdict. It is
           // carried into the message rather than dropped, because the merchant
           // is about to re-save and needs to know which half went where.
-          return { success: false, error: [message, ...warnings].join(" ") };
+          return { success: false, error: [message, ...warnings].join(" "), ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}) };
         }
-        warnings.unshift(message);
+        // Fully mapped ⇒ the page words it (localized); the English text is
+        // only the fallback for keys no field owns.
+        if (unmappedUnconfirmedKeys.length > 0) warnings.unshift(message);
       }
 
       // A removal Shopify did not confirm: the local row was KEPT, so the field
@@ -1499,7 +1539,7 @@ export class ShopifyContentService {
         warnings.unshift(message);
       }
 
-      if (warnings.length > 0) {
+      if (warnings.length > 0 || unconfirmedFields.length > 0 || skippedFields.length > 0 || featuredAltFailed) {
         // FIELD keys whose clear Shopify did not confirm: the page keeps them
         // dirty instead of caching them as saved-empty.
         const unconfirmedClearedFields = unconfirmedRemovals
@@ -1507,8 +1547,11 @@ export class ShopifyContentService {
           .filter((field): field is string => !!field);
         return {
           success: true,
-          warning: warnings.join(" "),
+          ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
           ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
+          ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}),
+          ...(skippedFields.length > 0 ? { skippedFields } : {}),
+          ...(featuredAltFailed ? { failedAltTextIndices: [0] } : {}),
         };
       }
 
@@ -1619,6 +1662,7 @@ export class ShopifyContentService {
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
           ...attributeInput,
         });
+        if (updates.imageAltText !== undefined) assertFeaturedAltEchoed(updatedResource, updates.imageAltText);
 
         // Update database
         await db.article.update({
@@ -1648,6 +1692,7 @@ export class ShopifyContentService {
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
           ...attributeInput,
         });
+        if (updates.imageAltText !== undefined) assertFeaturedAltEchoed(updatedResource, updates.imageAltText);
 
         // Update database
         await db.collection.update({

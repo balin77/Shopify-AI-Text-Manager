@@ -854,12 +854,24 @@ async function updateTranslatedProduct(
       `Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`,
     );
   }
+  // FIELD keys of the writes Shopify did not echo: the page keeps them dirty
+  // with the typed text and words the message itself, in the merchant's
+  // language, from its own field labels. A key no field owns keeps the English
+  // text below as the fallback.
+  const unconfirmedFields = [
+    ...new Set(unconfirmedKeys.map((key) => FIELD_OF_PRODUCT_TRANSLATION_KEY[key]).filter((f): f is string => !!f)),
+  ];
+  const unmappedUnconfirmedKeys = unconfirmedKeys.filter((key) => !FIELD_OF_PRODUCT_TRANSLATION_KEY[key]);
   if (unconfirmedKeys.length > 0) {
-    const message = `Shopify accepted the save but did not confirm storing (${unconfirmedKeys.join(", ")}). Those fields were NOT saved and were not cached locally — please try again.${registerError ? ` (${registerError})` : ""}`;
+    const named = unmappedUnconfirmedKeys.length > 0 ? unmappedUnconfirmedKeys : unconfirmedKeys;
+    const message = `Shopify accepted the save but did not confirm storing (${named.join(", ")}). Those fields were NOT saved and were not cached locally — please try again.${registerError ? ` (${registerError})` : ""}`;
     if (confirmedInputs.length === 0) {
-      return json({ success: false, error: [message, ...warnings].join(" ") }, { status: 500 });
+      return json(
+        { success: false, error: [message, ...warnings].join(" "), ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}) },
+        { status: 500 },
+      );
     }
-    warnings.unshift(message);
+    if (unmappedUnconfirmedKeys.length > 0 || registerError) warnings.unshift(message);
   }
   if (unconfirmedRemovals.length > 0) {
     const message = `Shopify did not confirm removing the translation of (${unconfirmedRemovals.join(", ")}). It was kept — please try again.${removalError ? ` (${removalError})` : ""}`;
@@ -868,7 +880,7 @@ async function updateTranslatedProduct(
     }
     warnings.unshift(message);
   }
-  if (warnings.length > 0) {
+  if (warnings.length > 0 || unconfirmedFields.length > 0) {
     // FIELD keys whose clear Shopify did not confirm: the page keeps them dirty
     // instead of caching them as saved-empty.
     const unconfirmedClearedFields = unconfirmedRemovals
@@ -876,8 +888,9 @@ async function updateTranslatedProduct(
       .filter((field): field is string => !!field);
     return json({
       success: true,
-      warning: warnings.join(" "),
+      ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
       ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
+      ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}),
     });
   }
 
@@ -1182,6 +1195,18 @@ async function updatePrimaryProduct(
         error: data.data.productUpdate.userErrors[0].message,
       },
       { status: 500 }
+    );
+  }
+
+  // The echo rule: `userErrors: []` describes a call Shopify accepted, and a
+  // throttled or partial answer carries an empty list too. Only a product that
+  // comes BACK says something was written - without it the cache would be
+  // mirrored and the translation repair started for a primary that never moved.
+  if (!data.data.productUpdate.product?.id) {
+    logger.error("Shopify product update returned no product", { context: "UpdateProduct", productId });
+    return json(
+      { success: false, error: "Shopify did not confirm the product update - please try again." },
+      { status: 500 },
     );
   }
 

@@ -60,6 +60,10 @@ interface SubResourceFetcherData {
   /** Create / delete / reorder failures, which carry no option id. */
   structuralFailures?: number;
   removedOptionIds?: string[];
+  /** The server's sentence (or the plan refusal's code "gated") when `success` is false. */
+  error?: string;
+  /** Ids of detached repairs a save started, offered even when the save failed. */
+  retranslationTaskIds?: string[];
 }
 
 export interface SubResourceState {
@@ -181,6 +185,8 @@ interface UseProductSubResourcesStrings {
   /** "This field cannot be translated in Shopify." */
   subResourceNotTranslatable?: string;
   saveFailedItems?: string;
+  /** Generic answer to a request that failed as a whole (no per-item lists). */
+  subResourcesRequestFailed?: string;
   optionNameEmpty?: string;
   optionValuesEmpty?: string;
   metafieldValuesEmpty?: string;
@@ -506,6 +512,46 @@ export function useProductSubResources({
     setRefreshVersion((v) => v + 1);
   }, []);
 
+  // A request that failed as a whole, from either fetcher. The plan refusal
+  // arrives as the code "gated" and goes through the editor's one translator so
+  // it reads as the upgrade message; a managed-AI refusal already carries a
+  // localised sentence. A save that failed still hands its task ids (a repair
+  // some other resource of the same save may have started) to the watcher.
+  const reportFailedRequest = (data: SubResourceFetcherData) => {
+    const raw = typeof data.error === "string" ? data.error : "";
+    const translated = raw
+      ? translateErrorMessage(raw, {
+          content: { upgradeRequired: strings.upgradeRequired },
+          errors: {},
+        } as unknown as TranslationStrings)
+      : "";
+    const isSave = data.actionType === "savePrimarySubResources" || data.actionType === "saveSubResourceTranslations";
+    const fallback = isSave
+      ? strings.subResourcesRequestFailed || "Saving failed. Your edits are kept - please try again."
+      : strings.translateFailed || strings.subResourcesRequestFailed || "Translation failed";
+    showInfoBox?.(translated || fallback, "critical");
+    if (Array.isArray(data.retranslationTaskIds) && data.retranslationTaskIds.length > 0) {
+      onSaveResponse?.(data);
+    }
+  };
+
+  // The translate spinners a failed request left behind. `data.fieldId` names
+  // the one that was asked for (managed refusals carry it); otherwise every
+  // translating id of this item goes, because the failed answer cannot say
+  // which. A save never started a translate spinner, so it clears none.
+  const clearFailedTranslateSpinners = (data: SubResourceFetcherData, always: boolean) => {
+    const resourceId = selectedItem?.id || "";
+    if (!resourceId) return;
+    const isSave = data.actionType === "savePrimarySubResources" || data.actionType === "saveSubResourceTranslations";
+    if (isSave && !always) return;
+    if (data.fieldId) {
+      markSubResourceCompleted(resourceId, data.fieldId);
+      if (data.fieldId !== "all:subresources") return;
+    }
+    for (const id of translatingFieldIds) markSubResourceCompleted(resourceId, id);
+    markSubResourceCompleted(resourceId, "all:subresources");
+  };
+
   // ============================================================================
   // Handle fetcher responses (load + translate + save)
   // ============================================================================
@@ -519,7 +565,21 @@ export function useProductSubResources({
     lastProcessedDataRef.current = data;
 
     if (!data.success) {
-      if (data.actionType === "loadSubResourceTranslations") setIsLoading(false);
+      if (data.actionType === "loadSubResourceTranslations") {
+        setIsLoading(false);
+        return;
+      }
+      // A request that failed as a whole (server error, plan refusal, managed
+      // AI refusal). It used to return silently: the spinner of a copy or a
+      // translate hung until the store's ten-minute timeout and the merchant
+      // heard nothing. Edits stay PENDING (nothing here touches the dirty sets
+      // or `hasChanges`) so the save can simply be pressed again.
+      reportFailedRequest(data);
+      if (pendingCopyFieldIdRef.current) {
+        markSubResourceCompleted(selectedItem?.id || "", pendingCopyFieldIdRef.current);
+        pendingCopyFieldIdRef.current = null;
+      }
+      clearFailedTranslateSpinners(data, false);
       return;
     }
 
@@ -852,7 +912,11 @@ export function useProductSubResources({
     if (data === lastProcessedTranslateAllDataRef.current) return;
     lastProcessedTranslateAllDataRef.current = data;
 
-    if (!data.success) return;
+    if (!data.success) {
+      reportFailedRequest(data);
+      clearFailedTranslateSpinners(data, true);
+      return;
+    }
 
     if (data.actionType === "translateSubResources" || data.actionType === "translateSubResourceToAllLocales") {
       // Clear all sub-resource translating states from global store

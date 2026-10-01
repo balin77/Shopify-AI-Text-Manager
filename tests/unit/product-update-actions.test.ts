@@ -355,7 +355,7 @@ describe("updateTranslatedProduct -- foreign register + mirror", () => {
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it("a PARTIAL echo mirrors only the confirmed key and warns naming the others", async () => {
+  it("a PARTIAL echo mirrors only the confirmed key and names the unconfirmed FIELD for the page", async () => {
     const w = installAdmin({
       register: (v: any) => ({
         data: {
@@ -370,7 +370,10 @@ describe("updateTranslatedProduct -- foreign register + mirror", () => {
     const result = body(await saveForeign(w.admin, { title: "Hemd", handle: "hemd" }));
 
     expect(result.success).toBe(true);
-    expect(result.warning).toContain("(handle)");
+    // FIELD keys, not Shopify keys: the page keeps them dirty and words the
+    // message itself in the merchant's language. No raw English warning.
+    expect(result.unconfirmedFields).toEqual(["handle"]);
+    expect(result.warning).toBeUndefined();
     expect(db.contentTranslation.upsert.mock.calls.map((c: any) => c[0].create.key)).toEqual(["title"]);
   });
 

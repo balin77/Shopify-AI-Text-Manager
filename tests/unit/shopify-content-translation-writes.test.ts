@@ -663,12 +663,14 @@ describe('updateContent -- foreign save of a featured image alt', () => {
       updates: { imageAltText: 'Chaise' }, db, shop,
     } as any);
 
-  it('an alt register Shopify did not echo is a WARNING on the save, not a silent success', async () => {
+  it('an alt register Shopify did not echo is reported as a FAILED alt (index 0), not a silent success', async () => {
     const admin = makeAdmin({ data: { translationsRegister: { userErrors: [], translations: [] } } });
     const db = makeDb();
     const result: any = await save(admin, db);
     expect(result.success).toBe(true);
-    expect(result.warning).toMatch(/alt text translation was NOT saved/);
+    // The same channel a product's failed alt uses: the page words it in the
+    // merchant's language and keeps that alt dirty.
+    expect(result.failedAltTextIndices).toEqual([0]);
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 

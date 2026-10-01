@@ -50,7 +50,7 @@ import { readLastSelectedId } from "../utils/last-selected-item";
 import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
-import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys } from "../services/editor/unconfirmed-cleared.shared";
+import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -518,6 +518,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem, t]);
 
   const effectiveFieldDefinitionsRef = useLatestRef(effectiveFieldDefinitions);
+
+  // A save that stored only part of what was typed names the fields by their
+  // LABELS in the merchant's language (never by translation keys). Plain
+  // function over the latest render's `t` and field definitions.
+  const localizedUnconfirmedFields = (data: unknown): string => {
+    const labels = (t.content?.fieldLabels ?? {}) as Record<string, string>;
+    return unconfirmedFieldsMessage(
+      data,
+      (key) => labels[key] || effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.label || key,
+      {
+        unconfirmed: String(
+          t.content?.unconfirmedFieldsWarning ||
+            "Shopify did not confirm storing: {fields}. These fields were NOT saved - your text is still in the fields, please try again.",
+        ),
+        skipped: String(
+          t.content?.skippedFieldsSamePrimary ||
+            "Not saved: {fields} is identical to the main language. A translated URL needs a different value.",
+        ),
+      },
+    );
+  };
 
   // Resolve a raw field key to a human-readable label (for info box messages)
   const resolveFieldLabel = useCallback((fieldKey: string): string => {
@@ -1960,9 +1981,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Update originalAltTexts immediately after saving to reset change detection
       // (a failed copy's index keeps its previous baseline, see altBaselineSnapshot)
-      setOriginalAltTexts(altBaselineSnapshot(
-        Array.isArray(fetcher.data.failedAltTextIndices) ? fetcher.data.failedAltTextIndices : []
-      ));
+      // and so does ANY failed alt (not only a copy): its text was not stored,
+      // so it must stay dirty against the baseline it had before this save.
+      {
+        const failedAlts: number[] = Array.isArray(fetcher.data.failedAltTextIndices) ? fetcher.data.failedAltTextIndices : [];
+        setOriginalAltTexts(keepFailedAltsDirty(altBaselineSnapshot(failedAlts), failedAlts, imageAltTextsRef.current));
+      }
       debugLog.response(' Updated originalAltTexts:', { ...imageAltTextsRef.current });
 
       // Clear the saved locale ref after processing
@@ -2337,6 +2361,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         [
           ruleWarningCode && (ruleWarnings[ruleWarningCode] || ruleWarningCode),
           ...attributeWarningCodes.map((code) => attributeWarnings[code] || code),
+          localizedUnconfirmedFields(fetcher.data),
           "warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "",
         ]
           .filter(Boolean)
@@ -2375,7 +2400,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       // Update original alt-texts to match current values (so hasChanges becomes false)
-      setOriginalAltTexts(altBaselineAfterCopy);
+      setOriginalAltTexts(keepFailedAltsDirty(altBaselineAfterCopy, copyFailedAlts, imageAltTextsRef.current));
 
       // For templates: Do NOT eagerly update originalTemplateValuesRef here.
       // Using the current editableValues would incorrectly bake in any manual edits
@@ -2463,7 +2488,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedItemIdRef.current = null;
 
       if (isSavedItemCurrent) {
-        const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
+        const translatedError =
+          localizedUnconfirmedFields(fetcher.data) ||
+          translateErrorMessage(String(fetcher.data.error || ""), t);
         showInfoBox(translatedError, "critical");
       }
     } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {

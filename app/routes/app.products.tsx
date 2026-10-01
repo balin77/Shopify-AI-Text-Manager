@@ -518,6 +518,7 @@ export default function ProductsPage() {
       upgradeRequired: t.content.upgradeRequired,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
+      subResourcesRequestFailed: t.products.subResourcesRequestFailed,
       translateSubResourcesFailed: t.products.translateSubResourcesFailed,
       subResourceNotTranslatable: t.products.subResourceNotTranslatable,
       translatePartialLocales: t.content.translatePartialLocales,
