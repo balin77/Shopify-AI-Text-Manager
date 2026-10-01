@@ -9,7 +9,7 @@
  * image manager's on/off), because replacements keep serving on the storefront
  * when the manager is switched off.
  */
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type MutableRefObject, type ReactNode } from "react";
 import type { MarketInfo, ShopLocale } from "../../types/content-editor.types";
 import { useLocalizedMedia, type LocalizedMediaState } from "./useLocalizedMedia";
 
@@ -30,6 +30,7 @@ export function LocalizedMediaProvider({
   embedActivationUrl,
   reloadKey,
   enabled,
+  draftsPendingRef,
   children,
 }: {
   productId: string;
@@ -41,6 +42,8 @@ export function LocalizedMediaProvider({
   reloadKey?: string;
   /** The plan gate, and a product being selected. */
   enabled: boolean;
+  /** Mirrors "unsaved drafts exist" for the page's item-switch guard (the drafts live here, below the page's hooks). */
+  draftsPendingRef?: MutableRefObject<boolean>;
   children: ReactNode;
 }) {
   const state = useLocalizedMedia({
@@ -51,7 +54,11 @@ export function LocalizedMediaProvider({
     selectedMarketId,
     enabled,
     reloadKey,
+    embedActivationUrl,
   });
+  useEffect(() => {
+    if (draftsPendingRef) draftsPendingRef.current = state.hasDrafts;
+  }, [draftsPendingRef, state.hasDrafts]);
   return (
     <LocalizedMediaContext.Provider value={{ state, embedActivationUrl: embedActivationUrl ?? null }}>
       {children}

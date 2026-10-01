@@ -67,7 +67,7 @@ COPY --chown=node:node --from=builder /app/build ./build
 # recovery AND the stuck-task monitor for every task type with it, leaving one
 # log line behind).
 COPY --chown=node:node server.js start.js ./
-COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js image-op-refund.js orphan-run-recovery.js ./
+COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js image-op-refund.js localized-media-rekey.js orphan-run-recovery.js ./
 COPY --chown=node:node scripts ./scripts/
 
 # Copy middleware and other app files needed at runtime by server.js

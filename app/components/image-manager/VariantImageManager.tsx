@@ -11,8 +11,8 @@ import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useLocalizedMediaContext } from "../localized-images/LocalizedMediaContext";
-import { LocalizedMediaReplacePanel, LocalizedMediaOrphanNotice } from "../localized-images/LocalizedMediaReplacePanel";
-import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
+import { LocalizedMediaReplaceButtons, LocalizedMediaOrphanNotice } from "../localized-images/LocalizedMediaReplaceButton";
+import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
@@ -223,7 +223,7 @@ export function VariantImageManager({
   seedThreeDPreviewUrls,
   onGalleryOrderChange,
 }: VariantImageManagerProps) {
-  const { t, locale: appLocale } = useI18n();
+  const { t } = useI18n();
   const { plan } = usePlan();
   // Alt-text translation needs at least one foreign locale. Without one the
   // buttons stay visible but greyed out, with this as their tooltip.
@@ -2109,6 +2109,12 @@ export function VariantImageManager({
     return urls;
   }, [selectedGalleryItems]);
 
+  // Per-language media state (product page only): the delete path reports a
+  // failed clean-up of the deleted originals' replacements through it.
+  const localizedMediaState = useLocalizedMediaContext()?.state ?? null;
+  const localizedMediaRef = useRef(localizedMediaState);
+  localizedMediaRef.current = localizedMediaState;
+
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteConfirm) return;
     const { urls } = deleteConfirm;
@@ -2214,8 +2220,11 @@ export function VariantImageManager({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ productId: startedProductId, mediaIds: gids }),
         });
-        const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
+        const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean; localizedMedia?: { removed?: number; failed?: string } } | null;
         deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false;
+        // The route also removes the originals' per-language replacements; the
+        // delete stands even if that part failed, and the merchant is told.
+        if (deleteOk && deleteBody?.localizedMedia?.failed) localizedMediaRef.current?.reportCleanupFailed(deleteBody.localizedMedia.failed);
       }
       // Shopify does not automatically clear a variant's image when the referenced media is
       // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,
@@ -2591,21 +2600,21 @@ export function VariantImageManager({
     : false;
 
   // Per-language replacement (foreign language only, product gallery only):
-  // tiles whose medium has one carry a corner mark, and the one selected,
-  // SAVED medium gets the replace panel. An unsaved tile has no GID and is not
-  // offered; a still-processing one is said to be unavailable by the panel.
-  const localizedMedia = useLocalizedMediaContext()?.state ?? null;
-  const replacedProductUrls = useMemo(() => {
-    const out = new Set<string>();
-    if (!localizedMedia?.active || localizedMedia.replaced.size === 0) return out;
+  // a tile whose medium has one SHOWS it in place of the original, with the
+  // corner symbol that flips it back to the original. The selected, SAVED
+  // medium gets the replace button next to its alt-text controls. An unsaved
+  // tile has no GID and is not offered; a still-processing one is said to be
+  // unavailable by the button. Tiles stay keyed by the ORIGINAL's URL.
+  const localizedMedia = localizedMediaState;
+  const replacementsByUrl = useMemo(() => {
+    const out: Record<string, LocalizedMediaTile> = {};
+    if (!localizedMedia?.active) return out;
     for (const [url, gid] of Object.entries(urlToGid)) {
-      if (localizedMedia.replaced.has(gid)) out.add(url);
+      const tile = localizedMedia.tileOf(gid);
+      if (tile) out[url] = tile;
     }
     return out;
   }, [localizedMedia, urlToGid]);
-  const replacedMarkLabel = localizedMedia?.active
-    ? t.localizedImages.replacedMark.replace("{language}", getLocalizedLanguageName(localizedMedia.rawLocale, appLocale))
-    : "";
   const productSingleSelectedGid = productSingleSelected
     ? (urlToGid[productSingleSelected]
       ?? Object.entries(urlToGid).find(([k]) => k.split("?")[0] === productSingleSelected.split("?")[0])?.[1]
@@ -2780,8 +2789,7 @@ export function VariantImageManager({
               onOpenPicker={() => setPickerTarget({ mode: "product" })}
               localAltTexts={localAltTexts}
               isPrimaryLocale={isPrimaryLocale}
-              replacedUrls={replacedProductUrls}
-              replacedLabel={replacedMarkLabel}
+              replacements={replacementsByUrl}
             />
           </div>
           {(productGalleryHasOverflow || isProductGalleryExpanded) && (
@@ -2980,6 +2988,8 @@ export function VariantImageManager({
                     </Button>
                   </div>
                 )}
+                {/* Replacement for the selected image/video in this foreign language: one more button. */}
+                {productSingleSelectedGid && <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />}
               </div>
             </div>
             {!isPrimaryLocale && productPrimaryAltText && (
@@ -2990,8 +3000,6 @@ export function VariantImageManager({
             )}
           </div>
         )}
-        {/* Replacement for the selected image/video in this foreign language. */}
-        {productSingleSelectedGid && <LocalizedMediaReplacePanel mediaId={productSingleSelectedGid} />}
         <LocalizedMediaOrphanNotice />
       </div>
 

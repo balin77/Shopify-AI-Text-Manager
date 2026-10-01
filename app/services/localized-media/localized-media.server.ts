@@ -399,3 +399,28 @@ export async function removeLocalizedImage(args: {
   if (!written.ok) return written;
   return { ok: true, entries: next, media: current.media };
 }
+
+/**
+ * The originals are gone (deleted in the app): every replacement of theirs, in
+ * every language and market, goes too. Same read-modify-write and echo rule as
+ * every other write here. A product that never had a replacement costs one
+ * read and no write. `removed` counts the entries taken out.
+ */
+export async function removeEntriesForDeletedMedia(args: {
+  graphql: Graphql;
+  productId: string;
+  mediaIds: string[];
+}): Promise<LocalizedMediaResult<{ removed: number }>> {
+  const { graphql, productId, mediaIds } = args;
+  const gone = new Set(mediaIds);
+  if (gone.size === 0) return { ok: true, removed: 0 };
+  const current = await readProductLocalizedMedia(graphql, productId);
+  if (!current.ok) return current;
+  if (current.foreignValue) return { ok: false, code: "foreignMetafieldValue" };
+  const next = current.entries.filter((e) => !gone.has(e.m));
+  const removed = current.entries.length - next.length;
+  if (removed === 0) return { ok: true, removed: 0 };
+  const written = await writeProductLocalizedMedia(graphql, productId, next, current.hasMetafield);
+  if (!written.ok) return written;
+  return { ok: true, removed };
+}

@@ -18,6 +18,7 @@ import {
   type LocalizedMediaEntry,
 } from "../../app/services/localized-media/localized-media.shared";
 import {
+  removeEntriesForDeletedMedia,
   removeLocalizedImage,
   setLocalizedImage,
   writeProductLocalizedMedia,
@@ -233,6 +234,35 @@ describe("localized media — Shopify write path", () => {
     const res = await removeLocalizedImage({ graphql: fn as never, productId: PRODUCT, sourceMediaId: MEDIA, locale: "fr", marketId: "" });
     expect(res.ok).toBe(true);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("deleting an original removes its replacements", () => {
+  it("drops every locale and market of the deleted media and confirms by the echo", async () => {
+    const OTHER = "gid://shopify/MediaImage/11";
+    const stored = serializeLocalizedMedia([entry(), entry({ l: "es", k: "7" }), entry({ m: OTHER })]);
+    const kept = serializeLocalizedMedia([entry({ m: OTHER })]);
+    const { fn, calls } = fakeGraphql([
+      productRead(stored),
+      () => ({ metafieldsSet: { metafields: [{ key: "localized_media", namespace: "custom", value: kept, owner: { id: PRODUCT } }], userErrors: [] } }),
+    ]);
+    const res = await removeEntriesForDeletedMedia({ graphql: fn as never, productId: PRODUCT, mediaIds: [MEDIA] });
+    expect(res).toMatchObject({ ok: true, removed: 2 });
+    expect(calls[1].query).toContain("metafieldsSet");
+  });
+
+  it("writes nothing when no entry belonged to the deleted media", async () => {
+    const { fn, calls } = fakeGraphql([productRead(serializeLocalizedMedia([entry({ m: "gid://shopify/MediaImage/11" })]))]);
+    expect(await removeEntriesForDeletedMedia({ graphql: fn as never, productId: PRODUCT, mediaIds: [MEDIA] })).toMatchObject({ ok: true, removed: 0 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("reports a write that Shopify did not echo", async () => {
+    const { fn } = fakeGraphql([
+      productRead(serializeLocalizedMedia([entry()])),
+      () => ({ metafieldsDelete: { deletedMetafields: [], userErrors: [] } }),
+    ]);
+    expect(await removeEntriesForDeletedMedia({ graphql: fn as never, productId: PRODUCT, mediaIds: [MEDIA] })).toMatchObject({ ok: false, code: "writeNotConfirmed" });
   });
 });
 
