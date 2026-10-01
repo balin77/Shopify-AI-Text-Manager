@@ -2311,6 +2311,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onTranslateField={subResourceHandlers.translateOptionField}
                       onCopyField={subResourceHandlers.copyOptionField}
                       onCopyFieldToAllLocales={subResourceHandlers.copyOptionFieldToAllLocales}
+                      onCopyOptionToAllLocales={subResourceHandlers.copyOptionToAllLocales}
                       onOptionNameChange={subResourceHandlers.handleOptionNameChange}
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
                       onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
@@ -2345,6 +2346,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         translateButton: t.products?.translateEntireOption,
                         translateFieldButton: t.products?.translateFieldButton,
                         translateSaveFirst: t.products?.optionTranslateSaveFirst,
+                        translateAllButton: t.products?.translate,
+                        copyAllButton: t.products?.copyToAllLocales,
                         linkedOptionHint: t.products?.linkedOptionHint,
                         linkedOptionHintBefore: t.products?.linkedOptionHintBefore,
                         linkedOptionHintAfter: t.products?.linkedOptionHintAfter,

@@ -128,6 +128,9 @@ interface OptionsFieldProps {
    *  Only used in primary locale view to show blue highlight. */
   missingTranslationIds?: Set<string>;
 
+  /** Copy an option's name and values into every foreign locale. */
+  onCopyOptionToAllLocales?: (optionId: string) => void;
+
   /** Options whose translate button is locked: their text on screen is not
    *  the saved text yet, and the translation would use the old one. */
   translationBlockedIds?: Set<string>;
@@ -149,6 +152,9 @@ interface OptionsFieldProps {
     translateFieldButton?: string;
     /** Tooltip on a translate button locked by unsaved option changes. */
     translateSaveFirst?: string;
+    /** The variants card's two whole-option buttons in the primary locale. */
+    translateAllButton?: string;
+    copyAllButton?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
     linkedOptionHintBefore?: string;
@@ -227,6 +233,7 @@ export function OptionsField({
   translatingFieldIds = new Set(),
   missingTranslationIds,
   translationBlockedIds,
+  onCopyOptionToAllLocales,
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
@@ -289,6 +296,7 @@ export function OptionsField({
         onReorderValues={(id, valueIds) => onReorderOptionValues?.(id, valueIds)}
         onOpenMetaobjects={navigateToMetaobjects}
         onTranslate={onTranslate}
+        onCopyToAllLocales={onCopyOptionToAllLocales}
         translatingFieldIds={translatingFieldIds}
         missingTranslationIds={missingTranslationIds}
         translationBlockedIds={translationBlockedIds}

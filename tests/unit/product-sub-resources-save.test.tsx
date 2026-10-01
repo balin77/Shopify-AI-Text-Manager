@@ -537,4 +537,38 @@ describe("translating an option never sends the text the merchant replaced", () 
     expect(result.current.state.primaryOptionEdits).toEqual({});
     expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
   });
+
+  it("copies an option's name and values into every foreign locale, verbatim", () => {
+    const { result } = setupWithReload();
+    act(() => result.current.handlers.copyOptionToAllLocales(OPTION));
+
+    // One save per foreign locale ("en"), carrying the name and both values.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = (fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }])[1].body;
+    expect(body.get("action")).toBe("saveSubResourceTranslations");
+    expect(body.get("locale")).toBe("en");
+    expect(JSON.parse(String(body.get("translationsData")))).toEqual({
+      [OPTION]: { name: "Colour" },
+      "gid://shopify/ProductOptionValue/1": { name: "Red" },
+      "gid://shopify/ProductOptionValue/1b": { name: "Blue" },
+    });
+    expect(JSON.parse(String(body.get("resourceTypes")))[OPTION]).toBe("ProductOption");
+  });
+
+  it("copies only the name of a linked option, and nothing while it is locked", () => {
+    const linked = {
+      ...(selectedItem as { options: Array<Record<string, unknown>> }),
+      options: [{ ...(selectedItem as { options: Array<Record<string, unknown>> }).options[0], isLinked: true }],
+    };
+    const { result, rerender } = setupWithReload();
+    rerender({ current: linked, reload: "idle" });
+    act(() => result.current.handlers.copyOptionToAllLocales(OPTION));
+    const body = (fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }])[1].body;
+    expect(Object.keys(JSON.parse(String(body.get("translationsData"))))).toEqual([OPTION]);
+
+    fetchSpy.mockClear();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+    act(() => result.current.handlers.copyOptionToAllLocales(OPTION));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });

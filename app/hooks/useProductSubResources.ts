@@ -122,6 +122,9 @@ export interface SubResourceHandlers {
   translateOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   copyOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   copyOptionFieldToAllLocales: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
+  /** Copies an option's name and (unless linked) every value into all foreign
+   *  locales, verbatim — the whole-option twin of `copyOptionFieldToAllLocales`. */
+  copyOptionToAllLocales: (optionId: string) => void;
   translateMetafield: (metafieldId: string) => void;
   translateAllSubResources: () => void;
   translateAllSubResourcesToAllLocales: () => void;
@@ -1817,6 +1820,67 @@ export function useProductSubResources({
     });
   }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
 
+  const copyOptionToAllLocales = useCallback((optionId: string) => {
+    // Copies the CACHED primary text, so the same rule as translating holds.
+    if (!selectedItem || optionTranslationBlockedIds.has(optionId)) return;
+    const option = selectedItem.options?.find(o => o.id === optionId);
+    if (!option) return;
+
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) return;
+
+    // The same rows `buildSourceData` would translate: the name, and the
+    // values only where they belong to the product (a linked option's values
+    // live in the metaobjects). Empty text is skipped — copying "" would
+    // register an empty translation rather than leave the field to fall back.
+    const entries: Array<{ resourceId: string; resourceType: string; value: string }> = [];
+    if (option.name) entries.push({ resourceId: option.id, resourceType: "ProductOption", value: option.name });
+    if (!option.isLinked) {
+      for (const val of option.values) {
+        if (val.id && val.name) entries.push({ resourceId: val.id, resourceType: "ProductOptionValue", value: val.name });
+      }
+    }
+    if (entries.length === 0) return;
+
+    const translationsData = JSON.stringify(
+      Object.fromEntries(entries.map((e) => [e.resourceId, { name: e.value }])),
+    );
+    const resourceTypes = JSON.stringify(
+      Object.fromEntries(entries.map((e) => [e.resourceId, e.resourceType])),
+    );
+    const capturedItemId = selectedItem.id;
+    const fieldId = `${optionId}:copyAll`;
+
+    // Write to overlay immediately for all target locales
+    for (const locale of targetLocales) {
+      const overlay = localSubResourceOverlayRef.current;
+      if (!overlay[locale]) overlay[locale] = {};
+      for (const e of entries) {
+        if (!overlay[locale][e.resourceId]) overlay[locale][e.resourceId] = {};
+        overlay[locale][e.resourceId]["name"] = e.value;
+      }
+    }
+
+    markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
+
+    const saves = targetLocales.map(locale => {
+      const fd = new FormData();
+      fd.set("action", "saveSubResourceTranslations");
+      fd.set("locale", locale);
+      fd.set("translationsData", translationsData);
+      fd.set("resourceTypes", resourceTypes);
+      fd.set("itemId", capturedItemId);
+      return fetch("/app/products", { method: "POST", body: fd });
+    });
+
+    Promise.all(saves).finally(() => {
+      markSubResourceCompleted(capturedItemId, fieldId);
+      if (revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
+    });
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
+
   return {
     state: {
       optionTranslations,
@@ -1858,6 +1922,7 @@ export function useProductSubResources({
       translateOptionField,
       copyOptionField,
       copyOptionFieldToAllLocales,
+      copyOptionToAllLocales,
       translateMetafield,
       translateAllSubResources,
       translateAllSubResourcesToAllLocales,

@@ -48,7 +48,7 @@
 
 /* Blue background when primary locale has content but foreign translation is missing */
 .ai-editable-field-wrapper.bg-missing-translation .Polaris-TextField__Backdrop {
-  background-color: #e0f2fe !important;
+  background-color: var(--app-missing-translation-bg, rgba(234, 244, 255, 1)) !important;
 }
 
 /* Gray background for fallback values (using primary locale value when no translation exists) */
@@ -288,7 +288,7 @@
 
 .ai-editable-html-field.bg-missing-translation textarea,
 .ai-editable-html-field.bg-missing-translation [contenteditable] {
-  background-color: #e0f2fe !important;
+  background-color: var(--app-missing-translation-bg, rgba(234, 244, 255, 1)) !important;
   border-color: var(--app-field-border-color) !important;
 }
 

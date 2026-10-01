@@ -335,6 +335,8 @@ export interface VariantOptionsEditorProps {
   /** Jump to this app's own metaobjects page for a linked option. */
   onOpenMetaobjects?: (option: OptionData) => void;
   onTranslate?: (optionId: string) => void;
+  /** Copy the option's name and values into every foreign locale verbatim. */
+  onCopyToAllLocales?: (optionId: string) => void;
   translatingFieldIds?: Set<string>;
   /** Option and option-value GIDs with a translation missing in at least one
    *  foreign locale — tinted blue, like every other primary field. */
@@ -382,6 +384,7 @@ export function VariantOptionsEditor({
   onReorderValues,
   onOpenMetaobjects,
   onTranslate,
+  onCopyToAllLocales,
   translatingFieldIds = new Set(),
   missingTranslationIds,
   translationBlockedIds,
@@ -562,30 +565,47 @@ export function VariantOptionsEditor({
     (missingTranslationIds.has(option.id) || option.values.some((v) => !!v.id && missingTranslationIds.has(v.id)));
 
   /**
-   * "Translate into every language", under the option's values — open or
-   * closed, so translating never requires opening the editor. A linked
-   * option's values live in the metaobjects, so for it the request carries the
-   * name alone. Locked while the option's text is unsaved (or saved and not
-   * reloaded yet): the request would carry the OLD text as its source.
+   * "Translate" and "Copy to all languages" for one option — under its values
+   * on a collapsed card, between Delete and Done on an open one, so neither
+   * needs the editor opened. A linked option's values live in the metaobjects,
+   * so for it both act on the name alone. Locked while the option's text is
+   * unsaved (or saved and not reloaded yet): both send the CACHED text, i.e.
+   * the old one.
    */
-  const renderTranslateRow = (option: OptionData) => {
-    if (!onTranslate) return null;
+  const renderTranslateButtons = (option: OptionData) => {
+    if (!onTranslate && !onCopyToAllLocales) return null;
     const blocked = !!translationBlockedIds?.has(option.id);
     const hint = singleLocaleHint ?? (blocked ? t.translateSaveFirst || "Save first" : undefined);
+    const busy =
+      translatingFieldIds.has(`${option.id}:entire`) || translatingFieldIds.has(`${option.id}:copyAll`);
     return (
       // A click here must not open (or close) the card it sits in.
       <div onClick={(event) => event.stopPropagation()}>
-        <InlineStack align="end">
-          <DisabledActionTooltip hint={hint}>
-            <Button
-              size="slim"
-              onClick={() => onTranslate(option.id)}
-              loading={translatingFieldIds.has(`${option.id}:entire`)}
-              disabled={!!hint}
-            >
-              🌍 {t.translateButton || "Translate option"}
-            </Button>
-          </DisabledActionTooltip>
+        <InlineStack gap="200" align="end" wrap>
+          {onTranslate && (
+            <DisabledActionTooltip hint={hint}>
+              <Button
+                size="slim"
+                onClick={() => onTranslate(option.id)}
+                loading={translatingFieldIds.has(`${option.id}:entire`)}
+                disabled={!!hint || busy}
+              >
+                🌍 {t.translateAllButton || "Translate"}
+              </Button>
+            </DisabledActionTooltip>
+          )}
+          {onCopyToAllLocales && (
+            <DisabledActionTooltip hint={hint}>
+              <Button
+                size="slim"
+                onClick={() => onCopyToAllLocales(option.id)}
+                loading={translatingFieldIds.has(`${option.id}:copyAll`)}
+                disabled={!!hint || busy}
+              >
+                📋 {t.copyAllButton || "Copy to all languages"}
+              </Button>
+            </DisabledActionTooltip>
+          )}
         </InlineStack>
       </div>
     );
@@ -913,6 +933,8 @@ export function VariantOptionsEditor({
             return (
               <SortableItem key={option.id} id={option.id} style={{ cursor: "pointer" }}>
                 <Card
+                  // `bg-surface-info` IS `--app-missing-translation-bg`
+                  // (responsive.css): the same blue as every field.
                   background={optionMissesTranslation(option) ? "bg-surface-info" : "bg-surface-secondary"}
                   padding="300"
                 >
@@ -978,7 +1000,7 @@ export function VariantOptionsEditor({
                             );
                           })}
                         </InlineStack>
-                        {renderTranslateRow(option)}
+                        {renderTranslateButtons(option)}
                       </BlockStack>
                     </div>
                   </InlineStack>
@@ -1281,9 +1303,7 @@ export function VariantOptionsEditor({
                   </BlockStack>
                 )}
 
-                {renderTranslateRow(option)}
-
-                <InlineStack align="space-between" blockAlign="center">
+                <InlineStack align="space-between" blockAlign="center" gap="200">
                   <Button
                     tone="critical"
                     variant="tertiary"
@@ -1302,9 +1322,14 @@ export function VariantOptionsEditor({
                   >
                     {t.deleteOption || "Delete"}
                   </Button>
-                  <Button variant="primary" onClick={() => setOpenOptionId(null)}>
-                    {t.done || "Done"}
-                  </Button>
+                  {/* Between Delete and Done: the two actions on the option
+                      as a whole sit in the one row that already holds them. */}
+                  <InlineStack gap="200" blockAlign="center">
+                    {renderTranslateButtons(option)}
+                    <Button variant="primary" onClick={() => setOpenOptionId(null)}>
+                      {t.done || "Done"}
+                    </Button>
+                  </InlineStack>
                 </InlineStack>
               </BlockStack>
               </Card>

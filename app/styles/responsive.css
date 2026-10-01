@@ -280,6 +280,14 @@
      drift; the fallback is its current value, for a Polaris that renames it. */
   --app-control-height: var(--pg-control-height, 2rem);
   --app-field-border-color: #c9cccf;
+  /* The ONE "a translation is missing" blue, on every surface that marks it:
+     the primary text fields, the HTML editors, the bulk grid's cells and the
+     variants card's collapsed option cards. It is Polaris' own info surface
+     rather than a number of ours, because the option card is a Polaris `Card`
+     whose `background` prop accepts only that token -- pointing everything
+     else at it is what makes the four agree. Change the blue HERE (and the
+     card follows only as long as this stays the Polaris token). */
+  --app-missing-translation-bg: var(--p-color-bg-surface-info, rgba(234, 244, 255, 1));
   --app-field-border-color-disabled: #dfe1e3;
   --app-field-border-radius: 8px;
   --app-swatch-radius: 6px;

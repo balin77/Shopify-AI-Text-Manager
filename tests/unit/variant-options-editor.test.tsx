@@ -781,57 +781,89 @@ describe("VariantOptionsEditor — members of a predefined option", () => {
   });
 });
 
-describe("VariantOptionsEditor — translating an option into every language", () => {
-  it("offers the translate button on a COLLAPSED card, without opening it", () => {
+describe("VariantOptionsEditor — translating and copying an option into every language", () => {
+  const TRANSLATE = /^🌍 Translate$/;
+  const COPY = /^📋 Copy to all languages$/;
+
+  it("offers both buttons on a COLLAPSED card, without opening it", () => {
     const onTranslate = vi.fn();
-    ui({ onTranslate });
+    const onCopyToAllLocales = vi.fn();
+    ui({ onTranslate, onCopyToAllLocales });
 
-    // Still collapsed: no input on screen, and yet one button per option.
+    // Still collapsed: no input on screen, and yet both buttons per option.
     expect(screen.queryAllByRole("textbox").length).toBe(0);
-    const buttons = screen.getAllByRole("button", { name: /Translate option/i });
-    expect(buttons.length).toBe(2);
+    const translate = screen.getAllByRole("button", { name: TRANSLATE });
+    const copy = screen.getAllByRole("button", { name: COPY });
+    expect(translate.length).toBe(2);
+    expect(copy.length).toBe(2);
 
-    fireEvent.click(buttons[0]);
+    fireEvent.click(translate[0]);
+    fireEvent.click(copy[1]);
     expect(onTranslate).toHaveBeenCalledWith(OPTION);
-    // The click translates; it does not open the card it sits in.
+    expect(onCopyToAllLocales).toHaveBeenCalledWith(SECOND);
+    // The clicks act; they do not open the card they sit in.
     expect(screen.queryAllByRole("textbox").length).toBe(0);
   });
 
-  it("offers it on a metaobject-linked option too", () => {
+  it("offers them on a metaobject-linked option too", () => {
     const onTranslate = vi.fn();
     ui({
       onTranslate,
+      onCopyToAllLocales: vi.fn(),
       options: [{ ...options[0], isLinked: true }],
     });
-    fireEvent.click(screen.getByRole("button", { name: /Translate option/i }));
+    fireEvent.click(screen.getByRole("button", { name: TRANSLATE }));
     expect(onTranslate).toHaveBeenCalledWith(OPTION);
   });
 
-  it("keeps it below the values once the card is open", () => {
-    const onTranslate = vi.fn();
-    ui({ onTranslate });
+  it("puts them between Delete and Done once the card is open", () => {
+    ui({ onTranslate: vi.fn(), onCopyToAllLocales: vi.fn() });
     fireEvent.click(screen.getByText("Colour"));
 
-    const button = screen.getAllByRole("button", { name: /Translate option/i })[0];
-    const lastValue = (screen.getAllByRole("textbox") as HTMLInputElement[]).find((b) => b.value === "Blue")!;
-    // Later in document order = rendered underneath the values.
-    expect(lastValue.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const del = screen.getByRole("button", { name: /^Delete$/ });
+    const done = screen.getByRole("button", { name: /^Done$/ });
+    // The open card's buttons are the ones after its Delete (the collapsed
+    // Size card renders its own pair earlier or later in the list).
+    const translate = screen
+      .getAllByRole("button", { name: TRANSLATE })
+      .find((b) => del.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+        && b.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING)!;
+    const copy = screen
+      .getAllByRole("button", { name: COPY })
+      .find((b) => del.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+        && b.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING)!;
+    expect(translate).toBeTruthy();
+    expect(copy).toBeTruthy();
+    // And nothing of the pair is left above the values any more.
+    const firstValue = (screen.getAllByRole("textbox") as HTMLInputElement[]).find((b) => b.value === "Red")!;
+    const pairs = screen.getAllByRole("button", { name: TRANSLATE });
+    const openCard = firstValue.closest("[data-sortable-id='" + OPTION + "']")!;
+    for (const b of pairs.filter((x) => openCard.contains(x))) {
+      expect(firstValue.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
   });
 
-  it("locks it while the option's text is not the saved text", () => {
+  it("locks both while the option's text is not the saved text", () => {
     const onTranslate = vi.fn();
+    const onCopyToAllLocales = vi.fn();
     ui({
       onTranslate,
+      onCopyToAllLocales,
       translationBlockedIds: new Set([OPTION]),
       t: { translateSaveFirst: "Save first" },
     });
 
-    const [colour, size] = screen.getAllByRole("button", { name: /Translate option/i }) as HTMLButtonElement[];
     // Polaris marks a disabled button with `aria-disabled`, not `disabled`.
-    expect(colour.getAttribute("aria-disabled")).toBe("true");
-    expect(size.getAttribute("aria-disabled")).not.toBe("true");
-    fireEvent.click(colour);
+    const [colourT, sizeT] = screen.getAllByRole("button", { name: TRANSLATE });
+    const [colourC, sizeC] = screen.getAllByRole("button", { name: COPY });
+    expect(colourT.getAttribute("aria-disabled")).toBe("true");
+    expect(colourC.getAttribute("aria-disabled")).toBe("true");
+    expect(sizeT.getAttribute("aria-disabled")).not.toBe("true");
+    expect(sizeC.getAttribute("aria-disabled")).not.toBe("true");
+    fireEvent.click(colourT);
+    fireEvent.click(colourC);
     expect(onTranslate).not.toHaveBeenCalled();
+    expect(onCopyToAllLocales).not.toHaveBeenCalled();
   });
 
   it("tints a collapsed card, and the fields of an open one, where a translation is missing", () => {

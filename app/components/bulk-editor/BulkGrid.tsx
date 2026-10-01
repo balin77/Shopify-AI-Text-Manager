@@ -645,7 +645,7 @@ export function BulkGrid({
            AIEditableField.css so "Inhalt" and the bulk grid read identically.
            Dirty/error cells are never recoloured (see the grid render). */
         .cp-bulk-cell-untranslated { background: #fff4e5; }
-        .cp-bulk-cell-missing { background: #e0f2fe; }
+        .cp-bulk-cell-missing { background: var(--app-missing-translation-bg, rgba(234, 244, 255, 1)); }
         /* Sortable header: the whole heading is a button; the caret shows
            the current direction. */
         .cp-bulk-sort-btn {

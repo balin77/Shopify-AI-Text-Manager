@@ -1029,7 +1029,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Optionen übersetzen",
           paragraphs: [
-            "Unter jeder Option im Varianten-Bereich — auch im zugeklappten Zustand — übersetzt „Option übersetzen“ den Optionsnamen und seine Werte in alle Sprachen. Ist eine Option blau unterlegt, fehlt ihr in mindestens einer Sprache noch eine Übersetzung. Haben Sie eine Option geändert, speichern Sie zuerst: Bis die Änderung gespeichert ist, bleibt der Button gesperrt, damit nicht der alte Text übersetzt wird.",
+            "Unter jeder Option im Varianten-Bereich — auch im zugeklappten Zustand — übersetzt „Übersetzen“ den Optionsnamen und seine Werte in alle Sprachen; „In alle Sprachen übertragen“ übernimmt sie unverändert. Bei einer geöffneten Option stehen die beiden Buttons zwischen „Löschen“ und „Fertig“. Ist eine Option blau unterlegt, fehlt ihr in mindestens einer Sprache noch eine Übersetzung. Haben Sie eine Option geändert, speichern Sie zuerst: Bis die Änderung gespeichert ist, bleiben die Buttons gesperrt, damit nicht der alte Text übersetzt wird.",
           ],
         },
         {
