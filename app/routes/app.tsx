@@ -37,6 +37,7 @@ import { isProductionLocked } from "../utils/planUtils";
 import { de, en, es } from "../i18n";
 import {
   hasCurrentAiProcessingConsent,
+  hasOwnKeyStored,
   wantsManagedAi,
 } from "~/services/ai/managed-ai.shared";
 
@@ -53,6 +54,7 @@ type AiSettingsRow = {
   managedAiActive?: boolean | null;
   aiProcessingConsentAt?: Date | string | null;
   aiProcessingConsentVersion?: string | null;
+  managedAiTasterSpentAt?: Date | string | null;
 } | null | undefined;
 
 function buildAiSettingsFlags(
@@ -95,6 +97,16 @@ function buildAiSettingsFlags(
      * "add an API key": a managed shop needs no key, and the keys tab is not
      * where the consent is given.
      */
+    /**
+     * No plan with AI, no key of its own, taster not yet spent: the "add an
+     * API key" warning must also say that the included AI can be tried once
+     * — confirming the processing notice is what starts it.
+     */
+    managedTasterOffered:
+      managedAvailable &&
+      settings?.managedAiActive !== true &&
+      settings?.managedAiTasterSpentAt == null &&
+      !hasOwnKeyStored((settings ?? null) as Record<string, unknown> | null),
     managedAiConsentMissing:
       managedAvailable &&
       wantsManagedAi(settings ?? null) &&
@@ -227,6 +239,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         managedAiActive: true,
         aiProcessingConsentAt: true,
         aiProcessingConsentVersion: true,
+        // Whether the one-time taster is still there to be offered.
+        managedAiTasterSpentAt: true,
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
         seoLimits: true,
@@ -530,8 +544,11 @@ function AppContent() {
       // Clear the more specific warning if it was previously shown.
       dismissByKey(NO_PREFERRED_KEY);
       showInfoBox(
-        t.settings?.noApiKeyAtAllDescription ||
-          "To use AI features, you first need to add an API key for an AI provider.",
+        aiSettings.managedTasterOffered
+          ? t.settings?.noApiKeyTasterDescription ||
+              "To use AI features, add an API key for an AI provider — or try the included AI once with a free trial credit, which you activate in Settings."
+          : t.settings?.noApiKeyAtAllDescription ||
+              "To use AI features, you first need to add an API key for an AI provider.",
         "warning",
         link,
         NO_KEY_AT_ALL,
@@ -540,8 +557,12 @@ function AppContent() {
       // Keys exist, just not for the preferred provider.
       dismissByKey(NO_KEY_AT_ALL);
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
-      const message = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
+      const keyMessage = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
         `No ${providerName} API key. Please add in Settings.`;
+      // Without a key for the PREFERRED provider the taster applies too.
+      const message = aiSettings.managedTasterOffered && t.settings?.tasterAlternative
+        ? `${keyMessage} ${t.settings.tasterAlternative}`
+        : keyMessage;
       showInfoBox(message, "warning", link, NO_PREFERRED_KEY);
     }
   }, [aiSettings, t, showInfoBox, dismissByKey]);

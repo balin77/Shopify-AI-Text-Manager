@@ -139,8 +139,11 @@ export function isManagedAiEnabled(): boolean {
 export function readManagedCredential(role: ManagedRole): ManagedCredential | null {
   const prefix = role === "failover" ? "MANAGED_AI_FALLBACK_" : "MANAGED_AI_";
   const rawProvider = process.env[`${prefix}PROVIDER`];
-  const model = process.env[`${prefix}MODEL`];
-  const apiKey = process.env[`${prefix}API_KEY`];
+  const model = process.env[`${prefix}MODEL`]?.trim();
+  // Trimmed, and stripped of one pair of surrounding quotes: a key pasted
+  // into a dashboard with a trailing newline or in quotes is rejected by the
+  // provider as "invalid" — a 401 that reads exactly like a revoked key.
+  const apiKey = process.env[`${prefix}API_KEY`]?.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
   if (!rawProvider || !model || !apiKey) return null;
 
   // `toValidProvider` falls back to 'claude' for anything it does not

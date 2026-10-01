@@ -1574,6 +1574,8 @@ export const en: Translation = {
     goToSettings: "Go to Settings",
     preferredProviderNoKey: "No {provider} API key. Please add key in Settings or change model.",
     preferredProviderNoKeyDescription: "AI features require an API key for {provider}.",
+    noApiKeyTasterDescription: "To use AI features, add an API key for an AI provider — or first try the included AI with a one-time free trial credit, which you activate in Settings.",
+    tasterAlternative: "Alternatively, you can try the included AI once with a free trial credit, which you activate in Settings.",
     noApiKeyAtAllDescription: "To use AI features, you first need to add an API key for an AI provider.",
     corruptedApiKeyWarning: "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.",
     apiKeyFormatError: "This key doesn't match the expected format. Double-check it in the provider dashboard and paste it again.",

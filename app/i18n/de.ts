@@ -1575,6 +1575,8 @@ export const de = {
     goToSettings: "Zu den Einstellungen",
     preferredProviderNoKey: "Kein {provider} API-Schlüssel. Bitte Schlüssel in den Einstellungen eingeben oder Modell wechseln.",
     preferredProviderNoKeyDescription: "KI-Funktionen benötigen einen API-Schlüssel für {provider}.",
+    noApiKeyTasterDescription: "Um die KI-Funktionen nutzen zu können, hinterlegen Sie einen API-Schlüssel eines KI-Anbieters — oder testen Sie zuerst die enthaltene KI mit einem einmaligen Gratis-Guthaben, das Sie in den Einstellungen aktivieren.",
+    tasterAlternative: "Alternativ können Sie die enthaltene KI einmalig mit einem Gratis-Guthaben testen, das Sie in den Einstellungen aktivieren.",
     noApiKeyAtAllDescription: "Um die KI-Funktionen nutzen zu können, müssen Sie zuerst einen API-Schlüssel eines KI-Anbieters hinterlegen.",
     corruptedApiKeyWarning: "Der gespeicherte API-Schlüssel für {provider} konnte nicht entschlüsselt werden und wurde zurückgesetzt. Bitte erneut eingeben und speichern.",
     apiKeyFormatError: "Der eingegebene Schlüssel hat nicht das erwartete Format. Bitte überprüfen Sie den Code im Anbieter-Dashboard und fügen Sie ihn erneut ein.",

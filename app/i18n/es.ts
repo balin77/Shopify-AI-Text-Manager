@@ -1554,6 +1554,8 @@ export const es: Translation = {
     goToSettings: "Ir a Configuración",
     preferredProviderNoKey: "Sin clave API de {provider}. Por favor, añade la clave en Configuración o cambia el modelo.",
     preferredProviderNoKeyDescription: "Las funciones de IA requieren una clave API para {provider}.",
+    noApiKeyTasterDescription: "Para usar las funciones de IA, añade una clave API de un proveedor de IA, o prueba primero la IA incluida con un crédito de prueba gratuito único, que activas en Ajustes.",
+    tasterAlternative: "También puedes probar la IA incluida una vez con un crédito de prueba gratuito, que activas en Ajustes.",
     noApiKeyAtAllDescription: "Para usar las funciones de IA, primero debes añadir una clave API de un proveedor de IA.",
     corruptedApiKeyWarning: "La clave API guardada para {provider} no se pudo descifrar y se ha borrado. Vuelve a introducirla y guárdala.",
     apiKeyFormatError: "Esta clave no tiene el formato esperado. Compruébala en el panel del proveedor y pégala de nuevo.",

@@ -531,3 +531,13 @@ describe('wantsManagedAi — the plan decides, the merchant does not', () => {
     expect(wantsManagedAi({ ...s, ...consent })).toBe(true);
   });
 });
+
+describe('the operator key is read as pasted, not as typed', () => {
+  it('trims whitespace and one pair of surrounding quotes', () => {
+    configureManaged();
+    process.env.MANAGED_AI_API_KEY = '  "sk-operator"\n';
+    expect(readManagedCredential('default')?.apiKey).toBe('sk-operator');
+    process.env.MANAGED_AI_API_KEY = "'sk-operator'";
+    expect(readManagedCredential('default')?.apiKey).toBe('sk-operator');
+  });
+});
