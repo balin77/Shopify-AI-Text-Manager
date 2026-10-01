@@ -29,6 +29,7 @@ import type {
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
+import { runPerLocaleSaves, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 
 // ---------------------------------------------------------------------------
 // Prop / return types
@@ -319,7 +320,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     isSaveFromTranslateRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
 
-    showInfoBox(t.common?.copied ?? "Copied", "success");
+    // Feedback is deferred to the save-response handler (see
+    // pendingCopyAltTextIndexRef in useUnifiedContentEditor.ts), so the box
+    // reflects the actual Shopify result and not an optimistic guess.
   };
 
   const handleCopyAltTextToAllLocales = (imageIndex: number) => {
@@ -351,41 +354,29 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
     markOperationActive(capturedItemId, `altText_${imageIndex}`, "copyToAllLocales");
 
-    const saves = targetLocales.map(locale => {
+    // The answer is READ (content-action-endpoint.shared.ts), so a locale that
+    // did not save is named instead of reported as copied.
+    runPerLocaleSaves(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "updateContent");
       fd.set("itemId", capturedItemId);
       fd.set("locale", locale);
       fd.set("primaryLocale", primaryLocale);
       fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
-      // The answer is READ now (content-action-endpoint.shared.ts), so a
-      // locale that did not save is named instead of reported as copied.
-      return postContentEditorSave(fd).then((ok) => (ok === false ? locale : null));
-    });
-
-    Promise.all(saves).then((results) => {
-      const failed = results.filter((l): l is string => l !== null);
-      if (failed.length > 0) {
-        // Take back what the copy wrote up front for those locales: the
-        // overlay outranks the loaded alt texts, so left in place the editor
-        // went on showing a value that was never saved. Only the copy's own
-        // value -- anything written there since is not ours to remove.
-        for (const locale of failed) {
-          const forLocale = localAltTextOverlayRef.current[locale];
-          if (forLocale && forLocale[imageIndex] === sourceAltText) {
-            delete forLocale[imageIndex];
-          }
+      return postContentEditorSave(fd);
+    }).then((failed) => {
+      // Take back what the copy wrote up front for those locales: the
+      // overlay outranks the loaded alt texts, so left in place the editor
+      // went on showing a value that was never saved. Only the copy's own
+      // value -- anything written there since is not ours to remove.
+      for (const locale of failed) {
+        const forLocale = localAltTextOverlayRef.current[locale];
+        if (forLocale && forLocale[imageIndex] === sourceAltText) {
+          delete forLocale[imageIndex];
         }
-        showInfoBox(
-          String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
-            "{locales}",
-            failed.map((l) => l.toUpperCase()).join(", "),
-          ),
-          "critical",
-        );
-      } else {
-        showInfoBox(t.common?.copied ?? "Copied", "success");
       }
+      const outcome = copyOutcomeMessage(failed, t.common ?? {});
+      showInfoBox(outcome.text, outcome.tone);
     }).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);
       if (revalidatorRef.current.state === 'idle') {

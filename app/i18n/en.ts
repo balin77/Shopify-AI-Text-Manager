@@ -1879,6 +1879,11 @@ export const en: Translation = {
   // Image Manager
   imageManager: {
     title: "Image Manager",
+    mediaDeleteFailed: "The image(s) could not be deleted. They have been restored.",
+    mediaClearMainFailed: "The images were deleted, but a variant's main image could not be cleared. Please check the variant in Shopify.",
+    uploadFailedFiles: "Upload failed for: {files}. These files were not added.",
+    altTemplateSaveFailed: "The alt text template could not be saved. Please try again.",
+    altTemplateDeleteFailed: "The alt text template could not be deleted. Please try again.",
     expand: "Expand ↓",
     collapse: "Collapse ↑",
     showAll: "Show all ↓",

@@ -26,6 +26,8 @@ import {
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
 import { buildLocaleKey } from "./useUiDataLoader";
+import { runPerLocaleSaves, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { postJsonSave, rollbackSubResourceCopy } from "../services/editor/sub-resource-copy.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -157,6 +159,9 @@ interface UseProductSubResourcesStrings {
   optionsSavedSuccess?: string;
   /** Fallback when a sub-resource translate fails without a server message. */
   translateFailed?: string;
+  /** "Copied" / "Copying failed for: {locales}" -- the copy to all languages reports per locale. */
+  copied?: string;
+  copyFailedLocales?: string;
   saveFailedOptions?: string;
   saveFailedItems?: string;
   optionNameEmpty?: string;
@@ -1810,23 +1815,28 @@ export function useProductSubResources({
 
     markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
 
-    const saves = targetLocales.map(locale => {
+    // The answer is READ: a locale whose save was refused (or only partly
+    // applied) is named, and the overlay value written up front is taken back
+    // for it, instead of the copy being reported as done.
+    void runPerLocaleSaves(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "saveSubResourceTranslations");
       fd.set("locale", locale);
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
-    });
-
-    Promise.all(saves).finally(() => {
+      return postJsonSave(SUB_RESOURCE_ENDPOINT, fd);
+    }).then((failed) => {
+      rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, [{ resourceId, value: primaryValue }]);
+      const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales });
+      showInfoBox?.(outcome.text, outcome.tone);
+    }).finally(() => {
       markSubResourceCompleted(capturedItemId, fieldId);
       if (revalidator && revalidator.state === "idle") {
         revalidator.revalidate();
       }
     });
-  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds, showInfoBox, strings.copied, strings.copyFailedLocales]);
 
   const copyOptionToAllLocales = useCallback((optionId: string) => {
     // Copies the CACHED primary text, so the same rule as translating holds.
@@ -1871,23 +1881,28 @@ export function useProductSubResources({
 
     markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
 
-    const saves = targetLocales.map(locale => {
+    // The answer is READ: a locale whose save was refused (or only partly
+    // applied) is named, and the overlay value written up front is taken back
+    // for it, instead of the copy being reported as done.
+    void runPerLocaleSaves(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "saveSubResourceTranslations");
       fd.set("locale", locale);
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
-    });
-
-    Promise.all(saves).finally(() => {
+      return postJsonSave(SUB_RESOURCE_ENDPOINT, fd);
+    }).then((failed) => {
+      rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, entries);
+      const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales });
+      showInfoBox?.(outcome.text, outcome.tone);
+    }).finally(() => {
       markSubResourceCompleted(capturedItemId, fieldId);
       if (revalidator && revalidator.state === "idle") {
         revalidator.revalidate();
       }
     });
-  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds]);
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds, showInfoBox, strings.copied, strings.copyFailedLocales]);
 
   return {
     state: {

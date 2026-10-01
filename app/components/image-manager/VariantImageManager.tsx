@@ -15,6 +15,7 @@ import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
+import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -269,6 +270,8 @@ export function VariantImageManager({
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
+  // A media write (delete, upload) the server refused; shown above the gallery.
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   // GIDs (mediaId) of images currently being converted; cleared when done.
   // Tracked by GID rather than URL because Shopify CDN URLs can change query params between
@@ -2082,6 +2085,15 @@ export function VariantImageManager({
 
     setIsDeleting(true);
     setDeleteConfirm(null);
+    // What the optimistic removal below replaces, so a refused delete can put
+    // the images back instead of leaving the gallery showing a state Shopify
+    // never reached.
+    const snapshot = {
+      galleries: pendingVariantGalleries,
+      excludedMain: locallyExcludedMainGids,
+      order: pendingProductImageOrder,
+      refreshed: refreshedProductImages,
+    };
 
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
@@ -2115,6 +2127,8 @@ export function VariantImageManager({
       return next;
     });
 
+    let deleteFailed = false;
+    let clearFailed = false;
     try {
       const deleteFetch = fetch("/api/delete-product-images", {
         method: "POST",
@@ -2130,13 +2144,28 @@ export function VariantImageManager({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ productId, clearVariantMainImages: clearMainImageIds }),
           })
-        : Promise.resolve();
-      await Promise.all([deleteFetch, clearFetch]);
+        : null;
+      const [deleteRes, clearRes] = await Promise.all([deleteFetch, clearFetch]);
+      const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
+      deleteFailed = !deleteRes.ok || !deleteBody || deleteBody.success === false;
+      if (clearRes) {
+        const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
+        clearFailed = !clearRes.ok || !clearBody || clearBody.success === false;
+      }
     } catch {
-      // non-critical: local state already reflects deletion
+      deleteFailed = true;
+    }
+    if (deleteFailed) {
+      setPendingVariantGalleries(snapshot.galleries);
+      setLocallyExcludedMainGids(snapshot.excludedMain);
+      setPendingProductImageOrder(snapshot.order);
+      setRefreshedProductImages(snapshot.refreshed);
+      setMediaError(t.imageManager.mediaDeleteFailed);
+    } else if (clearFailed) {
+      setMediaError(t.imageManager.mediaClearMainFailed);
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, refreshedProductImages, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -2202,6 +2231,8 @@ export function VariantImageManager({
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         const res = await fetch("/api/staged-upload", {
@@ -2214,27 +2245,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // See FilePickerModal — PUT (image) vs multipart POST (video/3D).
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           setPendingVariantGalleries(p => {
@@ -2251,13 +2267,19 @@ export function VariantImageManager({
           });
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, [variants, urlToGid, locallyExcludedMainGids]);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [variants, urlToGid, locallyExcludedMainGids, t]);
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         // Classify so we (a) know what to push into pendingProductNewMedia
@@ -2274,30 +2296,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // PUT (image) vs multipart POST (video/3D). The previous always-PUT
-          // path produced a 405 against video / model staged targets, so a
-          // drag-drop .glb to the product-gallery placeholder silently
-          // failed and the merchant saw the modal close with nothing saved.
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           // Push the typed shape — bare resourceUrl strings would survive the
@@ -2309,10 +2313,14 @@ export function VariantImageManager({
           setPendingProductNewMedia(p => [...p, { resourceUrl, kind, previewUrl }]);
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, []);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [t]);
 
   // Watch altTextFetcher for AI generate / translate results → auto-save result
   useEffect(() => {
@@ -2497,6 +2505,11 @@ export function VariantImageManager({
           paddingRight: isExpanded ? 0 : 4,
         }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {mediaError && (
+        <Banner tone="critical" onDismiss={() => setMediaError(null)}>
+          <p>{mediaError}</p>
+        </Banner>
+      )}
       {webpError && (
         <Banner tone="critical" onDismiss={() => setWebpError(null)}>
           <p>{webpError}</p>

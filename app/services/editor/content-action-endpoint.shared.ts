@@ -15,6 +15,8 @@
  * for both, so a page the route knows is exactly a page the client sends.
  */
 
+import { saveAnswerFailed } from "./per-locale-saves.shared";
+
 export const CONTENT_EDITOR_ACTION_ENDPOINT = "/api/content-editor-action";
 
 /** The only action this door takes: both callers save through `updateContent`. */
@@ -78,8 +80,10 @@ export async function postContentEditorSave(
   try {
     const response = await fetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: formData });
     if (!response.ok) return false;
-    const body = (await response.json().catch(() => null)) as { success?: unknown } | null;
-    return !!body && body.success !== false;
+    // A save can answer `success: true` and still name what it refused
+    // (`failedAltTextIndices`): that is a failure for the caller too.
+    const body = await response.json().catch(() => null);
+    return !saveAnswerFailed(body);
   } catch {
     return false;
   }
