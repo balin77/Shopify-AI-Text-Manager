@@ -3,7 +3,8 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
-import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
+import { registerAndVerify } from "~/services/translations/verified-translations.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
@@ -145,32 +146,44 @@ export async function handleTranslateAll(
 
     for (const [, batch] of shopifyBatches) {
       try {
-        const response = await admin.graphql(TRANSLATE_CONTENT, {
-          variables: { resourceId: batch.resId, translations: batch.inputs },
-        });
-        const data = await response.json();
-
-        if (data.data?.translationsRegister?.userErrors?.length > 0) {
-          const errors = data.data.translationsRegister.userErrors;
-          logger.error("[TEMPLATES] translateAll: Shopify rejected translations", {
+        // Verified: only keys Shopify ECHOED are confirmed, userErrors or not.
+        const verified = await registerAndVerify(admin, batch.resId, batch.inputs);
+        const unconfirmed = batch.inputs.filter((input) => !verified.confirmedKeys.has(input.key));
+        if (unconfirmed.length > 0) {
+          const reason = verified.userErrors[0]?.message ?? "not stored by Shopify";
+          logger.error("[TEMPLATES] translateAll: Shopify did not confirm every translation", {
             context: "Templates",
-            errors,
+            errors: verified.userErrors,
             resourceId: batch.resId,
             locale: batch.locale,
+            unconfirmedKeys: unconfirmed.map((i) => i.key),
           });
-          failedBatches.push(`${batch.resId} (${batch.locale}): ${errors[0].message}`);
-        } else {
+          failedBatches.push(
+            `${batch.resId} (${batch.locale}): ${reason} [${unconfirmed.slice(0, 5).map((i) => i.key).join(", ")}]`,
+          );
+        }
+        const confirmed = batch.inputs.filter((input) => verified.confirmedKeys.has(input.key));
+        if (confirmed.length > 0) {
           logger.info("[TEMPLATES] translateAll: Shopify translations registered", {
             context: "Templates",
             resourceId: batch.resId,
             locale: batch.locale,
-            fieldCount: batch.inputs.length,
+            fieldCount: confirmed.length,
           });
-          for (const input of batch.inputs) {
-            const resId = keyToResourceId.get(input.key) || resourceId;
-            successfulUpserts.push({ key: input.key, locale: input.locale, value: input.value, resId });
-          }
+          markTranslationSaved(batch.resId);
         }
+        for (const input of confirmed) {
+          const resId = keyToResourceId.get(input.key) || resourceId;
+          successfulUpserts.push({
+            key: input.key,
+            locale: input.locale,
+            value: verified.confirmedValues.get(input.key) ?? input.value,
+            resId,
+          });
+          // The response reports what Shopify stored.
+          translations[input.locale][input.key] = verified.confirmedValues.get(input.key) ?? input.value;
+        }
+        for (const input of unconfirmed) delete translations[input.locale]?.[input.key];
       } catch (shopifyError) {
         const errorMsg = shopifyError instanceof Error ? shopifyError.message : String(shopifyError);
         logger.error("[TEMPLATES] translateAll: translationsRegister failed", {
@@ -180,6 +193,7 @@ export async function handleTranslateAll(
           locale: batch.locale,
         });
         failedBatches.push(`${batch.resId} (${batch.locale}): ${errorMsg}`);
+        for (const input of batch.inputs) delete translations[input.locale]?.[input.key];
       }
     }
 
@@ -221,12 +235,14 @@ export async function handleTranslateAll(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: failedBatches.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: `Translated ${uniqueContent.size} fields to ${targetLocales.length} locales`,
+        ...(failedBatches.length > 0 ? { error: failedBatches.join("; ").substring(0, 1000) } : {}),
       },
     });
+    const failures = failedBatches.length > 0 ? { failures: failedBatches } : {};
 
     if (actionType === "translateAllForLocale") {
       return json({
@@ -234,10 +250,11 @@ export async function handleTranslateAll(
         actionType: "translateAllForLocale",
         translations: translations[targetLocale] || {},
         targetLocale,
+        ...failures,
       });
     }
 
-    return json({ success: true, actionType: "translateAll", translations });
+    return json({ success: true, actionType: "translateAll", translations, ...failures });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     await db.task.update({
