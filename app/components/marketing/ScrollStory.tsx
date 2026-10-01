@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import type { MarketingImageSlot } from "../../config/marketing-images";
+import type { HomeVideoSlot } from "../../config/marketing-videos";
 import type { MarketingTranslation } from "../../i18n/marketing";
-import { MediaSlot } from "./MediaSlot";
+import { VideoSlot } from "./VideoSlot";
 
 export interface StoryStep {
-  slot: MarketingImageSlot;
+  slot: HomeVideoSlot;
   title: string;
   body: string;
 }
 
 /**
- * Text that scrolls past ONE picture that changes with it.
+ * Text that scrolls past ONE video frame that changes with it.
  *
  * The steps run down the left; the browser frame on the right is sticky and
  * cross-fades to the step that is currently in the middle of the viewport.
- * The image changes BECAUSE the text changes — that is what makes the effect
+ * The video changes BECAUSE the text changes — that is what makes the effect
  * an explanation rather than decoration, and why it lives on the three
  * pillars and nowhere else.
  *
@@ -25,11 +25,13 @@ export interface StoryStep {
  *   `typeof window` guard — that flips too early and mismatches anyway.
  * - Below the desktop breakpoint — and everywhere until the effect has
  *   stamped `data-enhanced` — the sticky column is `display: none` and each
- *   step shows its own image inline: sticky on a phone means a picture that
- *   covers the words it belongs to. On desktop the inline copies stay in the
- *   accessibility tree (visually hidden, not `display: none`), because the
- *   sticky column is a visual duplicate and is `aria-hidden`; without that a
- *   screen reader at desktop width would never hear the alt texts.
+ *   step shows its own video inline: sticky on a phone means a frame that
+ *   covers the words it belongs to. On desktop the inline copies leave the
+ *   page entirely and the sticky column is the one a visitor (and a screen
+ *   reader) reaches: a player is a control, and a visually hidden copy of it
+ *   would be a tab stop nobody can see. Inactive frames are `visibility:
+ *   hidden` once faded, which takes them out of the tab order too, and a
+ *   frame that fades out stops its video.
  * - The fade is opacity only and is switched off under prefers-reduced-motion
  *   (see marketing.css). Nothing here moves the layout.
  */
@@ -91,13 +93,13 @@ export function ScrollStory({ steps, t }: { steps: StoryStep[]; t: MarketingTran
             <h3>{step.title}</h3>
             <p>{step.body}</p>
             <div className="mk-story__inline">
-              <MediaSlot slot={step.slot} t={t} />
+              <VideoSlot slot={step.slot} title={step.title} t={t} />
             </div>
           </article>
         ))}
       </div>
 
-      <div className="mk-story__visual" aria-hidden="true">
+      <div className="mk-story__visual">
         <div className="mk-story__stack">
           {steps.map((step, index) => (
             <div
@@ -105,7 +107,7 @@ export function ScrollStory({ steps, t }: { steps: StoryStep[]; t: MarketingTran
               className="mk-story__frame"
               data-active={index === active ? "true" : undefined}
             >
-              <MediaSlot slot={step.slot} t={t} />
+              <VideoSlot slot={step.slot} title={step.title} t={t} paused={index !== active} />
             </div>
           ))}
         </div>

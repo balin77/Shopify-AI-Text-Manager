@@ -274,10 +274,6 @@ export const de: MarketingTranslation = {
   media: {
     placeholder: "Bild folgt",
     alt: {
-      hero: "Der Bulk-Editor: ein paar hundert Produkte in einer Tabelle, mehrere Sprachen nebeneinander",
-      "pillar-writes": "Der Content-Editor mit einem KI-Vorschlag im Beschreibungsfeld",
-      "pillar-translates": "Die Sprachleiste eines Produkts mit allen veröffentlichten Sprachen und einer Markt-Variante",
-      "pillar-found": "Der On-Page-Bericht nach einem Crawl der Storefront, Befunde nach Kategorie gruppiert",
       "feature-ai": "Ein Feld mit einem generierten Text und dem Übernehmen-Button daneben",
       "feature-translations": "Die Seite 'Fehlende Übersetzungen ergänzen' mit den Checkboxen pro Sprache",
       "feature-bulk": "Das Raster des Bulk-Editors mit einem gesetzten Filter und ein paar hervorgehobenen Zellen",
@@ -309,6 +305,8 @@ export const de: MarketingTranslation = {
 
   /** Labels of the click-to-load video player the guide (and the home page) use. */
   video: {
+    pending: "Video folgt",
+    heroTitle: "ContentPilot im Überblick",
     loadExternal: "Laden und abspielen",
     externalNote:
       "Beim Abspielen wird das Video von einem externen Anbieter geladen, der Cookies setzen kann.",

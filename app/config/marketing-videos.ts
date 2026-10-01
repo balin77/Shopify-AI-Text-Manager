@@ -26,6 +26,25 @@ export type MarketingVideoSource =
     };
 
 /**
+ * The home page's video positions: one beside the hero and one per pillar of
+ * the scroll story. `null` until the video is recorded; the slot then shows a
+ * "video follows" frame of the same size, so publishing one moves nothing.
+ *
+ * To publish a video, replace its `null`, e.g.
+ *   hero: { kind: "embed", provider: "youtube", videoId: "abc123" },
+ */
+export const HOME_VIDEO_SLOTS = ["hero", "pillar-writes", "pillar-translates", "pillar-found"] as const;
+
+export type HomeVideoSlot = (typeof HOME_VIDEO_SLOTS)[number];
+
+export const HOME_VIDEOS: Record<HomeVideoSlot, MarketingVideoSource | null> = {
+  hero: null,
+  "pillar-writes": null,
+  "pillar-translates": null,
+  "pillar-found": null,
+};
+
+/**
  * The iframe URL for an embed, built only once the visitor has pressed play.
  *
  * YouTube's `-nocookie` host and Vimeo's `dnt=1` are the providers' own

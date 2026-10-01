@@ -288,10 +288,6 @@ export const en = {
     placeholder: "Image to come",
     /** What each screenshot should SHOW — the brief for whoever captures it, and the alt text once it exists. */
     alt: {
-      hero: "The bulk editor: a few hundred products in one spreadsheet, several languages side by side",
-      "pillar-writes": "The content editor with an AI suggestion waiting in the description field",
-      "pillar-translates": "The language bar of a product with every published locale and a market override",
-      "pillar-found": "The on-page report after a crawl of the storefront, findings grouped by category",
       "feature-ai": "A field with a generated text and the accept button next to it",
       "feature-translations": "The 'add missing translations' page with the per-language checkboxes",
       "feature-bulk": "The bulk editor grid with a filter set and a few edited cells highlighted",
@@ -323,6 +319,8 @@ export const en = {
 
   /** Labels of the click-to-load video player the guide (and the home page) use. */
   video: {
+    pending: "Video coming soon",
+    heroTitle: "ContentPilot at a glance",
     loadExternal: "Load and play",
     externalNote:
       "Playing loads the video from an external provider, which may set cookies.",

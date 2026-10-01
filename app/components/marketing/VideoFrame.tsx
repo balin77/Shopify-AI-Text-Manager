@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { embedUrl, type MarketingVideoSource } from "../../config/marketing-videos";
 import type { MarketingTranslation } from "../../i18n/marketing";
 
@@ -21,14 +21,24 @@ export function VideoFrame({
   title,
   pendingLabel,
   t,
+  paused = false,
 }: {
   source: MarketingVideoSource | null;
   /** The iframe's accessible name once an embed is loaded. */
   title: string;
   pendingLabel: string;
   t: MarketingTranslation;
+  /** Stop playback, e.g. when a scroll story fades this frame out. An embed
+   *  is unloaded (back to its facade), a file is paused where it is. */
+  paused?: boolean;
 }) {
   const [playing, setPlaying] = useState(false);
+  const fileRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    if (!paused) return;
+    setPlaying(false);
+    fileRef.current?.pause();
+  }, [paused]);
 
   return (
     <div className="mk-video__frame">
@@ -37,7 +47,7 @@ export function VideoFrame({
           <span className="mk-media__label">{pendingLabel}</span>
         </div>
       ) : source.kind === "file" ? (
-        <video controls preload="none" poster={source.poster} playsInline>
+        <video ref={fileRef} controls preload="none" poster={source.poster} playsInline>
           {source.sources.map((entry) => (
             <source key={entry.src} src={entry.src} type={entry.type} />
           ))}

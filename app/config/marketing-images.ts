@@ -15,10 +15,6 @@
  */
 
 export const MARKETING_IMAGE_SLOTS = [
-  "hero",
-  "pillar-writes",
-  "pillar-translates",
-  "pillar-found",
   "feature-ai",
   "feature-translations",
   "feature-bulk",
@@ -38,10 +34,6 @@ export interface MarketingImage {
 }
 
 export const MARKETING_IMAGES: Record<MarketingImageSlot, MarketingImage | null> = {
-  hero: null,
-  "pillar-writes": null,
-  "pillar-translates": null,
-  "pillar-found": null,
   "feature-ai": null,
   "feature-translations": null,
   "feature-bulk": null,

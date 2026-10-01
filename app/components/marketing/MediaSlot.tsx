@@ -42,7 +42,7 @@ export function MediaSlot({
           width={image.width}
           height={image.height}
           alt={t.media.alt[slot]}
-          loading={slot === "hero" ? "eager" : "lazy"}
+          loading="lazy"
           decoding="async"
         />
       ) : (

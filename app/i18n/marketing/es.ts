@@ -274,10 +274,6 @@ export const es: MarketingTranslation = {
   media: {
     placeholder: "Imagen pendiente",
     alt: {
-      hero: "El editor masivo: unos cientos de productos en una hoja, varios idiomas uno junto a otro",
-      "pillar-writes": "El editor de contenido con una sugerencia de la IA en el campo de descripción",
-      "pillar-translates": "La barra de idiomas de un producto con todos los idiomas publicados y una variante de mercado",
-      "pillar-found": "El informe on-page tras un rastreo de la tienda, con los hallazgos agrupados por categoría",
       "feature-ai": "Un campo con un texto generado y el botón de aceptar al lado",
       "feature-translations": "La página 'añadir traducciones que faltan' con las casillas por idioma",
       "feature-bulk": "La cuadrícula del editor masivo con un filtro aplicado y unas celdas editadas resaltadas",
@@ -309,6 +305,8 @@ export const es: MarketingTranslation = {
 
   /** Labels of the click-to-load video player the guide (and the home page) use. */
   video: {
+    pending: "Vídeo próximamente",
+    heroTitle: "ContentPilot de un vistazo",
     loadExternal: "Cargar y reproducir",
     externalNote:
       "Al reproducirlo, el vídeo se carga desde un proveedor externo que puede usar cookies.",
