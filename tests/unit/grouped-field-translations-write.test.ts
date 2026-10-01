@@ -136,4 +136,14 @@ describe("grouped-field update re-sync", () => {
     await call();
     expect(markSaved.mock.calls.map((c) => c[0])).toEqual(["gid://shopify/Product/1", "gid://shopify/Product/2"]);
   });
+
+  it("a mirror failure after a confirmed write still counts the product as synced", async () => {
+    dbMock.contentTranslation.upsert.mockRejectedValue(new Error("db down"));
+    try {
+      const r = await call();
+      expect(body(r)).toMatchObject({ ok: true, synced: 2, failed: 0 });
+    } finally {
+      dbMock.contentTranslation.upsert.mockImplementation(async (a: any) => a);
+    }
+  });
 });
