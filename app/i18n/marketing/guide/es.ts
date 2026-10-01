@@ -69,7 +69,7 @@ export const guideEs: GuideCopy = {
 
     "ai-providers": {
       title: "Proveedores de IA y claves API",
-      summary: "La app usa tu propio acceso a la IA. Cómo conectar un proveedor y elegir modelo y límites.",
+      summary: "La IA puede venir incluida en tu plan, o usas tu propio acceso. Cómo funcionan ambos y cómo elegir modelo y límites.",
       sections: [
         {
           heading: "Tu propia clave",
@@ -80,6 +80,15 @@ export const guideEs: GuideCopy = {
             "Crea una cuenta en un proveedor y genera una clave API.",
             "En la app, abre Ajustes → Acceso a la API de IA e introduce la clave en ese proveedor.",
             "Elige el proveedor y el modelo preferidos y guarda.",
+          ],
+        },
+        {
+          heading: "IA incluida en el plan",
+          paragraphs: [
+            "En lugar de tu propia clave, puedes elegir un plan con IA incluida. En Ajustes → Plan, activa arriba «Con IA incluida»: las tarjetas muestran entonces el precio con IA y aproximadamente cuánto trabajo incluye. Cambias de plan como siempre con el botón de cada tarjeta.",
+            "Qué IA se usa lo decide solo tu plan: con un plan con IA, la app trabaja con la IA incluida. Sin él, usa tu propia clave en cuanto hay una guardada. Si no tienes ninguna de las dos, puedes probar la IA incluida una vez gratis.",
+            "Antes de que la IA incluida trabaje, confirmas una vez en Ajustes → Acceso a la API de IA que tu contenido puede enviarse a los proveedores de IA indicados. Ahí ves también cuánto del volumen incluido has usado en el periodo de facturación actual.",
+            "Cuando se agota el volumen, la app sigue con tu propia clave si has guardado una. Si no, continúa en el siguiente periodo de facturación. Las traducciones nunca se borran solo porque se haya agotado el volumen.",
           ],
         },
         {

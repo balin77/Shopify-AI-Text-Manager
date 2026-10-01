@@ -41,6 +41,33 @@ function PlanValue({ highlight, children }: { highlight: boolean; children: Reac
   return highlight ? <strong>{children}</strong> : <>{children}</>;
 }
 
+/**
+ * The volume line under every card's price, the SAME height on every card.
+ *
+ * The four texts differ in length, so each card would wrap its own to a
+ * different number of lines and push its feature list out of line with the
+ * neighbours. Every card therefore stacks ALL four texts in one grid cell and
+ * shows only its own: the cell is as tall as the longest text at that card's
+ * width, and the cards share one width, so every slot ends at the same line.
+ */
+function PlanVolumeSlot({ visibleId, texts }: { visibleId: string; texts: Record<string, string> }) {
+  return (
+    <div style={{ display: "grid" }}>
+      {Object.entries(texts).map(([id, text]) => (
+        <div
+          key={id}
+          aria-hidden={id === visibleId ? undefined : true}
+          style={{ gridArea: "1 / 1", visibility: id === visibleId ? "visible" : "hidden" }}
+        >
+          <Text as="p" variant="bodySm" tone="subdued">
+            {text}
+          </Text>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface SettingsPlanTabProps {
   subscriptionPlan: string;
   inTrial: boolean;
@@ -66,6 +93,8 @@ interface SettingsPlanTabProps {
    * second price is not even offered.
    */
   managedAiOffered?: boolean;
+  /** The one-time taster's size in AI actions — the Free card's volume line. */
+  managedAiTasterActions?: number;
   /**
    * The VERIFIED subscription includes AI. A plan is two products, and
    * without this the tab could only see one of them — so a merchant on
@@ -90,6 +119,7 @@ export function SettingsPlanTab({
   imageOperationCount,
   managedAiOffered = false,
   managedAiActive = false,
+  managedAiTasterActions = 0,
   t,
 }: SettingsPlanTabProps) {
   const revalidator = useRevalidator();
@@ -107,6 +137,15 @@ export function SettingsPlanTab({
   // starts on the variant the shop holds, so "current plan" reads true at once.
   const [withAi, setWithAi] = useState(managedAiActive && managedAiOffered);
   const showAiVariant = managedAiOffered && withAi;
+  // The included volume per card, as a work unit a merchant thinks in — never
+  // tokens (PLAN_MANAGED_AI_KEY §8). Free names the one-time taster instead.
+  const planVolume = t.settings.managedAi?.planVolume ?? {};
+  const planVolumeTexts: Record<string, string> = {
+    free: String(planVolume.free ?? "").replace("{actions}", String(managedAiTasterActions || "")),
+    basic: String(planVolume.basic ?? ""),
+    pro: String(planVolume.pro ?? ""),
+    max: String(planVolume.max ?? ""),
+  };
   const availablePlans = getAvailablePlans();
 
   const performDowngrade = async () => {
@@ -299,10 +338,11 @@ export function SettingsPlanTab({
                     {/* The included volume, as a work unit a merchant thinks
                         in — never tokens, never one precise-looking number
                         of "actions" (PLAN_MANAGED_AI_KEY §8). */}
-                    {cardWithAi && (
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {t.settings.managedAi?.planVolume?.[id] ?? ""}
-                      </Text>
+                    {showAiVariant && (
+                      <PlanVolumeSlot
+                        visibleId={id}
+                        texts={planVolumeTexts}
+                      />
                     )}
 
                     <Divider />

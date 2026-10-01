@@ -70,7 +70,7 @@ export const guideDe: GuideCopy = {
     "ai-providers": {
       title: "KI-Anbieter und API-Schlüssel",
       summary:
-        "Die App nutzt Ihren eigenen KI-Zugang. So verbinden Sie einen Anbieter und wählen Modell und Limits.",
+        "Die KI kann im Plan enthalten sein, oder Sie nutzen Ihren eigenen Zugang. So funktioniert beides, und so wählen Sie Modell und Limits.",
       sections: [
         {
           heading: "Ihr eigener Schlüssel",
@@ -81,6 +81,15 @@ export const guideDe: GuideCopy = {
             "Bei einem Anbieter ein Konto anlegen und einen API-Schlüssel erzeugen.",
             "In der App Einstellungen → KI-API-Zugang öffnen und den Schlüssel beim passenden Anbieter eintragen.",
             "Den bevorzugten Anbieter und das Modell wählen, dann speichern.",
+          ],
+        },
+        {
+          heading: "KI im Plan enthalten",
+          paragraphs: [
+            "Statt eines eigenen Schlüssels können Sie einen Plan mit enthaltener KI wählen. Unter Einstellungen → Plan schalten Sie oben „Mit enthaltener KI“ ein: Die Karten zeigen dann den Preis mit KI und wie viel Arbeit darin ungefähr enthalten ist. Den Plan wechseln Sie wie gewohnt mit dem Knopf auf der jeweiligen Karte.",
+            "Welche KI verwendet wird, entscheidet allein Ihr Plan: Mit einem KI-Plan arbeitet die App mit der enthaltenen KI. Ohne KI-Plan nutzt sie Ihren eigenen Schlüssel, sobald einer hinterlegt ist. Ist weder das eine noch das andere vorhanden, können Sie die enthaltene KI einmalig kostenlos ausprobieren.",
+            "Bevor die enthaltene KI arbeitet, bestätigen Sie einmal unter Einstellungen → KI-API-Zugang, dass Ihre Inhalte dafür an die genannten KI-Anbieter gesendet werden dürfen. Dort sehen Sie auch, wie viel des enthaltenen Volumens im aktuellen Abrechnungszeitraum schon verbraucht ist.",
+            "Ist das Volumen aufgebraucht, arbeitet die App mit Ihrem eigenen Schlüssel weiter, falls Sie einen hinterlegt haben. Sonst geht es im nächsten Abrechnungszeitraum weiter. Übersetzungen werden dabei nie gelöscht, nur weil das Volumen aufgebraucht ist.",
           ],
         },
         {
