@@ -3,8 +3,9 @@ import { embedUrl, type MarketingVideoSource } from "../../config/marketing-vide
 import type { MarketingTranslation } from "../../i18n/marketing";
 
 /**
- * The 16:9 frame of one video — shared by the `/videos` cards and the guide's
- * topic pages, so the click-to-load rule lives in exactly one place.
+ * The 16:9 frame of one video, used by the guide's topic pages. Any other
+ * page that shows a video renders this too, so the click-to-load rule lives in
+ * exactly one place.
  *
  * An embed is a FACADE: until the visitor presses play, nothing is requested
  * from YouTube or Vimeo, so an unwatched page sets no third-party cookie. A
@@ -54,7 +55,7 @@ export function VideoFrame({
           <button type="button" className="mk-video__play" onClick={() => setPlaying(true)}>
             <span>
               <span aria-hidden="true">&#9654;</span>
-              {t.videos.loadExternal}
+              {t.video.loadExternal}
             </span>
           </button>
         </>

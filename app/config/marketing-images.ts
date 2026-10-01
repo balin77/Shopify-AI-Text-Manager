@@ -1,7 +1,7 @@
 /**
  * The website's images, and whether each one exists yet.
  *
- * Same shape as marketing-videos.ts and for the same reason: the page ships
+ * Same approach as the guide video slots and for the same reason: the page ships
  * BEFORE the artwork, every slot renders a clean placeholder until its entry
  * is filled in, and filling one in is an edit to this file alone. A slot is
  * named after the PLACE it appears in, never after a file, so the layout can

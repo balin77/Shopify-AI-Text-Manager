@@ -11,7 +11,6 @@ export const de: MarketingTranslation = {
   nav: {
     features: "Funktionen",
     pricing: "Preise",
-    videos: "Videos",
     roadmap: "Roadmap",
     faq: "Fragen",
     guide: "Anleitung",
@@ -308,38 +307,11 @@ export const de: MarketingTranslation = {
     helpAction: "Support kontaktieren",
   },
 
-  videos: {
-    title: "Videos",
-    intro:
-      "Kurze Rundgänge durch die Teile, die sich in einem Satz schlecht erklären lassen. Weitere entstehen gerade.",
-    comingSoon: "Aufnahme läuft",
-    comingSoonBody: "Dieser Rundgang ist noch nicht veröffentlicht.",
-    play: "Abspielen",
+  /** Labels of the click-to-load video player the guide (and the home page) use. */
+  video: {
     loadExternal: "Laden und abspielen",
     externalNote:
       "Beim Abspielen wird das Video von einem externen Anbieter geladen, der Cookies setzen kann.",
-    items: {
-      overview: {
-        title: "Ein Rundgang durch die App",
-        body: "Welche Bereiche es gibt, wo Ihre Inhalte liegen und was beim Speichern passiert.",
-      },
-      "bulk-editor": {
-        title: "Einen ganzen Katalog auf einmal bearbeiten",
-        body: "Auf die richtigen Zeilen filtern, Hunderte Zellen ändern und eine CSV wieder einlesen.",
-      },
-      translations: {
-        title: "Einen Shop übersetzen",
-        body: "Fehlende Sprachen füllen, marktspezifische Formulierungen — und was passiert, wenn sich ein Ausgangstext ändert.",
-      },
-      seo: {
-        title: "Die eigene Storefront crawlen",
-        body: "Den Scan starten, den On-Page-Bericht lesen und das Gefundene beheben, ohne die App zu verlassen.",
-      },
-      aeo: {
-        title: "Für KI-Assistenten lesbar sein",
-        body: "agents.md, llms.txt und strukturierte Daten — was das ist und warum es inzwischen zählt.",
-      },
-    },
   },
 
   install: {

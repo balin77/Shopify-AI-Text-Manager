@@ -1,7 +1,7 @@
 /**
  * Layout of the PUBLIC website — everything a visitor sees without a Shopify
  * session. Pathless (`_public`), so its children keep the bare URLs `/`,
- * `/features`, `/pricing`, `/guide`, `/videos`, `/roadmap`, `/install` and their `/de` + `/es` prefixes.
+ * `/features`, `/pricing`, `/guide`, `/roadmap`, `/install` and their `/de` + `/es` prefixes.
  *
  * It deliberately loads NO Polaris and NO App Bridge: Polaris is admin chrome
  * (root.tsx no longer imports its stylesheet, app/routes/app.tsx does), and
@@ -46,7 +46,6 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
     { path: "/compare", to: localizedPath(locale, "/compare"), label: t.nav.compare, roomyOnly: true },
     // Phones drop these two from the header altogether, for the same reason —
     // Pricing took Roadmap's place in the phone row.
-    { path: "/videos", to: localizedPath(locale, "/videos"), label: t.nav.videos, wideOnly: true },
     { path: "/roadmap", to: localizedPath(locale, "/roadmap"), label: t.nav.roadmap, wideOnly: true },
   ];
 
@@ -119,7 +118,6 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
               <Link to={localizedPath(locale, "/pricing")}>{t.nav.pricing}</Link>
               <Link to={localizedPath(locale, "/guide")}>{t.nav.guide}</Link>
               <Link to={localizedPath(locale, "/compare")}>{t.nav.compare}</Link>
-              <Link to={localizedPath(locale, "/videos")}>{t.nav.videos}</Link>
               <Link to={localizedPath(locale, "/roadmap")}>{t.nav.roadmap}</Link>
               <InstallLink locale={locale}>{t.nav.install}</InstallLink>
             </div>

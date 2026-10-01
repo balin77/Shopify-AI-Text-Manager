@@ -11,7 +11,6 @@ export const es: MarketingTranslation = {
   nav: {
     features: "Funciones",
     pricing: "Precios",
-    videos: "Vídeos",
     roadmap: "Hoja de ruta",
     faq: "Preguntas",
     guide: "Guía",
@@ -308,38 +307,11 @@ export const es: MarketingTranslation = {
     helpAction: "Contactar con soporte",
   },
 
-  videos: {
-    title: "Vídeos",
-    intro:
-      "Recorridos breves por las partes que cuesta explicar en una frase. Se están grabando más.",
-    comingSoon: "Grabación en curso",
-    comingSoonBody: "Este recorrido aún no está publicado.",
-    play: "Reproducir",
+  /** Labels of the click-to-load video player the guide (and the home page) use. */
+  video: {
     loadExternal: "Cargar y reproducir",
     externalNote:
       "Al reproducirlo, el vídeo se carga desde un proveedor externo que puede usar cookies.",
-    items: {
-      overview: {
-        title: "Un recorrido por la aplicación",
-        body: "Qué secciones hay, dónde vive su contenido y qué ocurre al guardar.",
-      },
-      "bulk-editor": {
-        title: "Editar un catálogo entero de una vez",
-        body: "Filtrar hasta las filas que importan, cambiar cientos de celdas y volver a importar un CSV.",
-      },
-      translations: {
-        title: "Traducir una tienda",
-        body: "Rellenar los idiomas que faltan, la redacción por mercado y qué pasa cuando cambia un texto de origen.",
-      },
-      seo: {
-        title: "Rastrear su propia tienda",
-        body: "Lanzar el análisis, leer el informe on-page y arreglar lo que encuentra sin salir de la aplicación.",
-      },
-      aeo: {
-        title: "Ser legible para los asistentes de IA",
-        body: "agents.md, llms.txt y datos estructurados — qué son y por qué ahora cuentan.",
-      },
-    },
   },
 
   install: {

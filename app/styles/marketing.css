@@ -1,5 +1,5 @@
 /*
- * The PUBLIC website (`/`, `/features`, `/videos`, `/install`).
+ * The PUBLIC website (`/`, `/features`, `/install`).
  *
  * Self-contained on purpose: these routes render outside the /app tree, do not
  * load Polaris, and must stay readable if the admin's design system ever moves.
@@ -868,11 +868,6 @@ a.mk-badge:hover {
 
 /* ── Videos ─────────────────────────────────────────────────────── */
 
-.mk-video {
-  padding: 0;
-  overflow: hidden;
-}
-
 .mk-video__frame {
   position: relative;
   aspect-ratio: 16 / 9;
@@ -927,22 +922,6 @@ a.mk-badge:hover {
   background: rgba(0, 0, 0, 0.6);
   padding: 12px 20px;
   border-radius: 999px;
-}
-
-.mk-video__body {
-  padding: 20px 24px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mk-video__body h3 {
-  font-size: 1.0625rem;
-}
-
-.mk-video__body p {
-  color: var(--mk-text-muted);
-  font-size: 1rem;
 }
 
 .mk-note {

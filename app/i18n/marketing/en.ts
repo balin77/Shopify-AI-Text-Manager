@@ -1,5 +1,5 @@
 /**
- * Copy for the PUBLIC website (`/`, `/features`, `/videos`, `/roadmap`, `/install`).
+ * Copy for the PUBLIC website (`/`, `/features`, `/roadmap`, `/install`).
  *
  * Deliberately its own bundle rather than more keys in `app/i18n/en.ts`: that
  * file is ~5000 lines of admin UI strings shipped into the embedded app, and
@@ -22,7 +22,6 @@ export const en = {
   nav: {
     features: "Features",
     pricing: "Pricing",
-    videos: "Videos",
     roadmap: "Roadmap",
     faq: "FAQ",
     guide: "Guide",
@@ -322,38 +321,11 @@ export const en = {
     helpAction: "Contact support",
   },
 
-  videos: {
-    title: "Videos",
-    intro:
-      "Short walkthroughs of the parts that are hard to describe in a sentence. More are being recorded.",
-    comingSoon: "Recording in progress",
-    comingSoonBody: "This walkthrough is not published yet.",
-    play: "Play",
+  /** Labels of the click-to-load video player the guide (and the home page) use. */
+  video: {
     loadExternal: "Load and play",
     externalNote:
       "Playing loads the video from an external provider, which may set cookies.",
-    items: {
-      overview: {
-        title: "A tour of the app",
-        body: "What the sections are, where your content lives, and what happens on a save.",
-      },
-      "bulk-editor": {
-        title: "Editing a whole catalogue at once",
-        body: "Filtering to the rows you care about, changing hundreds of cells, and importing a CSV back.",
-      },
-      translations: {
-        title: "Translating a shop",
-        body: "Filling the missing languages, market-specific wording, and what happens when a source text changes.",
-      },
-      seo: {
-        title: "Crawling your own storefront",
-        body: "Running the scan, reading the on-page report, and fixing what it finds without leaving the app.",
-      },
-      aeo: {
-        title: "Being readable by AI assistants",
-        body: "agents.md, llms.txt and structured data — what they are and why they now matter.",
-      },
-    },
   },
 
   install: {

@@ -41,7 +41,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     `- [Pricing](${origin}/pricing): the four plans, their prices and limits side by side`,
     `- [Guide](${origin}/guide): how each part of the app works, one topic per page`,
     `- [Comparison](${origin}/compare): ${compare.intro}`,
-    `- [Videos](${origin}/videos): walkthroughs`,
     `- [Roadmap](${origin}/roadmap): what is planned and recently shipped`,
     "",
   ];

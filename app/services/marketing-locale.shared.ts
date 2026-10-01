@@ -107,7 +107,6 @@ export const MARKETING_LOCALIZED_PATHS = [
   "/pricing",
   "/guide",
   "/compare",
-  "/videos",
   "/roadmap",
   "/install",
 ] as const;
