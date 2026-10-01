@@ -15,6 +15,7 @@ import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
+import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -2230,6 +2231,8 @@ export function VariantImageManager({
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         const res = await fetch("/api/staged-upload", {
@@ -2242,27 +2245,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // See FilePickerModal — PUT (image) vs multipart POST (video/3D).
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           setPendingVariantGalleries(p => {
@@ -2279,13 +2267,19 @@ export function VariantImageManager({
           });
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, [variants, urlToGid, locallyExcludedMainGids]);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [variants, urlToGid, locallyExcludedMainGids, t]);
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         // Classify so we (a) know what to push into pendingProductNewMedia
@@ -2302,30 +2296,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // PUT (image) vs multipart POST (video/3D). The previous always-PUT
-          // path produced a 405 against video / model staged targets, so a
-          // drag-drop .glb to the product-gallery placeholder silently
-          // failed and the merchant saw the modal close with nothing saved.
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           // Push the typed shape — bare resourceUrl strings would survive the
@@ -2337,10 +2313,14 @@ export function VariantImageManager({
           setPendingProductNewMedia(p => [...p, { resourceUrl, kind, previewUrl }]);
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, []);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [t]);
 
   // Watch altTextFetcher for AI generate / translate results → auto-save result
   useEffect(() => {

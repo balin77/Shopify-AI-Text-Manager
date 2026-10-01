@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { snapshotAndPersist } from "../../utils/threeDSnapshot";
+import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import {
   Modal,
   TextField,
@@ -370,109 +371,68 @@ export function FilePickerModal({
           setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
           return;
         }
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const pct = Math.round((e.loaded / e.total) * 100);
-              setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, progress: pct } : it));
-            }
+        try {
+          await uploadToStagedTarget({ url, httpMethod, parameters }, file, (pct) => {
+            setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, progress: pct } : it));
+          });
+        } catch (uploadErr) {
+          console.error("[FilePickerModal XHR upload FAILED]", { fileName: file.name, err: uploadErr });
+          setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
+          return;
+        }
+        setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
+          ? { ...it, status: "ready" as const, progress: 100, resourceUrl }
+          : it));
+        // In immediate mode commit the freshly uploaded file the moment
+        // it's ready so the merchant sees it on the variant without an
+        // extra click. For 3D models we additionally wait for the
+        // snapshot+persist pipeline so the storefront gets a real
+        // preview URL on first save — without the await, onAdd would
+        // fire with persistentPreviewUrl=undefined and the snapshot
+        // would only land on a later save (or not at all, since the
+        // pending state was already consumed by handleModalAdd).
+        if (uploadCommitMode === "immediate") {
+          const finalize = async (persistentPreviewUrl?: string) => {
+            onAdd([{
+              source: "upload",
+              resourceUrl,
+              kind: item.kind,
+              previewUrl: pendingPreviewRef.current.get(item.uniqueId) ?? item.previewUrl,
+              fileName: item.fileName,
+              mimeType: item.mimeType,
+              persistentPreviewUrl,
+            }]);
+            pendingFilesRef.current.delete(item.uniqueId);
+            pendingPreviewRef.current.delete(item.uniqueId);
+            setPendingUploads(prev => prev.filter(p => p.uniqueId !== item.uniqueId));
           };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
-                ? { ...it, status: "ready" as const, progress: 100, resourceUrl }
-                : it));
-              // In immediate mode commit the freshly uploaded file the moment
-              // it's ready so the merchant sees it on the variant without an
-              // extra click. For 3D models we additionally wait for the
-              // snapshot+persist pipeline so the storefront gets a real
-              // preview URL on first save — without the await, onAdd would
-              // fire with persistentPreviewUrl=undefined and the snapshot
-              // would only land on a later save (or not at all, since the
-              // pending state was already consumed by handleModalAdd).
-              if (uploadCommitMode === "immediate") {
-                const finalize = async (persistentPreviewUrl?: string) => {
-                  onAdd([{
-                    source: "upload",
-                    resourceUrl,
-                    kind: item.kind,
-                    previewUrl: pendingPreviewRef.current.get(item.uniqueId) ?? item.previewUrl,
-                    fileName: item.fileName,
-                    mimeType: item.mimeType,
-                    persistentPreviewUrl,
-                  }]);
-                  pendingFilesRef.current.delete(item.uniqueId);
-                  pendingPreviewRef.current.delete(item.uniqueId);
-                  setPendingUploads(prev => prev.filter(p => p.uniqueId !== item.uniqueId));
-                };
-                if (item.kind === "model") {
-                  // Snapshot+persist is awaited but its failure must NOT
-                  // block onAdd — the .glb is uploaded and the merchant
-                  // should still see the tile. Storefront falls back to
-                  // its "3D" placeholder for this slot.
-                  snapshotAndPersist(file)
-                    .then(({ blobUrl, cdnUrl }) => {
-                      setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
-                        ? { ...it, previewUrl: blobUrl, persistentPreviewUrl: cdnUrl }
-                        : it));
-                      return finalize(cdnUrl);
-                    })
-                    .catch((err) => {
-                      console.warn("[FilePickerModal] 3D snapshot/persist failed", { file: file.name, err });
-                      return finalize(undefined);
-                    });
-                } else {
-                  void finalize();
-                }
-              }
-              // Queue mode + 3D model: no client-side snapshot. The pipeline
-              // (model-viewer + canvas.toBlob) timed out on big .glb files
-              // and forced the merchant to wait ~20s before "Add selected"
-              // became active, with no upside — server-side Shopify
-              // Model3d.preview generation runs on save anyway and handles
-              // arbitrarily large files without occupying the merchant's
-              // browser tab.
-              resolve();
-            } else {
-              console.error("[FilePickerModal XHR upload FAILED]", {
-                fileName: file.name,
-                xhrStatus: xhr.status,
-                statusText: xhr.statusText,
-                response: xhr.responseText.slice(0, 500),
+          if (item.kind === "model") {
+            // Snapshot+persist is awaited but its failure must NOT
+            // block onAdd — the .glb is uploaded and the merchant
+            // should still see the tile. Storefront falls back to
+            // its "3D" placeholder for this slot.
+            snapshotAndPersist(file)
+              .then(({ blobUrl, cdnUrl }) => {
+                setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
+                  ? { ...it, previewUrl: blobUrl, persistentPreviewUrl: cdnUrl }
+                  : it));
+                return finalize(cdnUrl);
+              })
+              .catch((err) => {
+                console.warn("[FilePickerModal] 3D snapshot/persist failed", { file: file.name, err });
+                return finalize(undefined);
               });
-              setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
-              reject(new Error(`Upload failed: HTTP ${xhr.status}`));
-            }
-          };
-          xhr.onerror = () => {
-            console.error("[FilePickerModal XHR network error]", { fileName: file.name });
-            setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
-            reject(new Error("Upload network error"));
-          };
-          // Shopify's staged target is reached differently per resource:
-          //   IMAGE: signed PUT — body is the raw file, Content-Type header
-          //   VIDEO / MODEL_3D: signed POST policy — multipart/form-data with
-          //     every `parameters` entry as a form field FIRST, then `file`
-          //     LAST (the underlying storage requires this order). Skipping
-          //     this branch (always PUT) was the previous bug: PUTting a
-          //     `.glb` to a POST-only target returned 405 and the upload
-          //     silently failed, leaving the merchant clicking Add with
-          //     nothing happening.
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
           } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
+            void finalize();
           }
-        });
+        }
+        // Queue mode + 3D model: no client-side snapshot. The pipeline
+        // (model-viewer + canvas.toBlob) timed out on big .glb files
+        // and forced the merchant to wait ~20s before "Add selected"
+        // became active, with no upside — server-side Shopify
+        // Model3d.preview generation runs on save anyway and handles
+        // arbitrarily large files without occupying the merchant's
+        // browser tab.
       } catch {
         setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
       }
