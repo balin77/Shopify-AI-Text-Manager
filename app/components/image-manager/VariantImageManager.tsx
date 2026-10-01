@@ -19,6 +19,7 @@ import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./typ
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
+import { splitLoadedAltTexts, altFieldView, shouldSaveAltText } from "./alt-market-layer";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -148,6 +149,12 @@ interface VariantImageManagerProps {
   variantReloadKey?: number;
   currentLanguage?: string;
   primaryLocale?: string;
+  /**
+   * The market whose translation layer the open foreign language shows ("" or
+   * absent = the global layer). Foreign alt texts are read from and saved to
+   * THAT layer; "translate to all languages" stays global, like the editor's.
+   */
+  selectedMarketId?: string;
   productTitle?: string;
   enabledLanguages?: string[];
   onDirtyChange?: (isDirty: boolean) => void;
@@ -211,6 +218,7 @@ export function VariantImageManager({
   variantReloadKey,
   currentLanguage,
   primaryLocale,
+  selectedMarketId = "",
   productTitle,
   enabledLanguages = [],
   onDirtyChange,
@@ -320,6 +328,9 @@ export function VariantImageManager({
   const fetcher = useFetcher();
   // Alt text editing state
   const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
+  // Values the open market inherits from the global layer: shown as a
+  // placeholder, never as the field's value (see alt-market-layer.ts).
+  const [inheritedAltTexts, setInheritedAltTexts] = useState<Record<string, string>>({});
   const altTextFetcher = useFetcher<any>();          // generate / translate (returns text)
   const saveAltTextFetcher = useFetcher<any>();      // save (writes to Shopify)
   const { showInfoBox } = useInfoBox();
@@ -386,6 +397,9 @@ export function VariantImageManager({
     form.append("mediaId", next.mediaId);
     form.append("altText", next.altText);
     if (next.locale) form.append("locale", next.locale);
+    // A market save belongs to that market's layer; the server refuses a
+    // market on the primary locale, so it only rides foreign saves.
+    if (next.marketId && next.locale && next.locale !== primaryLocaleRef.current) form.append("marketId", next.marketId);
     if (primaryLocaleRef.current) form.append("primaryLocale", primaryLocaleRef.current);
     saveAltTextFetcher.submit(form, { method: "post" });
     // A stuck request must not stall the queue for good.
@@ -446,6 +460,8 @@ export function VariantImageManager({
   // What the single in-flight generate / translate request was made FOR (image,
   // language, product): the reply is applied to that, never to a position.
   const altAiRequestRef = useRef<{ url: string; mediaId?: string; locale?: string; marketId?: string; productId: string } | null>(null);
+  // The market layer a foreign-language edit is written to ("" = global).
+  const foreignMarketId = currentLanguage && currentLanguage !== primaryLocale ? selectedMarketId || undefined : undefined;
   const productGalleryBlurSkipRef = useRef(false);
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
@@ -536,6 +552,7 @@ export function VariantImageManager({
     lastBgRefreshRef.current = backgroundRefreshVersion;
     if (!isBackgroundRefresh) {
       setLocalAltTexts({});
+      setInheritedAltTexts({});
       failedAltUrlsRef.current.clear();
     }
     if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
@@ -543,8 +560,9 @@ export function VariantImageManager({
     form.append("action", "loadImageAltTranslations");
     form.append("productId", productId);
     form.append("locale", currentLanguage);
+    if (selectedMarketId) form.append("marketId", selectedMarketId);
     translationsFetcher.submit(form, { method: "post" });
-  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, selectedMarketId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-read the open language's alt texts after the server wrote foreign values.
   const reloadForeignAlts = useCallback(() => {
@@ -553,22 +571,27 @@ export function VariantImageManager({
     form.append("action", "loadImageAltTranslations");
     form.append("productId", productId);
     form.append("locale", currentLanguage);
+    if (selectedMarketId) form.append("marketId", selectedMarketId);
     translationsFetcher.submit(form, { method: "post" });
-  }, [productId, currentLanguage, primaryLocale, translationsFetcher]);
+  }, [productId, currentLanguage, primaryLocale, translationsFetcher, selectedMarketId]);
 
   // Apply loaded translations to localAltTexts (mediaId → url → altText)
   useEffect(() => {
     const data = translationsFetcher.data;
     if (!data || data.actionType !== "loadImageAltTranslations") return;
+    // An answer for another market (a stale response after a switch) is not
+    // this view's layer.
+    if ((data.marketId ?? "") !== selectedMarketId) return;
     const altTexts: Record<string, string> = data.altTexts ?? {};
+    const layer = splitLoadedAltTexts(altTexts, data.inheritedMediaIds, (mediaId) => fileUrlMap[mediaId]);
     setLocalAltTexts(prev => {
       const next = { ...prev };
-      for (const [mediaId, altText] of Object.entries(altTexts)) {
-        const url = fileUrlMap[mediaId];
-        if (url && !isAltUrlBusy(url)) next[url] = altText as string;
+      for (const [url, altText] of Object.entries(layer.own)) {
+        if (!isAltUrlBusy(url)) next[url] = altText;
       }
       return next;
     });
+    setInheritedAltTexts(layer.inherited);
   }, [translationsFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Extracted so it can be called both on product selection (full reset) and on image reload
@@ -2581,6 +2604,10 @@ export function VariantImageManager({
     const data = altTextFetcher.data;
     if (!data || data === prevAltFetcherData.current) return;
     prevAltFetcherData.current = data;
+    if (data.errorCode === "imageNotFound") {
+      setMediaError(t.imageManager.altImageNotFound);
+      return;
+    }
     const im = t.imageManager;
     const failText = (message: string) =>
       message
@@ -2623,7 +2650,7 @@ export function VariantImageManager({
       localAltTextsRef.current = { ...localAltTextsRef.current, [url]: generated };
     }
     // Auto-save the result immediately; a failed save says so.
-    submitAltSave({ url, mediaId, altText: generated, locale: req.locale, productId: req.productId, productTitle });
+    submitAltSave({ url, mediaId, altText: generated, locale: req.locale, marketId: req.marketId, productId: req.productId, productTitle });
   }, [altTextFetcher.data, effectiveProductImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAltTextChange = useCallback((url: string, value: string) => {
@@ -2637,16 +2664,20 @@ export function VariantImageManager({
   const handleSaveAltText = useCallback((url: string, altText: string) => {
     const mediaId = urlToGid[url];
     if (!mediaId) return;
+    // The inputs save on every blur: without an edit (or a failed save to
+    // retry) there is nothing to write -- and an inherited fallback must never
+    // be pinned as a market override.
+    if (!shouldSaveAltText(dirtyUrlsRef.current.has(url) || failedAltUrlsRef.current.has(url))) return;
     // The dirty flag stays until the server CONFIRMS the save (see the answer
     // effect above); a failed one keeps the text and the flag.
     failedAltUrlsRef.current.delete(url);
-    submitAltSave({ url, mediaId, altText, locale: currentLanguage, productId, productTitle });
-  }, [urlToGid, currentLanguage, submitAltSave, productId, productTitle]);
+    submitAltSave({ url, mediaId, altText, locale: currentLanguage, marketId: foreignMarketId, productId, productTitle });
+  }, [urlToGid, currentLanguage, submitAltSave, productId, productTitle, foreignMarketId]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     if (imageIndex < 0) return;
-    altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, productId };
+    altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, marketId: foreignMarketId, productId };
     const form = new FormData();
     form.append("action", "generateAltText");
     form.append("itemId", productId);
@@ -2656,12 +2687,12 @@ export function VariantImageManager({
     form.append("productTitle", productTitle ?? "");
     form.append("mainLanguage", primaryLocale ?? "en");
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher, urlToGid, currentLanguage]);
+  }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher, urlToGid, currentLanguage, foreignMarketId]);
 
   const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     if (!currentLanguage || imageIndex < 0) return;
-    altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, productId };
+    altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, marketId: foreignMarketId, productId };
     const form = new FormData();
     form.append("action", "translateAltText");
     form.append("itemId", productId);
@@ -2670,24 +2701,34 @@ export function VariantImageManager({
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocale", currentLanguage);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher, urlToGid]);
+  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher, urlToGid, foreignMarketId]);
 
+  // GLOBAL layer by design, like the editor's own "translate to all languages":
+  // it never carries a market. The image is named by its MEDIA id -- a position
+  // in this live list is not one in the database, and the server refuses an id
+  // it cannot find instead of writing to another image.
   const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
+    const mediaId = urlToGid[url] ?? effectiveProductImages[imageIndex]?.mediaId;
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
-    if (targetLocales.length === 0 || imageIndex < 0) return;
-    altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, productId };
+    if (targetLocales.length === 0) return;
+    if (!mediaId || !mediaId.startsWith("gid://")) {
+      setMediaError(t.imageManager.altImageNotFound);
+      return;
+    }
+    altAiRequestRef.current = { url, mediaId, locale: currentLanguage, productId };
     const form = new FormData();
     form.append("action", "translateAltTextToAllLocales");
     form.append("itemId", productId);
     form.append("productId", productId);
-    form.append("imageIndex", String(imageIndex));
+    form.append("mediaId", mediaId);
+    if (imageIndex >= 0) form.append("imageIndex", String(imageIndex));
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocales", JSON.stringify(targetLocales));
     form.append("productTitle", productTitle ?? "");
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, enabledLanguages, primaryLocale, altTextFetcher, urlToGid, currentLanguage]);
+  }, [productId, effectiveProductImages, urlToGid, enabledLanguages, primaryLocale, altTextFetcher, t, currentLanguage]);
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
@@ -2724,7 +2765,14 @@ export function VariantImageManager({
   const productCurrentAltText = productSingleSelected
     ? (isPrimaryLocale
       ? (localAltTexts[productSingleSelected] ?? imageMetas[productSingleSelected]?.altText ?? "")
-      : (localAltTexts[productSingleSelected] ?? ""))
+      : altFieldView({
+        own: localAltTexts[productSingleSelected],
+        inherited: inheritedAltTexts[productSingleSelected],
+        primaryAlt: "", fallbackPlaceholder: "",
+      }).value)
+    : "";
+  const productInheritedAlt = productSingleSelected && !isPrimaryLocale
+    ? (inheritedAltTexts[productSingleSelected] ?? "")
     : "";
   const productPrimaryAltText = productSingleSelected ? (imageMetas[productSingleSelected]?.altText ?? "") : "";
   const productHasTranslation = productSingleSelected
@@ -3033,7 +3081,7 @@ export function VariantImageManager({
                 type="text"
                 value={productCurrentAltText}
                 onChange={(e) => handleAltTextChange(productSingleSelected, e.target.value)}
-                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : (productPrimaryAltText || t.imageManager.altTextPlaceholder)}
+                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: productCurrentAltText, inherited: productInheritedAlt, primaryAlt: productPrimaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                 style={{
                   flex: "1 1 200px",
                   minWidth: 180,
@@ -3209,6 +3257,7 @@ export function VariantImageManager({
                 localAltTexts={localAltTexts}
                 isAltTextLoading={altTextFetcher.state !== "idle"}
                 onAltTextChange={handleAltTextChange}
+                inheritedAltTexts={inheritedAltTexts}
                 onSaveAltText={handleSaveAltText}
                 onGenerateAltText={handleGenerateAltTextForImage}
                 onTranslateAltText={handleTranslateAltTextForImage}

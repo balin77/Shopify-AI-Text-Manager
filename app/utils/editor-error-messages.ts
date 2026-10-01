@@ -27,6 +27,12 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return taskErrorText(refusal[0], t) ?? errorMessage;
   }
 
+  // The image an alt-text action named no longer exists on the product.
+  if (errorMessage === "Image not found on this product") {
+    const im = (t as unknown as { imageManager?: Record<string, string> }).imageManager;
+    return im?.altImageNotFound || errorMessage;
+  }
+
   // A plan refusal travels as the code "gated" (planGateRefusal, 403).
   if (errorMessage === "gated") {
     const content = t.content as Record<string, string> | undefined;

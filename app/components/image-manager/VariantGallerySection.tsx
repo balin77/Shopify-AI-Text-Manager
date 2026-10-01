@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
+import { altFieldView } from "./alt-market-layer";
 import { useI18n } from "../../contexts/I18nContext";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -26,6 +27,8 @@ interface VariantGallerySectionProps {
   skipDndContext?: boolean;
   hasMainImage?: boolean;
   localAltTexts?: Record<string, string>;
+  /** Values a selected market inherits from the global layer (placeholder only). */
+  inheritedAltTexts?: Record<string, string>;
   isAltTextLoading?: boolean;
   onAltTextChange?: (url: string, value: string) => void;
   onSaveAltText?: (url: string, altText: string) => void;
@@ -68,6 +71,7 @@ export function VariantGallerySection({
   skipDndContext = false,
   hasMainImage = true,
   localAltTexts,
+  inheritedAltTexts,
   isAltTextLoading,
   onAltTextChange,
   onSaveAltText,
@@ -344,7 +348,7 @@ export function VariantGallerySection({
                   type="text"
                   value={currentAltText}
                   onChange={(e) => onAltTextChange?.(singleSelectedUrl, e.target.value)}
-                  placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : (primaryAltText || t.imageManager.altTextPlaceholder)}
+                  placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: currentAltText, inherited: singleSelectedUrl ? inheritedAltTexts?.[singleSelectedUrl] : undefined, primaryAlt: primaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                   style={{
                     flex: "1 1 200px",
                     minWidth: 180,

@@ -30,6 +30,11 @@ import type { SeoLimits } from "../../utils/character-limits";
 import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { ALT_IMAGE_NOT_FOUND, pickProductImage } from "~/services/product-image-pick.shared";
+import { altTextSyncShieldId, marketLayerLockId } from "~/services/translations/translation-locks.shared";
+
+// A Shopify Market id: the only shape a client-sent marketId may take.
+const MARKET_GID_RE = /^gid:\/\/shopify\/Market\/\d+$/;
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -504,11 +509,32 @@ export async function handleTranslateAltTextToAllLocales(
   const { admin, session, contentConfig, db, itemId, provider, serviceConfig, shopifyContentService } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
+  const requestedMediaId = getFormString(formData, "mediaId") || "";
   const sourceAltText = getFormString(formData, "sourceAltText");
   const productTitle = getFormString(formData, "productTitle") || "";
   const targetLocales = getFormJSON<string[]>(formData, "targetLocales");
   if (!targetLocales) {
     return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
+  }
+
+  // The medium is resolved by its id BEFORE any AI work is spent: a client
+  // position is not a DB position, and an image that cannot be found is
+  // refused, never replaced by image 0. (Articles/Collections have no
+  // ProductImage rows and keep the index.)
+  const isFeaturedImageResource = contentConfig.resourceType === 'Article' || contentConfig.resourceType === 'Collection';
+  let resolvedDbImage: { mediaId: string | null } | undefined;
+  if (!isFeaturedImageResource) {
+    const dbProduct = await db.product.findUnique({
+      where: { shop_id: { shop: session.shop, id: itemId } },
+      include: { images: { orderBy: { position: 'asc' } } },
+    });
+    resolvedDbImage = pickProductImage(dbProduct?.images, { mediaId: requestedMediaId, imageIndex });
+    if (requestedMediaId && !resolvedDbImage) {
+      return json(
+        { success: false, errorCode: ALT_IMAGE_NOT_FOUND, error: "Image not found on this product" },
+        { status: 404 },
+      );
+    }
   }
 
   // Same fallback as its siblings: the form's title first, the cached one
@@ -572,13 +598,13 @@ export async function handleTranslateAltTextToAllLocales(
     // Articles/Collections store the featured image translation on a separate translatable
     // resource (ArticleImage / CollectionImage) and persist locally to `contentTranslation`,
     // not to `productImageAltTranslation`. Delegate to the shared helper.
-    if (contentConfig.resourceType === 'Article' || contentConfig.resourceType === 'Collection') {
+    if (isFeaturedImageResource) {
       for (const locale of targetLocales) {
         const altText = translatedAltTexts[locale];
         if (!altText) continue;
         const result = await shopifyContentService.saveImageAltTextTranslation({
           resourceId: itemId,
-          resourceType: contentConfig.resourceType,
+          resourceType: contentConfig.resourceType as "Article" | "Collection",
           locale,
           altText,
           shop: session.shop,
@@ -616,17 +642,7 @@ export async function handleTranslateAltTextToAllLocales(
     const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
     const gateway = new ShopifyApiGateway(admin, session.shop);
 
-    // Get DB product image to find mediaId
-    const dbProduct = await db.product.findUnique({
-      where: { id: itemId },
-      include: {
-        images: {
-          orderBy: { position: 'asc' },
-        },
-      },
-    });
-
-    const dbImage = dbProduct?.images?.[imageIndex];
+    const dbImage = resolvedDbImage;
 
     if (!dbImage?.mediaId) {
       // No mediaId = cannot save to Shopify, so don't save to DB either
@@ -834,6 +850,13 @@ export async function handleSaveImageAltText(
   const altText = getFormString(formData, "altText") ?? "";
   const locale = getFormString(formData, "locale") || null;
   const primaryLocale = getFormString(formData, "primaryLocale") || null;
+  // The MARKET layer the merchant is editing (foreign locales only: the
+  // primary alt is one value for every market). Validated here because the
+  // action takes a direct POST and the id lands in a Shopify mutation.
+  const rawMarketId = getFormString(formData, "marketId") || "";
+  if (rawMarketId && !MARKET_GID_RE.test(rawMarketId)) {
+    return json({ success: false, error: "Invalid marketId" }, { status: 400 });
+  }
 
   if (!mediaId) {
     return json({ success: false, error: "mediaId required" }, { status: 400 });
@@ -859,18 +882,19 @@ export async function handleSaveImageAltText(
       mirrorProductMediaAlt,
     } = await import("~/services/translations/verified-translations.server");
 
+    const marketId = rawMarketId;
     let storedAlt = altText;
     try {
       if (altText.trim() === "") {
         // Clearing means REMOVING the translation (a register of "" is
         // refused); the local row goes only when the removal is confirmed.
-        const removal = await removeMediaAltAndVerify(admin, mediaId, locale);
+        const removal = await removeMediaAltAndVerify(admin, mediaId, locale, marketId);
         shopifySaved = removal.confirmed;
         if (!shopifySaved) {
           logger.error("[saveImageAltText] Shopify did not confirm removing the alt translation", { errors: removal.userErrors });
         }
       } else {
-        const verified = await registerMediaAltAndVerify(admin, mediaId, locale, altText);
+        const verified = await registerMediaAltAndVerify(admin, mediaId, locale, altText, marketId || undefined);
         if (verified.noDigest) {
           return json({ success: false, error: "No digest found for alt-text translation" }, { status: 400 });
         }
@@ -888,12 +912,22 @@ export async function handleSaveImageAltText(
       // lock AND every resource it is about to write, so marking the image is
       // both precise and enough — without it the AI would overwrite the value
       // the merchant just accepted.
-      markTranslationSaved(mediaId);
+      // The bare MediaImage id is what a repair run watches; a MARKET write
+      // must not abort it (a repair writes global rows only), so it marks the
+      // market-layer key instead. Both layers also mark the product's alt-sync
+      // shield -- the one key the products/update sync actually asks for -- so
+      // the rewrite stays off the alt cache until Shopify's read-back caught up.
+      markTranslationSaved(marketId ? marketLayerLockId(mediaId) : mediaId);
+      const owningProduct = await db.productImage
+        .findFirst({ where: { mediaId, product: { shop: session.shop } }, select: { productId: true } })
+        .catch(() => null);
+      if (owningProduct?.productId) markTranslationSaved(altTextSyncShieldId(owningProduct.productId));
       try {
         // Shop-scoped, resolved now (R4-DI7): an unscoped mediaId lookup could
-        // resolve another tenant's ProductImage. A cleared value deletes the
-        // GLOBAL-layer row only — market overrides stay.
-        await mirrorProductMediaAlt(db, { shop: session.shop, mediaId, locale, value: altText.trim() === "" ? "" : storedAlt });
+        // resolve another tenant's ProductImage. A cleared value deletes ONLY
+        // the row of the layer that was written -- the global one, or this
+        // market's -- never the other layer.
+        await mirrorProductMediaAlt(db, { shop: session.shop, mediaId, locale, marketId, value: altText.trim() === "" ? "" : storedAlt });
       } catch {
         // DB update is best-effort; Shopify is the source of truth
       }
@@ -919,22 +953,43 @@ export async function handleLoadImageAltTranslations(
   const { db } = ctx;
   const productId = getFormString(formData, "productId") || ctx.itemId;
   const locale = getFormString(formData, "locale");
+  const marketId = getFormString(formData, "marketId") || "";
 
   if (!productId || !locale) {
     return json({ success: false, error: "productId and locale required" }, { status: 400 });
   }
+  if (marketId && !MARKET_GID_RE.test(marketId)) {
+    return json({ success: false, error: "Invalid marketId" }, { status: 400 });
+  }
 
+  // ONE layer per answer. The rows of every market and the global one share
+  // (image, locale) and used to be mixed here, the last row winning. With a
+  // market selected the market's rows are read plus the global ones as the
+  // fallback, exactly the editor's display chain (market, else global); with
+  // none, the global layer alone.
   const rows = await db.productImageAltTranslation.findMany({
-    where: { locale, image: { productId } },
-    select: { altText: true, image: { select: { mediaId: true } } },
+    where: { locale, image: { productId }, marketId: marketId ? { in: ["", marketId] } : "" },
+    select: { altText: true, marketId: true, image: { select: { mediaId: true } } },
   });
 
   const altTexts: Record<string, string> = {};
-  for (const row of rows) {
-    if (row.image?.mediaId) {
-      altTexts[row.image.mediaId] = row.altText;
+  const inheritedMediaIds: string[] = [];
+  // Global first, so a market row of the same image overrides it.
+  for (const row of rows.filter((r: { marketId: string }) => (r.marketId ?? "") === "")) {
+    if (row.image?.mediaId) altTexts[row.image.mediaId] = row.altText;
+  }
+  if (marketId) {
+    const overridden = new Set<string>();
+    for (const row of rows.filter((r: { marketId: string }) => (r.marketId ?? "") === marketId)) {
+      if (row.image?.mediaId) {
+        altTexts[row.image.mediaId] = row.altText;
+        overridden.add(row.image.mediaId);
+      }
+    }
+    for (const mediaId of Object.keys(altTexts)) {
+      if (!overridden.has(mediaId) && altTexts[mediaId].trim() !== "") inheritedMediaIds.push(mediaId);
     }
   }
 
-  return json({ actionType: "loadImageAltTranslations", locale, altTexts });
+  return json({ actionType: "loadImageAltTranslations", locale, marketId, altTexts, inheritedMediaIds });
 }

@@ -731,7 +731,10 @@ export function isAltTextTranslated(
   if (locale === primaryLocale) return true;
   if (!image) return false;
   if (liveValue !== undefined) return !isFieldEmpty(liveValue);
-  const t = image.altTextTranslations?.find(t => t.locale === locale);
+  // GLOBAL layer: a market override is not what completeness asks about (the
+  // other completeness checks read the global rows too), and a market row of
+  // the same locale must not be the one `find` happens to hit.
+  const t = image.altTextTranslations?.find(t => t.locale === locale && (t.marketId ?? "") === "");
   return !!t && !isFieldEmpty(t.altText);
 }
 

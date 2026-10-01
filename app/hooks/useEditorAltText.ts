@@ -32,6 +32,17 @@ import { debugLog } from "../utils/debug";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 
+/**
+ * The medium behind an image tile, as a form field. The server resolves the
+ * image to write by this id when it is sent (a position in the editor's list is
+ * not a position in the DB order); collections and articles carry none and
+ * keep the index.
+ */
+function mediaIdField(image: unknown): { mediaId?: string } {
+  const id = (image as { mediaId?: unknown } | null | undefined)?.mediaId;
+  return typeof id === "string" && id.startsWith("gid://") ? { mediaId: id } : {};
+}
+
 // ---------------------------------------------------------------------------
 // Prop / return types
 // ---------------------------------------------------------------------------
@@ -596,6 +607,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         productId: selectedItem.id,
         productTitle: selectedItem.title || "",
         imageIndex: String(imageIndex),
+        ...mediaIdField(image),
         sourceAltText,
         targetLocales: JSON.stringify(targetLocales),
         primaryLocale
@@ -1022,6 +1034,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
                 productId: item.id,
                 productTitle: item.title || "",
                 imageIndex: String(imageIndex),
+                ...mediaIdField(item.images?.[imageIndex]),
                 sourceAltText: suggestion,
                 targetLocales: JSON.stringify(targetOthers),
                 primaryLocale: L,
@@ -1106,6 +1119,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       action: "translateAltTextToAllLocales",
       productId: item.id,
       imageIndex: String(imageIndex),
+      ...mediaIdField(item.images?.[imageIndex]),
       sourceAltText: suggestion,
       targetLocales: JSON.stringify(targetLocales)
     }, { method: "POST" });

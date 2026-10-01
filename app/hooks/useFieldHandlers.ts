@@ -11,7 +11,7 @@ import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/conten
 import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { useCallback, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue, buildLocaleKey, buildDeletedKey, LOCALE_MARKET_SEP } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { writeLastContentLocale } from "../utils/last-content-locale";
@@ -333,8 +333,8 @@ const handleSave = () => {
     });
 
     // The same invalidation for the ALT texts of the images whose primary alt
-    // changed: the server deletes their foreign translations (globally — a
-    // market override survives), and both places the editor reads them from
+    // changed: the server deletes their foreign translations (the global layer
+    // AND the market overrides), and every place the editor reads them from
     // would otherwise keep serving the deleted value for the rest of the
     // session, with a save from that view writing it straight back.
     //
@@ -346,11 +346,11 @@ const handleSave = () => {
     // save must not disagree about what the server did.
     if (changedAltTextIndices.length > 0) {
       for (const key of Object.keys(localAltTextOverlayRef.current)) {
-        // Global layer only — `buildLocaleKey` writes a market key as
-        // `locale@@market`, and the server's removal leaves market overrides
-        // alone. Testing for the wrong separator wiped them from the editor
-        // while Shopify kept serving them.
-        if (key.includes(LOCALE_MARKET_SEP)) continue;
+        // EVERY foreign layer goes -- the global one and the market overlays
+        // (`buildLocaleKey` writes a market key as `locale@@market`): the
+        // server's invalidation removes the market overrides of these images
+        // as well (purgeMarketOverrides), so keeping them here would render a
+        // deleted market alt and write it straight back on the next save.
         if (key === primaryLocale) continue;
         for (const index of changedAltTextIndices) {
           delete localAltTextOverlayRef.current[key][index];
@@ -366,8 +366,7 @@ const handleSave = () => {
         const img = images[index];
         if (!img?.altTextTranslations) continue;
         img.altTextTranslations = img.altTextTranslations.filter(
-          (t: { locale: string; marketId?: string }) =>
-            t.locale === primaryLocale || (t.marketId ?? "") !== "",
+          (t: { locale: string; marketId?: string }) => t.locale === primaryLocale,
         );
       }
     }
@@ -1759,8 +1758,10 @@ const handleClearAllForLocaleConfirm = () => {
   let hasAltTextsToDelete = false;
   if (selectedItem?.images) {
     selectedItem.images.forEach((img: ContentImage, index: number) => {
+      // Only the layer being cleared (the selected market's, else global).
       const hasTranslation = img.altTextTranslations?.some(
-        (t: { locale: string }) => t.locale === currentLanguage
+        (t: { locale: string; marketId?: string }) =>
+          t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || "")
       );
       if (hasTranslation) {
         altTextsToDelete[index] = "";
@@ -1779,7 +1780,8 @@ const handleClearAllForLocaleConfirm = () => {
     selectedItem.images.forEach((img: ContentImage) => {
       if (img.altTextTranslations) {
         img.altTextTranslations = img.altTextTranslations.filter(
-          (t: { locale: string }) => t.locale !== currentLanguage
+          (t: { locale: string; marketId?: string }) =>
+            !(t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || ""))
         );
       }
     });

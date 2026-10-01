@@ -131,7 +131,7 @@ export interface QueuedAltSave {
   mediaId: string;
   altText: string;
   locale?: string;
-  /** Room for the market a save belongs to (not used yet). */
+  /** The market layer the save belongs to (undefined = global). */
   marketId?: string;
   /** The product the save was made on: a late answer must not touch another product's dirty state. */
   productId?: string;
@@ -139,7 +139,7 @@ export interface QueuedAltSave {
 }
 
 export function enqueueAltSave(queue: QueuedAltSave[], entry: QueuedAltSave): QueuedAltSave[] {
-  const rest = queue.filter((q) => !(q.mediaId === entry.mediaId && q.locale === entry.locale));
+  const rest = queue.filter((q) => !(q.mediaId === entry.mediaId && q.locale === entry.locale && (q.marketId ?? "") === (entry.marketId ?? "")));
   return [...rest, entry];
 }
 
