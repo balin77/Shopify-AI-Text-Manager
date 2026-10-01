@@ -679,16 +679,15 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     const managedActive = resolved.aiMode === 'managed';
 
     // Losing managed AI is not a quiet event, even though the fallback is the
-    // friendly one: the shop's stored choice stays "managed" while
-    // `wantsManagedAi` now answers false, so the next AI call spends the
-    // merchant's OWN key — or refuses, if they never kept one. That is the
+    // friendly one: the PLAN decides the mode (`wantsManagedAi`), so the next
+    // AI call spends the merchant's OWN key — or, without one, the taster if
+    // they consented, else refuses. That is the
     // right behaviour (their work does not stop) and it must not be silent.
     // §8's usage card is the merchant's half; this is ours.
     if (!managedActive && existing?.managedAiActive === true) {
       logger.info('[Billing] Managed AI entitlement ended — shop falls back to its own key', {
         shop,
         plan,
-        keptChoice: existing?.aiKeySource ?? 'byo',
       });
     }
 

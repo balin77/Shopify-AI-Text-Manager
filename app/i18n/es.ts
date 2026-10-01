@@ -1098,14 +1098,10 @@ export const es: Translation = {
     aiApiAccess: "Códigos de acceso a la API de IA",
     managedAi: {
       heading: "De dónde viene la IA",
-      useOwnKey: "Usar mi propia clave de API",
-      useIncluded: "Usar la IA incluida en mi plan",
-      includedHint:
-        "Tu plan incluye IA. Puedes cambiar a tu propia clave cuando quieras — tus claves guardadas se conservan.",
+      ownKeyHint: "Se usa tu propia clave API. La IA sin clave propia viene con un plan con IA incluida (en «Plan»).",
+      includedHint: "Tu plan incluye IA y se usa automáticamente. Tus claves API guardadas se conservan. Para volver a usar tu propia clave, elige en «Plan» la variante sin IA.",
       notIncludedHint:
         "Tu plan actual no incluye IA. Elige un plan con IA incluida, o añade tu propia clave abajo.",
-      entitlementEnded:
-        "Tu plan ya no incluye IA, así que se vuelve a usar tu propia clave. Tus claves guardadas se conservaron.",
       storedKeys: "{count} clave(s) de API guardada(s), conservadas para que puedas volver",
       storedKeysNone: "No hay claves de API guardadas",
       deleteKeys: "Eliminar claves guardadas",
@@ -1135,15 +1131,16 @@ export const es: Translation = {
       usageUnavailable:
         "No se pudo cargar tu consumo de IA. Hasta entonces, las acciones de IA pueden rechazarse.",
       tasterHeading: "Prueba gratuita de IA",
-      tasterHint:
-        "Prueba la IA incluida con unas {actions} acciones de IA, una sola vez: sin clave de API y sin cambiar de plan. Tu propia clave sigue siendo gratuita e ilimitada.",
+      tasterHint: "Sin clave API propia puedes probar la IA incluida una vez con unas {actions} acciones de IA: confirma abajo el procesamiento. En cuanto añadas tu propia clave, se usará esa.",
       tasterUsed: "{percent}% de tu prueba gratuita usado",
       tasterStarted: "Iniciada el {date}",
       tasterWarning:
         "Has usado el {percent}% de tu prueba gratuita de IA. Es única y no se renueva.",
       tasterExhausted:
         "Tu prueba gratuita de IA se ha agotado. Añade tu propia clave de API para seguir gratis, o elige un plan con IA incluida.",
-      planButton: "Con IA incluida — {price}",
+      planToggle: "Con IA incluida",
+      planToggleHelp:
+        "Muestra los planes con IA incluida: los textos se crean y traducen con nuestra cuenta de IA, sin clave API propia. El precio incluye un volumen por periodo de facturación. Tu plan solo cambia con el botón debajo de cada plan.",
       planVolume: {
         basic: "Alcanza para unos 300–500 productos traducidos a un idioma por periodo.",
         pro: "Alcanza para unos 600–1.000 productos traducidos a un idioma por periodo.",

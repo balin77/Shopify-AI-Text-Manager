@@ -11,19 +11,16 @@
  *
  * Resolution order, and each step is a decision someone could get wrong:
  *
- *   1. The MODE is the merchant's stored choice (`aiKeySource`). Since §10's
- *      taster it is that choice ALONE: a Free shop has no managed
- *      subscription by definition, so gating the mode on the verified one put
- *      the acquisition grant out of reach of the only population it is for.
- *      The verified half (`managedAiActive`, mirrored by
- *      `checkAndSyncSubscription` and settable by nobody else) moved down to
- *      the only thing it ever protected — the SIZE of the budget, in
- *      `periodBudgetMicros`. A shop that did not buy the variant gets the
- *      taster, once, ever.
- *   2. A MERCHANT key wins whenever the merchant has one and asked for it.
- *      Managed mode does not delete BYO keys and BYO keys do not disable a
- *      managed subscription; the stored choice decides, which is what makes
- *      "I hit the cap" one click rather than a support ticket.
+ *   1. The MODE is decided by the PLAN (`wantsManagedAi`): an AI-included
+ *      subscription, else the merchant's own key, else — once consented —
+ *      the taster. (It used to be the merchant's stored choice,
+ *      `aiKeySource`.) The verified subscription (`managedAiActive`,
+ *      mirrored by `checkAndSyncSubscription` and settable by nobody else)
+ *      also decides the SIZE of the budget, in `periodBudgetMicros`; a shop
+ *      that did not buy the variant gets the taster, once, ever.
+ *   2. Without an AI-included plan a MERCHANT key wins wherever one is
+ *      stored. Managed mode never deletes BYO keys, so a cancelled plan
+ *      falls straight back to the key the merchant kept.
  *   3. CONSENT is checked in managed mode only, before anything is spent.
  *   4. BUDGET is checked last, because it is the only step that costs a DB
  *      round trip.
@@ -41,6 +38,7 @@ import { UNPRICED_PROVIDERS } from "../../config/ai-pricing";
 import {
   managedPeriodKey,
   managedPoolFor,
+  periodBudgetMicros,
 } from "./managed-budget.server";
 import { tasterActionsFor, tasterBudgetMicros } from "../../config/managed-ai-budget";
 // §7a "belt and braces": the operator key must never be served from the
@@ -313,18 +311,22 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
     };
   }
 
-  // The shop's stored choice says managed. Everything below is a reason we
-  // cannot serve it — and each one asks the same question afterwards: does
-  // this merchant still have a key of their own?
-  //
-  // That fallback is the half §10 nearly cost. Before the taster,
-  // `wantsManagedAi` was false for a shop whose AI-included plan ENDED, so it
-  // went straight back to its own key — which `checkAndSyncSubscription`
-  // documents as the designed behaviour, and which is why cancelling never
-  // deletes a stored key. With the mode now decided by the stored choice
-  // alone, that shop would have sat in managed mode with a spent taster and a
-  // perfectly good credential nothing ever reached.
-  if (!managedAiAvailable()) return managedUnavailableOrByo(settings);
+  // The plan says managed (an AI-included subscription, or the taster).
+  // Everything below is a reason we cannot serve it — and each one asks the
+  // same question afterwards: does this merchant still have a key of their
+  // own? Cancelling never deletes a stored key, so a shop whose AI-included
+  // plan ended (or whose taster is spent) goes back to it rather than sitting
+  // in managed mode with a credential nothing ever reaches.
+  if (!managedAiAvailable()) {
+    // A shop that never BOUGHT the AI is here only for the taster; with
+    // managed AI switched off it is simply a shop without a key, and the
+    // answer it has always had ("add an API key") is the right one.
+    if (!boughtManagedAi(settings)) {
+      const missing = missingMerchantKey(settings);
+      if (missing) return { ok: false, reason: "noKey", provider: missing };
+    }
+    return managedUnavailableOrByo(settings);
+  }
 
   // 3. Consent, before anything is spent. No fallback here: a merchant who
   // has not answered the question has not asked for their own key either, and
@@ -332,11 +334,20 @@ export function resolveAiCredentials(args: ResolveArgs): AiCredentialDecision {
   // the one property §B4 is satisfied by.
   if (!hasCurrentAiProcessingConsent(settings)) return { ok: false, reason: "consentMissing" };
 
-  // The TASTER is spent and this shop never bought the variant. Synchronous,
-  // from a column, because this function runs on every detached path and
-  // cannot afford the aggregate that established the fact. The stamp is
-  // written by the preflight; the ledger row is what really enforces it.
-  if (!boughtManagedAi(settings) && settings?.managedAiTasterSpentAt != null) {
+  // The TASTER is spent and this shop has no PERIOD budget to fall back on.
+  // Asked of the budget, not of the purchase: a shop that bought "+ AI" but is
+  // inside its 7-day trial, a dev store or a test subscription gets the taster
+  // too (§7, §7a) — and once it is spent, an own key it kept must take over,
+  // or the shop is stuck with every call refused until the trial ends (the
+  // plan decides the mode, so there is no switch left to escape with).
+  // Synchronous, from a column, because this function runs on every detached
+  // path and cannot afford the aggregate that established the fact. The stamp
+  // is written by the preflight; the ledger row is what really enforces it.
+  const plan = (settings?.subscriptionPlan ?? "free") as BillingPlan;
+  if (
+    periodBudgetMicros(args.shop, settings, plan) <= 0 &&
+    settings?.managedAiTasterSpentAt != null
+  ) {
     const missing = missingMerchantKey(settings);
     if (!missing) {
       return {
@@ -412,6 +423,20 @@ function managedUnavailableOrByo(settings: AISettings | null): AiCredentialDecis
     provider: toValidProvider(settings?.preferredProvider),
     config: byoConfig(settings),
   };
+}
+
+/**
+ * Are the merchant's key fields withheld from the Settings page?
+ *
+ * Only where the shop really runs on a plan's PERIOD budget. A shop on the
+ * taster — including one that bought "+ AI" but is still in its trial, a dev
+ * store or a test subscription — may need its own key the moment the taster
+ * is spent, so it must be able to see and edit the fields.
+ */
+export function keyFieldsWithheld(shop: string, settings: AISettings | null): boolean {
+  if (settings?.managedAiActive !== true || !managedAiAvailable()) return false;
+  const plan = (settings.subscriptionPlan ?? "free") as BillingPlan;
+  return periodBudgetMicros(shop, settings, plan) > 0;
 }
 
 /** The ledger dimension for a decision — `managed` or `byo`, never guessed. */

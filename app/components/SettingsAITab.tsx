@@ -338,26 +338,23 @@ export function SettingsAITab({
   // PLAN_MANAGED_AI_KEY §8a — in managed mode the six key fields, the provider
   // select, the model select and the per-provider rate limits are all noise:
   // none of them affects anything, and a screen full of inert inputs invites
-  // the merchant to fill them in and wonder why nothing changes. The mode
-  // SWITCH stays (the way back must never be the hidden thing), and so does
-  // the line saying how many keys are stored, with a Delete control — hiding
-  // the tab without that would leave "uninstall the app" as the only way to
-  // erase a credential they gave us.
-  // Since §10 the question is "is this shop ON managed AI", not "did it buy
-  // it": a Free shop spending its taster is on managed AI, and leaving six key
-  // fields and a model select in front of it would describe a setup nothing is
-  // reading.
+  // the merchant to fill them in and wonder why nothing changes. The line
+  // saying how many keys are stored stays, with a Delete control — hiding the
+  // tab without that would leave "uninstall the app" as the only way to erase
+  // a credential they gave us.
+  // Hidden only under a PLAN with AI: there is no switch any more, the plan
+  // decides. A shop on the taster has no key by definition and MUST see the
+  // fields — adding a key is what takes it off the taster.
   const keyFieldsHidden =
-    managedAi?.aiKeySource === "managed" && managedAi.managedAiOffered === true;
+    managedAi?.managedAiActive === true && managedAi.managedAiOffered === true;
 
   return (
     <>
-    {/* Only where this deployment OFFERS managed AI — or the shop already
-        chose it, so the card can say why it is not being served. While the
-        feature is switched off (MANAGED_AI_ENABLED) every merchant would
-        otherwise see a greyed-out switch for something that does not exist
-        yet, which reads as a broken feature (and is one in App Review). */}
-    {managedAi && (managedAi.managedAiOffered || managedAi.aiKeySource === "managed") && (
+    {/* Only where this deployment OFFERS managed AI. While the feature is
+        switched off (MANAGED_AI_ENABLED) the card would describe something
+        that does not exist yet, which reads as a broken feature (and is one
+        in App Review). */}
+    {managedAi?.managedAiOffered && (
       <ManagedAiCard {...managedAi} fetcher={fetcher} t={t} />
     )}
     {keyFieldsHidden ? null : (

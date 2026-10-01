@@ -33,11 +33,15 @@ import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
 import {
   hasCurrentAiProcessingConsent,
-  toAiKeySource,
   wantsManagedAi,
+  hasOwnKeyStored,
   AI_PROCESSING_CONSENT_VERSION,
 } from "../services/ai/managed-ai.shared";
-import { managedAiAvailable, managedTasterActions } from "../services/ai/ai-credentials.server";
+import {
+  keyFieldsWithheld,
+  managedAiAvailable,
+  managedTasterActions,
+} from "../services/ai/ai-credentials.server";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import {
   DEFAULT_GENERAL_INSTRUCTIONS,
@@ -455,11 +459,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // one screen it still needs.
     const managedAiOffered = managedAiAvailable();
     const onManagedAi = wantsManagedAi(settings) && managedAiOffered;
+    // The key fields are withheld only under an AI-included PLAN. A shop on
+    // the taster has no key BY DEFINITION and must be able to add one — the
+    // key it adds is what takes it off the taster.
+    const keysWithheld = keyFieldsWithheld(session.shop, settings);
     const storedKeyCount = keyFields.filter(
       ({ field }) => !!(settings[field] as string | null | undefined),
     ).length;
 
-    if (!onManagedAi) {
+    if (!keysWithheld) {
       for (const { field, provider } of keyFields) {
         const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
         decryptedKeys[field] = value || "";
@@ -678,15 +686,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // ── Managed AI (PLAN_MANAGED_AI_KEY §8) ───────────────────────────
         // One choice, shown in two places, rendered from ONE state: the
         // merchant's stored choice and the Shopify-verified entitlement.
-        aiKeySource: toAiKeySource(settings.aiKeySource),
+        /** On managed AI right now — by PLAN, or on the taster. */
+        managedAiOn: onManagedAi,
         managedAiActive: settings.managedAiActive === true,
         /** The one-time grant is gone — the offer stops being an invitation. */
         managedAiTasterSpent: settings.managedAiTasterSpentAt != null,
         managedAiConsented: hasCurrentAiProcessingConsent(settings),
         /** How many keys are stored — the line that replaces the hidden tab. */
         storedApiKeyCount: storedKeyCount,
+        /** A key for the PREFERRED provider — what decides own key vs taster. */
+        managedAiOwnKeyStored: hasOwnKeyStored(settings as unknown as Record<string, unknown>),
         /** True when the key fields were NOT decrypted for this response. */
-        apiKeysWithheld: onManagedAi,
+        apiKeysWithheld: keysWithheld,
         selectedModel: settings.selectedModel || '',
         appLanguage: settings.appLanguage || "en",
 
@@ -1679,45 +1690,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType, enabledCount: toInsert.length, failed });
-    } else if (actionType === "saveAiSource") {
-      // WHOSE key this shop spends — PLAN_MANAGED_AI_KEY §5 step 2, §8.
-      //
-      // The merchant's own choice, and the ONE thing about managed mode they
-      // may set. It writes nothing to the key columns (§8a rule 4): switching
-      // to managed keeps every stored key, the preferred provider and the
-      // model, because "back to my own key" means back to their own SETUP and
-      // not to a default that silently rewrites it.
-      //
-      // "managed" is accepted whenever this DEPLOYMENT can serve it (§9.4),
-      // and that is Phase 4's change: the verified subscription used to be
-      // required here, which made §10's taster — the whole point of which is
-      // to be reachable before anything is bought — unreachable by every Free
-      // shop. What a merchant cannot post is the SIZE of what they get:
-      // `managedAiActive` is mirrored by checkAndSyncSubscription and nothing
-      // else, and `periodBudgetMicros` grants a plan's monthly volume only to
-      // a shop that carries it. Posting this field buys the taster, once,
-      // ever — which is exactly what the UI offers anyway.
-      const requested = toAiKeySource(getFormString(formData, "aiKeySource"));
-
-      if (requested === "managed" && !managedAiAvailable()) {
-        return json(
-          {
-            success: false,
-            actionType,
-            code: "managedAiNotAvailable",
-            error: "Included AI is not available for this shop.",
-          },
-          { status: 403 }
-        );
-      }
-
-      await db.aISettings.update({
-        where: { shop: session.shop },
-        data: { aiKeySource: requested },
-      });
-
-      logger.info("[Settings] AI key source changed", { shop: session.shop, source: requested });
-      return json({ success: true, actionType, aiKeySource: requested });
     } else if (actionType === "saveAiProcessingConsent") {
       // §2 rule 1 — explicit, LOGGED, versioned consent to processing content
       // through the OPERATOR's AI account. It is what makes managed mode
@@ -1869,13 +1841,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // (§8a rule 4: the stored keys survive managed mode). Two signals, both
       // refusing: the form says it was rendered without them (a tab seeded
       // before a switch back to BYO), or the shop is on managed AI right now.
-      const storedForKeys = await db.aISettings.findUnique({
-        where: { shop: session.shop },
-        select: { aiKeySource: true },
-      });
+      const storedForKeys = await db.aISettings.findUnique({ where: { shop: session.shop } });
       const keysWithheld =
-        formData.get("keysWithheld") === "true" ||
-        (storedForKeys != null && wantsManagedAi(storedForKeys) && managedAiAvailable());
+        formData.get("keysWithheld") === "true" || keyFieldsWithheld(session.shop, storedForKeys);
       const keyWrites = keysWithheld
         ? {}
         : {
@@ -2376,7 +2344,7 @@ export default function SettingsPage() {
                   t={t}
                   onHasChangesChange={setHasAIChanges}
                   managedAi={{
-                    aiKeySource: settings.aiKeySource as "byo" | "managed",
+                    onManaged: settings.managedAiOn === true,
                     managedAiActive: settings.managedAiActive,
                     managedAiOffered,
                     tasterActions: managedAiTasterActions,
@@ -2385,6 +2353,7 @@ export default function SettingsPage() {
                     consentedAt: managedAiConsentedAt,
                     consentVersion: managedAiConsentVersion,
                     storedApiKeyCount: settings.storedApiKeyCount,
+                    ownKeyStored: settings.managedAiOwnKeyStored === true,
                     budget: managedAiBudget,
                   }}
                 />

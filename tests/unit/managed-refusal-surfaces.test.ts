@@ -57,11 +57,14 @@ import { recordManagedStandDown } from '~/services/translations/stale-translatio
 const SHOP = 'demo.myshopify.com';
 
 /** A Free shop on the TASTER: asked for managed, consented, never bought. */
+// A taster shop has no AI plan and NO key of its own (with one it would run
+// on that key — the plan decides, not a stored choice) and has confirmed the
+// processing notice, which is the opt-in to the taster.
 const tasterShop = (over: Record<string, unknown> = {}) =>
   ({
     shop: SHOP,
     preferredProvider: 'openai',
-    openaiApiKey: 'sk-merchant',
+    openaiApiKey: null,
     selectedModel: 'gpt-4o-mini',
     subscriptionPlan: 'free',
     aiKeySource: 'managed',
@@ -131,12 +134,15 @@ describe('markTasterSpentIfExhausted', () => {
 });
 
 describe('aiRefusalResponse — a spent taster', () => {
-  it('stamps and hands a shop WITH its own key back to it', async () => {
+  it('stamps and hands a shop that has SINCE added its own key back to it', async () => {
     budget.managedBudgetStatus.mockResolvedValue(spentTaster);
-    // The re-read after the stamp sees the stamp.
-    db.aISettings.findUnique.mockResolvedValue(tasterShop({ managedAiTasterSpentAt: new Date() }));
+    // The settings in hand predate the key; the re-read after the stamp sees
+    // the stamp AND the key the merchant added meanwhile.
+    db.aISettings.findUnique.mockResolvedValue(
+      tasterShop({ openaiApiKey: 'sk-merchant', managedAiTasterSpentAt: new Date() }),
+    );
 
-    const settings = tasterShop() as { managedAiTasterSpentAt: Date | null };
+    const settings = tasterShop() as { managedAiTasterSpentAt: Date | null; openaiApiKey: string | null };
     const response = await aiRefusalResponse(settings as never, SHOP);
 
     expect(response).toBeNull();
@@ -145,9 +151,17 @@ describe('aiRefusalResponse — a spent taster', () => {
     // now resolve to the merchant's key, or the first request is refused by
     // the managed preflight as "left managed mode".
     expect(settings.managedAiTasterSpentAt).toBeInstanceOf(Date);
+    expect(settings.openaiApiKey).toBe('sk-merchant');
     const { resolveAiCredentials } = await import('~/services/ai/ai-credentials.server');
     const decision = resolveAiCredentials({ shop: SHOP, settings: settings as never });
     expect(decision.ok && decision.source).toBe('byo');
+  });
+
+  it('never reaches the taster for a shop that already HAS its own key', async () => {
+    const response = await aiRefusalResponse(tasterShop({ openaiApiKey: 'sk-merchant' }), SHOP);
+    expect(response).toBeNull();
+    expect(budget.managedBudgetStatus).not.toHaveBeenCalled();
+    expect(db.aISettings.updateMany).not.toHaveBeenCalled();
   });
 
   it('stamps and still refuses a shop with NO key of its own', async () => {

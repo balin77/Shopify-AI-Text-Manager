@@ -68,7 +68,9 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
     // is the refusal at the point of use, which names both exits by name —
     // which is where §10 puts that sentence anyway.
     managedAiWorking:
-      wantsManagedAi(settings ?? null) && hasCurrentAiProcessingConsent(settings ?? null),
+      managedAiAvailableSafe() &&
+      wantsManagedAi(settings ?? null) &&
+      hasCurrentAiProcessingConsent(settings ?? null),
     // Managed chosen + available in this deployment, consent missing: the
     // merchant is to be sent to confirm AI processing, not to add a key.
     managedAiConsentMissing:
