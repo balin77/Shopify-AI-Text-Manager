@@ -148,7 +148,10 @@ export default function MarketingPricing() {
           </div>
 
           <div className="mk-pricing__mode">
-            <div className="mk-compare-levels" role="group" aria-label={p.modeLabel}>
+            {/* Its own container, borrowing only the BUTTON style: the comparison
+                page's `.mk-compare-levels` turns into a zero-height scroll strip
+                on a phone, which here clipped both buttons and swallowed taps. */}
+            <div className="mk-pricing__switch" role="group" aria-label={p.modeLabel}>
               <button
                 type="button"
                 className="mk-compare-levels__button"
@@ -187,10 +190,14 @@ export default function MarketingPricing() {
                     <PriceTag plan={plan} withAi={withAi} t={t} locale={locale} />
                   </p>
                   {/* Free has no AI variant; its one-time taster is a highlight
-                      line instead, so the card does not change with the switch. */}
-                  {withAi && plan !== "free" ? (
-                    <p className="mk-pricing__volume">{p.includedVolume[plan]}</p>
-                  ) : null}
+                      line instead, so the card does not change with the switch.
+                      The element is ALWAYS rendered, empty where there is
+                      nothing to say: the cards share their rows through a
+                      subgrid, and a card with one child fewer would shift every
+                      row below it against its neighbours. */}
+                  <p className="mk-pricing__volume">
+                    {withAi && plan !== "free" ? p.includedVolume[plan] : null}
+                  </p>
                   <p className="mk-pricing__limits">{fill(p.limitsLine, plan, locale)}</p>
                   <PlanCardPoints plan={plan} t={t} locale={locale} />
                   <InstallLink

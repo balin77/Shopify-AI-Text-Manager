@@ -2413,7 +2413,7 @@ a.mk-badge:hover {
   margin-bottom: 28px;
 }
 
-.mk-pricing__mode .mk-compare-levels {
+.mk-pricing__switch {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -2423,12 +2423,19 @@ a.mk-badge:hover {
   max-width: var(--mk-prose-width);
 }
 
+/* The cards share their ROWS through a subgrid, so the tagline, the price,
+   the AI volume, the limits line, the list and the button sit at the same
+   height on every card of a row — a tagline that wraps to two lines on one
+   card no longer pushes everything below it out of line with its neighbours.
+   Each card spans the seven rows its seven children fill (the badge is
+   absolutely positioned and takes no cell). Where subgrid is unsupported the
+   card falls back to the flex column below, unaligned but intact. */
 .mk-pricing__cards {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 16px;
+  gap: 24px 16px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   align-items: stretch;
 }
@@ -2442,6 +2449,16 @@ a.mk-badge:hover {
   border: 1px solid var(--mk-border);
   border-radius: var(--mk-radius);
   background: var(--mk-surface);
+}
+
+@supports (grid-template-rows: subgrid) {
+  .mk-pricing__card {
+    display: grid;
+    grid-row: span 7;
+    grid-template-rows: subgrid;
+    row-gap: 10px;
+    align-content: start;
+  }
 }
 
 .mk-pricing__card--highlight {
