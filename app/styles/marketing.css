@@ -1968,9 +1968,25 @@ a.mk-badge:hover {
 }
 
 /* The topic's heading sits under the switch, so it is a size smaller than a
-   landing page's. */
+   landing page's, and runs wider than prose so the four topics' titles
+   and leads fit two lines each on a desktop. */
+.mk-compare-head {
+  --mk-compare-head-size: clamp(1.75rem, 3.6vw, 2.375rem);
+  max-width: 60rem;
+}
+
 .mk-compare-head h1 {
-  font-size: clamp(1.75rem, 3.6vw, 2.375rem);
+  font-size: var(--mk-compare-head-size);
+}
+
+/* Room for a two-line title and a two-line lead is reserved under them, so
+   a topic whose title fits one line leaves the table where it was. The
+   numbers are the title's and the lead's own line heights (1.15 and 1.6)
+   plus the head's 14px gap. */
+@media (min-width: 769px) {
+  .mk-compare-head {
+    min-height: calc(2 * 1.15 * var(--mk-compare-head-size) + 14px + 2 * 1.6 * 1.125rem);
+  }
 }
 
 .mk-shell > .mk-compare-preview {
