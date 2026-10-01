@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   runPerLocaleSaves,
+  runPerLocaleSavesDetailed,
+  PLAN_REFUSED,
   copyOutcomeMessage,
   saveAnswerFailed,
 } from "../../app/services/editor/per-locale-saves.shared";
@@ -126,5 +128,41 @@ describe("rollbackSubResourceCopy", () => {
     const overlay: Record<string, Record<string, Record<string, string>>> = { fr: { r1: { name: "Rot" } } };
     rollbackSubResourceCopy(overlay, ["fr"], [{ resourceId: "r1", value: "Rot" }]);
     expect(overlay).toEqual({});
+  });
+});
+
+describe("a warning counts as not landed (copy to all)", () => {
+  it("saveAnswerFailed treats a non-empty warning as failed", () => {
+    expect(saveAnswerFailed({ success: true, warning: "saved locally only" })).toBe(true);
+    expect(saveAnswerFailed({ success: true, warning: "  " })).toBe(false);
+    expect(saveAnswerFailed({ success: true, warning: undefined })).toBe(false);
+  });
+});
+
+describe("a plan refusal surfaces as the upgrade message", () => {
+  const gate = () => jsonResponse({ success: false, error: "gated" }, 403);
+
+  it("postContentEditorSave and postJsonSave report PLAN_REFUSED for a 403 gated", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => gate()));
+    expect(await postContentEditorSave(new FormData(), { pathname: "/app/pages", search: "" })).toBe(PLAN_REFUSED);
+    expect(await postJsonSave("/x", new FormData(), (async () => gate()) as unknown as typeof fetch)).toBe(PLAN_REFUSED);
+    // Any other 403 / 500 stays a plain failure.
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "nope" }, 403)));
+    expect(await postContentEditorSave(new FormData(), { pathname: "/app/pages", search: "" })).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("runPerLocaleSavesDetailed flags gated locales as failed", async () => {
+    const out = await runPerLocaleSavesDetailed(["fr", "es"], async (l) => (l === "fr" ? PLAN_REFUSED : true));
+    expect(out).toEqual({ failed: ["fr"], gated: true });
+    expect((await runPerLocaleSavesDetailed(["fr"], async () => false)).gated).toBe(false);
+  });
+
+  it("copyOutcomeMessage says upgrade required instead of naming locales", () => {
+    expect(copyOutcomeMessage(["fr"], { upgradeRequired: "Upgrade erforderlich" }, true)).toEqual({
+      text: "Upgrade erforderlich",
+      tone: "critical",
+    });
+    expect(copyOutcomeMessage(["fr"], { copyFailedLocales: "Failed: {locales}" }, false).text).toBe("Failed: FR");
   });
 });

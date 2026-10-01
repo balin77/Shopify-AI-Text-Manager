@@ -1,6 +1,7 @@
 /**
- * server.js is CommonJS and cannot import the TS list of content editor pages,
- * so its content rate limiter uses a CJS copy. This keeps the two from
+ * server.js is an ES module (it reaches CommonJS through createRequire) and
+ * cannot import the TS list of content editor pages, so its content rate
+ * limiter uses a CJS copy. This keeps the two from
  * drifting and pins the matching behaviour.
  */
 

@@ -29,7 +29,7 @@ import type {
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
-import { runPerLocaleSaves, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 
 // ---------------------------------------------------------------------------
 // Prop / return types
@@ -60,6 +60,8 @@ interface UseEditorAltTextProps {
   backgroundRefreshVersion?: number;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
+  /** Item the in-flight save belongs to; the save-response handler bails without it. */
+  savedItemIdRef: React.MutableRefObject<string | null>;
   savedLocaleRef: React.MutableRefObject<string | null>;
   savedMarketIdRef: React.MutableRefObject<string>;
   isSavePendingRef: React.MutableRefObject<boolean>;
@@ -109,6 +111,8 @@ interface UseEditorAltTextReturn {
   handleTranslateAllAltTexts: () => void;
   /** Ref to pending copy index so save-response handler can clear loading state */
   pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
+  /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
+  rollbackCopyAltText: () => void;
   handleTranslateAllAltTextsForLocale: () => void;
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
@@ -136,6 +140,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     backgroundRefreshVersion = 0,
     buildFieldsForSave,
     safeSubmit,
+    savedItemIdRef,
     savedLocaleRef,
     savedMarketIdRef,
     isSavePendingRef,
@@ -166,6 +171,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
   // Track image index of an in-flight copy save so save-response handler can clear loading
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
+  // What the in-flight copy wrote into the overlay, so a failure can undo exactly that.
+  const copyOverlayRollbackRef = useRef<{ key: string; index: number; value: string } | null>(null);
   // Per-locale overlay for copy operations — eliminates stale window on locale switch
   // structure: { locale: { imageIndex: altText } }
   const localAltTextOverlayRef = useRef<Record<string, Record<number, string>>>({});
@@ -300,6 +307,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       localAltTextOverlayRef.current[copyOverlayKey] = {};
     }
     localAltTextOverlayRef.current[copyOverlayKey][imageIndex] = sourceAltText;
+    copyOverlayRollbackRef.current = { key: copyOverlayKey, index: imageIndex, value: sourceAltText };
 
     markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
     pendingCopyAltTextIndexRef.current = imageIndex;
@@ -314,6 +322,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
+    savedItemIdRef.current = selectedItemId;
     savedLocaleRef.current = currentLanguage;
     savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
@@ -323,6 +332,17 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Feedback is deferred to the save-response handler (see
     // pendingCopyAltTextIndexRef in useUnifiedContentEditor.ts), so the box
     // reflects the actual Shopify result and not an optimistic guess.
+  };
+
+  const rollbackCopyAltText = () => {
+    const pending = copyOverlayRollbackRef.current;
+    copyOverlayRollbackRef.current = null;
+    if (!pending) return;
+    const entry = localAltTextOverlayRef.current[pending.key];
+    // Only undo our own write: a later edit or copy under the same key stays.
+    if (entry && entry[pending.index] === pending.value) {
+      delete entry[pending.index];
+    }
   };
 
   const handleCopyAltTextToAllLocales = (imageIndex: number) => {
@@ -356,7 +376,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
     // The answer is READ (content-action-endpoint.shared.ts), so a locale that
     // did not save is named instead of reported as copied.
-    runPerLocaleSaves(targetLocales, (locale) => {
+    runPerLocaleSavesDetailed(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "updateContent");
       fd.set("itemId", capturedItemId);
@@ -364,7 +384,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       fd.set("primaryLocale", primaryLocale);
       fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
       return postContentEditorSave(fd);
-    }).then((failed) => {
+    }).then(({ failed, gated }) => {
       // Take back what the copy wrote up front for those locales: the
       // overlay outranks the loaded alt texts, so left in place the editor
       // went on showing a value that was never saved. Only the copy's own
@@ -375,7 +395,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           delete forLocale[imageIndex];
         }
       }
-      const outcome = copyOutcomeMessage(failed, t.common ?? {});
+      const outcome = copyOutcomeMessage(failed, { ...(t.common ?? {}), upgradeRequired: String(t.content?.upgradeRequired ?? "") || undefined }, gated);
       showInfoBox(outcome.text, outcome.tone);
     }).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);
@@ -437,6 +457,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
               Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
               formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
+              savedItemIdRef.current = itemId;
               savedLocaleRef.current = currentLanguage;
               savedMarketIdRef.current = selectedMarketId;
               isSavePendingRef.current = true;
@@ -752,6 +773,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Add the new image alt-texts
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
+    savedItemIdRef.current = selectedItemId;
     savedLocaleRef.current = currentLanguage;
     savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
@@ -803,6 +825,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           primaryLocale,
         };
         foreignForm.imageAltTexts = JSON.stringify(newAltTexts);
+        savedItemIdRef.current = requestItemId;
         savedLocaleRef.current = L;
         savedMarketIdRef.current = "";
         isSavePendingRef.current = true;
@@ -855,6 +878,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             // the FOREIGN alt-text (held in imageAltTextsRef) into the primary
             // in-memory image (a leak). The server still persists this as the
             // primary base alt-text via the form `locale` field.
+            // Same item as save A, which already claimed it.
+            savedItemIdRef.current = requestItemId;
             isSavePendingRef.current = true;
             isSaveFromTranslateRef.current = true;
             safeSubmit(primaryForm, { method: "POST" });
@@ -919,6 +944,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       };
       Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
       formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+      savedItemIdRef.current = selectedItemId;
       savedLocaleRef.current = primaryLocale;
       savedMarketIdRef.current = "";
       isSavePendingRef.current = true;
@@ -940,6 +966,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     };
     Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+    savedItemIdRef.current = selectedItemId;
     savedLocaleRef.current = primaryLocale;
     savedMarketIdRef.current = "";
     isSavePendingRef.current = true;
@@ -1088,6 +1115,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleCopyAltText,
     handleCopyAltTextToAllLocales,
     pendingCopyAltTextIndexRef,
+    rollbackCopyAltText,
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts,

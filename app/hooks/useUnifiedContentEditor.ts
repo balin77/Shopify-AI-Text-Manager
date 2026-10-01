@@ -648,7 +648,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
-    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef,
+    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, rollbackCopyAltText,
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
@@ -669,6 +669,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     backgroundRefreshVersion,
     buildFieldsForSave: (v, l) => buildFieldsForSaveRef.current(v, l),
     safeSubmit: (data, opts) => safeSubmitRef.current(data, opts),
+    savedItemIdRef,
     savedLocaleRef,
     savedMarketIdRef,
     isSavePendingRef,
@@ -2394,6 +2395,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (pendingCopyAltTextIndexRef.current !== null && selectedItemIdRef.current) {
         markOperationFailed(selectedItemIdRef.current, `altText_${pendingCopyAltTextIndexRef.current}`);
         pendingCopyAltTextIndexRef.current = null;
+        rollbackCopyAltText();
       }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
@@ -2427,6 +2429,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (pendingCopyAltTextIndexRef.current !== null && selectedItemIdRef.current) {
         markOperationFailed(selectedItemIdRef.current, `altText_${pendingCopyAltTextIndexRef.current}`);
         pendingCopyAltTextIndexRef.current = null;
+        rollbackCopyAltText();
       }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;

@@ -37,7 +37,7 @@ import type { TransitionResult } from "./useUiDataLoader";
 import { aiImageCandidates } from "../services/ai/vision-policy.shared";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
-import { runPerLocaleSaves, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 
 // ============================================================================
 // TYPES
@@ -1990,7 +1990,7 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   // content-action-endpoint.shared.ts): "copied" is said once every locale
   // confirmed, and a locale that did not is named instead of hidden.
   const runSaves = async () => {
-    const failed = await runPerLocaleSaves(
+    const { failed, gated } = await runPerLocaleSavesDetailed(
       targetLocales,
       (locale) => {
         const fd = new FormData();
@@ -2012,7 +2012,7 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
       dataLoader.onCopyToLocalesFailed(field.translationKey, failed, primaryValue);
       onCopyToAllLocalesFailed?.(fieldKey, failed);
     }
-    const outcome = copyOutcomeMessage(failed, t.common ?? {});
+    const outcome = copyOutcomeMessage(failed, { ...(t.common ?? {}), upgradeRequired: String(t.content?.upgradeRequired ?? "") || undefined }, gated);
     showInfoBox(outcome.text, outcome.tone);
   };
   void runSaves();

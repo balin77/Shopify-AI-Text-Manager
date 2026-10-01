@@ -54,6 +54,22 @@ describe("api.content-editor-action", () => {
     expect(response.init?.status).toBe(400);
   });
 
+  it.each(["translateSubResources", "translateSubResourceToAllLocales", "saveSubResourceTranslations"])(
+    "lets the product page's sub-resource action %s through to the products action",
+    async (name) => {
+      await post({ action: name, _page: "/app/products" });
+      expect(productsAction).toHaveBeenCalledTimes(1);
+      const fd = await productsAction.mock.calls[0][0].request.formData();
+      expect(fd.get("action")).toBe(name);
+    },
+  );
+
+  it("does not offer the sub-resource actions on any other page", async () => {
+    const response = (await post({ action: "translateSubResources", _page: "/app/pages" })) as { init?: { status?: number } };
+    expect(response.init?.status).toBe(400);
+    expect(productsAction).not.toHaveBeenCalled();
+  });
+
   it("refuses a page it does not list, and a foreign origin", async () => {
     for (const page of ["/app/settings", "https://evil.test/app/products", ""]) {
       const response = (await post({ action: "updateContent", _page: page })) as { init?: { status?: number } };
