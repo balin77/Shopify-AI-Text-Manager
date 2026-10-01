@@ -192,6 +192,20 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
 }
 
 /**
+ * In the PRIMARY locale nothing of this feature renders, but drafts made in a
+ * foreign language are still waiting behind the save bar: one subdued line says
+ * so, or the bar would be dirty with no visible reason.
+ */
+function LocalizedMediaDraftsNote() {
+  const ctx = useLocalizedMediaContext();
+  const { t, locale: appLocale } = useI18n();
+  const state = ctx?.state;
+  if (!state || state.active || !state.hasDrafts) return null;
+  const languages = state.draftLocales.map((l) => getLocalizedLanguageName(l, appLocale)).join(", ");
+  return <Text as="p" variant="bodySm" tone="subdued">{t.localizedImages.draftsElsewhere.replace("{languages}", languages)}</Text>;
+}
+
+/**
  * Replacements nothing in the gallery can reach any more (original removed,
  * market inactive, language removed): a compact warning with a remove button
  * per row, foreign locale only, and ONLY while there are any. Removing is a
@@ -203,6 +217,7 @@ export function LocalizedMediaOrphanNotice() {
   const { t, locale: appLocale } = useI18n();
   const tx = t.localizedImages;
   const state = ctx?.state;
+  if (ctx && state && !state.active) return <LocalizedMediaDraftsNote />;
   if (!ctx || !state || !state.active || state.orphans.length === 0) return null;
   return (
     <Banner tone="warning" title={tx.orphanTitle}>
@@ -249,6 +264,7 @@ export function LocalizedMediaPlainExtras() {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
   const state = ctx?.state;
+  if (ctx && state && !state.active) return <LocalizedMediaDraftsNote />;
   if (!ctx || !state || !state.active) return null;
   const videos = state.media.filter((m) => m.kind !== "image");
   const selectedId = selected && videos.some((m) => m.id === selected) ? selected : null;
@@ -263,30 +279,33 @@ export function LocalizedMediaPlainExtras() {
               const tile = state.tileOf(m.id);
               const src = tile?.src ?? m.url;
               return (
-                <button
-                  key={m.id}
-                  type="button"
-                  aria-pressed={on}
-                  title={m.alt ?? m.kind}
-                  onClick={() => setSelected(on ? null : m.id)}
-                  style={{
-                    position: "relative",
-                    width: 72,
-                    height: 72,
-                    padding: 0,
-                    cursor: "pointer",
-                    overflow: "hidden",
-                    background: "var(--p-color-bg-surface-secondary)",
-                    border: on ? "3px solid #005bd3" : "2px solid var(--app-surface-border-color)",
-                    borderRadius: 8,
-                  }}
-                >
-                  {src && <img src={`${src}${src.includes("?") ? "&" : "?"}width=160`} alt={m.alt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
-                  <span aria-hidden style={{ position: "absolute", right: 4, bottom: 2, fontSize: 12, color: "#fff", textShadow: "0 0 3px #000" }}>▶</span>
+                // The symbol is a SIBLING of the tile button (a button inside a
+                // button is invalid markup), positioned over it.
+                <div key={m.id} style={{ position: "relative", width: 72, height: 72 }}>
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    title={tile?.title ?? m.alt ?? m.kind}
+                    onClick={() => setSelected(on ? null : m.id)}
+                    style={{
+                      position: "relative",
+                      width: 72,
+                      height: 72,
+                      padding: 0,
+                      cursor: "pointer",
+                      overflow: "hidden",
+                      background: "var(--p-color-bg-surface-secondary)",
+                      border: on ? "3px solid #005bd3" : "2px solid var(--app-surface-border-color)",
+                      borderRadius: 8,
+                    }}
+                  >
+                    {src && <img src={`${src}${src.includes("?") ? "&" : "?"}width=160`} alt={m.alt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                    <span aria-hidden style={{ position: "absolute", right: 4, bottom: 2, fontSize: 12, color: "#fff", textShadow: "0 0 3px #000" }}>▶</span>
+                  </button>
                   {tile && (
                     <ReplacedMediaBadge label={tile.label} draft={tile.draft} showingOriginal={tile.showingOriginal} onToggle={tile.onToggle} />
                   )}
-                </button>
+                </div>
               );
             })}
           </InlineStack>

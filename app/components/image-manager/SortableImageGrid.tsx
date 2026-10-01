@@ -267,6 +267,9 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           // host name. The play overlay sits on top either way.
           meta?.externalHost === "YouTube" || meta?.externalHost === "youtube" ? (
             <img
+              // Keyed by src: the onError below hides the element, and a src
+              // that changes (the symbol's toggle) must show again.
+              key={replacement?.src ?? "original"}
               src={replacement?.src ?? (() => {
                 const m = url.match(/[?&]v=([A-Za-z0-9_-]{11})/) || url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) || url.match(/youtube\.com\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})/);
                 return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : "";

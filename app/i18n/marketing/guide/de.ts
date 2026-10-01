@@ -504,7 +504,7 @@ export const guideDe: GuideCopy = {
             "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
             "Ihre Wahl gilt pro Sprache und Markt: Sie können in einer Sprache etwas wählen, zu einer anderen wechseln und am Ende alles mit einem Klick auf „Speichern“ übernehmen.",
             "Löschen Sie ein Bild in der App, werden auch alle seine Ersatzbilder (in jeder Sprache und jedem Markt) mit gelöscht.",
-            "Gibt es Ersatzbilder, die zu nichts mehr gehören (zum Beispiel zu einem Markt oder einer Sprache, die es im Shop nicht mehr gibt), erscheint unter der Galerie eine Warnung, in der Sie sie entfernen können.",
+            "Gibt es Ersatzbilder, die zu nichts mehr gehören (zum Beispiel zu einem Markt oder einer Sprache, die es im Shop nicht mehr gibt), erscheint unter der Galerie eine Warnung, in der Sie sie entfernen können. Wandeln Sie ein Bild in WebP um, entsteht eine neue Datei; die Ersatzbilder des alten Bildes erscheinen dann in dieser Warnung und müssen neu gesetzt werden. Ungespeicherte Ersatzbilder aus einer Fremdsprache bleiben beim Wechsel in die Hauptsprache erhalten; eine Zeile unter der Galerie nennt die Sprachen, in denen noch etwas auf „Speichern“ wartet.",
           ],
         },
         {

@@ -2224,7 +2224,7 @@ export function VariantImageManager({
         deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false;
         // The route also removes the originals' per-language replacements; the
         // delete stands even if that part failed, and the merchant is told.
-        if (deleteOk && deleteBody?.localizedMedia?.failed) localizedMediaRef.current?.reportCleanupFailed();
+        if (deleteOk && deleteBody?.localizedMedia?.failed) localizedMediaRef.current?.reportCleanupFailed(deleteBody.localizedMedia.failed);
       }
       // Shopify does not automatically clear a variant's image when the referenced media is
       // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,

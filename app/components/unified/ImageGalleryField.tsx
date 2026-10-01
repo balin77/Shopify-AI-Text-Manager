@@ -334,15 +334,16 @@ export function ImageGalleryField({
                 const tile = tileOf(image);
 
                 return (
+                  // The replacement symbol is a SIBLING of the tile button (a
+                  // button inside a button is invalid markup), positioned over it.
+                  <div key={index} style={{ position: "relative", width: "100%", minWidth: "61px", maxWidth: "134px", aspectRatio: "1" }}>
                   <button
-                    key={index}
                     onClick={() => setSelectedImageIndex(index)}
                     title={tile?.title ?? extractFilename(image.url)}
                     style={{
                       position: "relative",
                       width: "100%",
-                      minWidth: "61px",
-                      maxWidth: "134px",
+                      height: "100%",
                       minHeight: "61px",
                       maxHeight: "134px",
                       padding: 0,
@@ -364,9 +365,6 @@ export function ImageGalleryField({
                         objectFit: "cover",
                       }}
                     />
-                    {tile && (
-                      <ReplacedMediaBadge label={tile.label} draft={tile.draft} showingOriginal={tile.showingOriginal} onToggle={tile.onToggle} />
-                    )}
                     {/* Alt-text status badge */}
                     <div
                       title={(altTexts[index] !== undefined ? altTexts[index] : (isPrimaryLocale ? image.altText : undefined)) || undefined}
@@ -386,6 +384,10 @@ export function ImageGalleryField({
                       {hasAltText ? (t.altBadge || "ALT") : (t.noAltBadge || "NO ALT")}
                     </div>
                   </button>
+                  {tile && (
+                    <ReplacedMediaBadge label={tile.label} draft={tile.draft} showingOriginal={tile.showingOriginal} onToggle={tile.onToggle} />
+                  )}
+                  </div>
                 );
               })}
             </div>

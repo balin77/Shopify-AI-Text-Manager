@@ -124,10 +124,15 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   const [saving, setSaving] = useState(false);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
-  // Media whose tile the merchant flipped to its ORIGINAL (the corner symbol).
-  // View state only: it selects nothing and writes nothing.
+  // Slots (medium|language|market) whose tile the merchant flipped to its
+  // ORIGINAL (the corner symbol). View state only: it selects nothing and
+  // writes nothing; it is per slot, so it never carries over to another
+  // language or market, and Discard clears it.
   const [showOriginal, setShowOriginal] = useState<ReadonlySet<string>>(() => new Set());
   const savingRef = useRef(false);
+  // Which save run owns `savingRef`: a run that went stale after a product
+  // switch must not clear the flag of a newer one.
+  const saveTokenRef = useRef(0);
   const mediaIdsRef = useRef<string[]>([]);
   const { showInfoBox } = useInfoBox();
   const loadStartedRef = useRef(false);
@@ -165,6 +170,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     setShowOriginal(new Set());
     setSaving(false);
     savingRef.current = false;
+    saveTokenRef.current += 1;
     setLoaded(false);
     setLoadError(false);
     setEntries([]);
@@ -242,7 +248,22 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
       return next;
     });
   }, []);
-  const discard = useCallback(() => setDrafts({}), []);
+  const discard = useCallback(() => {
+    setDrafts({});
+    setShowOriginal(new Set());
+  }, []);
+
+  // A medium that left the product (deleted in the gallery) takes its "set"
+  // drafts with it: left in state they would keep the save bar lit for a write
+  // that can never happen.
+  useEffect(() => {
+    if (!loaded) return;
+    const ids = new Set(media.map((m) => m.id));
+    setDrafts((d) => {
+      const pruned = pruneDrafts(d, ids);
+      return Object.keys(pruned).length === Object.keys(d).length ? d : pruned;
+    });
+  }, [loaded, media]);
 
   /**
    * The save bar's Save: every draft through the existing write calls, one
@@ -253,11 +274,11 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   const save = useCallback(async () => {
     if (savingRef.current) return;
     const startedFor = productId;
-    const todo = draftsToWrite(pruneDrafts(draftsRef.current, new Set(mediaIdsRef.current)));
-    if (todo.length === 0) {
-      setDrafts({});
-      return;
-    }
+    const pruned = pruneDrafts(draftsRef.current, new Set(mediaIdsRef.current));
+    const todo = draftsToWrite(pruned);
+    setDrafts(pruned);
+    if (todo.length === 0) return;
+    const token = ++saveTokenRef.current;
     savingRef.current = true;
     setSaving(true);
     const failures: Array<{ mediaId: string; text: string }> = [];
@@ -296,8 +317,10 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
         }
       }
     } finally {
-      savingRef.current = false;
-      if (!isStaleAnswer(startedFor, productIdRef.current)) setSaving(false);
+      if (saveTokenRef.current === token) {
+        savingRef.current = false;
+        if (!isStaleAnswer(startedFor, productIdRef.current)) setSaving(false);
+      }
     }
     if (isStaleAnswer(startedFor, productIdRef.current)) return;
     if (failures.length === 0) {
@@ -322,9 +345,12 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   }, [productId, tx, errorText, showInfoBox, mediaName, embedActivationUrl]);
 
   /** The deleted originals' replacements could not be removed with them: said, and the orphan list offers them. */
-  const reportCleanupFailed = useCallback(() => {
-    showInfoBox(tx.cleanupFailed, "warning");
-  }, [showInfoBox, tx]);
+  const reportCleanupFailed = useCallback((code?: string) => {
+    // The orphan list lists nothing for a foreign-valued metafield, and it only
+    // exists in a foreign language: each case gets the sentence that is true.
+    const text = code === "foreignMetafieldValue" ? tx.cleanupForeign : active ? tx.cleanupFailed : tx.cleanupFailedPrimary;
+    showInfoBox(text, "warning");
+  }, [showInfoBox, tx, active]);
 
   /** Said in the InfoBox, for a pick that failed before it could even become a draft. */
   const reportPickFailure = useCallback((code: string | undefined, fallback: string) => {
@@ -350,12 +376,13 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     [entries, drafts, locale, marketNumeric],
   );
   const toggleOriginal = useCallback((mediaId: string) => {
+    const slot = draftKey(mediaId, locale, marketNumeric);
     setShowOriginal((cur) => {
       const next = new Set(cur);
-      if (!next.delete(mediaId)) next.add(mediaId);
+      if (!next.delete(slot)) next.add(slot);
       return next;
     });
-  }, []);
+  }, [locale, marketNumeric]);
   /**
    * What a tile or preview of this medium renders when it has a replacement for
    * the current language and market: the picture to show in place of the
@@ -365,10 +392,11 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   const tileOf = useCallback((mediaId: string): LocalizedMediaTile | null => {
     const v = viewOf(mediaId);
     if (!v) return null;
-    const flipped = showOriginal.has(mediaId);
+    const flipped = showOriginal.has(draftKey(mediaId, locale, marketNumeric));
     const language = getLocalizedLanguageName(locale, appLocale);
     const m = mediaById.get(mediaId);
-    const originalName = filenameFromUrl(m?.url) || m?.alt || "";
+    // A YouTube/Vimeo original has no file: its link is its name.
+    const originalName = m?.kind === "external" ? (m.stamp || m.key || "") : (filenameFromUrl(m?.url) || m?.alt || "");
     const replacementTip = m && m.kind !== "image" ? tx.tipReplacementVideo : tx.tipReplacement;
     const base = flipped ? tx.originalMark : tx.replacedMark.replace("{language}", language);
     return {
@@ -381,8 +409,10 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
         : replacementTip.replace("{name}", v.name || originalName),
       onToggle: () => toggleOriginal(mediaId),
     };
-  }, [viewOf, showOriginal, locale, appLocale, tx, toggleOriginal, mediaById]);
+  }, [viewOf, showOriginal, locale, marketNumeric, appLocale, tx, toggleOriginal, mediaById]);
   const hasDrafts = Object.keys(drafts).length > 0;
+  /** Languages (normalized codes) that hold unsaved drafts. */
+  const draftLocales = useMemo(() => [...new Set(Object.values(drafts).map((d) => d.locale))], [drafts]);
   const orphans = useMemo(
     () => (loaded && active ? findOrphanEntries(entries, mediaIds, markets, shopLocales) : []),
     [loaded, active, entries, mediaIds, markets, shopLocales],
@@ -412,6 +442,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     orphans,
     drafts,
     hasDrafts,
+    draftLocales,
     saving,
     viewOf,
     tileOf,

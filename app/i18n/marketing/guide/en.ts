@@ -499,7 +499,7 @@ export const guideEn: GuideCopy = {
             "A replacement for a specific market takes precedence over the replacement for “All markets”.",
             "Your choices apply per language and market: you can choose something in one language, switch to another, and apply everything at the end with one click on “Save”.",
             "If you delete an image in the app, all of its replacement images (in every language and market) are deleted with it.",
-            "If there are replacement images that no longer belong to anything (for example to a market or language that no longer exists in your store), a warning appears below the gallery where you can remove them.",
+            "If there are replacement images that no longer belong to anything (for example to a market or language that no longer exists in your store), a warning appears below the gallery where you can remove them. If you convert an image to WebP, a new file is created; the old image's replacement images then appear in this warning and have to be set again. Unsaved replacement images from a foreign language stay when you switch to the main language; a line below the gallery names the languages in which something is still waiting for “Save”.",
           ],
         },
         {
