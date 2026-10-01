@@ -21,6 +21,7 @@ export const en = {
 
   nav: {
     features: "Features",
+    pricing: "Pricing",
     videos: "Videos",
     roadmap: "Roadmap",
     faq: "FAQ",
@@ -155,6 +156,135 @@ export const en = {
     ],
   },
 
+  pricing: {
+    title: "Plans and pricing",
+    intro:
+      "Four plans that differ in how much of your shop they cover — not in how many languages you may use. Every plan translates into all of your languages.",
+    trial: "Every paid plan starts with a {days}-day free trial. Billed by Shopify, cancel any time.",
+    modeLabel: "How the AI is paid for",
+    modeOwnKey: "With your own AI key",
+    modeIncluded: "AI included",
+    modeOwnKeyHint:
+      "You connect your own key from OpenAI, Anthropic, Gemini, DeepSeek, Grok or HuggingFace and pay the provider directly for what you use.",
+    modeIncludedHint:
+      "No key and no second bill: a monthly AI volume is part of the price. You can still connect your own key at any time.",
+    free: "Free",
+    perMonth: "/ month",
+    recommended: "Most popular",
+    choose: "Install and choose this plan",
+    chooseFree: "Install for free",
+    limitsLine: "{products} products · {collections} collections",
+    everythingIn: "Everything in {plan}, plus:",
+    included: "Included:",
+    tasterLine: "About {taster} AI actions once to try it, no key needed",
+    moreInTable: "+ {n} more in the table below",
+    plans: {
+      free: {
+        tagline: "To try it on a small catalogue.",
+      },
+      basic: {
+        tagline: "For small shops.",
+      },
+      pro: {
+        tagline: "For growing shops.",
+      },
+      max: {
+        tagline: "For large catalogues.",
+      },
+    },
+    includedVolume: {
+      free: "Includes about {taster} AI actions once, to try it",
+      basic: "AI included: about 300–500 products per month, each translated into one language",
+      pro: "AI included: about 600–1,000 products per month, each translated into one language",
+      max: "AI included: about 1,500–2,500 products per month, each translated into one language",
+    },
+    tableTitle: "Compare the plans",
+    tableIntro: "Everything each plan contains, row by row. Numbers are per shop.",
+    planColumn: "Feature",
+    priceRow: "Price",
+    groups: {
+      content: "Content you can edit and translate",
+      workflow: "Translation and AI",
+      images: "Images",
+      seo: "SEO and AI visibility",
+    },
+    rows: {
+      products: { label: "Products", help: "Products the app loads and works on." },
+      collections: { label: "Collections" },
+      pages: { label: "Pages" },
+      articles: { label: "Blogs and articles", help: "Number of articles." },
+      policies: { label: "Shop policies", help: "Refund, privacy, shipping and terms." },
+      menus: { label: "Navigation menus", help: "Edit and translate your menus." },
+      metaobjects: { label: "Metaobjects" },
+      themeTranslations: { label: "Theme texts", help: "Texts and settings of your theme, translated." },
+      checkoutTexts: { label: "Shipping and checkout texts" },
+      notifications: { label: "Notifications and packing slips", help: "The emails and documents Shopify sends." },
+      directTranslations: { label: "Direct translations", help: "Translate any text that appears on your storefront." },
+      languages: { label: "Languages" },
+      ownKey: { label: "Use your own AI key", help: "Six providers to choose from." },
+      aiInstructions: { label: "Your own AI instructions", help: "Tone and rules per field, used in every prompt." },
+      bulkEditor: { label: "Bulk editor and CSV export", help: "A spreadsheet over your whole shop." },
+      csvImport: { label: "CSV import" },
+      translateMissing: { label: "Add all missing translations in one run" },
+      autoTranslate: { label: "Automatic translation", help: "When a text changes — in the app or in the Shopify admin — its translations are renewed." },
+      productImages: { label: "Product images" },
+      imageSuite: { label: "Image manager", help: "Variant galleries, bulk upload, bulk alt texts, SKU names." },
+      imageOperations: { label: "Image uploads and WebP conversions" },
+      seoAudit: { label: "SEO audit, structured data, redirects, hreflang" },
+      pageSpeed: { label: "PageSpeed checks" },
+      keywords: { label: "Tracked keywords" },
+      aiDiscovery: { label: "AI discovery (agents.md, llms.txt)", help: "What AI assistants read about your shop." },
+      crawl: { label: "Storefront crawl and on-page report" },
+      searchConsole: { label: "Google Search Console" },
+      internalLinks: { label: "Internal link suggestions" },
+      sitemap: { label: "Sitemap control" },
+      indexNow: { label: "IndexNow submissions" },
+      scoreHistory: { label: "SEO score history" },
+      scheduled: { label: "Automatic nightly audit and weekly crawl" },
+      seoBulk: { label: "Items per SEO bulk fix" },
+    },
+    formats: {
+      imageOperations: "{n} / month",
+      pageSpeed: "{n} / day",
+      searchConsole: "{n} days of data",
+      indexNow: "{n} / month",
+      scoreHistory: "{n} days",
+    },
+    values: {
+      yes: "Included",
+      no: "Not included",
+      unlimited: "Unlimited",
+      featuredOnly: "Featured image",
+      allImages: "All images",
+    },
+    tableNote:
+      "The limits apply to what the app works on. Your shop itself can be larger — content beyond the limit simply stays as it is.",
+    compareLink: "How do these prices compare with other apps?",
+    faqTitle: "Questions about billing",
+    faq: [
+      {
+        q: "How is the app billed?",
+        a: "Through your normal Shopify invoice, in euros. There is no separate account and no credit card to enter on this site.",
+      },
+      {
+        q: "Is there a free trial?",
+        a: "Yes. Every paid plan starts with a {days}-day trial, and the Free plan has no time limit at all. If you cancel during the trial, you pay nothing.",
+      },
+      {
+        q: "Can I change plans later?",
+        a: "Yes, at any time, in the app's settings. Shopify adjusts the charge for you. Moving down never deletes your content in Shopify.",
+      },
+      {
+        q: "Own AI key or AI included — which should I choose?",
+        a: "With your own key you pay the AI provider directly for what you use, and you choose the model. With AI included there is nothing to set up and one bill for everything. Both use the same features.",
+      },
+      {
+        q: "Does it cost more for more languages?",
+        a: "No. Every plan includes all of your languages. The plans differ in the number of products and in the content types they cover.",
+      },
+    ],
+  },
+
   media: {
     placeholder: "Image to come",
     /** What each screenshot should SHOW — the brief for whoever captures it, and the alt text once it exists. */
@@ -278,7 +408,7 @@ export const en = {
       },
       {
         q: "Which AI provider does it use?",
-        a: "Whichever you connect: Anthropic, OpenAI, Gemini, DeepSeek, Grok or HuggingFace. You bring your own key, so the cost and the choice of model stay yours.",
+        a: "Whichever you connect: Anthropic, OpenAI, Gemini, DeepSeek, Grok or HuggingFace. With your own key, the cost and the choice of model stay yours. If you would rather not set up a key, every paid plan is also available with the AI included.",
       },
       {
         q: "Do I need more than one language to use it?",

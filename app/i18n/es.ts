@@ -1142,6 +1142,7 @@ export const es: Translation = {
       planToggleHelp:
         "Muestra los planes con IA incluida: los textos se crean y traducen con nuestra cuenta de IA, sin clave API propia. El precio incluye un volumen por periodo de facturación. Tu plan solo cambia con el botón debajo de cada plan.",
       planVolume: {
+        free: "Prueba única: unas {actions} acciones de IA, sin suscripción. Después, con tu propia clave API o un plan con IA.",
         basic: "Alcanza para unos 300–500 productos traducidos a un idioma por periodo.",
         pro: "Alcanza para unos 600–1.000 productos traducidos a un idioma por periodo.",
         max: "Alcanza para unos 1.500–2.500 productos traducidos a un idioma por periodo.",

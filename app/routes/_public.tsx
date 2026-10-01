@@ -1,7 +1,7 @@
 /**
  * Layout of the PUBLIC website — everything a visitor sees without a Shopify
  * session. Pathless (`_public`), so its children keep the bare URLs `/`,
- * `/features`, `/guide`, `/videos`, `/roadmap`, `/install` and their `/de` + `/es` prefixes.
+ * `/features`, `/pricing`, `/guide`, `/videos`, `/roadmap`, `/install` and their `/de` + `/es` prefixes.
  *
  * It deliberately loads NO Polaris and NO App Bridge: Polaris is admin chrome
  * (root.tsx no longer imports its stylesheet, app/routes/app.tsx does), and
@@ -38,14 +38,16 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { path: "/features", to: localizedPath(locale, "/features"), label: t.nav.features },
+    { path: "/pricing", to: localizedPath(locale, "/pricing"), label: t.nav.pricing },
     { path: "/guide", to: localizedPath(locale, "/guide"), label: t.nav.guide },
-    { path: "/compare", to: localizedPath(locale, "/compare"), label: t.nav.compare },
-    // Phones drop this one from the header (the footer keeps it): six items
-    // do not fit one row at 360px, and a nav that wraps to a third header row
-    // pushes every page's heading below the fold.
+    // The narrowest phones drop this one (the footer keeps it): the phone row
+    // holds four links and the language switcher, and a nav that wraps to a
+    // third header row pushes every page's heading below the fold.
+    { path: "/compare", to: localizedPath(locale, "/compare"), label: t.nav.compare, roomyOnly: true },
+    // Phones drop these two from the header altogether, for the same reason —
+    // Pricing took Roadmap's place in the phone row.
     { path: "/videos", to: localizedPath(locale, "/videos"), label: t.nav.videos, wideOnly: true },
-    // …and the narrowest phones drop this one too, for the same reason.
-    { path: "/roadmap", to: localizedPath(locale, "/roadmap"), label: t.nav.roadmap, roomyOnly: true },
+    { path: "/roadmap", to: localizedPath(locale, "/roadmap"), label: t.nav.roadmap, wideOnly: true },
   ];
 
   return (
@@ -114,6 +116,7 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
             <div className="mk-footer__col">
               <h3>{t.footer.product}</h3>
               <Link to={localizedPath(locale, "/features")}>{t.nav.features}</Link>
+              <Link to={localizedPath(locale, "/pricing")}>{t.nav.pricing}</Link>
               <Link to={localizedPath(locale, "/guide")}>{t.nav.guide}</Link>
               <Link to={localizedPath(locale, "/compare")}>{t.nav.compare}</Link>
               <Link to={localizedPath(locale, "/videos")}>{t.nav.videos}</Link>

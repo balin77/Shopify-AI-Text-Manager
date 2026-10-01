@@ -253,8 +253,8 @@ html {
   }
 }
 
-/* Five items (four links and the language switcher — Videos is hidden here)
-   share the phone's nav
+/* Five items (four links and the language switcher — Videos and Roadmap are
+   hidden here) share the phone's nav
    row; on the narrowest screens the link padding gives way before the row
    wraps. */
 @media (max-width: 420px) {
@@ -2432,4 +2432,153 @@ a.mk-badge:hover {
 
 .mk-level-stack__item:not([data-active]) {
   visibility: hidden;
+}
+
+/* ── Pricing (/pricing) ──────────────────────────────────────────── */
+
+.mk-pricing__mode {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.mk-pricing__switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mk-pricing__mode .mk-note {
+  max-width: var(--mk-prose-width);
+}
+
+/* The cards share their ROWS through a subgrid, so the tagline, the price,
+   the AI volume, the limits line, the list and the button sit at the same
+   height on every card of a row — a tagline that wraps to two lines on one
+   card no longer pushes everything below it out of line with its neighbours.
+   Each card spans the seven rows its seven children fill (the badge is
+   absolutely positioned and takes no cell). Where subgrid is unsupported the
+   card falls back to the flex column below, unaligned but intact. */
+.mk-pricing__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 24px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  align-items: stretch;
+}
+
+.mk-pricing__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 22px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface);
+}
+
+@supports (grid-template-rows: subgrid) {
+  .mk-pricing__card {
+    display: grid;
+    grid-row: span 7;
+    grid-template-rows: subgrid;
+    row-gap: 10px;
+    align-content: start;
+  }
+}
+
+.mk-pricing__card--highlight {
+  border-color: var(--mk-brand);
+  box-shadow: var(--mk-shadow);
+}
+
+.mk-pricing__badge {
+  position: absolute;
+  top: -12px;
+  left: 22px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  background: var(--mk-brand);
+  color: var(--mk-text-invert);
+}
+
+.mk-pricing__name {
+  font-size: 1.375rem;
+}
+
+.mk-pricing__tagline {
+  color: var(--mk-text-muted);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.mk-pricing__price {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.mk-pricing__unit {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__volume {
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__limits {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+/* The list takes the slack, so every card's button sits on one line. */
+.mk-pricing__points {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.9375rem;
+}
+
+.mk-pricing__points-head {
+  font-size: 0.875rem;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__more {
+  font-size: 0.875rem;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__cta {
+  margin-top: 8px;
+  text-align: center;
+}
+
+.mk-pricing__compare {
+  display: inline-block;
+  margin-top: 28px;
+}
+
+/* Five columns fit a tablet; only a phone scrolls the table. */
+.mk-pricing-table {
+  min-width: 600px;
+}
+
+/* `position: relative` keeps each cell's visually-hidden answer word inside
+   the table: absolutely positioned, it otherwise escapes the scroll box and
+   widens the whole page on a phone. */
+.mk-pricing-table td {
+  position: relative;
+  white-space: nowrap;
 }
