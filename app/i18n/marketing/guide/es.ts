@@ -499,7 +499,7 @@ export const guideEs: GuideCopy = {
             "Un reemplazo para un mercado concreto tiene prioridad sobre el reemplazo para «Todos los mercados».",
             "Tus elecciones valen por idioma y mercado: puedes elegir algo en un idioma, cambiar a otro y aplicarlo todo al final con un clic en «Guardar».",
             "Si eliminas una imagen en la app, también se eliminan todas sus imágenes de reemplazo (en cada idioma y mercado).",
-            "Si hay imágenes de reemplazo que ya no pertenecen a nada (por ejemplo a un mercado o idioma que ya no existe en tu tienda), aparece una advertencia bajo la galería donde puedes quitarlas. Si conviertes una imagen a WebP, se crea un archivo nuevo; las imágenes de reemplazo de la imagen antigua aparecen entonces en esta advertencia y hay que volver a definirlas. Las imágenes de reemplazo sin guardar de un idioma extranjero se conservan al pasar al idioma principal; una línea bajo la galería indica los idiomas en los que algo espera todavía a «Guardar».",
+            "Si hay imágenes de reemplazo que ya no pertenecen a nada (por ejemplo a un mercado o idioma que ya no existe en tu tienda), aparece una advertencia bajo la galería donde puedes quitarlas. Si conviertes una imagen a WebP, las imágenes de reemplazo de la imagen antigua se trasladan automáticamente al archivo nuevo; solo si eso falla aparecen en esta advertencia y hay que volver a definirlas. Las imágenes de reemplazo sin guardar de un idioma extranjero se conservan al pasar al idioma principal; una línea bajo la galería indica los idiomas en los que algo espera todavía a «Guardar».",
           ],
         },
         {
