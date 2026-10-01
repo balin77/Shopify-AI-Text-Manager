@@ -9,6 +9,7 @@ import {
   enqueueAltSave,
   altSaveScope,
 } from "../../app/services/alt-text-feedback.shared";
+import { preserveUnsavedEdits } from "../../app/hooks/useUiDataLoader";
 
 describe("classifyAltSaveResponse", () => {
   it("only an explicit success is a save", () => {
@@ -93,9 +94,27 @@ describe("enqueueAltSave", () => {
 
 describe("altSaveScope", () => {
   it("flags a late answer for another product or language", () => {
-    expect(altSaveScope({ productId: "p1", locale: "de" }, { productId: "p1", locale: "de" })).toEqual({ sameProduct: true, sameLocale: true });
+    expect(altSaveScope({ productId: "p1", locale: "de" }, { productId: "p1", locale: "de" })).toEqual({ sameProduct: true, sameLocale: true, sameMarket: true });
     expect(altSaveScope({ productId: "p1", locale: "de" }, { productId: "p2", locale: "de" }).sameProduct).toBe(false);
     expect(altSaveScope({ productId: "p1", locale: "de" }, { productId: "p1", locale: "fr" }).sameLocale).toBe(false);
-    expect(altSaveScope({}, { productId: "p1", locale: "fr" })).toEqual({ sameProduct: true, sameLocale: true });
+    expect(altSaveScope({}, { productId: "p1", locale: "fr" })).toEqual({ sameProduct: true, sameLocale: true, sameMarket: true });
+  });
+  it("a failed save of market A is not market B's", () => {
+    expect(altSaveScope({ locale: "de", marketId: "A" }, { locale: "de", marketId: "B" }).sameMarket).toBe(false);
+    expect(altSaveScope({ locale: "de", marketId: "A" }, { locale: "de", marketId: "" }).sameMarket).toBe(false);
+    expect(altSaveScope({ locale: "de" }, { locale: "de", marketId: "" }).sameMarket).toBe(true);
+    expect(altSaveScope({ locale: "de", marketId: "A" }, { locale: "de", marketId: "A" }).sameMarket).toBe(true);
+  });
+});
+
+describe("unconfirmed foreign field survives the reload after the save", () => {
+  it("keeps the typed text against the restored (previous) baseline", () => {
+    const { values, preservedKeys } = preserveUnsavedEdits(
+      { a: "A", b: "alt" },
+      { a: "A", b: "neu" },
+      { a: "A", b: "alt" },
+    );
+    expect(values.b).toBe("neu");
+    expect(preservedKeys).toEqual(["b"]);
   });
 });

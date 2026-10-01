@@ -343,6 +343,9 @@ export function VariantImageManager({
   primaryLocaleRef.current = primaryLocale;
   const currentLanguageRef = useRef(currentLanguage);
   currentLanguageRef.current = currentLanguage;
+  // The market layer the open view writes to ("" = global / primary language).
+  const viewMarketRef = useRef("");
+  const timedOutAltSaveRef = useRef<QueuedAltSave | null>(null);
   // Alt saves are SERIALISED over the one fetcher: a second save fired before
   // the first answer landed used to drop that answer, and with it the task ids
   // of the re-translation the first one started. One in flight, the rest queued.
@@ -359,7 +362,11 @@ export function VariantImageManager({
     onDirtyChange?.(dirtyUrlsRef.current.size > 0);
   }, [onDirtyChange]);
   const settleAltSave = useCallback((entry: QueuedAltSave, verdict: { kind: "saved" } | { kind: "failed"; message: string }) => {
-    const { sameProduct, sameLocale } = altSaveScope(entry, { productId: productIdRef.current, locale: currentLanguageRef.current });
+    const scope = altSaveScope(entry, { productId: productIdRef.current, locale: currentLanguageRef.current, marketId: viewMarketRef.current });
+    const { sameProduct } = scope;
+    // The text only stays in the field where the view still shows exactly the
+    // language AND market it was typed for.
+    const sameLocale = scope.sameLocale && scope.sameMarket;
     if (verdict.kind === "saved") {
       if (sameProduct) {
         failedAltUrlsRef.current.delete(entry.url);
@@ -381,7 +388,9 @@ export function VariantImageManager({
     const im = t.imageManager;
     let text: string;
     if (!sameLocale) {
-      text = String(im?.altSaveFailedOtherLanguage ?? "The alt text for {locale} could not be saved.").replace("{locale}", String(entry.locale));
+      text = String(
+        (scope.sameLocale ? im?.altSaveFailedOtherMarket : im?.altSaveFailedOtherLanguage) ?? "The alt text for {locale} could not be saved.",
+      ).replace("{locale}", String(entry.locale));
     } else if (verdict.message) {
       text = String(im?.altSaveFailedWithReason ?? "The alt text could not be saved: {error}").replace("{error}", verdict.message);
     } else {
@@ -410,6 +419,8 @@ export function VariantImageManager({
     altSaveTimerRef.current = setTimeout(() => {
       if (altSaveInFlightRef.current !== next) return;
       altSaveInFlightRef.current = null;
+      // The request is not aborted: remember it, a late success is still settled.
+      timedOutAltSaveRef.current = next;
       settleAltSave(next, { kind: "failed", message: "" });
       dispatchNextAltSave();
     }, 90000);
@@ -432,10 +443,22 @@ export function VariantImageManager({
       altSaveSawBusyRef.current = true;
       return;
     }
-    if (!altSaveInFlightRef.current) return;
     const data = saveAltTextFetcher.data;
+    if (!altSaveInFlightRef.current) {
+      const late = timedOutAltSaveRef.current;
+      if (late && data && data !== lastHandledSaveDataRef.current) {
+        lastHandledSaveDataRef.current = data;
+        timedOutAltSaveRef.current = null;
+        // Its task ids must reach the watcher; a confirmed save clears the failure.
+        onSaveResponse?.(data);
+        const verdict = classifyAltSaveResponse(data);
+        if (verdict.kind === "saved") settleAltSave(late, verdict);
+      }
+      return;
+    }
     if (data && data !== lastHandledSaveDataRef.current) {
       lastHandledSaveDataRef.current = data;
+      timedOutAltSaveRef.current = null;
       onSaveResponse?.(data);
       finishAltSave(classifyAltSaveResponse(data));
       return;
@@ -465,6 +488,7 @@ export function VariantImageManager({
   const altAiRequestRef = useRef<{ url: string; mediaId?: string; locale?: string; marketId?: string; productId: string } | null>(null);
   // The market layer a foreign-language edit is written to ("" = global).
   const foreignMarketId = currentLanguage && currentLanguage !== primaryLocale ? selectedMarketId || undefined : undefined;
+  viewMarketRef.current = foreignMarketId ?? "";
   const productGalleryBlurSkipRef = useRef(false);
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
@@ -589,6 +613,11 @@ export function VariantImageManager({
     const layer = splitLoadedAltTexts(altTexts, data.inheritedMediaIds, (mediaId) => fileUrlMap[mediaId]);
     setLocalAltTexts(prev => {
       const next = { ...prev };
+      // The answer is the whole layer: an own value it no longer carries (an
+      // override removed on the server) goes, unless the merchant is busy there.
+      for (const url of Object.keys(next)) {
+        if (!(url in layer.own) && !isAltUrlBusy(url)) delete next[url];
+      }
       for (const [url, altText] of Object.entries(layer.own)) {
         if (!isAltUrlBusy(url)) next[url] = altText;
       }
@@ -2657,7 +2686,7 @@ export function VariantImageManager({
       : data.actionType === "translateAltText" && data.translatedAltText !== undefined ? (data.translatedAltText as string)
       : undefined;
     if (generated === undefined) return;
-    if (req.locale === currentLanguageRef.current) {
+    if (req.locale === currentLanguageRef.current && (req.marketId ?? "") === viewMarketRef.current) {
       setLocalAltTexts(p => ({ ...p, [url]: generated }));
       localAltTextsRef.current = { ...localAltTextsRef.current, [url]: generated };
     }

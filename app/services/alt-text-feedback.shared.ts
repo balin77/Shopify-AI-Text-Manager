@@ -144,13 +144,15 @@ export function enqueueAltSave(queue: QueuedAltSave[], entry: QueuedAltSave): Qu
 }
 
 /** Does a (late) save answer still belong to what the screen shows? A save with
- *  no recorded product / locale counts as belonging. */
+ *  no recorded product / locale counts as belonging. The market compares as
+ *  "" = global, so a failed save of market A never marks market B's field. */
 export function altSaveScope(
-  entry: Pick<QueuedAltSave, "productId" | "locale">,
-  current: { productId?: string; locale?: string },
-): { sameProduct: boolean; sameLocale: boolean } {
+  entry: Pick<QueuedAltSave, "productId" | "locale" | "marketId">,
+  current: { productId?: string; locale?: string; marketId?: string },
+): { sameProduct: boolean; sameLocale: boolean; sameMarket: boolean } {
   return {
     sameProduct: !entry.productId || entry.productId === current.productId,
     sameLocale: entry.locale === undefined || entry.locale === current.locale,
+    sameMarket: (entry.marketId ?? "") === (current.marketId ?? ""),
   };
 }

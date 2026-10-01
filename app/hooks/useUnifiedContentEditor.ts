@@ -635,6 +635,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  the fields it did not carry (they were not sent, so the server has only
    *  their old values). Time-boxed, and dropped on any switch. */
   const preserveEditsUntilRef = useRef(0);
+  // Fields whose save was NOT confirmed by Shopify: they stay dirty against a
+  // restored baseline, so ANY reload of the same item/locale/market keeps their
+  // typed text (not just one inside a time window). Dropped on a switch and on
+  // the next save response.
+  const unconfirmedKeptKeysRef = useRef<Set<string>>(new Set());
   // Ref to track the fieldKey of a pending copy save so we can clear its loading state on response
   const pendingCopyFieldKeyRef = useRef<string | null>(null);
   // Item the in-flight field copy was started for (savedItemIdRef is nulled on item change).
@@ -1093,7 +1098,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // writes.
     const switchedDuringRefresh = itemIdChanged || languageChanged || marketChanged;
     // A switch ends the window: the fields on screen now belong elsewhere.
-    if (switchedDuringRefresh) preserveEditsUntilRef.current = 0;
+    if (switchedDuringRefresh) {
+      preserveEditsUntilRef.current = 0;
+      unconfirmedKeptKeysRef.current = new Set();
+    }
     // The re-read that follows a PARTIAL save (a single-field translate):
     // the fields that save did not carry may hold unsaved input, and the
     // server only has their old values — resolving in normal mode would
@@ -1102,7 +1110,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const preserveAfterPartialSave =
       !switchedDuringRefresh &&
       !(refreshTriggered && !isBackgroundRefresh) &&
-      Date.now() < preserveEditsUntilRef.current;
+      (Date.now() < preserveEditsUntilRef.current || unconfirmedKeptKeysRef.current.size > 0);
     const previousBaseline =
       (isBackgroundRefresh || preserveAfterPartialSave) && !switchedDuringRefresh
         ? { ...baselineValuesRef.current }
@@ -1934,6 +1942,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // translation there: it is not accepted into the saved cache, so it keeps
       // its overlay and stays dirty for a retry.
       const unconfirmedCleared = unconfirmedClearedFieldSet(fetcher.data);
+      unconfirmedKeptKeysRef.current = new Set(unconfirmedCleared);
       const onlyKeys = unconfirmedClearedOnlyKeys(
         partial ? new Set(Object.keys(partial.values)) : null,
         effectiveFieldDefinitions.map((f) => f.key),
@@ -2377,6 +2386,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           ruleWarningCode && (ruleWarnings[ruleWarningCode] || ruleWarningCode),
           ...attributeWarningCodes.map((code) => attributeWarnings[code] || code),
           localizedUnconfirmedFields(fetcher.data),
+          // One box for the save: the purge warning REPLACES the plain "saved"
+          // toast (the host page used to show both).
+          Array.isArray((fetcher.data as unknown as { warnings?: unknown }).warnings) &&
+          ((fetcher.data as unknown as { warnings: unknown[] }).warnings).includes("translationPurgeUnconfirmed")
+            ? String(t.content?.translationPurgeUnconfirmed || "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them.")
+            : "",
           "warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "",
         ]
           .filter(Boolean)
