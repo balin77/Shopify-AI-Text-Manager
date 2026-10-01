@@ -79,3 +79,32 @@ export function stripRefsFromGalleries(
   }
   return next;
 }
+
+export interface DeleteAnswerSplit {
+  /** Requested ids Shopify ECHOED as deleted, whatever the HTTP status. */
+  deleted: string[];
+  /** Requested ids it did not echo: these stay and are restored. */
+  failed: string[];
+  /** Everything requested is gone and the answer is clean. */
+  allDeleted: boolean;
+}
+
+/**
+ * Reads the delete route's answer per id. A 422 carrying `deletedMediaIds` /
+ * `failedMediaIds` is a PARTIAL failure, not a total one: the echoed ids are
+ * gone on Shopify and must not be restored, and only the rest comes back.
+ * An unreadable answer deletes nothing.
+ */
+export function splitDeleteAnswer(
+  requested: readonly string[],
+  answer: { ok: boolean; body: { success?: boolean; deletedMediaIds?: string[] } | null },
+): DeleteAnswerSplit {
+  const echoed = new Set(answer.body?.deletedMediaIds ?? []);
+  const deleted = requested.filter((id) => echoed.has(id));
+  const failed = requested.filter((id) => !echoed.has(id));
+  return {
+    deleted,
+    failed,
+    allDeleted: answer.ok && !!answer.body && answer.body.success !== false && failed.length === 0,
+  };
+}

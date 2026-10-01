@@ -1871,6 +1871,7 @@ export const es: Translation = {
   imageManager: {
     title: "Image Manager",
     mediaDeleteFailed: "No se pudieron eliminar las imágenes. Se han restaurado.",
+    mediaDeletePartial: "Se eliminaron {deleted} imagen(es), pero {failed} no se pudieron eliminar. Se han restaurado.",
     mediaClearMainFailed: "Las imágenes se eliminaron, pero no se pudo quitar la imagen principal de una variante. Revisa la variante en Shopify.",
     uploadFailedFiles: "Error al subir: {files}. Estos archivos no se añadieron.",
     altImageNotFound: "Esta imagen ya no se encuentra en el producto (puede que aún se esté subiendo o que se haya eliminado). Recarga la página e inténtalo de nuevo.",
@@ -1880,6 +1881,7 @@ export const es: Translation = {
     altSaveFailedWithReason: "No se pudo guardar el texto alternativo: {error} Tu texto se queda en el campo hasta que cambies de idioma, mercado o producto. Inténtalo de nuevo.",
     altSaveFailedOtherLanguage: "El texto alternativo del idioma {locale} no se pudo guardar y no se conservó. Vuelve a introducirlo.",
     altSaveFailedOtherMarket: "El texto alternativo del idioma {locale} en otro mercado no se pudo guardar y no se conservó. Vuelve a introducirlo.",
+    altSaveLateSuccess: "El texto alternativo se guardó finalmente.",
     altAiFailed: "No se pudo crear el texto alternativo: {error}",
     altTranslateAllLocalesSuccess: "Texto alternativo traducido a {count} idioma(s).",
     altTranslateAllLocalesPartial: "Texto alternativo traducido parcialmente. Los idiomas {failedLocales} no pudieron guardarse. Inténtalo de nuevo.",

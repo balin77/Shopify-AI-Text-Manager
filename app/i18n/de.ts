@@ -1892,6 +1892,7 @@ export const de = {
   imageManager: {
     title: "Image Manager",
     mediaDeleteFailed: "Die Bilder konnten nicht gelöscht werden. Sie wurden wiederhergestellt.",
+    mediaDeletePartial: "Es wurden {deleted} Bild(er) gelöscht, aber {failed} konnten nicht gelöscht werden. Diese wurden wiederhergestellt.",
     mediaClearMainFailed: "Die Bilder wurden gelöscht, aber das Hauptbild einer Variante konnte nicht entfernt werden. Bitte die Variante in Shopify prüfen.",
     uploadFailedFiles: "Upload fehlgeschlagen für: {files}. Diese Dateien wurden nicht hinzugefügt.",
     altImageNotFound: "Dieses Bild wurde am Produkt nicht mehr gefunden (es wird evtl. noch hochgeladen oder wurde gelöscht). Lade die Seite neu und versuche es erneut.",
@@ -1901,6 +1902,7 @@ export const de = {
     altSaveFailedWithReason: "Der Alt-Text konnte nicht gespeichert werden: {error} Dein Text bleibt im Feld stehen, solange du Sprache, Markt und Produkt nicht wechselst. Bitte erneut versuchen.",
     altSaveFailedOtherLanguage: "Der Alt-Text für die Sprache {locale} konnte nicht gespeichert werden und wurde nicht beibehalten. Bitte erneut eingeben.",
     altSaveFailedOtherMarket: "Der Alt-Text für die Sprache {locale} in einem anderen Markt konnte nicht gespeichert werden und wurde nicht beibehalten. Bitte erneut eingeben.",
+    altSaveLateSuccess: "Der Alt-Text wurde doch noch gespeichert.",
     altAiFailed: "Der Alt-Text konnte nicht erstellt werden: {error}",
     altTranslateAllLocalesSuccess: "Alt-Text in {count} Sprache(n) übersetzt.",
     altTranslateAllLocalesPartial: "Alt-Text teilweise übersetzt. Sprache(n) {failedLocales} konnten nicht gespeichert werden. Bitte erneut versuchen.",

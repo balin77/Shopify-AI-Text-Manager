@@ -1,10 +1,12 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { captureRemoved, reinsertRemoved, deleteOutcome, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, type RemovedEntry } from "./delete-rollback";
+import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
+import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
+import { answerPredatesSave } from "./alt-load-guard";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
 import { classifyAltSaveResponse, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
 import { usePlan } from "../../contexts/PlanContext";
@@ -237,7 +239,7 @@ export function VariantImageManager({
   onGalleryOrderChange,
   backgroundRefreshVersion = 0,
 }: VariantImageManagerProps) {
-  const { t } = useI18n();
+  const { t, locale: appLocale } = useI18n();
   const { plan } = usePlan();
   // Alt-text translation needs at least one foreign locale. Without one the
   // buttons stay visible but greyed out, with this as their tooltip.
@@ -358,6 +360,10 @@ export function VariantImageManager({
   // the page-level Save (that one never writes alts) and is not overwritten by a
   // reload. Re-saving happens on the next blur.
   const failedAltUrlsRef = useRef(new Set<string>());
+  // When each image's own alt was last CONFIRMED saved, and when the open
+  // load request was made: an answer requested before a save must not undo it.
+  const altConfirmedAtRef = useRef(new Map<string, number>());
+  const altLoadRequestedAtRef = useRef(0);
   const syncAltDirty = useCallback(() => {
     onDirtyChange?.(dirtyUrlsRef.current.size > 0);
   }, [onDirtyChange]);
@@ -369,6 +375,7 @@ export function VariantImageManager({
     const sameLocale = scope.sameLocale && scope.sameMarket;
     if (verdict.kind === "saved") {
       if (sameProduct) {
+        altConfirmedAtRef.current.set(entry.url, Date.now());
         failedAltUrlsRef.current.delete(entry.url);
         // A newer edit of the same image stays dirty.
         const current = localAltTextsRef.current[entry.url];
@@ -390,14 +397,14 @@ export function VariantImageManager({
     if (!sameLocale) {
       text = String(
         (scope.sameLocale ? im?.altSaveFailedOtherMarket : im?.altSaveFailedOtherLanguage) ?? "The alt text for {locale} could not be saved.",
-      ).replace("{locale}", String(entry.locale));
+      ).replace("{locale}", entry.locale ? getLocalizedLanguageName(String(entry.locale), appLocale) : "");
     } else if (verdict.message) {
       text = String(im?.altSaveFailedWithReason ?? "The alt text could not be saved: {error}").replace("{error}", verdict.message);
     } else {
       text = String(im?.altSaveFailed ?? "The alt text could not be saved. Your text is kept, please try again.");
     }
     showInfoBox(!sameProduct && entry.productTitle ? `${entry.productTitle}: ${text}` : text, "critical");
-  }, [t, showInfoBox, syncAltDirty]);
+  }, [t, appLocale, showInfoBox, syncAltDirty]);
   const dispatchNextAltSave = useCallback(() => {
     if (altSaveInFlightRef.current) return;
     const next = altSaveQueueRef.current.shift();
@@ -452,7 +459,14 @@ export function VariantImageManager({
         // Its task ids must reach the watcher; a confirmed save clears the failure.
         onSaveResponse?.(data);
         const verdict = classifyAltSaveResponse(data);
-        if (verdict.kind === "saved") settleAltSave(late, verdict);
+        if (verdict.kind === "saved") {
+          settleAltSave(late, verdict);
+          // The timeout already told the merchant it failed: correct that.
+          showInfoBox(
+            String(t.imageManager?.altSaveLateSuccess ?? "The alt text was saved after all."),
+            "success",
+          );
+        }
       }
       return;
     }
@@ -588,6 +602,7 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     if (selectedMarketId) form.append("marketId", selectedMarketId);
+    altLoadRequestedAtRef.current = Date.now();
     translationsFetcher.submit(form, { method: "post" });
   }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, selectedMarketId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -599,6 +614,7 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     if (selectedMarketId) form.append("marketId", selectedMarketId);
+    altLoadRequestedAtRef.current = Date.now();
     translationsFetcher.submit(form, { method: "post" });
   }, [productId, currentLanguage, primaryLocale, translationsFetcher, selectedMarketId]);
 
@@ -609,6 +625,12 @@ export function VariantImageManager({
     // An answer for another market (a stale response after a switch) is not
     // this view's layer.
     if ((data.marketId ?? "") !== selectedMarketId) return;
+    // Same for another language (an answer that outlived a language switch).
+    if (data.locale && data.locale !== currentLanguage) return;
+    // An image saved since this answer was requested keeps its fresh value.
+    const requestedAt = altLoadRequestedAtRef.current;
+    const skipUrl = (url: string) =>
+      isAltUrlBusy(url) || answerPredatesSave(altConfirmedAtRef.current.get(url), requestedAt);
     const altTexts: Record<string, string> = data.altTexts ?? {};
     const layer = splitLoadedAltTexts(altTexts, data.inheritedMediaIds, (mediaId) => fileUrlMap[mediaId]);
     setLocalAltTexts(prev => {
@@ -616,10 +638,10 @@ export function VariantImageManager({
       // The answer is the whole layer: an own value it no longer carries (an
       // override removed on the server) goes, unless the merchant is busy there.
       for (const url of Object.keys(next)) {
-        if (!(url in layer.own) && !isAltUrlBusy(url)) delete next[url];
+        if (!(url in layer.own) && !skipUrl(url)) delete next[url];
       }
       for (const [url, altText] of Object.entries(layer.own)) {
-        if (!isAltUrlBusy(url)) next[url] = altText;
+        if (!skipUrl(url)) next[url] = altText;
       }
       return next;
     });
@@ -2395,11 +2417,15 @@ export function VariantImageManager({
 
     let deleteOk = false;
     let clearOk: boolean | null = null;
+    // Per-id verdict: a partial answer deletes some and keeps others.
+    let deletedGids: string[] = [];
+    let failedGids: string[] = [...gids];
     try {
       if (gids.length === 0) {
         // Only queued (not yet uploaded) ghost tiles: nothing exists on Shopify
         // to delete, and the route answers 400 for an empty list.
         deleteOk = true;
+        failedGids = [];
       } else {
         const deleteRes = await fetch("/api/delete-product-images", {
           method: "POST",
@@ -2409,19 +2435,24 @@ export function VariantImageManager({
         const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean; deletedMediaIds?: string[]; localizedMedia?: { removed?: number; failed?: string } } | null;
         // Only what Shopify ECHOED as deleted counts: every requested id must
         // be in the answer before the variants' main images are cleared.
-        const echoedDeleted = new Set(deleteBody?.deletedMediaIds ?? []);
-        deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false && gids.every(g => echoedDeleted.has(g));
+        const split = splitDeleteAnswer(gids, { ok: deleteRes.ok, body: deleteBody });
+        deleteOk = split.allDeleted;
+        deletedGids = split.deleted;
+        failedGids = split.failed;
         // The route also removes the originals' per-language replacements; the
         // delete stands even if that part failed, and the merchant is told.
-        if (deleteOk && deleteBody?.localizedMedia?.failed) localizedMediaRef.current?.reportCleanupFailed(deleteBody.localizedMedia.failed);
-        // The server removed the originals' replacements: read the list again.
-        if (deleteOk) localizedMediaRef.current?.refresh();
+        if (deletedGids.length > 0 && deleteBody?.localizedMedia?.failed) localizedMediaRef.current?.reportCleanupFailed(deleteBody.localizedMedia.failed);
+        // The server removed the deleted originals' replacements: read the list again.
+        if (deletedGids.length > 0) localizedMediaRef.current?.refresh();
       }
       // Shopify does not automatically clear a variant's image when the referenced media is
       // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,
       // so a refused delete changes nothing on Shopify.
-      const clearMainImageIds = variantsWithDeletedMainImage.map(v => v.id);
-      if (deleteOk && clearMainImageIds.length > 0) {
+      const deletedSet = new Set(deletedGids);
+      const clearMainImageIds = variantsWithDeletedMainImage
+        .filter(v => v.defaultImageUrl && deletedSet.has(urlToGid[v.defaultImageUrl]))
+        .map(v => v.id);
+      if (clearMainImageIds.length > 0) {
         try {
           const clearRes = await fetch("/api/update-variant-galleries", {
             method: "POST",
@@ -2438,13 +2469,21 @@ export function VariantImageManager({
       deleteOk = false;
     }
     if (switchedAway()) { setIsDeleting(false); return; }
-    const outcome = deleteOutcome(deleteOk, clearOk);
-    if (outcome === "deleteFailed") {
+    const failedSet = new Set(failedGids);
+    const partial = failedGids.length > 0 && deletedGids.length > 0;
+    if (failedGids.length > 0) {
+      // Only what Shopify did NOT delete comes back.
+      const failedUrl = (url: string) => failedSet.has(urlToGid[url]);
+      const restoredOrder = removedFromOrder.filter(e => failedUrl(e.value));
+      const restoredRefreshed = removedFromRefreshed.filter(e => (!!e.value.mediaId && failedSet.has(e.value.mediaId)) || failedUrl(e.value.url));
+      const failedMainIds = new Set(
+        variantsWithDeletedMainImage.filter(v => v.defaultImageUrl && failedUrl(v.defaultImageUrl)).map(v => v.id),
+      );
       setPendingVariantGalleries(p => {
         const next = { ...p };
         for (const v of variants) {
-          const removed = removedFromGalleries[v.id];
-          if (!removed) continue;
+          const removed = removedFromGalleries[v.id]?.filter(e => failedSet.has(e.value));
+          if (!removed || removed.length === 0) continue;
           const restored = reinsertRemoved(p[v.id] ?? v.galleryFileGids, removed);
           const base = originalGalleries[v.id] ?? v.galleryFileGids;
           const sameAs = (list: readonly string[]) =>
@@ -2460,32 +2499,44 @@ export function VariantImageManager({
       });
       setLocallyExcludedMainGids(s => {
         const next = new Set(s);
-        addedExcludedIds.forEach(id => next.delete(id));
+        addedExcludedIds.filter(id => failedMainIds.has(id)).forEach(id => next.delete(id));
         return next;
       });
       setPendingProductImageOrder(curr => {
         if (!curr) return curr;
-        const restored = reinsertRemoved(curr, removedFromOrder);
+        const restored = reinsertRemoved(curr, restoredOrder);
         if (orderWasUnset && restored.length === originalOrder.length && restored.every((u, i) => u === originalOrder[i])) return null;
         return restored;
       });
       setSelectedGalleryItems(m => {
         const next = new Map(m);
-        for (const [k, v] of removedSelection) if (!next.has(k)) next.set(k, v);
+        for (const [k, v] of removedSelection) {
+          if (failedUrl(k.slice("product::".length)) && !next.has(k)) next.set(k, v);
+        }
         return next;
       });
-      setRefreshedProductImages(curr => (curr ? reinsertRemoved(curr, removedFromRefreshed, (a, b) => a.url === b.url) : curr));
+      setRefreshedProductImages(curr => (curr ? reinsertRemoved(curr, restoredRefreshed, (a, b) => a.url === b.url) : curr));
       // A queued tile is removed for good even when the Shopify delete failed.
-      setMediaError(t.imageManager.mediaDeleteFailed);
-    } else {
+      setMediaError(
+        partial
+          ? t.imageManager.mediaDeletePartial.replace("{failed}", String(failedGids.length)).replace("{deleted}", String(deletedGids.length))
+          : t.imageManager.mediaDeleteFailed,
+      );
+    }
+    if (deletedGids.length > 0) {
       // A deleted node can never turn up in shopifyMediaMap, so a settling
       // entry for it would keep its tile on screen forever. Retire it only now
-      // that the delete is confirmed.
-      if (gids.length > 0) {
-        onSettlingMediaResolved?.(gids);
-        pendingMediaOrderRef.current = pendingMediaOrderRef.current.filter(o => !gidSet.has(o.mediaId));
+      // that the delete is confirmed (per id: a partial answer retires its half).
+      const deletedIdSet = new Set(deletedGids);
+      onSettlingMediaResolved?.(deletedGids);
+      pendingMediaOrderRef.current = pendingMediaOrderRef.current.filter(o => !deletedIdSet.has(o.mediaId));
+      if (clearOk === false) {
+        setMediaError(
+          partial
+            ? `${t.imageManager.mediaDeletePartial.replace("{failed}", String(failedGids.length)).replace("{deleted}", String(deletedGids.length))} ${t.imageManager.mediaClearMainFailed}`
+            : t.imageManager.mediaClearMainFailed,
+        );
       }
-      if (outcome === "clearFailed") setMediaError(t.imageManager.mediaClearMainFailed);
     }
     setIsDeleting(false);
   }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t]);

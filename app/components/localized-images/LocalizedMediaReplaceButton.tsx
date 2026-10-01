@@ -69,6 +69,8 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
     const kind = pickerKind;
     setPickerKind(null);
     if (!kind || !mediaKind || !draftFile || !reportPickFailure) return;
+    // The slot the pick started in: the upload can outlast a language/market switch.
+    const slot = { locale: state?.rawLocale ?? "", marketId: state?.marketId ?? "" };
     setResolving(true);
     try {
       const picked = await resolvePickedMedia(items.find((i) => i.source !== "external_url") ?? items[0], kind);
@@ -77,11 +79,11 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
         return;
       }
       // A video file's URL is not a picture: the tile keeps the original's poster.
-      draftFile(mediaId, mediaKind, picked.fileId, kind === "image" ? picked.url : "", filenameFromUrl(picked.url));
+      draftFile(mediaId, mediaKind, picked.fileId, kind === "image" ? picked.url : "", filenameFromUrl(picked.url), slot);
     } finally {
       setResolving(false);
     }
-  }, [pickerKind, mediaKind, draftFile, reportPickFailure, mediaId]);
+  }, [pickerKind, mediaKind, draftFile, reportPickFailure, mediaId, state?.rawLocale, state?.marketId]);
 
   const handleLinkSave = useCallback(() => {
     const externalUrl = linkValue.trim();

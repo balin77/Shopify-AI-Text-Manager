@@ -247,8 +247,14 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   }), [locale, marketNumeric, selectedMarketId]);
 
   /** A picked file (already materialised in Files) becomes a draft. */
-  const draftFile = useCallback((mediaId: string, mediaKind: LocalizedMediaDraft["mediaKind"], fileId: string, previewUrl: string, name: string) => {
-    setDrafts((d) => draftsAfterSet(d, { ...slotTarget(mediaId, mediaKind), op: "set", fileId, previewUrl, name }));
+  // `slot` names the language/market the pick STARTED in: the upload can finish
+  // after the merchant switched view, and a draft is keyed by (medium, language,
+  // market), so it belongs to the slot that was asked for, not the one showing.
+  const draftFile = useCallback((mediaId: string, mediaKind: LocalizedMediaDraft["mediaKind"], fileId: string, previewUrl: string, name: string, slot?: { locale: string; marketId: string }) => {
+    const target = slot
+      ? { mediaId, locale: slot.locale, k: marketNumericId(slot.marketId) ?? "", marketId: slot.marketId, mediaKind }
+      : slotTarget(mediaId, mediaKind);
+    setDrafts((d) => draftsAfterSet(d, { ...target, op: "set", fileId, previewUrl, name }));
   }, [slotTarget]);
   /** A YouTube/Vimeo link becomes a draft; the server validates it on save. */
   const draftLink = useCallback((mediaId: string, externalUrl: string, previewUrl: string) => {

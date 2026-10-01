@@ -50,7 +50,7 @@ import { readLastSelectedId } from "../utils/last-selected-item";
 import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
-import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage } from "../services/editor/unconfirmed-cleared.shared";
+import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -2044,6 +2044,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const savedItemId = savedItemIdRef.current;
       const isSavedItemCurrent = savedItemId === selectedItemIdRef.current;
       savedItemIdRef.current = null; // Always clean up — we've processed this response
+      // The purge warning must survive every early return below (item switch,
+      // Accept & Translate): those used to drop it and the merchant never
+      // learned that stale translations are still live.
+      const purgeWarningText = hasPurgeUnconfirmedWarning(fetcher.data)
+        ? String(t.content?.translationPurgeUnconfirmed || "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them.")
+        : "";
 
       // A copy ("Übertragen") save is settled by THIS response whichever item is
       // on screen now. Resolve it before the item-changed return: stale pending
@@ -2086,6 +2092,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       if (!isSavedItemCurrent) {
         debugLog.response(' Item changed during save — skipping response application for wrong item');
+        // The editor state belongs to another item now, but the warning is about
+        // live data on Shopify: say it rather than lose it.
+        if (purgeWarningText) showInfoBox(purgeWarningText, "warning");
         return;
       }
 
@@ -2190,7 +2199,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           fieldKey,
           (result) => {
             // Guard: discard stale callback if user navigated to a different item
-            if (selectedItemRef.current?.id !== itemId) return;
+            if (selectedItemRef.current?.id !== itemId) {
+              if (purgeWarningText) showInfoBox(purgeWarningText, "warning");
+              return;
+            }
 
             // Handle success - update translations
             const translations = result.translations as Record<string, string>;
@@ -2284,18 +2296,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 );
               }
 
+              if (purgeWarningText) messages.push(purgeWarningText);
               showInfoBox(
                 messages.join(" "),
                 "warning"
               );
             } else {
               const fieldLabel = resolveFieldLabel(fieldKey);
-              showInfoBox(
+              const translatedText =
                 t.common?.fieldTranslatedToLanguages
                   ?.replace("{fieldType}", fieldLabel)
                   .replace("{count}", String(Object.keys(translations).length))
-                  || `${fieldLabel} translated to ${Object.keys(translations).length} language(s)`,
-                "success"
+                  || `${fieldLabel} translated to ${Object.keys(translations).length} language(s)`;
+              showInfoBox(
+                purgeWarningText ? `${translatedText} ${purgeWarningText}` : translatedText,
+                purgeWarningText ? "warning" : "success"
               );
             }
 
@@ -2390,10 +2405,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           localizedUnconfirmedFields(fetcher.data),
           // One box for the save: the purge warning REPLACES the plain "saved"
           // toast (the host page used to show both).
-          Array.isArray((fetcher.data as unknown as { warnings?: unknown }).warnings) &&
-          ((fetcher.data as unknown as { warnings: unknown[] }).warnings).includes("translationPurgeUnconfirmed")
-            ? String(t.content?.translationPurgeUnconfirmed || "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them.")
-            : "",
+          purgeWarningText,
           "warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "",
         ]
           .filter(Boolean)

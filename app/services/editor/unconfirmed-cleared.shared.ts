@@ -88,3 +88,13 @@ export function unconfirmedFieldsMessage(
   if (skipped.length > 0) parts.push(templates.skipped.replace("{fields}", names(skipped)));
   return parts.join(" ");
 }
+
+/**
+ * True when the save answered that removing the now-stale translations was not
+ * confirmed on Shopify (they are still live). Read wherever a response is
+ * consumed, including the early-return paths, so the warning is never lost.
+ */
+export function hasPurgeUnconfirmedWarning(data: unknown): boolean {
+  const warnings = (data as { warnings?: unknown } | null | undefined)?.warnings;
+  return Array.isArray(warnings) && warnings.includes("translationPurgeUnconfirmed");
+}

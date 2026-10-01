@@ -1891,6 +1891,7 @@ export const en: Translation = {
   imageManager: {
     title: "Image Manager",
     mediaDeleteFailed: "The image(s) could not be deleted. They have been restored.",
+    mediaDeletePartial: "{deleted} image(s) were deleted, but {failed} could not be deleted. Those have been restored.",
     mediaClearMainFailed: "The images were deleted, but a variant's main image could not be cleared. Please check the variant in Shopify.",
     uploadFailedFiles: "Upload failed for: {files}. These files were not added.",
     altImageNotFound: "This image could not be found on the product any more (it may still be uploading or was deleted). Reload the page and try again.",
@@ -1900,6 +1901,7 @@ export const en: Translation = {
     altSaveFailedWithReason: "The alt text could not be saved: {error} Your text stays in the field until you switch language, market or product. Please try again.",
     altSaveFailedOtherLanguage: "The alt text for language {locale} could not be saved and was not kept. Please redo it.",
     altSaveFailedOtherMarket: "The alt text for language {locale} in another market could not be saved and was not kept. Please redo it.",
+    altSaveLateSuccess: "The alt text was saved after all.",
     altAiFailed: "The alt text could not be created: {error}",
     altTranslateAllLocalesSuccess: "Alt text translated to {count} language(s).",
     altTranslateAllLocalesPartial: "Alt text partially translated. Language(s) {failedLocales} could not be saved. Please try again.",

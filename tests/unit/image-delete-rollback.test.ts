@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { captureRemoved, reinsertRemoved, deleteOutcome } from "~/components/image-manager/delete-rollback";
+import { captureRemoved, reinsertRemoved, deleteOutcome, splitDeleteAnswer } from "~/components/image-manager/delete-rollback";
 
 describe("delete rollback", () => {
   it("re-inserts removed entries at their positions in the current list", () => {
@@ -41,5 +41,23 @@ describe("queued tile staging urls in variant galleries", () => {
     const out = stripRefsFromGalleries(g, refs);
     expect(out.v1).toEqual(["gid://1"]);
     expect(out.v2).toBe(g.v2);
+  });
+});
+
+describe("splitDeleteAnswer", () => {
+  it("treats a 422 with echoed ids as a partial failure", () => {
+    const r = splitDeleteAnswer(["a", "b", "c"], { ok: false, body: { success: false, deletedMediaIds: ["a", "c"] } });
+    expect(r).toEqual({ deleted: ["a", "c"], failed: ["b"], allDeleted: false });
+  });
+  it("is clean only when ok and every id echoed", () => {
+    expect(splitDeleteAnswer(["a"], { ok: true, body: { success: true, deletedMediaIds: ["a"] } }).allDeleted).toBe(true);
+    expect(splitDeleteAnswer(["a"], { ok: true, body: { success: true, deletedMediaIds: [] } }).failed).toEqual(["a"]);
+  });
+  it("deletes nothing on an unreadable answer", () => {
+    expect(splitDeleteAnswer(["a", "b"], { ok: false, body: null })).toEqual({
+      deleted: [],
+      failed: ["a", "b"],
+      allDeleted: false,
+    });
   });
 });
