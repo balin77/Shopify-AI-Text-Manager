@@ -640,13 +640,15 @@ export async function handleTranslateAltTextToAllLocales(
         registerMediaAltAndVerify,
         mirrorProductMediaAlt,
       } = await import("~/services/translations/verified-translations.server");
+      // One digest read for this image, not one per locale.
+      const digestCache = new Map<string, string | null>();
       for (const locale of targetLocales) {
         const altText = translatedAltTexts[locale];
         if (!altText) continue;
 
         let stored: string | null = null;
         try {
-          const verified = await registerMediaAltAndVerify(gateway, dbImage.mediaId, locale, altText);
+          const verified = await registerMediaAltAndVerify(gateway, dbImage.mediaId, locale, altText, undefined, { digestCache });
           if (verified.confirmed) {
             stored = verified.storedValue ?? altText;
           } else {

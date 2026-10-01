@@ -279,3 +279,24 @@ describe("removeVerifiedWithGapReread / confirmedPairsWhere (Phase B+C)", () => 
     expect(confirmedPairsWhere(new Set(), ["a"], ["fr"])).toBeNull();
   });
 });
+
+describe("registerMediaAltAndVerify digest cache", () => {
+  it("reads the image's alt digest once for many locales, still checking each echo", async () => {
+    const { registerMediaAltAndVerify } = await import("~/services/translations/verified-translations.server");
+    const { client, calls } = fakeClient((query, variables) => {
+      if (query.includes("translationsRegister")) {
+        const t = (variables?.translations as Array<{ key: string; locale: string; value: string }>)[0];
+        // "fr" is not echoed: it must fail on its own even with a cached digest.
+        return registerEcho(t.locale === "fr" ? [] : [{ key: "alt", locale: t.locale, value: t.value }]);
+      }
+      return { data: { translatableResource: { translatableContent: [{ key: "alt", digest: "da" }] } } };
+    });
+    const cache = new Map<string, string | null>();
+    const de = await registerMediaAltAndVerify(client, "gid://shopify/MediaImage/1", "de", "Kiste", undefined, { digestCache: cache });
+    const fr = await registerMediaAltAndVerify(client, "gid://shopify/MediaImage/1", "fr", "Boîte", undefined, { digestCache: cache });
+    const it_ = await registerMediaAltAndVerify(client, "gid://shopify/MediaImage/1", "it", "Scatola", undefined, { digestCache: cache });
+    expect([de.confirmed, fr.confirmed, it_.confirmed]).toEqual([true, false, true]);
+    expect(calls.filter((c) => c.query.includes("translatableResource")).length).toBe(1);
+    expect(calls.filter((c) => c.query.includes("translationsRegister")).length).toBe(3);
+  });
+});

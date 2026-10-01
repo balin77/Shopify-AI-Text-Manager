@@ -819,12 +819,38 @@ export async function registerMediaAltAndVerify(
   locale: string,
   value: string,
   marketId?: string,
+  options: {
+    /**
+     * Per-request memo of the image's `alt` digest (null = no digest). A run
+     * that writes one image into many locales reads the digest ONCE instead of
+     * once per locale -- the primary alt does not change during the run, and
+     * the echo check still decides every locale on its own.
+     */
+    digestCache?: Map<string, string | null>;
+  } = {},
 ): Promise<MediaAltRegisterResult> {
-  const result = await registerWithDigests(client, imageGid, locale, [{ key: MEDIA_ALT_KEY, value }], marketId);
-  const digest = result.digests.get(MEDIA_ALT_KEY);
-  if (result.noDigest.includes(MEDIA_ALT_KEY)) {
-    return { confirmed: false, noDigest: true, userErrors: result.userErrors };
+  const cache = options.digestCache;
+  let digest: string | undefined;
+  if (cache && cache.has(imageGid)) {
+    digest = cache.get(imageGid) ?? undefined;
+  } else {
+    const read = await fetchDigestsForResourceDetailed(client, imageGid, [MEDIA_ALT_KEY]);
+    if (!read.found) throw new Error(`translatableResource not found: ${imageGid}`);
+    digest = read.digests.get(MEDIA_ALT_KEY);
+    cache?.set(imageGid, digest ?? null);
   }
+  if (!digest) {
+    return { confirmed: false, noDigest: true, userErrors: [] };
+  }
+  const result = await registerAndVerify(client, imageGid, [
+    {
+      key: MEDIA_ALT_KEY,
+      value,
+      locale,
+      translatableContentDigest: digest,
+      ...(marketId ? { marketId } : {}),
+    },
+  ]);
   const confirmed = result.confirmedKeys.has(MEDIA_ALT_KEY);
   return {
     confirmed,

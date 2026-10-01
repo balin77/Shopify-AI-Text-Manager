@@ -497,14 +497,16 @@ async function saveProductAltTranslation(args: {
   locale: string;
   altText: string;
   imageIndex: number;
+  /** One per request: the image's alt digest is read once, not per locale. */
+  digestCache?: Map<string, string | null>;
 }): Promise<boolean> {
-  const { gateway, db, shop, productId, mediaId, locale, altText, imageIndex } = args;
+  const { gateway, db, shop, productId, mediaId, locale, altText, imageIndex, digestCache } = args;
   const { registerMediaAltAndVerify, mirrorProductMediaAlt } = await import(
     "~/services/translations/verified-translations.server"
   );
   let stored: string;
   try {
-    const verified = await registerMediaAltAndVerify(gateway, mediaId, locale, altText);
+    const verified = await registerMediaAltAndVerify(gateway, mediaId, locale, altText, undefined, { digestCache });
     if (!verified.confirmed) {
       logger.error("[API-AI] Shopify did not confirm the alt-text translation", {
         context: "AI", imageIndex, locale, mediaId, noDigest: verified.noDigest, errors: verified.userErrors,
@@ -712,11 +714,13 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
         });
         failedLocales.push(...targetLocales);
       } else {
+        // One digest read for this image, not one per locale.
+        const digestCache = new Map<string, string | null>();
         for (const locale of targetLocales) {
           const altText = translatedAltTexts[locale];
           if (!altText) continue;
           const saved = await saveProductAltTranslation({
-            gateway, db, shop: session.shop, productId, mediaId: dbImage.mediaId, locale, altText, imageIndex,
+            gateway, db, shop: session.shop, productId, mediaId: dbImage.mediaId, locale, altText, imageIndex, digestCache,
           });
           if (saved) savedLocales.push(locale);
           else failedLocales.push(locale);
@@ -914,11 +918,13 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
         }
 
         let imageFullySaved = true;
+        // One digest read for this image, not one per locale.
+        const digestCache = new Map<string, string | null>();
         for (const locale of targetLocales) {
           const altText = translatedResults[imgIdx]?.[locale];
           if (!altText) continue;
           const saved = await saveProductAltTranslation({
-            gateway, db, shop: session.shop, productId, mediaId: dbImage.mediaId, locale, altText, imageIndex: imgIdx,
+            gateway, db, shop: session.shop, productId, mediaId: dbImage.mediaId, locale, altText, imageIndex: imgIdx, digestCache,
           });
           if (saved) savedCount++;
           else imageFullySaved = false;
