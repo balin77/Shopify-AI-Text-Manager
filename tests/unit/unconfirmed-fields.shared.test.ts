@@ -77,3 +77,18 @@ describe('keepFailedAltsDirty', () => {
     expect(keepFailedAltsDirty(base, [], base)({ 0: 'zzz' })).toBe(base);
   });
 });
+
+import { purgeWarningConcernsOtherFields } from "../../app/services/editor/unconfirmed-cleared.shared";
+describe("purgeWarningConcernsOtherFields", () => {
+  const w = { warnings: ["translationPurgeUnconfirmed"] };
+  it("is false without a warning", () => {
+    expect(purgeWarningConcernsOtherFields({}, "title")).toBe(false);
+  });
+  it("is moot when only the re-translated field is named", () => {
+    expect(purgeWarningConcernsOtherFields({ ...w, unconfirmedClearedFields: ["title"] }, "title")).toBe(false);
+  });
+  it("stands when other fields are named or none are", () => {
+    expect(purgeWarningConcernsOtherFields({ ...w, unconfirmedClearedFields: ["title", "body"] }, "title")).toBe(true);
+    expect(purgeWarningConcernsOtherFields(w, "title")).toBe(true);
+  });
+});

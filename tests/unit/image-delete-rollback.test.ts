@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { captureRemoved, reinsertRemoved, deleteOutcome, splitDeleteAnswer } from "~/components/image-manager/delete-rollback";
+import { captureRemoved, reinsertRemoved, deleteOutcome, splitDeleteAnswer, unsentUrls, urlNeedsRestore } from "~/components/image-manager/delete-rollback";
 
 describe("delete rollback", () => {
   it("re-inserts removed entries at their positions in the current list", () => {
@@ -59,5 +59,18 @@ describe("splitDeleteAnswer", () => {
       failed: ["a", "b"],
       allDeleted: false,
     });
+  });
+});
+
+describe("unsent urls", () => {
+  const map = { u1: "g1" } as Record<string, string>;
+  it("finds non-queued urls without a gid", () => {
+    expect(unsentUrls(["u1", "u2", "q"], map, new Set(["q"]))).toEqual(["u2"]);
+  });
+  it("restores unsent and failed urls, not deleted ones", () => {
+    const unsent = new Set(["u2"]);
+    expect(urlNeedsRestore("u2", map, new Set(), unsent)).toBe(true);
+    expect(urlNeedsRestore("u1", map, new Set(["g1"]), unsent)).toBe(true);
+    expect(urlNeedsRestore("u1", map, new Set(), unsent)).toBe(false);
   });
 });

@@ -250,7 +250,9 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   // `slot` names the language/market the pick STARTED in: the upload can finish
   // after the merchant switched view, and a draft is keyed by (medium, language,
   // market), so it belongs to the slot that was asked for, not the one showing.
-  const draftFile = useCallback((mediaId: string, mediaKind: LocalizedMediaDraft["mediaKind"], fileId: string, previewUrl: string, name: string, slot?: { locale: string; marketId: string }) => {
+  const draftFile = useCallback((mediaId: string, mediaKind: LocalizedMediaDraft["mediaKind"], fileId: string, previewUrl: string, name: string, slot?: { locale: string; marketId: string; productId?: string }) => {
+    // The pick started on another product: the draft would land on this one.
+    if (slot?.productId !== undefined && isStaleAnswer(slot.productId, productIdRef.current)) return;
     const target = slot
       ? { mediaId, locale: slot.locale, k: marketNumericId(slot.marketId) ?? "", marketId: slot.marketId, mediaKind }
       : slotTarget(mediaId, mediaKind);

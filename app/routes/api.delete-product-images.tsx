@@ -41,10 +41,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const d = await r.json();
   const userErrors = d.data?.productDeleteMedia?.userErrors ?? [];
-  if (userErrors.length > 0) {
-    return json({ success: false, errors: userErrors.map((e: { message: string }) => e.message) }, { status: 422 });
-  }
-
+  // userErrors do not mean nothing was deleted: the mutation can echo the ids it
+  // did delete beside them, and those must be cleaned up and reported.
   const deletedMediaIds: string[] = d.data?.productDeleteMedia?.deletedMediaIds ?? [];
 
   // The originals are gone, so their per-language replacements (custom.localized_media,
@@ -70,7 +68,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // that were deleted already had their replacements cleaned above).
   const echoed = new Set(deletedMediaIds);
   const failedMediaIds = (mediaIds as string[]).filter((id) => !echoed.has(id));
-  if (failedMediaIds.length > 0) {
+  if (userErrors.length > 0 || failedMediaIds.length > 0) {
+    if (userErrors.length > 0) {
+      return json(
+        { success: false, errors: userErrors.map((e: { message: string }) => e.message), deletedMediaIds, failedMediaIds, localizedMedia },
+        { status: 422 },
+      );
+    }
     return json({ success: false, error: "Not all media were deleted", deletedMediaIds, failedMediaIds, localizedMedia }, { status: 422 });
   }
 

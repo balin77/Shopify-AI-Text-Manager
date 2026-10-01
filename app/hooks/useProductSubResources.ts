@@ -45,6 +45,7 @@ import {
   stageTranslateAnswer,
   translateAnswerPlan,
   updateKeepIds,
+  savedIdsAfterPartialSave,
   type TranslateTarget,
 } from "../services/editor/sub-resource-overlay.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
@@ -65,6 +66,7 @@ interface SubResourceFetcherData {
   translations?: Record<string, Record<string, string>>;
   fieldId?: string;
   failedResources?: string[];
+  savedResources?: string[];
   failedLocales?: string[];
   translatedLocales?: string[];
   /** Resource ids whose key has no digest at Shopify: not writable, not a failure. */
@@ -407,9 +409,12 @@ export function useProductSubResources({
   // the overlay for exactly those resources (the answer does not echo values).
   const pendingForeignSaveRef = useRef<{
     localeKey: string;
+    marketLayer?: boolean;
     values: Record<string, Record<string, string>>;
   } | null>(null);
   const pendingPrimarySaveIdsRef = useRef<string[]>([]);
+  // What the primary save SENT, so a partial failure can still settle the saved subset.
+  const pendingPrimarySaveSentRef = useRef<{ options: Record<string, any>; metafields: Record<string, unknown> } | null>(null);
   // The item/language/market a translate was REQUESTED for; its answer is
   // staged there, never into whatever is showing when it arrives.
   const translateAllTargetRef = useRef<TranslateTarget | null>(null);
@@ -536,6 +541,7 @@ export function useProductSubResources({
       keepOverlayIdsRef.current = new Set();
       pendingForeignSaveRef.current = null;
       pendingPrimarySaveIdsRef.current = [];
+      pendingPrimarySaveSentRef.current = null;
     }
 
     if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
@@ -631,8 +637,9 @@ export function useProductSubResources({
     target: TranslateTarget | null,
   ): "apply" | "stage" | "skip" => {
     const plan = translateAnswerPlan(target, currentViewRef.current);
-    // A translate writes the global layer: a market view stages nothing.
-    if (plan === "skip" || !target || !translations || target.marketId) return plan;
+    // A translate writes the global layer, so it is staged under the global key
+    // for a market target too (the plan never applies it visibly there).
+    if (plan === "skip" || !target || !translations) return plan;
     if (stageTranslateAnswer(localSubResourceOverlayRef.current, buildLocaleKey(target.locale, ""), translations)) {
       touchOverlay();
     }
@@ -695,6 +702,7 @@ export function useProductSubResources({
       reportFailedRequest(data);
       pendingForeignSaveRef.current = null;
       pendingPrimarySaveIdsRef.current = [];
+      pendingPrimarySaveSentRef.current = null;
       if (pendingCopyFieldIdRef.current) {
         markSubResourceCompleted(selectedItem?.id || "", pendingCopyFieldIdRef.current);
         pendingCopyFieldIdRef.current = null;
@@ -854,6 +862,7 @@ export function useProductSubResources({
             sentSave.values,
             failedResources,
             data.notTranslatable || [],
+            { marketLayer: !!sentSave.marketLayer, savedIds: Array.isArray(data.savedResources) ? data.savedResources : null },
           )
         ) {
           touchOverlay();
@@ -990,6 +999,18 @@ export function useProductSubResources({
       const totalFailed = failedOptions.length + failedMetafields.length + structuralFailures;
 
       if (totalFailed > 0) {
+        // The part that WAS saved still moved its source text: settle the
+        // overlay for it exactly like a full success.
+        const sentPrimary = pendingPrimarySaveSentRef.current;
+        pendingPrimarySaveSentRef.current = null;
+        const partialPurge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
+        const partialSavedIds = sentPrimary
+          ? savedIdsAfterPartialSave(sentPrimary.options, sentPrimary.metafields, failedOptions, failedMetafields)
+          : [];
+        updateKeepIds(keepOverlayIdsRef.current, partialSavedIds, partialPurge.resourceIds);
+        if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, partialSavedIds, keepOverlayIdsRef.current)) {
+          touchOverlay();
+        }
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
           // The warning codes carry the only specific reason there is (the
@@ -1003,6 +1024,10 @@ export function useProductSubResources({
             [
               (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
               reasons,
+              partialPurge.unconfirmed
+                ? strings.translationPurgeUnconfirmed ||
+                  "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
+                : "",
             ].filter(Boolean).join(" "),
             "critical"
           );
@@ -1046,6 +1071,7 @@ export function useProductSubResources({
         setOptionValueOrder({});
         setSavedNonce((n) => n + 1);
         pendingPrimarySaveIdsRef.current = [];
+        pendingPrimarySaveSentRef.current = null;
 
         setHasChanges(false);
       } else {
@@ -1057,6 +1083,7 @@ export function useProductSubResources({
         // value for them is stale, except where the removal was not confirmed.
         const savedIds = pendingPrimarySaveIdsRef.current;
         pendingPrimarySaveIdsRef.current = [];
+        pendingPrimarySaveSentRef.current = null;
         updateKeepIds(keepOverlayIdsRef.current, savedIds, purge.resourceIds);
         if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, savedIds, keepOverlayIdsRef.current)) {
           touchOverlay();
@@ -1987,6 +2014,7 @@ export function useProductSubResources({
       }
 
       pendingPrimarySaveIdsRef.current = changedIdsOfPrimarySave(optionsChanges, metafieldChanges);
+      pendingPrimarySaveSentRef.current = { options: optionsChanges, metafields: metafieldChanges };
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
       // FOREIGN LOCALE: Save translations
@@ -2025,6 +2053,7 @@ export function useProductSubResources({
 
       pendingForeignSaveRef.current = {
         localeKey: buildLocaleKey(currentLanguage, selectedMarketId),
+        marketLayer: !!selectedMarketId,
         values: translationsData,
       };
       fetcher.submit(

@@ -108,3 +108,27 @@ export function splitDeleteAnswer(
     allDeleted: answer.ok && !!answer.body && answer.body.success !== false && failed.length === 0,
   };
 }
+
+/**
+ * Non-queued URLs of a delete that no GID lookup resolves: nothing is ever sent
+ * for them, so they are not deleted and must come back with whatever failed.
+ */
+export function unsentUrls(
+  urls: readonly string[],
+  urlToGid: Readonly<Record<string, string | undefined>>,
+  queuedUrls: ReadonlySet<string>,
+): string[] {
+  return urls.filter((url) => !queuedUrls.has(url) && !urlToGid[url]);
+}
+
+/** Whether a removed URL must be put back: failed on Shopify, or never sent at all. */
+export function urlNeedsRestore(
+  url: string,
+  urlToGid: Readonly<Record<string, string | undefined>>,
+  failedGids: ReadonlySet<string>,
+  unsent: ReadonlySet<string>,
+): boolean {
+  if (unsent.has(url)) return true;
+  const gid = urlToGid[url];
+  return gid !== undefined && failedGids.has(gid);
+}

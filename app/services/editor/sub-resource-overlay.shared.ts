@@ -25,14 +25,30 @@ export function recordConfirmedForeignSave(
   submitted: Record<string, Record<string, string>>,
   failedIds: readonly string[] = [],
   skipIds: readonly string[] = [],
+  opts: { marketLayer?: boolean; savedIds?: readonly string[] | null } = {},
 ): boolean {
   const failed = new Set(failedIds);
   const skip = new Set(skipIds);
+  // The server's own list of what it saved, where it sent one.
+  const saved = opts.savedIds ? new Set(opts.savedIds) : null;
   let touched = false;
   for (const [resourceId, fields] of Object.entries(submitted)) {
     if (failed.has(resourceId) || skip.has(resourceId)) continue;
+    if (saved && !saved.has(resourceId)) continue;
     for (const [key, value] of Object.entries(fields || {})) {
       if (!STAGEABLE_KEYS.has(key) || typeof value !== "string") continue;
+      if (value === "" && opts.marketLayer) {
+        // A confirmed removal of a market override: the market now INHERITS the
+        // global value, which a staged "" would hide behind an empty field.
+        const entry = overlay[localeKey]?.[resourceId];
+        if (entry && key in entry) {
+          delete entry[key];
+          touched = true;
+          if (Object.keys(entry).length === 0) delete overlay[localeKey][resourceId];
+          if (Object.keys(overlay[localeKey]).length === 0) delete overlay[localeKey];
+        }
+        continue;
+      }
       ((overlay[localeKey] ??= {})[resourceId] ??= {})[key] = value;
       touched = true;
     }
@@ -106,21 +122,20 @@ export interface TranslateTarget {
 
 /**
  * What to do with a translate answer that arrives later:
- * - `apply`: the editor still shows the requested item/language/market, so the
- *   answer is put into the visible state (and staged, in the global layer);
- * - `stage`: same item, a different view now — staged under the REQUESTED
- *   language only (never into what is showing);
- * - `skip`: another item is open (the overlay belongs to it), or the request
- *   was for a market view that is no longer showing.
+ * - `apply`: the editor still shows the requested item/language (global
+ *   layer), so the answer is put into the visible state (and staged);
+ * - `stage`: same item, but the view is not the requested global one (another
+ *   language, or a MARKET view: the server wrote the GLOBAL layer, which a
+ *   market view must not show as its own override) -- staged under the
+ *   requested language's global key only, never into what is showing;
+ * - `skip`: another item is open (the overlay belongs to it).
  */
 export function translateAnswerPlan(
   target: TranslateTarget | null,
   current: { itemId: string | undefined; locale: string; marketId: string },
 ): "apply" | "stage" | "skip" {
   if (!target || !target.itemId || target.itemId !== current.itemId) return "skip";
-  if (target.locale === current.locale && target.marketId === current.marketId) return "apply";
-  // A translate writes the global layer; a different market view has nothing to stage.
-  if (target.marketId) return "skip";
+  if (!target.marketId && target.locale === current.locale && current.marketId === "") return "apply";
   return "stage";
 }
 
@@ -144,14 +159,36 @@ export function stageTranslateAnswer(
 
 /** Resource ids a primary-save payload changes (options, their values, metafields). */
 export function changedIdsOfPrimarySave(
-  optionsChanges: Record<string, { valueUpdates?: Array<{ id: string }> }>,
+  optionsChanges: Record<string, { name?: string; valueUpdates?: Array<{ id: string }> }>,
   metafieldChanges: Record<string, unknown>,
 ): string[] {
   const ids = new Set<string>();
   for (const [optionId, change] of Object.entries(optionsChanges)) {
-    ids.add(optionId);
-    for (const v of change.valueUpdates ?? []) ids.add(v.id);
+    // Mirrors the server's purge: the option's own name translation goes only
+    // when the name was changed; added/deleted values touch no existing one.
+    if (change?.name !== undefined) ids.add(optionId);
+    for (const v of change?.valueUpdates ?? []) if (v?.id) ids.add(v.id);
   }
   for (const id of Object.keys(metafieldChanges)) ids.add(id);
   return [...ids];
+}
+
+/**
+ * The ids of a primary save that a PARTIAL failure still saved: the sent ids
+ * minus failed metafields, minus failed options and the value ids that
+ * belong to a failed option.
+ */
+export function savedIdsAfterPartialSave(
+  optionsChanges: Record<string, { name?: string; valueUpdates?: Array<{ id: string }> }>,
+  metafieldChanges: Record<string, unknown>,
+  failedOptionIds: readonly string[],
+  failedMetafieldIds: readonly string[],
+): string[] {
+  const failedOptions = new Set(failedOptionIds);
+  const failedMetafields = new Set(failedMetafieldIds);
+  const okOptions: Record<string, { name?: string; valueUpdates?: Array<{ id: string }> }> = {};
+  for (const [id, change] of Object.entries(optionsChanges)) if (!failedOptions.has(id)) okOptions[id] = change;
+  const okMetafields: Record<string, unknown> = {};
+  for (const [id, change] of Object.entries(metafieldChanges)) if (!failedMetafields.has(id)) okMetafields[id] = change;
+  return changedIdsOfPrimarySave(okOptions, okMetafields);
 }

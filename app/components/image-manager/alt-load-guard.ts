@@ -7,3 +7,13 @@
 export function answerPredatesSave(confirmedSaveAt: number | undefined, requestedAt: number): boolean {
   return confirmedSaveAt !== undefined && confirmedSaveAt >= requestedAt;
 }
+
+/** Monotonic clock for request/confirm stamps (Date.now() can step). */
+export function monotonicNow(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+/** A confirmed save only concerns the answer of the SAME layer (language + market). */
+export function altConfirmKey(url: string, locale: string | null | undefined, marketId: string | null | undefined): string {
+  return `${url}|${locale ?? ""}|${marketId ?? ""}`;
+}

@@ -4,12 +4,13 @@ import {
   dropOverlayForPrimaryChange,
   overlayKeepingOnly,
   recordConfirmedForeignSave,
+  savedIdsAfterPartialSave,
   stageTranslateAnswer,
   translateAnswerPlan,
   updateKeepIds,
 } from "../../app/services/editor/sub-resource-overlay.shared";
 import { hasPurgeUnconfirmedWarning } from "../../app/services/editor/unconfirmed-cleared.shared";
-import { answerPredatesSave } from "../../app/components/image-manager/alt-load-guard";
+import { answerPredatesSave, altConfirmKey } from "../../app/components/image-manager/alt-load-guard";
 
 describe("recordConfirmedForeignSave", () => {
   it("overwrites a staged translate value with what was saved, skipping failed ones", () => {
@@ -22,6 +23,36 @@ describe("recordConfirmedForeignSave", () => {
     const overlay: Record<string, Record<string, Record<string, string>>> = {};
     recordConfirmedForeignSave(overlay, "de::m1", { a: { value: "v" }, c: { value: "x" } }, [], ["c"]);
     expect(overlay).toEqual({ "de::m1": { a: { value: "v" } } });
+  });
+});
+
+describe("recordConfirmedForeignSave market removal and savedIds", () => {
+  it("deletes a staged market entry on a confirmed removal instead of staging empty", () => {
+    const overlay: Record<string, Record<string, Record<string, string>>> = { "de::m1": { a: { name: "old" } } };
+    expect(recordConfirmedForeignSave(overlay, "de::m1", { a: { name: "" } }, [], [], { marketLayer: true })).toBe(true);
+    expect(overlay).toEqual({});
+  });
+  it("still stages an empty value in the global layer", () => {
+    const overlay: Record<string, Record<string, Record<string, string>>> = {};
+    recordConfirmedForeignSave(overlay, "de", { a: { name: "" } });
+    expect(overlay).toEqual({ de: { a: { name: "" } } });
+  });
+  it("intersects with the server's savedResources", () => {
+    const overlay: Record<string, Record<string, Record<string, string>>> = {};
+    recordConfirmedForeignSave(overlay, "de", { a: { name: "x" }, b: { name: "y" } }, [], [], { savedIds: ["a"] });
+    expect(overlay).toEqual({ de: { a: { name: "x" } } });
+  });
+});
+
+describe("savedIdsAfterPartialSave", () => {
+  it("drops failed options with their values and failed metafields", () => {
+    const ids = savedIdsAfterPartialSave(
+      { o1: { name: "n", valueUpdates: [{ id: "v1" }] }, o2: { name: "m", valueUpdates: [{ id: "v2" }] } },
+      { m1: 1, m2: 2 },
+      ["o2"],
+      ["m2"],
+    );
+    expect(ids.sort()).toEqual(["m1", "o1", "v1"]);
   });
 });
 
@@ -58,9 +89,11 @@ describe("translateAnswerPlan", () => {
   it("stages only when the language changed meanwhile", () => {
     expect(translateAnswerPlan({ itemId: "p1", locale: "fr", marketId: "" }, cur)).toBe("stage");
   });
-  it("skips another item and a vanished market view", () => {
+  it("skips another item; a market target is staged globally, never applied", () => {
     expect(translateAnswerPlan({ itemId: "p2", locale: "de", marketId: "" }, cur)).toBe("skip");
-    expect(translateAnswerPlan({ itemId: "p1", locale: "de", marketId: "m" }, cur)).toBe("skip");
+    expect(translateAnswerPlan({ itemId: "p1", locale: "de", marketId: "m" }, cur)).toBe("stage");
+    expect(translateAnswerPlan({ itemId: "p1", locale: "de", marketId: "m" }, { ...cur, marketId: "m" })).toBe("stage");
+    expect(translateAnswerPlan({ itemId: "p1", locale: "de", marketId: "" }, { ...cur, marketId: "m" })).toBe("stage");
     expect(translateAnswerPlan(null, cur)).toBe("skip");
   });
   it("stages under the requested locale, ignoring empty values", () => {
@@ -73,8 +106,13 @@ describe("translateAnswerPlan", () => {
 describe("changedIdsOfPrimarySave", () => {
   it("collects options, value updates and metafields", () => {
     expect(
-      changedIdsOfPrimarySave({ o1: { valueUpdates: [{ id: "v1" }] }, o2: {} }, { m1: "x" }).sort(),
+      changedIdsOfPrimarySave({ o1: { name: "n", valueUpdates: [{ id: "v1" }] }, o2: { name: "m" } }, { m1: "x" }).sort(),
     ).toEqual(["m1", "o1", "o2", "v1"]);
+  });
+  it("does not name an option whose name did not change", () => {
+    expect(
+      changedIdsOfPrimarySave({ o1: { valueUpdates: [{ id: "v1" }] }, o2: { valuesToAdd: [] } as any }, {}).sort(),
+    ).toEqual(["v1"]);
   });
 });
 
@@ -91,5 +129,13 @@ describe("answerPredatesSave", () => {
     expect(answerPredatesSave(2000, 1000)).toBe(true);
     expect(answerPredatesSave(500, 1000)).toBe(false);
     expect(answerPredatesSave(undefined, 1000)).toBe(false);
+  });
+});
+
+describe("altConfirmKey", () => {
+  it("separates language and market layers of one image", () => {
+    expect(altConfirmKey("u", "de", "")).not.toBe(altConfirmKey("u", "fr", ""));
+    expect(altConfirmKey("u", "de", undefined)).toBe(altConfirmKey("u", "de", ""));
+    expect(altConfirmKey("u", "de", "m1")).not.toBe(altConfirmKey("u", "de", ""));
   });
 });

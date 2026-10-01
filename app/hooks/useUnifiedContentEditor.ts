@@ -50,7 +50,7 @@ import { readLastSelectedId } from "../utils/last-selected-item";
 import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
-import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning } from "../services/editor/unconfirmed-cleared.shared";
+import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -2047,6 +2047,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // The purge warning must survive every early return below (item switch,
       // Accept & Translate): those used to drop it and the merchant never
       // learned that stale translations are still live.
+      const purgeSourceData = fetcher.data;
       const purgeWarningText = hasPurgeUnconfirmedWarning(fetcher.data)
         ? String(t.content?.translationPurgeUnconfirmed || "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them.")
         : "";
@@ -2308,9 +2309,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                   ?.replace("{fieldType}", fieldLabel)
                   .replace("{count}", String(Object.keys(translations).length))
                   || `${fieldLabel} translated to ${Object.keys(translations).length} language(s)`;
+              // Every language of THIS field was re-translated, which overwrote
+              // the stale translations the purge could not remove: only a
+              // warning about other fields/keys is still true.
+              const stillWarn = purgeWarningText && purgeWarningConcernsOtherFields(purgeSourceData, fieldKey);
               showInfoBox(
-                purgeWarningText ? `${translatedText} ${purgeWarningText}` : translatedText,
-                purgeWarningText ? "warning" : "success"
+                stillWarn ? `${translatedText} ${purgeWarningText}` : translatedText,
+                stillWarn ? "warning" : "success"
               );
             }
 
@@ -2348,7 +2353,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // before clearing isLoadingData, ensuring buttons only stop pulsing once
             // the server has confirmed the saved translations.
             try { revalidatorRef.current.revalidate(); } catch {}
-          }
+          },
+          (errorMessage) => {
+            // The translation failed, the save did not: the purge warning is
+            // still true and must not vanish behind the error.
+            setIsAcceptAndTranslateFlow(false);
+            showInfoBox(
+              [translateErrorMessage(errorMessage, t), purgeWarningText].filter(Boolean).join(" "),
+              "critical",
+            );
+          },
+          { suppressErrorBox: true },
         );
 
         // Don't revalidate here — translation is still in flight; the callback above

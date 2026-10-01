@@ -1,12 +1,12 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, type RemovedEntry } from "./delete-rollback";
+import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, unsentUrls, urlNeedsRestore, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
-import { answerPredatesSave } from "./alt-load-guard";
+import { answerPredatesSave, altConfirmKey, monotonicNow } from "./alt-load-guard";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
 import { classifyAltSaveResponse, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
 import { usePlan } from "../../contexts/PlanContext";
@@ -375,7 +375,7 @@ export function VariantImageManager({
     const sameLocale = scope.sameLocale && scope.sameMarket;
     if (verdict.kind === "saved") {
       if (sameProduct) {
-        altConfirmedAtRef.current.set(entry.url, Date.now());
+        altConfirmedAtRef.current.set(altConfirmKey(entry.url, entry.locale, entry.marketId), monotonicNow());
         failedAltUrlsRef.current.delete(entry.url);
         // A newer edit of the same image stays dirty.
         const current = localAltTextsRef.current[entry.url];
@@ -602,7 +602,7 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     if (selectedMarketId) form.append("marketId", selectedMarketId);
-    altLoadRequestedAtRef.current = Date.now();
+    altLoadRequestedAtRef.current = monotonicNow();
     translationsFetcher.submit(form, { method: "post" });
   }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, selectedMarketId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -614,7 +614,7 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     if (selectedMarketId) form.append("marketId", selectedMarketId);
-    altLoadRequestedAtRef.current = Date.now();
+    altLoadRequestedAtRef.current = monotonicNow();
     translationsFetcher.submit(form, { method: "post" });
   }, [productId, currentLanguage, primaryLocale, translationsFetcher, selectedMarketId]);
 
@@ -630,7 +630,7 @@ export function VariantImageManager({
     // An image saved since this answer was requested keeps its fresh value.
     const requestedAt = altLoadRequestedAtRef.current;
     const skipUrl = (url: string) =>
-      isAltUrlBusy(url) || answerPredatesSave(altConfirmedAtRef.current.get(url), requestedAt);
+      isAltUrlBusy(url) || answerPredatesSave(altConfirmedAtRef.current.get(altConfirmKey(url, data.locale ?? currentLanguage, data.marketId ?? selectedMarketId)), requestedAt);
     const altTexts: Record<string, string> = data.altTexts ?? {};
     const layer = splitLoadedAltTexts(altTexts, data.inheritedMediaIds, (mediaId) => fileUrlMap[mediaId]);
     setLocalAltTexts(prev => {
@@ -2470,10 +2470,13 @@ export function VariantImageManager({
     }
     if (switchedAway()) { setIsDeleting(false); return; }
     const failedSet = new Set(failedGids);
-    const partial = failedGids.length > 0 && deletedGids.length > 0;
-    if (failedGids.length > 0) {
-      // Only what Shopify did NOT delete comes back.
-      const failedUrl = (url: string) => failedSet.has(urlToGid[url]);
+    // URLs with no GID were never sent, so they are not deleted either.
+    const unsentSet = new Set(unsentUrls(urls, urlToGid, queuedUrls));
+    const failedCount = failedGids.length + unsentSet.size;
+    const partial = failedCount > 0 && deletedGids.length > 0;
+    if (failedCount > 0) {
+      // Everything Shopify did NOT confirm deleted comes back.
+      const failedUrl = (url: string) => urlNeedsRestore(url, urlToGid, failedSet, unsentSet);
       const restoredOrder = removedFromOrder.filter(e => failedUrl(e.value));
       const restoredRefreshed = removedFromRefreshed.filter(e => (!!e.value.mediaId && failedSet.has(e.value.mediaId)) || failedUrl(e.value.url));
       const failedMainIds = new Set(
@@ -2519,7 +2522,7 @@ export function VariantImageManager({
       // A queued tile is removed for good even when the Shopify delete failed.
       setMediaError(
         partial
-          ? t.imageManager.mediaDeletePartial.replace("{failed}", String(failedGids.length)).replace("{deleted}", String(deletedGids.length))
+          ? t.imageManager.mediaDeletePartial.replace("{failed}", String(failedCount)).replace("{deleted}", String(deletedGids.length))
           : t.imageManager.mediaDeleteFailed,
       );
     }
@@ -2533,7 +2536,7 @@ export function VariantImageManager({
       if (clearOk === false) {
         setMediaError(
           partial
-            ? `${t.imageManager.mediaDeletePartial.replace("{failed}", String(failedGids.length)).replace("{deleted}", String(deletedGids.length))} ${t.imageManager.mediaClearMainFailed}`
+            ? `${t.imageManager.mediaDeletePartial.replace("{failed}", String(failedCount)).replace("{deleted}", String(deletedGids.length))} ${t.imageManager.mediaClearMainFailed}`
             : t.imageManager.mediaClearMainFailed,
         );
       }

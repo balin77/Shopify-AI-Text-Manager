@@ -98,3 +98,18 @@ export function hasPurgeUnconfirmedWarning(data: unknown): boolean {
   const warnings = (data as { warnings?: unknown } | null | undefined)?.warnings;
   return Array.isArray(warnings) && warnings.includes("translationPurgeUnconfirmed");
 }
+
+/**
+ * Whether a save's "translations could not be removed" warning concerns
+ * anything BEYOND `fieldKey`. After "Accept & Translate" fully re-translated
+ * that field, its stale translations are overwritten, so a warning about only
+ * that field is moot; one that names other fields, or names none (sub-resource
+ * ids), still stands.
+ */
+export function purgeWarningConcernsOtherFields(data: unknown, fieldKey: string): boolean {
+  if (!hasPurgeUnconfirmedWarning(data)) return false;
+  const named = unconfirmedClearedFieldSet(data);
+  if (named.size === 0) return true;
+  for (const k of named) if (k !== fieldKey) return true;
+  return false;
+}

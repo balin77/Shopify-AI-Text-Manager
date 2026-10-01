@@ -70,7 +70,7 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
     setPickerKind(null);
     if (!kind || !mediaKind || !draftFile || !reportPickFailure) return;
     // The slot the pick started in: the upload can outlast a language/market switch.
-    const slot = { locale: state?.rawLocale ?? "", marketId: state?.marketId ?? "" };
+    const slot = { locale: state?.rawLocale ?? "", marketId: state?.marketId ?? "", productId: state?.productId };
     setResolving(true);
     try {
       const picked = await resolvePickedMedia(items.find((i) => i.source !== "external_url") ?? items[0], kind);
@@ -83,7 +83,7 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
     } finally {
       setResolving(false);
     }
-  }, [pickerKind, mediaKind, draftFile, reportPickFailure, mediaId, state?.rawLocale, state?.marketId]);
+  }, [pickerKind, mediaKind, draftFile, reportPickFailure, mediaId, state?.rawLocale, state?.marketId, state?.productId]);
 
   const handleLinkSave = useCallback(() => {
     const externalUrl = linkValue.trim();
