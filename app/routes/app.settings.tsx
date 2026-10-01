@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
-import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator, useLocation } from "react-router";
 import {
   Page,
   Card,
@@ -1984,8 +1984,11 @@ export default function SettingsPage() {
     showTaxonomyProbeTab;
 
   const getInitialSection = (): Section => {
-    if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
+    // An explicit `tab` wins over a billing result: the callback's `billing`
+    // used to ride along on every later navigation, so a banner's "open the
+    // AI tab" link landed on the plan tab instead.
+    if (searchParams.get("billing") && !tabParam) return "plan";
     // Legacy deep-links keep working: language/glossary/feedback landed inside
     // the Setup / AI-Instructions tabs; translations/sku/metafields/richtext/
     // recurring/imagemanager all now live inside the "Weiteres" (other) tab.
@@ -2061,6 +2064,26 @@ export default function SettingsPage() {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
+
+  // A deep link that arrives while Settings is ALREADY open (a banner's
+  // "confirm in Settings", the plan buttons in the nav) is a navigation to
+  // this same route: the component stays mounted, so the section read once
+  // into state above would ignore it — the merchant landed in Settings, on
+  // whatever tab was open. Every navigation carries a new location key, also
+  // one to the identical URL (the tab is not mirrored into the URL, so a
+  // second click on the same link changes nothing else). Only a navigation
+  // that NAMES a section moves it: dismissing the billing banner rewrites the
+  // URL too, and must not throw the merchant off the plan tab.
+  const location = useLocation();
+  const seenLocationKey = useRef(location.key);
+  useEffect(() => {
+    if (seenLocationKey.current === location.key) return;
+    seenLocationKey.current = location.key;
+    if (!searchParams.get("tab") && !searchParams.get("billing")) return;
+    const target = getInitialSection();
+    if (target !== selectedSection) void handleSectionChange(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
 
   // Reset changes state after successful save
   useEffect(() => {

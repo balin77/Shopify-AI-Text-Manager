@@ -27,7 +27,10 @@ import { useNavigate } from "react-router";
  * one. Everything else — Shopify's `shop`/`host`/`embedded`/`locale`, the
  * sections' own filter state — is preserved as before.
  */
-const ONE_SHOT_PARAMS = new Set(["contentLocale"]);
+// `billing` / `plan` are the billing callback's result for the Settings page
+// banner — carried along they re-opened the plan tab (and its banner) on every
+// later visit to Settings, whatever tab a link asked for.
+const ONE_SHOT_PARAMS = new Set(["contentLocale", "billing", "plan"]);
 
 interface NavigateOptions {
   /** Additional search params to include (will be merged with preserved params) */

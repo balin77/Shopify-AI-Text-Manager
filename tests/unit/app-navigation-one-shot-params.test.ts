@@ -70,4 +70,18 @@ describe("useAppNavigation — one-shot params", () => {
     expect(params.get("contentLocale")).toBe("es");
     expect(params.get("select")).toBe("gid://shopify/Product/1");
   });
+
+  it("does NOT carry the billing callback's result past the page it was for", () => {
+    // Carried along, ?billing=success re-opened Settings on the plan tab for
+    // every later link — the AI banner's "open the AI tab" link included.
+    withSearch("?shop=x.myshopify.com&billing=success&plan=pro&tab=plan");
+    const { result } = renderHook(() => useAppNavigation());
+
+    result.current.handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "ai" }) });
+
+    const params = navigatedParams();
+    expect(params.get("billing")).toBeNull();
+    expect(params.get("plan")).toBeNull();
+    expect(params.get("tab")).toBe("ai");
+  });
 });
