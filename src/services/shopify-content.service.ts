@@ -9,6 +9,7 @@ import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
 import { featuredAltLockId, marketLayerLockId } from '../../app/services/translations/translation-locks.shared';
 import { collectRetranslationTaskIds } from '../../app/services/translations/retranslation-tasks.shared';
+import { echoComparisonKey } from '../../app/services/translations/translation-echo.shared';
 import { isAuthError, isManagedRefusal, localeName } from './ai.service';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
@@ -77,9 +78,6 @@ export function fieldTranslationKeyMap(resourceType: string): Readonly<Record<st
   return { ...FIELD_TO_TRANSLATION_KEY, description: 'body', body: 'body' };
 }
 
-/** Composite key of the echo lookup — a translation is identified by BOTH its
- *  locale and its key, exactly as `registerAndVerify` identifies its own. */
-const ECHO_KEY_SEP = '\u0000';
 
 /**
  * What a `translationsRegister` response PROVES was stored.
@@ -157,7 +155,7 @@ function readTranslationEcho(data: any): TranslationEcho {
  * nothing to normalise and no reason to widen the match.
  */
 function echoKeyOf(locale: string, translationKey: string): string {
-  return `${locale.toLowerCase()}${ECHO_KEY_SEP}${translationKey}`;
+  return echoComparisonKey(locale, translationKey);
 }
 
 /** Did Shopify echo THIS (locale, key) back? `false` for an unknown echo, so
