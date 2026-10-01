@@ -339,8 +339,28 @@ export class ShopifyContentService {
       throw new Error('saveTranslations takes ONE locale per call');
     }
 
-    // Fetch digest map first
-    const { digestMap } = await this.loadTranslatableContent(resourceId);
+    // Fetch digest map first. The DETAILED read, because the plain one cannot
+    // tell an ABSENT resource (a deleted option / metafield GID) from one whose
+    // keys are all empty: both read as "no digest", i.e. notTranslatable, and a
+    // vanished resource was reported as merely untranslatable instead of failed.
+    const { fetchDigestsForResourceDetailed } = await import('../../app/services/translations/verified-translations.server');
+    const detailed = await fetchDigestsForResourceDetailed(
+      this.admin,
+      resourceId,
+      translations.map((t) => t.key),
+    );
+    if (!detailed.found) {
+      loggers.translation('warn', `[saveTranslations] Translatable resource ${resourceId} not found — nothing saved`);
+      return {
+        confirmedKeys: new Set(),
+        confirmedValues: new Map(),
+        userErrors: [{ message: `Translatable resource not found: ${resourceId}` }],
+        digests: new Map(),
+        noDigest: [],
+        unconfirmedKeys: [...new Set(translations.map((t) => t.key))],
+      };
+    }
+    const digestMap: Record<string, string> = Object.fromEntries(detailed.digests);
 
     // Add digests to translations, filtering out any without a valid digest.
     // When a market is selected, fold marketId onto each TranslationInput so
@@ -1804,26 +1824,6 @@ export class ShopifyContentService {
         !!changePolicy?.autoTranslateExternalChanges &&
         IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType) &&
         fieldsChanged;
-      // The bulk caller's budget is asked only where a run would really start.
-      const contentBudgetRefused =
-        repairWanted && !!params.repairBudget && !params.repairBudget.take('content', resourceId);
-      const selfRetranslated =
-        !!changePolicy?.autoTranslateExternalChanges &&
-        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType) &&
-        !contentBudgetRefused;
-      // With the repair in force the stored deletion answer is superseded by
-      // `purgeOnPrimaryChange` (which that switch forces off); without it the
-      // resource is unreconciled and the merchant's own answer stands. The
-      // `|| resourceType === 'Collection'` this used to carry is gone with the
-      // exclusion it belonged to — a collection is `selfRetranslated` now.
-      const purgeChangedFields = !!changePolicy && (
-        selfRetranslated ||
-        // A refused collection group loses nothing (see `repairBudget`).
-        (contentBudgetRefused && resourceType === 'Collection')
-          ? changePolicy.purgeOnPrimaryChange
-          : changePolicy.purgeUnreconciledSurfaces
-      );
-
       // Map UI field names to Shopify translation keys — the ONE canonical map
       // (FIELD_TO_TRANSLATION_KEY, top of this file).
       const changedTranslationKeys = fieldsChanged
@@ -1844,8 +1844,14 @@ export class ShopifyContentService {
       // — repeating the write. A stale translation is visible and repairable;
       // "your text was not saved" about text that was is neither.
       const needsForeignLocales =
-        (purgeChangedFields && changedTranslationKeys.length > 0) ||
-        (selfRetranslated && changedTranslationKeys.length > 0) ||
+        // The budget slot is taken only AFTER the locales are known (a run
+        // starts only with foreign locales), so the question here is asked of
+        // `repairWanted` and the policy, not of the budget's verdict.
+        (!!changePolicy &&
+          (repairWanted ||
+            changePolicy.purgeOnPrimaryChange ||
+            changePolicy.purgeUnreconciledSurfaces) &&
+          changedTranslationKeys.length > 0) ||
         // BOTH featured-alt outcomes need the locales — the deletion to scope
         // it, the re-translation to know what to translate into. Asking only
         // about the deletion left a shop with auto-translate ON and the stored
@@ -1867,6 +1873,27 @@ export class ShopifyContentService {
           });
         }
       }
+
+      // The bulk caller's budget is asked only where a run would really start.
+      const contentBudgetRefused =
+        repairWanted && changedTranslationKeys.length > 0 && foreignLocales.length > 0 && !!params.repairBudget && !params.repairBudget.take('content', resourceId);
+      const selfRetranslated =
+        !!changePolicy?.autoTranslateExternalChanges &&
+        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType) &&
+        !contentBudgetRefused;
+      // With the repair in force the stored deletion answer is superseded by
+      // `purgeOnPrimaryChange` (which that switch forces off); without it the
+      // resource is unreconciled and the merchant's own answer stands. The
+      // `|| resourceType === 'Collection'` this used to carry is gone with the
+      // exclusion it belonged to — a collection is `selfRetranslated` now.
+      const purgeChangedFields = !!changePolicy && (
+        selfRetranslated ||
+        // A refused collection group loses nothing (see `repairBudget`).
+        (contentBudgetRefused && resourceType === 'Collection')
+          ? changePolicy.purgeOnPrimaryChange
+          : changePolicy.purgeUnreconciledSurfaces
+      );
+
 
       // Delete translations for changed fields across ALL foreign locales.
       // With the purge off the old translations stay and Shopify flags them

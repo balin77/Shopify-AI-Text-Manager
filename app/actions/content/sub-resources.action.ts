@@ -505,6 +505,10 @@ export async function handleTranslateSubResources(
           for (const key of result.confirmedKeys) {
             (confirmedTranslations[resourceId] ??= {})[key] = result.confirmedValues.get(key) ?? fields[key];
           }
+          // Claim the sub-resource (global layer) after a CONFIRMED write: a
+          // detached repair watches each resource it is about to write and
+          // must abandon it rather than overwrite this value.
+          if (result.confirmedKeys.size > 0) markTranslationSaved(resourceId);
           if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
             notTranslatable.push(resourceId);
           }
@@ -777,7 +781,11 @@ export async function handleTranslateSubResourceToAllLocales(
               result,
               digests: result.digests,
             });
-            if (result.confirmedKeys.size > 0) writtenLocales.add(locale);
+            if (result.confirmedKeys.size > 0) {
+              writtenLocales.add(locale);
+              // Same claim as the single-locale path, global layer.
+              markTranslationSaved(resourceId);
+            }
             if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
               notTranslatable.push(resourceId);
             }
@@ -1173,6 +1181,9 @@ export async function handleSavePrimarySubResources(
         ? changePolicy.purgeOnPrimaryChange
         : changePolicy.purgeUnreconciledSurfaces);
 
+    // Sub-resources whose stale foreign translation Shopify did not confirm
+    // removing (kept locally); surfaced as a warning on a save that worked.
+    const purgeUnconfirmed: string[] = [];
     if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
       // The MARKET overrides of every sub-resource this save moved. Nothing
       // re-translates one (the repair writes global rows only), so once the
@@ -1238,7 +1249,8 @@ export async function handleSavePrimarySubResources(
         // confirmed (locale, key): an unconfirmed removal keeps it (the next
         // sync corrects it), and a DB-only mirror row Shopify never held is
         // confirmed by the re-read and cleared. `admin`, not the gateway: this
-        // is request-bound and a refused document must not cost retry sleeps.
+        // is request-bound, but the gateway is what throttle-retries: a bare
+        // `admin` call dropped a removal on the first THROTTLED answer.
         const purgeForeign = async (resourceId: string, resourceType: string, key: string) => {
           let localPairs: Set<string> | undefined;
           try {
@@ -1251,7 +1263,7 @@ export async function handleSavePrimarySubResources(
             // Unknown local rows: every gap is re-read instead.
             localPairs = undefined;
           }
-          const removal = await removeVerifiedWithGapReread(admin, resourceId, [key], foreignLocales, "", { localPairs });
+          const removal = await removeVerifiedWithGapReread(gateway, resourceId, [key], foreignLocales, "", { localPairs });
           const confirmedLocales = foreignLocales.filter((l) => removal.confirmedPairs.has(`${l}${LOCALE_KEY_SEP}${key}`));
           if (confirmedLocales.length > 0) {
             await db.contentTranslation.deleteMany({
@@ -1259,6 +1271,7 @@ export async function handleSavePrimarySubResources(
             });
           }
           if (removal.unconfirmedPairs.length > 0) {
+            purgeUnconfirmed.push(resourceId);
             logger.warn(`[UnifiedContent] Shopify did not confirm removing ${resourceType} translations for ${resourceId} — local rows kept`, {
               context: "UnifiedContent",
               resourceId,
@@ -1289,6 +1302,7 @@ export async function handleSavePrimarySubResources(
               }
             }
           } catch (err) {
+            purgeUnconfirmed.push(optionId);
             logger.error(`[UnifiedContent] Failed to delete translations for option ${optionId}`, {
               context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
             });
@@ -1302,6 +1316,7 @@ export async function handleSavePrimarySubResources(
           try {
             await purgeForeign(metafieldId, "Metafield", "value");
           } catch (err) {
+            purgeUnconfirmed.push(metafieldId);
             logger.error(`[UnifiedContent] Failed to delete translations for metafield ${metafieldId}`, {
               context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
             });
@@ -1474,6 +1489,9 @@ export async function handleSavePrimarySubResources(
       savedMetafields,
       failedMetafields,
       retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+      ...(purgeUnconfirmed.length > 0
+        ? { warnings: ["translationPurgeUnconfirmed"], unconfirmedPurge: purgeUnconfirmed }
+        : {}),
     });
   } catch (error: unknown) {
     const msg = getFullErrorMessage(error);

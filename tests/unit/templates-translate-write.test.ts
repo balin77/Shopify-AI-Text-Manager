@@ -288,6 +288,32 @@ describe("handleTranslateAll", () => {
     expect(taskUpdates.at(-1).status).toBe("completed");
   });
 
+  it("routes a CookieBanner resource through the unstable endpoint, not the stable register", async () => {
+    const CB = "gid://shopify/CookieBanner/1";
+    translateChunked.mockResolvedValue({ en: { [KEY]: "Hello" } });
+    const fetchMock = vi.fn(async (..._args: unknown[]) => ({
+      ok: true,
+      json: async () => ({ data: { translationsRegister: { userErrors: [], translations: [{ key: KEY, locale: "en" }] } } }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { ctx, db } = makeCtx({ formEntries: form });
+      (ctx as any).session = { shop: "s.myshopify.com", accessToken: "tok" };
+      (ctx as any).keyToResourceId = new Map([[KEY, CB]]);
+      (ctx as any).themeGroups[0].resourceId = CB;
+      (ctx as any).resourceId = CB;
+      const r = await handleTranslateAll(ctx, "translateAll");
+      expect(body(r).success).toBe(true);
+      expect(body(r).rejectedFields).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/admin/api/unstable/");
+      expect(shopify.registers).toEqual([]);
+      expect(db.themeTranslation.upsert).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("an unechoed key is not mirrored and the run fails (nothing confirmed)", async () => {
     translateChunked.mockResolvedValue({ en: { [KEY]: "Hello" } });
     shopify.registerStores = () => [];

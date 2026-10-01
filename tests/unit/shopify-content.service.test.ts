@@ -631,6 +631,34 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
     expect(removedFromShopify).toEqual([]);
   });
 
+  it('a single-language shop spends no budget slot: no run could start', async () => {
+    const inner = admin.graphql as unknown as (q: string, o?: unknown) => Promise<unknown>;
+    const singleAdmin = {
+      graphql: vi.fn(async (query: string, opts?: any) =>
+        query.includes('getShopLocales')
+          ? {
+              ok: true,
+              json: async () => ({ data: { shopLocales: [{ locale: 'de', primary: true, published: true }] } }),
+            }
+          : inner(query, opts),
+      ),
+    };
+    service = new ShopifyContentService(singleAdmin as never);
+    const take = vi.fn().mockReturnValue(true);
+    await savePage({ repairBudget: { take } });
+    await savePage({ resourceId: 'gid://shopify/Page/2', repairBudget: { take } });
+
+    expect(take).not.toHaveBeenCalled();
+    expect(retranslate.calls).toEqual([]);
+  });
+
+  it('a multi-locale shop still counts every run against the budget', async () => {
+    const take = vi.fn().mockReturnValue(true);
+    await savePage({ repairBudget: { take } });
+    await savePage({ resourceId: 'gid://shopify/Page/2', repairBudget: { take } });
+    expect(take).toHaveBeenCalledTimes(2);
+  });
+
   it('a Collection past the budget keeps its translations (the purge answer auto-translate forces off)', async () => {
     const take = vi.fn().mockReturnValue(false);
     await service.updateContent({

@@ -6,7 +6,7 @@ import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
-import { registerAndVerify } from "~/services/translations/verified-translations.server";
+import { registerThemeResourceTranslations } from "~/utils/cookie-banner-availability.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
@@ -79,7 +79,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
     }
 
     // Verified register: userErrors alone prove nothing, Shopify must ECHO the key.
-    const verified = await registerAndVerify(admin, fieldResId, [
+    const verified = await registerThemeResourceTranslations(admin, session, fieldResId, [
       { key: fieldType, value: translatedValue, locale: targetLocale, translatableContentDigest: singleFieldDigest },
     ]);
     if (!verified.confirmedKeys.has(fieldType)) {
@@ -246,7 +246,7 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
     const failureReasons: string[] = [];
     for (const { locale, value } of pendingUpserts) {
       try {
-        const verified = await registerAndVerify(admin, fieldResId2, [
+        const verified = await registerThemeResourceTranslations(admin, session, fieldResId2, [
           { key: fieldType, value, locale, translatableContentDigest: fieldDigest },
         ]);
         if (verified.confirmedKeys.has(fieldType)) {

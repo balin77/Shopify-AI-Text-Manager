@@ -139,4 +139,29 @@ describe("handleUpdateContent — redirect on a translated handle", () => {
     // Not even the snapshot read: the capture bails on the first query.
     expect(database.collection.findFirst).not.toHaveBeenCalled();
   });
+
+  it("still finishes the redirect when a confirmed removal came back as success:false", async () => {
+    // A foreign save that confirmed the handle REMOVAL but no register answers
+    // success:false; the translated URL is dead all the same, so the redirect
+    // (back to the primary handle) must still be written.
+    const state = { frHandle: "boite-ancienne" as string | null };
+    const database = db(state);
+    const ctx = ctxFor(database, async () => {
+      state.frHandle = null;
+      return { success: false, error: "register not confirmed" };
+    });
+
+    await handleUpdateContent(ctx, formData(""));
+
+    expect(created).toEqual([
+      { path: "/collections/boite-ancienne", target: "/collections/kumikobox" },
+    ]);
+  });
+
+  it("writes nothing on a failed save that changed nothing", async () => {
+    const state = { frHandle: "boite-ancienne" as string | null };
+    const ctx = ctxFor(db(state), async () => ({ success: false, error: "x" }));
+    await handleUpdateContent(ctx, formData("boite-neuve"));
+    expect(created).toEqual([]);
+  });
 });

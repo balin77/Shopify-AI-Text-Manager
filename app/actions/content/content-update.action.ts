@@ -451,11 +451,16 @@ export async function handleUpdateContent(
       // The two are mutually exclusive by construction — one returns early for
       // a foreign save, the other for a primary one — so at most one note comes
       // back and the response shape stays a single `redirectNote`.
+      // The TRANSLATED-handle redirect is finished even on a failed answer: a
+      // foreign save that confirmed a handle REMOVAL but no register answers
+      // success:false, and the old translated URL is dead all the same. The
+      // finisher reads the STORED row, so a save that changed nothing decides
+      // "unchanged" and writes nothing.
       const productRedirectNote =
-        productBody?.success === false
+        (productBody?.success === false
           ? undefined
-          : (await finishHandleRedirect(echoedHandle(productBody))) ??
-            (await finishTranslatedHandleRedirect(capturedTranslatedHandle));
+          : await finishHandleRedirect(echoedHandle(productBody))) ??
+        (await finishTranslatedHandleRedirect(capturedTranslatedHandle));
       // Products have their own webhook, so `finishIndexNow` is a no-op here —
       // it is called anyway so the two return paths stay identical and a future
       // creatable type on this branch is covered without anyone remembering.
@@ -566,10 +571,13 @@ export async function handleUpdateContent(
     }
 
     const savedOk = (result as { success?: boolean })?.success !== false;
-    const redirectNote = savedOk
-      ? (await finishHandleRedirect(echoedHandle(result as Record<string, unknown>))) ??
-        (await finishTranslatedHandleRedirect(capturedTranslatedHandle))
-      : undefined;
+    // Translated-handle redirect also after a failed answer: a confirmed
+    // removal with no confirmed register still moved the live URL (the
+    // finisher reads the stored row, so an unchanged save writes nothing).
+    const redirectNote =
+      (savedOk
+        ? await finishHandleRedirect(echoedHandle(result as Record<string, unknown>))
+        : undefined) ?? (await finishTranslatedHandleRedirect(capturedTranslatedHandle));
     // §3.4 — the ONLY moment a page/article/blog publish can reach IndexNow:
     // Shopify emits no webhook for any of them.
     if (savedOk) await finishIndexNow(echoedHandle(result as Record<string, unknown>));

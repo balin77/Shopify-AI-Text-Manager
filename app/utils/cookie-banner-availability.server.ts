@@ -24,6 +24,7 @@
  */
 
 import { logger } from "~/utils/logger.server";
+import { registerAndVerify, type VerifiedWriteResult } from "~/services/translations/verified-translations.server";
 
 export type CookieBannerAvailability = "available" | "unavailable";
 
@@ -376,4 +377,47 @@ export async function removeCookieBannerTranslations(
 /** Test/maintenance helper — clears the in-memory cache. */
 export function __clearCookieBannerCache(): void {
   cache.clear();
+}
+
+export const COOKIE_BANNER_GID_PREFIX = "gid://shopify/CookieBanner/";
+
+/**
+ * ONE register for a theme-content resource, whichever endpoint owns it:
+ * COOKIE_BANNER resources are rejected by the pinned stable endpoint ("invalid
+ * id") and go through the unstable one; everything else is the echo-verified
+ * stable register. The documented cookie-banner exception stays: the unstable
+ * response is not echo-verified (an `ok` answer confirms every input), exactly
+ * as the manual save and the AI-translate path treat it.
+ */
+export async function registerThemeResourceTranslations(
+  admin: Parameters<typeof registerAndVerify>[0],
+  session: { shop: string; accessToken?: string },
+  resourceId: string,
+  inputs: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }>,
+): Promise<VerifiedWriteResult> {
+  if (!resourceId.startsWith(COOKIE_BANNER_GID_PREFIX)) {
+    return registerAndVerify(admin, resourceId, inputs);
+  }
+  const res = await writeCookieBannerTranslations(
+    { shop: session.shop, accessToken: session.accessToken as string },
+    resourceId,
+    inputs.map((i) => ({
+      key: i.key,
+      value: i.value,
+      translatableContentDigest: i.translatableContentDigest,
+      locale: i.locale,
+    })),
+  );
+  if (!res.ok) {
+    return {
+      confirmedKeys: new Set(),
+      confirmedValues: new Map(),
+      userErrors: [{ message: res.error ?? "Cookie banner translation rejected" }] as VerifiedWriteResult["userErrors"],
+    };
+  }
+  return {
+    confirmedKeys: new Set(inputs.map((i) => i.key)),
+    confirmedValues: new Map(),
+    userErrors: [],
+  };
 }
