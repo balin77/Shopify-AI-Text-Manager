@@ -17,6 +17,7 @@ import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./typ
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
+import { splitLoadedAltTexts, altFieldView, shouldSaveAltText } from "./alt-market-layer";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -321,6 +322,9 @@ export function VariantImageManager({
   const fetcher = useFetcher();
   // Alt text editing state
   const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
+  // Values the open market inherits from the global layer: shown as a
+  // placeholder, never as the field's value (see alt-market-layer.ts).
+  const [inheritedAltTexts, setInheritedAltTexts] = useState<Record<string, string>>({});
   const altTextFetcher = useFetcher<any>();          // generate / translate (returns text)
   const saveAltTextFetcher = useFetcher<any>();      // save (writes to Shopify)
   // A primary alt save may start a detached re-translation; hand its task ids
@@ -421,6 +425,7 @@ export function VariantImageManager({
   // or after a bulk apply (variantReloadKey bump) so freshly saved translations show up.
   useEffect(() => {
     setLocalAltTexts({});
+    setInheritedAltTexts({});
     if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
     const form = new FormData();
     form.append("action", "loadImageAltTranslations");
@@ -438,14 +443,9 @@ export function VariantImageManager({
     // this view's layer.
     if ((data.marketId ?? "") !== selectedMarketId) return;
     const altTexts: Record<string, string> = data.altTexts ?? {};
-    setLocalAltTexts(prev => {
-      const next = { ...prev };
-      for (const [mediaId, altText] of Object.entries(altTexts)) {
-        const url = fileUrlMap[mediaId];
-        if (url) next[url] = altText as string;
-      }
-      return next;
-    });
+    const layer = splitLoadedAltTexts(altTexts, data.inheritedMediaIds, (mediaId) => fileUrlMap[mediaId]);
+    setLocalAltTexts(prev => ({ ...prev, ...layer.own }));
+    setInheritedAltTexts(layer.inherited);
   }, [translationsFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Extracted so it can be called both on product selection (full reset) and on image reload
@@ -2509,6 +2509,9 @@ export function VariantImageManager({
   const handleSaveAltText = useCallback((url: string, altText: string) => {
     const mediaId = urlToGid[url];
     if (!mediaId) return;
+    // The inputs save on every blur: without an edit there is nothing to write
+    // (and an inherited fallback must never be pinned as an override).
+    if (!shouldSaveAltText(dirtyUrlsRef.current.has(url))) return;
     const form = new FormData();
     form.append("action", "saveImageAltText");
     form.append("mediaId", mediaId);
@@ -2608,7 +2611,14 @@ export function VariantImageManager({
   const productCurrentAltText = productSingleSelected
     ? (isPrimaryLocale
       ? (localAltTexts[productSingleSelected] ?? imageMetas[productSingleSelected]?.altText ?? "")
-      : (localAltTexts[productSingleSelected] ?? ""))
+      : altFieldView({
+        own: localAltTexts[productSingleSelected],
+        inherited: inheritedAltTexts[productSingleSelected],
+        primaryAlt: "", fallbackPlaceholder: "",
+      }).value)
+    : "";
+  const productInheritedAlt = productSingleSelected && !isPrimaryLocale
+    ? (inheritedAltTexts[productSingleSelected] ?? "")
     : "";
   const productPrimaryAltText = productSingleSelected ? (imageMetas[productSingleSelected]?.altText ?? "") : "";
   const productHasTranslation = productSingleSelected
@@ -2917,7 +2927,7 @@ export function VariantImageManager({
                 type="text"
                 value={productCurrentAltText}
                 onChange={(e) => handleAltTextChange(productSingleSelected, e.target.value)}
-                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : (productPrimaryAltText || t.imageManager.altTextPlaceholder)}
+                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: productCurrentAltText, inherited: productInheritedAlt, primaryAlt: productPrimaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                 style={{
                   flex: "1 1 200px",
                   minWidth: 180,
@@ -3093,6 +3103,7 @@ export function VariantImageManager({
                 localAltTexts={localAltTexts}
                 isAltTextLoading={altTextFetcher.state !== "idle"}
                 onAltTextChange={handleAltTextChange}
+                inheritedAltTexts={inheritedAltTexts}
                 onSaveAltText={handleSaveAltText}
                 onGenerateAltText={handleGenerateAltTextForImage}
                 onTranslateAltText={handleTranslateAltTextForImage}

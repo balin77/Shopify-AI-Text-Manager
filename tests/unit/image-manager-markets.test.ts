@@ -210,6 +210,7 @@ describe("handleSaveImageAltText on a market layer", () => {
     expect(upsert.where.imageId_locale_marketId.marketId).toBe(MARKET);
     expect(markTranslationSaved).toHaveBeenCalledWith(`${MEDIA_A}#market`);
     expect(markTranslationSaved).not.toHaveBeenCalledWith(MEDIA_A);
+    expect(markTranslationSaved).toHaveBeenCalledWith("p1#altTextShield");
   });
 
   it("a global save is unchanged: no marketId, bare lock key", async () => {

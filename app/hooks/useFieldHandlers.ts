@@ -1758,8 +1758,10 @@ const handleClearAllForLocaleConfirm = () => {
   let hasAltTextsToDelete = false;
   if (selectedItem?.images) {
     selectedItem.images.forEach((img: ContentImage, index: number) => {
+      // Only the layer being cleared (the selected market's, else global).
       const hasTranslation = img.altTextTranslations?.some(
-        (t: { locale: string }) => t.locale === currentLanguage
+        (t: { locale: string; marketId?: string }) =>
+          t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || "")
       );
       if (hasTranslation) {
         altTextsToDelete[index] = "";
@@ -1778,7 +1780,8 @@ const handleClearAllForLocaleConfirm = () => {
     selectedItem.images.forEach((img: ContentImage) => {
       if (img.altTextTranslations) {
         img.altTextTranslations = img.altTextTranslations.filter(
-          (t: { locale: string }) => t.locale !== currentLanguage
+          (t: { locale: string; marketId?: string }) =>
+            !(t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || ""))
         );
       }
     });

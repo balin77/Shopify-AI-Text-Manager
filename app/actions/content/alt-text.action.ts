@@ -30,7 +30,7 @@ import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { ALT_IMAGE_NOT_FOUND, pickProductImage } from "~/services/product-image-pick.shared";
-import { marketLayerLockId } from "~/services/translations/translation-locks.shared";
+import { altTextSyncShieldId, marketLayerLockId } from "~/services/translations/translation-locks.shared";
 
 // A Shopify Market id: the only shape a client-sent marketId may take.
 const MARKET_GID_RE = /^gid:\/\/shopify\/Market\/\d+$/;
@@ -524,7 +524,7 @@ export async function handleTranslateAltTextToAllLocales(
   let resolvedDbImage: { mediaId: string | null } | undefined;
   if (!isFeaturedImageResource) {
     const dbProduct = await db.product.findUnique({
-      where: { id: itemId },
+      where: { shop_id: { shop: session.shop, id: itemId } },
       include: { images: { orderBy: { position: 'asc' } } },
     });
     resolvedDbImage = pickProductImage(dbProduct?.images, { mediaId: requestedMediaId, imageIndex });
@@ -911,9 +911,16 @@ export async function handleSaveImageAltText(
       // lock AND every resource it is about to write, so marking the image is
       // both precise and enough — without it the AI would overwrite the value
       // the merchant just accepted.
-      // A MARKET write marks the market-layer key instead (a repair writes
-      // global rows only and must not be aborted by it; the syncs ask for it).
+      // The bare MediaImage id is what a repair run watches; a MARKET write
+      // must not abort it (a repair writes global rows only), so it marks the
+      // market-layer key instead. Both layers also mark the product's alt-sync
+      // shield -- the one key the products/update sync actually asks for -- so
+      // the rewrite stays off the alt cache until Shopify's read-back caught up.
       markTranslationSaved(marketId ? marketLayerLockId(mediaId) : mediaId);
+      const owningProduct = await db.productImage
+        .findFirst({ where: { mediaId, product: { shop: session.shop } }, select: { productId: true } })
+        .catch(() => null);
+      if (owningProduct?.productId) markTranslationSaved(altTextSyncShieldId(owningProduct.productId));
       try {
         // Shop-scoped, resolved now (R4-DI7): an unscoped mediaId lookup could
         // resolve another tenant's ProductImage. A cleared value deletes ONLY
