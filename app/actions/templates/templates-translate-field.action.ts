@@ -6,7 +6,8 @@ import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
-import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
+import { registerAndVerify } from "~/services/translations/verified-translations.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
@@ -77,25 +78,22 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
       );
     }
 
-    const response = await admin.graphql(TRANSLATE_CONTENT, {
-      variables: {
-        resourceId: fieldResId,
-        translations: [
-          {
-            key: fieldType,
-            value: translatedValue,
-            locale: targetLocale,
-            translatableContentDigest: singleFieldDigest,
-          },
-        ],
-      },
-    });
-    const data = await response.json();
-
-    if (data.data?.translationsRegister?.userErrors?.length > 0) {
-      const errors = data.data.translationsRegister.userErrors;
-      throw new Error(`Shopify rejected translation: ${errors[0].message}`);
+    // Verified register: userErrors alone prove nothing, Shopify must ECHO the key.
+    const verified = await registerAndVerify(admin, fieldResId, [
+      { key: fieldType, value: translatedValue, locale: targetLocale, translatableContentDigest: singleFieldDigest },
+    ]);
+    if (!verified.confirmedKeys.has(fieldType)) {
+      throw new Error(
+        verified.userErrors.length > 0
+          ? `Shopify rejected translation: ${verified.userErrors[0].message}`
+          : "Shopify did not store the translation although it reported no error",
+      );
     }
+    // What Shopify STORED is what gets mirrored.
+    const storedValue = verified.confirmedValues.get(fieldType) ?? translatedValue;
+    // Claim the resource the merchant just translated (global layer): a detached
+    // theme repair must abandon the rest rather than overwrite this value.
+    markTranslationSaved(fieldResId);
 
     logger.info("[TEMPLATES] translateField: Shopify translation registered", {
       context: "Templates",
@@ -116,7 +114,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
           themeId: extractThemeIdFromResourceId(fieldResId) ?? "",
         },
       },
-      update: { value: translatedValue, updatedAt: new Date() },
+      update: { value: storedValue, updatedAt: new Date() },
       create: {
         shop: session.shop,
         groupId: groupId,
@@ -125,7 +123,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
         domain: domain,
         locale: targetLocale,
         key: fieldType,
-        value: translatedValue,
+        value: storedValue,
       },
     });
 
@@ -135,11 +133,11 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
         status: "completed",
         progress: 100,
         completedAt: new Date(),
-        result: translatedValue.substring(0, 1000),
+        result: storedValue.substring(0, 1000),
       },
     });
 
-    return json({ success: true, translatedValue, fieldType, targetLocale });
+    return json({ success: true, translatedValue: storedValue, fieldType, targetLocale });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     await db.task.update({
@@ -241,33 +239,44 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
       );
     }
 
-    if (pendingUpserts.length > 0) {
-      const translationInputs = pendingUpserts.map(({ locale, value }) => ({
-        key: fieldType,
-        value,
-        locale,
-        translatableContentDigest: fieldDigest,
-      }));
-
-      const response = await admin.graphql(TRANSLATE_CONTENT, {
-        variables: { resourceId: fieldResId2, translations: translationInputs },
-      });
-      const data = await response.json();
-
-      if (data.data?.translationsRegister?.userErrors?.length > 0) {
-        const errors = data.data.translationsRegister.userErrors;
-        throw new Error(`Shopify rejected translations: ${errors[0].message}`);
+    // One verified register per locale: the echo is matched per (key, locale),
+    // and a result set keyed by key alone could not tell two locales apart.
+    const confirmedUpserts: Array<{ locale: string; value: string }> = [];
+    const failedLocales: string[] = [];
+    const failureReasons: string[] = [];
+    for (const { locale, value } of pendingUpserts) {
+      try {
+        const verified = await registerAndVerify(admin, fieldResId2, [
+          { key: fieldType, value, locale, translatableContentDigest: fieldDigest },
+        ]);
+        if (verified.confirmedKeys.has(fieldType)) {
+          confirmedUpserts.push({ locale, value: verified.confirmedValues.get(fieldType) ?? value });
+        } else {
+          failedLocales.push(locale);
+          failureReasons.push(verified.userErrors[0]?.message ?? "not stored by Shopify");
+        }
+      } catch (registerError) {
+        failedLocales.push(locale);
+        failureReasons.push(registerError instanceof Error ? registerError.message : String(registerError));
       }
+    }
 
+    if (pendingUpserts.length > 0 && confirmedUpserts.length === 0) {
+      throw new Error(`Shopify rejected translations: ${failureReasons[0]}`);
+    }
+
+    if (confirmedUpserts.length > 0) {
       logger.info("[TEMPLATES] translateFieldToAllLocales: Shopify translations registered", {
         context: "Templates",
         fieldType,
-        localeCount: translationInputs.length,
+        localeCount: confirmedUpserts.length,
+        failedLocales,
       });
+      markTranslationSaved(fieldResId2);
 
-      // Shopify succeeded — now save to local DB
+      // Only CONFIRMED locales are mirrored, with the value Shopify stored.
       await db.$transaction(
-        pendingUpserts.map(({ locale, value }) =>
+        confirmedUpserts.map(({ locale, value }) =>
           db.themeTranslation.upsert({
             where: {
               shop_resourceId_groupId_key_locale_themeId_marketId: {
@@ -295,18 +304,28 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
         )
       );
     }
+    for (const { locale, value } of confirmedUpserts) translations[locale] = value;
+    for (const locale of failedLocales) delete translations[locale];
 
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: failedLocales.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: `Translated to ${Object.keys(translations).length} locales`,
+        ...(failedLocales.length > 0
+          ? { error: `Not stored by Shopify: ${failedLocales.join(", ")}`.substring(0, 1000) }
+          : {}),
       },
     });
 
-    return json({ success: true, translations, fieldType });
+    return json({
+      success: true,
+      translations,
+      fieldType,
+      ...(failedLocales.length > 0 ? { failedLocales } : {}),
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     await db.task.update({
