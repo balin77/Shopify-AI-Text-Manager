@@ -131,6 +131,24 @@ describe('saveTranslations', () => {
     ]);
   });
 
+  it('an ABSENT resource (deleted option / metafield) is a failure, not notTranslatable', async () => {
+    const admin = {
+      graphql: vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: { translatableResource: null } }),
+      })),
+    };
+    const result = await new ShopifyContentService(admin as never).saveTranslations(rid, [
+      { key: 'value', value: 'x', locale: 'fr' },
+    ]);
+    expect(result.noDigest).toEqual([]);
+    expect(result.unconfirmedKeys).toEqual(['value']);
+    expect(result.confirmedKeys.size).toBe(0);
+    expect(result.userErrors[0].message).toContain('not found');
+    // Nothing was sent: no register call after the failed digest read.
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+  });
+
   it('sends nothing at all when no key has a digest', async () => {
     const admin = routedAdmin({ digests: [{ key: 'value', digest: null }] });
     await new ShopifyContentService(admin as never).saveTranslations(rid, [

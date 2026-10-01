@@ -3,7 +3,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
-import { registerAndVerify } from "~/services/translations/verified-translations.server";
+import { registerThemeResourceTranslations } from "~/utils/cookie-banner-availability.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
@@ -164,7 +164,7 @@ export async function handleTranslateAll(
     for (const [, batch] of shopifyBatches) {
       try {
         // Verified: only keys Shopify ECHOED are confirmed, userErrors or not.
-        const verified = await registerAndVerify(admin, batch.resId, batch.inputs);
+        const verified = await registerThemeResourceTranslations(admin, session, batch.resId, batch.inputs);
         const unconfirmed = batch.inputs.filter((input) => !verified.confirmedKeys.has(input.key));
         if (unconfirmed.length > 0) {
           const reason = verified.userErrors[0]?.message ?? "not stored by Shopify";

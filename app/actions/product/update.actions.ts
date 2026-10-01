@@ -454,6 +454,9 @@ async function updateImageAltTexts(
     // its remaining entries in neither list.
     if (shopifySaved && params.locale !== params.primaryLocale && !marketId) {
       markTranslationSaved(altTextLockId(productId));
+      // And the MediaImage itself (global layer), the key every other alt write
+      // site marks and the one a per-medium repair watches.
+      if (mediaImageId) markTranslationSaved(mediaImageId);
     }
 
     // Save to Database ONLY if Shopify save succeeded (no mismatch allowed)
@@ -1352,11 +1355,9 @@ async function updatePrimaryProduct(
   // have - the deletion answer here is `purgeOnPrimaryChange`, which the
   // auto-translation forces off, exactly the bulk editor's refused content
   // group - and the `products/update` webhook is the only reconciler left.
-  const contentRepairPossible =
-    changedFields.length > 0 &&
-    !!changePolicy?.autoTranslateExternalChanges &&
-    (!repairBudget || repairBudget.take("content", productId));
-  if ((changedAltTextIndices.length > 0 || contentRepairPossible) && changePolicy) {
+  const contentRepairWanted =
+    changedFields.length > 0 && !!changePolicy?.autoTranslateExternalChanges;
+  if ((changedAltTextIndices.length > 0 || contentRepairWanted) && changePolicy) {
     try {
       const { fetchShopLocales } = await import("~/services/sync-utils");
       const shopLocales = await fetchShopLocales(gateway.graphql.bind(gateway));
@@ -1371,6 +1372,12 @@ async function updatePrimaryProduct(
       });
     }
   }
+  // The budget slot is taken only now that it is known a run CAN start (it
+  // needs a foreign locale); a single-language shop never spends one.
+  const contentRepairPossible =
+    contentRepairWanted &&
+    altForeignLocales.length > 0 &&
+    (!repairBudget || repairBudget.take("content", productId));
   const retranslateAltTexts = altRepairRetranslates(changePolicy, altForeignLocales, altPrimaryLocale);
   const purgeStaleAltTextTranslations = retranslateAltTexts
     ? (changePolicy?.purgeOnPrimaryChange ?? false)

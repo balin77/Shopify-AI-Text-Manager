@@ -950,7 +950,7 @@ export async function handleLoadImageAltTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<DataResponse> {
-  const { db } = ctx;
+  const { db, session } = ctx;
   const productId = getFormString(formData, "productId") || ctx.itemId;
   const locale = getFormString(formData, "locale");
   const marketId = getFormString(formData, "marketId") || "";
@@ -968,7 +968,7 @@ export async function handleLoadImageAltTranslations(
   // fallback, exactly the editor's display chain (market, else global); with
   // none, the global layer alone.
   const rows = await db.productImageAltTranslation.findMany({
-    where: { locale, image: { productId }, marketId: marketId ? { in: ["", marketId] } : "" },
+    where: { locale, image: { productId, product: { shop: session.shop } }, marketId: marketId ? { in: ["", marketId] } : "" },
     select: { altText: true, marketId: true, image: { select: { mediaId: true } } },
   });
 

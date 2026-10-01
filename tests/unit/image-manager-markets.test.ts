@@ -147,7 +147,7 @@ describe("handleLoadImageAltTranslations market filter", () => {
     const { handleLoadImageAltTranslations } = await import("~/actions/content/alt-text.action");
     const fd = new FormData();
     for (const [k, v] of Object.entries(fields)) fd.set(k, v);
-    const res: any = await handleLoadImageAltTranslations({ db, itemId: "p1" } as never, fd);
+    const res: any = await handleLoadImageAltTranslations({ db, itemId: "p1", session: { shop: SHOP } } as never, fd);
     return res.data ?? res;
   }
 
@@ -155,6 +155,11 @@ describe("handleLoadImageAltTranslations market filter", () => {
     const db = makeDb();
     await load(db, { productId: "p1", locale: "de" });
     expect(db.productImageAltTranslation.findMany.mock.calls[0][0].where.marketId).toBe("");
+    // Scoped to the caller's shop through the product, never by productId alone.
+    expect(db.productImageAltTranslation.findMany.mock.calls[0][0].where.image).toEqual({
+      productId: "p1",
+      product: { shop: SHOP },
+    });
   });
 
   it("with a market: that market's rows override the global ones, global shows as inherited", async () => {
