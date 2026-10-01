@@ -29,6 +29,17 @@ export function PlanPrice({
 }) {
   if (plan.monthly === 0) return <>{copy.pricing.free}</>;
   if (plan.onRequest) return <>{copy.pricing.onRequest}</>;
+  if (plan.monthlyRange) {
+    const currency = plan.currency ?? table.currency;
+    const [low, high] = plan.monthlyRange;
+    return (
+      <>
+        {formatComparePrice(low, currency, locale)}–{formatComparePrice(high, currency, locale)}{" "}
+        <span className="mk-compare-prices__unit">{copy.pricing.perMonth}</span>
+        <span className="mk-compare-matrix__alt">{copy.pricing.byShopifyPlan}</span>
+      </>
+    );
+  }
   const yearly = plan.monthly === null;
   const amount = yearly ? (plan.yearly ?? 0) : (plan.monthly as number);
   const text = formatComparePrice(amount, plan.currency ?? table.currency, locale).replace(/\d{4,}/, (digits) =>
@@ -83,8 +94,17 @@ export function planLimitTexts(plan: PricePlan, copy: CompareCopy, locale: Marke
           ? g.values.included
           : v.kind === "unlimitedWords"
             ? g.values.unlimitedWords
+            : v.kind === "unlimitedAi"
+              ? g.values.unlimitedAi
             : (
                 {
+                  credits: g.values.credits,
+                  creditsMonth: g.values.creditsMonth,
+                  creditsOnce: g.values.creditsOnce,
+                  tokensOnce: g.values.tokensOnce,
+                  postsMonth: g.values.postsMonth,
+                  descriptionsManual: g.values.descriptionsManual,
+                  aiUpToProducts: g.values.aiUpToProducts,
                   words: g.values.words,
                   wordsOnce: g.values.wordsOnce,
                   tokensMonth: g.values.tokensMonth,

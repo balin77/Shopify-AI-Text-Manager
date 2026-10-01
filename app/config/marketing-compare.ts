@@ -31,17 +31,17 @@ export const TRANSLATION_COMPETITORS = [
   "gtranslate",
 ] as const;
 
-/** SEO apps. Facts PROVISIONAL until the research in docs/marketing/compare-research-prompts.md. */
-export const SEO_COMPETITORS = ["yoast", "storeseo", "seowill", "tinyimg", "booster"] as const;
+/** SEO apps — the five largest by reviews, checked 2026-10-01 (COMPETITIVE_ANALYSIS.md §2.2). */
+export const SEO_COMPETITORS = ["avada-seo", "storeseo", "seowill", "tinyseo", "booster"] as const;
 
-/** AI content apps. Facts PROVISIONAL, and the list itself is up for the research to confirm. */
-export const AI_CONTENT_COMPETITORS = ["smartli", "writepilot"] as const;
+/** AI content apps — the five largest by reviews, checked 2026-10-01 (§2.3). */
+export const AI_CONTENT_COMPETITORS = ["avada-blog", "profitonium", "tapita", "essential-blog", "storeya"] as const;
 
-/** Variant image / gallery apps. Facts PROVISIONAL. */
+/** Variant image apps, checked 2026-10-01 (§2.4). */
 export const VARIANT_IMAGE_COMPETITORS = [
   "rubik",
   "sa-variant-images",
-  "ns-color-swatch",
+  "op-color-swatch",
   "variant-image-wizard",
   "gg-image-slider",
 ] as const;
@@ -66,16 +66,19 @@ export const COMPETITOR_NAMES: Record<CompetitorId, string> = {
   "t-lab": "T Lab",
   langify: "Langify",
   gtranslate: "GTranslate",
-  yoast: "Yoast SEO",
+  "avada-seo": "Avada AI SEO",
   storeseo: "StoreSEO",
   seowill: "SEOWILL",
-  tinyimg: "TinyIMG",
+  tinyseo: "TinySEO",
   booster: "Booster SEO",
-  smartli: "Smartli",
-  writepilot: "WritePilot",
+  "avada-blog": "Avada Blog",
+  profitonium: "Profitonium",
+  tapita: "Tapita AI Blog",
+  "essential-blog": "Essential AI Blog",
+  storeya: "StoreYa AI Description",
   rubik: "Rubik Variant Images",
   "sa-variant-images": "SA Variant Image Automator",
-  "ns-color-swatch": "NS Color Swatch",
+  "op-color-swatch": "OP Color Swatch",
   "variant-image-wizard": "Variant Image Wizard",
   "gg-image-slider": "GG Image Slider",
 };
@@ -370,12 +373,12 @@ export function comparePath(competitor: CompetitorId): string {
 // same plan ladder in every topic, which is the point the page makes — one
 // plan covers all four.
 //
-// Competitor answers below are PROVISIONAL, lifted from
-// docs/reference/COMPETITIVE_ANALYSIS.md §2.2–2.4 and
-// SEO_COMPETITIVE_ANALYSIS_2026-08.md §3 (sources from 01–08/2026, no plan
-// levels). A topic stays unpublished — reachable only as a preview outside
-// production — until the research in docs/marketing/compare-research-prompts.md
-// has replaced them.
+// Competitor answers: docs/reference/COMPETITIVE_ANALYSIS.md §2.2–2.4 and the
+// evidence files in docs/reference/competitive-research/ (2026-10-01). Where a
+// store listing and the provider's own pages disagree, the answer more
+// favourable to the competitor is taken — understating another app is the
+// one error this page may not make — and the cell's note says so where it
+// matters.
 
 const H = "higherPlan" as const;
 /** Pro and up — the variant image manager, crawl, Search Console, IndexNow … */
@@ -388,107 +391,162 @@ const FEATURED_ONLY_ON_FREE: Support[] = ["partial", "yes", "yes", "yes"];
 export const SEO_GROUPS: CompareGroupId[] = ["seoBasics", "seoTechnical", "seoSearch", "aiSearch"];
 
 export const SEO_ROWS: CompareRow[] = [
-  { id: "metaAi", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
-  { id: "bulkEditor", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  {
+    id: "metaAi",
+    group: "seoBasics",
+    ours: "yes",
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "partial", tinyseo: "yes", booster: "yes" },
+    byPlan: { seowill: [H, "partial", "partial"] },
+  },
+  {
+    id: "bulkEditor",
+    group: "seoBasics",
+    ours: "yes",
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "yes", tinyseo: "partial", booster: "partial" },
+    byPlan: { seowill: ["partial", "yes", "yes"], tinyseo: [H, H, "partial", "partial"] },
+  },
   {
     id: "altText",
     group: "seoBasics",
     ours: "yes",
-    them: { yoast: "no", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" },
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "partial", tinyseo: "unstated", booster: "yes" },
     byPlan: { contentpilot: FEATURED_ONLY_ON_FREE },
   },
-  { id: "structuredData", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
-  { id: "storeAudit", group: "seoBasics", ours: "yes", them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
-  { id: "seoPerLanguage", group: "seoBasics", ours: "yes", them: { yoast: "no", storeseo: "no", seowill: "no", tinyimg: "no", booster: "no" } },
+  {
+    id: "structuredData",
+    group: "seoBasics",
+    ours: "yes",
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "yes", tinyseo: "yes", booster: "yes" },
+    byPlan: { storeseo: ["partial", "yes", "yes", "yes", "yes"], seowill: [H, "yes", "yes"], tinyseo: ["partial", "yes", "yes", "yes"], booster: [H, "yes", "yes", "yes"] },
+  },
+  {
+    id: "storeAudit",
+    group: "seoBasics",
+    ours: "yes",
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "yes", tinyseo: "yes", booster: "yes" },
+  },
+  {
+    id: "seoPerLanguage",
+    group: "seoBasics",
+    ours: "yes",
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "partial", tinyseo: "unstated", booster: "unstated" },
+    byPlan: { "avada-seo": [H, "yes", "yes"], storeseo: [H, H, H, "yes", "yes"] },
+  },
   {
     id: "siteCrawl",
     group: "seoTechnical",
     ours: "yes",
-    them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "partial", booster: "yes" },
+    them: { "avada-seo": "partial", storeseo: "unstated", seowill: "partial", tinyseo: "partial", booster: "partial" },
     byPlan: { contentpilot: FROM_PRO },
   },
   {
     id: "brokenLinks",
     group: "seoTechnical",
     ours: "yes",
-    them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "yes", booster: "yes" },
-    byPlan: { contentpilot: FROM_PRO },
+    them: { "avada-seo": "partial", storeseo: "partial", seowill: "partial", tinyseo: "partial", booster: "partial" },
+    byPlan: { contentpilot: FROM_PRO, tinyseo: [H, H, "partial", "partial"] },
   },
-  { id: "redirects", group: "seoTechnical", ours: "yes", them: { yoast: "no", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  {
+    id: "redirects",
+    group: "seoTechnical",
+    ours: "yes",
+    them: { "avada-seo": "yes", storeseo: "partial", seowill: "yes", tinyseo: "yes", booster: "yes" },
+    byPlan: { seowill: [H, "yes", "yes"], tinyseo: [H, H, "yes", "yes"], booster: [H, "yes", "yes", "yes"] },
+  },
   {
     id: "internalLinks",
     group: "seoTechnical",
     ours: "yes",
-    them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "no", booster: "partial" },
-    byPlan: { contentpilot: FROM_PRO },
+    them: { "avada-seo": "yes", storeseo: "unstated", seowill: "yes", tinyseo: "partial", booster: "unstated" },
+    byPlan: { contentpilot: FROM_PRO, "avada-seo": [H, "yes", "yes"], seowill: [H, H, "yes"] },
   },
   {
     id: "sitemapControl",
     group: "seoTechnical",
     ours: "yes",
-    them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" },
-    byPlan: { contentpilot: FROM_PRO },
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "partial", tinyseo: "yes", booster: "partial" },
+    byPlan: { contentpilot: FROM_PRO, "avada-seo": ["partial", "yes", "yes"], tinyseo: [H, H, "yes", "yes"], booster: [H, "partial", "partial", "partial"] },
   },
-  { id: "pageSpeed", group: "seoTechnical", ours: "yes", them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" } },
-  // A product decision, not a gap we hope to close: the app never edits the
-  // merchant's theme code (CLAUDE.md, "Deploy-critical gotchas").
-  { id: "speedOptimization", group: "seoTechnical", ours: "no", them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "yes", booster: "yes" } },
+  {
+    id: "pageSpeed",
+    group: "seoTechnical",
+    ours: "yes",
+    them: { "avada-seo": "yes", storeseo: "unstated", seowill: "yes", tinyseo: "unstated", booster: "partial" },
+  },
+  {
+    id: "speedOptimization",
+    group: "seoTechnical",
+    ours: "no",
+    them: { "avada-seo": "yes", storeseo: "unstated", seowill: "yes", tinyseo: "yes", booster: "no" },
+    byPlan: { tinyseo: [H, "yes", "yes", "yes"] },
+  },
   {
     id: "imageCompression",
     group: "seoTechnical",
     ours: "yes",
-    them: { yoast: "no", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "yes" },
-    byPlan: { contentpilot: FROM_PRO },
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "yes", tinyseo: "yes", booster: "yes" },
+    byPlan: { contentpilot: FROM_PRO, booster: [H, H, "yes", "yes"] },
   },
   {
     id: "searchConsole",
     group: "seoSearch",
     ours: "yes",
-    them: { yoast: "partial", storeseo: "yes", seowill: "partial", tinyimg: "partial", booster: "yes" },
-    byPlan: { contentpilot: FROM_PRO },
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "yes", tinyseo: "yes", booster: "yes" },
+    byPlan: { contentpilot: FROM_PRO, storeseo: [H, "yes", "yes", "yes", "yes"], seowill: [H, "yes", "yes"], booster: [H, H, "yes", "yes"] },
   },
   {
     id: "keywordTracking",
     group: "seoSearch",
     ours: "yes",
-    them: { yoast: "yes", storeseo: "yes", seowill: "yes", tinyimg: "partial", booster: "yes" },
-    byPlan: { contentpilot: FROM_BASIC },
+    them: { "avada-seo": "partial", storeseo: "yes", seowill: "yes", tinyseo: "yes", booster: "partial" },
+    byPlan: { contentpilot: FROM_BASIC, seowill: [H, "yes", "yes"], tinyseo: [H, H, H, "yes"] },
   },
-  { id: "keywordVolume", group: "seoSearch", ours: "no", them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "no", booster: "unstated" } },
+  {
+    id: "keywordVolume",
+    group: "seoSearch",
+    ours: "no",
+    them: { "avada-seo": "yes", storeseo: "yes", seowill: "yes", tinyseo: "partial", booster: "unstated" },
+  },
   {
     id: "indexNow",
     group: "seoSearch",
     ours: "yes",
-    them: { yoast: "partial", storeseo: "yes", seowill: "yes", tinyimg: "yes", booster: "partial" },
-    byPlan: { contentpilot: FROM_PRO },
+    them: { "avada-seo": "partial", storeseo: "partial", seowill: "partial", tinyseo: "yes", booster: "unstated" },
+    byPlan: { contentpilot: FROM_PRO, "avada-seo": [H, "partial", "partial"], storeseo: [H, "partial", "partial", "partial", "partial"], seowill: [H, "partial", "partial"], tinyseo: [H, H, "yes", "yes"] },
   },
-  { id: "localSeo", group: "seoSearch", ours: "no", them: { yoast: "no", storeseo: "partial", seowill: "yes", tinyimg: "no", booster: "unstated" } },
+  {
+    id: "localSeo",
+    group: "seoSearch",
+    ours: "no",
+    them: { "avada-seo": "partial", storeseo: "partial", seowill: "yes", tinyseo: "unstated", booster: "partial" },
+    byPlan: { storeseo: [H, "partial", "partial", "partial", "partial"], seowill: [H, "partial", "yes"], booster: [H, H, "partial", "partial"] },
+  },
   {
     id: "aiDiscoveryFiles",
     group: "aiSearch",
     ours: "yes",
-    them: { yoast: "partial", storeseo: "yes", seowill: "partial", tinyimg: "yes", booster: "partial" },
-    byPlan: { contentpilot: FROM_BASIC },
+    them: { "avada-seo": "unstated", storeseo: "yes", seowill: "partial", tinyseo: "yes", booster: "partial" },
+    byPlan: { contentpilot: FROM_BASIC, seowill: [H, "partial", "partial"], tinyseo: [H, H, "yes", "yes"] },
   },
   {
     id: "aiCrawlers",
     group: "aiSearch",
     ours: "yes",
-    them: { yoast: "no", storeseo: "partial", seowill: "partial", tinyimg: "partial", booster: "partial" },
-    byPlan: { contentpilot: FROM_BASIC },
+    them: { "avada-seo": "partial", storeseo: "unstated", seowill: "unstated", tinyseo: "unstated", booster: "unstated" },
+    byPlan: { contentpilot: FROM_BASIC, "avada-seo": [H, "partial", "partial"] },
   },
   {
     id: "aiReferral",
     group: "aiSearch",
     ours: "yes",
-    them: { yoast: "no", storeseo: "partial", seowill: "partial", tinyimg: "partial", booster: "no" },
-    byPlan: { contentpilot: FROM_BASIC },
+    them: { "avada-seo": "unstated", storeseo: "yes", seowill: "unstated", tinyseo: "unstated", booster: "unstated" },
+    byPlan: { contentpilot: FROM_BASIC, storeseo: [H, "yes", "yes", "yes", "yes"] },
   },
   {
     id: "catalogReadiness",
     group: "aiSearch",
     ours: "yes",
-    them: {},
+    them: { "avada-seo": "unstated", storeseo: "partial", seowill: "unstated", tinyseo: "unstated", booster: "unstated" },
     byPlan: { contentpilot: FROM_BASIC },
   },
 ];
@@ -496,76 +554,206 @@ export const SEO_ROWS: CompareRow[] = [
 export const AI_CONTENT_GROUPS: CompareGroupId[] = ["aiEngine", "aiTexts", "aiWorkflow"];
 
 export const AI_CONTENT_ROWS: CompareRow[] = [
-  { id: "aiProvider", group: "aiEngine", ours: "yes", them: { smartli: "no", writepilot: "no" } },
-  { id: "ownKey", group: "aiEngine", ours: "yes", them: {} },
-  // Free carries the one-time taster, each paid plan an "+ AI" variant.
+  {
+    id: "aiProvider",
+    group: "aiEngine",
+    ours: "yes",
+    them: { "avada-blog": "partial", profitonium: "yes", tapita: "unstated", "essential-blog": "unstated", storeya: "unstated" },
+  },
+  {
+    id: "ownKey",
+    group: "aiEngine",
+    ours: "yes",
+    them: { "avada-blog": "unstated", profitonium: "unstated", tapita: "unstated", "essential-blog": "unstated", storeya: "unstated" },
+  },
   {
     id: "includedAi",
     group: "aiEngine",
     ours: "yes",
-    them: { smartli: "yes", writepilot: "yes" },
+    them: { "avada-blog": "yes", profitonium: "yes", tapita: "yes", "essential-blog": "yes", storeya: "yes" },
     byPlan: { contentpilot: ["partial", "yes", "yes", "yes"] },
   },
   {
     id: "brandVoice",
     group: "aiEngine",
     ours: "yes",
-    them: { smartli: "yes", writepilot: "yes" },
-    byPlan: { contentpilot: FROM_PRO },
+    them: { "avada-blog": "yes", profitonium: "yes", tapita: "yes", "essential-blog": "partial", storeya: "partial" },
+    byPlan: { contentpilot: FROM_PRO, profitonium: [H, "yes", "yes", "yes", "yes"] },
   },
-  { id: "productDescriptions", group: "aiTexts", ours: "yes", them: { smartli: "yes", writepilot: "yes" } },
-  { id: "metaAi", group: "aiTexts", ours: "yes", them: {} },
-  { id: "altText", group: "aiTexts", ours: "yes", them: {}, byPlan: { contentpilot: FEATURED_ONLY_ON_FREE } },
-  // Articles are a Pro content type (maxArticles is 0 below it).
+  {
+    id: "productDescriptions",
+    group: "aiTexts",
+    ours: "yes",
+    them: { "avada-blog": "unstated", profitonium: "yes", tapita: "unstated", "essential-blog": "no", storeya: "yes" },
+  },
+  {
+    id: "metaAi",
+    group: "aiTexts",
+    ours: "yes",
+    them: { "avada-blog": "partial", profitonium: "yes", tapita: "partial", "essential-blog": "unstated", storeya: "yes" },
+    byPlan: { "avada-blog": [H, "partial", "partial"], profitonium: [H, "yes", "yes", "yes", "yes"], storeya: [H, "yes", "yes", "yes"] },
+  },
+  {
+    id: "altText",
+    group: "aiTexts",
+    ours: "yes",
+    them: { "avada-blog": "unstated", profitonium: "yes", tapita: "unstated", "essential-blog": "unstated", storeya: "unstated" },
+    byPlan: { contentpilot: FEATURED_ONLY_ON_FREE },
+  },
   {
     id: "blogArticles",
     group: "aiTexts",
-    ours: "yes",
-    them: { smartli: "yes", writepilot: "yes" },
-    byPlan: { contentpilot: FROM_PRO },
+    ours: "partial",
+    them: { "avada-blog": "yes", profitonium: "unstated", tapita: "yes", "essential-blog": "yes", storeya: "yes" },
+    byPlan: { contentpilot: [H, H, "partial", "partial"] },
   },
-  { id: "imageToText", group: "aiTexts", ours: "yes", them: { smartli: "yes", writepilot: "no" } },
-  { id: "aiImages", group: "aiTexts", ours: "no", them: { smartli: "yes", writepilot: "no" } },
-  { id: "marketingTexts", group: "aiTexts", ours: "no", them: { smartli: "yes", writepilot: "no" } },
-  { id: "bulkGeneration", group: "aiWorkflow", ours: "yes", them: { smartli: "yes", writepilot: "yes" } },
-  { id: "createWithAi", group: "aiWorkflow", ours: "yes", them: { smartli: "no", writepilot: "no" } },
-  { id: "translateGenerated", group: "aiWorkflow", ours: "yes", them: { smartli: "yes", writepilot: "yes" } },
+  {
+    id: "imageToText",
+    group: "aiTexts",
+    ours: "yes",
+    them: { "avada-blog": "unstated", profitonium: "yes", tapita: "unstated", "essential-blog": "unstated", storeya: "unstated" },
+  },
+  {
+    id: "aiImages",
+    group: "aiTexts",
+    ours: "no",
+    them: { "avada-blog": "yes", profitonium: "unstated", tapita: "yes", "essential-blog": "yes", storeya: "partial" },
+    byPlan: { storeya: [H, "partial", "partial", "partial"] },
+  },
+  {
+    id: "marketingTexts",
+    group: "aiTexts",
+    ours: "no",
+    them: { "avada-blog": "unstated", profitonium: "unstated", tapita: "unstated", "essential-blog": "unstated", storeya: "partial" },
+    byPlan: { storeya: [H, "partial", "partial", "partial"] },
+  },
+  {
+    id: "bulkGeneration",
+    group: "aiWorkflow",
+    ours: "yes",
+    them: { "avada-blog": "partial", profitonium: "yes", tapita: "yes", "essential-blog": "yes", storeya: "yes" },
+    byPlan: { "avada-blog": [H, "partial", "partial"], profitonium: [H, "yes", "yes", "yes", "yes"], tapita: [H, "yes"], "essential-blog": [H, "yes", "yes", "yes"], storeya: [H, "yes", "yes", "yes"] },
+  },
+  {
+    id: "createWithAi",
+    group: "aiWorkflow",
+    ours: "yes",
+    them: { "avada-blog": "unstated", profitonium: "unstated", tapita: "unstated", "essential-blog": "no", storeya: "unstated" },
+  },
+  {
+    id: "translateGenerated",
+    group: "aiWorkflow",
+    ours: "yes",
+    them: { "avada-blog": "yes", profitonium: "partial", tapita: "yes", "essential-blog": "partial", storeya: "partial" },
+    byPlan: { "avada-blog": [H, "yes", "yes"], profitonium: [H, "partial", "partial", "partial", "partial"], tapita: [H, "yes"] },
+  },
 ];
 
 export const VARIANT_IMAGE_GROUPS: CompareGroupId[] = ["gallery", "assignment", "swatches", "imageExtras"];
 
-/** Everything around the gallery is the variant image manager, a Pro feature. */
-const gallery = (id: CompareRowId, group: CompareGroupId, them: CompareRow["them"]): CompareRow => ({
-  id,
-  group,
-  ours: "yes",
-  them,
-  byPlan: { contentpilot: FROM_PRO },
-});
-
 export const VARIANT_IMAGE_ROWS: CompareRow[] = [
-  gallery("multiImagePerVariant", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "yes" }),
-  gallery("variantFilter", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "yes" }),
-  gallery("noLayoutShift", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "partial", "variant-image-wizard": "partial", "gg-image-slider": "yes" }),
-  gallery("zoomLightbox", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "partial", "gg-image-slider": "yes" }),
-  gallery("videoAnd3d", "gallery", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "partial", "variant-image-wizard": "partial", "gg-image-slider": "yes" }),
-  gallery("autoAssign", "assignment", { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "partial", "variant-image-wizard": "no", "gg-image-slider": "partial" }),
-  gallery("keyGenerator", "assignment", { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" }),
-  gallery("dragDrop", "assignment", { rubik: "yes", "sa-variant-images": "no", "ns-color-swatch": "partial", "variant-image-wizard": "yes", "gg-image-slider": "partial" }),
-  gallery("bulkUpload", "assignment", {}),
-  // The category's lead feature, and our biggest gap in it — said plainly.
-  { id: "swatchesProduct", group: "swatches", ours: "no", them: { rubik: "yes", "sa-variant-images": "yes", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "partial" } },
-  { id: "swatchesCollection", group: "swatches", ours: "no", them: { rubik: "partial", "sa-variant-images": "no", "ns-color-swatch": "yes", "variant-image-wizard": "no", "gg-image-slider": "no" } },
-  { id: "combinedListings", group: "swatches", ours: "no", them: { rubik: "partial", "sa-variant-images": "no", "ns-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "no" } },
-  gallery("imageCompression", "imageExtras", { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" }),
+  {
+    id: "multiImagePerVariant",
+    group: "gallery",
+    ours: "yes",
+    them: { rubik: "yes", "sa-variant-images": "yes", "op-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "yes" },
+    byPlan: { contentpilot: FROM_PRO, "gg-image-slider": [H, "yes"] },
+  },
+  {
+    id: "variantFilter",
+    group: "gallery",
+    ours: "yes",
+    them: { rubik: "yes", "sa-variant-images": "yes", "op-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "yes" },
+    byPlan: { contentpilot: FROM_PRO, "gg-image-slider": [H, "yes"] },
+  },
+  {
+    id: "noLayoutShift",
+    group: "gallery",
+    ours: "yes",
+    them: { rubik: "partial", "sa-variant-images": "partial", "op-color-swatch": "no", "variant-image-wizard": "unstated", "gg-image-slider": "partial" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "zoomLightbox",
+    group: "gallery",
+    ours: "yes",
+    them: { rubik: "partial", "sa-variant-images": "partial", "op-color-swatch": "unstated", "variant-image-wizard": "yes", "gg-image-slider": "yes" },
+    byPlan: { contentpilot: FROM_PRO, "gg-image-slider": [H, "yes"] },
+  },
+  {
+    id: "videoAnd3d",
+    group: "gallery",
+    ours: "yes",
+    them: { rubik: "yes", "sa-variant-images": "yes", "op-color-swatch": "unstated", "variant-image-wizard": "yes", "gg-image-slider": "yes" },
+    byPlan: { contentpilot: FROM_PRO, "variant-image-wizard": [H, H, "yes"], "gg-image-slider": [H, "yes"] },
+  },
+  {
+    id: "autoAssign",
+    group: "assignment",
+    ours: "yes",
+    them: { rubik: "yes", "sa-variant-images": "partial", "op-color-swatch": "partial", "variant-image-wizard": "partial", "gg-image-slider": "partial" },
+    byPlan: { contentpilot: FROM_PRO, "gg-image-slider": [H, "partial"] },
+  },
+  {
+    id: "keyGenerator",
+    group: "assignment",
+    ours: "yes",
+    them: { rubik: "unstated", "sa-variant-images": "unstated", "op-color-swatch": "unstated", "variant-image-wizard": "unstated", "gg-image-slider": "unstated" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "dragDrop",
+    group: "assignment",
+    ours: "yes",
+    them: { rubik: "yes", "sa-variant-images": "yes", "op-color-swatch": "unstated", "variant-image-wizard": "yes", "gg-image-slider": "no" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "bulkUpload",
+    group: "assignment",
+    ours: "yes",
+    them: { rubik: "no", "sa-variant-images": "unstated", "op-color-swatch": "unstated", "variant-image-wizard": "partial", "gg-image-slider": "no" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
+  {
+    id: "swatchesProduct",
+    group: "swatches",
+    ours: "no",
+    them: { rubik: "yes", "sa-variant-images": "no", "op-color-swatch": "yes", "variant-image-wizard": "yes", "gg-image-slider": "unstated" },
+  },
+  {
+    id: "swatchesCollection",
+    group: "swatches",
+    ours: "no",
+    them: { rubik: "yes", "sa-variant-images": "no", "op-color-swatch": "yes", "variant-image-wizard": "unstated", "gg-image-slider": "unstated" },
+  },
+  {
+    id: "combinedListings",
+    group: "swatches",
+    ours: "no",
+    them: { rubik: "no", "sa-variant-images": "no", "op-color-swatch": "partial", "variant-image-wizard": "partial", "gg-image-slider": "unstated" },
+    byPlan: { "variant-image-wizard": [H, H, "partial"] },
+  },
+  {
+    id: "imageCompression",
+    group: "imageExtras",
+    ours: "yes",
+    them: { rubik: "unstated", "sa-variant-images": "no", "op-color-swatch": "unstated", "variant-image-wizard": "unstated", "gg-image-slider": "partial" },
+    byPlan: { contentpilot: FROM_PRO },
+  },
   {
     id: "altText",
     group: "imageExtras",
     ours: "yes",
-    them: { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" },
+    them: { rubik: "unstated", "sa-variant-images": "no", "op-color-swatch": "unstated", "variant-image-wizard": "unstated", "gg-image-slider": "unstated" },
     byPlan: { contentpilot: FEATURED_ONLY_ON_FREE },
   },
-  { id: "altTranslation", group: "imageExtras", ours: "yes", them: { rubik: "no", "sa-variant-images": "no", "ns-color-swatch": "no", "variant-image-wizard": "no", "gg-image-slider": "no" } },
+  {
+    id: "altTranslation",
+    group: "imageExtras",
+    ours: "yes",
+    them: { rubik: "unstated", "sa-variant-images": "unstated", "op-color-swatch": "unstated", "variant-image-wizard": "unstated", "gg-image-slider": "unstated" },
+  },
 ];
 
 export type CompareTopicId = "translation" | "seo" | "aiContent" | "variantImages";
@@ -611,34 +799,34 @@ export const COMPARE_TOPICS: Record<CompareTopicId, CompareTopic> = {
     id: "seo",
     slug: "seo",
     competitors: SEO_COMPETITORS,
-    initial: ["yoast", "storeseo", "seowill", "tinyimg"],
+    initial: ["avada-seo", "storeseo", "seowill", "booster"],
     groups: SEO_GROUPS,
     rows: SEO_ROWS,
-    planRows: ["products"],
+    planRows: ["products", "volume"],
     showEngines: false,
-    published: false,
+    published: true,
   },
   aiContent: {
     id: "aiContent",
     slug: "ai-content",
     competitors: AI_CONTENT_COMPETITORS,
-    initial: AI_CONTENT_COMPETITORS,
+    initial: ["avada-blog", "profitonium", "tapita", "storeya"],
     groups: AI_CONTENT_GROUPS,
     rows: AI_CONTENT_ROWS,
-    planRows: ["products", "volume"],
+    planRows: ["volume"],
     showEngines: true,
-    published: false,
+    published: true,
   },
   variantImages: {
     id: "variantImages",
     slug: "variant-images",
     competitors: VARIANT_IMAGE_COMPETITORS,
-    initial: ["rubik", "sa-variant-images", "ns-color-swatch", "variant-image-wizard"],
+    initial: ["rubik", "sa-variant-images", "op-color-swatch", "variant-image-wizard"],
     groups: VARIANT_IMAGE_GROUPS,
     rows: VARIANT_IMAGE_ROWS,
     planRows: ["products"],
     showEngines: false,
-    published: false,
+    published: true,
   },
 };
 
@@ -716,7 +904,16 @@ export type PlanVolume =
   | { kind: "tokensMonthOwnKey"; amount: number }
   /** Unlimited machine words plus a monthly AI-token allowance (Transcy). */
   | { kind: "wordsPlusTokens"; amount: number }
-  | { kind: "wordsPlusTokensOwnKey"; amount: number };
+  | { kind: "wordsPlusTokensOwnKey"; amount: number }
+  // AI quotas of the SEO and AI content apps, in the provider's own unit.
+  | { kind: "credits"; amount: number }
+  | { kind: "creditsMonth"; amount: number }
+  | { kind: "creditsOnce"; amount: number }
+  | { kind: "tokensOnce"; amount: number }
+  | { kind: "postsMonth"; amount: number }
+  | { kind: "descriptionsManual"; amount: number }
+  | { kind: "aiUpToProducts"; amount: number }
+  | { kind: "unlimitedAi" };
 
 export type PricePlan = {
   /** Key into the copy's per-plan description. */
@@ -729,6 +926,13 @@ export type PricePlan = {
   yearly?: number;
   /** No published price at all ("contact us"). */
   onRequest?: true;
+  /**
+   * The price follows the merchant's SHOPIFY plan, not the features: one plan
+   * row with the cheapest and the dearest monthly price (`monthly` is null).
+   */
+  monthlyRange?: [number, number];
+  /** Who may use this plan at all, where the provider limits it. */
+  restriction?: "devStoresOnly" | "freeThemesOnly";
   /** Where this plan's price comes from a source in another currency than the table's. */
   currency?: "EUR" | "USD";
   languages: PlanLanguages;
@@ -769,21 +973,6 @@ const OWN_KEY: PlanVolume = { kind: "ownKey" };
 /** Rows of the price table: every app's plans lined up by position, free first. */
 export function priceLevelCount(apps: readonly PriceAppId[]): number {
   return Math.max(...apps.map((app) => COMPARE_PRICES[app].plans.length));
-}
-
-/** One placeholder plan per app whose plans nobody has checked yet. */
-function pendingTables<T extends CompetitorId>(apps: readonly T[]): Record<T, PriceTable> {
-  return Object.fromEntries(
-    apps.map((app) => [
-      app,
-      {
-        pending: true,
-        currency: "USD",
-        trialDays: "unstated",
-        plans: [{ id: "pending", name: "", monthly: null, languages: "onRequest", products: "unstated", volume: { kind: "onRequest" } }],
-      } satisfies PriceTable,
-    ]),
-  ) as Record<T, PriceTable>;
 }
 
 export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
@@ -896,8 +1085,148 @@ export const COMPARE_PRICES: Record<PriceAppId, PriceTable> = {
       { id: "enterprise", name: "Enterprise", monthly: 50, languages: 103, products: "unstated", volume: { kind: "unlimitedWords" } },
     ],
   },
-  // ── Not researched yet (unpublished topics) ──
-  ...pendingTables([...SEO_COMPETITORS, ...AI_CONTENT_COMPETITORS, ...VARIANT_IMAGE_COMPETITORS]),
+  // ── SEO, AI content, variant images: checked 2026-10-01 against store
+  //    listings, pricing pages and help centres (docs/reference/competitive-research/).
+  "avada-seo": {
+    currency: "USD",
+    trialDays: 7,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "creditsOnce", amount: 100 } },
+      { id: "pro", name: "Pro", monthly: 34.95, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 1000 } },
+      { id: "enterprise", name: "Enterprise", monthly: 99, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 10000 } },
+    ],
+  },
+  storeseo: {
+    currency: "USD",
+    trialDays: 7,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: 25, volume: { kind: "credits", amount: 200 } },
+      { id: "lite", name: "Lite", monthly: 14.99, languages: "onRequest", products: 100, volume: { kind: "credits", amount: 1000 } },
+      { id: "essential", name: "Essential", monthly: 39.99, languages: "onRequest", products: 250, volume: { kind: "credits", amount: 5000 } },
+      { id: "growth", name: "Growth", monthly: 99.99, languages: "onRequest", products: 1000, volume: { kind: "credits", amount: 12500 } },
+      { id: "advanced", name: "Advanced", monthly: 249.99, languages: "onRequest", products: 10000, volume: { kind: "credits", amount: 50000 } },
+    ],
+  },
+  seowill: {
+    currency: "USD",
+    trialDays: 7,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "credits", amount: 30 } },
+      { id: "pro", name: "Pro", monthly: 29.99, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 200 } },
+      { id: "premium", name: "Premium", monthly: 59.99, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 500 } },
+    ],
+  },
+  tinyseo: {
+    currency: "USD",
+    trialDays: "unstated",
+    plans: [
+      { id: "payg", name: "Pay as you go", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 10 } },
+      { id: "beginner", name: "Beginner", monthly: 14, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 100 } },
+      { id: "advanced", name: "Advanced", monthly: 23, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 300 } },
+      { id: "expert", name: "Expert", monthly: 49, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 1000 } },
+    ],
+  },
+  booster: {
+    currency: "USD",
+    trialDays: 14,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "aiUpToProducts", amount: 250 } },
+      { id: "pro", name: "Pro", monthly: 39, languages: "onRequest", products: "unstated", volume: { kind: "unlimitedAi" } },
+      { id: "premium", name: "Premium", monthly: 69, languages: "onRequest", products: "unstated", volume: { kind: "unlimitedAi" } },
+      { id: "concierge", name: "Concierge", monthly: 199, languages: "onRequest", products: "unstated", volume: { kind: "unlimitedAi" } },
+    ],
+  },
+  "avada-blog": {
+    currency: "USD",
+    trialDays: 7,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "tokensOnce", amount: 200000 } },
+      { id: "pro", name: "Pro", monthly: 14.9, languages: "onRequest", products: "unstated", volume: { kind: "tokensMonth", amount: 1000000 } },
+      { id: "bundle", name: "All-in-one bundle", monthly: 49, languages: "onRequest", products: "unstated", volume: { kind: "tokensMonth", amount: 1000000 } },
+    ],
+  },
+  profitonium: {
+    currency: "USD",
+    trialDays: "unstated",
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 100 } },
+      { id: "basic", name: "Basic", monthly: 19, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 2000 } },
+      { id: "standard", name: "Standard", monthly: 49, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 11000 } },
+      { id: "catalog", name: "Catalog", monthly: 129, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 40000 } },
+      { id: "pro", name: "Pro", monthly: 249, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 110000 } },
+    ],
+  },
+  tapita: {
+    currency: "USD",
+    trialDays: "unstated",
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "creditsOnce", amount: 50 } },
+      { id: "pro", name: "Pro", monthly: null, monthlyRange: [9.99, 69.99], languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 250 } },
+    ],
+  },
+  "essential-blog": {
+    currency: "USD",
+    trialDays: "unstated",
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "postsMonth", amount: 3 } },
+      { id: "starter", name: "Starter", monthly: 9.99, languages: "onRequest", products: "unstated", volume: { kind: "postsMonth", amount: 30 } },
+      { id: "essential", name: "Essential", monthly: 29.99, languages: "onRequest", products: "unstated", volume: { kind: "postsMonth", amount: 100 } },
+      { id: "professional", name: "Professional", monthly: 99.99, languages: "onRequest", products: "unstated", volume: { kind: "postsMonth", amount: 300 } },
+    ],
+  },
+  storeya: {
+    currency: "USD",
+    trialDays: "unstated",
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: "unstated", volume: { kind: "descriptionsManual", amount: 120 } },
+      { id: "starter", name: "Starter", monthly: 15, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 2500 } },
+      { id: "pro", name: "Pro", monthly: 30, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 12000 } },
+      { id: "elite", name: "Elite", monthly: 100, languages: "onRequest", products: "unstated", volume: { kind: "creditsMonth", amount: 120000 } },
+    ],
+  },
+  rubik: {
+    currency: "USD",
+    trialDays: 7,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: 1, volume: { kind: "onRequest" } },
+      { id: "starter", name: "Starter", monthly: 25, languages: "onRequest", products: 100, volume: { kind: "onRequest" } },
+      { id: "advanced", name: "Advanced", monthly: 50, languages: "onRequest", products: 1000, volume: { kind: "onRequest" } },
+      { id: "premium", name: "Premium", monthly: 75, languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+    ],
+  },
+  "sa-variant-images": {
+    currency: "USD",
+    trialDays: 30,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, restriction: "devStoresOnly", languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+      { id: "paid", name: "", monthly: null, monthlyRange: [5, 99.9], languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+    ],
+  },
+  "op-color-swatch": {
+    currency: "USD",
+    trialDays: 30,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, restriction: "devStoresOnly", languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+      { id: "paid", name: "", monthly: null, monthlyRange: [11.9, 99.9], languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+    ],
+  },
+  "variant-image-wizard": {
+    currency: "USD",
+    trialDays: 14,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, restriction: "freeThemesOnly", languages: "onRequest", products: 5, volume: { kind: "onRequest" } },
+      { id: "starter", name: "Starter", monthly: 4.99, restriction: "freeThemesOnly", languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+      { id: "pro", name: "Pro", monthly: 7.99, languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+    ],
+  },
+  "gg-image-slider": {
+    currency: "USD",
+    trialDays: 7,
+    plans: [
+      { id: "free", name: "Free", monthly: 0, languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+      { id: "paid", name: "", monthly: null, monthlyRange: [5.99, 17.99], languages: "onRequest", products: null, volume: { kind: "onRequest" } },
+    ],
+  },
 };
 
 /**
@@ -1006,6 +1335,15 @@ export const COMPARE_ENGINES: Partial<Record<PriceAppId, PlanEngines[]>> = {
     { kind: "list", names: ["DeepL", "Google", "DeepSeek (Beta)", "Gemma (Beta)"] },
     { kind: "list", names: ["DeepL", "Google", "DeepSeek (Beta)", "Gemma (Beta)"] },
   ],
+  // AI content apps (2026-10-01). Profitonium names GPT, Claude and Gemini for
+  // every plan ("more model choices" from Standard); Essential and StoreYa list
+  // only OpenAI models under "Works with"; Avada's model choice is unclear since
+  // its May 2026 engine change, Tapita names none.
+  "avada-blog": [{ kind: "unstated" }, { kind: "unstated" }, { kind: "unstated" }],
+  profitonium: Array.from({ length: 5 }, (): PlanEngines => ({ kind: "list", names: ["OpenAI", "Anthropic", "Google Gemini"] })),
+  tapita: [{ kind: "unstated" }, { kind: "unstated" }],
+  "essential-blog": Array.from({ length: 4 }, (): PlanEngines => ({ kind: "list", names: ["OpenAI"] })),
+  storeya: Array.from({ length: 4 }, (): PlanEngines => ({ kind: "list", names: ["OpenAI"] })),
   // GTranslate: "Machine translation" on Free, "AI translation" from Custom,
   // no engine named on either.
   gtranslate: [
