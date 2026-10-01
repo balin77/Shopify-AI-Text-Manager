@@ -17,6 +17,7 @@ import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -71,9 +72,14 @@ async function translateMetaobjectEntries(params: {
   targetLocales: string[];
   translationService: TranslationService;
   customInstructions?: string;
-}): Promise<{ translations: Record<string, Record<string, string>>; failedLocales: string[] }> {
+}): Promise<{
+  translations: Record<string, Record<string, string>>;
+  failedLocales: string[];
+  /** locale -> compound field keys Shopify did not confirm (never mirrored). */
+  rejectedFields: Record<string, string[]>;
+}> {
   const { admin, session, db, metaobjectFields, targetLocales, translationService, customInstructions } = params;
-  const { TRANSLATE_CONTENT } = await import("../../graphql/content.mutations");
+  const { registerAndVerify } = await import("~/services/translations/verified-translations.server");
   const { GET_TRANSLATABLE_CONTENT } = await import("../../graphql/content.queries");
   const { parseMetaobjectFieldKey } = await import("~/services/metaobject-fields.shared");
 
@@ -91,7 +97,7 @@ async function translateMetaobjectEntries(params: {
   });
 
   if (compoundKeys.length === 0) {
-    return { translations: {}, failedLocales: [...targetLocales] };
+    return { translations: {}, failedLocales: [...targetLocales], rejectedFields: {} };
   }
 
   // AI translation (all entries × all locales in one request)
@@ -105,6 +111,11 @@ async function translateMetaobjectEntries(params: {
   // Map AI results back to GID keys
   const allTranslations: Record<string, Record<string, string>> = {};
   const failedLocales: string[] = [];
+  const rejectedFields: Record<string, string[]> = {};
+  const reject = (locale: string, compound: string) => {
+    delete allTranslations[locale]?.[compound];
+    (rejectedFields[locale] ??= []).push(compound);
+  };
 
   for (const locale of targetLocales) {
     const localeResult = aiResult[locale];
@@ -127,6 +138,7 @@ async function translateMetaobjectEntries(params: {
       const parsed = parseMetaobjectFieldKey(compound);
       if (!parsed) continue;
       const { metaobjectId, fieldKey } = parsed;
+      let writeConfirmed = false;
       try {
         // The cache row is the tenancy check AND the source of the type the DB
         // row is stamped with. `itemId` on this page is `metaobject_type_<type>`
@@ -137,7 +149,12 @@ async function translateMetaobjectEntries(params: {
           where: { shop_id: { shop: session.shop, id: metaobjectId } },
           select: { type: true },
         });
-        if (!cached) continue;
+        if (!cached) {
+          // Unknown to this shop's cache: nothing was written, so the AI value
+          // must not be returned as saved.
+          reject(locale, compound);
+          continue;
+        }
 
         // Fetch digest for THIS field. `translatableContent` only lists keys
         // that have a primary value, so a missing digest means the source field
@@ -146,22 +163,45 @@ async function translateMetaobjectEntries(params: {
           variables: { resourceId: metaobjectId },
         });
         const digestData = await digestResponse.json();
-        const tc = digestData.data?.translatableResource?.translatableContent || [];
-        const digestEntry = tc.find((c: { key: string; digest: string | null }) => c.key === fieldKey);
-        if (!digestEntry?.digest) continue;
+        const resource = digestData.data?.translatableResource;
+        if (!resource || !Array.isArray(resource.translatableContent)) {
+          // A failed / inconclusive read proves nothing about the source field.
+          reject(locale, compound);
+          continue;
+        }
+        const digestEntry = resource.translatableContent.find(
+          (c: { key: string; digest: string | null }) => c.key === fieldKey,
+        );
+        if (!digestEntry) {
+          // Genuinely empty source field: nothing to translate, nothing saved.
+          delete allTranslations[locale]?.[compound];
+          continue;
+        }
+        if (!digestEntry.digest) {
+          reject(locale, compound);
+          continue;
+        }
 
-        // Register translation
-        await admin.graphql(TRANSLATE_CONTENT, {
-          variables: {
-            resourceId: metaobjectId,
-            translations: [{
-              key: fieldKey,
-              value: translatedValue,
-              locale,
-              translatableContentDigest: digestEntry.digest,
-            }],
-          },
-        });
+        // Verified register: userErrors alone prove nothing, Shopify must ECHO the
+        // key. A write it did not store is reported and NOT mirrored.
+        const verified = await registerAndVerify(admin, metaobjectId, [
+          { key: fieldKey, value: translatedValue, locale, translatableContentDigest: digestEntry.digest },
+        ]);
+        if (!verified.confirmedKeys.has(fieldKey)) {
+          logger.error("[translateMetaobjectEntries] Shopify did not confirm the translation", {
+            context: "Metaobjects",
+            metaobjectId,
+            fieldKey,
+            locale,
+            userErrors: verified.userErrors,
+          });
+          reject(locale, compound);
+          continue;
+        }
+        writeConfirmed = true;
+        markTranslationSaved(metaobjectId);
+        const storedValue = verified.confirmedValues.get(fieldKey) ?? translatedValue;
+        allTranslations[locale][compound] = storedValue;
 
         // Upsert DB
         await db.metaobjectTranslation.upsert({
@@ -179,12 +219,12 @@ async function translateMetaobjectEntries(params: {
             metaobjectId,
             type: cached.type,
             key: fieldKey,
-            value: translatedValue,
+            value: storedValue,
             locale,
             outdated: false,
           },
           update: {
-            value: translatedValue,
+            value: storedValue,
             outdated: false,
             // Repairs a row an older build stamped with the pseudo-item id.
             type: cached.type,
@@ -199,11 +239,14 @@ async function translateMetaobjectEntries(params: {
           locale,
           error: err instanceof Error ? err.message : String(err),
         });
+        // A write Shopify already confirmed is never taken back because our own
+        // mirror failed; only an unconfirmed one is reported as rejected.
+        if (!writeConfirmed) reject(locale, compound);
       }
     }
   }
 
-  return { translations: allTranslations, failedLocales };
+  return { translations: allTranslations, failedLocales, rejectedFields };
 }
 
 // ============================================================================
@@ -486,18 +529,22 @@ export async function handleTranslateAll(
       await db.task.update({
         where: { id: task.id },
         data: {
-          status: result.failedLocales.length > 0 ? "completed_with_errors" : "completed",
+          status:
+            result.failedLocales.length > 0 || Object.keys(result.rejectedFields).length > 0
+              ? "completed_with_errors"
+              : "completed",
           progress: 100,
           completedAt: new Date(),
           result: JSON.stringify({
             success: true,
             locales: Object.keys(result.translations),
             failedLocales: result.failedLocales,
+            rejectedFields: result.rejectedFields,
           }),
         },
       });
 
-      return json({ actionType: "translateAll", success: true, translations: result.translations, failedLocales: result.failedLocales, rejectedFields: {}, skippedFields: {} });
+      return json({ actionType: "translateAll", success: true, translations: result.translations, failedLocales: result.failedLocales, rejectedFields: result.rejectedFields, skippedFields: {} });
     }
 
     const result = await shopifyContentService.translateAllContent({
