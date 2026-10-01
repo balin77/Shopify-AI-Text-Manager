@@ -34,7 +34,7 @@ import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
-import { LocalizedImagesCard } from "~/components/localized-images/LocalizedImagesCard";
+import { LocalizedMediaProvider } from "~/components/localized-images/LocalizedMediaContext";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -1025,6 +1025,21 @@ export default function ProductsPage() {
   }
 
   return (
+    // Per-language replacement of the product's images and videos: state for
+    // both galleries, plan-gated only (never on the image manager's on/off).
+    // Keyed by data, not by element: the editor below must never remount.
+    <LocalizedMediaProvider
+      productId={editor.selectedItem?.id ?? ""}
+      enabled={showLocalizedImages && !!editor.selectedItem}
+      shopLocales={shopLocales}
+      markets={markets ?? []}
+      currentLanguage={editor.state.currentLanguage}
+      selectedMarketId={editor.state.selectedMarketId}
+      embedActivationUrl={localizedImagesEmbedUrl}
+      // The image list the manager last confirmed: an image added or removed
+      // there is reflected in the next foreign-language view without a reload.
+      reloadKey={editor.selectedItem ? `${imageManagerState.resetCounter}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}` : ""}
+    >
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
@@ -1143,23 +1158,9 @@ export default function ProductsPage() {
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
             />
           ) : undefined}
-          imageGalleryAddon={showLocalizedImages && editor.selectedItem ? (
-            <>
-            {/* Keyed on the product and on the image list the manager last
-                confirmed, so an image added or removed there is reflected
-                here without a page reload. */}
-            <LocalizedImagesCard
-              key={`${editor.selectedItem.id}:${imageManagerState.resetCounter}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}`}
-              productId={editor.selectedItem.id}
-              shopLocales={shopLocales}
-              markets={markets ?? []}
-              currentLanguage={editor.state.currentLanguage}
-              embedActivationUrl={localizedImagesEmbedUrl}
-            />
-            </>
-          ) : undefined}
         />
       </div>
     </div>
+    </LocalizedMediaProvider>
   );
 }

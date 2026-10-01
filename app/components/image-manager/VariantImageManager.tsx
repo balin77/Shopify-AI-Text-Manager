@@ -10,6 +10,9 @@ import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
+import { useLocalizedMediaContext } from "../localized-images/LocalizedMediaContext";
+import { LocalizedMediaReplacePanel, LocalizedMediaOrphanNotice } from "../localized-images/LocalizedMediaReplacePanel";
+import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
@@ -220,7 +223,7 @@ export function VariantImageManager({
   seedThreeDPreviewUrls,
   onGalleryOrderChange,
 }: VariantImageManagerProps) {
-  const { t } = useI18n();
+  const { t, locale: appLocale } = useI18n();
   const { plan } = usePlan();
   // Alt-text translation needs at least one foreign locale. Without one the
   // buttons stay visible but greyed out, with this as their tooltip.
@@ -2587,6 +2590,28 @@ export function VariantImageManager({
     ? (localAltTexts[productSingleSelected] !== undefined && localAltTexts[productSingleSelected] !== "")
     : false;
 
+  // Per-language replacement (foreign language only, product gallery only):
+  // tiles whose medium has one carry a corner mark, and the one selected,
+  // SAVED medium gets the replace panel. An unsaved tile has no GID and is not
+  // offered; a still-processing one is said to be unavailable by the panel.
+  const localizedMedia = useLocalizedMediaContext()?.state ?? null;
+  const replacedProductUrls = useMemo(() => {
+    const out = new Set<string>();
+    if (!localizedMedia?.active || localizedMedia.replaced.size === 0) return out;
+    for (const [url, gid] of Object.entries(urlToGid)) {
+      if (localizedMedia.replaced.has(gid)) out.add(url);
+    }
+    return out;
+  }, [localizedMedia, urlToGid]);
+  const replacedMarkLabel = localizedMedia?.active
+    ? t.localizedImages.replacedMark.replace("{language}", getLocalizedLanguageName(localizedMedia.rawLocale, appLocale))
+    : "";
+  const productSingleSelectedGid = productSingleSelected
+    ? (urlToGid[productSingleSelected]
+      ?? Object.entries(urlToGid).find(([k]) => k.split("?")[0] === productSingleSelected.split("?")[0])?.[1]
+      ?? null)
+    : null;
+
   return (
     <DndContext
       sensors={sharedSensors}
@@ -2755,6 +2780,8 @@ export function VariantImageManager({
               onOpenPicker={() => setPickerTarget({ mode: "product" })}
               localAltTexts={localAltTexts}
               isPrimaryLocale={isPrimaryLocale}
+              replacedUrls={replacedProductUrls}
+              replacedLabel={replacedMarkLabel}
             />
           </div>
           {(productGalleryHasOverflow || isProductGalleryExpanded) && (
@@ -2963,6 +2990,9 @@ export function VariantImageManager({
             )}
           </div>
         )}
+        {/* Replacement for the selected image/video in this foreign language. */}
+        {productSingleSelectedGid && <LocalizedMediaReplacePanel mediaId={productSingleSelectedGid} />}
+        <LocalizedMediaOrphanNotice />
       </div>
 
       <Divider />

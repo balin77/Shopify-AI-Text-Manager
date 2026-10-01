@@ -22,6 +22,11 @@ import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris"
 import { AIEditableField } from "../AIEditableField";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
+import { useI18n } from "../../contexts/I18nContext";
+import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
+import { useLocalizedMediaContext } from "../localized-images/LocalizedMediaContext";
+import { ReplacedMediaBadge } from "../localized-images/ReplacedMediaBadge";
+import { LocalizedMediaReplacePanel, LocalizedMediaOrphanNotice } from "../localized-images/LocalizedMediaReplacePanel";
 import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
 import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
 
@@ -38,6 +43,8 @@ export interface ImageData {
   altText?: string;
   altTextTranslations?: AltTextTranslation[];
   id?: string;
+  /** Shopify media GID (products): what a per-language replacement is keyed by. */
+  mediaId?: string | null;
 }
 
 interface ImageGalleryFieldProps {
@@ -162,6 +169,15 @@ export function ImageGalleryField({
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   // Single-language shop → nothing to translate alt-texts into.
   const singleLocaleHint = useSingleLocaleHint();
+  // Per-language replacement of a product's media (foreign language only; null
+  // on every other content type and below the plan).
+  const localized = useLocalizedMediaContext()?.state ?? null;
+  const { t: appT, locale: appLocale } = useI18n();
+  const replacedMarkLabel = localized?.active
+    ? appT.localizedImages.replacedMark.replace("{language}", getLocalizedLanguageName(localized.rawLocale, appLocale))
+    : "";
+  const isReplaced = (img: ImageData | undefined): boolean =>
+    !!localized?.active && !!img?.mediaId && localized.replaced.has(img.mediaId);
 
   // Reset selected image when images change
   useEffect(() => {
@@ -246,6 +262,9 @@ export function ImageGalleryField({
                   objectFit: "cover",
                 }}
               />
+            )}
+            {!isFreePlan && isReplaced(images[selectedImageIndex]) && (
+              <ReplacedMediaBadge label={replacedMarkLabel} size={24} top={8} left={8} />
             )}
             {/* Alt-text status badge on preview */}
             {!isFreePlan && images && images[selectedImageIndex] && (
@@ -339,6 +358,7 @@ export function ImageGalleryField({
                         objectFit: "cover",
                       }}
                     />
+                    {isReplaced(image) && <ReplacedMediaBadge label={replacedMarkLabel} />}
                     {/* Alt-text status badge */}
                     <div
                       title={(altTexts[index] !== undefined ? altTexts[index] : (isPrimaryLocale ? image.altText : undefined)) || undefined}
@@ -480,6 +500,13 @@ export function ImageGalleryField({
           onClear={onClearAltText ? () => onClearAltText(0) : undefined}
         />
       ) : null)}
+
+      {/* Replacement for the selected image in this foreign language; the
+          primary locale shows nothing of it. */}
+      {!isFreePlan && localized?.active && images && images[selectedImageIndex]?.mediaId && (
+        <LocalizedMediaReplacePanel mediaId={images[selectedImageIndex].mediaId as string} />
+      )}
+      <LocalizedMediaOrphanNotice />
     </BlockStack>
   );
 }
