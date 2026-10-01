@@ -1163,6 +1163,7 @@ export const de = {
       planToggleHelp:
         "Zeigt die Pläne mit enthaltener KI: Texte werden über unser KI-Konto erstellt und übersetzt, ohne eigenen API-Schlüssel. Ein Volumen pro Abrechnungszeitraum ist im Preis enthalten. Der Plan ändert sich erst mit dem Button unter dem Plan.",
       planVolume: {
+        free: "Einmalig zum Testen: rund {actions} KI-Aktionen, ohne Abo. Danach mit eigenem API-Key oder einem Plan mit KI.",
         basic: "Reicht für etwa 300–500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
         pro: "Reicht für etwa 600–1.000 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
         max: "Reicht für etwa 1.500–2.500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",

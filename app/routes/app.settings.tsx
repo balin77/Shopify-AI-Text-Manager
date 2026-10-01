@@ -2489,6 +2489,7 @@ export default function SettingsPage() {
                     imageOperationCount={imageOperationCount}
                     managedAiOffered={managedAiOffered}
                     managedAiActive={settings.managedAiActive}
+                    managedAiTasterActions={managedAiTasterActions}
                     t={t}
                   />
                 </>

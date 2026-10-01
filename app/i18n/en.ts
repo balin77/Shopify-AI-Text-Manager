@@ -1162,6 +1162,7 @@ export const en: Translation = {
       planToggleHelp:
         "Shows the plans with AI included: texts are written and translated through our AI account, with no API key of your own. A volume per billing period is included in the price. Your plan only changes with the button below a plan.",
       planVolume: {
+        free: "One-time trial: about {actions} AI actions, no subscription. After that, use your own API key or a plan with AI.",
         basic: "Enough for about 300–500 products translated into one language each period.",
         pro: "Enough for about 600–1,000 products translated into one language each period.",
         max: "Enough for about 1,500–2,500 products translated into one language each period.",
