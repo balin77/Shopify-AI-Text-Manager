@@ -335,6 +335,7 @@ export const guideDe: GuideCopy = {
           heading: "Gespeichert heisst bestätigt",
           paragraphs: [
             "Eine Übersetzung gilt erst als gespeichert, wenn Shopify sie zurückmeldet. Nimmt Shopify eine Übersetzung nicht an, sehen Sie das am betroffenen Feld — statt einer Erfolgsmeldung über etwas, das nie angekommen ist.",
+            "Dasselbe gilt beim Leeren: Eine Übersetzung gilt erst als entfernt, wenn Shopify es bestätigt; sonst bleibt sie sichtbar und Sie werden darüber informiert. Bei Produktoptionen und Metafeldern wird eine von Shopify abgelehnte Sprache in der Aufgabe benannt, die dann „mit Fehlern abgeschlossen“ anzeigt.",
           ],
         },
       ],

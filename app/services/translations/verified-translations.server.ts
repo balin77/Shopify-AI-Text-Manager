@@ -664,3 +664,121 @@ export async function mirrorConfirmedContentTranslations(
   }
   return { mirrored, localOnly };
 }
+
+// --- removal with the gap re-read, for callers that must reach it ----------------
+
+export interface RemoveWithGapRereadResult {
+  /** Confirmed `${locale}${LOCALE_KEY_SEP}${key}` pairs, keyed by the SENT
+   *  locale spelling. Only these may be deleted locally. */
+  confirmedPairs: Set<string>;
+  /**
+   * Pairs that are NOT confirmed. With `localPairs` given: only the ones that
+   * have a local row (what a caller could act on); without it: every one.
+   */
+  unconfirmedPairs: string[];
+  userErrors: TranslationUserError[];
+}
+
+/**
+ * The removal pattern of `purgeAltTranslations`, as one call: for ONE locale it
+ * is `removeAndVerify` (echo, then the re-read on a gap); for SEVERAL it is ONE
+ * `removeAndVerifyAcrossLocales` and then `removeAndVerify` ONLY for a locale
+ * that has a gap -- so the re-read costs one query per locale that needs it,
+ * never one per locale per key.
+ *
+ * `localPairs` (optional) are the `${locale}\0${key}` pairs that have a LOCAL
+ * mirror row. When given, only a gap pair in it is re-read: a pair with no row
+ * has nothing to delete locally, so confirming it buys nothing. Omit it where
+ * the caller does not know the local rows -- every gap is then re-read.
+ *
+ * Why the re-read matters here at all: Shopify echoes what it DELETED, so a
+ * key it never held (a DB-only mirror row, written on purpose when the register
+ * found no digest) comes back empty with `userErrors: []`. "Delete confirmed
+ * only" without the re-read would make such a row impossible to clear.
+ *
+ * Throws on a transport/GraphQL error of the FIRST call; a failed per-locale
+ * re-read leaves that locale's pairs unconfirmed.
+ */
+export async function removeVerifiedWithGapReread(
+  client: GraphqlClient,
+  resourceId: string,
+  translationKeys: string[],
+  locales: string[],
+  marketId: string,
+  options: { localPairs?: ReadonlySet<string> } = {},
+): Promise<RemoveWithGapRereadResult> {
+  const confirmedPairs = new Set<string>();
+  const userErrors: TranslationUserError[] = [];
+  if (translationKeys.length === 0 || locales.length === 0) {
+    return { confirmedPairs, unconfirmedPairs: [], userErrors };
+  }
+  const pair = (locale: string, key: string) => `${locale}${LOCALE_KEY_SEP}${key}`;
+
+  if (locales.length === 1) {
+    const single = await removeAndVerify(client, resourceId, translationKeys, locales[0], marketId);
+    for (const key of single.confirmedKeys) confirmedPairs.add(pair(locales[0], key));
+    userErrors.push(...single.userErrors);
+  } else {
+    const across = await removeAndVerifyAcrossLocales(client, resourceId, translationKeys, locales, marketId);
+    for (const p of across.confirmedPairs) confirmedPairs.add(p);
+    userErrors.push(...across.userErrors);
+    for (const locale of locales) {
+      const gapKeys = translationKeys.filter((key) => {
+        const p = pair(locale, key);
+        return !confirmedPairs.has(p) && (!options.localPairs || options.localPairs.has(p));
+      });
+      if (gapKeys.length === 0) continue;
+      try {
+        const single = await removeAndVerify(client, resourceId, gapKeys, locale, marketId);
+        for (const key of single.confirmedKeys) confirmedPairs.add(pair(locale, key));
+        userErrors.push(...single.userErrors);
+      } catch (error: unknown) {
+        // Unconfirmed: the local row stays and the next look corrects it.
+        logger.warn("[VERIFIED] removal re-read for a gap locale failed", {
+          context: "Verified",
+          resourceId,
+          locale,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  const unconfirmedPairs: string[] = [];
+  for (const locale of locales) {
+    for (const key of translationKeys) {
+      const p = pair(locale, key);
+      if (confirmedPairs.has(p)) continue;
+      if (options.localPairs && !options.localPairs.has(p)) continue;
+      unconfirmedPairs.push(p);
+    }
+  }
+  return { confirmedPairs, unconfirmedPairs, userErrors };
+}
+
+/**
+ * The `where` fragment ({ key, locale } or an OR of them) that selects exactly
+ * the CONFIRMED (locale, key) pairs of a removal, for a `deleteMany` -- or
+ * `null` when nothing was confirmed (then there is nothing to delete). The
+ * common all-confirmed case keeps the plain `key in / locale in` shape.
+ */
+export function confirmedPairsWhere(
+  confirmedPairs: ReadonlySet<string>,
+  translationKeys: string[],
+  locales: string[],
+):
+  | { key: { in: string[] }; locale: { in: string[] } }
+  | { OR: Array<{ locale: string; key: { in: string[] } }> }
+  | null {
+  const perLocale = locales
+    .map((locale) => ({
+      locale,
+      keys: translationKeys.filter((key) => confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}${key}`)),
+    }))
+    .filter((entry) => entry.keys.length > 0);
+  if (perLocale.length === 0) return null;
+  if (perLocale.length === locales.length && perLocale.every((entry) => entry.keys.length === translationKeys.length)) {
+    return { key: { in: translationKeys }, locale: { in: locales } };
+  }
+  return { OR: perLocale.map((entry) => ({ locale: entry.locale, key: { in: entry.keys } })) };
+}

@@ -53,6 +53,8 @@ const { policy, removeAcrossLocales } = vi.hoisted(() => ({
     /** locale\u0000key pairs Shopify confirms. null = confirm everything asked for. */
     confirms: null as null | string[],
     calls: [] as Array<{ resourceId: string; keys: string[]; locales: string[] }>,
+    /** true = run the real helper (the field purge tests drive it through admin.graphql). */
+    useReal: false,
   },
 }));
 
@@ -63,18 +65,27 @@ vi.mock('../../app/services/translations/translation-change-policy.server', () =
   ),
 }));
 
-vi.mock('../../app/services/bulk-editor/translations.server', () => ({
-  LOCALE_KEY_SEP: '\u0000',
-  removeAndVerifyAcrossLocales: vi.fn(
-    async (_gw: unknown, resourceId: string, keys: string[], locales: string[]) => {
-      removeAcrossLocales.calls.push({ resourceId, keys, locales });
-      const pairs =
-        removeAcrossLocales.confirms ??
-        locales.flatMap((l) => keys.map((k) => `${l}\u0000${k}`));
-      return { confirmedPairs: new Set(pairs), userErrors: [] };
-    },
-  ),
-}));
+// The service imports the verified helpers from verified-translations.server
+// (the moved module); only the multi-locale sweep is faked, everything else
+// (removeAndVerify, the gap re-read helper, ...) stays real over `admin.graphql`.
+vi.mock('../../app/services/translations/verified-translations.server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../app/services/translations/verified-translations.server')>();
+  return {
+    ...actual,
+    removeAndVerifyAcrossLocales: vi.fn(
+      async (gw: unknown, resourceId: string, keys: string[], locales: string[], marketId: string) => {
+        if (removeAcrossLocales.useReal) {
+          return actual.removeAndVerifyAcrossLocales(gw as never, resourceId, keys, locales, marketId);
+        }
+        removeAcrossLocales.calls.push({ resourceId, keys, locales });
+        const pairs =
+          removeAcrossLocales.confirms ??
+          locales.flatMap((l) => keys.map((k) => `${l}\u0000${k}`));
+        return { confirmedPairs: new Set(pairs), userErrors: [] };
+      },
+    ),
+  };
+});
 
 vi.mock('../../app/services/shopify-api-gateway.service', () => ({
   ShopifyApiGateway: class {
@@ -470,7 +481,17 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
               keys: opts?.variables?.translationKeys,
               locales: opts?.variables?.locales,
             });
-            return { data: { translationsRemove: { userErrors: [] } } };
+            // Echoes what it deleted -- the local rows go only for confirmed pairs.
+            return {
+              data: {
+                translationsRemove: {
+                  userErrors: [],
+                  translations: (opts?.variables?.locales ?? []).flatMap((l: string) =>
+                    (opts?.variables?.translationKeys ?? []).map((k: string) => ({ key: k, locale: l })),
+                  ),
+                },
+              },
+            };
           }
           return { data: { pageUpdate: { page: { id: pageId, title: 'Neuer Titel' }, userErrors: [] } } };
         },
@@ -540,7 +561,11 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
     expect(removedFromShopify).toHaveLength(1);
     expect(removedFromShopify[0].keys.sort()).toEqual(['body_html', 'title']);
     expect(removedFromShopify[0].locales).toEqual(['fr']);
-    expect(db.contentTranslation.deleteMany).toHaveBeenCalled();
+    // The confirmed (locale, key) pairs are deleted locally, scoped to the shop.
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({
+      shop, resourceId: pageId, marketId: '', locale: { in: ['fr'] },
+    });
   });
 
   it('repairs a Collection here too — its webhook cannot prove a change on a row with no translations', async () => {
