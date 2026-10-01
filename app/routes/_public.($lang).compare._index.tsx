@@ -1,9 +1,8 @@
 import type { LoaderFunctionArgs, MetaFunction } from "react-router";
-import { Link, useLoaderData } from "react-router";
+import { useLoaderData } from "react-router";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { getCompareCopy } from "../i18n/marketing/compare";
 import { MARKETING_SITE } from "../config/marketing-site";
-import { COMPETITORS, COMPETITOR_NAMES, PRICE_APPS, comparePath } from "../config/marketing-compare";
 import { breadcrumbLd } from "../utils/marketing-jsonld";
 import { buildMarketingMeta } from "../utils/marketing-meta";
 import {
@@ -12,14 +11,15 @@ import {
   requireMarketingLocale,
 } from "../utils/marketing-route.server";
 import { localizedPath } from "../services/marketing-locale.shared";
-import { CompareDisclaimer, CompareMatrix } from "../components/marketing/CompareTable";
+import { CompareTopicPage } from "../components/marketing/CompareTopicPage";
 import { MarketingCta } from "../components/marketing/MarketingCta";
+import { comparePreviewAllowed } from "../utils/marketing-compare-preview.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   redirectTrailingSlash(url);
   const locale = requireMarketingLocale(params.lang, "/compare", url.search);
-  return { locale, origin: marketingOrigin(url) };
+  return { locale, origin: marketingOrigin(url), preview: comparePreviewAllowed(url) };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
@@ -43,53 +43,20 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
 };
 
 /**
- * `/compare` — ContentPilot against the four translation apps merchants weigh
- * it against, in one table, with a card per app leading to its own page.
- * The facts live in config/marketing-compare.ts; read the rules there before
+ * `/compare` — the translation topic, ContentPilot against the translation
+ * apps merchants weigh it against. The other topics live at
+ * `/compare/<topic>` and share this page's layout (CompareTopicPage). The
+ * facts live in config/marketing-compare.ts; read the rules there before
  * changing an answer.
  */
 export default function MarketingCompare() {
-  const { locale } = useLoaderData<typeof loader>();
+  const { locale, preview } = useLoaderData<typeof loader>();
   const t = getMarketingTranslation(locale);
   const copy = getCompareCopy(locale);
 
   return (
     <>
-      <section className="mk-section mk-section--first">
-        <div className="mk-shell">
-          <div className="mk-section__head">
-            <h1>{copy.title}</h1>
-            <p className="mk-lead">{copy.intro}</p>
-          </div>
-
-          <CompareMatrix copy={copy} locale={locale} apps={PRICE_APPS} />
-
-          <ul className="mk-compare-cards">
-            {COMPETITORS.map((id) => {
-              const competitor = copy.competitors[id];
-              return (
-                <li key={id}>
-                  <Link className="mk-compare-card" to={localizedPath(locale, comparePath(id))}>
-                    <span className="mk-compare-card__title">
-                      {copy.vsTitle.replace("{name}", COMPETITOR_NAMES[id])}
-                    </span>
-                    <span className="mk-note">{competitor.kind}</span>
-                    <span className="mk-compare-card__summary">{competitor.summary}</span>
-                    <span className="mk-arrow">{copy.detailLink}</span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </section>
-
-      <section className="mk-section">
-        <div className="mk-shell">
-          <CompareDisclaimer copy={copy} />
-        </div>
-      </section>
-
+      <CompareTopicPage copy={copy} locale={locale} topic="translation" preview={preview} />
       <MarketingCta t={t} locale={locale} />
     </>
   );

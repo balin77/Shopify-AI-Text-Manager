@@ -1903,6 +1903,55 @@ a.mk-badge:hover {
   max-width: var(--mk-prose-width);
 }
 
+/* ── Comparison topics (/compare, /compare/seo, …) ─────────────────────── */
+
+/* Underlined tabs rather than pills: the pills below them pick a LEVEL of
+   the table, and two rows of identical-looking pills read as one control. */
+.mk-compare-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--mk-border);
+}
+
+.mk-compare-topics__link {
+  padding: 10px 2px;
+  margin-bottom: -1px;
+  font-weight: 600;
+  color: var(--mk-text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+
+.mk-compare-topics__link:hover {
+  color: var(--mk-text);
+}
+
+.mk-compare-topics__link[aria-current="page"] {
+  color: var(--mk-text);
+  border-bottom-color: var(--mk-brand);
+}
+
+.mk-compare-topics__link:focus-visible {
+  outline: 2px solid var(--mk-brand);
+  outline-offset: 2px;
+}
+
+.mk-shell > .mk-compare-preview {
+  margin: 0 0 32px;
+  padding: 10px 14px;
+  border: 1px dashed var(--mk-border-strong);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface-2);
+  font-size: 0.9375rem;
+}
+
+.mk-shell > .mk-compare-suite {
+  margin: -8px 0 0;
+  font-weight: 600;
+}
+
 /* ── Plan by plan ─────────────────────────────────────────────────────── */
 
 .mk-compare-matrix {
@@ -2060,6 +2109,27 @@ a.mk-badge:hover {
 
 .mk-compare-matrix__table thead th:first-child {
   z-index: 3;
+}
+
+/* Scrolling sideways, two things stay put: ContentPilot's column right after
+   the feature column (it is what every other column is compared against),
+   and the group titles, whose label sticks to the left edge while their
+   full-width row slides underneath. */
+.mk-compare-matrix__table .mk-compare-table__ours {
+  position: sticky;
+  left: var(--mk-compare-first-col, 200px);
+  z-index: 1;
+  box-shadow: 1px 0 0 var(--mk-border);
+}
+
+.mk-compare-matrix__table thead th.mk-compare-table__ours {
+  z-index: 3;
+}
+
+.mk-compare-table__group-label {
+  position: sticky;
+  left: 14px;
+  display: inline-block;
 }
 
 /* Fitting: no scroll box at all (`clip` is not a scroll container, so

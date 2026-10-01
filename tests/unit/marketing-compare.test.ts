@@ -8,8 +8,16 @@ import {
   COMPARE_GROUPS,
   COMPARE_ROWS,
   COMPETITORS,
+  COMPARE_TOPICS,
+  COMPARE_TOPIC_ORDER,
+  LIVE_COMPETITORS,
+  TRANSLATION_COMPETITORS,
   comparePath,
   isCompetitorId,
+  topicBySlug,
+  topicOfCompetitor,
+  topicPath,
+  visibleTopics,
 } from "../../app/config/marketing-compare";
 import { getCompareCopy } from "../../app/i18n/marketing/compare";
 import { BILLING_PLANS } from "../../app/config/billing";
@@ -27,7 +35,7 @@ describe("comparison pages", () => {
 
   it("only accepts the listed competitors as slugs", () => {
     expect(isCompetitorId("weglot")).toBe(true);
-    expect(isCompetitorId("langify")).toBe(false);
+    expect(isCompetitorId("not-an-app")).toBe(false);
     expect(isCompetitorId(undefined)).toBe(false);
   });
 
@@ -36,10 +44,58 @@ describe("comparison pages", () => {
     for (const group of COMPARE_GROUPS) {
       expect(COMPARE_ROWS.some((row) => row.group === group)).toBe(true);
     }
+    for (const topic of COMPARE_TOPIC_ORDER) {
+      const { rows, groups } = COMPARE_TOPICS[topic];
+      for (const row of rows) expect(groups, `${topic}/${row.id}`).toContain(row.group);
+      for (const group of groups) expect(rows.some((row) => row.group === group), `${topic}/${group}`).toBe(true);
+      // A row id appears once per topic: the copy and the notes are keyed by it.
+      expect(new Set(rows.map((row) => row.id)).size, topic).toBe(rows.length);
+    }
   });
 
   it("names our own gaps too — a table we win on every row reads as an advert", () => {
-    expect(COMPARE_ROWS.some((row) => row.ours === "no")).toBe(true);
+    for (const topic of COMPARE_TOPIC_ORDER) {
+      expect(COMPARE_TOPICS[topic].rows.some((row) => row.ours === "no"), topic).toBe(true);
+    }
+  });
+
+  it("answers each row only for the apps of its own topic", () => {
+    for (const topic of COMPARE_TOPIC_ORDER) {
+      const { rows, competitors } = COMPARE_TOPICS[topic];
+      for (const row of rows) {
+        for (const app of Object.keys(row.them)) {
+          expect(competitors as readonly string[], `${topic}/${row.id}/${app}`).toContain(app);
+        }
+      }
+    }
+  });
+
+  it("keeps topic slugs and competitor slugs apart, and every competitor in exactly one topic", () => {
+    for (const topic of COMPARE_TOPIC_ORDER) {
+      const slug = COMPARE_TOPICS[topic].slug;
+      if (slug) expect(isCompetitorId(slug), slug).toBe(false);
+      expect(topicBySlug(slug ?? undefined)).toBe(slug ? topic : null);
+      expect(topicPath(topic)).toBe(slug ? `/compare/${slug}` : "/compare");
+    }
+    for (const id of COMPETITORS) {
+      const homes = COMPARE_TOPIC_ORDER.filter((topic) => COMPARE_TOPICS[topic].competitors.includes(id));
+      expect(homes, id).toEqual([topicOfCompetitor(id)]);
+      const { initial, competitors } = COMPARE_TOPICS[topicOfCompetitor(id)];
+      for (const start of initial) expect(competitors).toContain(start);
+    }
+  });
+
+  it("publishes nothing unresearched: a live topic has real plans and page copy for every app", () => {
+    for (const topic of visibleTopics(false)) {
+      for (const id of COMPARE_TOPICS[topic].competitors) {
+        expect(COMPARE_PRICES[id].pending, `${topic}/${id}`).toBeUndefined();
+        for (const locale of MARKETING_LOCALES) {
+          expect(getCompareCopy(locale).competitors[id], `${locale} ${id}`).toBeDefined();
+        }
+      }
+    }
+    expect(visibleTopics(false)).toContain("translation");
+    expect(LIVE_COMPETITORS).toEqual(expect.arrayContaining([...TRANSLATION_COMPETITORS]));
   });
 
   it("gives every competitor the same number of strengths and edges in every language", () => {
@@ -47,11 +103,17 @@ describe("comparison pages", () => {
     for (const locale of MARKETING_LOCALES) {
       const copy = getCompareCopy(locale);
       for (const id of COMPETITORS) {
-        expect(copy.competitors[id].strengths.length).toBe(en.competitors[id].strengths.length);
-        expect(copy.competitors[id].ourEdge.length).toBe(en.competitors[id].ourEdge.length);
-        expect(Object.keys(copy.competitors[id].notes ?? {}).sort()).toEqual(
-          Object.keys(en.competitors[id].notes ?? {}).sort(),
-        );
+        const mine = copy.competitors[id];
+        const reference = en.competitors[id];
+        // The same apps have copy in every language — never one page in English only.
+        expect(Boolean(mine), `${locale} ${id}`).toBe(Boolean(reference));
+        if (!mine || !reference) continue;
+        expect(mine.strengths.length).toBe(reference.strengths.length);
+        expect(mine.ourEdge.length).toBe(reference.ourEdge.length);
+        expect(Object.keys(mine.notes ?? {}).sort()).toEqual(Object.keys(reference.notes ?? {}).sort());
+      }
+      for (const topic of COMPARE_TOPIC_ORDER) {
+        expect(copy.ourStrengthsByTopic[topic]?.length ?? 0).toBe(en.ourStrengthsByTopic[topic]?.length ?? 0);
       }
       expect(Object.keys(copy.ourNotes).sort()).toEqual(Object.keys(en.ourNotes).sort());
       expect(copy.vsTitle).toContain("{name}");
@@ -77,7 +139,7 @@ describe("comparison pages", () => {
   });
 
   it("lists a per-plan answer for every plan of the app it describes", () => {
-    for (const row of COMPARE_ROWS) {
+    for (const row of COMPARE_TOPIC_ORDER.flatMap((topic) => COMPARE_TOPICS[topic].rows)) {
       for (const [app, answers] of Object.entries(row.byPlan ?? {})) {
         const plans = COMPARE_PRICES[app as keyof typeof COMPARE_PRICES].plans;
         expect(answers, `${row.id}/${app}`).toHaveLength(plans.length);
@@ -86,7 +148,7 @@ describe("comparison pages", () => {
   });
 
   it("never says 'higher plan' on an app's top plan, and reads its top plan past its ladder", () => {
-    for (const row of COMPARE_ROWS) {
+    for (const row of COMPARE_TOPIC_ORDER.flatMap((topic) => COMPARE_TOPICS[topic].rows)) {
       for (const app of PRICE_APPS) {
         const top = COMPARE_PRICES[app].plans.length - 1;
         expect(supportAtLevel(row, app, top), `${row.id}/${app}`).not.toBe("higherPlan");
@@ -101,9 +163,18 @@ describe("comparison pages", () => {
     expect(supportAtLevel(row, "contentpilot", 3)).toBe("yes");
   });
 
-  it("names the engines of every plan of every app", () => {
+  it("names the engines of every plan of every app whose engines are compared", () => {
+    const engineApps = new Set<string>(["contentpilot"]);
+    for (const topic of COMPARE_TOPIC_ORDER) {
+      const config = COMPARE_TOPICS[topic];
+      if (config.showEngines) config.competitors.forEach((id) => engineApps.add(id));
+    }
     for (const app of PRICE_APPS) {
-      expect(COMPARE_ENGINES[app], app).toHaveLength(COMPARE_PRICES[app].plans.length);
+      const engines = COMPARE_ENGINES[app];
+      // A pending app (not researched yet) may miss its engines; it renders "being checked".
+      if (!engines && COMPARE_PRICES[app].pending) continue;
+      if (engineApps.has(app) && !COMPARE_PRICES[app].pending) expect(engines, app).toBeDefined();
+      if (engines) expect(engines, app).toHaveLength(COMPARE_PRICES[app].plans.length);
     }
   });
 });
@@ -113,8 +184,11 @@ describe("strengths row of the comparison table", () => {
     for (const locale of MARKETING_LOCALES) {
       const copy = getCompareCopy(locale);
       expect(copy.ourStrengths.length, locale).toBeGreaterThan(0);
-      for (const id of COMPETITORS) {
-        expect(copy.competitors[id].strengths.length, `${locale} ${id}`).toBeGreaterThan(0);
+      for (const id of LIVE_COMPETITORS) {
+        expect(copy.competitors[id]?.strengths.length ?? 0, `${locale} ${id}`).toBeGreaterThan(0);
+      }
+      for (const topic of COMPARE_TOPIC_ORDER) {
+        expect((copy.ourStrengthsByTopic[topic] ?? copy.ourStrengths).length, `${locale} ${topic}`).toBeGreaterThan(0);
       }
     }
   });

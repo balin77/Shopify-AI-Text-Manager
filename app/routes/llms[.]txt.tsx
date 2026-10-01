@@ -13,7 +13,7 @@ import type { LoaderFunctionArgs } from "react-router";
 import { marketingOrigin } from "../utils/marketing-route.server";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { GUIDE_CATEGORIES, guideTopicPath } from "../config/marketing-guide";
-import { COMPETITORS, COMPETITOR_NAMES, comparePath } from "../config/marketing-compare";
+import { COMPETITOR_NAMES, LIVE_COMPETITORS, comparePath } from "../config/marketing-compare";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { getGuideCopy } from "../i18n/marketing/guide";
 import { getCompareCopy } from "../i18n/marketing/compare";
@@ -55,10 +55,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   lines.push("## Comparisons", "");
-  for (const id of COMPETITORS) {
-    lines.push(
-      `- [${compare.vsTitle.replace("{name}", COMPETITOR_NAMES[id])}](${origin}${comparePath(id)}): ${compare.competitors[id].summary}`,
-    );
+  for (const id of LIVE_COMPETITORS) {
+    const summary = compare.competitors[id]?.summary;
+    if (!summary) continue;
+    lines.push(`- [${compare.vsTitle.replace("{name}", COMPETITOR_NAMES[id])}](${origin}${comparePath(id)}): ${summary}`);
   }
   lines.push("");
 

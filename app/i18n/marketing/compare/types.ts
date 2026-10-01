@@ -2,7 +2,9 @@ import type {
   CompareGroupId,
   PriceAppId,
   CompareRowId,
+  CompareTopicId,
   CompetitorId,
+  TranslationCompetitorId,
   Support,
 } from "../../../config/marketing-compare";
 
@@ -36,8 +38,24 @@ export type CompareCopy = {
   rows: Record<CompareRowId, { label: string; help: string }>;
   /** ContentPilot's own strengths, for the strengths row of the table. */
   ourStrengths: string[];
+  /** Our strengths per topic; a topic without an entry uses `ourStrengths`. */
+  ourStrengthsByTopic: Partial<Record<CompareTopicId, string[]>>;
   /** Our own notes on a cell, keyed by row. */
   ourNotes: Partial<Record<CompareRowId, string>>;
+  /** The topic switch above the table and the topic pages. */
+  topics: {
+    /** Accessible name of the topic switch. */
+    nav: string;
+    /** One sentence over every table: one plan covers all topics. */
+    suite: string;
+    /** Banner on a topic that is only visible as a preview. */
+    preview: string;
+    /** Translation uses the page's own `title`/`intro`; every other topic has its own. */
+    items: { translation: { tab: string } } & Record<
+      Exclude<CompareTopicId, "translation">,
+      { tab: string; title: string; intro: string }
+    >;
+  };
   aboutHeading: string;
   strengthsHeading: string;
   ourEdgeHeading: string;
@@ -72,6 +90,7 @@ export type CompareCopy = {
       shopify: string;
       vendor: string;
       unstated: string;
+      manual: string;
     };
     trialRow: string;
     /** The "+ AI" variant of our plans: the merchant uses a key of ours. */
@@ -94,8 +113,18 @@ export type CompareCopy = {
     strengthsRow: string;
     strengthsHelp: string;
     values: {
+      /** A plan row of an app whose plans are not researched yet. */
+      pending: string;
       unlimited: string;
+      /** Ours: every language Shopify lets the shop have. */
+      shopifyMax: string;
       someAutomatic: string;
+      /** `{auto}` translated by AI out of `{total}` addable. */
+      automaticOf: string;
+      manualOnly: string;
+      wordsOnce: string;
+      oncePerLanguage: string;
+      oncePerLanguageOrOwnKey: string;
       noProductLimit: string;
       ownKey: string;
       included: string;
@@ -131,5 +160,11 @@ export type CompareCopy = {
   detailLink: string;
   otherComparisons: string;
   allComparisons: string;
-  competitors: Record<CompetitorId, CompetitorCopy>;
+  /**
+   * Every translation app has its page copy; the apps of the newer topics get
+   * theirs once their facts are researched — until then they have no
+   * `/compare/<app>` page and no card.
+   */
+  competitors: Record<TranslationCompetitorId, CompetitorCopy> &
+    Partial<Record<CompetitorId, CompetitorCopy>>;
 };
