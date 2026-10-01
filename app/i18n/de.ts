@@ -1582,6 +1582,8 @@ export const de = {
     apiKeyFormatError: "Der eingegebene Schlüssel hat nicht das erwartete Format. Bitte überprüfen Sie den Code im Anbieter-Dashboard und fügen Sie ihn erneut ein.",
     apiKeySaveErrorIntro: "Einige Einträge haben nicht das erwartete Format. Die betroffenen Felder sind unten rot markiert – bitte korrigieren Sie diese und klicken Sie erneut auf Speichern.",
     imageManagerSaveError: "Bildmanager-Einstellungen konnten nicht gespeichert werden. Bitte erneut versuchen.",
+    modelUnavailable: "nicht mehr verfügbar",
+    modelUnavailableHelp: "Dieses Modell bietet der Anbieter nicht mehr an. Die App verwendet vorübergehend sein Nachfolgemodell — wählen Sie ein Modell aus der Liste und speichern Sie.",
     modelsFallback_no_api_key: "Standardliste – ein API-Schlüssel ist nötig, um die Live-Modelliste zu laden.",
     modelsFallback_api_error: "Standardliste – die Anbieter-API konnte nicht erreicht werden.",
     modelsFallback_invalid_key: "Standardliste – der hinterlegte Schlüssel scheint ungültig zu sein.",

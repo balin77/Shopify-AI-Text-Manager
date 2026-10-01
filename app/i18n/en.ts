@@ -1581,6 +1581,8 @@ export const en: Translation = {
     apiKeyFormatError: "This key doesn't match the expected format. Double-check it in the provider dashboard and paste it again.",
     apiKeySaveErrorIntro: "Some entries don't match the expected format. The fields with problems are highlighted below — fix them and click Save again.",
     imageManagerSaveError: "Image manager settings could not be saved. Please try again.",
+    modelUnavailable: "no longer available",
+    modelUnavailableHelp: "The provider no longer offers this model. The app temporarily uses its successor — choose a model from the list and save.",
     modelsFallback_no_api_key: "Default list — an API key is required to load the live model list.",
     modelsFallback_api_error: "Default list — the provider's API couldn't be reached.",
     modelsFallback_invalid_key: "Default list — the stored API key appears to be invalid.",
