@@ -839,21 +839,36 @@ async function updateTranslatedProduct(
   // again). Something confirmed => a partial save, reported as a WARNING naming
   // what did not land -- the confirmed half is real and a critical error over
   // it would invite re-typing text that is already live.
-  const failures: string[] = [];
-  if (unconfirmedKeys.length > 0) {
-    failures.push(
-      `Shopify accepted the save but did not confirm storing (${unconfirmedKeys.join(", ")}). Those fields were NOT saved and were not cached locally — please try again.${registerError ? ` (${registerError})` : ""}`,
+  // The same rules, in the same order, as updateContent
+  // (shopify-content.service.ts), so the product editor and every other
+  // editor answer one save the same way:
+  //  - a REGISTER that confirmed nothing fails the save, whatever removals did
+  //    -- otherwise the client caches the unsaved text as saved and the field
+  //    reads clean while Shopify holds nothing;
+  //  - fields stored locally only (no digest) are said out loud, also inside a
+  //    failure, so the merchant knows which half went where.
+  const warnings: string[] = [];
+  if (dbOnlyTranslations.length > 0) {
+    const fieldNames = dbOnlyTranslations.map((t) => t.key).join(", ");
+    warnings.push(
+      `Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`,
     );
+  }
+  if (unconfirmedKeys.length > 0) {
+    const message = `Shopify accepted the save but did not confirm storing (${unconfirmedKeys.join(", ")}). Those fields were NOT saved and were not cached locally — please try again.${registerError ? ` (${registerError})` : ""}`;
+    if (confirmedInputs.length === 0) {
+      return json({ success: false, error: [message, ...warnings].join(" ") }, { status: 500 });
+    }
+    warnings.unshift(message);
   }
   if (unconfirmedRemovals.length > 0) {
-    failures.push(
-      `Shopify did not confirm removing the translation of (${unconfirmedRemovals.join(", ")}). It was kept — please try again.${removalError ? ` (${removalError})` : ""}`,
-    );
-  }
-  if (failures.length > 0) {
+    const message = `Shopify did not confirm removing the translation of (${unconfirmedRemovals.join(", ")}). It was kept — please try again.${removalError ? ` (${removalError})` : ""}`;
     if (confirmedInputs.length === 0 && confirmedDeleteKeys.length === 0) {
-      return json({ success: false, error: failures.join(" ") }, { status: 500 });
+      return json({ success: false, error: [message, ...warnings].join(" ") }, { status: 500 });
     }
+    warnings.unshift(message);
+  }
+  if (warnings.length > 0) {
     // FIELD keys whose clear Shopify did not confirm: the page keeps them dirty
     // instead of caching them as saved-empty.
     const unconfirmedClearedFields = unconfirmedRemovals
@@ -861,7 +876,7 @@ async function updateTranslatedProduct(
       .filter((field): field is string => !!field);
     return json({
       success: true,
-      warning: failures.join(" "),
+      warning: warnings.join(" "),
       ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
     });
   }
@@ -1467,7 +1482,7 @@ async function updatePrimaryProduct(
             const keys = [...new Set(pairs.map(([, key]) => key))];
             const locales = [...new Set(pairs.map(([locale]) => locale))];
             purgeWarnings.push(
-              `Shopify did not confirm removing the outdated translation of (${keys.join(", ")}) in (${locales.join(", ")}). It was kept and will be corrected by the next sync.`,
+              `Shopify did not confirm removing the outdated translation of (${keys.join(", ")}) in (${locales.join(", ")}). It was kept and is still live on Shopify — please save again.`,
             );
           }
 
@@ -1490,7 +1505,7 @@ async function updatePrimaryProduct(
       // Don't fail the request - primary update succeeded -- but say so: the
       // old translations may still be live.
       purgeWarnings.push(
-        "The primary text was saved, but the outdated translations could not be removed. They are kept and will be corrected by the next sync.",
+        "The primary text was saved, but the outdated translations could not be removed. They are kept and are still live on Shopify — please save again.",
       );
     }
   }

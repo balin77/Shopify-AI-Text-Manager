@@ -387,6 +387,32 @@ describe("updateTranslatedProduct -- foreign register + mirror", () => {
   });
 });
 
+describe("updateTranslatedProduct -- the verdict, aligned with updateContent", () => {
+  it("a register that confirmed nothing fails the save even when a removal in it was confirmed", async () => {
+    // Title set (not echoed) + SEO title cleared (removal confirmed). Answering
+    // success here let the editor cache the unsaved title as saved.
+    const w = installAdmin({
+      register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [{ key: "meta_title", locale: "fr" }] } } }),
+    });
+    makeDb();
+    const result = body(await saveForeign(w.admin, { title: "Hemd", seoTitle: "" }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("did not confirm storing (title)");
+  });
+
+  it("says out loud which fields were saved locally only (no digest)", async () => {
+    const w = installAdmin({ productDigests: [{ key: "title", digest: "dg-title" }] });
+    makeDb();
+    const result = body(await saveForeign(w.admin, { title: "Hemd", handle: "hemd" }));
+
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("saved locally only");
+    expect(result.warning).toContain("handle");
+  });
+});
+
 // ---------------------------------------------------------------------------
 describe("updateTranslatedProduct -- foreign remove + DB delete", () => {
   it("a cleared field is removed for that locale and the local row is deleted (with the shop)", async () => {
