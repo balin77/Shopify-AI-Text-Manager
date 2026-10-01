@@ -1893,6 +1893,7 @@ export const de = {
     altTemplateDeleteFailed: "Die Alt-Text-Vorlage konnte nicht gelöscht werden. Bitte erneut versuchen.",
     altSaveFailed: "Der Alt-Text konnte nicht gespeichert werden. Dein Text bleibt erhalten, bitte erneut versuchen.",
     altSaveFailedWithReason: "Der Alt-Text konnte nicht gespeichert werden: {error} Dein Text bleibt erhalten, bitte erneut versuchen.",
+    altSaveFailedOtherLanguage: "Der Alt-Text für die Sprache {locale} konnte nicht gespeichert werden und wurde nicht beibehalten. Bitte erneut eingeben.",
     altAiFailed: "Der Alt-Text konnte nicht erstellt werden: {error}",
     altTranslateAllLocalesSuccess: "Alt-Text in {count} Sprache(n) übersetzt.",
     altTranslateAllLocalesPartial: "Alt-Text teilweise übersetzt. Sprache(n) {failedLocales} konnten nicht gespeichert werden. Bitte erneut versuchen.",

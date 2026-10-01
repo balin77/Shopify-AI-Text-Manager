@@ -1892,6 +1892,7 @@ export const en: Translation = {
     altTemplateDeleteFailed: "The alt text template could not be deleted. Please try again.",
     altSaveFailed: "The alt text could not be saved. Your text is kept, please try again.",
     altSaveFailedWithReason: "The alt text could not be saved: {error} Your text is kept, please try again.",
+    altSaveFailedOtherLanguage: "The alt text for language {locale} could not be saved and was not kept. Please redo it.",
     altAiFailed: "The alt text could not be created: {error}",
     altTranslateAllLocalesSuccess: "Alt text translated to {count} language(s).",
     altTranslateAllLocalesPartial: "Alt text partially translated. Language(s) {failedLocales} could not be saved. Please try again.",

@@ -59,6 +59,8 @@ interface UseEditorAltTextProps {
    * leaves it at 0.
    */
   backgroundRefreshVersion?: number;
+  /** Success text staged right before the save is submitted; `safeSubmit` binds it to that request. */
+  pendingAltTranslateToastRef: React.MutableRefObject<string | null>;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
   /** Item the in-flight save belongs to; the save-response handler bails without it. */
@@ -110,9 +112,6 @@ interface UseEditorAltTextReturn {
   handleTranslateAltText: (imageIndex: number) => void;
   handleTranslateAltTextToAllLocales: (imageIndex: number) => void;
   handleTranslateAllAltTexts: () => void;
-  /** Success text of a translate-and-save whose save has not answered yet; the
-   *  save-response handler shows it only once the save is CONFIRMED. */
-  pendingAltTranslateToastRef: React.MutableRefObject<string | null>;
   /** Ref to pending copy index so save-response handler can clear loading state */
   pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
   /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
@@ -145,6 +144,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     editableValues,
     editableValuesRef,
     backgroundRefreshVersion = 0,
+    pendingAltTranslateToastRef,
     buildFieldsForSave,
     safeSubmit,
     savedItemIdRef,
@@ -180,7 +180,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
   // Track image index of an in-flight copy save so save-response handler can clear loading
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
-  const pendingAltTranslateToastRef = useRef<string | null>(null);
   // What the in-flight copy wrote into the overlay, so a failure can undo exactly that.
   const copyOverlayRollbackRef = useRef<{
     itemId: string;
@@ -1244,7 +1243,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleCopyAltText,
     handleCopyAltTextToAllLocales,
     pendingCopyAltTextIndexRef,
-    pendingAltTranslateToastRef,
     rollbackCopyAltText,
     discardCopyAltRecord,
     altBaselineSnapshot,

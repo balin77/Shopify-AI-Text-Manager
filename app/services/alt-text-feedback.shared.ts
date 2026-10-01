@@ -131,9 +131,26 @@ export interface QueuedAltSave {
   mediaId: string;
   altText: string;
   locale?: string;
+  /** Room for the market a save belongs to (not used yet). */
+  marketId?: string;
+  /** The product the save was made on: a late answer must not touch another product's dirty state. */
+  productId?: string;
+  productTitle?: string;
 }
 
 export function enqueueAltSave(queue: QueuedAltSave[], entry: QueuedAltSave): QueuedAltSave[] {
   const rest = queue.filter((q) => !(q.mediaId === entry.mediaId && q.locale === entry.locale));
   return [...rest, entry];
+}
+
+/** Does a (late) save answer still belong to what the screen shows? A save with
+ *  no recorded product / locale counts as belonging. */
+export function altSaveScope(
+  entry: Pick<QueuedAltSave, "productId" | "locale">,
+  current: { productId?: string; locale?: string },
+): { sameProduct: boolean; sameLocale: boolean } {
+  return {
+    sameProduct: !entry.productId || entry.productId === current.productId,
+    sameLocale: entry.locale === undefined || entry.locale === current.locale,
+  };
 }

@@ -588,6 +588,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedMarketId: string;
     savedItemId: string | null;
     partial: PartialSave | null;
+    successToast: string | null;
   }>>([]);
 
   const editableValuesRef = useLatestRef(editableValues);
@@ -603,6 +604,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** The partial description of the save IN FLIGHT — bound per request by
    *  `safeSubmit` and the queue drain, consumed by that request's response. */
   const inFlightPartialRef = useRef<PartialSave | null>(null);
+  /** Success text of a translate-and-save, STAGED by the caller right before
+   *  `safeSubmit` and bound there to its own request (queue entry or in-flight
+   *  slot), like `partialSaveRef`: a shared slot let an earlier unrelated save's
+   *  answer take it. */
+  const pendingAltTranslateToastRef = useRef<string | null>(null);
+  const inFlightToastRef = useRef<string | null>(null);
   /** After a partial save the re-read that follows must keep unsaved input in
    *  the fields it did not carry (they were not sent, so the server has only
    *  their old values). Time-boxed, and dropped on any switch. */
@@ -651,12 +658,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
-    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, pendingAltTranslateToastRef, rollbackCopyAltText, discardCopyAltRecord, altBaselineSnapshot, getPendingCopyAltItemId,
+    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, rollbackCopyAltText, discardCopyAltRecord, altBaselineSnapshot, getPendingCopyAltItemId,
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
   } = useEditorAltText({
+    pendingAltTranslateToastRef,
     selectedItem,
     selectedItemId,
     selectedItemRef,
@@ -889,6 +897,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     fetcherRef,
     partialSaveRef,
     inFlightPartialRef,
+    pendingAltTranslateToastRef,
+    inFlightToastRef,
     preserveEditsUntilRef,
   });
 
@@ -1023,6 +1033,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Its response will never be applied here (the pending flag is gone), so
       // its partial description must not survive to be read by the next save.
       inFlightPartialRef.current = null;
+      inFlightToastRef.current = null;
       processedTranslateFieldRef.current = null;
       processedTranslateAltTextAllRef.current = null;
       processedTranslateAllRef.current = null;
@@ -2017,8 +2028,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       pendingCopyFieldItemIdRef.current = null;
       // The single alt translate-and-save reports success HERE, once Shopify
       // confirmed the save, not when the AI answered.
-      const altTranslateToast = pendingAltTranslateToastRef.current;
-      pendingAltTranslateToastRef.current = null;
+      const altTranslateToast = inFlightToastRef.current;
+      inFlightToastRef.current = null;
       let wasCopySave = !!pendingCopyFieldKeyRef.current || pendingCopyAltTextIndexRef.current !== null;
       let copyAltFailed = false;
       if (pendingCopyFieldKeyRef.current) {
@@ -2445,7 +2456,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
-      pendingAltTranslateToastRef.current = null;
+      inFlightToastRef.current = null;
       inFlightPartialRef.current = null;
       setIsSaving(false);
 
@@ -2488,7 +2499,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       inFlightPartialRef.current = null;
       isSaveFromTranslateRef.current = false;
-      pendingAltTranslateToastRef.current = null;
+      inFlightToastRef.current = null;
       setIsSaving(false);
 
       // A refused copy must not leave its spinner behind either.
@@ -2601,6 +2612,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedMarketIdRef.current = next.savedMarketId;
       savedItemIdRef.current = next.savedItemId;
       inFlightPartialRef.current = next.partial;
+      inFlightToastRef.current = next.successToast;
       isSavePendingRef.current = true;
 
       try {

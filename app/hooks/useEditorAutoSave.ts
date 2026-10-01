@@ -54,6 +54,7 @@ interface UseEditorAutoSaveProps {
     savedMarketId: string;
     savedItemId: string | null;
     partial: PartialSave | null;
+    successToast: string | null;
   }>>;
   justSubmittedRef: React.MutableRefObject<boolean>;
   fetcherRef: React.MutableRefObject<any>;
@@ -62,6 +63,9 @@ interface UseEditorAutoSaveProps {
   partialSaveRef: React.MutableRefObject<PartialSave | null>;
   /** The partial description of the request IN FLIGHT (null = a full save). */
   inFlightPartialRef: React.MutableRefObject<PartialSave | null>;
+  /** Staged success text, bound to the request it belongs to (queue entry or in-flight slot). */
+  pendingAltTranslateToastRef: React.MutableRefObject<string | null>;
+  inFlightToastRef: React.MutableRefObject<string | null>;
   /** Until when the next data re-read keeps unsaved edits (see the editor). */
   preserveEditsUntilRef: React.MutableRefObject<number>;
 }
@@ -105,6 +109,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     fetcherRef,
     partialSaveRef,
     inFlightPartialRef,
+    pendingAltTranslateToastRef,
+    inFlightToastRef,
     preserveEditsUntilRef,
   } = props;
 
@@ -133,6 +139,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     // never in one shared slot a different response could consume.
     const partial = partialSaveRef.current;
     partialSaveRef.current = null;
+    const successToast = pendingAltTranslateToastRef.current;
+    pendingAltTranslateToastRef.current = null;
     if (partial) {
       // The reload that follows this save re-reads the item; the fields it did
       // NOT carry may hold unsaved input, which that pass must keep.
@@ -148,10 +156,12 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         savedMarketId: savedMarketIdRef.current,
         savedItemId: savedItemIdRef.current,
         partial,
+        successToast,
       });
       return;
     }
     inFlightPartialRef.current = partial;
+    inFlightToastRef.current = successToast;
 
     try {
       justSubmittedRef.current = true;

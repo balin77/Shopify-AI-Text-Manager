@@ -7,6 +7,7 @@ import {
   overlayWritesFromTranslations,
   overlayIndexWrites,
   enqueueAltSave,
+  altSaveScope,
 } from "../../app/services/alt-text-feedback.shared";
 
 describe("classifyAltSaveResponse", () => {
@@ -87,5 +88,14 @@ describe("enqueueAltSave", () => {
     const a2 = { url: "u1", mediaId: "m1", altText: "a2", locale: "de" };
     expect(enqueueAltSave(enqueueAltSave([a], b), a2)).toEqual([b, a2]);
     expect(enqueueAltSave([a], { ...a2, locale: "fr" })).toHaveLength(2);
+  });
+});
+
+describe("altSaveScope", () => {
+  it("flags a late answer for another product or language", () => {
+    expect(altSaveScope({ productId: "p1", locale: "de" }, { productId: "p1", locale: "de" })).toEqual({ sameProduct: true, sameLocale: true });
+    expect(altSaveScope({ productId: "p1", locale: "de" }, { productId: "p2", locale: "de" }).sameProduct).toBe(false);
+    expect(altSaveScope({ productId: "p1", locale: "de" }, { productId: "p1", locale: "fr" }).sameLocale).toBe(false);
+    expect(altSaveScope({}, { productId: "p1", locale: "fr" })).toEqual({ sameProduct: true, sameLocale: true });
   });
 });

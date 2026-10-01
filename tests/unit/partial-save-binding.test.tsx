@@ -18,6 +18,8 @@ function setup(fetcherState: "idle" | "submitting") {
     saveQueueRef: ref<any[]>([]),
     partialSaveRef: ref<any>(null),
     inFlightPartialRef: ref<any>(null),
+    pendingAltTranslateToastRef: ref<any>(null),
+    inFlightToastRef: ref<any>(null),
     preserveEditsUntilRef: ref(0),
   };
   const { result } = renderHook(() =>
@@ -75,6 +77,16 @@ describe("safeSubmit binds a partial save to its own request", () => {
     expect(fetcher.submit).not.toHaveBeenCalled();
     expect(refs.saveQueueRef.current[0].partial).toBe(partial);
     expect(refs.inFlightPartialRef.current).toBe(inFlight);
+  });
+
+  it("the success toast travels with its own request, not a shared slot", () => {
+    const { result, refs } = setup("submitting");
+    refs.inFlightToastRef.current = null;
+    refs.pendingAltTranslateToastRef.current = "translated";
+    result.current.safeSubmit({ action: "updateContent" });
+    expect(refs.saveQueueRef.current[0].successToast).toBe("translated");
+    expect(refs.pendingAltTranslateToastRef.current).toBeNull();
+    expect(refs.inFlightToastRef.current).toBeNull();
   });
 
   it("a FULL save clears the in-flight slot and opens no preserve window", () => {

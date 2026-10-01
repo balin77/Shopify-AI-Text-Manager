@@ -1872,6 +1872,7 @@ export const es: Translation = {
     altTemplateDeleteFailed: "No se pudo eliminar la plantilla de texto alternativo. Inténtalo de nuevo.",
     altSaveFailed: "No se pudo guardar el texto alternativo. Tu texto se conserva, inténtalo de nuevo.",
     altSaveFailedWithReason: "No se pudo guardar el texto alternativo: {error} Tu texto se conserva, inténtalo de nuevo.",
+    altSaveFailedOtherLanguage: "El texto alternativo del idioma {locale} no se pudo guardar y no se conservó. Vuelve a introducirlo.",
     altAiFailed: "No se pudo crear el texto alternativo: {error}",
     altTranslateAllLocalesSuccess: "Texto alternativo traducido a {count} idioma(s).",
     altTranslateAllLocalesPartial: "Texto alternativo traducido parcialmente. Los idiomas {failedLocales} no pudieron guardarse. Inténtalo de nuevo.",
