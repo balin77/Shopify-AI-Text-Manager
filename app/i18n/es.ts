@@ -1859,6 +1859,11 @@ export const es: Translation = {
   // Image Manager
   imageManager: {
     title: "Image Manager",
+    mediaDeleteFailed: "No se pudieron eliminar las imágenes. Se han restaurado.",
+    mediaClearMainFailed: "Las imágenes se eliminaron, pero no se pudo quitar la imagen principal de una variante. Revisa la variante en Shopify.",
+    uploadFailedFiles: "Error al subir: {files}. Estos archivos no se añadieron.",
+    altTemplateSaveFailed: "No se pudo guardar la plantilla de texto alternativo. Inténtalo de nuevo.",
+    altTemplateDeleteFailed: "No se pudo eliminar la plantilla de texto alternativo. Inténtalo de nuevo.",
     expand: "Expandir ↓",
     collapse: "Contraer ↑",
     showAll: "Mostrar todas ↓",

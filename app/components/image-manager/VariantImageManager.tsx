@@ -269,6 +269,8 @@ export function VariantImageManager({
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
+  // A media write (delete, upload) the server refused; shown above the gallery.
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   // GIDs (mediaId) of images currently being converted; cleared when done.
   // Tracked by GID rather than URL because Shopify CDN URLs can change query params between
@@ -2082,6 +2084,15 @@ export function VariantImageManager({
 
     setIsDeleting(true);
     setDeleteConfirm(null);
+    // What the optimistic removal below replaces, so a refused delete can put
+    // the images back instead of leaving the gallery showing a state Shopify
+    // never reached.
+    const snapshot = {
+      galleries: pendingVariantGalleries,
+      excludedMain: locallyExcludedMainGids,
+      order: pendingProductImageOrder,
+      refreshed: refreshedProductImages,
+    };
 
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
@@ -2115,6 +2126,8 @@ export function VariantImageManager({
       return next;
     });
 
+    let deleteFailed = false;
+    let clearFailed = false;
     try {
       const deleteFetch = fetch("/api/delete-product-images", {
         method: "POST",
@@ -2130,13 +2143,28 @@ export function VariantImageManager({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ productId, clearVariantMainImages: clearMainImageIds }),
           })
-        : Promise.resolve();
-      await Promise.all([deleteFetch, clearFetch]);
+        : null;
+      const [deleteRes, clearRes] = await Promise.all([deleteFetch, clearFetch]);
+      const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean } | null;
+      deleteFailed = !deleteRes.ok || !deleteBody || deleteBody.success === false;
+      if (clearRes) {
+        const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
+        clearFailed = !clearRes.ok || !clearBody || clearBody.success === false;
+      }
     } catch {
-      // non-critical: local state already reflects deletion
+      deleteFailed = true;
+    }
+    if (deleteFailed) {
+      setPendingVariantGalleries(snapshot.galleries);
+      setLocallyExcludedMainGids(snapshot.excludedMain);
+      setPendingProductImageOrder(snapshot.order);
+      setRefreshedProductImages(snapshot.refreshed);
+      setMediaError(t.imageManager.mediaDeleteFailed);
+    } else if (clearFailed) {
+      setMediaError(t.imageManager.mediaClearMainFailed);
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, refreshedProductImages, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -2497,6 +2525,11 @@ export function VariantImageManager({
           paddingRight: isExpanded ? 0 : 4,
         }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {mediaError && (
+        <Banner tone="critical" onDismiss={() => setMediaError(null)}>
+          <p>{mediaError}</p>
+        </Banner>
+      )}
       {webpError && (
         <Banner tone="critical" onDismiss={() => setWebpError(null)}>
           <p>{webpError}</p>

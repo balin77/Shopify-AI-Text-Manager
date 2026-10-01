@@ -1880,6 +1880,11 @@ export const de = {
   // Image Manager
   imageManager: {
     title: "Image Manager",
+    mediaDeleteFailed: "Die Bilder konnten nicht gelöscht werden. Sie wurden wiederhergestellt.",
+    mediaClearMainFailed: "Die Bilder wurden gelöscht, aber das Hauptbild einer Variante konnte nicht entfernt werden. Bitte die Variante in Shopify prüfen.",
+    uploadFailedFiles: "Upload fehlgeschlagen für: {files}. Diese Dateien wurden nicht hinzugefügt.",
+    altTemplateSaveFailed: "Die Alt-Text-Vorlage konnte nicht gespeichert werden. Bitte erneut versuchen.",
+    altTemplateDeleteFailed: "Die Alt-Text-Vorlage konnte nicht gelöscht werden. Bitte erneut versuchen.",
     expand: "Vergrößern ↓",
     collapse: "Verkleinern ↑",
     showAll: "Alle anzeigen ↓",
