@@ -735,12 +735,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           // Keys whose removal Shopify did not confirm are still live there (and
           // kept locally): dropping them from the cache would show them missing.
           const saveData = fetcher.data as { warnings?: string[]; unconfirmedPurgeKeys?: string[] };
-          if (saveData.warnings?.includes("translationPurgeUnconfirmed")) {
-            showInfoBox(
-              String(t.content?.translationPurgeUnconfirmed || "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."),
-              "warning"
-            );
-          }
+          // The purge warning itself is shown by the editor hook, in place of the plain "saved" toast.
           const invalidated = keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
 
           if (invalidated.size > 0) {
