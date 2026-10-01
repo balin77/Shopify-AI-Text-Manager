@@ -113,6 +113,7 @@ interface UseEditorAltTextReturn {
   pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
   /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
   rollbackCopyAltText: () => void;
+  discardCopyAltRecord: () => void;
   altBaselineSnapshot: (failedIndices?: number[]) => Record<number, string>;
   getPendingCopyAltItemId: () => string | null;
   handleTranslateAllAltTextsForLocale: () => void;
@@ -378,6 +379,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     const pending = copyOverlayRollbackRef.current;
     if (
       pending &&
+      // Only while that copy is still the save being answered: a record left
+      // over from an earlier copy must never rewrite a later save's baseline.
+      pendingCopyAltTextIndexRef.current === pending.index &&
       failedIndices.includes(pending.index) &&
       canRestoreVisibleCopy(pending) &&
       base[pending.index] === pending.value
@@ -386,6 +390,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       else base[pending.index] = pending.prevOriginal;
     }
     return base;
+  };
+
+  /** A copy that LANDED: forget its rollback record, or a later unrelated
+   *  save would still be read through it. */
+  const discardCopyAltRecord = () => {
+    copyOverlayRollbackRef.current = null;
   };
 
   const rollbackCopyAltText = () => {
@@ -1185,6 +1195,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleCopyAltTextToAllLocales,
     pendingCopyAltTextIndexRef,
     rollbackCopyAltText,
+    discardCopyAltRecord,
     altBaselineSnapshot,
     getPendingCopyAltItemId,
     handleTranslateAltText,

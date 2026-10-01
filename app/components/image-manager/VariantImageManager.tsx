@@ -2148,11 +2148,29 @@ export function VariantImageManager({
 
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
-      const next = stripRefsFromGalleries(p, removedQueuedRefs);
+      // A copy: with nothing to strip the helper hands back `p` itself, and the
+      // loop below must never write into the previous state object.
+      const next = { ...stripRefsFromGalleries(p, removedQueuedRefs) };
+      const queuedRefSet = new Set(removedQueuedRefs);
       for (const v of variants) {
-        const current = p[v.id] ?? v.galleryFileGids;
+        // Read the STRIPPED list: starting from `p` here wrote a removed
+        // queued tile's staging URL back whenever the same delete also took a
+        // saved image out of this variant.
+        const current = next[v.id] ?? v.galleryFileGids;
         const filtered = current.filter(gid => !gidSet.has(gid));
         if (filtered.length !== current.length) next[v.id] = filtered;
+        // A list the strip returned to exactly the stored gallery is no change
+        // at all; keeping the key would light Save up for a no-op write.
+        const stored = v.galleryFileGids;
+        const now = next[v.id];
+        if (
+          now &&
+          now.length === stored.length &&
+          now.every((g, i) => g === stored[i]) &&
+          (p[v.id] ?? []).some(ref => queuedRefSet.has(ref))
+        ) {
+          delete next[v.id];
+        }
       }
       return next;
     });

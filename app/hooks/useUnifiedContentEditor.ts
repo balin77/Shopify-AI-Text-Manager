@@ -650,7 +650,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
-    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, rollbackCopyAltText, altBaselineSnapshot, getPendingCopyAltItemId,
+    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, rollbackCopyAltText, discardCopyAltRecord, altBaselineSnapshot, getPendingCopyAltItemId,
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
@@ -2018,6 +2018,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (copyFailedAlts.includes(copyIndex)) {
           copyAltFailed = true;
           rollbackCopyAltText();
+        } else {
+          discardCopyAltRecord();
         }
       }
       if (copyAltFailed) wasCopySave = false; // reported as a failed copy, not "copied"
