@@ -782,3 +782,107 @@ export function confirmedPairsWhere(
   }
   return { OR: perLocale.map((entry) => ({ locale: entry.locale, key: { in: entry.keys } })) };
 }
+
+// --- media alt text (Phase E) --------------------------------------------------------
+//
+// The alt of a MediaImage / CollectionImage / ArticleImage is ONE key (`alt`) on
+// the image's OWN translatable resource. Every alt-translation write site used
+// to hand-roll "digest -> register -> userErrors" and then mirror on that;
+// this is the shared sequence. The caller mirrors ONLY on `confirmed`, with
+// `storedValue`, and never without a digest.
+
+export const MEDIA_ALT_KEY = "alt";
+
+export interface MediaAltRegisterResult {
+  /** Shopify echoed the `alt` key back: the ONLY state a mirror may follow. */
+  confirmed: boolean;
+  /** What Shopify stored (the echoed value, else what was sent). Set when confirmed. */
+  storedValue?: string;
+  /** The digest the write used. Absent when the resource has none. */
+  digest?: string;
+  /** The resource answered but carries no `alt` digest: nothing was sent. */
+  noDigest: boolean;
+  userErrors: TranslationUserError[];
+}
+
+/**
+ * Register ONE alt translation (one locale, at most one market) on an image
+ * resource and verify the echo. Throws on transport/GraphQL errors and when the
+ * resource did not answer at all (a wrong or deleted id must not read as
+ * "no digest"). `noDigest` and an unechoed write both come back as
+ * `confirmed: false` -- the caller reports the locale as failed and writes
+ * nothing locally.
+ */
+export async function registerMediaAltAndVerify(
+  client: GraphqlClient,
+  imageGid: string,
+  locale: string,
+  value: string,
+  marketId?: string,
+): Promise<MediaAltRegisterResult> {
+  const result = await registerWithDigests(client, imageGid, locale, [{ key: MEDIA_ALT_KEY, value }], marketId);
+  const digest = result.digests.get(MEDIA_ALT_KEY);
+  if (result.noDigest.includes(MEDIA_ALT_KEY)) {
+    return { confirmed: false, noDigest: true, userErrors: result.userErrors };
+  }
+  const confirmed = result.confirmedKeys.has(MEDIA_ALT_KEY);
+  return {
+    confirmed,
+    ...(confirmed ? { storedValue: result.confirmedValues.get(MEDIA_ALT_KEY) ?? value } : {}),
+    ...(digest ? { digest } : {}),
+    noDigest: false,
+    userErrors: result.userErrors,
+  };
+}
+
+/**
+ * Remove ONE alt translation, verified (echo, then the single-locale re-read:
+ * a DB-only row Shopify never held is cleared that way). Delete the local row
+ * only when `confirmed`.
+ */
+export async function removeMediaAltAndVerify(
+  client: GraphqlClient,
+  imageGid: string,
+  locale: string,
+  marketId = "",
+): Promise<{ confirmed: boolean; userErrors: TranslationUserError[] }> {
+  const removal = await removeAndVerify(client, imageGid, [MEDIA_ALT_KEY], locale, marketId);
+  return { confirmed: removal.confirmedKeys.has(MEDIA_ALT_KEY), userErrors: removal.userErrors };
+}
+
+/**
+ * Mirror a CONFIRMED product-media alt translation into
+ * ProductImageAltTranslation. The cache row is resolved from
+ * (productId?, mediaId) NOW -- never captured: a product sync recreates
+ * ProductImage rows with fresh ids. `imageGone` = no row to attach to (deleted
+ * or not cached): nothing is written under a guessed id, the caller decides
+ * how to report it. `value: ""` deletes the global-layer row.
+ */
+export async function mirrorProductMediaAlt(
+  db: Pick<PrismaClient, "productImage" | "productImageAltTranslation">,
+  params: { shop: string; mediaId: string; locale: string; value: string; productId?: string; marketId?: string },
+): Promise<"mirrored" | "imageGone"> {
+  const { shop, mediaId, locale, value } = params;
+  const marketId = params.marketId ?? "";
+  const image = await db.productImage.findFirst({
+    where: { mediaId, product: { shop }, ...(params.productId ? { productId: params.productId } : {}) },
+    select: { id: true },
+  });
+  if (!image) return "imageGone";
+  try {
+    if (value.trim() === "") {
+      await db.productImageAltTranslation.deleteMany({ where: { imageId: image.id, locale, marketId } });
+    } else {
+      await db.productImageAltTranslation.upsert({
+        where: { imageId_locale_marketId: { imageId: image.id, locale, marketId } },
+        create: { imageId: image.id, locale, marketId, altText: value },
+        update: { altText: value },
+      });
+    }
+  } catch (error: unknown) {
+    // The image was deleted between the lookup and the write (concurrent sync).
+    if ((error as { code?: string })?.code === "P2003") return "imageGone";
+    throw error;
+  }
+  return "mirrored";
+}

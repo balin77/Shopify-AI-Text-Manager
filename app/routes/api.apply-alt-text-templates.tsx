@@ -7,6 +7,7 @@ import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
+import { registerMediaAltAndVerify } from "~/services/translations/verified-translations.server";
 
 // Resolve a fresh image URL from Shopify for stub-row creation. Returns the gid
 // itself as a last-resort placeholder so we never lose a translation due to a
@@ -57,6 +58,17 @@ async function gqlWithThrottleRetry(
     if (!throttled || i >= attempts - 1) return d;
     await new Promise((res) => setTimeout(res, backoffMs[Math.min(i, backoffMs.length - 1)]));
   }
+}
+
+// The verified helpers take a `{ graphql }` client; this one keeps the
+// throttle backoff above in front of every call they make.
+function throttledClient(admin: { graphql: (q: string, opts?: any) => Promise<Response> }) {
+  return {
+    graphql: async (query: string, options?: { variables?: Record<string, unknown> }) => {
+      const body = await gqlWithThrottleRetry(admin, query, options?.variables ?? {});
+      return { json: async () => body };
+    },
+  };
 }
 
 // Persist the alt-text (primary) or translation (foreign locale) for one media
@@ -346,48 +358,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
           }
         } else {
-          // Foreign locale: get digest first
-          const td = await gqlWithThrottleRetry(
-            admin,
-            `#graphql
-              query translatableContent($id: ID!) {
-                translatableResource(resourceId: $id) {
-                  translatableContent { key digest }
-                }
-              }`,
-            { id: gid }
-          );
-          const altDigest = (td.data?.translatableResource?.translatableContent ?? [])
-            .find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
-
-          if (!altDigest) {
+          // Foreign locale: verified register (digest -> register -> echo).
+          // Only a write Shopify echoed counts as applied and is mirrored, with
+          // the value it stored. The client wraps the throttle backoff.
+          const verified = await registerMediaAltAndVerify(throttledClient(admin), gid, locale, altText);
+          if (verified.noDigest) {
             errors.push(`${variant.title} (Position ${tmpl.position}): No translatable digest found for GID ${gid}`);
             continue;
           }
-
-          const d = await gqlWithThrottleRetry(
-            admin,
-            `#graphql
-              mutation translateMedia($resourceId: ID!, $translations: [TranslationInput!]!) {
-                translationsRegister(resourceId: $resourceId, translations: $translations) {
-                  userErrors { field message }
-                }
-              }`,
-            {
-              resourceId: gid,
-              translations: [{ key: "alt", value: altText, locale, translatableContentDigest: altDigest }],
-            }
-          );
-          const errs = d.data?.translationsRegister?.userErrors ?? [];
-          if (errs.length === 0) {
+          if (verified.confirmed) {
             applied++;
             try {
-              await persistAltText(productId, gid, session.shop, locale, false, altText, admin);
+              await persistAltText(productId, gid, session.shop, locale, false, verified.storedValue ?? altText, admin);
             } catch (dbErr: unknown) {
               errors.push(`${variant.title} (Position ${tmpl.position}, ${locale} DB save): ${String(dbErr)}`);
             }
           } else {
-            errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
+            const detail = verified.userErrors.length > 0
+              ? verified.userErrors.map((e) => e.message).join(", ")
+              : "Shopify did not store the translation";
+            errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${detail}`);
           }
         }
       } catch (err: unknown) {

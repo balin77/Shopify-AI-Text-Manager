@@ -817,20 +817,17 @@ export class ShopifyContentService {
         return { saved: false, reason: 'no-digest' };
       }
 
-      const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
-      const altDigest = imageDigestMap['alt'];
+      const verifiedModule = await import('../../app/services/translations/verified-translations.server');
 
       if (altText.trim() === '') {
-        if (altDigest) {
+        // A resource with no `alt` digest carries nothing to remove on Shopify.
+        const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
+        if (imageDigestMap['alt']) {
           // VERIFIED (echo, then the re-read on a gap -- a DB-only row Shopify
           // never held is cleared that way): the parent's local row goes ONLY
           // when the removal is confirmed. A refusal keeps it and says so.
-          const removal = await this.deleteAllTranslationsForKeys({
-            resourceId: imageResourceId,
-            translationKeys: ['alt'],
-            foreignLocales: [locale],
-          });
-          if (!removal.confirmedPairs.has(localeKeyPair(locale, 'alt'))) {
+          const removal = await verifiedModule.removeMediaAltAndVerify(this.admin, imageResourceId, locale);
+          if (!removal.confirmed) {
             loggers.translation('error', `[saveImageAltTextTranslation] Shopify did not confirm removing the alt translation`, {
               resourceType, locale, errors: removal.userErrors,
             });
@@ -846,32 +843,23 @@ export class ShopifyContentService {
 
       // Shopify is the source of truth for alt-text translations. If the
       // ArticleImage/CollectionImage translatable resource has no digest, or
-      // Shopify rejects the translation, fail loudly — do NOT write locally,
-      // otherwise the editor would show a value that does not exist on the
-      // storefront and the next sync would be misleading.
-      if (!altDigest) {
+      // Shopify rejects or does not echo the translation, fail loudly -- do NOT
+      // write locally, otherwise the editor would show a value that does not
+      // exist on the storefront and the next sync would be misleading.
+      const verified = await verifiedModule.registerMediaAltAndVerify(this.admin, imageResourceId, locale, altText);
+      if (verified.noDigest) {
         loggers.translation('warn', `[saveImageAltTextTranslation] No 'alt' digest on ${resourceType} image translatable resource`, { imageResourceId });
         return { saved: false, reason: 'no-digest' };
       }
-
-      // Verified register: only an ECHOED write counts. Not echoed (or refused)
-      // means Shopify stored nothing, and "no local write without a digest /
-      // without confirmation" is this method's rule.
-      const { registerAndVerify } = await import('../../app/services/translations/verified-translations.server');
-      const verified = await registerAndVerify(this.admin, imageResourceId, [{
-        key: 'alt',
-        value: altText,
-        locale,
-        translatableContentDigest: altDigest,
-      }]);
-      if (!verified.confirmedKeys.has('alt')) {
+      if (!verified.confirmed || !verified.digest) {
         loggers.translation('error', `[saveImageAltTextTranslation] Shopify did not confirm storing the alt translation`, {
           resourceType, errors: verified.userErrors,
         });
         return { saved: false, reason: 'shopify-error' };
       }
+      const altDigest = verified.digest;
       // What Shopify STORED, where it said so.
-      const storedAlt = verified.confirmedValues.get('alt') ?? altText;
+      const storedAlt = verified.storedValue ?? altText;
 
       // Claim the key the featured-alt repair runs under (see
       // translation-locks.shared.ts). The parent's own lock belongs to its

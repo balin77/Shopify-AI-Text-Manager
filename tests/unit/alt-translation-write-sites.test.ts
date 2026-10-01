@@ -68,6 +68,12 @@ interface FakeOpts {
   silent?: string[];
   /** locales Shopify refuses with a userError */
   refuse?: string[];
+  /** locale -> value Shopify echoes back instead of the one sent */
+  stored?: Record<string, string>;
+  /** translationsRemove echoes the key (true) or nothing (false) */
+  removeEcho?: boolean;
+  /** the re-read after an unechoed removal still shows the key */
+  stillPresent?: boolean;
 }
 
 /** A fake Shopify answering the digest read and translationsRegister. */
@@ -89,11 +95,34 @@ function fakeAdmin(opts: FakeOpts = {}) {
           data: {
             translationsRegister: {
               userErrors: [],
-              translations: v.translations.map((x: any) => ({ key: x.key, locale: x.locale, value: x.value, market: null })),
+              translations: v.translations.map((x: any) => ({
+                key: x.key,
+                locale: x.locale,
+                value: opts.stored?.[x.locale] ?? x.value,
+                market: null,
+              })),
             },
           },
         };
       }
+    } else if (query.includes("translationsRemove(")) {
+      body = {
+        data: {
+          translationsRemove: {
+            userErrors: [],
+            translations: opts.removeEcho ? v.locales.map((l: string) => ({ key: "alt", locale: l })) : [],
+          },
+        },
+      };
+    } else if (query.includes("translations(locale")) {
+      // removal re-read: which keys still carry a translation
+      body = {
+        data: {
+          translatableResource: {
+            translations: opts.stillPresent ? [{ key: "alt", locale: v.locale, value: "x", outdated: false }] : [],
+          },
+        },
+      };
     } else if (query.includes("translatableResource")) {
       body = {
         data: {
@@ -198,11 +227,30 @@ describe("alt-text.action handleTranslateAltTextToAllLocales (product path)", ()
     expect(admin.registers).toEqual([]);
   });
 
-  it("CURRENT: a register accepted without storing is mirrored as saved", async () => {
+  it("a register accepted without storing (nothing echoed) is failed, not mirrored, not claimed for that locale", async () => {
     const db = makeDb();
     const res = await run(fakeAdmin({ silent: ["fr"] }), db);
+    expect(res.savedLocales).toEqual(["de"]);
+    expect(res.failedLocales).toEqual(["fr"]);
+    expect(altWrites(db)).toEqual(["Kiste"]);
+  });
+
+  it("mirrors the value Shopify STORED, resolved by (productId, mediaId) now", async () => {
+    const admin = fakeAdmin({ stored: { de: "Kiste (normalisiert)" } });
+    const db = makeDb();
+    await run(admin, db);
+    expect(altWrites(db)[0]).toBe("Kiste (normalisiert)");
+    expect(db.productImage.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ mediaId: MEDIA, productId: "p1", product: { shop: SHOP } }) }),
+    );
+  });
+
+  it("an image deleted by a concurrent sync is not mirrored under a guessed id", async () => {
+    const db = makeDb();
+    db.productImage.findFirst.mockResolvedValue(null);
+    const res = await run(fakeAdmin(), db);
+    expect(altWrites(db)).toEqual([]);
     expect(res.failedLocales).toEqual([]);
-    expect(altWrites(db)).toEqual(["Kiste", "Boite"]);
   });
 });
 
@@ -246,11 +294,38 @@ describe("alt-text.action handleSaveImageAltText (foreign locale)", () => {
     expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it("CURRENT: accepted-but-unechoed is reported saved and mirrored", async () => {
+  it("accepted-but-unechoed is NOT a save: success false, not mirrored, no claim", async () => {
     const db = makeDb();
     const { body } = await run(fakeAdmin({ silent: ["de"] }), db);
+    expect(body.success).toBe(false);
+    expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
+    expect(markTranslationSaved).not.toHaveBeenCalled();
+  });
+
+  it("a transport failure answers 500 and mirrors nothing", async () => {
+    const admin = fakeAdmin();
+    admin.graphql.mockRejectedValueOnce(new Error("boom"));
+    const db = makeDb();
+    const { body, status } = await run(admin, db);
+    expect(body.success).toBe(false);
+    expect(status).toBe(500);
+    expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("clearing removes the translation (echo or re-read) and deletes the GLOBAL row only on confirmation", async () => {
+    const db = makeDb();
+    const { body } = await run(fakeAdmin({ removeEcho: true }), db, "");
     expect(body.success).toBe(true);
-    expect(db.productImageAltTranslation.upsert).toHaveBeenCalled();
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { imageId: "img-row", locale: "de", marketId: "" },
+    });
+  });
+
+  it("clearing: an unconfirmed removal keeps the local row", async () => {
+    const db = makeDb();
+    const { body } = await run(fakeAdmin({ removeEcho: false, stillPresent: true }), db, "");
+    expect(body.success).toBe(false);
+    expect(db.productImageAltTranslation.deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -309,11 +384,12 @@ describe("api-ai alt-text handlers (product path)", () => {
       expect(altWrites(db)).toEqual([]);
     });
 
-    it("CURRENT: accepted-but-unechoed is mirrored", async () => {
+    it("accepted-but-unechoed is failed and not mirrored", async () => {
       const db = makeDb();
       const res = await run(fakeAdmin({ silent: ["fr"] }), db);
-      expect(res.failedLocales).toEqual([]);
-      expect(altWrites(db)).toEqual(["Kiste", "Boite"]);
+      expect(res.savedLocales).toEqual(["de"]);
+      expect(res.failedLocales).toEqual(["fr"]);
+      expect(altWrites(db)).toEqual(["Kiste"]);
     });
   });
 
@@ -354,11 +430,12 @@ describe("api-ai alt-text handlers (product path)", () => {
       expect(res.savedCount).toBe(0);
     });
 
-    it("CURRENT: accepted-but-unechoed counts as saved", async () => {
+    it("accepted-but-unechoed is not saved: the image is reported failed", async () => {
       const db = makeDb();
       const res = await run(fakeAdmin({ silent: ["fr"] }), db);
-      expect(res.savedCount).toBe(2);
-      expect(res.failedImages).toEqual([]);
+      expect(res.savedCount).toBe(1);
+      expect(res.failedImages).toEqual([0]);
+      expect(altWrites(db)).toEqual(["Kiste"]);
     });
   });
 
@@ -397,10 +474,13 @@ describe("api-ai alt-text handlers (product path)", () => {
       expect(res.failedImages).toEqual([0]);
     });
 
-    it("CURRENT: accepted-but-unechoed counts as saved", async () => {
+    it("accepted-but-unechoed is not saved: failed image, not mirrored, no claim", async () => {
       const db = makeDb();
       const res = await run(fakeAdmin({ silent: ["de"] }), db);
-      expect(res.savedCount).toBe(1);
+      expect(res.savedCount).toBe(0);
+      expect(res.failedImages).toEqual([0]);
+      expect(altWrites(db)).toEqual([]);
+      expect(markTranslationSaved).not.toHaveBeenCalled();
     });
   });
 });
@@ -460,10 +540,60 @@ describe("api.apply-alt-text-templates action (foreign locale)", () => {
     expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it("CURRENT: accepted-but-unechoed counts as applied and is mirrored", async () => {
+  it("accepted-but-unechoed is an error, not applied, not mirrored, not claimed", async () => {
     const db = makeDb();
     const res = await run(fakeAdmin({ silent: ["de"] }), db);
-    expect(res.applied).toBe(1);
-    expect(db.productImageAltTranslation.upsert).toHaveBeenCalled();
+    expect(res.applied).toBe(0);
+    expect(res.errors?.[0]).toContain("did not store");
+    expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
+    expect(markTranslationSaved).not.toHaveBeenCalled();
+  });
+
+  it("mirrors the value Shopify stored", async () => {
+    const db = makeDb();
+    await run(fakeAdmin({ stored: { de: "Kiste (normalisiert)" } }), db);
+    expect(db.productImageAltTranslation.upsert.mock.calls[0][0].create.altText).toBe("Kiste (normalisiert)");
+  });
+});
+
+// -------------------------------------------------------------------------------
+describe("registerMediaAltAndVerify / removeMediaAltAndVerify", () => {
+  it("echoed: confirmed with the stored value and the digest used", async () => {
+    const { registerMediaAltAndVerify } = await import("../../app/services/translations/verified-translations.server");
+    const admin = fakeAdmin({ stored: { de: "Kiste!" } });
+    const r = await registerMediaAltAndVerify(admin, MEDIA, "de", "Kiste");
+    expect(r).toMatchObject({ confirmed: true, storedValue: "Kiste!", digest: "dg1", noDigest: false });
+    expect(admin.registers[0].translations[0]).toMatchObject({ key: "alt", locale: "de", translatableContentDigest: "dg1" });
+  });
+
+  it("unechoed: not confirmed, no stored value", async () => {
+    const { registerMediaAltAndVerify } = await import("../../app/services/translations/verified-translations.server");
+    const r = await registerMediaAltAndVerify(fakeAdmin({ silent: ["de"] }), MEDIA, "de", "Kiste");
+    expect(r).toMatchObject({ confirmed: false, noDigest: false });
+    expect(r.storedValue).toBeUndefined();
+  });
+
+  it("no digest: nothing is sent", async () => {
+    const { registerMediaAltAndVerify } = await import("../../app/services/translations/verified-translations.server");
+    const admin = fakeAdmin({ digest: null });
+    const r = await registerMediaAltAndVerify(admin, MEDIA, "de", "Kiste");
+    expect(r).toMatchObject({ confirmed: false, noDigest: true });
+    expect(admin.registers).toEqual([]);
+  });
+
+  it("an absent resource throws instead of reading as 'no digest'", async () => {
+    const { registerMediaAltAndVerify } = await import("../../app/services/translations/verified-translations.server");
+    await expect(registerMediaAltAndVerify(fakeAdmin({ digest: undefined }), MEDIA, "de", "Kiste")).rejects.toThrow(
+      /not found/,
+    );
+  });
+
+  it("removal: confirmed by echo, or by the re-read; a still-present key is not confirmed", async () => {
+    const { removeMediaAltAndVerify } = await import("../../app/services/translations/verified-translations.server");
+    expect((await removeMediaAltAndVerify(fakeAdmin({ removeEcho: true }), MEDIA, "de")).confirmed).toBe(true);
+    expect((await removeMediaAltAndVerify(fakeAdmin({ removeEcho: false }), MEDIA, "de")).confirmed).toBe(true);
+    expect((await removeMediaAltAndVerify(fakeAdmin({ removeEcho: false, stillPresent: true }), MEDIA, "de")).confirmed).toBe(
+      false,
+    );
   });
 });
