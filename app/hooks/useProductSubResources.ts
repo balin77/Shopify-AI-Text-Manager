@@ -31,6 +31,12 @@ import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/edito
 import { subResourceOutcome } from "../services/editor/sub-resource-outcome.shared";
 import { useLatestRef } from "./useLatestRef";
 import { postJsonSave, rollbackSubResourceCopy } from "../services/editor/sub-resource-copy.shared";
+import {
+  hasPendingSubResourceChanges,
+  unconfirmedPurgeOf,
+  withoutIds,
+  type SubResourcePendingState,
+} from "../services/editor/sub-resource-pending.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 
 /**
@@ -107,6 +113,13 @@ export interface SubResourceState {
   fallbackResourceIds: Set<string>;
   /** Whether there are unsaved changes */
   hasChanges: boolean;
+  /**
+   * Translations written by a copy / translate and not yet in the loaded item,
+   * `{ locale: { resourceId: { key: value } } }` (market-folded keys for market
+   * layers). Read-only for callers; `overlayVersion` changes when it does.
+   */
+  localOverlay: Record<string, Record<string, Record<string, string>>>;
+  overlayVersion: number;
   /** Whether translations are loading from Shopify */
   isLoading: boolean;
   /** Whether sub-resources are currently being saved */
@@ -170,6 +183,10 @@ export interface SubResourceHandlers {
 // have no reader and are gone rather than passed and dropped.
 interface UseProductSubResourcesStrings {
   optionsSavedSuccess?: string;
+  /** "Translation saved for all languages" -- the primary-locale translate of an option. */
+  optionTranslatedAll?: string;
+  /** A primary save that could not confirm the removal of stale foreign translations. */
+  translationPurgeUnconfirmed?: string;
   /** Fallback when a sub-resource translate fails without a server message. */
   translateFailed?: string;
   /** "Copied" / "Copying failed for: {locales}" -- the copy to all languages reports per locale. */
@@ -337,6 +354,12 @@ export function useProductSubResources({
   // so spinners persist across item navigation.
   const translatingFieldIds = useTranslatingSubResourceIds(selectedItem?.id || "");
   const [hasChanges, setHasChanges] = useState(false);
+  // A translate/copy answer says nothing about the rest of the card: what is
+  // still pending stays pending, so the flag is RECOMPUTED, never forced off.
+  const syncHasChanges = useCallback(() => {
+    const pending = pendingStateRef.current;
+    setHasChanges(pending ? hasPendingSubResourceChanges(pending) : false);
+  }, []);
   const [isLoading, setIsLoading] = useState(false);
 
   // Own fetcher for load/save/individual-translate operations.
@@ -355,6 +378,21 @@ export function useProductSubResources({
   const lastProcessedDataRef = useRef<any>(null);
   // Track fieldId of an in-flight copy save so we can clear its spinner on response
   const pendingCopyFieldIdRef = useRef<string | null>(null);
+  // What the single-option "Copy" wrote up front, so a refused save can take it
+  // back and a landed one can clear only ITS resource from the dirty sets.
+  const pendingCopyRef = useRef<{
+    overlayKey: string;
+    resourceId: string;
+    value: string;
+    previous: string | undefined;
+  } | null>(null);
+  // The latest pending sets, for response handlers that run from effects.
+  const pendingStateRef = useRef<SubResourcePendingState | null>(null);
+  const [overlayVersion, setOverlayVersion] = useState(0);
+  const touchOverlay = useCallback(() => setOverlayVersion((v) => v + 1), []);
+  // Resources whose stale foreign translations a primary save could not remove:
+  // they are still live, so the refresh must not wipe their staged values.
+  const keepOverlayIdsRef = useRef<Set<string>>(new Set());
   // Per-locale overlay for copy operations — eliminates stale window on locale switch
   // structure: { locale: { resourceId: { fieldKey: value } } }
   const localSubResourceOverlayRef = useRef<Record<string, Record<string, Record<string, string>>>>({});
@@ -501,7 +539,22 @@ export function useProductSubResources({
     // The server has just rewritten these languages; a staged copy would
     // otherwise keep winning over the fresh loader value. The overlay only ever
     // holds values that were already saved, which the fresh item carries too.
-    localSubResourceOverlayRef.current = {};
+    {
+      const keep = keepOverlayIdsRef.current;
+      if (keep.size === 0) {
+        localSubResourceOverlayRef.current = {};
+      } else {
+        const kept: Record<string, Record<string, Record<string, string>>> = {};
+        for (const [key, byResource] of Object.entries(localSubResourceOverlayRef.current)) {
+          for (const [resourceId, fields] of Object.entries(byResource)) {
+            if (!keep.has(resourceId)) continue;
+            (kept[key] ??= {})[resourceId] = fields;
+          }
+        }
+        localSubResourceOverlayRef.current = kept;
+      }
+      touchOverlay();
+    }
     // Phase 2 goes through the SAME fetcher as a save; submitting while it is
     // busy would abort that request, so the Shopify supplement is skipped then.
     readTranslationsFromItem(fetcher.state === "idle");
@@ -552,6 +605,52 @@ export function useProductSubResources({
     markSubResourceCompleted(resourceId, "all:subresources");
   };
 
+  // Stage a translate answer in the overlay: the server saved it, but the
+  // loaded item does not carry it until a reload, and a locale switch (or the
+  // "missing translation" marker on the primary tab) would read the old item.
+  // Global layer only: the translate writes no market override.
+  const stageTranslations = (translations: Record<string, Record<string, string>> | undefined | null) => {
+    if (isPrimaryLocale || selectedMarketId || !translations) return;
+    const overlay = localSubResourceOverlayRef.current;
+    let touched = false;
+    for (const [resourceId, fields] of Object.entries(translations)) {
+      for (const [key, value] of Object.entries(fields || {})) {
+        if ((key !== "name" && key !== "value") || typeof value !== "string" || !value) continue;
+        ((overlay[currentLanguage] ??= {})[resourceId] ??= {})[key] = value;
+        touched = true;
+      }
+    }
+    if (touched) touchOverlay();
+  };
+
+  // Takes back what the single-option Copy wrote up front (the save failed).
+  const rollbackPendingCopy = () => {
+    const c = pendingCopyRef.current;
+    pendingCopyRef.current = null;
+    if (!c) return;
+    const overlay = localSubResourceOverlayRef.current;
+    rollbackSubResourceCopy(overlay, [c.overlayKey], [{ resourceId: c.resourceId, value: c.value }]);
+    if (c.previous !== undefined) {
+      ((overlay[c.overlayKey] ??= {})[c.resourceId] ??= {})["name"] = c.previous;
+    }
+    touchOverlay();
+  };
+
+  // The copy's resource is settled (saved, or reverted): only IT leaves the
+  // dirty sets, and the save bar stays for whatever else is still pending.
+  const settleCopiedResource = (resourceId: string) => {
+    const pending = pendingStateRef.current;
+    const next = {
+      dirtyOptionIds: withoutIds(pending?.dirtyOptionIds ?? new Set<string>(), [resourceId]),
+      dirtyOptionValueIds: withoutIds(pending?.dirtyOptionValueIds ?? new Set<string>(), [resourceId]),
+      dirtyMetafieldIds: withoutIds(pending?.dirtyMetafieldIds ?? new Set<string>(), [resourceId]),
+    };
+    setDirtyOptionIds(next.dirtyOptionIds);
+    setDirtyOptionValueIds(next.dirtyOptionValueIds);
+    setDirtyMetafieldIds(next.dirtyMetafieldIds);
+    setHasChanges(pending ? hasPendingSubResourceChanges({ ...pending, ...next }) : false);
+  };
+
   // ============================================================================
   // Handle fetcher responses (load + translate + save)
   // ============================================================================
@@ -582,6 +681,9 @@ export function useProductSubResources({
         markSubResourceCompleted(selectedItem?.id || "", pendingCopyFieldIdRef.current);
         pendingCopyFieldIdRef.current = null;
       }
+      // The copy's value was staged as saved; it was not, so it goes again
+      // (the edit itself stays pending, like every failed request).
+      rollbackPendingCopy();
       clearFailedTranslateSpinners(data, false);
       return;
     }
@@ -626,7 +728,8 @@ export function useProductSubResources({
           });
         }
       }
-      setHasChanges(false);
+      // Unsaved edits made while this load was in flight are still unsaved.
+      syncHasChanges();
     }
 
     if (data.actionType === "translateSubResources" || data.actionType === "translateSubResourceToAllLocales") {
@@ -646,6 +749,7 @@ export function useProductSubResources({
       }
 
       const translations = data.translations as Record<string, Record<string, string>>;
+      stageTranslations(translations);
 
       // For translateSubResourceToAllLocales from primary locale:
       // The server saves translations to DB but returns empty translations object.
@@ -691,8 +795,9 @@ export function useProductSubResources({
       }
 
       // Both translateSubResources and translateSubResourceToAllLocales save to Shopify immediately
-      // So we don't need to mark as changed - translations are already persisted
-      setHasChanges(false);
+      // So the translated fields need no save -- but anything ELSE the merchant
+      // has pending stays pending.
+      syncHasChanges();
 
       // A run in which fields or languages failed is never reported as done.
       const outcome = subResourceOutcome(data, strings);
@@ -702,6 +807,7 @@ export function useProductSubResources({
     if (data.actionType === "saveSubResourceTranslations") {
       // Clear copy loading state (markSubResourceActive was called in copyOptionField)
       const wasCopyOperation = !!pendingCopyFieldIdRef.current;
+      const copied = pendingCopyRef.current;
       if (pendingCopyFieldIdRef.current) {
         markSubResourceCompleted(selectedItem?.id || "", pendingCopyFieldIdRef.current);
         pendingCopyFieldIdRef.current = null;
@@ -773,19 +879,42 @@ export function useProductSubResources({
           });
         }
 
-        setHasChanges(false);
+        if (copied) {
+          // A single-option Copy: only ITS resource failed and is reverted;
+          // the rest of the card's unsaved edits keep their save bar.
+          rollbackPendingCopy();
+          settleCopiedResource(copied.resourceId);
+        } else {
+          setHasChanges(false);
+        }
       } else if ((data.notTranslatable || []).length > 0) {
         // Not a refused write: Shopify exposes no digest for the field, so it
         // cannot be translated there. Nothing is reverted (the typed value is
         // the merchant's) and nothing is claimed as saved.
         const outcome = subResourceOutcome(data, strings);
         if (outcome) showInfoBox?.(outcome.text, outcome.tone);
-        setHasChanges(false);
-        // The rest of the save landed; leaving the dirty sets armed re-sent the
-        // untranslatable field on every later save and repeated the warning.
-        setDirtyOptionIds(new Set());
-        setDirtyOptionValueIds(new Set());
-        setDirtyMetafieldIds(new Set());
+        if (copied) {
+          pendingCopyRef.current = null;
+          settleCopiedResource(copied.resourceId);
+        } else {
+          setHasChanges(false);
+          // The rest of the save landed; leaving the dirty sets armed re-sent the
+          // untranslatable field on every later save and repeated the warning.
+          setDirtyOptionIds(new Set());
+          setDirtyOptionValueIds(new Set());
+          setDirtyMetafieldIds(new Set());
+        }
+      } else if (copied) {
+        // A single-option Copy landed. Only the one resource was sent, so only
+        // it leaves the dirty sets; another unsaved translation keeps its bar.
+        pendingCopyRef.current = null;
+        if (showInfoBox) {
+          showInfoBox(strings.copied || "Copied", "success");
+        }
+        settleCopiedResource(copied.resourceId);
+        if (revalidator && revalidator.state === "idle") {
+          revalidator.revalidate();
+        }
       } else {
         // All saved successfully
         if (showInfoBox) {
@@ -874,9 +1003,21 @@ export function useProductSubResources({
 
         setHasChanges(false);
       } else {
-        // All saved successfully
+        // Saved -- but removing the now-stale foreign translations may not have
+        // been confirmed on Shopify. Those are still LIVE: say so, and keep what
+        // the card holds for them instead of treating them as gone.
+        const purge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
+        for (const id of purge.resourceIds) keepOverlayIdsRef.current.add(id);
         if (showInfoBox) {
-          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
+          if (purge.unconfirmed) {
+            showInfoBox(
+              strings.translationPurgeUnconfirmed ||
+                "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them.",
+              "warning",
+            );
+          } else {
+            showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
+          }
         }
         setHasChanges(false);
         // Clear primary edits after successful save
@@ -936,6 +1077,7 @@ export function useProductSubResources({
       }
 
       const translations = data.translations as Record<string, Record<string, string>>;
+      stageTranslations(translations);
       if (selectedItem) {
         setOptionTranslations(prev => {
           const updated = { ...prev };
@@ -966,7 +1108,7 @@ export function useProductSubResources({
 
       const outcome = subResourceOutcome(data, strings);
       if (outcome) showInfoBox?.(outcome.text, outcome.tone);
-      setHasChanges(false);
+      syncHasChanges();
     }
   }, [translateAllFetcher.state, translateAllFetcher.data, selectedItem, revalidator]);
 
@@ -1051,6 +1193,20 @@ export function useProductSubResources({
   const [optionValueOrder, setOptionValueOrder] = useState<Record<string, string[]>>({});
   /** Bumped on every landed save — see `SubResourceState.savedNonce`. */
   const [savedNonce, setSavedNonce] = useState(0);
+  pendingStateRef.current = {
+    dirtyOptionIds,
+    dirtyOptionValueIds,
+    dirtyMetafieldIds,
+    primaryOptionEdits,
+    primaryMetafieldEdits,
+    optionValuesToAdd,
+    optionLinkedValuesToAdd,
+    optionValuesToDelete,
+    optionsToCreate,
+    optionsToDelete,
+    optionOrder,
+    optionValueOrder,
+  };
 
   const handleAddLinkedOptionValue = useCallback(
     (optionId: string, entry: { id: string; name: string }) => {
@@ -1357,6 +1513,7 @@ export function useProductSubResources({
       const data = await resp.json().catch(() => null) as SubResourceFetcherData | null;
       if (data?.success && data.translations) {
         applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
+        stageTranslations(data.translations as Record<string, Record<string, string>>);
       }
       // A refused or failed translate used to be swallowed: the spinner
       // stopped and nothing said why. The server's sentence is shown as is —
@@ -1383,15 +1540,22 @@ export function useProductSubResources({
       if (isPrimaryLocale && revalidator && revalidator.state === "idle") {
         revalidator.revalidate();
       }
-      setHasChanges(false);
+      // Only the translated fields are saved; other pending edits stay pending.
+      syncHasChanges();
       const outcome = subResourceOutcome(data, stringsRef.current);
-      if (outcome) showInfoBox?.(outcome.text, outcome.tone);
+      if (outcome) {
+        showInfoBox?.(outcome.text, outcome.tone);
+      } else if (isPrimaryLocale) {
+        // The primary-locale translate saves into every language server-side
+        // and shows nothing on screen: say it landed, like "copy to all".
+        showInfoBox?.(stringsRef.current.optionTranslatedAll || "Translation saved for all languages", "success");
+      }
     } catch {
       // Spinner is still cleared in finally; translation state simply isn't updated.
     } finally {
       markSubResourceCompleted(resourceId, fieldId);
     }
-  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, stringsRef]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, stringsRef, selectedMarketId]);
 
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);
@@ -1870,10 +2034,19 @@ export function useProductSubResources({
     const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
     const overlay = localSubResourceOverlayRef.current;
     if (!overlay[overlayKey]) overlay[overlayKey] = {};
+    const [copiedResourceId, copiedFields] = Object.entries(translationsData)[0];
+    // Remembered so a refused save can put the real stored value back.
+    pendingCopyRef.current = {
+      overlayKey,
+      resourceId: copiedResourceId,
+      value: copiedFields.name,
+      previous: overlay[overlayKey][copiedResourceId]?.["name"],
+    };
     for (const [resourceId, fields] of Object.entries(translationsData)) {
       if (!overlay[overlayKey][resourceId]) overlay[overlayKey][resourceId] = {};
       overlay[overlayKey][resourceId]["name"] = fields.name;
     }
+    touchOverlay();
 
     markSubResourceActive(selectedItem.id, fieldId, "copy");
     pendingCopyFieldIdRef.current = fieldId;
@@ -1929,6 +2102,7 @@ export function useProductSubResources({
       if (!overlay[locale][resourceId]) overlay[locale][resourceId] = {};
       overlay[locale][resourceId]["name"] = primaryValue;
     }
+    touchOverlay();
 
     markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
 
@@ -1945,6 +2119,7 @@ export function useProductSubResources({
       return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
     }).then(({ failed, gated }) => {
       rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, [{ resourceId, value: primaryValue }]);
+      touchOverlay();
       const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);
       showInfoBox?.(outcome.text, outcome.tone);
     }).finally(() => {
@@ -1995,6 +2170,7 @@ export function useProductSubResources({
         overlay[locale][e.resourceId]["name"] = e.value;
       }
     }
+    touchOverlay();
 
     markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
 
@@ -2011,6 +2187,7 @@ export function useProductSubResources({
       return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
     }).then(({ failed, gated }) => {
       rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, entries);
+      touchOverlay();
       const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);
       showInfoBox?.(outcome.text, outcome.tone);
     }).finally(() => {
@@ -2038,6 +2215,8 @@ export function useProductSubResources({
       translatingFieldIds,
       fallbackResourceIds,
       hasChanges,
+      localOverlay: localSubResourceOverlayRef.current,
+      overlayVersion,
       isLoading,
       isSaving: fetcher.state !== "idle",
     },

@@ -2068,6 +2068,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (pendingCopyFieldKeyRef.current) {
         if (copyFieldItemId) markOperationFailed(copyFieldItemId, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
+        // The copy landed: its rollback record must not outlive it.
+        discardCopyFieldRecord();
       }
       if (pendingCopyAltTextIndexRef.current !== null) {
         const copyIndex = pendingCopyAltTextIndexRef.current;
@@ -2514,6 +2516,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (failedFieldItemId) markOperationFailed(failedFieldItemId, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
         pendingCopyFieldItemIdRef.current = null;
+        // Nothing was saved: the overlay value, baselines and visible value
+        // the copy wrote up front go back to what Shopify holds.
+        rollbackCopyField();
       }
       if (pendingCopyAltTextIndexRef.current !== null) {
         const failedAltItemId = getPendingCopyAltItemId() ?? savedItemIdRef.current;
@@ -2557,6 +2562,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (failedFieldItemId) markOperationFailed(failedFieldItemId, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
         pendingCopyFieldItemIdRef.current = null;
+        // Nothing was saved: the overlay value, baselines and visible value
+        // the copy wrote up front go back to what Shopify holds.
+        rollbackCopyField();
       }
       if (pendingCopyAltTextIndexRef.current !== null) {
         const failedAltItemId = getPendingCopyAltItemId() ?? savedItemIdRef.current;
@@ -2701,6 +2709,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleTranslateField,
     handleTranslateFieldToAllLocales,
     handleCopyField,
+    rollbackCopyField,
+    discardCopyFieldRecord,
     handleCopyFieldToAllLocales,
     handleTranslateAll,
     handleAcceptSuggestion,
