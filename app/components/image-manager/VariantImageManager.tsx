@@ -2121,9 +2121,16 @@ export function VariantImageManager({
     // delete can put exactly those entries back into whatever the state has
     // become meanwhile (a whole-state snapshot would discard edits made while
     // the request was in flight).
+    // Staged resourceUrls of removed queued tiles: a tile dragged into a variant
+    // gallery sits there under its staging URL, which no GID lookup resolves.
+    const removedQueuedRefs = queuedResourceUrls(pendingProductNewMedia, urls);
+    // Positions are taken from the list AFTER those refs are stripped: that is
+    // the list a refused delete reinserts into, and positions counted with the
+    // staging refs still in it would put a restored image one slot late.
+    const strippedGalleries = stripRefsFromGalleries(pendingVariantGalleries, removedQueuedRefs);
     const removedFromGalleries: Record<string, RemovedEntry<string>[]> = {};
     for (const v of variants) {
-      const removed = captureRemoved(pendingVariantGalleries[v.id] ?? v.galleryFileGids, gid => gidSet.has(gid));
+      const removed = captureRemoved(strippedGalleries[v.id] ?? v.galleryFileGids, gid => gidSet.has(gid));
       if (removed.length > 0) removedFromGalleries[v.id] = removed;
     }
     const originalOrder = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
@@ -2141,10 +2148,6 @@ export function VariantImageManager({
     const removedFromRefreshed = captureRemoved(effectiveProductImages, img => urlSet.has(img.url) && !queuedUrls.has(img.url));
     const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
     const addedExcludedIds = variantsWithDeletedMainImage.map(v => v.id).filter(id => !locallyExcludedMainGids.has(id));
-
-    // Staged resourceUrls of removed queued tiles: a tile dragged into a variant
-    // gallery sits there under its staging URL, which no GID lookup resolves.
-    const removedQueuedRefs = queuedResourceUrls(pendingProductNewMedia, urls);
 
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
@@ -2241,10 +2244,13 @@ export function VariantImageManager({
           if (!removed) continue;
           const restored = reinsertRemoved(p[v.id] ?? v.galleryFileGids, removed);
           const base = originalGalleries[v.id] ?? v.galleryFileGids;
-          const unchanged = restored.length === base.length && restored.every((g, i) => g === base[i]);
+          const sameAs = (list: readonly string[]) =>
+            restored.length === list.length && restored.every((g, i) => g === list[i]);
           // Back to the pre-delete list: restore the prior presence/absence so
-          // a no-op does not light up the Save button.
-          if (unchanged && originalGalleries[v.id] === undefined) delete next[v.id];
+          // a no-op does not light up the Save button. Equal to the STORED
+          // gallery is a no-op too -- the pre-delete list may have differed only
+          // by a queued tile's staging ref, which this delete removed for good.
+          if ((sameAs(base) && originalGalleries[v.id] === undefined) || sameAs(v.galleryFileGids)) delete next[v.id];
           else next[v.id] = restored;
         }
         return next;
