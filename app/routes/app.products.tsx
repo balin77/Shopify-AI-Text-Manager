@@ -523,6 +523,8 @@ export default function ProductsPage() {
     strings: {
       optionsSavedSuccess: t.products.optionsSavedSuccess,
       translateFailed: t.errors.translationFailed,
+      copied: t.common.copied,
+      copyFailedLocales: t.common.copyFailedLocales,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
       optionNameEmpty: t.products.optionNameEmpty,

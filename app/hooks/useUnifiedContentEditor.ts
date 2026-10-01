@@ -2227,7 +2227,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Check if any alt-text indices failed to save to Shopify
       const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
       // If this save was triggered by a copy action, clear the field loading state.
-      const wasCopySave = !!pendingCopyFieldKeyRef.current;
+      const wasCopySave = !!pendingCopyFieldKeyRef.current || pendingCopyAltTextIndexRef.current !== null;
       if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
         markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
@@ -2391,6 +2391,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
       }
+      if (pendingCopyAltTextIndexRef.current !== null && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, `altText_${pendingCopyAltTextIndexRef.current}`);
+        pendingCopyAltTextIndexRef.current = null;
+      }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;
@@ -2414,6 +2418,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       inFlightPartialRef.current = null;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
+
+      // A refused copy must not leave its spinner behind either.
+      if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+      }
+      if (pendingCopyAltTextIndexRef.current !== null && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, `altText_${pendingCopyAltTextIndexRef.current}`);
+        pendingCopyAltTextIndexRef.current = null;
+      }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;

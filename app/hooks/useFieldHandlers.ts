@@ -37,6 +37,7 @@ import type { TransitionResult } from "./useUiDataLoader";
 import { aiImageCandidates } from "../services/ai/vision-policy.shared";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
+import { runPerLocaleSaves, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 
 // ============================================================================
 // TYPES
@@ -1989,16 +1990,19 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   // content-action-endpoint.shared.ts): "copied" is said once every locale
   // confirmed, and a locale that did not is named instead of hidden.
   const runSaves = async () => {
-    const failed: string[] = [];
-    for (const locale of targetLocales) {
-      const fd = new FormData();
-      fd.set("action", "updateContent");
-      fd.set("itemId", capturedItemId);
-      fd.set("locale", locale);
-      fd.set("primaryLocale", primaryLocale);
-      fd.set(fieldKey, primaryValue);
-      if ((await postContentEditorSave(fd)) === false) failed.push(locale);
-    }
+    const failed = await runPerLocaleSaves(
+      targetLocales,
+      (locale) => {
+        const fd = new FormData();
+        fd.set("action", "updateContent");
+        fd.set("itemId", capturedItemId);
+        fd.set("locale", locale);
+        fd.set("primaryLocale", primaryLocale);
+        fd.set(fieldKey, primaryValue);
+        return postContentEditorSave(fd);
+      },
+      { sequential: true },
+    );
     markOperationFailed(capturedItemId, fieldKey);
     if (failed.length > 0) {
       // Take back what the copy showed up front for those locales: the
@@ -2007,16 +2011,9 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
       // the editor went on showing a value that was never saved.
       dataLoader.onCopyToLocalesFailed(field.translationKey, failed, primaryValue);
       onCopyToAllLocalesFailed?.(fieldKey, failed);
-      showInfoBox(
-        String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
-          "{locales}",
-          failed.map((l) => l.toUpperCase()).join(", "),
-        ),
-        "critical",
-      );
-    } else {
-      showInfoBox(t.common?.copied ?? "Copied", "success");
     }
+    const outcome = copyOutcomeMessage(failed, t.common ?? {});
+    showInfoBox(outcome.text, outcome.tone);
   };
   void runSaves();
 
