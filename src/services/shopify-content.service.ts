@@ -1521,6 +1521,10 @@ export class ShopifyContentService {
           success: true,
           warning: warnings.join(" "),
           ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
+          // The featured image is alt index 0 on a collection/article, and the
+          // editor already keeps a failed index dirty instead of taking it into
+          // the saved baseline -- the same channel the product alt path uses.
+          ...(featuredAltWarning ? { failedAltTextIndices: [0] } : {}),
         };
       }
 

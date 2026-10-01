@@ -748,6 +748,11 @@ export async function handleTranslateSubResourceToAllLocales(
     // that resource a failed resource); a digest-less key is `notTranslatable`.
     const failedResources: string[] = [];
     const notTranslatable: string[] = [];
+    // Locales in which Shopify confirmed at least one key. "Not failed" is not
+    // "translated": a locale whose every field is notTranslatable wrote nothing,
+    // and reporting it as translated made a run that changed nothing read as a
+    // clean "completed".
+    const writtenLocales = new Set<string>();
     for (const [locale, translations] of Object.entries(allTranslations)) {
       for (const [resourceId, fields] of Object.entries(translations)) {
         try {
@@ -769,6 +774,7 @@ export async function handleTranslateSubResourceToAllLocales(
               result,
               digests: result.digests,
             });
+            if (result.confirmedKeys.size > 0) writtenLocales.add(locale);
             if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
               notTranslatable.push(resourceId);
             }
@@ -793,15 +799,20 @@ export async function handleTranslateSubResourceToAllLocales(
       }
     }
 
-    // Update task: "completed_with_errors" when any locale or resource failed.
+    const translatedLocales = targetLocales.filter(
+      (l: string) => writtenLocales.has(l) && !failedLocales.includes(l),
+    );
+    // Update task: "completed_with_errors" when any locale or resource failed,
+    // or when nothing at all was written although fields were left untranslated.
+    const nothingWritten = translatedLocales.length === 0 && notTranslatable.length > 0;
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: failedLocales.length > 0 || failedResources.length > 0 ? "completed_with_errors" : "completed",
+        status: failedLocales.length > 0 || failedResources.length > 0 || nothingWritten ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({
-          translatedLocales: targetLocales.filter((l: string) => !failedLocales.includes(l)),
+          translatedLocales,
           failedLocales,
           failedResources,
           notTranslatable,
@@ -814,7 +825,7 @@ export async function handleTranslateSubResourceToAllLocales(
       actionType: "translateSubResourceToAllLocales",
       success: true,
       translations: {}, // Already saved to Shopify, no need to return
-      translatedLocales: targetLocales.filter((l: string) => !failedLocales.includes(l)),
+      translatedLocales,
       failedLocales,
       failedResources,
       notTranslatable,

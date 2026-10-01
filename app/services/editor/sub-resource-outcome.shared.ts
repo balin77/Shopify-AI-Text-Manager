@@ -6,7 +6,6 @@
  * `notTranslatable` is a field Shopify exposes no digest for (a property of the
  * field, never reverted and never counted as a failure).
  */
-import { partialLocaleCounts } from "../translations/partial-result.shared";
 
 export interface SubResourceOutcomeData {
   failedResources?: string[];
@@ -40,16 +39,21 @@ export function subResourceOutcome(
   const failedResources = Array.isArray(data.failedResources) ? data.failedResources : [];
   const notTranslatable = Array.isArray(data.notTranslatable) ? data.notTranslatable : [];
 
-  if (failedLocales.length > 0) {
-    // The all-locales run returns no translations map, only the locales it
-    // finished: build the counts from those.
+  // A per-LANGUAGE count only exists for the all-locales run, which reports
+  // the locales it finished. The single-locale translate keys `translations`
+  // by RESOURCE id, so counting those as languages read "4/5 language(s)" for
+  // one language with one refused option value -- that run is reported by its
+  // failed fields below instead.
+  if (failedLocales.length > 0 && (data.translatedLocales || failedResources.length === 0)) {
     let succeeded: number;
     let total: number;
     if (data.translatedLocales) {
       succeeded = data.translatedLocales.filter((l) => !failedLocales.includes(l)).length;
       total = new Set([...data.translatedLocales, ...failedLocales]).size;
     } else {
-      ({ succeeded, total } = partialLocaleCounts(data.translations, failedLocales));
+      // Single locale, nothing per field to name: that language failed whole.
+      succeeded = 0;
+      total = failedLocales.length;
     }
     return {
       text: String(

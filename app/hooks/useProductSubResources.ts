@@ -29,6 +29,7 @@ import { translateErrorMessage } from "../utils/editor-error-messages";
 import { buildLocaleKey } from "./useUiDataLoader";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { subResourceOutcome } from "../services/editor/sub-resource-outcome.shared";
+import { useLatestRef } from "./useLatestRef";
 import { postJsonSave, rollbackSubResourceCopy } from "../services/editor/sub-resource-copy.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 
@@ -717,6 +718,11 @@ export function useProductSubResources({
         const outcome = subResourceOutcome(data, strings);
         if (outcome) showInfoBox?.(outcome.text, outcome.tone);
         setHasChanges(false);
+        // The rest of the save landed; leaving the dirty sets armed re-sent the
+        // untranslatable field on every later save and repeated the warning.
+        setDirtyOptionIds(new Set());
+        setDirtyOptionValueIds(new Set());
+        setDirtyMetafieldIds(new Set());
       } else {
         // All saved successfully
         if (showInfoBox) {
@@ -1255,6 +1261,9 @@ export function useProductSubResources({
   // response reaches fetcher.data — every other field's spinner then hangs
   // forever. A dedicated fetch per call gives each its own lifecycle and clears
   // its own spinner in `finally`.
+  // The caller passes `strings` as a fresh object every render; read it through
+  // a ref so this callback (and everything built on it) is not rebuilt each time.
+  const stringsRef = useLatestRef(strings);
   const runIndividualTranslate = useCallback(async (
     fieldId: string,
     sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }>,
@@ -1295,11 +1304,11 @@ export function useProductSubResources({
         // only holds message strings, so hand it the slice it can use.
         const message = rawMessage
           ? translateErrorMessage(rawMessage, {
-              content: { upgradeRequired: strings.upgradeRequired },
+              content: { upgradeRequired: stringsRef.current.upgradeRequired },
               errors: {},
             } as unknown as TranslationStrings)
           : "";
-        showInfoBox?.(message || strings.translateFailed || "Translation failed", "critical");
+        showInfoBox?.(message || stringsRef.current.translateFailed || "Translation failed", "critical");
         return;
       }
       // Primary-locale translate saves to foreign locales server-side and returns
@@ -1308,14 +1317,14 @@ export function useProductSubResources({
         revalidator.revalidate();
       }
       setHasChanges(false);
-      const outcome = subResourceOutcome(data, strings);
+      const outcome = subResourceOutcome(data, stringsRef.current);
       if (outcome) showInfoBox?.(outcome.text, outcome.tone);
     } catch {
       // Spinner is still cleared in finally; translation state simply isn't updated.
     } finally {
       markSubResourceCompleted(resourceId, fieldId);
     }
-  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings, strings.translateFailed, strings.upgradeRequired]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, stringsRef]);
 
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);
