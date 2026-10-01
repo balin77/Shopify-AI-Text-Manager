@@ -144,7 +144,12 @@ export interface FieldHandlerProps {
       translations: Record<string, string>,
       currentLocale: string
     ) => void;
-    onCopyToLocalesFailed: (translationKey: string, locales: string[], copiedValue: string) => void;
+    onCopyToLocalesFailed: (
+    translationKey: string,
+    locales: string[],
+    copiedValue: string,
+    opts?: { itemUnchanged?: boolean; allLocalesFailed?: boolean },
+  ) => void;
   };
 
   // State setters
@@ -2009,7 +2014,10 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
       // overlay (it outranks the loaded data in resolve()) and whatever a
       // page cached through onTranslateToAllLocalesComplete. Left in place,
       // the editor went on showing a value that was never saved.
-      dataLoader.onCopyToLocalesFailed(field.translationKey, failed, primaryValue);
+      dataLoader.onCopyToLocalesFailed(field.translationKey, failed, primaryValue, {
+        itemUnchanged: selectedItemIdRef.current === capturedItemId,
+        allLocalesFailed: failed.length === targetLocales.length,
+      });
       onCopyToAllLocalesFailed?.(fieldKey, failed);
     }
     const outcome = copyOutcomeMessage(failed, { ...(t.common ?? {}), upgradeRequired: String(t.content?.upgradeRequired ?? "") || undefined }, gated);

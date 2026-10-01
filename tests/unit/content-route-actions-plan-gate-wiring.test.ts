@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { CONTENT_EDITOR_ACTION_PAGES } from "../../app/services/editor/content-action-endpoint.shared";
 
 const authenticate = { admin: vi.fn() };
 vi.mock("~/shopify.server", () => ({ authenticate }));
@@ -85,6 +86,12 @@ beforeEach(() => {
 vi.setConfig({ testTimeout: 30_000 });
 
 describe("every content route action is plan-gated", () => {
+  it("ROUTES covers every page of CONTENT_EDITOR_ACTION_PAGES", () => {
+    const covered = new Set(ROUTES.map((r) => `/${r.route.replace(/^app\./, "app/")}`));
+    const missing = CONTENT_EDITOR_ACTION_PAGES.filter((page) => !covered.has(page));
+    expect(missing).toEqual([]);
+  });
+
   for (const { route, freeAllowed } of ROUTES) {
     it(`${route}: a Free shop is ${freeAllowed ? "let past the gate" : "refused with 403"}`, async () => {
       aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "free" });

@@ -1,8 +1,8 @@
 /**
  * The route action every content editor page shares.
  *
- * Products, collections, pages, blogs, policies, metaobjects and the product
- * sub-resource route each carried the same fifteen lines (authenticate, read
+ * Products, collections, pages, blogs, policies, metaobjects and the other
+ * content pages each carried the same fifteen lines (authenticate, read
  * the form, load the AI settings, hand over to `handleUnifiedContentActions`)
  * and none of them asked the PLAN: `PlanAccessGate` hides a page the plan does
  * not include, but every action is directly POST-reachable, so a Free shop

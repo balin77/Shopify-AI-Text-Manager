@@ -172,7 +172,14 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   // Track image index of an in-flight copy save so save-response handler can clear loading
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
   // What the in-flight copy wrote into the overlay, so a failure can undo exactly that.
-  const copyOverlayRollbackRef = useRef<{ key: string; index: number; value: string } | null>(null);
+  const copyOverlayRollbackRef = useRef<{
+    key: string;
+    index: number;
+    value: string;
+    prevField: string | undefined;
+    prevOriginal: string | undefined;
+    prevOverlay: string | undefined;
+  } | null>(null);
   // Per-locale overlay for copy operations — eliminates stale window on locale switch
   // structure: { locale: { imageIndex: altText } }
   const localAltTextOverlayRef = useRef<Record<string, Record<number, string>>>({});
@@ -297,6 +304,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     }
 
     const newAltTexts = { ...imageAltTexts, [imageIndex]: sourceAltText };
+    const prevField = imageAltTexts[imageIndex];
+    const prevOriginal = originalAltTexts[imageIndex];
     setImageAltTexts(newAltTexts);
     setOriginalAltTexts(newAltTexts);
 
@@ -306,8 +315,16 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!localAltTextOverlayRef.current[copyOverlayKey]) {
       localAltTextOverlayRef.current[copyOverlayKey] = {};
     }
+    const prevOverlay = localAltTextOverlayRef.current[copyOverlayKey][imageIndex];
     localAltTextOverlayRef.current[copyOverlayKey][imageIndex] = sourceAltText;
-    copyOverlayRollbackRef.current = { key: copyOverlayKey, index: imageIndex, value: sourceAltText };
+    copyOverlayRollbackRef.current = {
+      key: copyOverlayKey,
+      index: imageIndex,
+      value: sourceAltText,
+      prevField,
+      prevOriginal,
+      prevOverlay,
+    };
 
     markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
     pendingCopyAltTextIndexRef.current = imageIndex;
@@ -341,8 +358,23 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     const entry = localAltTextOverlayRef.current[pending.key];
     // Only undo our own write: a later edit or copy under the same key stays.
     if (entry && entry[pending.index] === pending.value) {
-      delete entry[pending.index];
+      if (pending.prevOverlay === undefined) delete entry[pending.index];
+      else entry[pending.index] = pending.prevOverlay;
     }
+    // The visible field and its baseline were set to the copied value at copy
+    // time. Restore them only where they still hold it (a later edit stays).
+    const restore = (
+      prev: Record<number, string>,
+      previous: string | undefined,
+    ): Record<number, string> => {
+      if (prev[pending.index] !== pending.value) return prev;
+      const next = { ...prev };
+      if (previous === undefined) delete next[pending.index];
+      else next[pending.index] = previous;
+      return next;
+    };
+    setImageAltTexts((prev) => restore(prev, pending.prevField));
+    setOriginalAltTexts((prev) => restore(prev, pending.prevOriginal));
   };
 
   const handleCopyAltTextToAllLocales = (imageIndex: number) => {
