@@ -18,11 +18,8 @@
  * not become a second door to the rest of the product editor's actions.
  */
 
-import { data as json, type ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
-import { handleUnifiedContentActions } from "../actions/unified-content.actions";
+import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { PRODUCTS_CONFIG } from "../config/content-fields.config";
-import { getFormString } from "~/utils/form-data.utils";
 
 const SUB_RESOURCE_FETCH_ACTIONS: ReadonlySet<string> = new Set([
   "translateSubResources",
@@ -30,27 +27,10 @@ const SUB_RESOURCE_FETCH_ACTIONS: ReadonlySet<string> = new Set([
   "saveSubResourceTranslations",
 ]);
 
-export const action = async (args: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(args.request);
-  const formData = await args.request.formData();
-
-  if (!SUB_RESOURCE_FETCH_ACTIONS.has(getFormString(formData, "action"))) {
-    return json({ success: false, error: "Unsupported action" }, { status: 400 });
-  }
-
-  const { db } = await import("../db.server");
-  const [aiSettings, aiInstructions] = await Promise.all([
-    db.aISettings.findUnique({ where: { shop: session.shop } }),
-    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
-  ]);
-
-  return handleUnifiedContentActions({
-    admin,
-    session,
-    formData,
-    contentConfig: PRODUCTS_CONFIG,
-    db,
-    aiSettings,
-    aiInstructions,
-  });
-};
+// Products are in every plan, so the gate is a formality today; it is passed
+// anyway so a plan matrix change cannot silently open this door.
+export const action = makeContentRouteAction({
+  config: PRODUCTS_CONFIG,
+  planContentType: "products",
+  allowedActions: SUB_RESOURCE_FETCH_ACTIONS,
+});

@@ -32,12 +32,13 @@ import {
   type CookieBannerSession,
 } from "../utils/cookie-banner-availability.server";
 import { getFormString } from "../utils/form-data.utils";
+import { planGateRefusal } from "../utils/content-route-action.server";
 import { logger } from "~/utils/logger.server";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 
 export const loader = makeThemeDomainLoader("customer_privacy", "COOKIE_BANNER");
 
-const baseAction = makeThemeContentRouteAction("customer_privacy");
+const baseAction = makeThemeContentRouteAction("customer_privacy", "onlineStoreExtras");
 
 export const action = async (args: ActionFunctionArgs) => {
   // Peek at the action type without consuming the body — baseAction still needs
@@ -53,6 +54,17 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
   const cbSession: CookieBannerSession = { shop: session.shop, accessToken: session.accessToken };
 
   const formData = await request.formData();
+
+  // baseAction gates every other action; this branch bypasses it, so it asks
+  // the plan itself (same content type as the page's PlanAccessGate).
+  const { db: planDb } = await import("../db.server");
+  const planRow = await planDb.aISettings.findUnique({
+    where: { shop: session.shop },
+    select: { subscriptionPlan: true },
+  });
+  const refusal = planGateRefusal(planRow?.subscriptionPlan, "onlineStoreExtras", formData);
+  if (refusal) return refusal;
+
   const itemId = getFormString(formData, "itemId");
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");

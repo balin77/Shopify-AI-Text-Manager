@@ -1,5 +1,5 @@
 import { data as json } from "react-router";
-import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
+import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
@@ -26,7 +26,9 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
   // Compliance gate: whose key, consent, kill switch and budget — before a
   // Task row exists.
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const refusal = await aiRefusalResponse(settings, session.shop);
+  // `actionType` + `fieldType` ride on every refusal and error so the editor's
+  // generic handler lands it inside the field that fired it.
+  const refusal = await aiRefusalFor(settings, session.shop, { actionType: "translateField", fieldType });
   if (refusal) {
     return refusal;
   }
@@ -140,7 +142,10 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
       where: { id: task.id },
       data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
     });
-    return json({ success: false, error: msg }, { status: 500 });
+    // A managed-AI refusal thrown mid-run is a coded answer, never a raw 500.
+    const refused = managedRefusalResponseFromError(error, settings, { actionType: "translateField", fieldType });
+    if (refused) return refused;
+    return json({ success: false, error: msg, actionType: "translateField", fieldType }, { status: 500 });
   }
 }
 
@@ -164,7 +169,7 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
   // Compliance gate: whose key, consent, kill switch and budget — before a
   // Task row exists.
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const refusal = await aiRefusalResponse(settings, session.shop);
+  const refusal = await aiRefusalFor(settings, session.shop, { actionType: "translateFieldToAllLocales", fieldType });
   if (refusal) {
     return refusal;
   }
@@ -301,6 +306,9 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
       where: { id: task.id },
       data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
     });
-    return json({ success: false, error: msg }, { status: 500 });
+    // A managed-AI refusal thrown mid-run is a coded answer, never a raw 500.
+    const refused = managedRefusalResponseFromError(error, settings, { actionType: "translateFieldToAllLocales", fieldType });
+    if (refused) return refused;
+    return json({ success: false, error: msg, actionType: "translateFieldToAllLocales", fieldType }, { status: 500 });
   }
 }

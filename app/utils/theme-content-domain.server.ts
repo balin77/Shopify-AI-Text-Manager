@@ -20,6 +20,8 @@ import type { TranslatableField, ThemeContentRow, TemplatesActionContext } from 
 import type { ThemeNavItem } from "~/types/theme-content-domain";
 import { listThemes, resolveSelectedThemeId, type ThemeOption } from "~/services/theme-selection.server";
 import type { LoaderContext } from "./loader-factory.server";
+import { planGateRefusal } from "./content-route-action.server";
+import type { ContentType } from "~/config/plans";
 
 /**
  * Resolve the shop's theme list + the selected Theme-GID once per request,
@@ -179,11 +181,22 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
  * fetchers (loadTranslations / generateAIText / translate* / updateContent),
  * dispatching to the shared template action handlers with the right domain.
  */
-export function makeThemeContentRouteAction(domain: string, resourceTypes?: string[]) {
+export function makeThemeContentRouteAction(domain: string, planContentType: ContentType, resourceTypes?: string[]) {
   return async ({ request }: ActionFunctionArgs) => {
     const { admin, session } = await authenticate.admin(request);
     const formData = await request.formData();
     const actionType = getFormString(formData, "action");
+
+    // The page's PlanAccessGate only hides the UI; this action is directly
+    // POST-reachable. `planContentType` is the same value the route gives
+    // ThemeContentDomainPage, so server and UI judge one content type.
+    const { db: gateDb } = await import("../db.server");
+    const settings = await gateDb.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { subscriptionPlan: true },
+    });
+    const refusal = planGateRefusal(settings?.subscriptionPlan, planContentType, formData);
+    if (refusal) return refusal;
     const itemId = getFormString(formData, "itemId");
 
     const groupId = itemId?.replace("group_", "");
@@ -191,7 +204,7 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
       return json({ success: false, error: "groupId is required" }, { status: 400 });
     }
 
-    const { db } = await import("../db.server");
+    const db = gateDb;
 
     // Theme-Auswahl: scope editor actions to the selected theme so a save/translate
     // targets the chosen theme's resource (and never a sibling theme's rows).
