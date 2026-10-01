@@ -571,4 +571,17 @@ describe("translating an option never sends the text the merchant replaced", () 
     act(() => result.current.handlers.copyOptionToAllLocales(OPTION));
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("posts to the JSON route and reports a successful translate as one", async () => {
+    // A plain POST to the PAGE route /app/products is answered with HTML, so
+    // the JSON never arrived and every successful translate read as failed.
+    const { result } = setupWithReload();
+    await act(async () => {
+      result.current.handlers.translateOption(OPTION);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect((fetchSpy.mock.calls[0] as unknown as [string])[0]).toBe("/api/product-sub-resources");
+    expect(showInfoBox).not.toHaveBeenCalledWith(expect.anything(), "critical");
+  });
 });

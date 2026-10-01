@@ -27,6 +27,14 @@ import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
 import { buildLocaleKey } from "./useUiDataLoader";
 
+/**
+ * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
+ * page route, and a plain POST to it is answered with the rendered HTML
+ * document, so the JSON this hook reads never arrives -- every successful
+ * translate then reported "failed". See api.product-sub-resources.tsx.
+ */
+const SUB_RESOURCE_ENDPOINT = "/api/product-sub-resources";
+
 /** Response shape from sub-resource API actions */
 interface SubResourceFetcherData {
   success: boolean;
@@ -1234,7 +1242,7 @@ export function useProductSubResources({
     }
 
     try {
-      const resp = await fetch("/app/products", { method: "POST", body: fd });
+      const resp = await fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
       const data = await resp.json().catch(() => null) as SubResourceFetcherData | null;
       if (data?.success && data.translations) {
         applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
@@ -1809,7 +1817,7 @@ export function useProductSubResources({
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return fetch("/app/products", { method: "POST", body: fd });
+      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
     });
 
     Promise.all(saves).finally(() => {
@@ -1870,7 +1878,7 @@ export function useProductSubResources({
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return fetch("/app/products", { method: "POST", body: fd });
+      return fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
     });
 
     Promise.all(saves).finally(() => {
