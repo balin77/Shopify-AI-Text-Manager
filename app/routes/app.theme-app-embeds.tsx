@@ -17,7 +17,7 @@ import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/the
 const RESOURCE_TYPES = ["ONLINE_STORE_THEME_APP_EMBED"];
 
 export const loader = makeThemeDomainLoader("theme", "THEME_APP_EMBEDS", RESOURCE_TYPES);
-export const action = makeThemeContentRouteAction("theme", RESOURCE_TYPES);
+export const action = makeThemeContentRouteAction("theme", "templates", RESOURCE_TYPES);
 
 export default function ThemeAppEmbedsPage() {
   const data = useLoaderData<typeof loader>();

@@ -11,14 +11,12 @@
  * - Minimal code (~150 lines vs 779 lines)
  */
 
-import { type ActionFunctionArgs } from "react-router";
+import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
-import { authenticate } from "../shopify.server";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
-import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { PRODUCTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -375,28 +373,7 @@ export const loader = createContentLoader({
 // ACTION - Handle all actions via unified handler
 // ============================================================================
 
-export const action = async (args: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(args.request);
-  const formData = await args.request.formData();
-
-  // Load AI settings
-  const { db } = await import("../db.server");
-  const [aiSettings, aiInstructions] = await Promise.all([
-    db.aISettings.findUnique({ where: { shop: session.shop } }),
-    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
-  ]);
-
-  // Use unified action handler (handles text fields + images)
-  return handleUnifiedContentActions({
-    admin,
-    session,
-    formData,
-    contentConfig: PRODUCTS_CONFIG,
-    db,
-    aiSettings,
-    aiInstructions,
-  });
-};
+export const action = makeContentRouteAction({ config: PRODUCTS_CONFIG, planContentType: "products" });
 
 // ============================================================================
 // COMPONENT - Simple, unified approach (like Collections)

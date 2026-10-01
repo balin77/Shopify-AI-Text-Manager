@@ -14,7 +14,7 @@ import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/the
 const RESOURCE_TYPES = ["ONLINE_STORE_THEME_SECTION_GROUP"];
 
 export const loader = makeThemeDomainLoader("theme", "THEME_SECTION_GROUPS", RESOURCE_TYPES);
-export const action = makeThemeContentRouteAction("theme", RESOURCE_TYPES);
+export const action = makeThemeContentRouteAction("theme", "templates", RESOURCE_TYPES);
 
 export default function ThemeSectionGroupsPage() {
   const data = useLoaderData<typeof loader>();

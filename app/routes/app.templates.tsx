@@ -20,7 +20,7 @@ import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/the
 const RESOURCE_TYPES = ["ONLINE_STORE_THEME_JSON_TEMPLATE"];
 
 export const loader = makeThemeDomainLoader("theme", "THEME_TEMPLATES", RESOURCE_TYPES);
-export const action = makeThemeContentRouteAction("theme", RESOURCE_TYPES);
+export const action = makeThemeContentRouteAction("theme", "templates", RESOURCE_TYPES);
 
 export default function TemplatesPage() {
   const data = useLoaderData<typeof loader>();

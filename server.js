@@ -252,6 +252,43 @@ app.use('/api/sync-content', bulkOperationRateLimit);
 // /api budget with every other API call turned routine clicks into 429s.
 const CONTENT_EDITOR_API_PATHS = ['/api/content-editor-action', '/api/product-sub-resources'];
 
+// Every content editor PAGE route that posts form data (save, copy, translate).
+// Mirrors CONTENT_EDITOR_ACTION_PAGES in app/services/editor/content-action-endpoint.shared.ts
+// (this file is CommonJS and cannot import that TS module) plus the pages that
+// post their own forms: /app/menus and the bulk editor. A unit test
+// (tests/unit/server-content-rate-limit-paths.test.ts) fails when the two lists
+// drift. Matched exactly or as a prefix on a path segment, never with `includes`.
+const CONTENT_PAGE_PATHS = [
+  '/app/products',
+  '/app/collections',
+  '/app/pages',
+  '/app/blog',
+  '/app/policies',
+  '/app/metaobjects',
+  '/app/cookie-banner',
+  '/app/templates',
+  '/app/delivery',
+  '/app/selling-plans',
+  '/app/system',
+  '/app/online-store-extras',
+  '/app/shop-metadata',
+  '/app/theme-app-embeds',
+  '/app/theme-section-groups',
+  '/app/theme-settings',
+  '/app/theme-standard',
+  '/app/theme-static-sections',
+  '/app/menus',
+  '/app/bulk',
+  '/app/content',
+];
+
+// React Router's single fetch posts a page action to `<path>.data`.
+function isContentPagePath(reqPath) {
+  let p = reqPath.endsWith('.data') ? reqPath.slice(0, -'.data'.length) : reqPath;
+  if (p.length > 1) p = p.replace(/\/+$/, '');
+  return CONTENT_PAGE_PATHS.some((base) => p === base || p.startsWith(base + '/'));
+}
+
 // Content page rate limiting — applied to form submissions (save, copy, translate).
 // Uses a permissive 200/min limit because these pages mix AI and non-AI operations
 // and routine copy/save clicks must not be throttled. The /api/ai route has its
@@ -260,10 +297,7 @@ app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('application/x-www-form-urlencoded') ||
       contentType.includes('multipart/form-data')) {
-    if (req.path.includes('/app/products') ||
-        req.path.includes('/app/content') ||
-        req.path.includes('/app/collections') ||
-        CONTENT_EDITOR_API_PATHS.includes(req.path)) {
+    if (isContentPagePath(req.path) || CONTENT_EDITOR_API_PATHS.includes(req.path)) {
       return contentActionRateLimit(req, res, next);
     }
   }

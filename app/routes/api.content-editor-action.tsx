@@ -8,9 +8,13 @@
  * content-action-endpoint.shared.ts.
  *
  * This route runs the page's OWN exported `action` -- not a copy of it, so
- * every page keeps its exact checks (plan, managed AI, theme scope, resource
- * id) -- on a request rebuilt for the page's URL, and hands back whatever it
- * returns. A resource route (no default export) serialises that as JSON.
+ * every page keeps its exact checks -- on a request rebuilt for the page's URL,
+ * and hands back whatever it returns. Those checks live in the action
+ * factories every listed page is built with: the plan gate by content type
+ * (`makeContentRouteAction` / `makeThemeContentRouteAction` in app/utils, and
+ * the cookie banner's own `updateContent` branch), plus managed AI, theme
+ * scope and resource id inside the shared handlers. This route adds no gate of
+ * its own and needs none: it can only reach an action that already has one. A resource route (no default export) serialises that as JSON.
  *
  * It is not a second door to the editors: only the pages in the shared list,
  * and only `updateContent`, which is what both callers send.

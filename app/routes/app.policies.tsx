@@ -8,13 +8,13 @@
  * and set automatically by Shopify based on the policy type.
  */
 
-import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { makeContentRouteAction } from "~/utils/content-route-action.server";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { Text, BlockStack, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
-import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { POLICIES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -145,28 +145,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 // ACTION - Handle all actions via unified handler
 // ============================================================================
 
-export const action = async (args: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(args.request);
-  const formData = await args.request.formData();
-
-  // Load AI settings
-  const { db } = await import("../db.server");
-  const [aiSettings, aiInstructions] = await Promise.all([
-    db.aISettings.findUnique({ where: { shop: session.shop } }),
-    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
-  ]);
-
-  // Use unified action handler (encryption is handled automatically)
-  return handleUnifiedContentActions({
-    admin,
-    session,
-    formData,
-    contentConfig: POLICIES_CONFIG,
-    db,
-    aiSettings,
-    aiInstructions,
-  });
-};
+export const action = makeContentRouteAction({ config: POLICIES_CONFIG, planContentType: "policies" });
 
 // ============================================================================
 // COMPONENT - Just configuration, no logic!
