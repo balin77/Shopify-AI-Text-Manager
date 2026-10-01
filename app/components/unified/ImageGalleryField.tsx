@@ -22,11 +22,9 @@ import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris"
 import { AIEditableField } from "../AIEditableField";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
-import { useI18n } from "../../contexts/I18nContext";
-import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { useLocalizedMediaContext } from "../localized-images/LocalizedMediaContext";
 import { ReplacedMediaBadge } from "../localized-images/ReplacedMediaBadge";
-import { LocalizedMediaReplacePanel } from "../localized-images/LocalizedMediaReplacePanel";
+import { LocalizedMediaReplaceButtons } from "../localized-images/LocalizedMediaReplaceButton";
 import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
 import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
 
@@ -172,12 +170,10 @@ export function ImageGalleryField({
   // Per-language replacement of a product's media (foreign language only; null
   // on every other content type and below the plan).
   const localized = useLocalizedMediaContext()?.state ?? null;
-  const { t: appT, locale: appLocale } = useI18n();
-  const replacedMarkLabel = localized?.active
-    ? appT.localizedImages.replacedMark.replace("{language}", getLocalizedLanguageName(localized.rawLocale, appLocale))
-    : "";
-  const isReplaced = (img: ImageData | undefined): boolean =>
-    !!localized?.active && !!img?.mediaId && localized.replaced.has(img.mediaId);
+  // The tile (or preview) of a medium that has a replacement shows it in place
+  // of the original, with the corner symbol that flips it back.
+  const tileOf = (img: ImageData | undefined) =>
+    localized?.active && img?.mediaId ? localized.tileOf(img.mediaId) : null;
 
   // Reset selected image when images change
   useEffect(() => {
@@ -203,6 +199,7 @@ export function ImageGalleryField({
   };
 
   const previewImage = getPreviewImage();
+  const previewTile = tileOf(images?.[selectedImageIndex]);
   const hasImages = (images && images.length > 0) || featuredImage;
 
   if (!hasImages) {
@@ -250,9 +247,9 @@ export function ImageGalleryField({
           >
             {previewImage && (
               <img
-                src={previewImage.url}
+                src={(!isFreePlan ? previewTile?.src : null) ?? previewImage.url}
                 alt={altTexts[selectedImageIndex] || previewImage.altText || t.featuredImage || "Image"}
-                title={extractFilename(previewImage.url)}
+                title={(!isFreePlan ? previewTile?.title : null) ?? extractFilename(previewImage.url)}
                 style={{
                   position: "absolute",
                   top: 0,
@@ -263,8 +260,16 @@ export function ImageGalleryField({
                 }}
               />
             )}
-            {!isFreePlan && isReplaced(images[selectedImageIndex]) && (
-              <ReplacedMediaBadge label={replacedMarkLabel} size={24} top={8} left={8} />
+            {!isFreePlan && previewTile && (
+              <ReplacedMediaBadge
+                label={previewTile.label}
+                draft={previewTile.draft}
+                showingOriginal={previewTile.showingOriginal}
+                onToggle={previewTile.onToggle}
+                size={24}
+                top={8}
+                left={8}
+              />
             )}
             {/* Alt-text status badge on preview */}
             {!isFreePlan && images && images[selectedImageIndex] && (
@@ -326,12 +331,13 @@ export function ImageGalleryField({
                   ? altTexts[index] !== ""
                   : (isPrimaryLocale && !!image.altText);
                 const isSelected = index === selectedImageIndex;
+                const tile = tileOf(image);
 
                 return (
                   <button
                     key={index}
                     onClick={() => setSelectedImageIndex(index)}
-                    title={extractFilename(image.url)}
+                    title={tile?.title ?? extractFilename(image.url)}
                     style={{
                       position: "relative",
                       width: "100%",
@@ -350,7 +356,7 @@ export function ImageGalleryField({
                     }}
                   >
                     <img
-                      src={image.url}
+                      src={tile?.src ?? image.url}
                       alt={altTexts[index] || image.altText || `${t.image || "Image"} ${index + 1}`}
                       style={{
                         width: "100%",
@@ -358,7 +364,9 @@ export function ImageGalleryField({
                         objectFit: "cover",
                       }}
                     />
-                    {isReplaced(image) && <ReplacedMediaBadge label={replacedMarkLabel} />}
+                    {tile && (
+                      <ReplacedMediaBadge label={tile.label} draft={tile.draft} showingOriginal={tile.showingOriginal} onToggle={tile.onToggle} />
+                    )}
                     {/* Alt-text status badge */}
                     <div
                       title={(altTexts[index] !== undefined ? altTexts[index] : (isPrimaryLocale ? image.altText : undefined)) || undefined}
@@ -501,10 +509,12 @@ export function ImageGalleryField({
         />
       ) : null)}
 
-      {/* Replacement for the selected image in this foreign language; the
-          primary locale shows nothing of it. */}
+      {/* Replacement for the selected image in this foreign language: one
+          button; the primary locale shows nothing of it. */}
       {!isFreePlan && localized?.active && images && images[selectedImageIndex]?.mediaId && (
-        <LocalizedMediaReplacePanel mediaId={images[selectedImageIndex].mediaId as string} />
+        <InlineStack align="start">
+          <LocalizedMediaReplaceButtons mediaId={images[selectedImageIndex].mediaId as string} />
+        </InlineStack>
       )}
     </BlockStack>
   );

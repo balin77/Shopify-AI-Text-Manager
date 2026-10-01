@@ -40,7 +40,7 @@ import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLa
 import { MarketPublicationNotice } from "./unified/MarketPublicationNotice";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
-import { LocalizedMediaPlainExtras } from "./localized-images/LocalizedMediaReplacePanel";
+import { LocalizedMediaPlainExtras, LocalizedMediaSaveBridge } from "./localized-images/LocalizedMediaReplaceButton";
 import { OptionsField } from "./unified/OptionsField";
 import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
@@ -1570,6 +1570,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
     {/* The stock panel registers its save through this — see the save bar. */}
     <commerceSave.Provider value={commerceSave.value}>
+    {/* The per-language media drafts (product page) ride the same save bar. */}
+    <LocalizedMediaSaveBridge />
     {/* One live load, one set of pending edits, one registration — consumed by
         the channels field in the attributes card AND by the variants section
         inside the variants card. Two loads would mean two `compareQuantity`

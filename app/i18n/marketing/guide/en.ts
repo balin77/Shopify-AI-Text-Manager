@@ -492,13 +492,14 @@ export const guideEn: GuideCopy = {
         {
           heading: "Product images",
           paragraphs: [
-            "You set a replacement image right in the product's image gallery — also when the image manager is switched off. In the main language there is nothing special. Switch to a foreign language (and, if you like, to a market), select an image in the gallery and press “Choose or upload replacement” below it. Pick the replacement from your files or upload a new one; only what can replace the original is offered. The change is saved right away. “Change” picks another replacement, “Remove” brings the original back. The gallery keeps showing the originals; an image that is replaced in this language is recognizable by the small round symbol in its top-left corner. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
-            "For your store to show the replacements, turn on the “Images and videos per language” app embed once (the note below the gallery links straight to it). The images are replaced in the product page gallery and in the image shown when the link is shared and to search engines.",
+            "You set a replacement image right in the product's image gallery — also when the image manager is switched off. In the main language there is nothing special. Switch to a foreign language (and, if you like, to a market) and select an image in the gallery: next to the image's controls the button “Upload replacement image” appears. Clicking it opens your files, where you pick an image or upload a new one; only what can replace the original is offered. The chosen image shows in the gallery right away, in place of the original, marked with a small round symbol in its top-left corner. It is only saved when you press “Save” at the top; the info box reports the result. “Discard” takes your choice back. Clicking the symbol shows you the original (the symbol turns grey), another click shows the replacement again. “Remove replacement image” makes the original apply again — that too is only applied with “Save”. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
+            "For your store to show the replacements, turn on the “Images and videos per language” app embed once (the message after saving links straight to it). The images are replaced in the product page gallery and in the image shown when the link is shared and to search engines.",
           ],
           list: [
             "A replacement for a specific market takes precedence over the replacement for “All markets”.",
-            "If you change the original image later, the area below the gallery points it out so you can check whether the replacement still fits.",
-            "If an original image is deleted from the product, the gallery lists its replacements separately so you can remove them. The same goes for replacements for a market or language that no longer exists in your store or is no longer active.",
+            "Your choices apply per language and market: you can choose something in one language, switch to another, and apply everything at the end with one click on “Save”.",
+            "If you delete an image in the app, all of its replacement images (in every language and market) are deleted with it.",
+            "If there are replacement images that no longer belong to anything (for example to a market or language that no longer exists in your store), a warning appears below the gallery where you can remove them.",
           ],
         },
         {

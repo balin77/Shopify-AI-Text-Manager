@@ -409,6 +409,8 @@ export default function ProductsPage() {
   // Track which products we've already synced translations for (to avoid duplicate syncs)
   // IMPORTANT: All hooks must be called before any conditional returns
   const syncedProductsRef = useRef<Set<string>>(new Set());
+  // Set by LocalizedMediaProvider: unsaved per-language media choices exist.
+  const localizedDraftsPendingRef = useRef(false);
   const isMountedRef = useRef(true); // Track mount status to prevent state updates after unmount
   // Track that revalidation was triggered by on-demand translation sync
   // so we can refresh the editor when fresh data arrives
@@ -804,8 +806,12 @@ export default function ProductsPage() {
         }
         editor.handlers.handleLanguageChange(locale);
       },
+      // Unsaved per-language media choices live in the localized-media provider
+      // and survive a language switch (they are keyed by language and market),
+      // but not a product switch: they count here, or the next product would
+      // silently drop them.
       handleItemSelect: async (itemId: string) => {
-        if (hasPendingImageChanges && !editor.state.hasChanges) {
+        if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
           await confirmNavigation();
         }
         editor.handlers.handleItemSelect(itemId);
@@ -1036,6 +1042,7 @@ export default function ProductsPage() {
       currentLanguage={editor.state.currentLanguage}
       selectedMarketId={editor.state.selectedMarketId}
       embedActivationUrl={localizedImagesEmbedUrl}
+      draftsPendingRef={localizedDraftsPendingRef}
       // The image list the manager last confirmed: an image added or removed
       // there is reflected in the next foreign-language view without a reload.
       reloadKey={editor.selectedItem ? `${imageManagerState.resetCounter}:${(imageManagerState.settlingMedia ?? []).length}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}` : ""}
