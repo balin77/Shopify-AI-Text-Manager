@@ -1,10 +1,11 @@
 /**
  * A content page's own action, answered as JSON.
  *
- * The editor's "copy to all languages" saves (a field, an alt text) fire one
- * plain `fetch` per locale. Posted to the page route they were answered with
- * the rendered HTML document -- a full page render per locale, and an answer
- * nobody could read, so a failed save was reported as copied. See
+ * The editor's plain-`fetch` saves (a field or an alt text copied to all
+ * languages, the product editor's option / metafield translations) fire one
+ * `fetch` per locale or per resource. Posted to the page route they were
+ * answered with the rendered HTML document -- a full page render each, and an
+ * answer nobody could read, so a failed save was reported as copied. See
  * content-action-endpoint.shared.ts.
  *
  * This route runs the page's OWN exported `action` -- not a copy of it, so
@@ -14,15 +15,17 @@
  * (`makeContentRouteAction` / `makeThemeContentRouteAction` in app/utils, and
  * the cookie banner's own `updateContent` branch), plus managed AI, theme
  * scope and resource id inside the shared handlers. This route adds no gate of
- * its own and needs none: it can only reach an action that already has one. A resource route (no default export) serialises that as JSON.
+ * its own and needs none: it can only reach an action that already has one.
+ * A resource route (no default export) serialises that as JSON.
  *
  * It is not a second door to the editors: only the pages in the shared list,
- * and only `updateContent`, which is what both callers send.
+ * and per page only `updateContent` plus the actions that page's plain-fetch
+ * callers send (`CONTENT_EDITOR_EXTRA_ACTIONS`).
  */
 
 import { data as json, type ActionFunctionArgs } from "react-router";
 import {
-  CONTENT_EDITOR_FETCH_ACTION,
+  contentEditorActionAllowed,
   contentEditorActionPage,
   type ContentEditorActionPage,
 } from "~/services/editor/content-action-endpoint.shared";
@@ -54,10 +57,6 @@ export const action = async (args: ActionFunctionArgs) => {
   const { request } = args;
   const formData = await request.formData();
 
-  if (formData.get("action") !== CONTENT_EDITOR_FETCH_ACTION) {
-    return json({ success: false, error: "Unsupported action" }, { status: 400 });
-  }
-
   // `_page` is the page's path plus its query. Only the path is matched
   // against the list; the query rides along so the action sees its own URL.
   const rawPage = String(formData.get("_page") ?? "");
@@ -70,6 +69,11 @@ export const action = async (args: ActionFunctionArgs) => {
     : null;
   if (!page) {
     return json({ success: false, error: "Unknown page" }, { status: 400 });
+  }
+  // Per page: `updateContent` everywhere, plus the page's own fetch-sent
+  // actions (the product editor's sub-resource translations).
+  if (!contentEditorActionAllowed(page, String(formData.get("action") ?? ""))) {
+    return json({ success: false, error: "Unsupported action" }, { status: 400 });
   }
 
   const { action: pageAction } = await PAGE_ACTIONS[page]();

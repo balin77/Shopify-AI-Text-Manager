@@ -28,14 +28,16 @@ import type { TranslatableContentItem } from "../types/content-editor.types";
 import { buildLocaleKey } from "./useUiDataLoader";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { postJsonSave, rollbackSubResourceCopy } from "../services/editor/sub-resource-copy.shared";
+import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
  * page route, and a plain POST to it is answered with the rendered HTML
  * document, so the JSON this hook reads never arrives -- every successful
- * translate then reported "failed". See api.product-sub-resources.tsx.
+ * translate then reported "failed". It is the one content-editor door; each
+ * request names `/app/products` as its page (see api.content-editor-action.tsx).
  */
-const SUB_RESOURCE_ENDPOINT = "/api/product-sub-resources";
+const SUB_RESOURCE_ENDPOINT = CONTENT_EDITOR_ACTION_ENDPOINT;
 
 /** Response shape from sub-resource API actions */
 interface SubResourceFetcherData {
@@ -1249,7 +1251,7 @@ export function useProductSubResources({
     }
 
     try {
-      const resp = await fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: fd });
+      const resp = await fetch(SUB_RESOURCE_ENDPOINT, { method: "POST", body: setContentEditorPage(fd, "/app/products") });
       const data = await resp.json().catch(() => null) as SubResourceFetcherData | null;
       if (data?.success && data.translations) {
         applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
@@ -1827,7 +1829,7 @@ export function useProductSubResources({
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return postJsonSave(SUB_RESOURCE_ENDPOINT, fd);
+      return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
     }).then(({ failed, gated }) => {
       rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, [{ resourceId, value: primaryValue }]);
       const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);
@@ -1893,7 +1895,7 @@ export function useProductSubResources({
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
       fd.set("itemId", capturedItemId);
-      return postJsonSave(SUB_RESOURCE_ENDPOINT, fd);
+      return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
     }).then(({ failed, gated }) => {
       rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, entries);
       const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);

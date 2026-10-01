@@ -19,8 +19,27 @@ import { PLAN_REFUSED, isPlanRefusal, saveAnswerFailed } from "./per-locale-save
 
 export const CONTENT_EDITOR_ACTION_ENDPOINT = "/api/content-editor-action";
 
-/** The only action this door takes: both callers save through `updateContent`. */
+/** The action every listed page accepts: the per-locale copy saves send it. */
 export const CONTENT_EDITOR_FETCH_ACTION = "updateContent";
+
+/**
+ * The extra actions a page's plain-`fetch` callers send, by page. Everything
+ * else is refused, so this door never becomes a way to the rest of a page's
+ * actions. The product editor's option / option-value / metafield translations
+ * run several at once and each needs its own lifecycle, so they fetch too.
+ */
+export const CONTENT_EDITOR_EXTRA_ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  "/app/products": [
+    "translateSubResources",
+    "translateSubResourceToAllLocales",
+    "saveSubResourceTranslations",
+  ],
+};
+
+/** Whether `action` may be posted for `page` through this door. */
+export function contentEditorActionAllowed(page: string, action: string): boolean {
+  return action === CONTENT_EDITOR_FETCH_ACTION || (CONTENT_EDITOR_EXTRA_ACTIONS[page] ?? []).includes(action);
+}
 
 /** Every page whose editor saves with a plain fetch. */
 export const CONTENT_EDITOR_ACTION_PAGES = [
@@ -52,6 +71,19 @@ export function contentEditorActionPage(pathname: string): ContentEditorActionPa
   return (CONTENT_EDITOR_ACTION_PAGES as readonly string[]).includes(normalized)
     ? (normalized as ContentEditorActionPage)
     : null;
+}
+
+/**
+ * Names the page whose action a plain-`fetch` request to the door should run
+ * (`_page`: the page's path plus its query), for callers that post themselves.
+ */
+export function setContentEditorPage(
+  formData: FormData,
+  page: ContentEditorActionPage,
+  search = typeof window !== "undefined" ? window.location.search : "",
+): FormData {
+  formData.set("_page", `${page}${search}`);
+  return formData;
 }
 
 /**

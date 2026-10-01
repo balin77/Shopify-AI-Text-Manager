@@ -581,7 +581,9 @@ describe("translating an option never sends the text the merchant replaced", () 
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect((fetchSpy.mock.calls[0] as unknown as [string])[0]).toBe("/api/product-sub-resources");
+    expect((fetchSpy.mock.calls[0] as unknown as [string])[0]).toBe("/api/content-editor-action");
+    const sent = (fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }])[1].body;
+    expect(String(sent.get("_page"))).toMatch(/^\/app\/products/);
     expect(showInfoBox).not.toHaveBeenCalledWith(expect.anything(), "critical");
   });
 });
