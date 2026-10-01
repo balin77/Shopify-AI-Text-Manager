@@ -374,9 +374,9 @@ export const loader = createContentLoader({
     const localizedImagesEmbedUrl = apiKey
       ? `https://${ctx.session.shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/localized-media`
       : null;
-    // The PLAN gate alone, not the image manager's on/off setting: replacements
-    // keep showing on the storefront when the merchant switches the image
-    // manager off, so the card that lists and removes them must stay too.
+    // The PLAN gate for NEW replacements only. Existing ones keep showing on
+    // the storefront after a downgrade or when the image manager is switched
+    // off, so listing and removing them is open to every plan.
     const showLocalizedImages = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled);
     return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages };
   },
@@ -1038,11 +1038,13 @@ export default function ProductsPage() {
 
   return (
     // Per-language replacement of the product's images and videos: state for
-    // both galleries, plan-gated only (never on the image manager's on/off).
+    // both galleries. The plan only decides whether NEW replacements can be
+    // picked (remove-only below it); never the image manager's on/off.
     // Keyed by data, not by element: the editor below must never remount.
     <LocalizedMediaProvider
       productId={editor.selectedItem?.id ?? ""}
-      enabled={showLocalizedImages && !!editor.selectedItem}
+      enabled={!!editor.selectedItem}
+      canReplace={showLocalizedImages}
       shopLocales={shopLocales}
       markets={markets ?? []}
       currentLanguage={editor.state.currentLanguage}

@@ -500,6 +500,7 @@ export const guideEn: GuideCopy = {
             "A replacement for a specific market takes precedence over the replacement for “All markets”.",
             "Your choices apply per language and market: you can choose something in one language, switch to another, and apply everything at the end with one click on “Save”.",
             "If you delete an image in the app, all of its replacement images (in every language and market) are deleted with it.",
+            "If your plan does not (or no longer) include replacement images and videos, for example after a plan change, your store keeps showing the replacements that already exist. You see them in the gallery and can remove them there; new replacements can no longer be set. An uploaded video can take Shopify a few minutes to process; the file is already in your files by then and can be picked from there.",
             "If there are replacement images that no longer belong to anything (for example to a market or language that no longer exists in your store), a warning appears below the gallery where you can remove them. If you convert an image to WebP, the old image's replacement images are carried over to the new file automatically; only if that fails do they appear in this warning and have to be set again. Unsaved replacement images from a foreign language stay when you switch to the main language; a line below the gallery names the languages in which something is still waiting for “Save”.",
           ],
         },

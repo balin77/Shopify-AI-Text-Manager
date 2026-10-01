@@ -2406,11 +2406,16 @@ export function VariantImageManager({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ productId: startedProductId, mediaIds: gids }),
         });
-        const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean; localizedMedia?: { removed?: number; failed?: string } } | null;
-        deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false;
+        const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean; deletedMediaIds?: string[]; localizedMedia?: { removed?: number; failed?: string } } | null;
+        // Only what Shopify ECHOED as deleted counts: every requested id must
+        // be in the answer before the variants' main images are cleared.
+        const echoedDeleted = new Set(deleteBody?.deletedMediaIds ?? []);
+        deleteOk = deleteRes.ok && !!deleteBody && deleteBody.success !== false && gids.every(g => echoedDeleted.has(g));
         // The route also removes the originals' per-language replacements; the
         // delete stands even if that part failed, and the merchant is told.
         if (deleteOk && deleteBody?.localizedMedia?.failed) localizedMediaRef.current?.reportCleanupFailed(deleteBody.localizedMedia.failed);
+        // The server removed the originals' replacements: read the list again.
+        if (deleteOk) localizedMediaRef.current?.refresh();
       }
       // Shopify does not automatically clear a variant's image when the referenced media is
       // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,

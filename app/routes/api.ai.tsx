@@ -15,12 +15,14 @@ import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isManagedRefusal } from "../../src/services/ai.service";
+import { planGateRefusal } from "~/utils/content-route-action.server";
+import { aiRefusalFor } from "~/utils/ai-refusal-response.server";
+import { PLAN_CONFIG, type ContentType } from "~/config/plans";
 import type { AISettings } from "@prisma/client";
 import {
   VALID_CONTENT_TYPES,
   errorMessage,
   errorStack,
-  aiRefusalResponse,
   managedRefusalResponse,
   isAuthError,
   aiAuthErrorResponse,
@@ -63,6 +65,22 @@ import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.
 // growing the single seoAudit ternary below) now that there's more than one.
 const NON_AI_ACTIONS = new Set(["seoAudit", "seoBulkMeta", "seoJsonLdAudit", "seoCrawl"]);
 
+// Actions whose `contentType` is incidental (they work on the shop, not on a
+// content page), so the content-type plan gate does not apply to them.
+const SHOP_LEVEL_ACTIONS = new Set([...NON_AI_ACTIONS, "seoRobotsAdvice", "aiDiscoveryIntro"]);
+
+/**
+ * The plan content type a posted `contentType` is judged on: the very value the
+ * page's own `PlanAccessGate` / route action uses. The theme-content family
+ * keeps its own name (system, delivery, ...); everything else is already one.
+ * null = no plan content type to judge (never gate on a guess).
+ */
+function planContentTypeOf(rawContentType: string, normalized: string): ContentType | null {
+  const known = new Set<string>(Object.values(PLAN_CONFIG).flatMap((l) => l.contentTypes));
+  if (isThemeContentType(rawContentType) && known.has(rawContentType)) return rawContentType as ContentType;
+  return known.has(normalized) ? (normalized as ContentType) : null;
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   // Hoisted so the catch below can phrase a mid-call managed refusal in the
@@ -100,9 +118,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // NON_AI_ACTIONS are exempt — they only read/write the DB content cache
     // and/or Shopify directly (no provider call at all), so a shop with no AI
     // key configured yet must still be able to use them.
+    // The plan comes BEFORE it: this route is directly POST-reachable, so the
+    // page's PlanAccessGate (which only hides the page) is not a gate.
+    if (!SHOP_LEVEL_ACTIONS.has(actionType)) {
+      const planType = planContentTypeOf(rawContentType, contentType);
+      if (planType) {
+        const gated = planGateRefusal(settings?.subscriptionPlan, planType, formData);
+        if (gated) return gated;
+      }
+    }
+
     const refusal = NON_AI_ACTIONS.has(actionType)
       ? null
-      : await aiRefusalResponse(settings, session.shop);
+      : await aiRefusalFor(settings, session.shop, {
+          actionType,
+          fieldType: getFormString(formData, "fieldType") || undefined,
+        });
     if (refusal) {
       return refusal;
     }

@@ -328,7 +328,8 @@ export function FilePickerModal({
     let accepted = classified.map(x => x.file);
     if (onlyKind) {
       const others = classified.filter(x => x.kind !== onlyKind);
-      accepted = classified.filter(x => x.kind === onlyKind).map(x => x.file);
+      // One image or video per pick (a replacement takes exactly one).
+      accepted = classified.filter(x => x.kind === onlyKind).map(x => x.file).slice(0, 1);
       if (others.length > 0) {
         setError(onlyKind === "image"
           ? (t.imageManager.browseFilesImagesOnly ?? "Only images can be used here.")
@@ -368,7 +369,8 @@ export function FilePickerModal({
     // to hit the footer Add button once for a whole drop.
     if (uploadCommitMode === "queue") {
       setSelected(prev => {
-        const next = new Set(prev);
+        // Single-pick modes hold ONE selection: the new upload replaces it.
+        const next = new Set(onlyKind ? [] : prev);
         for (const it of newItems) next.add(it.uniqueId);
         return next;
       });
@@ -553,12 +555,13 @@ export function FilePickerModal({
   // ------------------------------------------------------------------------
   const toggleSelected = useCallback((id: string) => {
     setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
+      // imagesOnly / videosOnly are single-pick modes: their callers take one item.
+      const next = new Set(onlyKind ? [] : prev);
+      if (prev.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+  }, [onlyKind]);
 
   const handleCommitSelected = useCallback(() => {
     const picked: AddedItem[] = [];
@@ -848,7 +851,11 @@ export function FilePickerModal({
               every mime classifyFile() recognizes; the route re-validates. */}
           <InlineStack gap="200" blockAlign="center">
             <Button onClick={triggerFilePicker} variant="primary">
-              {t.imageManager.uploadMediaTitle ?? "Upload images, videos, or 3D models"}
+              {onlyKind === "image"
+                ? t.imageManager.uploadImageTitle
+                : onlyKind === "video"
+                  ? t.imageManager.uploadVideoTitle
+                  : (t.imageManager.uploadMediaTitle ?? "Upload images, videos, or 3D models")}
             </Button>
             <Text as="span" tone="subdued" variant="bodySm">
               {onlyKind === "image" ? "JPG · PNG · WebP" : onlyKind === "video" ? "MP4 · MOV · WebM" : "JPG · PNG · WebP · MP4 · MOV · WebM · GLB"}
@@ -857,7 +864,7 @@ export function FilePickerModal({
               ref={fileInputRef}
               type="file"
               accept={onlyKind === "image" ? IMAGE_MIME_TYPES.join(",") : onlyKind === "video" ? VIDEO_MIME_TYPES.join(",") : UPLOAD_ACCEPT}
-              multiple
+              multiple={!onlyKind}
               style={{ display: "none" }}
               onChange={(e) => {
                 handleFilesChosen(e.target.files);

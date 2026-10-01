@@ -24,6 +24,7 @@ export type PickedImage = { fileId: string; url: string };
  */
 export type PickFailureCode =
   | "stillProcessing"
+  | "stillProcessingVideo"
   | "noImageSelected"
   | "noVideoSelected"
   | "linkNotFile"
@@ -63,7 +64,7 @@ export async function resolvePickedMedia(
     // video nearly always is, for longer than the route waits). Not an upload
     // failure: re-uploading would create a duplicate, while the same file can
     // be picked from the library once Shopify has finished.
-    if (res.status === 504 && body.fileId) return { error: body.error || "processing", code: "stillProcessing" };
+    if (res.status === 504 && body.fileId) return { error: body.error || "processing", code: kind === "video" ? "stillProcessingVideo" : "stillProcessing" };
     if (!res.ok || !body.fileId || !body.url) return { error: body.error || `HTTP ${res.status}` };
     return { fileId: body.fileId, url: body.url };
   } catch (e) {

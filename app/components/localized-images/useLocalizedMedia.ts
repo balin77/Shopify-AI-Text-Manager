@@ -58,6 +58,8 @@ type DoorAnswer = {
   ok?: boolean;
   entries?: LocalizedMediaEntry[];
   media?: LocalizedMediaItem[];
+  /** Load only: the metafield holds data this app did not write. */
+  foreignValue?: boolean;
   code?: string;
   error?: string;
   message?: string;
@@ -93,8 +95,14 @@ export interface UseLocalizedMediaArgs {
   /** The editor's own language and market: this hook has no selectors of its own. */
   currentLanguage?: string;
   selectedMarketId?: string;
-  /** The plan gate (never the image manager's on/off). */
+  /** A product is selected (never the image manager's on/off, never the plan). */
   enabled: boolean;
+  /**
+   * The plan allows NEW replacements. Without it the feature is remove-only:
+   * existing replacements keep serving on the storefront after a downgrade, so
+   * they stay listed and removable, but nothing new can be picked.
+   */
+  canReplace?: boolean;
   /** Theme-editor deep link that activates the storefront embed; the save confirmation links to it. */
   embedActivationUrl?: string | null;
   /**
@@ -104,7 +112,7 @@ export interface UseLocalizedMediaArgs {
   reloadKey?: string;
 }
 
-export function useLocalizedMedia({ productId, shopLocales, markets, currentLanguage, selectedMarketId = "", enabled, reloadKey = "", embedActivationUrl = null }: UseLocalizedMediaArgs) {
+export function useLocalizedMedia({ productId, shopLocales, markets, currentLanguage, selectedMarketId = "", enabled, canReplace = true, reloadKey = "", embedActivationUrl = null }: UseLocalizedMediaArgs) {
   const { t, locale: appLocale } = useI18n();
   const tx = t.localizedImages;
 
@@ -118,6 +126,8 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // custom.localized_media holds data this app did not write: nothing in it is listed or changed.
+  const [foreignValue, setForeignValue] = useState(false);
   const [entries, setEntries] = useState<LocalizedMediaEntry[]>([]);
   const [media, setMedia] = useState<LocalizedMediaItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, LocalizedMediaDraft>>({});
@@ -152,6 +162,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
       if (status < 200 || status >= 300 || !body.ok) throw new Error("load");
       setEntries(body.entries ?? []);
       setMedia(body.media ?? []);
+      setForeignValue(!!body.foreignValue);
       setLoaded(true);
     } catch {
       if (!isStaleAnswer(startedFor, productIdRef.current)) setLoadError(true);
@@ -160,6 +171,17 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
       if (!isStaleAnswer(startedFor, productIdRef.current)) setLoading(false);
     }
   }, [productId]);
+
+  /**
+   * Reads again after the gallery CONFIRMED a delete: the server removed the
+   * deleted originals' replacements, and the list on screen must follow (a
+   * read fired by the optimistic removal can land before that). Before the
+   * first foreign-language visit there is nothing on screen to refresh.
+   */
+  const refresh = useCallback(() => {
+    if (!loadStartedRef.current) return;
+    void load();
+  }, [load]);
 
   // A different product starts from nothing.
   useEffect(() => {
@@ -172,6 +194,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     savingRef.current = false;
     saveTokenRef.current += 1;
     setLoaded(false);
+    setForeignValue(false);
     setLoadError(false);
     setEntries([]);
     setMedia([]);
@@ -281,7 +304,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     const token = ++saveTokenRef.current;
     savingRef.current = true;
     setSaving(true);
-    const failures: Array<{ mediaId: string; text: string }> = [];
+    const failures: Array<{ mediaId: string; locale: string; text: string }> = [];
     let done = 0;
     let wroteSet = false;
     try {
@@ -296,7 +319,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
           const { status, body } = await callLocalizedMedia(d.op === "set" ? "localizedMediaSet" : "localizedMediaRemove", fields);
           if (isStaleAnswer(startedFor, productIdRef.current)) return;
           if (status < 200 || status >= 300 || !body.ok) {
-            failures.push({ mediaId: d.mediaId, text: errorText(body.code ?? body.error, body.message || `HTTP ${status}`) });
+            failures.push({ mediaId: d.mediaId, locale: d.locale, text: errorText(body.code ?? body.error, body.message || `HTTP ${status}`) });
             continue;
           }
           done += 1;
@@ -313,7 +336,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
             return next;
           });
         } catch (e) {
-          failures.push({ mediaId: d.mediaId, text: tx.saveFailed.replace("{error}", e instanceof Error ? e.message : String(e)) });
+          failures.push({ mediaId: d.mediaId, locale: d.locale, text: tx.saveFailed.replace("{error}", e instanceof Error ? e.message : String(e)) });
         }
       }
     } finally {
@@ -333,7 +356,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
         showInfoBox(text, "success");
       }
     } else {
-      const detail = failures.slice(0, 3).map((f) => `${mediaName(f.mediaId)}: ${f.text}`).join(" · ");
+      const detail = failures.slice(0, 3).map((f) => `${mediaName(f.mediaId)} (${getLocalizedLanguageName(f.locale, appLocale)}): ${f.text}`).join(" · ");
       showInfoBox(
         (done > 0 ? tx.partialFailed : tx.allFailed)
           .replace("{done}", String(done))
@@ -342,7 +365,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
         "critical",
       );
     }
-  }, [productId, tx, errorText, showInfoBox, mediaName, embedActivationUrl]);
+  }, [productId, tx, errorText, showInfoBox, mediaName, embedActivationUrl, appLocale]);
 
   /** The deleted originals' replacements could not be removed with them: said, and the orphan list offers them. */
   const reportCleanupFailed = useCallback((code?: string) => {
@@ -410,6 +433,8 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
       onToggle: () => toggleOriginal(mediaId),
     };
   }, [viewOf, showOriginal, locale, marketNumeric, appLocale, tx, toggleOriginal, mediaById]);
+  /** A medium's kind in the merchant's words (never the raw "video" / "external"). */
+  const kindName = useCallback((kind: LocalizedMediaItem["kind"]) => (kind === "external" ? tx.kindLink : kind === "video" ? tx.kindVideo : tx.kindImage), [tx]);
   const hasDrafts = Object.keys(drafts).length > 0;
   /** Languages (normalized codes) that hold unsaved drafts. */
   const draftLocales = useMemo(() => [...new Set(Object.values(drafts).map((d) => d.locale))], [drafts]);
@@ -434,7 +459,11 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     loading,
     loadError,
     loaded,
+    foreignValue,
+    canReplace,
     load,
+    refresh,
+    kindName,
     entries,
     media,
     mediaById,

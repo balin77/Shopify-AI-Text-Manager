@@ -40,4 +40,9 @@ describe("content rate limit paths", () => {
     expect(serverJs).toContain("content-page-paths.cjs");
     expect(serverJs).not.toMatch(/req\.path\.includes\('\/app\//);
   });
+
+  it("limits the editor JSON door regardless of Content-Type and matches media types case-insensitively", () => {
+    expect(serverJs).toMatch(/CONTENT_EDITOR_API_PATHS\.includes\(req\.path\)\) \{\s*return contentActionRateLimit/);
+    expect(serverJs).toContain("toLowerCase()");
+  });
 });

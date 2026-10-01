@@ -65,5 +65,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  // Success is the ECHO, not an empty userErrors: every requested id has to come
+  // back as deleted. A partial answer says which ones did not (the originals
+  // that were deleted already had their replacements cleaned above).
+  const echoed = new Set(deletedMediaIds);
+  const failedMediaIds = (mediaIds as string[]).filter((id) => !echoed.has(id));
+  if (failedMediaIds.length > 0) {
+    return json({ success: false, error: "Not all media were deleted", deletedMediaIds, failedMediaIds, localizedMedia }, { status: 422 });
+  }
+
   return json({ success: true, deletedMediaIds, localizedMedia });
 };

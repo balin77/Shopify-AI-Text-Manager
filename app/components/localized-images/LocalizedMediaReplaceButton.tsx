@@ -97,9 +97,13 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
     draftLink(mediaId, externalUrl, externalPreview(externalUrl));
   }, [linkValue, draftLink, mediaId]);
 
-  // Primary locale, below the plan, or not a product page: nothing at all.
+  // Primary locale or not a product page: nothing at all.
   if (!ctx || !state || !state.active) return null;
 
+  if (state.foreignValue) {
+    // Nothing in a metafield this app did not write may be listed or changed.
+    return <Text as="span" variant="bodySm" tone="subdued">{tx.foreignValueNotice}</Text>;
+  }
   if (state.loadError && !state.loaded) {
     return (
       <InlineStack gap="100" blockAlign="center">
@@ -111,9 +115,13 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
   if (!m) {
     // Not loaded yet, still processing on Shopify, or added after the last
     // read: shown disabled with the reason, never silently absent.
+    // Before the first answer (or its error) the medium is simply not known
+    // yet: that is loading, not "not available".
+    const stillLoading = state.loading || (!state.loaded && !state.loadError);
+    if (!state.canReplace) return null;
     return (
-      <DisabledActionTooltip hint={state.loading ? undefined : tx.notYetAvailable}>
-        <Button size="slim" disabled loading={state.loading}>{tx.replace}</Button>
+      <DisabledActionTooltip hint={stillLoading ? undefined : tx.notYetAvailable}>
+        <Button size="slim" disabled loading={stillLoading}>{tx.replace}</Button>
       </DisabledActionTooltip>
     );
   }
@@ -126,6 +134,9 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
   const blockedHint = m.key ? undefined : tx.cannotReplace;
   const disabled = !m.key || resolving || state.saving;
   const ownSlot = state.hasOwn(m.id);
+  // Remove-only view (plan below the feature): no new picks, but a replacement
+  // that is serving on the storefront can still be taken down.
+  const removeOnly = !state.canReplace;
 
   const openReplace = () => {
     if (m.kind === "external") {
@@ -141,9 +152,14 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
   return (
     <>
       <InlineStack gap="100" blockAlign="center">
-        <DisabledActionTooltip hint={blockedHint}>
-          <Button size="slim" onClick={openReplace} disabled={disabled} loading={resolving}>{replaceLabel}</Button>
-        </DisabledActionTooltip>
+        {!removeOnly && (
+          <DisabledActionTooltip hint={blockedHint}>
+            <Button size="slim" onClick={openReplace} disabled={disabled} loading={resolving}>{replaceLabel}</Button>
+          </DisabledActionTooltip>
+        )}
+        {removeOnly && !ownSlot && (
+          <Text as="span" variant="bodySm" tone="subdued">{tx.planRemoveOnly}</Text>
+        )}
         {ownSlot && m.key && (
           <Button size="slim" tone="critical" disabled={disabled} onClick={() => state.draftRemove(m.id, m.kind)}>
             {removeLabel}
@@ -285,7 +301,7 @@ export function LocalizedMediaPlainExtras() {
                   <button
                     type="button"
                     aria-pressed={on}
-                    title={tile?.title ?? m.alt ?? m.kind}
+                    title={tile?.title ?? m.alt ?? state.kindName(m.kind)}
                     onClick={() => setSelected(on ? null : m.id)}
                     style={{
                       position: "relative",
