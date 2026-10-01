@@ -2122,6 +2122,36 @@ a.mk-badge:hover {
   outline-offset: 2px;
 }
 
+.mk-compare-matrix__add-hint {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-text);
+  color: var(--mk-bg);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+}
+
+.mk-compare-matrix__add-hint-title {
+  display: block;
+  font-weight: 600;
+}
+
+.mk-compare-matrix__add-button:hover + .mk-compare-matrix__add-hint,
+.mk-compare-matrix__add-button:focus-visible + .mk-compare-matrix__add-hint {
+  opacity: 1;
+  visibility: visible;
+}
+
 .mk-compare-matrix__add-menu {
   position: absolute;
   top: calc(100% + 6px);
