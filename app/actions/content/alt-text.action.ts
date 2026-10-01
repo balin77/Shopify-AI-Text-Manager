@@ -634,111 +634,51 @@ export async function handleTranslateAltTextToAllLocales(
       });
       failedLocales.push(...targetLocales);
     } else {
-      // Fetch digest once (shared for all locales)
-      let altDigest: string | undefined;
-      try {
-        const translatableResponse = await gateway.graphql(
-          `#graphql
-            query translatableContent($resourceId: ID!) {
-              translatableResource(resourceId: $resourceId) {
-                resourceId
-                translatableContent {
-                  key
-                  digest
-                  value
-                }
-              }
-            }`,
-          { variables: { resourceId: dbImage.mediaId } }
-        );
-        const translatableData = await translatableResponse.json() as any;
-        const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-        altDigest = translatableContent.find((c: { key: string; digest: string }) => c.key === "alt")?.digest;
-      } catch (err: unknown) {
-        logger.error("[UnifiedContent] Error fetching translatable content for alt-text", {
-          context: "UnifiedContent", imageIndex, error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      // One verified register per locale (digest -> register -> echo): a
+      // locale counts as saved, and is mirrored, ONLY when Shopify echoed it.
+      const {
+        registerMediaAltAndVerify,
+        mirrorProductMediaAlt,
+      } = await import("~/services/translations/verified-translations.server");
+      for (const locale of targetLocales) {
+        const altText = translatedAltTexts[locale];
+        if (!altText) continue;
 
-      if (!altDigest) {
-        logger.warn("[UnifiedContent] No digest for alt-text - cannot save to Shopify", {
-          context: "UnifiedContent", imageIndex, mediaId: dbImage.mediaId,
-        });
-        failedLocales.push(...targetLocales);
-      } else {
-        // Save each locale to Shopify, then DB
-        for (const locale of targetLocales) {
-          const altText = translatedAltTexts[locale];
-          if (!altText) continue;
-
-          let shopifySaved = false;
-          try {
-            const shopifyResult = await gateway.graphql(
-              `#graphql
-                mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
-                  translationsRegister(resourceId: $resourceId, translations: $translations) {
-                    userErrors { field message }
-                    translations { locale key value }
-                  }
-                }`,
-              {
-                variables: {
-                  resourceId: dbImage.mediaId,
-                  translations: [{
-                    key: "alt",
-                    value: altText,
-                    locale: locale,
-                    translatableContentDigest: altDigest,
-                  }],
-                },
-              }
-            );
-            const shopifyData = await shopifyResult.json() as any;
-            const userErrors = shopifyData.data?.translationsRegister?.userErrors || [];
-            if (userErrors.length === 0) {
-              shopifySaved = true;
-            } else {
-              logger.error("[UnifiedContent] Shopify translationsRegister userErrors for alt-text", {
-                context: "UnifiedContent", imageIndex, locale, errors: userErrors,
-              });
-            }
-          } catch (shopifyError: unknown) {
-            logger.error("[UnifiedContent] Error saving alt-text to Shopify", {
-              context: "UnifiedContent", imageIndex, locale, error: shopifyError instanceof Error ? shopifyError.message : String(shopifyError),
+        let stored: string | null = null;
+        try {
+          const verified = await registerMediaAltAndVerify(gateway, dbImage.mediaId, locale, altText);
+          if (verified.confirmed) {
+            stored = verified.storedValue ?? altText;
+          } else {
+            logger.error("[UnifiedContent] Shopify did not confirm the alt-text translation", {
+              context: "UnifiedContent", imageIndex, locale, noDigest: verified.noDigest, errors: verified.userErrors,
             });
           }
-
-          // Only save to DB if Shopify succeeded
-          if (shopifySaved) {
-            // The detached alt repair watches the MEDIA resource it is about to
-            // write (translation-locks.shared.ts); without this claim it never
-            // sees the merchant write and overwrites it minutes later.
-            markTranslationSaved(dbImage.mediaId);
-            try {
-              const existing = await db.productImageAltTranslation.findUnique({
-                where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
-              });
-              if (existing) {
-                await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
-              } else {
-                await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale, altText } });
-              }
-              savedLocales.push(locale);
-            } catch (dbError: unknown) {
-              const dbErr = dbError instanceof Error ? dbError : new Error(String(dbError));
-              const dbErrCode = (dbError as { code?: string })?.code;
-              if (dbErrCode === 'P2003' || dbErr.message?.includes('Foreign key constraint')) {
-                logger.warn("[UnifiedContent] Image deleted during translation save (concurrent sync)", {
-                  context: "UnifiedContent", imageIndex, productId: itemId, error: dbErr.message,
-                });
-              } else {
-                throw dbError;
-              }
-            }
-          } else {
-            failedLocales.push(locale);
-          }
+        } catch (shopifyError: unknown) {
+          logger.error("[UnifiedContent] Error saving alt-text to Shopify", {
+            context: "UnifiedContent", imageIndex, locale, error: shopifyError instanceof Error ? shopifyError.message : String(shopifyError),
+          });
         }
+
+        if (stored === null) {
+          failedLocales.push(locale);
+          continue;
+        }
+        // The detached alt repair watches the MEDIA resource it is about to
+        // write (translation-locks.shared.ts); without this claim it never
+        // sees the merchant write and overwrites it minutes later.
+        markTranslationSaved(dbImage.mediaId);
+        // The cache row is resolved from (productId, mediaId) NOW, never
+        // captured: a product sync recreates ProductImage rows.
+        const mirrored = await mirrorProductMediaAlt(db, {
+          shop: session.shop, productId: itemId, mediaId: dbImage.mediaId, locale, value: stored,
+        });
+        if (mirrored === "imageGone") {
+          logger.warn("[UnifiedContent] Image deleted during translation save (concurrent sync)", {
+            context: "UnifiedContent", imageIndex, productId: itemId,
+          });
+        }
+        savedLocales.push(locale);
       }
     }
 
@@ -908,48 +848,35 @@ export async function handleSaveImageAltText(
     shopifySaved = result.saved;
     retranslationTaskIds = result.retranslationTaskId ? [result.retranslationTaskId] : [];
   } else {
-    // Foreign locale: use translationsRegister (needs digest from Shopify)
-    let altDigest: string | undefined;
-    try {
-      const tr = await admin.graphql(
-        `#graphql
-          query translatableContent($id: ID!) {
-            translatableResource(resourceId: $id) {
-              translatableContent { key digest }
-            }
-          }`,
-        { variables: { id: mediaId } }
-      );
-      const td = await tr.json() as any;
-      altDigest = (td.data?.translatableResource?.translatableContent ?? [])
-        .find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
-    } catch (err: unknown) {
-      logger.error("[saveImageAltText] translatableContent error", { error: String(err) });
-    }
+    // Foreign locale: verified register (digest -> register -> echo). A write
+    // Shopify accepted without storing is NOT a save and is not mirrored.
+    const {
+      registerMediaAltAndVerify,
+      removeMediaAltAndVerify,
+      mirrorProductMediaAlt,
+    } = await import("~/services/translations/verified-translations.server");
 
-    if (!altDigest) {
-      return json({ success: false, error: "No digest found for alt-text translation" }, { status: 400 });
-    }
-
+    let storedAlt = altText;
     try {
-      const r = await admin.graphql(
-        `#graphql
-          mutation translateMedia($resourceId: ID!, $translations: [TranslationInput!]!) {
-            translationsRegister(resourceId: $resourceId, translations: $translations) {
-              userErrors { field message }
-            }
-          }`,
-        {
-          variables: {
-            resourceId: mediaId,
-            translations: [{ key: "alt", value: altText, locale, translatableContentDigest: altDigest }],
-          },
+      if (altText.trim() === "") {
+        // Clearing means REMOVING the translation (a register of "" is
+        // refused); the local row goes only when the removal is confirmed.
+        const removal = await removeMediaAltAndVerify(admin, mediaId, locale);
+        shopifySaved = removal.confirmed;
+        if (!shopifySaved) {
+          logger.error("[saveImageAltText] Shopify did not confirm removing the alt translation", { errors: removal.userErrors });
         }
-      );
-      const d = await r.json() as any;
-      shopifySaved = (d.data?.translationsRegister?.userErrors ?? []).length === 0;
+      } else {
+        const verified = await registerMediaAltAndVerify(admin, mediaId, locale, altText);
+        if (verified.noDigest) {
+          return json({ success: false, error: "No digest found for alt-text translation" }, { status: 400 });
+        }
+        shopifySaved = verified.confirmed;
+        if (shopifySaved) storedAlt = verified.storedValue ?? altText;
+        else logger.error("[saveImageAltText] Shopify did not confirm the alt translation", { errors: verified.userErrors });
+      }
     } catch (err: unknown) {
-      logger.error("[saveImageAltText] translationsRegister error", { error: String(err) });
+      logger.error("[saveImageAltText] translation write error", { error: String(err) });
       return json({ success: false, error: "Shopify translation API error" }, { status: 500 });
     }
 
@@ -960,23 +887,10 @@ export async function handleSaveImageAltText(
       // the merchant just accepted.
       markTranslationSaved(mediaId);
       try {
-        // R4-DI7: shop-scoped — an unscoped mediaId findFirst could resolve
-        // another tenant's ProductImage (per-shop-unique GIDs can collide)
-        // and we'd then write this shop's translation onto their row.
-        const dbImage = await db.productImage.findFirst({ where: { mediaId, product: { shop: session.shop } }, select: { id: true } });
-        if (dbImage) {
-          if (altText.trim() === "") {
-            // Scope to the global layer only — a global clear must not wipe
-            // market-specific alt overrides for the same locale.
-            await db.productImageAltTranslation.deleteMany({ where: { imageId: dbImage.id, locale, marketId: "" } });
-          } else {
-            await db.productImageAltTranslation.upsert({
-              where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
-              create: { imageId: dbImage.id, locale, altText },
-              update: { altText },
-            });
-          }
-        }
+        // Shop-scoped, resolved now (R4-DI7): an unscoped mediaId lookup could
+        // resolve another tenant's ProductImage. A cleared value deletes the
+        // GLOBAL-layer row only — market overrides stay.
+        await mirrorProductMediaAlt(db, { shop: session.shop, mediaId, locale, value: altText.trim() === "" ? "" : storedAlt });
       } catch {
         // DB update is best-effort; Shopify is the source of truth
       }
