@@ -1,6 +1,7 @@
 # Plan — one verified write path for every translation
 
-Status: PLANNED (2026-10-01). Branch: `fix/save-path-audit` (steps 1–2 of the
+Status: PLANNED (2026-10-01), revised after an independent review the same day
+(§8 lists what the review changed). Branch: `fix/save-path-audit` (steps 1–2 of the
 save-path audit land there first; this plan is step 3).
 
 ## 1. Why
@@ -57,9 +58,27 @@ Move the verified helpers out of the bulk editor into
 `bulk-editor/translations.server.ts` re-exports the moved names so existing
 imports keep working (removed in the last phase).
 
-Callers that hold an `admin` client construct `new ShopifyApiGateway(admin, shop)`
-— the pattern `metaobject-update.action.ts` already uses. No new client
-interface is needed.
+**Client.** The helpers take a minimal client interface
+`{ graphql(query, { variables }) → Response }`, which both `ShopifyApiGateway`
+and `admin` satisfy. Not "always a gateway": `ShopifyApiGateway` retries any
+thrown error three times with 1 s sleeps (throttling 1/2/3 s,
+`shopify-api-gateway.service.ts:139-190`) and `admin.graphql` THROWS
+`GraphqlQueryError` on a schema refusal, so a refused document would cost ~3 s
+of pointless retries on request-bound paths (single editor save, the
+grouped-field loop over N products). Request-bound callers pass `admin`;
+background / bulk callers keep their ONE gateway per request (a gateway per
+call coordinates nothing — each instance rate-limits only its own calls).
+
+**No-digest mirror is an explicit opt-in.** CLAUDE.md says "always write the
+DB row even when Shopify returns no digest" — that is the single editor's
+rule (`updateContent`'s `dbOnlyTranslations`), not a universal one:
+`saveImageAltTextTranslation` (`shopify-content.service.ts:766-777`)
+deliberately does NOT write locally without a digest, and
+`api.grouped-field-translations.tsx` counts a missing digest as a failure.
+`mirrorConfirmedContentTranslations` therefore mirrors no-digest keys only
+with `{ mirrorWithoutDigest: true }`, and the result reports them as
+`localOnly` so a caller can say "saved in the app, not on Shopify" instead of
+a plain success.
 
 ### 2.2 One echo comparison
 
@@ -71,6 +90,20 @@ case-insensitive comparison — a translation stored under a differently-cased
 spelling is the same translation, and reporting it as refused is a false
 failure. `readTranslationEcho` / `echoConfirms` / `echoedValue` in
 `shopify-content.service.ts` become thin uses of the shared matcher.
+
+**Results are keyed by the spelling that was SENT, never the echoed one.**
+`removeAndVerifyAcrossLocales` builds `confirmedPairs` from the locale Shopify
+echoes (`translations.server.ts:837`) while its callers look pairs up with the
+locale they sent (`shopify-content.service.ts:663`, `market-layer-purge`,
+`menu-tree`). With a case-insensitive match that would silently miss, or
+mirror rows that differ only in case. The matcher maps every echo back onto
+the sent input it matches, and every result and every mirror uses the sent
+spelling. Pinned by a test (`pt-BR` sent, `pt-br` echoed → confirmed under
+`pt-BR`, one row).
+
+Note: for the single editor's `updateContent` register (`:1138`) and
+`translateAllContent` (`:2279`/`:2343`/`:2748`) this is a REFACTOR only —
+they already verify the echo case-insensitively.
 
 ### 2.3 One field→key map, client-safe
 
@@ -96,19 +129,33 @@ add tests for `registerWithDigests` / `mirrorConfirmedContentTranslations`
 (confirmed only; no-digest keys mirrored; unechoed keys not mirrored;
 case-insensitive locale).
 
-### Phase B — `ShopifyContentService` (shared by many callers)
-- `saveTranslations` (`shopify-content.service.ts:243`): return the verified
-  result (confirmed keys, values, digests, no-digest keys) instead of the raw
-  echo; callers mirror only from it.
-- `deleteAllTranslationsForKeys` (`:843`): go through
-  `removeAndVerifyAcrossLocales`; return confirmed (locale, key) pairs. Callers
-  that delete DB rows unconditionally afterwards change to "confirmed only":
-  - single editor cleared field — `:1211` → DB delete `:1308-1317`
-  - primary-change purge — `:1723` → `deleteMany` after it
-  - featured-alt clear — `:757-765`
-- `saveImageAltTextTranslation` (`:792`): verified register.
+### Phase B+C — `ShopifyContentService` AND sub-resources, ONE commit
+They cannot land separately: the sub-resource callers (`sub-resources.action.ts`
+`:258`, `:482`, `:723`) ignore `saveTranslations`' return value and rely on it
+THROWING on `userErrors` — the catch is what fills `failedResources`. A
+`saveTranslations` that returns per-key results without its callers reading
+them would make every sub-resource save upsert every field silently.
 
-### Phase C — sub-resources (`app/actions/content/sub-resources.action.ts`)
+ShopifyContentService:
+- `saveTranslations` (`:243`): return the verified result (confirmed keys,
+  values, digests, no-digest keys); still THROWS on transport/GraphQL errors.
+- `deleteAllTranslationsForKeys` (`:843`): the removal must REACH THE RE-READ.
+  `removeAndVerifyAcrossLocales` never re-reads, and two of its callers clear
+  ONE locale whose row may be a DB-only mirror (digest null — written on
+  purpose by `updateContent`): Shopify echoes nothing for a key it never held,
+  so "delete confirmed only" without the re-read is the dead end CLAUDE.md
+  describes — the merchant can never clear that field. So:
+  - single-locale callers → `removeAndVerify` (echo, then re-read on a gap):
+    the single editor's cleared field (`:1211` → DB delete `:1308-1317`) and the
+    featured-alt clear (`:757-765`);
+  - multi-locale callers → the `product-alt-repair.server.ts:190-223` pattern:
+    one `removeAndVerifyAcrossLocales` call, then `removeAndVerify` ONLY for a
+    locale with a gap: the primary-change purge (`:1723` → its `deleteMany`).
+- `saveImageAltTextTranslation` (`:792`): verified register (no local write
+  without a digest — its existing rule, see §2.1).
+
+Sub-resources (`app/actions/content/sub-resources.action.ts`), same commit:
+
 - the three `saveTranslations` callers (`:258`, `:482`, `:723`) mirror only
   confirmed keys, WITH digest (fixes the 5 digest-less upserts `:103`, `:137`,
   `:320`, `:489`, `:730` — the two read-back backfills get the digest from the
@@ -119,14 +166,23 @@ case-insensitive locale).
 - Task status: `completed_with_errors` (the existing status used elsewhere)
   when any resource or locale failed, with the failures in `result`; the
   response carries `failedResources` so the client (fixed in audit step 2)
-  reports them.
+  reports them;
+- a GLOBAL metafield clear sends `value: ""` to `translationsRegister`
+  (`:242`) instead of removing the translation — clear means remove, as on
+  every other surface;
+- the `deleteMany` at `:315` has no `shop` filter — add it.
 
 ### Phase D — product editor (`app/actions/product/update.actions.ts`)
 - foreign register `:756-800` + mirror `:878` → `registerAndVerify` + mirror confirmed;
 - foreign remove `:805-850` + DB delete `:907-916` → `removeAndVerify`, delete confirmed only;
-- alt translation `:389-500` (+ mirror `ProductImageAltTranslation` `:543`) → shared alt helper (Phase E).
-This is the main product translation path; it gets its own commit and the
-product-editor save tests are extended first (characterisation tests).
+- alt translation `:389-500` (+ mirror `ProductImageAltTranslation` `:543`) → shared alt helper (Phase E);
+- the PRIMARY-change purge `:1463-1522`: hand-rolled `translationsRemove` with
+  no echo, followed by a `contentTranslation.deleteMany` that runs even after
+  `userErrors` and whose `where` has no `shop` filter → the multi-locale
+  pattern from Phase B+C, delete confirmed only, `shop` in the filter.
+This is the main product translation path and it has NO test file today
+(`tests/unit` has none for `product/update.actions.ts`): the characterisation
+tests are written from scratch first, in their own commit, before any change.
 
 ### Phase E — alt texts (one shared helper)
 `registerMediaAltAndVerify(gateway, mediaGid, locale, value)` (digest of `alt`
@@ -147,14 +203,21 @@ keep the existing lock claims (`mediaAltLockId`, `featuredAltLockId`).
   `ThemeTranslation` rows only for confirmed removals (today: deleted even when
   the Shopify removal failed or threw);
 - `templates-update.action.ts:303`'s own echo check is kept but moved onto the
-  shared matcher.
+  shared matcher;
+- the theme FOREIGN clear `templates-update.action.ts:361` checks the echo but
+  never re-reads, so a DB-only `ThemeTranslation` row can never be cleared —
+  the same dead end as Phase B+C; route it through the re-read.
+Line numbers in the template files have drifted by ~2 since the audit — each
+phase re-anchors its sites before editing.
 
 ### Phase G — remaining writers
 - `app/routes/api-ai-handlers/text-translation.handler.ts`: `acceptRegister`
-  (`:64-75`), `:791`, `:906` → verified register;
+  (`:64-75`) and all FOUR hand-rolled registers — `:771`, `:887` (content and
+  metaobject) and `:1266`, `:1379` (the sequential path) → verified register;
 - `app/routes/api.grouped-field-translations.tsx:158` → verified register,
-  answers `{ success }` like every other route (it answers `{ ok }` today —
-  update its one client), claims `markTranslationSaved`;
+  claims `markTranslationSaved`. Its `{ ok }` answer stays (renaming it would
+  touch `SettingsTranslationsTab.tsx:103` and `task-details.shared.ts:739` for
+  no behavioural gain);
 - `app/actions/content/translation.action.ts:154` metaobject translate-all
   branch (reads no result at all) → `registerAndVerify`, as the metaobject
   editor already does.
@@ -164,25 +227,40 @@ Deliberately NOT migrated: the cookie banner
 CookieBanner endpoint, whose empty echo is a documented exception; its echo
 check moves onto the shared matcher, the exception stays and stays commented.
 
+Two echo-verified registers of their own exist and are moved onto the shared
+matcher here (behaviour unchanged): `seo-bulk-fix.handler.ts:2443` (field) /
+`:2566` (alt), and `menu-translation-repair.server.ts:238-255`.
+
 ### Phase H — guard
-A unit test that scans `app/` and `src/` for the strings `translationsRegister`
-and `translationsRemove` and fails for any file outside an allowlist (the
-verified module, the cookie banner, GraphQL constant files, probes). New code
-then cannot hand-roll a write again without the test naming it. Remove the
-bulk-editor re-exports and point imports at the new module.
+A unit test that fails when a file outside an allowlist SENDS one of the two
+mutations. It must match the mutation being sent, not the bare word: the
+strings appear in comments and docs across many files (`stale-translation-sync`,
+`sitemap.service`, `app.menus.tsx`, `delete.actions`, `seo-bulk-meta`,
+`ai-credentials`, `roadmap.server`, `columns.shared`, constants, probes). The
+rule: a `#graphql` document (or a `graphql(` call's first argument) whose text
+contains `translationsRegister(` / `translationsRemove(`, or an import of the
+`TRANSLATE_CONTENT` / `REMOVE_TRANSLATIONS` constants. Allowlist by name: the
+verified module, the GraphQL constant files, the cookie banner, the probe
+routes. Remove the bulk-editor re-exports and point imports at the new module.
 
 ## 4. Order, size, verification
 
+Execution order: **A → B+C → E → D → F → G → H** (D uses E's alt helper).
+
 | Phase | Risk | Est. diff | Depends on |
 |---|---|---|---|
-| A module | low | ~300 (mostly moved) | — |
-| B ShopifyContentService | high (many callers) | ~250 | A |
-| C sub-resources | medium | ~200 | A, B |
-| D product editor | high (main path) | ~200 | A, E |
+| A module | low | ~300 (purely additive) | — |
+| B+C ShopifyContentService + sub-resources | high (many callers) | ~450 | A |
 | E alt texts | medium | ~250 | A |
+| D product editor (tests first) | high (main path) | ~250 + tests | A, E |
 | F themes | medium | ~150 | A |
-| G remaining | low | ~150 | A |
+| G remaining | low | ~200 | A |
 | H guard + map | low | ~200 | all |
+
+Phase A is purely ADDITIVE: the new module plus re-exports, no caller moved.
+Four tests `vi.mock` the bulk-editor module path, and a caller moved to the
+new path would slip past those mocks unnoticed — each later phase moves its
+callers AND updates the affected mocks in the same commit.
 
 One commit per phase, each with: typecheck, `lint:hooks`, full unit suite,
 new tests for the changed behaviour (confirmed-only mirror, unconfirmed
@@ -208,11 +286,35 @@ confirmed by Shopify; a refused language is named) — no new feature.
 
 ## 6. Open questions
 
-1. Do any callers rely on `saveTranslations` THROWING on `userErrors`? Phase B
-   keeps the throw for transport/GraphQL errors and returns per-key results
-   otherwise; every caller is reviewed in that commit.
+1. ~~Do any callers rely on `saveTranslations` THROWING on `userErrors`?~~
+   Answered by the review: yes, the three sub-resource callers — hence B+C as
+   one commit.
 2. `removeAndVerifyAcrossLocales` costs one extra re-read per locale with a
    gap. For the single editor's cleared-field path that is acceptable (one
    field); for the primary-change purge across many keys it is the same cost
    the bulk editor already pays — measure on a shop with 8 locales before
    merging Phase B.
+
+## 7. Already correct (not touched beyond the shared matcher)
+
+Stale repair (`stale-translation-sync.server.ts:3590/3616/4208`) and market
+purge (`market-layer-purge.server.ts:167`) already use the verified helpers.
+Rows kept after an unconfirmed removal keep their old digest, which the
+digest gate handles correctly, so neither changes behaviour here.
+
+## 8. What the review (2026-10-01) changed
+
+- Added sites: product primary-change purge (`update.actions.ts:1463-1522`),
+  two more text-translation registers (`:1266`, `:1379`), the theme foreign
+  clear (`templates-update.action.ts:361`), and the two self-verifying
+  registers in `seo-bulk-fix` / `menu-translation-repair`.
+- B and C merged into one commit (the throw dependency).
+- Single-locale clears go through the re-read, multi-locale ones through the
+  alt-repair pattern — otherwise a DB-only row could never be cleared.
+- Results keyed by the sent locale spelling.
+- No-digest mirroring is an opt-in with a `localOnly` result.
+- Helpers take a minimal client (admin OR gateway), not always a gateway.
+- Guard matches sent mutations, not bare strings.
+- Order A → B+C → E → D → F → G → H; D's tests written from scratch first.
+- Dropped the grouped-field `{ok}` → `{success}` rename.
+- Added: metafield clear = remove, missing `shop` filters.
