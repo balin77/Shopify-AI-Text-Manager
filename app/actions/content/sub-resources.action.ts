@@ -210,6 +210,9 @@ export async function handleSaveSubResourceTranslations(
 
     const savedResources: string[] = [];
     const failedResources: string[] = [];
+    /** Resources with a key Shopify exposes no digest for: not writable there,
+     *  which is a property of the field and not a refused write. */
+    const notTranslatable: string[] = [];
 
     logger.info('[UnifiedContent] saveSubResourceTranslations - Starting save operation', {
       context: "UnifiedContent",
@@ -270,7 +273,10 @@ export async function handleSaveSubResourceTranslations(
             result,
             digests: result.digests,
           });
-          if (result.unconfirmedKeys.length > 0 || result.noDigest.length > 0) {
+          if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
+            notTranslatable.push(resourceId);
+          }
+          if (result.unconfirmedKeys.length > 0) {
             resourceFailed = true;
             logger.error(`[UnifiedContent] Shopify did not confirm every sub-resource translation for ${resourceId}`, {
               context: "UnifiedContent",
@@ -320,7 +326,9 @@ export async function handleSaveSubResourceTranslations(
           continue;
         }
 
-        savedResources.push(resourceId);
+        // A resource whose only problem is a digest-less key was not saved,
+        // and was not refused either: reported under `notTranslatable`.
+        if (!notTranslatable.includes(resourceId)) savedResources.push(resourceId);
         logger.info(`[UnifiedContent] Successfully saved translations for ${resourceId}`, {
           context: "UnifiedContent",
           resourceId,
@@ -352,6 +360,7 @@ export async function handleSaveSubResourceTranslations(
       success: true,
       savedResources,
       failedResources,
+      notTranslatable,
     });
   } catch (error: unknown) {
     const msg = getFullErrorMessage(error);
@@ -466,6 +475,7 @@ export async function handleTranslateSubResources(
     // refused / unechoed / digest-less key is a failed resource.
     const savedResources: string[] = [];
     const failedResources: string[] = [];
+    const notTranslatable: string[] = [];
     const confirmedTranslations: Record<string, Record<string, string>> = {};
 
     for (const [resourceId, fields] of Object.entries(translations)) {
@@ -492,7 +502,10 @@ export async function handleTranslateSubResources(
           for (const key of result.confirmedKeys) {
             (confirmedTranslations[resourceId] ??= {})[key] = result.confirmedValues.get(key) ?? fields[key];
           }
-          if (result.unconfirmedKeys.length > 0 || result.noDigest.length > 0) {
+          if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
+            notTranslatable.push(resourceId);
+          }
+          if (result.unconfirmedKeys.length > 0) {
             logger.error(`[UnifiedContent] Shopify did not confirm every translated sub-resource key for ${resourceId}`, {
               context: "UnifiedContent",
               resourceId,
@@ -506,7 +519,7 @@ export async function handleTranslateSubResources(
           }
         }
 
-        savedResources.push(resourceId);
+        if (!notTranslatable.includes(resourceId)) savedResources.push(resourceId);
       } catch (err) {
         logger.error(`[UnifiedContent] Failed to translate sub-resource ${resourceId}`, {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
@@ -527,6 +540,7 @@ export async function handleTranslateSubResources(
           translatedCount: savedResources.length,
           failedCount: failedResources.length,
           failedResources,
+          notTranslatable,
           failedLocales: failedResources.length > 0 ? [targetLocale] : [],
           targetLocale,
         }),
@@ -540,6 +554,8 @@ export async function handleTranslateSubResources(
       translations: confirmedTranslations,
       savedResources,
       failedResources,
+      notTranslatable,
+      failedLocales: failedResources.length > 0 ? [targetLocale] : [],
       fieldId: getFormString(formData, "fieldId"), // Echo back fieldId for client state management
     });
   } catch (error: unknown) {
@@ -728,9 +744,10 @@ export async function handleTranslateSubResourceToAllLocales(
     }
 
     // Save all translations to Shopify + DB. VERIFIED: a locale in which any
-    // resource was refused / unechoed / digest-less is a FAILED locale (and
-    // that resource a failed resource); only echoed keys are mirrored.
+    // resource was refused / unechoed is a FAILED locale (and
+    // that resource a failed resource); a digest-less key is `notTranslatable`.
     const failedResources: string[] = [];
+    const notTranslatable: string[] = [];
     for (const [locale, translations] of Object.entries(allTranslations)) {
       for (const [resourceId, fields] of Object.entries(translations)) {
         try {
@@ -752,7 +769,10 @@ export async function handleTranslateSubResourceToAllLocales(
               result,
               digests: result.digests,
             });
-            if (result.unconfirmedKeys.length > 0 || result.noDigest.length > 0) {
+            if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
+              notTranslatable.push(resourceId);
+            }
+            if (result.unconfirmedKeys.length > 0) {
               logger.error(`[UnifiedContent] Shopify did not confirm every sub-resource key for ${resourceId} in ${locale}`, {
                 context: "UnifiedContent",
                 unconfirmedKeys: result.unconfirmedKeys,
@@ -784,6 +804,7 @@ export async function handleTranslateSubResourceToAllLocales(
           translatedLocales: targetLocales.filter((l: string) => !failedLocales.includes(l)),
           failedLocales,
           failedResources,
+          notTranslatable,
         }),
       },
     });
@@ -793,8 +814,10 @@ export async function handleTranslateSubResourceToAllLocales(
       actionType: "translateSubResourceToAllLocales",
       success: true,
       translations: {}, // Already saved to Shopify, no need to return
+      translatedLocales: targetLocales.filter((l: string) => !failedLocales.includes(l)),
       failedLocales,
       failedResources,
+      notTranslatable,
       fieldId: getFormString(formData, "fieldId"), // Echo back fieldId for client state management
     });
   } catch (error: unknown) {

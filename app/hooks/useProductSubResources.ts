@@ -28,6 +28,7 @@ import type { TranslatableContentItem, TranslationStrings } from "../types/conte
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { buildLocaleKey } from "./useUiDataLoader";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { subResourceOutcome } from "../services/editor/sub-resource-outcome.shared";
 import { postJsonSave, rollbackSubResourceCopy } from "../services/editor/sub-resource-copy.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 
@@ -47,6 +48,10 @@ interface SubResourceFetcherData {
   translations?: Record<string, Record<string, string>>;
   fieldId?: string;
   failedResources?: string[];
+  failedLocales?: string[];
+  translatedLocales?: string[];
+  /** Resource ids whose key has no digest at Shopify: not writable, not a failure. */
+  notTranslatable?: string[];
   failedOptions?: string[];
   failedMetafields?: string[];
   /** Failure CODES from the option write paths; the client owns the wording. */
@@ -168,6 +173,12 @@ interface UseProductSubResourcesStrings {
   /** Shown instead of the locale list when the plan gate refused the copy. */
   upgradeRequired?: string;
   saveFailedOptions?: string;
+  /** "{count} field(s) could not be saved in Shopify." */
+  translateSubResourcesFailed?: string;
+  /** "Translation partially completed: {successCount}/{totalCount} ... {failedLocales} failed." */
+  translatePartialLocales?: string;
+  /** "This field cannot be translated in Shopify." */
+  subResourceNotTranslatable?: string;
   saveFailedItems?: string;
   optionNameEmpty?: string;
   optionValuesEmpty?: string;
@@ -618,6 +629,10 @@ export function useProductSubResources({
       // Both translateSubResources and translateSubResourceToAllLocales save to Shopify immediately
       // So we don't need to mark as changed - translations are already persisted
       setHasChanges(false);
+
+      // A run in which fields or languages failed is never reported as done.
+      const outcome = subResourceOutcome(data, strings);
+      if (outcome) showInfoBox?.(outcome.text, outcome.tone);
     }
 
     if (data.actionType === "saveSubResourceTranslations") {
@@ -694,6 +709,13 @@ export function useProductSubResources({
           });
         }
 
+        setHasChanges(false);
+      } else if ((data.notTranslatable || []).length > 0) {
+        // Not a refused write: Shopify exposes no digest for the field, so it
+        // cannot be translated there. Nothing is reverted (the typed value is
+        // the merchant's) and nothing is claimed as saved.
+        const outcome = subResourceOutcome(data, strings);
+        if (outcome) showInfoBox?.(outcome.text, outcome.tone);
         setHasChanges(false);
       } else {
         // All saved successfully
@@ -868,6 +890,9 @@ export function useProductSubResources({
           return updated;
         });
       }
+
+      const outcome = subResourceOutcome(data, strings);
+      if (outcome) showInfoBox?.(outcome.text, outcome.tone);
       setHasChanges(false);
     }
   }, [translateAllFetcher.state, translateAllFetcher.data, selectedItem, revalidator]);
@@ -1283,12 +1308,14 @@ export function useProductSubResources({
         revalidator.revalidate();
       }
       setHasChanges(false);
+      const outcome = subResourceOutcome(data, strings);
+      if (outcome) showInfoBox?.(outcome.text, outcome.tone);
     } catch {
       // Spinner is still cleared in finally; translation state simply isn't updated.
     } finally {
       markSubResourceCompleted(resourceId, fieldId);
     }
-  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings.translateFailed, strings.upgradeRequired]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState, showInfoBox, strings, strings.translateFailed, strings.upgradeRequired]);
 
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);

@@ -192,6 +192,8 @@ export const en: Translation = {
     saveFailed: "Save Failed",
     saveFailedOptions: "Failed to save {count} option(s). Changes have been reverted to original values.",
     saveFailedItems: "Failed to save {count} item(s). Changes have been reverted to original values.",
+    translateSubResourcesFailed: "{count} field(s) could not be saved in Shopify.",
+    subResourceNotTranslatable: "This field cannot be translated in Shopify.",
     optionNameEmpty: "Option name cannot be empty",
     optionValuesEmpty: "Option values cannot be empty",
     metafieldValuesEmpty: "Metafield values cannot be empty",

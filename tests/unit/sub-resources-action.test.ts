@@ -348,14 +348,28 @@ describe('handleSaveSubResourceTranslations', () => {
     expect(db.contentTranslation.upsert.mock.calls[0][0].create.key).toBe('name');
   });
 
-  it('a key with NO digest is never sent, never mirrored, and fails the resource', async () => {
+  it('a key with NO digest is never sent, never mirrored, and is `notTranslatable` -- not a failure', async () => {
     const w = installAdmin({ digests: { [OPTION]: [{ key: 'name', digest: null }] } });
     const db = makeDb();
     const result = body(await save(db, w.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
 
     expect(w.of('register')).toHaveLength(0);
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(result.failedResources).toEqual([]);
+    expect(result.savedResources).toEqual([]);
+    expect(result.notTranslatable).toEqual([OPTION]);
+  });
+
+  it('a refused key beside a digest-less one still fails the resource (and names it as not translatable)', async () => {
+    const w = installAdmin({
+      digests: { [OPTION]: [{ key: 'name', digest: 'dg-name' }, { key: 'value', digest: null }] },
+      register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'no' }], translations: [] } } }),
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [OPTION]: { name: 'Couleur', value: 'x' } }, { [OPTION]: 'ProductOption' }));
+
     expect(result.failedResources).toEqual([OPTION]);
+    expect(result.notTranslatable).toEqual([OPTION]);
   });
 
   it('a DB-only row (Shopify holds nothing, no echo) IS cleared by the re-read, and the delete is shop-scoped', async () => {
@@ -444,6 +458,28 @@ describe('handleTranslateSubResources', () => {
 
     expect(result.failedResources).toEqual([METAFIELD]);
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a digest-less key is `notTranslatable`, not a failed resource, and the Task completes cleanly', async () => {
+    const w = installAdmin({ digests: { [METAFIELD]: [{ key: 'value', digest: null }] } });
+    const db = makeDb();
+    const result = body(await run(db, w.admin));
+
+    expect(result.notTranslatable).toEqual([METAFIELD]);
+    expect(result.failedResources).toEqual([]);
+    expect(result.failedLocales).toEqual([]);
+    expect(result.translations).toEqual({});
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(lastTaskUpdate(db).status).toBe('completed');
+  });
+
+  it('a refused resource also reports failedLocales (the client names the locale)', async () => {
+    const w = installAdmin({
+      register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'no' }], translations: [] } } }),
+    });
+    const db = makeDb();
+    const result = body(await run(db, w.admin));
+    expect(result.failedLocales).toEqual(['fr']);
   });
 });
 
