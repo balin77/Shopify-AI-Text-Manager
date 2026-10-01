@@ -55,4 +55,27 @@ describe("onCopyToLocalesFailed", () => {
     act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
     expect(value(result.current, "fr")).toBe("Mon titre");
   });
+
+  it("puts back the deleted marker the copy cleared", () => {
+    const { result } = setup();
+    // The merchant had emptied the French title (deleted marker), then copied.
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+
+    act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(true);
+    expect(value(result.current, "fr")).toBe("");
+  });
+
+  it("does not invent a deleted marker that was never there", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.onTranslateFieldToAllLocalesComplete("title", { fr: "Titel" }, "de");
+    });
+    act(() => result.current.onCopyToLocalesFailed("title", ["fr"], "Titel"));
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(false);
+  });
 });

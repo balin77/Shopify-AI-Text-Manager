@@ -373,6 +373,8 @@ export function useUiDataLoader(
    *  Entries are market-folded via buildDeletedKey() so a market-specific clear
    *  does not blank the global value (and vice-versa). */
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
+  // Keys whose "deleted" marker the last copy-to-all-locales cleared (see onCopyToLocalesFailed).
+  const clearedDeletedByCopyRef = useRef<Set<string>>(new Set());
 
   /** Currently-selected market ("" = global). Held in a ref so resolve()/the
    *  transition methods can read it without bloating their useCallback deps. The
@@ -985,9 +987,14 @@ export function useUiDataLoader(
         `onTranslateFieldToAllLocalesComplete: key=${translationKey} ${localeCount} locales`
       );
 
-      // 1. Clear deleted key
+      // 1. Clear deleted key (remembered, so a copy that then FAILS can put
+      //    the marker back: the merchant had cleared this field and Shopify
+      //    still holds that state).
       if (deletedTranslationKeysRef.current.has(translationKey)) {
         deletedTranslationKeysRef.current.delete(translationKey);
+        clearedDeletedByCopyRef.current.add(translationKey);
+      } else {
+        clearedDeletedByCopyRef.current.delete(translationKey);
       }
 
       // 2. Store in localTranslationsRef (overlay — replaces item mutation)
@@ -1012,6 +1019,11 @@ export function useUiDataLoader(
 
   const onCopyToLocalesFailed = useCallback(
     (translationKey: string, locales: string[], copiedValue: string) => {
+      // The copy cleared this key's "deleted" marker on the way in; it did not
+      // land, so the field is still deleted.
+      if (clearedDeletedByCopyRef.current.delete(translationKey) && locales.length > 0) {
+        deletedTranslationKeysRef.current.add(translationKey);
+      }
       const overlay = localTranslationsRef.current[translationKey];
       if (!overlay) return;
       for (const locale of locales) {
