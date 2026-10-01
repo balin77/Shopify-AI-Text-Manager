@@ -1,13 +1,14 @@
 /**
  * Settings → Probes → Translation: the theme-image probe
- * (routes/api.theme-image-probe.tsx, PLAN_LOCALIZED_IMAGES Phase 0).
+ * (services/localized-media/theme-image-probe.server.ts, run through
+ * routes/api.translation-probe.tsx with `kind=themeImage`; PLAN_LOCALIZED_IMAGES Phase 0).
  * Two buttons, because the second one writes: "read only" answers whether
  * Shopify reports image settings as translatable; "with write check" also
  * registers and removes the sample's own value in an empty slot.
  */
 import { useCallback, useState } from "react";
 import { Banner, BlockStack, Button, Card, InlineStack, Text } from "@shopify/polaris";
-import type { ThemeImageProbeReport } from "../routes/api.theme-image-probe";
+import type { ThemeImageProbeReport } from "../services/localized-media/theme-image-probe.shared";
 
 export function ThemeImageProbeCard() {
   const [loading, setLoading] = useState<"read" | "write" | null>(null);
@@ -19,8 +20,9 @@ export function ThemeImageProbeCard() {
     setError(null);
     try {
       const fd = new FormData();
+      fd.set("kind", "themeImage");
       if (withWrite) fd.set("confirm", "true");
-      const r = await fetch("/api/theme-image-probe", { method: "POST", body: fd });
+      const r = await fetch("/api/translation-probe", { method: "POST", body: fd });
       const j = (await r.json()) as { report?: ThemeImageProbeReport; error?: string };
       if (!r.ok || !j.report) throw new Error(j.error || `HTTP ${r.status}`);
       setReport(j.report);

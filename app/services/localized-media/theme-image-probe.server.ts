@@ -27,45 +27,14 @@
  * storefront for that language — that needs a visible change on a live
  * theme and is left to a manual check in Phase 1a.
  */
-import { data as json, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
+import { data as json } from "react-router";
 import { db } from "~/db.server";
 import { logger } from "~/utils/logger.server";
 import { REMOVE_TRANSLATIONS, TRANSLATE_CONTENT_VERIFIED } from "~/graphql/content.mutations";
 import { isThemeImageReference, isThemeMediaValue } from "~/utils/theme-image-reference.shared";
+import type { ImageSample, ThemeImageProbeReport, WriteCheck } from "./theme-image-probe.shared";
 
-interface ImageSample {
-  resourceId: string;
-  resourceType: string;
-  key: string;
-  value: string;
-}
-
-interface WriteCheck {
-  locale: string;
-  marketId: string | null;
-  registerEchoed: boolean;
-  readBack: boolean;
-  removeEchoed: boolean;
-  goneAfterRemove: boolean;
-  error?: string;
-}
-
-export interface ThemeImageProbeReport {
-  generatedAt: string;
-  shop: string;
-  scannedRows: number;
-  imageKeysByResourceType: Record<string, number>;
-  /** Video choices (a video reference or ANY YouTube/Vimeo link — social links included), counted apart. */
-  videoValuesByResourceType: Record<string, number>;
-  /** Image samples only: the write check is about `image_picker`, nothing else. */
-  samples: ImageSample[];
-  /** Up to five video values, to show which SPELLING a shop's video settings use (unmeasured). */
-  videoSamples: ImageSample[];
-  live: { resourceId: string; key: string; reportedAsTranslatable: boolean; digest: string | null; value: string | null } | null;
-  writes: WriteCheck[];
-  verdict: string[];
-}
+// Run from api.translation-probe.tsx (`kind=themeImage`), the one probe route.
 
 type Graphql = (query: string, opts?: { variables?: Record<string, unknown> }) => Promise<Response>;
 
@@ -142,19 +111,20 @@ async function writeCycle(
   return check;
 }
 
-export async function loader({ request }: LoaderFunctionArgs) {
-  await authenticate.admin(request);
-  return json({ ok: true, hint: "POST; add confirm=true to also run the write check (registers and removes the sample's own value)." });
-}
-
-export async function action({ request }: ActionFunctionArgs) {
-  const { admin, session } = await authenticate.admin(request);
+export async function runThemeImageProbe({
+  admin,
+  session,
+  formData,
+}: {
+  admin: { graphql: unknown };
+  session: { shop: string };
+  formData: FormData | null;
+}) {
   // Directly POST-reachable and it can write — the same dev-only gate the
   // Probes tab itself is rendered behind.
   if (process.env.APP_ENV !== "development") {
     return json({ error: "Not available." }, { status: 403 });
   }
-  const formData = await request.formData().catch(() => null);
   const confirm = formData?.get("confirm") === "true";
   const graphql = admin.graphql as unknown as Graphql;
 

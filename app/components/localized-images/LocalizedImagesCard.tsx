@@ -33,6 +33,7 @@ import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { resolvePickedMedia } from "./resolve-picked-image";
+import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../../services/editor/content-action-endpoint.shared";
 import {
   marketNumericId,
   normalizeLocale,
@@ -41,7 +42,32 @@ import {
 } from "../../services/localized-media/localized-media.shared";
 import type { MarketInfo, ShopLocale } from "../../types/content-editor.types";
 
-/** One product medium as /api/localized-images reports it (ProductMediaItem). */
+/**
+ * The card talks to the product page's own actions (`localizedMediaLoad`,
+ * `localizedMediaSet`, `localizedMediaRemove`) through the editors' one JSON
+ * door, so it inherits the page's plan gate and the content rate limit.
+ * A plan refusal answers `{ error: "gated" }`, the card's own gate `{ code }`.
+ */
+type DoorAnswer = {
+  ok?: boolean;
+  entries?: LocalizedMediaEntry[];
+  media?: MediaItem[];
+  code?: string;
+  error?: string;
+  message?: string;
+};
+
+async function callLocalizedMedia(action: string, fields: Record<string, string>): Promise<{ status: number; body: DoorAnswer }> {
+  const fd = new FormData();
+  fd.set("action", action);
+  for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+  setContentEditorPage(fd, "/app/products");
+  const res = await fetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: fd });
+  const body = (await res.json().catch(() => ({}))) as DoorAnswer;
+  return { status: res.status, body };
+}
+
+/** One product medium as `localizedMediaLoad` reports it (ProductMediaItem). */
 interface MediaItem {
   id: string;
   kind: "image" | "video" | "external";
@@ -130,9 +156,8 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
     setLoading(true);
     setLoadError(false);
     try {
-      const res = await fetch(`/api/localized-images?productId=${encodeURIComponent(productId)}`);
-      const body = (await res.json()) as { ok?: boolean; entries?: LocalizedMediaEntry[]; media?: MediaItem[] };
-      if (!res.ok || !body.ok) throw new Error("load");
+      const { status, body } = await callLocalizedMedia("localizedMediaLoad", { productId });
+      if (status < 200 || status >= 300 || !body.ok) throw new Error("load");
       setEntries(body.entries ?? []);
       setMedia(body.media ?? []);
     } catch {
@@ -153,18 +178,13 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
     return known ?? tx.saveFailed.replace("{error}", fallback);
   }, [tx]);
 
-  const post = useCallback(async (payload: Record<string, unknown>, slot: string, okText: string) => {
+  const post = useCallback(async (action: "localizedMediaSet" | "localizedMediaRemove", payload: Record<string, string>, slot: string, okText: string) => {
     setBusySlot(slot);
     setNotice(null);
     try {
-      const res = await fetch("/api/localized-images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, ...payload }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; entries?: LocalizedMediaEntry[]; media?: MediaItem[]; code?: string; message?: string };
-      if (!res.ok || !body.ok) {
-        setNotice({ tone: "critical", text: errorText(body.code, body.message || `HTTP ${res.status}`) });
+      const { status, body } = await callLocalizedMedia(action, { productId, ...payload });
+      if (status < 200 || status >= 300 || !body.ok) {
+        setNotice({ tone: "critical", text: errorText(body.code ?? body.error, body.message || `HTTP ${status}`) });
         return;
       }
       if (body.entries) setEntries(body.entries);
@@ -189,7 +209,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
       setNotice({ tone: "critical", text: errorText(picked.code, picked.error) });
       return;
     }
-    await post({ intent: "set", sourceMediaId, locale, marketId, fileId: picked.fileId }, sourceMediaId, tx.saved);
+    await post("localizedMediaSet", { sourceMediaId, locale, marketId, fileId: picked.fileId }, sourceMediaId, tx.saved);
   }, [pickerFor, post, locale, marketId, errorText]);
 
   const handleLinkSave = useCallback(async () => {
@@ -198,7 +218,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
     setLinkFor(null);
     setLinkValue("");
     if (!sourceMediaId || !externalUrl) return;
-    await post({ intent: "set", sourceMediaId, locale, marketId, externalUrl }, sourceMediaId, tx.saved);
+    await post("localizedMediaSet", { sourceMediaId, locale, marketId, externalUrl }, sourceMediaId, tx.saved);
   }, [linkFor, linkValue, post, locale, marketId, tx]);
 
   const openReplace = useCallback((m: MediaItem) => {
@@ -211,7 +231,20 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
   }, []);
 
   const mediaIds = useMemo(() => new Set(media.map((m) => m.id)), [media]);
-  const orphans = useMemo(() => entries.filter((e) => !mediaIds.has(e.m)), [entries, mediaIds]);
+  // An entry nothing in the card can reach any more: its original is gone, its
+  // market is not an active one, or its language is no longer on the shop.
+  // Markets and languages are judged only when their lists answered (an empty
+  // language list is a failed lookup, never "no languages"), so a failed
+  // lookup cannot offer every entry for removal.
+  const orphans = useMemo(() => {
+    const activeMarkets = new Set(markets.map((mk) => marketNumericId(mk.id)).filter((k): k is string => !!k));
+    const foreign = new Set(foreignLocales.map((l) => normalizeLocale(l.locale)));
+    return entries.filter((e) =>
+      !mediaIds.has(e.m) ||
+      (!!e.k && markets.length > 0 && !activeMarkets.has(e.k)) ||
+      (shopLocales.length > 0 && !foreign.has(e.l)),
+    );
+  }, [entries, mediaIds, markets, foreignLocales, shopLocales]);
   const countFor = useCallback(
     (loc: string) => entries.filter((e) => e.l === normalizeLocale(loc) && mediaIds.has(e.m)).length,
     [entries, mediaIds],
@@ -297,7 +330,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
                           variant="plain"
                           tone="critical"
                           disabled={busySlot !== null}
-                          onClick={() => void post({ intent: "remove", sourceMediaId: m.id, locale, marketId }, m.id, tx.removedToast)}
+                          onClick={() => void post("localizedMediaRemove", { sourceMediaId: m.id, locale, marketId }, m.id, tx.removedToast)}
                         >
                           {tx.remove}
                         </Button>
@@ -330,7 +363,7 @@ export function LocalizedImagesCard({ productId, shopLocales, markets, currentLa
                       disabled={busySlot !== null}
                       onClick={() => {
                         const gid = e.k ? `gid://shopify/Market/${e.k}` : "";
-                        void post({ intent: "remove", sourceMediaId: e.m, locale: e.l, marketId: gid }, slot, tx.removedToast);
+                        void post("localizedMediaRemove", { sourceMediaId: e.m, locale: e.l, marketId: gid }, slot, tx.removedToast);
                       }}
                     >
                       {tx.remove}

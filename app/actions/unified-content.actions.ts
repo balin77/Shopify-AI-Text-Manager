@@ -48,6 +48,7 @@ import { handleUpdateContent } from "./content/content-update.action";
 import { handleCreateContent } from "./content/create.actions";
 import { handleDeleteContent } from "./content/delete.actions";
 import { handleDuplicateContent } from "./content/duplicate.actions";
+import { LOCALIZED_MEDIA_ACTIONS, handleLocalizedMediaAction } from "./product/localized-media.action";
 import { aiCredentialsFor } from "~/services/ai/ai-credentials.server";
 import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import {
@@ -124,6 +125,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       ...(fieldType ? { fieldType } : {}),
     });
     if (refusal) return refusal;
+  }
+
+  // "Images per language" (product page only, own gate inside): no AI, no
+  // queue, so it is answered before any of that is set up.
+  if (LOCALIZED_MEDIA_ACTIONS.has(action)) {
+    return handleLocalizedMediaAction({ admin, session, contentConfig, aiSettings }, formData, action);
   }
 
   // Initialize services

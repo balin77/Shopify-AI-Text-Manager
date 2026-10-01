@@ -33,6 +33,10 @@ export const CONTENT_EDITOR_EXTRA_ACTIONS: Readonly<Record<string, readonly stri
     "translateSubResources",
     "translateSubResourceToAllLocales",
     "saveSubResourceTranslations",
+    // "Images per language" card: load / set / remove one replacement.
+    "localizedMediaLoad",
+    "localizedMediaSet",
+    "localizedMediaRemove",
   ],
 };
 

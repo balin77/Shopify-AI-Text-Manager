@@ -486,6 +486,7 @@ export const guideDe: GuideCopy = {
           heading: "Theme-Bilder",
           paragraphs: [
             "Bilder in Ihrem Theme (zum Beispiel ein Banner auf der Startseite) finden Sie unter Inhalte → Theme bei den Texten des jeweiligen Abschnitts. Statt eines Textfeldes sehen Sie dort eine Vorschau des Bildes.",
+            "Ob Ihr Theme das Bild der gewählten Sprache anzeigt, hängt vom Theme ab. Prüfen Sie nach dem Speichern Ihren Shop in dieser Sprache; manche Themes zeigen unter Umständen weiterhin das Originalbild.",
           ],
           steps: [
             "Oben die Sprache wählen — und, falls das Bild nur in einem Markt anders sein soll, den Markt.",
@@ -496,13 +497,13 @@ export const guideDe: GuideCopy = {
         {
           heading: "Produktbilder",
           paragraphs: [
-            "Auf der Produktseite finden Sie unter den Produktbildern die Karte „Bilder und Videos je Sprache“ — auch wenn der Bild-Manager ausgeschaltet ist. Ersatzbilder wählen Sie aus Ihren Dateien oder laden sie neu hoch; angeboten wird dabei nur, was das Original ersetzen kann. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert.",
+            "Auf der Produktseite finden Sie unter den Produktbildern die Karte „Bilder und Videos je Sprache“ — auch wenn der Bild-Manager ausgeschaltet ist. Ersatzbilder wählen Sie aus Ihren Dateien oder laden sie neu hoch; angeboten wird dabei nur, was das Original ersetzen kann. Dort wählen Sie Sprache und Markt und legen für jedes Produktbild ein Ersatzbild fest. Die Änderung wird sofort gespeichert. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
             "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images and videos per language“ (die Karte verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
           ],
           list: [
             "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
             "Ändern Sie später das Originalbild, weist die Karte darauf hin, damit Sie prüfen können, ob das Ersatzbild noch passt.",
-            "Wird ein Originalbild aus dem Produkt gelöscht, listet die Karte seine Ersatzbilder separat auf, damit Sie sie entfernen können.",
+            "Wird ein Originalbild aus dem Produkt gelöscht, listet die Karte seine Ersatzbilder separat auf, damit Sie sie entfernen können. Das gilt ebenso für Ersatzbilder zu einem Markt oder einer Sprache, die es im Shop nicht mehr gibt oder die nicht mehr aktiv sind.",
           ],
         },
         {

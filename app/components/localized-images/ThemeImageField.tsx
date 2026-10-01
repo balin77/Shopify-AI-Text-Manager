@@ -34,9 +34,9 @@ const urlCache = new Map<string, Promise<string | null>>();
 function lookupImageUrl(filename: string): Promise<string | null> {
   let hit = urlCache.get(filename);
   if (!hit) {
-    hit = fetch(`/api/shop-image-url?filename=${encodeURIComponent(filename)}`)
-      .then((r) => (r.ok ? r.json() : { url: null }))
-      .then((j: { url?: string | null }) => j.url ?? null)
+    hit = fetch(`/api/files?filename=${encodeURIComponent(filename)}`)
+      .then((r) => (r.ok ? r.json() : { files: [] }))
+      .then((j: { files?: Array<{ assetUrl?: string }> }) => j.files?.[0]?.assetUrl || null)
       .catch(() => null);
     // A failed lookup is not remembered: the next render may ask again.
     hit.then((u) => { if (u === null) urlCache.delete(filename); });
@@ -97,7 +97,8 @@ export function ThemeImageField({
     const picked = await resolvePickedImage(items.find((i) => i.source !== "external_url") ?? items[0]);
     setBusy(false);
     if ("error" in picked) {
-      setError(picked.code === "stillProcessing" ? tx.errors.stillProcessing : tx.fileFailed.replace("{error}", picked.error));
+      const known = picked.code ? (tx.errors as Record<string, string>)[picked.code] : undefined;
+      setError(known ?? tx.fileFailed.replace("{error}", picked.error));
       return;
     }
     const raw = filenameFromCdnUrl(picked.url);

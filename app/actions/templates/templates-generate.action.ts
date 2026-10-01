@@ -1,4 +1,4 @@
-import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
+import { isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
 import { data as json } from "react-router";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
@@ -16,7 +16,7 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
   const mainLanguage = getFormString(formData, "mainLanguage");
   const fieldLabel = extractReadableName(fieldType);
   if (isThemeMediaValue(currentValue)) {
-    return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
+    return json(themeMediaRefusalBody("generateAIText", fieldType), { status: 400 });
   }
 
   // Compliance gate: whose key, consent, kill switch and budget — before a

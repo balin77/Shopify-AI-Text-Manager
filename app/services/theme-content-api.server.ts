@@ -12,7 +12,7 @@
 import { data as json } from "react-router";
 import { AIService } from "../../src/services/ai.service";
 import { getFormString } from "~/utils/form-data.utils";
-import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
+import { isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
 import { logger } from "~/utils/logger.server";
 import type { DataResponse } from "~/types/data-response";
 import { aiServiceFor } from "./ai/ai-credentials.server";
@@ -250,7 +250,7 @@ export async function handleThemeContentActionResponse(opts: {
       const fieldKey = getFormString(formData, "fieldKey");
       const currentValue = getFormString(formData, "currentValue");
       if (isThemeMediaValue(currentValue)) {
-        return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
+        return json(themeMediaRefusalBody("generateAIText", fieldKey), { status: 400 });
       }
       const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
       const aiService = buildAIService(settings, session.shop);
@@ -277,7 +277,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         return json({ success: false, error: "No source text available" }, { status: 400 });
       }
       if (isThemeMediaValue(sourceText)) {
-        return json({ success: false, error: "Images and videos are not translated or rewritten by the AI.", code: "themeMediaValue" }, { status: 400 });
+        return json(themeMediaRefusalBody("translateField", fieldKey), { status: 400 });
       }
 
       const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });

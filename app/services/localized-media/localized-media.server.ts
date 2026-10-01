@@ -40,6 +40,7 @@ import {
   isShopifyCdnUrl,
   marketNumericId,
   normalizeLocale,
+  isForeignLocalizedMediaValue,
   parseLocalizedMediaValue,
   removeLocalizedMediaEntry,
   serializeLocalizedMedia,
@@ -94,7 +95,8 @@ export type LocalizedMediaErrorCode =
   | "replacementIsOriginal"
   | "tooManyEntries"
   | "invalidExternalUrl"
-  | "kindMismatch";
+  | "kindMismatch"
+  | "foreignMetafieldValue";
 
 export type LocalizedMediaResult<T> = ({ ok: true } & T) | { ok: false; code: LocalizedMediaErrorCode; message?: string };
 
@@ -181,7 +183,7 @@ export function toProductMediaItem(n: RawMediaNode): ProductMediaItem | null {
 export async function readProductLocalizedMedia(
   graphql: Graphql,
   productId: string,
-): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaItem[]; hasMetafield: boolean }>> {
+): Promise<LocalizedMediaResult<{ entries: LocalizedMediaEntry[]; media: ProductMediaItem[]; hasMetafield: boolean; foreignValue: boolean }>> {
   const data = await gqlData<{
     product: {
       metafield: { id: string; value: string } | null;
@@ -198,6 +200,7 @@ export async function readProductLocalizedMedia(
     entries: parseLocalizedMediaValue(data.product.metafield?.value ?? null),
     media,
     hasMetafield: !!data.product.metafield,
+    foreignValue: isForeignLocalizedMediaValue(data.product.metafield?.value ?? null),
   };
 }
 
@@ -344,6 +347,9 @@ export async function setLocalizedMedia(args: {
 
   const current = await readProductLocalizedMedia(graphql, productId);
   if (!current.ok) return current;
+  // The metafield is in the merchant's namespace: a value that is not ours is
+  // never overwritten (the write replaces the whole list).
+  if (current.foreignValue) return { ok: false, code: "foreignMetafieldValue" };
   const source = current.media.find((m) => m.id === sourceMediaId);
   if (!source || !isSafeFilename(source.key)) return { ok: false, code: "invalidSource" };
 
@@ -384,6 +390,7 @@ export async function removeLocalizedImage(args: {
   if (k === null) return { ok: false, code: "invalidMarket" };
   const current = await readProductLocalizedMedia(graphql, productId);
   if (!current.ok) return current;
+  if (current.foreignValue) return { ok: false, code: "foreignMetafieldValue" };
   // No scope validation on removal: an entry for a language the shop has
   // since removed (or an original that is gone) must still be deletable.
   const next = removeLocalizedMediaEntry(current.entries, sourceMediaId, locale, k);

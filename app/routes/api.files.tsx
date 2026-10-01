@@ -1,5 +1,26 @@
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { filenameFromCdnUrl } from "~/utils/theme-image-reference.shared";
+
+// Prose stays out of the document (CLAUDE.md: #graphql literals are sent verbatim).
+const FILES_BY_FILENAME = `#graphql
+  query filesByFilename($query: String!) {
+    files(first: 10, query: $query) {
+      nodes {
+        ... on MediaImage { id alt image { url } }
+      }
+    }
+  }
+`;
+
+function sameFilename(url: string, wanted: string): boolean {
+  const got = filenameFromCdnUrl(url);
+  if (!got) return false;
+  const norm = (s: string) => {
+    try { return decodeURIComponent(s).toLowerCase(); } catch { return s.toLowerCase(); }
+  };
+  return norm(got) === norm(wanted);
+}
 
 /**
  * Browse the merchant's Shopify Files library.
@@ -38,6 +59,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const first = Number.isFinite(firstRaw) ? Math.min(Math.max(firstRaw, 1), 100) : 50;
   const after = url.searchParams.get("after") || null;
   const usedByProductId = url.searchParams.get("usedByProductId");
+
+  // Branch C: `?filename=<name>` — the CDN URL of ONE Files image, for
+  // previewing a theme image reference (`shopify://shop_images/<name>`).
+  // Read-only, a preview only: nothing is written from its answer. The Files
+  // search is a SEARCH, so every hit is re-checked against the exact filename
+  // (a near miss would show a different picture than the one the theme
+  // serves). Answers the same `{ files }` shape; a miss is an empty list.
+  const filenameParam = (url.searchParams.get("filename") ?? "").trim();
+  if (url.searchParams.has("filename")) {
+    if (!filenameParam || filenameParam.length > 255 || /[/"\\]/.test(filenameParam)) {
+      return json({ files: [], pageInfo: { hasNextPage: false, endCursor: null } }, { status: 400 });
+    }
+    let decoded = filenameParam;
+    try { decoded = decodeURIComponent(filenameParam); } catch { /* keep raw */ }
+    try {
+      const res = await admin.graphql(FILES_BY_FILENAME, { variables: { query: `filename:${JSON.stringify(decoded)}` } });
+      const body = (await res.json()) as { data?: { files?: { nodes?: Array<{ id?: string; alt?: string | null; image?: { url?: string } | null } | null> } } };
+      const files = (body.data?.files?.nodes ?? [])
+        .filter((n): n is NonNullable<typeof n> => !!n?.id && !!n.image?.url && sameFilename(n.image.url, filenameParam))
+        .slice(0, 1)
+        .map((n) => ({ kind: "image" as const, id: n.id!, previewUrl: n.image!.url!, assetUrl: n.image!.url!, reference: n.id!, alt: n.alt ?? null }));
+      return json({ files, pageInfo: { hasNextPage: false, endCursor: null } });
+    } catch {
+      return json({ files: [], pageInfo: { hasNextPage: false, endCursor: null } });
+    }
+  }
 
   // Branch B: scoped to a single product. We use product(id).media because
   // Shopify's files() query has no "used in product" facet. The media field

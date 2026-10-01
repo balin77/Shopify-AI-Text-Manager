@@ -69,6 +69,24 @@ export function isThemeMediaValue(value: unknown): boolean {
   return isThemeImageReference(value) || isThemeVideoValue(value);
 }
 
+/**
+ * The refusal every AI path answers with for a media value. `error` IS the
+ * machine code (like "gated"), rendered in the merchant's language by
+ * `translateErrorMessage`; `actionType`/`fieldType` echo what was posted so the
+ * editor lands it on the control that fired it, like the managed-AI refusals.
+ */
+export const THEME_MEDIA_REFUSAL_CODE = "themeMediaValue";
+
+export function themeMediaRefusalBody(actionType: string, fieldType?: string) {
+  return {
+    success: false as const,
+    error: THEME_MEDIA_REFUSAL_CODE,
+    code: THEME_MEDIA_REFUSAL_CODE,
+    actionType,
+    ...(fieldType ? { fieldType } : {}),
+  };
+}
+
 /** Builds the reference for a Files filename. */
 export function themeImageReferenceFor(filename: string): string {
   return `${PREFIX}${filename}`;
