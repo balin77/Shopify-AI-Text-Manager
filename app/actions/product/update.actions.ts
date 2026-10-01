@@ -1374,8 +1374,12 @@ async function updatePrimaryProduct(
   }
   // The budget slot is taken only now that it is known a run CAN start (it
   // needs a foreign locale); a single-language shop never spends one.
+  // ...and only when a changed field has a translation key at all (vendor,
+  // tags or status alone start no run).
+  const hasTranslatableChange = changedFields.some((field) => !!FIELD_TO_TRANSLATION_KEY[field]);
   const contentRepairPossible =
     contentRepairWanted &&
+    hasTranslatableChange &&
     altForeignLocales.length > 0 &&
     (!repairBudget || repairBudget.take("content", productId));
   const retranslateAltTexts = altRepairRetranslates(changePolicy, altForeignLocales, altPrimaryLocale);
