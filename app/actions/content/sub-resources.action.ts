@@ -19,6 +19,12 @@ import { isBatchTranslatableValueType } from "~/services/metaobject-fields.share
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { subResourceLockId } from "~/services/translations/translation-locks.shared";
+import {
+  LOCALE_KEY_SEP,
+  mirrorConfirmedContentTranslations,
+  removeAndVerify,
+  removeVerifiedWithGapReread,
+} from "~/services/translations/verified-translations.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
@@ -87,7 +93,7 @@ export async function handleLoadSubResourceTranslations(
       for (let i = 0; i < missingIds.length; i += batchSize) {
         const batch = missingIds.slice(i, i + batchSize);
         const results = await Promise.allSettled(
-          batch.map(rid => shopifyContentService.loadTranslations(rid, locale))
+          batch.map(rid => shopifyContentService.loadTranslationsWithDigests(rid, locale))
         );
         results.forEach((result, idx) => {
           if (result.status === "fulfilled" && result.value) {
@@ -96,14 +102,16 @@ export async function handleLoadSubResourceTranslations(
             // Derive resourceType from GID (e.g. gid://shopify/ProductOption/123 → ProductOption)
             const gidMatch = rid.match(/gid:\/\/shopify\/(\w+)\//);
             const resourceType = gidMatch ? gidMatch[1] : "Unknown";
-            for (const t of result.value) {
+            // The digest comes from the SAME read (null for an outdated row), so
+            // the mirror is visible to the stale-translation detection.
+            for (const t of result.value.translations) {
               translations[rid][t.key] = t.value;
               // Persist to DB so next navigation finds it via the loader pipeline
               dbWrites.push(
                 db.contentTranslation.upsert({
                   where: { shop_resourceId_key_locale_marketId: { marketId: "",  shop: session.shop, resourceId: rid, key: t.key, locale } },
-                  create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale },
-                  update: { value: t.value },
+                  create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale, digest: t.digest },
+                  update: { value: t.value, digest: t.digest },
                 })
               );
             }
@@ -125,19 +133,19 @@ export async function handleLoadSubResourceTranslations(
           for (let i = 0; i < missingIds.length; i += batchSize) {
             const batch = missingIds.slice(i, i + batchSize);
             const results = await Promise.allSettled(
-              batch.map(rid => shopifyContentService.loadTranslations(rid, locale, market.id))
+              batch.map(rid => shopifyContentService.loadTranslationsWithDigests(rid, locale, market.id))
             );
             results.forEach((result, idx) => {
               if (result.status === "fulfilled" && result.value) {
                 const rid = batch[idx];
                 const gidMatch = rid.match(/gid:\/\/shopify\/(\w+)\//);
                 const resourceType = gidMatch ? gidMatch[1] : "Unknown";
-                for (const t of result.value) {
+                for (const t of result.value.translations) {
                   dbWrites.push(
                     db.contentTranslation.upsert({
                       where: { shop_resourceId_key_locale_marketId: { marketId: market.id, shop: session.shop, resourceId: rid, key: t.key, locale } },
-                      create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale, marketId: market.id },
-                      update: { value: t.value },
+                      create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale, marketId: market.id, digest: t.digest },
+                      update: { value: t.value, digest: t.digest },
                     })
                   );
                 }
@@ -180,7 +188,6 @@ export async function handleSaveSubResourceTranslations(
   formData: FormData,
 ): Promise<DataResponse> {
   const { db, shopifyContentService } = ctx;
-  // gateway is needed for deleting translations
   const { admin, session } = ctx;
 
   const locale = getFormString(formData, "locale");
@@ -212,34 +219,25 @@ export async function handleSaveSubResourceTranslations(
       resourceIds: Object.keys(translationsData),
     });
 
-    // We need gateway for the remove translations mutation
-    const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
-    const gateway = new ShopifyApiGateway(admin, session.shop);
-
     for (const [resourceId, fields] of Object.entries(translationsData)) {
       if (!isValidShopifyGID(resourceId)) continue;
 
       try {
         const resourceType = resourceTypes[resourceId] || "Unknown";
 
-        // Separate empty and non-empty values
-        // For ProductOption and ProductOptionValue, Shopify API rejects empty strings
-        // ("Value can't be blank" / "Name can't be blank")
-        // So we delete the translation instead of setting it to empty
+        // Separate empty and non-empty values. EVERY clear is a REMOVAL, never
+        // a registered "": Shopify rejects a blank option translation, a cleared
+        // market override must revert to the inherited global value, and a
+        // cleared GLOBAL metafield translation means "no translation" exactly as
+        // on every other surface (registering "" stored a blank the storefront
+        // then served instead of falling back to the primary text).
         const translationInputs: Array<{ key: string; value: string; locale: string }> = [];
         const keysToDelete: string[] = [];
 
         for (const [key, value] of Object.entries(fields)) {
-          const isEmpty = value === "";
-          const isOptionType = resourceType === "ProductOptionValue" || resourceType === "ProductOption";
-          // Delete (rather than store "") when: an option field is cleared
-          // (Shopify rejects blank option translations), OR any field is cleared
-          // in a MARKET context — clearing a market override reverts to the
-          // inherited global value instead of pinning a blank market-specific one.
-          if (isEmpty && (isOptionType || marketId)) {
+          if (value === "") {
             keysToDelete.push(key);
           } else {
-            // Non-empty value OR empty value in the global context for other types
             translationInputs.push({ key, value, locale });
           }
         }
@@ -253,9 +251,36 @@ export async function handleSaveSubResourceTranslations(
           keysToDelete: JSON.stringify(keysToDelete),
         });
 
-        // Save non-empty translations to Shopify (market-scoped when marketId set)
+        /** Set when ANY key of this resource was not confirmed by Shopify. */
+        let resourceFailed = false;
+
+        // Save non-empty translations to Shopify (market-scoped when marketId
+        // set). VERIFIED: only keys Shopify echoed are mirrored, with their
+        // digest. A key it refused, did not echo, or had no digest for was NOT
+        // stored -- the resource is reported failed, never mirrored as saved.
         if (translationInputs.length > 0) {
-          await shopifyContentService.saveTranslations(resourceId, translationInputs, marketId);
+          const result = await shopifyContentService.saveTranslations(resourceId, translationInputs, marketId);
+          await mirrorConfirmedContentTranslations(db, {
+            shop: session.shop,
+            resourceId,
+            resourceType,
+            locale,
+            marketId,
+            sent: translationInputs,
+            result,
+            digests: result.digests,
+          });
+          if (result.unconfirmedKeys.length > 0 || result.noDigest.length > 0) {
+            resourceFailed = true;
+            logger.error(`[UnifiedContent] Shopify did not confirm every sub-resource translation for ${resourceId}`, {
+              context: "UnifiedContent",
+              resourceId,
+              locale,
+              unconfirmedKeys: result.unconfirmedKeys,
+              noDigest: result.noDigest,
+              userErrors: result.userErrors,
+            });
+          }
         }
 
         // Claim the SUB-RESOURCE the merchant just wrote. A detached
@@ -266,63 +291,33 @@ export async function handleSaveSubResourceTranslations(
         // `isTranslationRecentlySaved` exists to prevent.
         markTranslationSaved(resourceId);
 
-        // Delete empty translations for ProductOptionValue. marketIds null =
-        // remove the global translation; a market removes only that override.
+        // Remove the cleared keys. marketIds null = remove the global
+        // translation; a market removes only that override. VERIFIED (echo, then
+        // the re-read on a gap): the local row -- a DB-only mirror row included
+        // -- is deleted only for a key Shopify confirmed gone.
         if (keysToDelete.length > 0) {
-          const deleteResponse = await gateway.graphql(
-            `#graphql
-              mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
-                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
-                  userErrors { field message }
-                }
-              }`,
-            {
-              variables: {
-                resourceId,
-                translationKeys: keysToDelete,
-                locales: [locale],
-                marketIds: marketId ? [marketId] : null,
-              },
-            }
-          );
-          const deleteData = await deleteResponse.json() as any;
-          if (deleteData.data?.translationsRemove?.userErrors?.length > 0) {
-            logger.error(`[UnifiedContent] translationsRemove userErrors for ${resourceId}`, {
+          const removal = await removeAndVerify(admin, resourceId, keysToDelete, locale, marketId);
+          const confirmedKeys = keysToDelete.filter((key) => removal.confirmedKeys.has(key));
+          if (confirmedKeys.length > 0) {
+            await db.contentTranslation.deleteMany({
+              where: { shop: session.shop, resourceId, key: { in: confirmedKeys }, locale, marketId },
+            });
+          }
+          if (confirmedKeys.length < keysToDelete.length) {
+            resourceFailed = true;
+            logger.error(`[UnifiedContent] Shopify did not confirm removing translations for ${resourceId} — local rows kept`, {
               context: "UnifiedContent",
               resourceId,
               locale,
-              errors: deleteData.data.translationsRemove.userErrors,
+              unconfirmed: keysToDelete.filter((key) => !removal.confirmedKeys.has(key)),
+              userErrors: removal.userErrors,
             });
-            throw new Error(`Shopify rejected translation deletion: ${deleteData.data.translationsRemove.userErrors[0].message}`);
           }
-          logger.info(`[UnifiedContent] Deleted translations for ${resourceId}`, {
-            context: "UnifiedContent",
-            resourceId,
-            locale,
-            keysToDelete: JSON.stringify(keysToDelete),
-          });
         }
 
-        // Save to local DB (including empty strings - user explicitly cleared the field)
-        // This allows tracking that the field was intentionally cleared
-        for (const [key, value] of Object.entries(fields)) {
-          const isEmpty = value === "";
-          const isOptionType = resourceType === "ProductOptionValue" || resourceType === "ProductOption";
-          if (isEmpty && (isOptionType || marketId)) {
-            // Cleared option field, or any field cleared in a market context:
-            // delete the DB row (Shopify removal already done above). Scoped to the
-            // saved market so clearing a market override doesn't wipe the global row.
-            await db.contentTranslation.deleteMany({
-              where: { resourceId, key, locale, marketId },
-            });
-          } else {
-            // For all other cases, save to DB (market-scoped)
-            await db.contentTranslation.upsert({
-              where: { shop_resourceId_key_locale_marketId: { marketId, shop: session.shop, resourceId, key, locale } },
-              create: { shop: session.shop, resourceId, resourceType, key, value, locale, marketId },
-              update: { value },
-            });
-          }
+        if (resourceFailed) {
+          failedResources.push(resourceId);
+          continue;
         }
 
         savedResources.push(resourceId);
@@ -466,9 +461,12 @@ export async function handleTranslateSubResources(
       data: { progress: 60 },
     });
 
-    // Save translations to Shopify + DB
+    // Save translations to Shopify + DB. VERIFIED: only keys Shopify echoed are
+    // mirrored (with their digest) and returned to the page; a resource with a
+    // refused / unechoed / digest-less key is a failed resource.
     const savedResources: string[] = [];
     const failedResources: string[] = [];
+    const confirmedTranslations: Record<string, Record<string, string>> = {};
 
     for (const [resourceId, fields] of Object.entries(translations)) {
       try {
@@ -479,18 +477,33 @@ export async function handleTranslateSubResources(
         }
 
         if (translationInputs.length > 0) {
-          await shopifyContentService.saveTranslations(resourceId, translationInputs);
-        }
-
-        // Save to DB
-        const sourceItem = sourceData.find(s => s.resourceId === resourceId);
-        const resourceType = sourceItem?.resourceType || "Unknown";
-        for (const [key, value] of Object.entries(fields)) {
-          await db.contentTranslation.upsert({
-            where: { shop_resourceId_key_locale_marketId: { marketId: "",  shop: session.shop, resourceId, key, locale: targetLocale } },
-            create: { shop: session.shop, resourceId, resourceType, key, value, locale: targetLocale },
-            update: { value },
+          const sourceItem = sourceData.find(s => s.resourceId === resourceId);
+          const resourceType = sourceItem?.resourceType || "Unknown";
+          const result = await shopifyContentService.saveTranslations(resourceId, translationInputs);
+          await mirrorConfirmedContentTranslations(db, {
+            shop: session.shop,
+            resourceId,
+            resourceType,
+            locale: targetLocale,
+            sent: translationInputs,
+            result,
+            digests: result.digests,
           });
+          for (const key of result.confirmedKeys) {
+            (confirmedTranslations[resourceId] ??= {})[key] = result.confirmedValues.get(key) ?? fields[key];
+          }
+          if (result.unconfirmedKeys.length > 0 || result.noDigest.length > 0) {
+            logger.error(`[UnifiedContent] Shopify did not confirm every translated sub-resource key for ${resourceId}`, {
+              context: "UnifiedContent",
+              resourceId,
+              targetLocale,
+              unconfirmedKeys: result.unconfirmedKeys,
+              noDigest: result.noDigest,
+              userErrors: result.userErrors,
+            });
+            failedResources.push(resourceId);
+            continue;
+          }
         }
 
         savedResources.push(resourceId);
@@ -502,16 +515,19 @@ export async function handleTranslateSubResources(
       }
     }
 
-    // Update task to completed
+    // Update task: "completed_with_errors" (the status the other translation
+    // tasks use) when any resource failed, with the failures in the result.
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: failedResources.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({
           translatedCount: savedResources.length,
           failedCount: failedResources.length,
+          failedResources,
+          failedLocales: failedResources.length > 0 ? [targetLocale] : [],
           targetLocale,
         }),
       },
@@ -520,7 +536,8 @@ export async function handleTranslateSubResources(
     return json({
       actionType: "translateSubResources",
       success: true,
-      translations,
+      // Only what Shopify confirmed: the page paints these as saved translations.
+      translations: confirmedTranslations,
       savedResources,
       failedResources,
       fieldId: getFormString(formData, "fieldId"), // Echo back fieldId for client state management
@@ -710,7 +727,10 @@ export async function handleTranslateSubResourceToAllLocales(
         .catch(() => undefined);
     }
 
-    // Save all translations to Shopify + DB
+    // Save all translations to Shopify + DB. VERIFIED: a locale in which any
+    // resource was refused / unechoed / digest-less is a FAILED locale (and
+    // that resource a failed resource); only echoed keys are mirrored.
+    const failedResources: string[] = [];
     for (const [locale, translations] of Object.entries(allTranslations)) {
       for (const [resourceId, fields] of Object.entries(translations)) {
         try {
@@ -720,37 +740,50 @@ export async function handleTranslateSubResourceToAllLocales(
           }
 
           if (translationInputs.length > 0) {
-            await shopifyContentService.saveTranslations(resourceId, translationInputs);
-          }
-
-          // Save to DB
-          const sourceItem = sourceData.find(s => s.resourceId === resourceId);
-          const resourceType = sourceItem?.resourceType || "Unknown";
-          for (const [key, value] of Object.entries(fields)) {
-            await db.contentTranslation.upsert({
-              where: { shop_resourceId_key_locale_marketId: { marketId: "",  shop: session.shop, resourceId, key, locale } },
-              create: { shop: session.shop, resourceId, resourceType, key, value, locale },
-              update: { value },
+            const sourceItem = sourceData.find(s => s.resourceId === resourceId);
+            const resourceType = sourceItem?.resourceType || "Unknown";
+            const result = await shopifyContentService.saveTranslations(resourceId, translationInputs);
+            await mirrorConfirmedContentTranslations(db, {
+              shop: session.shop,
+              resourceId,
+              resourceType,
+              locale,
+              sent: translationInputs,
+              result,
+              digests: result.digests,
             });
+            if (result.unconfirmedKeys.length > 0 || result.noDigest.length > 0) {
+              logger.error(`[UnifiedContent] Shopify did not confirm every sub-resource key for ${resourceId} in ${locale}`, {
+                context: "UnifiedContent",
+                unconfirmedKeys: result.unconfirmedKeys,
+                noDigest: result.noDigest,
+                userErrors: result.userErrors,
+              });
+              if (!failedLocales.includes(locale)) failedLocales.push(locale);
+              if (!failedResources.includes(resourceId)) failedResources.push(resourceId);
+            }
           }
         } catch (err) {
           logger.error(`[UnifiedContent] Failed to save sub-resource translation for ${resourceId} in ${locale}`, {
             context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
           });
+          if (!failedLocales.includes(locale)) failedLocales.push(locale);
+          if (!failedResources.includes(resourceId)) failedResources.push(resourceId);
         }
       }
     }
 
-    // Update task to completed
+    // Update task: "completed_with_errors" when any locale or resource failed.
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: failedLocales.length > 0 || failedResources.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({
           translatedLocales: targetLocales.filter((l: string) => !failedLocales.includes(l)),
           failedLocales,
+          failedResources,
         }),
       },
     });
@@ -761,6 +794,7 @@ export async function handleTranslateSubResourceToAllLocales(
       success: true,
       translations: {}, // Already saved to Shopify, no need to return
       failedLocales,
+      failedResources,
       fieldId: getFormString(formData, "fieldId"), // Echo back fieldId for client state management
     });
   } catch (error: unknown) {
@@ -1155,143 +1189,83 @@ export async function handleSavePrimarySubResources(
         // Logged inside; a stale override never fails a save that succeeded.
       }
       try {
-        {
-          // (the `foreignLocales.length > 0` guard now sits on the `if` above —
-          // without it every changed sub-resource fired a
-          // `translationsRemove(locales: [])` on a single-language shop)
-          // Delete option translations
-          for (const optionId of changedOptionIds) {
-            if (!isValidShopifyGID(optionId)) continue;
-
-            const changes = optionsChanges[optionId];
-
-            try {
-              // Only delete option name translation if the name was actually changed
-              if (changes?.name !== undefined) {
-                const delNameResp = await gateway.graphql(
-                  `#graphql
-                    mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                      translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
-                        userErrors { field message }
-                      }
-                    }`,
-                  {
-                    variables: {
-                      resourceId: optionId,
-                      translationKeys: ["name"],
-                      locales: foreignLocales,
-                    },
-                  }
-                );
-                const delNameData = await delNameResp.json() as any;
-                if (delNameData.data?.translationsRemove?.userErrors?.length > 0) {
-                  logger.error(`[UnifiedContent] translationsRemove userErrors for option name ${optionId}`, {
-                    context: "UnifiedContent", errors: delNameData.data.translationsRemove.userErrors,
-                  });
-                  // Shopify is master — skip DB deletion if Shopify rejected the removal
-                } else {
-                  // Delete from DB only if Shopify succeeded
-                  await db.contentTranslation.deleteMany({
-                    where: {
-                      resourceId: optionId,
-                      resourceType: "ProductOption",
-                      key: "name",
-                      locale: { in: foreignLocales },
-                      marketId: "",
-                    },
-                  });
-                }
-              }
-
-              // Only delete translations for values that actually changed
-              if (changes?.valueUpdates !== undefined && changes.valueUpdates.length > 0) {
-                // Use value IDs from the changes payload directly
-                for (const valueUpdate of changes.valueUpdates) {
-                  if (!valueUpdate.id) continue;
-
-                  const delValResp = await gateway.graphql(
-                    `#graphql
-                      mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                        translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
-                          userErrors { field message }
-                        }
-                      }`,
-                    {
-                      variables: {
-                        resourceId: valueUpdate.id,
-                        translationKeys: ["name"],
-                        locales: foreignLocales,
-                      },
-                    }
-                  );
-                  const delValData = await delValResp.json() as any;
-                  if (delValData.data?.translationsRemove?.userErrors?.length > 0) {
-                    logger.error(`[UnifiedContent] translationsRemove userErrors for option value ${valueUpdate.id}`, {
-                      context: "UnifiedContent", errors: delValData.data.translationsRemove.userErrors,
-                    });
-                    // Shopify is master — skip DB deletion if Shopify rejected the removal
-                  } else {
-                    await db.contentTranslation.deleteMany({
-                      where: {
-                        resourceId: valueUpdate.id,
-                        resourceType: "ProductOptionValue",
-                        key: "name",
-                        locale: { in: foreignLocales },
-                        marketId: "",
-                      },
-                    });
-                  }
-                }
-              }
-            } catch (err) {
-              logger.error(`[UnifiedContent] Failed to delete translations for option ${optionId}`, {
-                context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-              });
-            }
+        // (the `foreignLocales.length > 0` guard sits on the `if` above --
+        // without it every changed sub-resource fired a
+        // `translationsRemove(locales: [])` on a single-language shop)
+        //
+        // ONE verified removal per sub-resource, in the §6.6 pattern: a single
+        // multi-locale call, then the single-locale re-read ONLY for a locale
+        // that has a gap AND a local row. The local row is deleted ONLY for a
+        // confirmed (locale, key): an unconfirmed removal keeps it (the next
+        // sync corrects it), and a DB-only mirror row Shopify never held is
+        // confirmed by the re-read and cleared. `admin`, not the gateway: this
+        // is request-bound and a refused document must not cost retry sleeps.
+        const purgeForeign = async (resourceId: string, resourceType: string, key: string) => {
+          let localPairs: Set<string> | undefined;
+          try {
+            const rows: Array<{ locale: string; key: string }> = await db.contentTranslation.findMany({
+              where: { shop: session.shop, resourceId, resourceType, key, marketId: "", locale: { in: foreignLocales } },
+              select: { locale: true, key: true },
+            });
+            localPairs = new Set(rows.map((row) => `${row.locale}${LOCALE_KEY_SEP}${row.key}`));
+          } catch {
+            // Unknown local rows: every gap is re-read instead.
+            localPairs = undefined;
           }
+          const removal = await removeVerifiedWithGapReread(admin, resourceId, [key], foreignLocales, "", { localPairs });
+          const confirmedLocales = foreignLocales.filter((l) => removal.confirmedPairs.has(`${l}${LOCALE_KEY_SEP}${key}`));
+          if (confirmedLocales.length > 0) {
+            await db.contentTranslation.deleteMany({
+              where: { shop: session.shop, resourceId, resourceType, key, locale: { in: confirmedLocales }, marketId: "" },
+            });
+          }
+          if (removal.unconfirmedPairs.length > 0) {
+            logger.warn(`[UnifiedContent] Shopify did not confirm removing ${resourceType} translations for ${resourceId} — local rows kept`, {
+              context: "UnifiedContent",
+              resourceId,
+              unconfirmed: removal.unconfirmedPairs.length,
+              userErrors: removal.userErrors,
+            });
+          }
+        };
 
-          // Delete metafield translations
-          for (const metafieldId of changedMetafieldIds) {
-            if (!isValidShopifyGID(metafieldId)) continue;
+        // Delete option translations
+        for (const optionId of changedOptionIds) {
+          if (!isValidShopifyGID(optionId)) continue;
 
-            try {
-              const delMfResp = await gateway.graphql(
-                `#graphql
-                  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
-                      userErrors { field message }
-                    }
-                  }`,
-                {
-                  variables: {
-                    resourceId: metafieldId,
-                    translationKeys: ["value"],
-                    locales: foreignLocales,
-                  },
-                }
-              );
-              const delMfData = await delMfResp.json() as any;
-              if (delMfData.data?.translationsRemove?.userErrors?.length > 0) {
-                logger.error(`[UnifiedContent] translationsRemove userErrors for metafield ${metafieldId}`, {
-                  context: "UnifiedContent", errors: delMfData.data.translationsRemove.userErrors,
-                });
-                // Shopify is master — skip DB deletion if Shopify rejected the removal
-              } else {
-                await db.contentTranslation.deleteMany({
-                  where: {
-                    resourceId: metafieldId,
-                    resourceType: "Metafield",
-                    key: "value",
-                    locale: { in: foreignLocales },
-                    marketId: "",
-                  },
-                });
-              }
-            } catch (err) {
-              logger.error(`[UnifiedContent] Failed to delete translations for metafield ${metafieldId}`, {
-                context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-              });
+          const changes = optionsChanges[optionId];
+
+          try {
+            // Only delete option name translation if the name was actually changed
+            if (changes?.name !== undefined) {
+              await purgeForeign(optionId, "ProductOption", "name");
             }
+
+            // Only delete translations for values that actually changed
+            if (changes?.valueUpdates !== undefined && changes.valueUpdates.length > 0) {
+              // Use value IDs from the changes payload directly
+              for (const valueUpdate of changes.valueUpdates) {
+                if (!valueUpdate.id) continue;
+                await purgeForeign(valueUpdate.id, "ProductOptionValue", "name");
+              }
+            }
+          } catch (err) {
+            logger.error(`[UnifiedContent] Failed to delete translations for option ${optionId}`, {
+              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        // Delete metafield translations
+        for (const metafieldId of changedMetafieldIds) {
+          if (!isValidShopifyGID(metafieldId)) continue;
+
+          try {
+            await purgeForeign(metafieldId, "Metafield", "value");
+          } catch (err) {
+            logger.error(`[UnifiedContent] Failed to delete translations for metafield ${metafieldId}`, {
+              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       } catch (err) {

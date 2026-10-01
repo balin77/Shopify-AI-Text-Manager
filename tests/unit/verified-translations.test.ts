@@ -4,6 +4,8 @@ import {
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   registerWithDigests,
+  removeVerifiedWithGapReread,
+  confirmedPairsWhere,
   mirrorConfirmedContentTranslations,
   LOCALE_KEY_SEP,
   type GraphqlClient,
@@ -210,5 +212,70 @@ describe("mirrorConfirmedContentTranslations", () => {
     });
     expect(out).toEqual({ mirrored: [], localOnly: [] });
     expect(upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeVerifiedWithGapReread / confirmedPairsWhere (Phase B+C)", () => {
+  const sep = LOCALE_KEY_SEP;
+  const removeAnswer = (echo: Array<{ key: string; locale: string }>) => ({
+    data: { translationsRemove: { translations: echo, userErrors: [] } },
+  });
+  const readAnswer = (rows: Array<{ key: string; value: string | null }>) => ({
+    data: { translatableResource: { translations: rows.map((r) => ({ ...r, market: null })) } },
+  });
+
+  it("one locale: echo, then the re-read on a gap", async () => {
+    const { client, calls } = fakeClient((q) =>
+      q.includes("verifyTranslationRemoval") ? readAnswer([]) : removeAnswer([]),
+    );
+    const r = await removeVerifiedWithGapReread(client, RID, ["title"], ["fr"], "");
+    expect(calls).toHaveLength(2);
+    expect(r.confirmedPairs.has(`fr${sep}title`)).toBe(true);
+    expect(r.unconfirmedPairs).toEqual([]);
+  });
+
+  it("several locales: ONE sweep, then the re-read only for a locale with a gap", async () => {
+    const { client, calls } = fakeClient((q, v) => {
+      if (q.includes("verifyTranslationRemoval")) return readAnswer([]);
+      // the sweep (2 locales) echoes fr only; the follow-up single-locale call echoes nothing
+      return (v?.locales as string[]).length > 1 ? removeAnswer([{ key: "title", locale: "fr" }]) : removeAnswer([]);
+    });
+    const r = await removeVerifiedWithGapReread(client, RID, ["title"], ["fr", "it"], "");
+    const rereads = calls.filter((c) => c.query.includes("verifyTranslationRemoval"));
+    expect(rereads).toHaveLength(1);
+    expect(rereads[0].variables?.locale).toBe("it");
+    expect([...r.confirmedPairs].sort()).toEqual([`fr${sep}title`, `it${sep}title`]);
+  });
+
+  it("pairs are confirmed under the SENT spelling when Shopify echoes another case", async () => {
+    const { client } = fakeClient(() => removeAnswer([{ key: "title", locale: "pt-br" }, { key: "title", locale: "fr" }]));
+    const r = await removeVerifiedWithGapReread(client, RID, ["title"], ["pt-BR", "fr"], "");
+    expect(r.confirmedPairs.has(`pt-BR${sep}title`)).toBe(true);
+  });
+
+  it("localPairs limits the re-read: a gap with no local row is left alone and not reported", async () => {
+    const { client, calls } = fakeClient((q) => (q.includes("verifyTranslationRemoval") ? readAnswer([{ key: "title", value: "x" }]) : removeAnswer([])));
+    const r = await removeVerifiedWithGapReread(client, RID, ["title"], ["fr", "it"], "", {
+      localPairs: new Set([`it${sep}title`]),
+    });
+    expect(calls.filter((c) => c.query.includes("verifyTranslationRemoval"))).toHaveLength(1);
+    expect(r.unconfirmedPairs).toEqual([`it${sep}title`]);
+  });
+
+  it("a failed re-read leaves the pair unconfirmed instead of throwing", async () => {
+    const { client } = fakeClient((q) => (q.includes("verifyTranslationRemoval") ? { errors: [{ message: "boom" }] } : removeAnswer([])));
+    const r = await removeVerifiedWithGapReread(client, RID, ["title"], ["fr", "it"], "");
+    expect(r.confirmedPairs.size).toBe(0);
+    expect(r.unconfirmedPairs).toHaveLength(2);
+  });
+
+  it("confirmedPairsWhere: plain shape when all confirmed, OR when partial, null when none", () => {
+    const all = new Set([`fr${sep}a`, `fr${sep}b`, `it${sep}a`, `it${sep}b`]);
+    expect(confirmedPairsWhere(all, ["a", "b"], ["fr", "it"])).toEqual({ key: { in: ["a", "b"] }, locale: { in: ["fr", "it"] } });
+    const some = new Set([`fr${sep}a`, `it${sep}a`, `it${sep}b`]);
+    expect(confirmedPairsWhere(some, ["a", "b"], ["fr", "it"])).toEqual({
+      OR: [{ locale: "fr", key: { in: ["a"] } }, { locale: "it", key: { in: ["a", "b"] } }],
+    });
+    expect(confirmedPairsWhere(new Set(), ["a"], ["fr"])).toBeNull();
   });
 });

@@ -1,12 +1,11 @@
 /**
- * CHARACTERISATION (docs/plans/PLAN_TRANSLATION_WRITE_UNIFICATION.md, Phase B+C)
- * of app/actions/content/sub-resources.action.ts: what the save / translate /
+ * docs/plans/PLAN_TRANSLATION_WRITE_UNIFICATION.md, Phase B+C -- the behaviour of
+ * app/actions/content/sub-resources.action.ts: what the save / translate /
  * primary-change handlers do with Shopify's answers and the local mirror.
  *
- * The real ShopifyContentService runs over a mocked `admin.graphql`, so these
- * tests keep describing the same observable behaviour across the verified
- * rewrite; the cases tagged (current) pin behaviour the rewrite changes on
- * purpose and are updated in that commit.
+ * The real ShopifyContentService runs over a mocked `admin.graphql`. Written as
+ * a characterisation before the verified rewrite; the cases that described the
+ * unverified gaps now pin the verified behaviour.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -249,7 +248,7 @@ describe('handleSaveSubResourceTranslations', () => {
       }),
     );
 
-  it('registers the key with its digest and mirrors the row (currently WITHOUT a digest)', async () => {
+  it('registers the key with its digest and mirrors the confirmed row WITH its digest', async () => {
     const w = installAdmin();
     const db = makeDb();
     const result = body(await save(db, w.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
@@ -261,7 +260,7 @@ describe('handleSaveSubResourceTranslations', () => {
     expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
     const arg = db.contentTranslation.upsert.mock.calls[0][0];
     expect(arg.create).toMatchObject({ shop: SHOP, resourceId: OPTION, resourceType: 'ProductOption', key: 'name', value: 'Couleur', locale: 'fr', marketId: '' });
-    expect(arg.create.digest).toBeUndefined(); // (current) the digest-less upsert this phase fixes
+    expect(arg.create.digest).toBe('dg-name');
     expect(result).toMatchObject({ success: true, savedResources: [OPTION], failedResources: [] });
   });
 
@@ -285,18 +284,20 @@ describe('handleSaveSubResourceTranslations', () => {
     expect(w.of('register')).toHaveLength(0);
     expect(w.of('remove')[0].variables).toMatchObject({ resourceId: VALUE, translationKeys: ['name'], locales: ['fr'], marketIds: null });
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
-    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({ resourceId: VALUE, key: 'name', locale: 'fr', marketId: '' });
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({ shop: SHOP, resourceId: VALUE, key: { in: ['name'] }, locale: 'fr', marketId: '' });
     expect(result.savedResources).toEqual([VALUE]);
   });
 
   it('a removal Shopify rejected (userErrors) fails the resource and keeps the local row', async () => {
     const w = installAdmin({
       remove: () => ({ data: { translationsRemove: { userErrors: [{ message: 'refused' }], translations: [] } } }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: 'name', value: 'Rouge', market: null }] } } }),
     });
     const db = makeDb();
     const result = body(await save(db, w.admin, { [VALUE]: { name: '' } }, { [VALUE]: 'ProductOptionValue' }));
 
     expect(result.failedResources).toEqual([VALUE]);
+    expect(result.savedResources).toEqual([]);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -309,35 +310,77 @@ describe('handleSaveSubResourceTranslations', () => {
     expect(db.contentTranslation.deleteMany.mock.calls[0][0].where.marketId).toBe('gid://shopify/Market/9');
   });
 
-  it('(current) a GLOBAL metafield clear REGISTERS the empty string instead of removing the translation', async () => {
+  it('a GLOBAL metafield clear REMOVES the translation instead of registering ""', async () => {
     const w = installAdmin();
     const db = makeDb();
-    await save(db, w.admin, { [METAFIELD]: { value: '' } }, { [METAFIELD]: 'Metafield' });
+    const result = body(await save(db, w.admin, { [METAFIELD]: { value: '' } }, { [METAFIELD]: 'Metafield' }));
 
-    expect(w.of('register')[0].variables.translations[0]).toMatchObject({ key: 'value', value: '' });
-    expect(w.of('remove')).toHaveLength(0);
+    expect(w.of('register')).toHaveLength(0);
+    expect(w.of('remove')[0].variables).toMatchObject({ resourceId: METAFIELD, translationKeys: ['value'], locales: ['fr'], marketIds: null });
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(result.savedResources).toEqual([METAFIELD]);
   });
 
-  it('(current) an accepted-but-un-echoed write is reported SAVED and mirrored without a digest', async () => {
+  it('an accepted-but-un-echoed write is reported FAILED and mirrored NOWHERE', async () => {
     const w = installAdmin({
       register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
     });
     const db = makeDb();
     const result = body(await save(db, w.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
 
-    expect(result.savedResources).toEqual([OPTION]);
-    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(result.failedResources).toEqual([OPTION]);
+    expect(result.savedResources).toEqual([]);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it('(current) a removal Shopify did not echo deletes the local row anyway, and the delete has no shop filter', async () => {
+  it('a partial echo mirrors the echoed key only and fails the resource', async () => {
+    const w = installAdmin({
+      digests: { [OPTION]: [{ key: 'name', digest: 'dg-name' }, { key: 'value', digest: 'dg-value' }] },
+      register: (v) => ({
+        data: { translationsRegister: { userErrors: [], translations: [{ key: 'name', locale: 'fr', value: v.translations[0].value }] } },
+      }),
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [OPTION]: { name: 'Couleur', value: 'Autre' } }, { [OPTION]: 'ProductOption' }));
+
+    expect(result.failedResources).toEqual([OPTION]);
+    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.upsert.mock.calls[0][0].create.key).toBe('name');
+  });
+
+  it('a key with NO digest is never sent, never mirrored, and fails the resource', async () => {
+    const w = installAdmin({ digests: { [OPTION]: [{ key: 'name', digest: null }] } });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
+
+    expect(w.of('register')).toHaveLength(0);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(result.failedResources).toEqual([OPTION]);
+  });
+
+  it('a DB-only row (Shopify holds nothing, no echo) IS cleared by the re-read, and the delete is shop-scoped', async () => {
     const w = installAdmin({
       remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
     });
     const db = makeDb();
-    await save(db, w.admin, { [VALUE]: { name: '' } }, { [VALUE]: 'ProductOptionValue' });
+    const result = body(await save(db, w.admin, { [VALUE]: { name: '' } }, { [VALUE]: 'ProductOptionValue' }));
 
+    expect(w.of('reread')).toHaveLength(1);
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
-    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).not.toHaveProperty('shop');
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({ shop: SHOP, resourceId: VALUE, key: { in: ['name'] }, locale: 'fr', marketId: '' });
+    expect(result.savedResources).toEqual([VALUE]);
+  });
+
+  it('an unechoed removal of a translation Shopify STILL holds keeps the row and fails the resource', async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: 'name', value: 'Rouge', market: null }] } } }),
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [VALUE]: { name: '' } }, { [VALUE]: 'ProductOptionValue' }));
+
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+    expect(result.failedResources).toEqual([VALUE]);
   });
 });
 
@@ -353,7 +396,7 @@ describe('handleTranslateSubResources', () => {
   };
   const lastTaskUpdate = (db: any) => db.task.update.mock.calls.at(-1)[0].data;
 
-  it('registers with the digest and mirrors the row (currently WITHOUT a digest)', async () => {
+  it('registers with the digest and mirrors the confirmed row WITH its digest', async () => {
     const w = installAdmin();
     const db = makeDb();
     const result = body(await run(db, w.admin));
@@ -361,9 +404,9 @@ describe('handleTranslateSubResources', () => {
     expect(w.of('register')[0].variables.translations).toEqual([
       { key: 'value', value: 'Rouge', locale: 'fr', translatableContentDigest: 'dg-value' },
     ]);
-    expect(db.contentTranslation.upsert.mock.calls[0][0].create).toMatchObject({ key: 'value', value: 'Rouge', locale: 'fr' });
-    expect(db.contentTranslation.upsert.mock.calls[0][0].create.digest).toBeUndefined(); // (current)
+    expect(db.contentTranslation.upsert.mock.calls[0][0].create).toMatchObject({ key: 'value', value: 'Rouge', locale: 'fr', digest: 'dg-value' });
     expect(result.savedResources).toEqual([METAFIELD]);
+    expect(result.translations).toEqual({ [METAFIELD]: { value: 'Rouge' } });
     expect(lastTaskUpdate(db).status).toBe('completed');
   });
 
@@ -378,16 +421,29 @@ describe('handleTranslateSubResources', () => {
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it('(current) a failed resource still ends the Task as "completed"', async () => {
+  it('a failed resource ends the Task as completed_with_errors, with the failure in the result', async () => {
     const w = installAdmin({
       register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'no' }], translations: [] } } }),
     });
     const db = makeDb();
-    await run(db, w.admin);
+    const result = body(await run(db, w.admin));
 
     const data = lastTaskUpdate(db);
-    expect(data.status).toBe('completed');
-    expect(JSON.parse(data.result)).toMatchObject({ failedCount: 1 });
+    expect(data.status).toBe('completed_with_errors');
+    expect(JSON.parse(data.result)).toMatchObject({ failedCount: 1, failedResources: [METAFIELD], failedLocales: ['fr'] });
+    // The page paints `translations` as saved: a refused one must not be in it.
+    expect(result.translations).toEqual({});
+  });
+
+  it('an accepted-but-un-echoed write is failed, not saved', async () => {
+    const w = installAdmin({
+      register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
+    });
+    const db = makeDb();
+    const result = body(await run(db, w.admin));
+
+    expect(result.failedResources).toEqual([METAFIELD]);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 });
 
@@ -404,7 +460,7 @@ describe('handleTranslateSubResourceToAllLocales', () => {
   };
   const lastTaskUpdate = (db: any) => db.task.update.mock.calls.at(-1)[0].data;
 
-  it('writes every foreign locale (digest sent) and mirrors the rows (currently WITHOUT a digest)', async () => {
+  it('writes every foreign locale and mirrors the confirmed rows WITH their digest', async () => {
     const w = installAdmin();
     const db = makeDb();
     const result = body(await run(db, w.admin));
@@ -412,12 +468,12 @@ describe('handleTranslateSubResourceToAllLocales', () => {
     expect(w.of('register').map((c) => c.variables.translations[0].locale).sort()).toEqual(['fr', 'it']);
     const created = db.contentTranslation.upsert.mock.calls.map((c: any[]) => c[0].create);
     expect(created.map((c: any) => c.locale).sort()).toEqual(['fr', 'it']);
-    expect(created.every((c: any) => c.digest === undefined)).toBe(true); // (current)
+    expect(created.every((c: any) => c.digest === 'dg-value')).toBe(true);
     expect(result.failedLocales).toEqual([]);
     expect(lastTaskUpdate(db).status).toBe('completed');
   });
 
-  it('(current) a locale Shopify refused is neither reported nor reflected in the Task status', async () => {
+  it('a locale Shopify refused is reported in failedLocales/failedResources, ends the Task completed_with_errors, and is not mirrored', async () => {
     const w = installAdmin({
       register: (variables) =>
         variables.translations[0].locale === 'it'
@@ -434,10 +490,24 @@ describe('handleTranslateSubResourceToAllLocales', () => {
     const db = makeDb();
     const result = body(await run(db, w.admin));
 
-    expect(result.failedLocales).toEqual([]);
-    expect(lastTaskUpdate(db).status).toBe('completed');
-    // ...and the refused locale was not mirrored.
+    expect(result.failedLocales).toEqual(['it']);
+    expect(result.failedResources).toEqual([METAFIELD]);
+    const data = lastTaskUpdate(db);
+    expect(data.status).toBe('completed_with_errors');
+    expect(JSON.parse(data.result)).toMatchObject({ translatedLocales: ['fr'], failedLocales: ['it'], failedResources: [METAFIELD] });
     expect(db.contentTranslation.upsert.mock.calls.map((c: any[]) => c[0].create.locale)).toEqual(['fr']);
+  });
+
+  it('an unechoed write in a locale is a failed locale too', async () => {
+    const w = installAdmin({
+      register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
+    });
+    const db = makeDb();
+    const result = body(await run(db, w.admin));
+
+    expect(result.failedLocales.sort()).toEqual(['fr', 'it']);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(lastTaskUpdate(db).status).toBe('completed_with_errors');
   });
 });
 
@@ -507,14 +577,57 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('(current) a removal Shopify did not echo deletes the local rows anyway', async () => {
+  it('deletes NOTHING locally when Shopify confirmed nothing and still holds the translation', async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: 'name', value: 'Couleur', market: null }] } } }),
+    });
+    const db = makeDb();
+    db.contentTranslation.findMany.mockResolvedValue([{ locale: 'fr', key: 'name' }, { locale: 'it', key: 'name' }]);
+    await save(db, w.admin, { [OPTION]: { name: 'Farbe' } });
+
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('a gap locale gets the re-read only for THAT locale; only the confirmed locale is deleted locally (shop-scoped)', async () => {
+    const w = installAdmin({
+      remove: (v) => echoRemoved(v.translationKeys, v.locales.filter((l: string) => l === 'fr')),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: 'name', value: 'Colore', market: null }] } } }),
+    });
+    const db = makeDb();
+    db.contentTranslation.findMany.mockResolvedValue([{ locale: 'fr', key: 'name' }, { locale: 'it', key: 'name' }]);
+    await save(db, w.admin, { [OPTION]: { name: 'Farbe' } });
+
+    const rereads = w.of('reread');
+    expect(rereads).toHaveLength(1);
+    expect(rereads[0].variables.locale).toBe('it');
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({
+      shop: SHOP, resourceId: OPTION, key: 'name', locale: { in: ['fr'] }, marketId: '',
+    });
+  });
+
+  it('a DB-only row (Shopify never held it) IS cleared: the re-read confirms the key gone', async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+    });
+    const db = makeDb();
+    db.contentTranslation.findMany.mockResolvedValue([{ locale: 'it', key: 'value' }]);
+    await save(db, w.admin, {}, { [METAFIELD]: 'new' });
+
+    expect(w.of('reread')).toHaveLength(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({ shop: SHOP, resourceId: METAFIELD, key: 'value', locale: { in: ['it'] } });
+  });
+
+  it('a gap locale with NO local row costs no re-read and deletes nothing', async () => {
     const w = installAdmin({
       remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
     });
     const db = makeDb();
     await save(db, w.admin, { [OPTION]: { name: 'Farbe' } });
 
-    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(w.of('reread')).toHaveLength(0);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
   it('does nothing when the merchant switched the deletion off', async () => {
@@ -530,9 +643,20 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
 
 // ---------------------------------------------------------------------------
 describe('handleLoadSubResourceTranslations — read-back backfill', () => {
-  it('(current) mirrors the translations Shopify holds for a resource with no local row, WITHOUT a digest', async () => {
+  it('mirrors the translations Shopify holds for a resource with no local row, WITH the digest of the same read', async () => {
     const w = installAdmin({
-      readBack: () => ({ data: { translatableResource: { translations: [{ key: 'value', value: 'Rouge', locale: 'fr' }] } } }),
+      readBack: () => ({
+        data: {
+          translatableResource: {
+            translatableContent: [{ key: 'value', digest: 'dg-read' }, { key: 'name', digest: 'dg-name-read' }],
+            translations: [
+              { key: 'value', value: 'Rouge', locale: 'fr', outdated: false },
+              { key: 'name', value: 'Couleur', locale: 'fr', outdated: true },
+              { key: 'other', value: null, locale: 'fr', outdated: false },
+            ],
+          },
+        },
+      }),
     });
     const db = makeDb();
     const result = body(
@@ -542,10 +666,11 @@ describe('handleLoadSubResourceTranslations — read-back backfill', () => {
       ),
     );
 
-    expect(result.translations).toEqual({ [METAFIELD]: { value: 'Rouge' } });
-    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
-    const create = db.contentTranslation.upsert.mock.calls[0][0].create;
-    expect(create).toMatchObject({ shop: SHOP, resourceId: METAFIELD, resourceType: 'Metafield', key: 'value', value: 'Rouge', locale: 'fr' });
-    expect(create.digest).toBeUndefined();
+    expect(result.translations).toEqual({ [METAFIELD]: { value: 'Rouge', name: 'Couleur' } });
+    const created = Object.fromEntries(db.contentTranslation.upsert.mock.calls.map((c: any[]) => [c[0].create.key, c[0].create]));
+    expect(Object.keys(created).sort()).toEqual(['name', 'value']); // the value-less row is not a translation
+    expect(created.value).toMatchObject({ shop: SHOP, resourceId: METAFIELD, resourceType: 'Metafield', value: 'Rouge', locale: 'fr', digest: 'dg-read' });
+    // An OUTDATED row was written against an older source: no digest, or it would hide that it is stale.
+    expect(created.name.digest).toBeNull();
   });
 });

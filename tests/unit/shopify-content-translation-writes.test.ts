@@ -1,7 +1,7 @@
 /**
- * CHARACTERISATION (docs/plans/PLAN_TRANSLATION_WRITE_UNIFICATION.md, Phase B+C).
- *
- * Pins what `saveTranslations`, `deleteAllTranslationsForKeys` and their three
+ * Phase B+C (docs/plans/PLAN_TRANSLATION_WRITE_UNIFICATION.md) -- started as a
+ * characterisation of the pre-rewrite behaviour; the cases that described the
+ * unverified gaps now pin the verified behaviour. Pins what `saveTranslations`, `deleteAllTranslationsForKeys` and their three
  * single-editor callers (updateContent's cleared-field branch, updateContent's
  * primary-change purge, saveImageAltTextTranslation) do, driven through a
  * mocked `admin.graphql` and a mocked db. Written BEFORE the verified rewrite so
@@ -146,29 +146,52 @@ describe('saveTranslations', () => {
     ).rejects.toThrow('Throttled');
   });
 
-  it('(current contract) THROWS on userErrors', async () => {
+  it('does NOT throw on userErrors: they come back, and the key is unconfirmed', async () => {
     const admin = routedAdmin({
       register: { data: { translationsRegister: { userErrors: [{ message: 'Value cannot be blank' }], translations: [] } } },
     });
-    await expect(
-      new ShopifyContentService(admin as never).saveTranslations(rid, [{ key: 'value', value: 'x', locale: 'fr' }]),
-    ).rejects.toThrow('Value cannot be blank');
+    const result = await new ShopifyContentService(admin as never).saveTranslations(rid, [{ key: 'value', value: 'x', locale: 'fr' }]);
+    expect(result.userErrors).toEqual([{ message: 'Value cannot be blank' }]);
+    expect(result.unconfirmedKeys).toEqual(['value']);
+    expect([...result.confirmedKeys]).toEqual([]);
   });
 
-  it('(current contract) returns the echoed translations array, empty when nothing was echoed', async () => {
+  it('returns the VERIFIED result: confirmed keys, the stored value and the digest used', async () => {
     const echoed = routedAdmin({
       register: {
-        data: { translationsRegister: { userErrors: [], translations: [{ key: 'value', locale: 'fr', value: 'Rouge' }] } },
+        data: { translationsRegister: { userErrors: [], translations: [{ key: 'value', locale: 'fr', value: 'Rouge!' }] } },
       },
     });
-    expect(
-      await new ShopifyContentService(echoed as never).saveTranslations(rid, [{ key: 'value', value: 'Rouge', locale: 'fr' }]),
-    ).toEqual([{ key: 'value', locale: 'fr', value: 'Rouge' }]);
+    const result = await new ShopifyContentService(echoed as never).saveTranslations(rid, [{ key: 'value', value: 'Rouge', locale: 'fr' }]);
+    expect([...result.confirmedKeys]).toEqual(['value']);
+    expect(result.confirmedValues.get('value')).toBe('Rouge!');
+    expect(result.digests.get('value')).toBe('dg-value');
+    expect(result.unconfirmedKeys).toEqual([]);
+    expect(result.noDigest).toEqual([]);
+  });
 
+  it('an accepted write Shopify did not echo is unconfirmed, not saved', async () => {
     const silent = routedAdmin({});
-    expect(
-      await new ShopifyContentService(silent as never).saveTranslations(rid, [{ key: 'value', value: 'x', locale: 'fr' }]),
-    ).toEqual([]);
+    const result = await new ShopifyContentService(silent as never).saveTranslations(rid, [{ key: 'value', value: 'x', locale: 'fr' }]);
+    expect(result.unconfirmedKeys).toEqual(['value']);
+    expect([...result.confirmedKeys]).toEqual([]);
+  });
+
+  it('reports a key with no digest in noDigest (never sent)', async () => {
+    const admin = routedAdmin({ digests: [{ key: 'value', digest: null }] });
+    const result = await new ShopifyContentService(admin as never).saveTranslations(rid, [{ key: 'value', value: 'x', locale: 'fr' }]);
+    expect(result.noDigest).toEqual(['value']);
+    expect(admin.calls.some((c) => c.kind === 'register')).toBe(false);
+  });
+
+  it('refuses a call that mixes locales (the result is keyed by key)', async () => {
+    const admin = routedAdmin({});
+    await expect(
+      new ShopifyContentService(admin as never).saveTranslations(rid, [
+        { key: 'value', value: 'x', locale: 'fr' },
+        { key: 'value', value: 'y', locale: 'it' },
+      ]),
+    ).rejects.toThrow('ONE locale');
   });
 });
 
@@ -195,23 +218,55 @@ describe('deleteAllTranslationsForKeys', () => {
     expect(marketCall.variables).toMatchObject({ locales: ['fr'], marketIds: ['gid://shopify/Market/9'] });
   });
 
-  it('(current contract) THROWS on userErrors', async () => {
-    const admin = routedAdmin({
+  it('does NOT throw on userErrors: unconfirmed unless the re-read finds the key gone', async () => {
+    const refused = routedAdmin({
       remove: { data: { translationsRemove: { userErrors: [{ message: 'nope' }], translations: [] } } },
+      readBack: [{ key: 'value', value: 'Rouge' }],
     });
-    await expect(
-      new ShopifyContentService(admin as never).deleteAllTranslationsForKeys({
-        resourceId: rid, translationKeys: ['value'], foreignLocales: ['fr'],
-      }),
-    ).rejects.toThrow('nope');
+    const stuck = await new ShopifyContentService(refused as never).deleteAllTranslationsForKeys({
+      resourceId: rid, translationKeys: ['value'], foreignLocales: ['fr'],
+    });
+    expect(stuck.success).toBe(false);
+    expect(stuck.userErrors).toEqual([{ message: 'nope' }]);
+    expect(stuck.unconfirmedPairs).toEqual(['fr\u0000value']);
   });
 
-  it('(current contract) reports success when Shopify echoes NOTHING back', async () => {
-    const admin = routedAdmin({});
+  it('an unechoed removal is CONFIRMED by the re-read when the key carries nothing (a DB-only row)', async () => {
+    const admin = routedAdmin({ readBack: [] });
     const result = await new ShopifyContentService(admin as never).deleteAllTranslationsForKeys({
       resourceId: rid, translationKeys: ['value'], foreignLocales: ['fr'],
     });
-    expect(result).toMatchObject({ success: true });
+    expect(result.success).toBe(true);
+    expect([...result.confirmedPairs]).toEqual(['fr\u0000value']);
+    expect(admin.calls.filter((c) => c.kind === 'reread')).toHaveLength(1);
+  });
+
+  it('an unechoed removal of a key Shopify STILL holds stays unconfirmed', async () => {
+    const admin = routedAdmin({ readBack: [{ key: 'value', value: 'Rouge' }] });
+    const result = await new ShopifyContentService(admin as never).deleteAllTranslationsForKeys({
+      resourceId: rid, translationKeys: ['value'], foreignLocales: ['fr'],
+    });
+    expect(result.success).toBe(false);
+    expect([...result.confirmedPairs]).toEqual([]);
+  });
+
+  it('several locales: ONE sweep, then the re-read only for the gap locale that has a local row', async () => {
+    const admin = routedAdmin({
+      remove: { data: { translationsRemove: { userErrors: [], translations: [{ key: 'value', locale: 'fr' }] } } },
+      readBack: [],
+    });
+    const result = await new ShopifyContentService(admin as never).deleteAllTranslationsForKeys({
+      resourceId: rid,
+      translationKeys: ['value'],
+      foreignLocales: ['fr', 'it', 'es'],
+      localPairs: new Set(['it\u0000value']),
+    });
+    // fr echoed; it has a gap AND a row -> re-read (absent -> confirmed); es has a gap but no row -> left alone.
+    const rereads = admin.calls.filter((c) => c.kind === 'reread');
+    expect(rereads).toHaveLength(1);
+    expect(rereads[0].variables.locale).toBe('it');
+    expect([...result.confirmedPairs].sort()).toEqual(['fr\u0000value', 'it\u0000value']);
+    expect(result.unconfirmedPairs).toEqual([]);
   });
 });
 
@@ -259,21 +314,50 @@ describe('updateContent — foreign locale, a CLEARED field', () => {
     expect(db.contentTranslation.deleteMany.mock.calls[0][0].where.marketId).toBe('gid://shopify/Market/9');
   });
 
-  it('(current) deletes the local row even when Shopify echoed NOTHING', async () => {
-    const admin = routedAdmin({ digests: [{ key: 'title', digest: 'dg-title' }] });
+  it('a DB-only row (Shopify never held the key) IS cleared: the re-read confirms it gone', async () => {
+    const admin = routedAdmin({ digests: [{ key: 'title', digest: 'dg-title' }], readBack: [] });
     const db = makeDb();
     expect(await clear(admin, db)).toEqual({ success: true });
+    expect(admin.calls.filter((c) => c.kind === 'reread')).toHaveLength(1);
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
   });
 
-  it('(current) rejects on userErrors and touches no local row', async () => {
+  it('an unconfirmed removal KEEPS the local row and says so', async () => {
+    const admin = routedAdmin({
+      digests: [{ key: 'title', digest: 'dg-title' }],
+      readBack: [{ key: 'title', value: 'Titulo' }],
+    });
+    const db = makeDb();
+    const result: any = await clear(admin, db);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('title');
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('a removal Shopify rejected (userErrors) keeps the row, names the reason, and does not throw', async () => {
     const admin = routedAdmin({
       digests: [{ key: 'title', digest: 'dg-title' }],
       remove: { data: { translationsRemove: { userErrors: [{ message: 'refused' }], translations: [] } } },
+      readBack: [{ key: 'title', value: 'Titulo' }],
     });
     const db = makeDb();
-    await expect(clear(admin, db)).rejects.toThrow('refused');
+    const result: any = await clear(admin, db);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('refused');
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('a clear that is confirmed alongside an unconfirmed one is a warning, and only the confirmed row goes', async () => {
+    const admin = routedAdmin({
+      digests: [{ key: 'title', digest: 'dg-title' }, { key: 'body_html', digest: 'dg-body' }],
+      remove: { data: { translationsRemove: { userErrors: [], translations: [{ key: 'title', locale: 'es' }] } } },
+      readBack: [{ key: 'body_html', value: '<p>x</p>' }],
+    });
+    const db = makeDb();
+    const result: any = await clear(admin, db, { updates: { title: '', body: '' } });
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain('body_html');
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where.key).toEqual({ in: ['title'] });
   });
 });
 
@@ -285,8 +369,9 @@ describe('updateContent — primary-change purge (Page, merchant purge switch on
     policy.autoTranslateExternalChanges = false;
   });
 
-  function makePurgeAdmin(remove?: any) {
+  function makePurgeAdmin(remove?: any, readBack: Array<{ key: string; value: string | null }> = []) {
     const removals: any[] = [];
+    const rereads: any[] = [];
     const graphql = vi.fn(async (query: string, options?: any) => ({
       ok: true,
       json: async () => {
@@ -305,10 +390,14 @@ describe('updateContent — primary-change purge (Page, merchant purge switch on
           removals.push(options?.variables);
           return remove ?? { data: { translationsRemove: { userErrors: [], translations: [] } } };
         }
+        if (query.includes('verifyTranslationRemoval')) {
+          rereads.push(options?.variables);
+          return { data: { translatableResource: { translations: readBack.map((r) => ({ ...r, market: null })) } } };
+        }
         return { data: { pageUpdate: { page: { id: pageId, title: 'T' }, userErrors: [] } } };
       },
     }));
-    return { graphql, removals };
+    return { graphql, removals, rereads };
   }
   const makeDb = (localRows: Array<{ locale: string; key: string }> = []) =>
     ({
@@ -341,17 +430,55 @@ describe('updateContent — primary-change purge (Page, merchant purge switch on
     });
   });
 
-  it('(current) deletes the local rows even when Shopify echoed NOTHING', async () => {
-    const admin = makePurgeAdmin();
-    const db = makeDb();
+  it('deletes NOTHING locally when Shopify confirmed nothing and still holds the translation', async () => {
+    const admin = makePurgeAdmin(undefined, [{ key: 'title', value: 'Titre' }]);
+    const db = makeDb([{ locale: 'fr', key: 'title' }, { locale: 'it', key: 'title' }]);
     await savePage(admin, db);
-    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('(current) rejects on userErrors before any local delete', async () => {
-    const admin = makePurgeAdmin({ data: { translationsRemove: { userErrors: [{ message: 'refused' }], translations: [] } } });
-    const db = makeDb();
-    await expect(savePage(admin, db)).rejects.toThrow('refused');
+  it('a gap locale gets the re-read only for THAT locale, and only the confirmed pairs are deleted', async () => {
+    // fr echoed; it has a local row and a gap (Shopify still holds it); es is not a shop locale here.
+    const admin = makePurgeAdmin(
+      { data: { translationsRemove: { userErrors: [], translations: [{ key: 'title', locale: 'fr' }] } } },
+      [{ key: 'title', value: 'Titolo' }],
+    );
+    const db = makeDb([{ locale: 'fr', key: 'title' }, { locale: 'it', key: 'title' }]);
+    await savePage(admin, db);
+
+    expect(admin.rereads).toHaveLength(1);
+    expect(admin.rereads[0].locale).toBe('it');
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { shop, resourceId: pageId, resourceType: 'Page', marketId: '', OR: [{ locale: 'fr', key: { in: ['title'] } }] },
+    });
+  });
+
+  it('a DB-only row (digest null, never held by Shopify) IS cleared: the re-read confirms it gone', async () => {
+    const admin = makePurgeAdmin(undefined, []);
+    const db = makeDb([{ locale: 'it', key: 'title' }]);
+    await savePage(admin, db);
+
+    expect(admin.rereads).toHaveLength(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({
+      shop, marketId: '', OR: [{ locale: 'it', key: { in: ['title'] } }],
+    });
+  });
+
+  it('a locale with a gap and NO local row costs no re-read and deletes nothing', async () => {
+    const admin = makePurgeAdmin();
+    const db = makeDb([]);
+    await savePage(admin, db);
+    expect(admin.rereads).toHaveLength(0);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('userErrors no longer throw out of the save; the rows stay', async () => {
+    const admin = makePurgeAdmin(
+      { data: { translationsRemove: { userErrors: [{ message: 'refused' }], translations: [] } } },
+      [{ key: 'title', value: 'Titre' }],
+    );
+    const db = makeDb([{ locale: 'fr', key: 'title' }]);
+    await expect(savePage(admin, db)).resolves.toMatchObject({ success: true });
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 });
@@ -424,18 +551,29 @@ describe('saveImageAltTextTranslation', () => {
     expect(result).toEqual({ saved: true });
   });
 
-  it('(current) clear: deletes the row even when Shopify echoed nothing', async () => {
+  it('clear: a DB-only row (Shopify holds nothing) IS cleared by the re-read', async () => {
     const admin = makeAltAdmin({});
     const db = makeDb();
     expect(await run(admin, db, '')).toEqual({ saved: true });
+    expect(admin.calls.filter((c) => c.kind === 'reread')).toHaveLength(1);
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
   });
 
-  it('clear: a Shopify error is reported as a failure and keeps the row', async () => {
-    const admin = makeAltAdmin({ remove: { data: { translationsRemove: { userErrors: [{ message: 'refused' }], translations: [] } } } });
+  it('clear: a Shopify refusal is reported as a failure and keeps the row', async () => {
+    const admin = makeAltAdmin({
+      remove: { data: { translationsRemove: { userErrors: [{ message: 'refused' }], translations: [] } } },
+      readBack: [{ key: 'alt', value: 'Rouge', market: null }],
+    });
     const db = makeDb();
     const result = await run(admin, db, '');
-    expect(result).toEqual({ saved: false, reason: 'error' });
+    expect(result).toEqual({ saved: false, reason: 'shopify-error' });
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('clear: an unechoed removal of a translation Shopify still holds keeps the row', async () => {
+    const admin = makeAltAdmin({ readBack: [{ key: 'alt', value: 'Rouge', market: null }] });
+    const db = makeDb();
+    expect(await run(admin, db, '')).toEqual({ saved: false, reason: 'shopify-error' });
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -465,10 +603,19 @@ describe('saveImageAltTextTranslation', () => {
     });
   });
 
-  it('(current) register: a write Shopify accepted but did NOT echo is still reported saved and mirrored', async () => {
+  it('register: a write Shopify accepted but did NOT echo is a failure and is not mirrored', async () => {
     const admin = makeAltAdmin({});
     const db = makeDb();
+    expect(await run(admin, db, 'Rot')).toEqual({ saved: false, reason: 'shopify-error' });
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it('register: mirrors the value Shopify STORED, with the digest', async () => {
+    const admin = makeAltAdmin({
+      register: { data: { translationsRegister: { userErrors: [], translations: [{ key: 'alt', locale: 'fr', value: 'Rot (normalised)' }] } } },
+    });
+    const db = makeDb();
     expect(await run(admin, db, 'Rot')).toEqual({ saved: true });
-    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.upsert.mock.calls[0][0].create).toMatchObject({ value: 'Rot (normalised)', digest: 'dg-alt' });
   });
 });

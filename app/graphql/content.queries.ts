@@ -160,6 +160,25 @@ export const GET_TRANSLATIONS = `#graphql
   }
 `;
 
+// Translations AND the source digests of the same resource in ONE read, so a
+// read-back mirror can store the digest it was read against (stale detection).
+export const GET_TRANSLATIONS_WITH_DIGESTS = `#graphql
+  query getTranslationsWithDigests($resourceId: ID!, $locale: String!, $marketId: ID) {
+    translatableResource(resourceId: $resourceId) {
+      translatableContent {
+        key
+        digest
+      }
+      translations(locale: $locale, marketId: $marketId) {
+        key
+        value
+        locale
+        outdated
+      }
+    }
+  }
+`;
+
 export const GET_TRANSLATABLE_CONTENT = `#graphql
   query getTranslatableContent($resourceId: ID!) {
     translatableResource(resourceId: $resourceId) {
