@@ -314,6 +314,22 @@ describe("updateTranslatedProduct -- foreign register + mirror", () => {
     expect(marked[0]).toContain(PRODUCT);
   });
 
+  it("mirrors the value Shopify STORED (the echo), not the one that was sent", async () => {
+    const w = installAdmin({
+      register: (v: any) => ({
+        data: {
+          translationsRegister: {
+            userErrors: [],
+            translations: v.translations.map((t: any) => ({ key: t.key, locale: t.locale, value: `${t.value} (stored)`, market: null })),
+          },
+        },
+      }),
+    });
+    const db = makeDb();
+    await saveForeign(w.admin, { title: "Hemd" });
+    expect(db.contentTranslation.upsert.mock.calls[0][0].create.value).toBe("Hemd (stored)");
+  });
+
   it("a register refused with userErrors fails the save (500) and mirrors nothing", async () => {
     const w = installAdmin({
       register: () => ({ data: { translationsRegister: { userErrors: [{ message: "Title is invalid" }], translations: [] } } }),
@@ -322,25 +338,58 @@ describe("updateTranslatedProduct -- foreign register + mirror", () => {
     const r: any = await saveForeign(w.admin, { title: "Hemd" });
 
     expect(r.init?.status).toBe(500);
-    expect(body(r)).toMatchObject({ success: false, error: "Title is invalid" });
+    expect(body(r)).toMatchObject({ success: false });
+    expect(body(r).error).toContain("Title is invalid");
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it("CURRENT GAP: a register Shopify accepted but did not echo is still mirrored and reported as success", async () => {
+  it("a register Shopify accepted but did not echo is NOT mirrored and the save fails", async () => {
     const w = installAdmin({
       register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
     });
     const db = makeDb();
-    const result = body(await saveForeign(w.admin, { title: "Hemd" }));
+    const r: any = await saveForeign(w.admin, { title: "Hemd" });
 
-    expect(result).toMatchObject({ success: true });
-    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(body(r)).toMatchObject({ success: false });
+    expect(body(r).error).toContain("did not confirm storing (title)");
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a PARTIAL echo mirrors only the confirmed key and warns naming the others", async () => {
+    const w = installAdmin({
+      register: (v: any) => ({
+        data: {
+          translationsRegister: {
+            userErrors: [],
+            translations: v.translations.filter((t: any) => t.key === "title").map((t: any) => ({ key: t.key, locale: t.locale, value: t.value, market: null })),
+          },
+        },
+      }),
+    });
+    const db = makeDb();
+    const result = body(await saveForeign(w.admin, { title: "Hemd", handle: "hemd" }));
+
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("(handle)");
+    expect(db.contentTranslation.upsert.mock.calls.map((c: any) => c[0].create.key)).toEqual(["title"]);
+  });
+
+  it("an un-echoed key does not stop a digest-less key from being mirrored locally (digest null)", async () => {
+    const w = installAdmin({
+      productDigests: [{ key: "title", digest: "dg-title" }],
+      register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
+    });
+    const db = makeDb();
+    const r: any = await saveForeign(w.admin, { title: "Hemd", handle: "hemd" });
+
+    expect(body(r)).toMatchObject({ success: false });
+    expect(db.contentTranslation.upsert.mock.calls.map((c: any) => [c[0].create.key, c[0].create.digest])).toEqual([["handle", null]]);
   });
 });
 
 // ---------------------------------------------------------------------------
 describe("updateTranslatedProduct -- foreign remove + DB delete", () => {
-  it("a cleared field is removed for that locale and the local row is deleted", async () => {
+  it("a cleared field is removed for that locale and the local row is deleted (with the shop)", async () => {
     const w = installAdmin();
     const db = makeDb();
     const result = body(await saveForeign(w.admin, { title: "" }));
@@ -350,10 +399,11 @@ describe("updateTranslatedProduct -- foreign remove + DB delete", () => {
       resourceId: PRODUCT, translationKeys: ["title"], locales: ["fr"], marketIds: null,
     });
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
-    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({
-      resourceId: PRODUCT, resourceType: "Product", locale: "fr", marketId: "", key: "title",
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toEqual({
+      shop: SHOP, resourceId: PRODUCT, resourceType: "Product", locale: "fr", marketId: "", key: { in: ["title"] },
     });
-    expect(result).toMatchObject({ success: true });
+    expect(w.of("reread")).toHaveLength(0);
+    expect(result).toEqual({ success: true });
   });
 
   it("a market-scoped clear removes only that market's override", async () => {
@@ -362,30 +412,51 @@ describe("updateTranslatedProduct -- foreign remove + DB delete", () => {
     await saveForeign(w.admin, { seoTitle: "", marketId: MARKET });
 
     expect(w.of("remove")[0].variables.marketIds).toEqual([MARKET]);
-    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({ marketId: MARKET, key: "meta_title" });
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({ marketId: MARKET, key: { in: ["meta_title"] } });
   });
 
-  it("a removal refused with userErrors fails the save (500) and keeps the local row", async () => {
+  it("a DB-only row Shopify never held (no echo) is cleared through the re-read", async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+      // default re-read: the key carries nothing in this locale any more
+    });
+    const db = makeDb();
+    const result = body(await saveForeign(w.admin, { title: "" }));
+
+    expect(w.of("reread")).toHaveLength(1);
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("a removal Shopify did not confirm keeps the row and fails the save when nothing else landed", async () => {
     const w = installAdmin({
       remove: () => ({ data: { translationsRemove: { userErrors: [{ message: "refused" }], translations: [] } } }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: "title", value: "Hemd", market: null }] } } }),
     });
     const db = makeDb();
     const r: any = await saveForeign(w.admin, { title: "" });
 
     expect(r.init?.status).toBe(500);
-    expect(body(r)).toMatchObject({ success: false, error: "refused" });
+    expect(body(r)).toMatchObject({ success: false });
+    expect(body(r).error).toContain("did not confirm removing the translation of (title)");
+    expect(body(r).error).toContain("refused");
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("CURRENT GAP: a removal Shopify accepted but did not echo deletes the local row anyway", async () => {
+  it("a partial clear keeps the unconfirmed row, warns and names the FIELD keys to keep dirty", async () => {
     const w = installAdmin({
-      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [{ key: "title", locale: "fr" }] } } }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: "body_html", value: "<p>x</p>", market: null }] } } }),
     });
     const db = makeDb();
-    const result = body(await saveForeign(w.admin, { title: "" }));
+    const result = body(await saveForeign(w.admin, { title: "", descriptionHtml: "" }));
 
-    expect(result).toMatchObject({ success: true });
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("(body_html)");
+    // The editor's field key, not the Shopify key and not the wire name.
+    expect(result.unconfirmedClearedFields).toEqual(["description"]);
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where.key).toEqual({ in: ["title"] });
   });
 });
 
@@ -452,34 +523,89 @@ describe("updateImageAltTexts -- foreign alt translations", () => {
     expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
   });
 
-  it("CURRENT GAP: an alt register that was not echoed is still mirrored", async () => {
+  it("an alt register that was not echoed is NOT mirrored and the index fails", async () => {
     const w = installAdmin({
-      register: (v: any) =>
-        v.resourceId === MEDIA
-          ? { data: { translationsRegister: { userErrors: [], translations: [] } } }
-          : { data: { translationsRegister: { userErrors: [], translations: [] } } },
+      register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
     });
     const db = makeDb();
     const result = body(await saveForeign(w.admin, { imageAltTexts: JSON.stringify({ 0: "Alt fr" }) }));
 
+    expect(result.failedAltTextIndices).toEqual([0]);
+    expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
+    expect(marked.filter((id) => id !== PRODUCT)).toHaveLength(0);
+  });
+
+  it("mirrors the alt Shopify STORED, under the market it was written for", async () => {
+    const w = installAdmin({
+      register: (v: any) => ({
+        data: {
+          translationsRegister: {
+            userErrors: [],
+            translations: v.translations.map((t: any) => ({ key: t.key, locale: t.locale, value: `${t.value}!`, market: t.marketId ? { id: t.marketId } : null })),
+          },
+        },
+      }),
+    });
+    const db = makeDb();
+    await saveForeign(w.admin, { imageAltTexts: JSON.stringify({ 0: "Alt" }), marketId: MARKET });
+
+    const reg = w.of("register").find((c) => c.variables.resourceId === MEDIA)!;
+    expect(reg.variables.translations[0]).toMatchObject({ marketId: MARKET });
+    expect(db.productImageAltTranslation.upsert.mock.calls[0][0].create).toMatchObject({ altText: "Alt!", marketId: MARKET });
+  });
+
+  it("a cleared alt whose removal is not confirmed keeps the mirror row and fails the index", async () => {
+    const w = installAdmin({
+      remove: (v: any) =>
+        v.resourceId === MEDIA
+          ? { data: { translationsRemove: { userErrors: [{ message: "no" }], translations: [] } } }
+          : { data: { translationsRemove: { userErrors: [], translations: [] } } },
+      reread: () => ({ data: { translatableResource: { translations: [{ key: "alt", value: "old", market: null }] } } }),
+    });
+    const db = makeDb();
+    const result = body(await saveForeign(w.admin, { imageAltTexts: JSON.stringify({ 0: "" }) }));
+
+    expect(result.failedAltTextIndices).toEqual([0]);
+    expect(db.productImageAltTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("a DB-only alt row (Shopify held nothing) is cleared through the re-read", async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+    });
+    const db = makeDb();
+    const result = body(await saveForeign(w.admin, { imageAltTexts: JSON.stringify({ 0: "" }) }));
+
     expect(result.failedAltTextIndices).toBeUndefined();
-    expect(db.productImageAltTranslation.upsert).toHaveBeenCalledTimes(1);
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({ where: { imageId: "img-1", locale: "fr", marketId: "" } });
+  });
+
+  it("resolves the cache row from (product, media) at write time, never from the row read earlier", async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    // The product sync recreated the row between the read and the write.
+    db.productImage.findFirst.mockResolvedValue({ id: "img-recreated" });
+    await saveForeign(w.admin, { imageAltTexts: JSON.stringify({ 0: "Alt fr" }) });
+
+    expect(db.productImage.findFirst.mock.calls[0][0].where).toMatchObject({ mediaId: MEDIA, product: { shop: SHOP }, productId: PRODUCT });
+    expect(db.productImageAltTranslation.upsert.mock.calls[0][0].create.imageId).toBe("img-recreated");
   });
 });
 
 // ---------------------------------------------------------------------------
 describe("updatePrimaryProduct -- primary-change purge", () => {
-  it("removes the changed field's translations in every foreign locale, then deletes the local rows", async () => {
+  it("removes the changed field's translations in every foreign locale, then deletes the confirmed local rows (with the shop)", async () => {
     const w = installAdmin();
     const db = makeDb();
     const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
 
-    expect(result).toMatchObject({ success: true });
+    expect(result.success).toBe(true);
+    expect(result.warning).toBeUndefined();
     const rem = w.of("remove")[0].variables;
     expect(rem).toMatchObject({ resourceId: PRODUCT, translationKeys: ["title"], locales: ["fr", "it"] });
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
-    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({
-      resourceId: PRODUCT, resourceType: "Product", marketId: "", key: "title", locale: { in: ["fr", "it"] },
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toEqual({
+      shop: SHOP, resourceId: PRODUCT, resourceType: "Product", marketId: "", key: { in: ["title"] }, locale: { in: ["fr", "it"] },
     });
     // The market layer is purged beside it, through its own module.
     expect(repairs.market).toHaveLength(1);
@@ -503,29 +629,100 @@ describe("updatePrimaryProduct -- primary-change purge", () => {
     expect(w.of("remove")).toHaveLength(0);
   });
 
-  it("an error in the purge never fails the primary write that already succeeded", async () => {
-    const w = installAdmin({ removeThrows: true });
-    makeDb();
+  it("deletes ONLY the confirmed pairs: a locale with a gap that the re-read finds still translated keeps its row", async () => {
+    const w = installAdmin({
+      // Only fr is echoed by the multi-locale call (and by nothing else).
+      remove: (v: any) => ({
+        data: {
+          translationsRemove: {
+            userErrors: [],
+            translations: v.locales.includes("fr") ? [{ key: "title", locale: "fr" }] : [],
+          },
+        },
+      }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: "title", value: "Camicia", market: null }] } } }),
+    });
+    const db = makeDb();
+    db.contentTranslation.findMany.mockResolvedValue([
+      { locale: "fr", key: "title" },
+      { locale: "it", key: "title" },
+    ]);
     const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
-    expect(result).toMatchObject({ success: true });
+
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toEqual({
+      shop: SHOP, resourceId: PRODUCT, resourceType: "Product", marketId: "",
+      OR: [{ locale: "fr", key: { in: ["title"] } }],
+    });
+    // The gap locale was re-read once, on its own.
+    expect(w.of("reread")).toHaveLength(1);
+    expect(w.of("reread")[0].variables.locale).toBe("it");
+    // A save that succeeded says what it could not clean up.
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("(title)");
+    expect(result.warning).toContain("(it)");
   });
 
-  it("CURRENT GAP: the local rows are deleted even though Shopify's removal answered userErrors", async () => {
+  it("a DB-only row Shopify never held (no echo) is purged through the gap re-read", async () => {
     const w = installAdmin({
-      remove: () => ({ data: { translationsRemove: { userErrors: [{ message: "refused" }], translations: [] } } }),
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+    });
+    const db = makeDb();
+    db.contentTranslation.findMany.mockResolvedValue([{ locale: "fr", key: "title" }, { locale: "it", key: "title" }]);
+    const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+
+    expect(w.of("reread")).toHaveLength(2);
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({ shop: SHOP, key: { in: ["title"] }, locale: { in: ["fr", "it"] } });
+    expect(result.warning).toBeUndefined();
+  });
+
+  it("with no local row there is nothing to delete and nothing to re-read for an unechoed pair", async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
     });
     const db = makeDb();
     const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
 
-    expect(result).toMatchObject({ success: true });
-    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(w.of("reread")).toHaveLength(0);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+    expect(result.warning).toBeUndefined();
   });
 
-  it("CURRENT GAP: the delete's `where` carries no shop", async () => {
-    const w = installAdmin();
+  it("a removal answered with userErrors deletes nothing locally while the rows are still translated", async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [{ message: "refused" }], translations: [] } } }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: "title", value: "x", market: null }] } } }),
+    });
     const db = makeDb();
-    await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) });
-    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where.shop).toBeUndefined();
+    db.contentTranslation.findMany.mockResolvedValue([{ locale: "fr", key: "title" }, { locale: "it", key: "title" }]);
+    const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("did not confirm removing");
+  });
+
+  it("an error in the purge never fails the primary write that already succeeded: it is a warning", async () => {
+    const w = installAdmin({ removeThrows: true });
+    const db = makeDb();
+    const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("could not be removed");
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("a failed local-row lookup falls back to re-reading every gap", async () => {
+    const w = installAdmin({
+      remove: () => ({ data: { translationsRemove: { userErrors: [], translations: [] } } }),
+    });
+    const db = makeDb();
+    db.contentTranslation.findMany.mockRejectedValue(new Error("db blink"));
+    const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+
+    expect(w.of("reread")).toHaveLength(2);
+    expect(result.success).toBe(true);
   });
 });
 
