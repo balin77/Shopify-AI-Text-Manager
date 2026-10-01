@@ -1095,11 +1095,13 @@ export default function ProductsPage() {
               imageManagerState.reloadVariants();
               revalidator.revalidate();
             },
+            onSaveResponse: editor.helpers.trackRetranslationTasks,
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
               onSaveResponse={editor.helpers.trackRetranslationTasks}
+              backgroundRefreshVersion={editor.helpers.backgroundRefreshVersion}
               productImages={
                 productImagesOverride.get(editor.selectedItem.id) ??
                 (editor.selectedItem.images ?? []).map((img: any) => ({

@@ -294,6 +294,8 @@ interface UnifiedContentEditorProps {
     productTitle?: string;
     productId?: string;
     onApplySuccess?: () => void;
+    /** Apply / SKU answers, forwarded to the editor's re-translation watcher. */
+    onSaveResponse?: (response: unknown) => void;
   };
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
@@ -2638,6 +2640,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   shopLocales={shopLocales.map((l) => l.locale)}
                   primaryLocale={primaryLocale}
                   onApplySuccess={imageManager.onApplySuccess}
+                  onSaveResponse={imageManager.onSaveResponse}
                   selectedGids={imageManager.selectedGalleryGids}
                 />
               )}

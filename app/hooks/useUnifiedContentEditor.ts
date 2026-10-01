@@ -651,7 +651,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
-    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, rollbackCopyAltText, discardCopyAltRecord, altBaselineSnapshot, getPendingCopyAltItemId,
+    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef, pendingAltTranslateToastRef, rollbackCopyAltText, discardCopyAltRecord, altBaselineSnapshot, getPendingCopyAltItemId,
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
@@ -2015,6 +2015,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const copyFieldItemId = pendingCopyFieldItemIdRef.current ?? savedItemId;
       const copyAltItemId = getPendingCopyAltItemId() ?? savedItemId;
       pendingCopyFieldItemIdRef.current = null;
+      // The single alt translate-and-save reports success HERE, once Shopify
+      // confirmed the save, not when the AI answered.
+      const altTranslateToast = pendingAltTranslateToastRef.current;
+      pendingAltTranslateToastRef.current = null;
       let wasCopySave = !!pendingCopyFieldKeyRef.current || pendingCopyAltTextIndexRef.current !== null;
       let copyAltFailed = false;
       if (pendingCopyFieldKeyRef.current) {
@@ -2359,6 +2363,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           "success",
         );
         showInfoBox(text, tone);
+      } else if (altTranslateToast) {
+        const [text, tone] = withRedirect(altTranslateToast, "success");
+        showInfoBox(text, tone);
       } else if (!wasTranslateSave) {
         const [text, tone] = withRedirect(
           String(t.common?.changesSaved || "Changes saved successfully!"),
@@ -2438,6 +2445,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
+      pendingAltTranslateToastRef.current = null;
       inFlightPartialRef.current = null;
       setIsSaving(false);
 
@@ -2480,6 +2488,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       inFlightPartialRef.current = null;
       isSaveFromTranslateRef.current = false;
+      pendingAltTranslateToastRef.current = null;
       setIsSaving(false);
 
       // A refused copy must not leave its spinner behind either.

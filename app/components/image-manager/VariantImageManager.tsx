@@ -5,6 +5,8 @@ import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
+import { useInfoBox } from "../../contexts/InfoBoxContext";
+import { classifyAltSaveResponse, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
 import { usePlan } from "../../contexts/PlanContext";
 import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -155,6 +157,9 @@ interface VariantImageManagerProps {
   onMissingMainImageChange?: (hasMissing: boolean) => void;
   onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
   onGallerySelectionGidsChange?: (gids: string[]) => void;
+  /** Bumped by the editor when a background re-translation finished and the
+   *  loader was reloaded: the foreign alt texts are re-read from the database. */
+  backgroundRefreshVersion?: number;
 }
 
 function mapApiImagesToRefs(images: any[]): ProductImageRef[] {
@@ -219,6 +224,7 @@ export function VariantImageManager({
   seedThreeDModelUrls,
   seedThreeDPreviewUrls,
   onGalleryOrderChange,
+  backgroundRefreshVersion = 0,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const { plan } = usePlan();
@@ -316,12 +322,70 @@ export function VariantImageManager({
   const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
   const altTextFetcher = useFetcher<any>();          // generate / translate (returns text)
   const saveAltTextFetcher = useFetcher<any>();      // save (writes to Shopify)
+  const { showInfoBox } = useInfoBox();
+  const localAltTextsRef = useRef<Record<string, string>>({});
+  localAltTextsRef.current = localAltTexts;
+  const primaryLocaleRef = useRef(primaryLocale);
+  primaryLocaleRef.current = primaryLocale;
+  // Alt saves are SERIALISED over the one fetcher: a second save fired before
+  // the first answer landed used to drop that answer, and with it the task ids
+  // of the re-translation the first one started. One in flight, the rest queued.
+  const altSaveInFlightRef = useRef<QueuedAltSave | null>(null);
+  const altSaveQueueRef = useRef<QueuedAltSave[]>([]);
+  const lastHandledSaveDataRef = useRef<unknown>(null);
+  const dispatchNextAltSave = useCallback(() => {
+    if (altSaveInFlightRef.current) return;
+    const next = altSaveQueueRef.current.shift();
+    if (!next) return;
+    altSaveInFlightRef.current = next;
+    const form = new FormData();
+    form.append("action", "saveImageAltText");
+    form.append("mediaId", next.mediaId);
+    form.append("altText", next.altText);
+    if (next.locale) form.append("locale", next.locale);
+    if (primaryLocaleRef.current) form.append("primaryLocale", primaryLocaleRef.current);
+    saveAltTextFetcher.submit(form, { method: "post" });
+  }, [saveAltTextFetcher]);
   // A primary alt save may start a detached re-translation; hand its task ids
-  // to the editor's one watcher, or the foreign views never refresh.
+  // to the editor's one watcher, or the foreign views never refresh. The
+  // verdict decides the dirty flag: it clears ONLY on a confirmed save.
   useEffect(() => {
     if (saveAltTextFetcher.state !== "idle" || !saveAltTextFetcher.data) return;
-    onSaveResponse?.(saveAltTextFetcher.data);
+    const data = saveAltTextFetcher.data;
+    if (data === lastHandledSaveDataRef.current) return;
+    lastHandledSaveDataRef.current = data;
+    onSaveResponse?.(data);
+    const entry = altSaveInFlightRef.current;
+    altSaveInFlightRef.current = null;
+    if (entry) {
+      const verdict = classifyAltSaveResponse(data);
+      if (verdict.kind === "saved") {
+        // A newer edit of the same image stays dirty.
+        const current = localAltTextsRef.current[entry.url];
+        if (current === undefined || current === entry.altText) {
+          dirtyUrlsRef.current.delete(entry.url);
+          if (dirtyUrlsRef.current.size === 0) onDirtyChange?.(false);
+        }
+      } else {
+        // Keep the merchant's text and its dirty state, and say so.
+        if (!dirtyUrlsRef.current.has(entry.url)) {
+          dirtyUrlsRef.current.add(entry.url);
+          if (dirtyUrlsRef.current.size === 1) onDirtyChange?.(true);
+        }
+        showInfoBox(
+          verdict.message
+            ? String(t.imageManager?.altSaveFailedWithReason ?? "The alt text could not be saved: {error}").replace("{error}", verdict.message)
+            : String(t.imageManager?.altSaveFailed ?? "The alt text could not be saved. Your text is kept, please try again."),
+          "critical",
+        );
+      }
+    }
+    dispatchNextAltSave();
   }, [saveAltTextFetcher.state, saveAltTextFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const submitAltSave = useCallback((entry: QueuedAltSave) => {
+    altSaveQueueRef.current = enqueueAltSave(altSaveQueueRef.current, entry);
+    dispatchNextAltSave();
+  }, [dispatchNextAltSave]);
   // …and the SKU-generated alts, which ride the general fetcher. A response
   // without task ids is ignored by the watcher, so forwarding every one is safe.
   useEffect(() => {
@@ -420,7 +484,17 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     translationsFetcher.submit(form, { method: "post" });
-  }, [currentLanguage, productId, variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-read the open language's alt texts after the server wrote foreign values.
+  const reloadForeignAlts = useCallback(() => {
+    if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
+    const form = new FormData();
+    form.append("action", "loadImageAltTranslations");
+    form.append("productId", productId);
+    form.append("locale", currentLanguage);
+    translationsFetcher.submit(form, { method: "post" });
+  }, [productId, currentLanguage, primaryLocale, translationsFetcher]);
 
   // Apply loaded translations to localAltTexts (mediaId → url → altText)
   useEffect(() => {
@@ -2447,35 +2521,45 @@ export function VariantImageManager({
     const data = altTextFetcher.data;
     if (!data || data === prevAltFetcherData.current) return;
     prevAltFetcherData.current = data;
+    const im = t.imageManager;
+    const failText = (message: string) =>
+      message
+        ? String(im?.altAiFailed ?? "The alt text could not be created: {error}").replace("{error}", message)
+        : String(im?.altSaveFailed ?? "The alt text could not be saved. Your text is kept, please try again.");
+    if (data.actionType === "translateAltTextToAllLocales") {
+      const verdict = classifyAllLocalesResponse(data, enabledLanguages.filter(l => l !== primaryLocale));
+      if (verdict.kind === "success") {
+        showInfoBox(String(im?.altTranslateAllLocalesSuccess ?? "Alt text translated to {count} language(s).").replace("{count}", String(verdict.savedCount)), "success");
+        reloadForeignAlts();
+      } else if (verdict.kind === "partial") {
+        showInfoBox(String(im?.altTranslateAllLocalesPartial ?? "Alt text partially translated. Language(s) {failedLocales} could not be saved.").replace("{failedLocales}", verdict.failedLocales.join(", ")), "warning");
+        reloadForeignAlts();
+      } else if (verdict.kind === "refused") {
+        showInfoBox(verdict.message || failText(""), "critical");
+      } else {
+        showInfoBox(failText(verdict.message), "critical");
+      }
+      return;
+    }
+    const aiVerdict = classifyAltAiResponse(data);
+    if (aiVerdict.kind !== "ok") {
+      showInfoBox(aiVerdict.kind === "refused" && aiVerdict.message ? aiVerdict.message : failText(aiVerdict.message), "critical");
+      return;
+    }
     const idx = data.imageIndex as number | undefined;
     const url = idx !== undefined ? effectiveProductImages[idx]?.url : undefined;
     if (url) {
-      if (data.actionType === "generateAltText" && data.altText !== undefined) {
-        setLocalAltTexts(p => ({ ...p, [url]: data.altText }));
-        // Auto-save the generated result immediately
+      const generated =
+        data.actionType === "generateAltText" && data.altText !== undefined ? (data.altText as string)
+        : data.actionType === "translateAltText" && data.translatedAltText !== undefined ? (data.translatedAltText as string)
+        : undefined;
+      if (generated !== undefined) {
+        setLocalAltTexts(p => ({ ...p, [url]: generated }));
+        localAltTextsRef.current = { ...localAltTextsRef.current, [url]: generated };
+        // Auto-save the result immediately; a failed save keeps it dirty and says so.
         const mediaId = urlToGid[url];
         if (mediaId) {
-          const form = new FormData();
-          form.append("action", "saveImageAltText");
-          form.append("mediaId", mediaId);
-          form.append("altText", data.altText);
-          if (currentLanguage) form.append("locale", currentLanguage);
-          if (primaryLocale) form.append("primaryLocale", primaryLocale);
-          saveAltTextFetcher.submit(form, { method: "post" });
-        }
-      }
-      if (data.actionType === "translateAltText" && data.translatedAltText !== undefined) {
-        setLocalAltTexts(p => ({ ...p, [url]: data.translatedAltText }));
-        // Auto-save the translated result immediately
-        const mediaId = urlToGid[url];
-        if (mediaId) {
-          const form = new FormData();
-          form.append("action", "saveImageAltText");
-          form.append("mediaId", mediaId);
-          form.append("altText", data.translatedAltText);
-          if (currentLanguage) form.append("locale", currentLanguage);
-          if (primaryLocale) form.append("primaryLocale", primaryLocale);
-          saveAltTextFetcher.submit(form, { method: "post" });
+          submitAltSave({ url, mediaId, altText: generated, locale: currentLanguage });
         }
       }
     }
@@ -2492,16 +2576,10 @@ export function VariantImageManager({
   const handleSaveAltText = useCallback((url: string, altText: string) => {
     const mediaId = urlToGid[url];
     if (!mediaId) return;
-    const form = new FormData();
-    form.append("action", "saveImageAltText");
-    form.append("mediaId", mediaId);
-    form.append("altText", altText);
-    if (currentLanguage) form.append("locale", currentLanguage);
-    if (primaryLocale) form.append("primaryLocale", primaryLocale);
-    saveAltTextFetcher.submit(form, { method: "post" });
-    dirtyUrlsRef.current.delete(url);
-    if (dirtyUrlsRef.current.size === 0) onDirtyChange?.(false);
-  }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher, onDirtyChange]);
+    // The dirty flag stays until the server CONFIRMS the save (see the answer
+    // effect above); a failed one keeps the text and the flag.
+    submitAltSave({ url, mediaId, altText, locale: currentLanguage });
+  }, [urlToGid, currentLanguage, submitAltSave]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);

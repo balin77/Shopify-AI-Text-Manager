@@ -8,6 +8,7 @@
 import { data as json } from "react-router";
 import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
 import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
+import { altTranslateTaskStatus } from "~/services/alt-text-feedback.shared";
 import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
 import { decryptApiKey } from "../../utils/encryption.server";
@@ -593,7 +594,7 @@ export async function handleTranslateAltTextToAllLocales(
       await db.task.update({
         where: { id: task.id },
         data: {
-          status: "completed",
+          status: altTranslateTaskStatus(failedLocales.length),
           progress: 100,
           completedAt: new Date(),
           result: JSON.stringify({ translatedAltTexts, imageIndex, targetLocales, savedLocales, failedLocales }),
@@ -687,7 +688,7 @@ export async function handleTranslateAltTextToAllLocales(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: altTranslateTaskStatus(failedLocales.length),
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({ translatedAltTexts, imageIndex, targetLocales, savedLocales, failedLocales }),

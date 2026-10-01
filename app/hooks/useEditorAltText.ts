@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { overlayWritesFromTranslations, overlayIndexWrites } from "../services/alt-text-feedback.shared";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
@@ -109,6 +110,9 @@ interface UseEditorAltTextReturn {
   handleTranslateAltText: (imageIndex: number) => void;
   handleTranslateAltTextToAllLocales: (imageIndex: number) => void;
   handleTranslateAllAltTexts: () => void;
+  /** Success text of a translate-and-save whose save has not answered yet; the
+   *  save-response handler shows it only once the save is CONFIRMED. */
+  pendingAltTranslateToastRef: React.MutableRefObject<string | null>;
   /** Ref to pending copy index so save-response handler can clear loading state */
   pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
   /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
@@ -176,6 +180,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
   // Track image index of an in-flight copy save so save-response handler can clear loading
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
+  const pendingAltTranslateToastRef = useRef<string | null>(null);
   // What the in-flight copy wrote into the overlay, so a failure can undo exactly that.
   const copyOverlayRollbackRef = useRef<{
     itemId: string;
@@ -541,6 +546,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
               savedMarketIdRef.current = selectedMarketId;
               isSavePendingRef.current = true;
               isSaveFromTranslateRef.current = true;
+              // Success is reported by the save-response handler once Shopify
+              // confirmed the save; a failed save shows its own error instead.
+              pendingAltTranslateToastRef.current =
+                t.common?.fieldTranslatedAndSaved
+                  ?.replace("{fieldType}", "Alt-Text")
+                  || "Alt-Text translated and saved successfully";
               safeSubmit(formDataObj, { method: "POST" });
             }
 
@@ -549,14 +560,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
             return newAltTexts;
           });
-
-          // Show success toast
-          showInfoBox(
-            t.common?.fieldTranslatedAndSaved
-              ?.replace("{fieldType}", "Alt-Text")
-              || "Alt-Text translated and saved successfully",
-            "success"
-          );
         }
       }
     );
@@ -620,6 +623,18 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
               .replace("{count}", String(successCount)),
             "success"
           );
+        }
+
+        // The confirmed translations replace whatever an earlier copy-to-all
+        // left in the overlay (it outranks the loaded values), and the open
+        // language shows them at once.
+        for (const { locale, value } of overlayWritesFromTranslations(translatedAltTexts, failedLocales)) {
+          if (!localAltTextOverlayRef.current[locale]) localAltTextOverlayRef.current[locale] = {};
+          localAltTextOverlayRef.current[locale][imageIndex] = value;
+          if (locale === currentLanguageRef.current && !selectedMarketIdRefAlt.current) {
+            setImageAltTexts((prev) => ({ ...prev, [imageIndex]: value }));
+            setOriginalAltTexts((prev) => ({ ...prev, [imageIndex]: value }));
+          }
         }
 
         // Revalidate to fetch fresh data from the database
@@ -704,6 +719,20 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           );
         }
 
+        // Confirmed values go into the overlay for EVERY locale, so a language
+        // switch (or a stale earlier copy) never shows older text.
+        if (result.translatedResults) {
+          const all = result.translatedResults as Record<string, Record<string, string>>;
+          for (const [imgIdxStr, localeMap] of Object.entries(all)) {
+            const idx = parseInt(imgIdxStr, 10);
+            if (Number.isNaN(idx) || failedImages.includes(idx)) continue;
+            for (const { locale, value } of overlayWritesFromTranslations(localeMap, [])) {
+              if (!localAltTextOverlayRef.current[locale]) localAltTextOverlayRef.current[locale] = {};
+              localAltTextOverlayRef.current[locale][idx] = value;
+            }
+          }
+        }
+
         // Update UI state with translated alt texts for current language
         if (result.translatedResults && currentLanguage !== primaryLocale) {
           const translatedForCurrentLocale: Record<number, string> = {};
@@ -735,6 +764,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   // Translate ALL image alt-texts into ONE foreign language (foreign locale button)
   const handleTranslateAllAltTextsForLocale = () => {
+    const requestedLocale = currentLanguage;
     const allImages: ContentImage[] = selectedItem?.images?.length > 0
       ? selectedItem.images
       : selectedItem?.featuredImage ? [selectedItem.featuredImage] : [];
@@ -784,12 +814,32 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           });
 
           if (Object.keys(translated).length > 0) {
-            setImageAltTexts(prev => {
-              const updated = { ...prev, ...translated };
-              setOriginalAltTexts(updated);
-              return updated;
-            });
-            // No auto-save needed - server already saved to Shopify and DB
+            // Into the overlay too: the language-switch effect rebuilds from the
+            // (stale) item, so state alone vanished on the next switch.
+            const written = overlayIndexWrites(
+              result.translatedAltTexts as Record<string, string>,
+              failedImages,
+            );
+            if (!localAltTextOverlayRef.current[requestedLocale]) {
+              localAltTextOverlayRef.current[requestedLocale] = {};
+            }
+            Object.assign(localAltTextOverlayRef.current[requestedLocale], written);
+            if (currentLanguageRef.current === requestedLocale && !selectedMarketIdRefAlt.current) {
+              setImageAltTexts(prev => {
+                const updated = { ...prev, ...translated };
+                setOriginalAltTexts(updated);
+                return updated;
+              });
+            }
+            // The server already saved to Shopify and DB; reload so the item
+            // (and the missing-translation marker) catch up.
+            if (revalidatorRef.current.state === 'idle') {
+              try {
+                revalidatorRef.current.revalidate();
+              } catch (error) {
+                debugLog.revalidate(' Error during revalidation (ignored):', error);
+              }
+            }
           }
         }
 
@@ -1194,6 +1244,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleCopyAltText,
     handleCopyAltTextToAllLocales,
     pendingCopyAltTextIndexRef,
+    pendingAltTranslateToastRef,
     rollbackCopyAltText,
     discardCopyAltRecord,
     altBaselineSnapshot,

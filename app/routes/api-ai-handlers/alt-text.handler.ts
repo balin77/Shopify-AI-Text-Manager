@@ -15,6 +15,7 @@ import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale, resolveWrittenLocale } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { altTranslateTaskStatus } from "~/services/alt-text-feedback.shared";
 
 /**
  * Alt-text requirement line for the item's primary keyword. The shipped default
@@ -731,7 +732,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: altTranslateTaskStatus(failedLocales.length),
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify(aiResponses, null, 2),
@@ -938,7 +939,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
 
     await db.task.update({
       where: { id: bulkAllTask.id },
-      data: { status: "completed", progress: 100, completedAt: new Date() },
+      data: { status: altTranslateTaskStatus(failedImages.length), progress: 100, completedAt: new Date() },
     });
 
     return json({
@@ -1107,7 +1108,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
 
     await db.task.update({
       where: { id: localeTask.id },
-      data: { status: "completed", progress: 100, completedAt: new Date(), result: JSON.stringify(translatedAltTexts) },
+      data: { status: altTranslateTaskStatus(failedImages.length), progress: 100, completedAt: new Date(), result: JSON.stringify(translatedAltTexts) },
     });
 
     return json({
