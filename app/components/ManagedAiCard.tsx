@@ -1,29 +1,17 @@
 /**
  * Where the AI comes from — PLAN_MANAGED_AI_KEY §8, §8a.
  *
- * ONE choice, rendered from ONE state: the merchant's stored `aiKeySource`
- * and whether this deployment serves managed AI. The plan card sells the
- * variant (it is a price); this is where the merchant lives with it.
+ * NO switch: which AI a shop uses is decided by its PLAN (`wantsManagedAi`,
+ * the owner's decision 2026-10-01) — a plan with AI uses ours, otherwise the
+ * merchant's own key, otherwise (once consented) the one-time taster. The
+ * plan tab sells the variant; this card says which case applies, shows the
+ * usage, holds the consent and the stored keys.
  *
- * `managedAiActive` — the Shopify-verified purchase — no longer decides
- * whether this screen applies. Since §10's taster it decides only WHAT the
- * shop gets: a monthly period budget if it bought the variant, the one-time
- * free trial if it did not. The card therefore renders by budget KIND and
- * never by plan, because every sentence about a period is false about a grant
- * that does not come back.
+ * The card renders by budget KIND, never by plan, because every sentence
+ * about a period is false about a grant that does not come back.
  *
- * Four rules here are structural rather than cosmetic:
+ * Rules here are structural rather than cosmetic:
  *
- * - **The way back is never hidden.** In managed mode the six key fields, the
- *   provider select and the model select are noise — none of them affects
- *   anything, and a screen of inert inputs invites a merchant to fill them in
- *   and wonder why nothing changes. What stays is the SWITCH, because "add
- *   your own key and continue immediately" has to be true from the cap
- *   message itself, not only after the mode has already changed.
- * - **Switching modes is a COLUMN, not a price.** It takes effect from the
- *   next call and touches no billing. Changing the PLAN is the separate,
- *   Shopify-routed action with a confirmation and proration; offering that as
- *   the one-click escape at a budget wall would be a lie.
  * - **Consent is its own act, with its own button.** Never folded into a Save
  *   bar that also carries five other settings: a box that becomes consent
  *   when something else is saved is exactly the bundled consent the
@@ -48,8 +36,6 @@ import {
   Text,
 } from "@shopify/polaris";
 import type { FetcherWithComponents } from "react-router";
-import { ToggleRow } from "./ToggleRow";
-import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { AI_PROCESSING_CONSENT_VERSION } from "../services/ai/managed-ai.shared";
 
 export interface ManagedAiBudget {
@@ -68,7 +54,12 @@ export interface ManagedAiBudget {
 }
 
 export interface ManagedAiCardProps {
-  aiKeySource: "byo" | "managed";
+  /**
+   * On managed AI right now. Decided by the PLAN (`wantsManagedAi`): an
+   * AI-included subscription, or — without one and without a key of its own,
+   * once consented — the one-time taster. Not switchable here.
+   */
+  onManaged: boolean;
   /** Shopify verified the shop BOUGHT the AI-included variant. */
   managedAiActive: boolean;
   /** This DEPLOYMENT can serve managed AI at all (§9.4's kill switch). */
@@ -89,6 +80,12 @@ export interface ManagedAiCardProps {
   consentedAt?: string | null;
   consentVersion?: string | null;
   storedApiKeyCount: number;
+  /**
+   * A key is stored for the PREFERRED provider — the same question
+   * `wantsManagedAi` asks. `storedApiKeyCount` counts every provider and
+   * would call a shop "on its own key" while the resolver serves it the taster.
+   */
+  ownKeyStored?: boolean;
   budget?: ManagedAiBudget | null;
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   fetcher: FetcherWithComponents<any>;
@@ -106,7 +103,7 @@ const fill = (template: unknown, values: Record<string, string>): string => {
 };
 
 export function ManagedAiCard({
-  aiKeySource,
+  onManaged,
   managedAiActive,
   managedAiOffered = false,
   tasterActions = 0,
@@ -115,6 +112,7 @@ export function ManagedAiCard({
   consentedAt,
   consentVersion,
   storedApiKeyCount,
+  ownKeyStored = false,
   budget,
   fetcher: pageFetcher,
   t,
@@ -130,15 +128,6 @@ export function ManagedAiCard({
   const m = t?.settings?.managedAi ?? {};
   const [armedDelete, setArmedDelete] = useState(false);
 
-  // A DRAFT, not a write. CLAUDE.md's standing settings rule — a click is a
-  // draft until Save — and here it is not a formality: this one switch hides
-  // the whole AI-keys tab and stops the loader decrypting the merchant's
-  // stored keys, with the only way back being the same unconfirmed click. It
-  // keeps its own Save button rather than joining a save bar, for the reason
-  // the consent card beside it does: the page's bar belongs to the key fields
-  // that this switch is about to hide, and two `ui-save-bar`s cannot both be
-  // mounted.
-  const [modeDraft, setModeDraft] = useState<"byo" | "managed" | null>(null);
 
   // What the server said about the last post. The card's posts are all
   // refusable — a consent against a changed text (409), a mode the deployment
@@ -170,26 +159,27 @@ export function ManagedAiCard({
     fetcher.submit(body, { method: "post" });
   };
 
-  // On managed AI = the merchant chose it AND something can serve it. Since
-  // §10's taster that is no longer the same question as "did they buy it":
-  // `managedAiActive` decides the SIZE of what they get, not whether the
-  // screen applies to them.
-  const onManaged = aiKeySource === "managed" && managedAiOffered;
   const onTaster = budget?.kind === "taster";
   const usedPct = budget ? pct(budget.usedMicros, budget.limitMicros) : 0;
-  const chosenMode = modeDraft ?? aiKeySource;
-  const modeDirty = modeDraft !== null && modeDraft !== aiKeySource;
 
-  // The HINT under the switch answers a different question for four
-  // different shops, and collapsing them is how a merchant who is paying the
-  // surcharge came to read "your plan no longer includes AI".
+  // Which AI this shop uses is decided by its PLAN — there is no switch here
+  // (the owner's decision, 2026-10-01). The line says which case applies, and
+  // the four cases must stay apart: collapsing them is how a merchant paying
+  // the surcharge once read "your plan no longer includes AI".
   const hint = managedAiActive
     ? m.includedHint
     : !managedAiOffered
       ? m.notIncludedHint
-      : tasterSpent
-        ? m.tasterExhausted
-        : fill(m.tasterHint, { actions: String(tasterActions || "") });
+      : !onManaged && ownKeyStored
+        ? m.ownKeyHint
+        : tasterSpent
+          ? m.tasterExhausted
+          : fill(m.tasterHint, { actions: String(tasterActions || "") });
+  // Consent is the opt-in to the taster as well as the precondition of a
+  // plan with AI, so it is asked wherever either can apply — and stays
+  // visible once given, so it can be withdrawn.
+  const showConsent =
+    managedAiOffered && (managedAiActive || !ownKeyStored || consented);
 
   return (
     <BlockStack gap="400">
@@ -205,41 +195,6 @@ export function ManagedAiCard({
             </Banner>
           )}
 
-          {/* The entitlement ended while the merchant's choice still says
-              "managed". Their own key is being used again — the friendly
-              fallback, and not something to discover by noticing a different
-              writing style. */}
-          {/* Two different facts, two different sentences. "Your plan no
-              longer includes AI" is true only of a shop whose entitlement
-              really ended AND whose grant is gone, which is exactly when the
-              resolver hands it back to its own key. A deployment that serves
-              no managed AI is OURS, and saying otherwise to a merchant who is
-              paying the surcharge — which is what one condition for both
-              produced — contradicts the line directly under it. */}
-          {aiKeySource === "managed" && !managedAiActive && tasterSpent && managedAiOffered && (
-            <Banner tone="warning">
-              <Text as="p">{m.entitlementEnded}</Text>
-            </Banner>
-          )}
-          {aiKeySource === "managed" && !managedAiOffered && (
-            <Banner tone="warning">
-              <Text as="p">{m.notAvailableNotice}</Text>
-            </Banner>
-          )}
-
-          {/* CHECKED reflects the stored CHOICE (or the draft over it), never
-              whether we can serve it: an unchecked switch beside "your plan
-              includes AI" tells a paying merchant they turned it off. */}
-          <DisabledActionTooltip hint={managedAiOffered ? undefined : m.notAvailableNotice} block>
-            <ToggleRow
-              layout="inline"
-              label={m.useIncluded ?? ""}
-              checked={chosenMode === "managed"}
-              disabled={!managedAiOffered || busy("saveAiSource")}
-              onChange={(checked) => setModeDraft(checked ? "managed" : "byo")}
-            />
-          </DisabledActionTooltip>
-
           {/* Three different shops read this line: one that bought the AI, one
               that has not and is being offered the taster, and one whose
               deployment serves no managed AI at all. Telling the middle one
@@ -249,28 +204,11 @@ export function ManagedAiCard({
             {hint}
           </Text>
 
-          {modeDirty && (
-            <InlineStack gap="300" blockAlign="center">
-              <Button
-                variant="primary"
-                loading={busy("saveAiSource")}
-                onClick={() => {
-                  post({ actionType: "saveAiSource", aiKeySource: modeDraft as string });
-                  setModeDraft(null);
-                }}
-              >
-                {t?.products?.saveChanges ?? "Save"}
-              </Button>
-              <Button variant="plain" onClick={() => setModeDraft(null)}>
-                {t?.common?.cancel ?? "Cancel"}
-              </Button>
-            </InlineStack>
-          )}
         </BlockStack>
       </Card>
 
       {/* Consent — only where it is needed, and never pre-set. */}
-      {aiKeySource === "managed" && managedAiOffered && (
+      {showConsent && (
         <Card>
           <BlockStack gap="300">
             <Text as="h3" variant="headingMd">
@@ -402,8 +340,9 @@ export function ManagedAiCard({
 
       {/* The stored keys, and the way to erase them. Rendered only where the
           key fields themselves are hidden — otherwise it would be a second,
-          quieter copy of what the merchant is already looking at. */}
-      {onManaged && (
+          quieter copy of what the merchant is already looking at. The fields
+          are hidden only under a plan with AI. */}
+      {managedAiActive && (
         <Card>
           <BlockStack gap="300">
             <Text as="p" variant="bodySm">

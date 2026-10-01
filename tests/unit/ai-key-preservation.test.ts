@@ -41,17 +41,6 @@ const KEY_COLUMNS = [
 ];
 
 describe('only the save that OWNS the keys may write them', () => {
-  it('switching the AI source writes no key column, and no provider or model', () => {
-    // "Back to my own key" means back to the merchant's own SETUP, not to a
-    // default that silently rewrote their provider and model while they were
-    // on managed.
-    const body = branch('saveAiSource');
-    for (const column of [...KEY_COLUMNS, 'preferredProvider', 'selectedModel']) {
-      expect(body, `saveAiSource writes ${column}`).not.toContain(`${column}:`);
-    }
-    expect(body).toContain('aiKeySource: requested');
-  });
-
   it('recording consent writes no key column', () => {
     const body = branch('saveAiProcessingConsent');
     for (const column of KEY_COLUMNS) {
@@ -85,11 +74,33 @@ describe('a merchant can still erase a credential they gave us', () => {
   });
 });
 
+/** Every Prisma `data: { … }` block in the settings route, brace-matched. */
+function dataBlocks(): string[] {
+  const blocks: string[] = [];
+  for (const match of settingsRoute.matchAll(/\bdata:\s*\{/g)) {
+    let depth = 0;
+    let i = settingsRoute.indexOf('{', match.index);
+    const start = i;
+    for (; i < settingsRoute.length; i++) {
+      if (settingsRoute[i] === '{') depth++;
+      else if (settingsRoute[i] === '}') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    blocks.push(settingsRoute.slice(start, i + 1));
+  }
+  return blocks;
+}
+
 describe('the managed mode cannot be granted by a form', () => {
-  it('saveAiSource checks the VERIFIED entitlement before accepting "managed"', () => {
-    const body = branch('saveAiSource');
-    expect(body).toContain('managedAiActive');
-    expect(body).toMatch(/status: 403/);
+  it('there is no action that switches the AI source — the PLAN decides', () => {
+    // The owner's decision (2026-10-01): the merchant no longer chooses the
+    // mode. An action that still accepted a source would be a second answer
+    // to a question only the billing sync may answer.
+    expect(settingsRoute).not.toContain('actionType === "saveAiSource"');
+    const writers = dataBlocks().filter((b) => /\baiKeySource\b/.test(b));
+    expect(writers, 'a settings write touches aiKeySource').toEqual([]);
   });
 
   it('nothing in the settings route WRITES managedAiActive', () => {
@@ -97,32 +108,34 @@ describe('the managed mode cannot be granted by a form', () => {
     // can open devtools. Reads are fine and plentiful (the select, the loader
     // payload, the 403 check) — what must not exist is the column inside a
     // Prisma `data:` block, which is the only shape that writes.
-    const offenders: string[] = [];
-    for (const match of settingsRoute.matchAll(/\bdata:\s*\{/g)) {
-      // Walk to the matching brace so a nested object cannot end the scan early.
-      let depth = 0;
-      let i = settingsRoute.indexOf('{', match.index);
-      const start = i;
-      for (; i < settingsRoute.length; i++) {
-        if (settingsRoute[i] === '{') depth++;
-        else if (settingsRoute[i] === '}') {
-          depth--;
-          if (depth === 0) break;
-        }
-      }
-      const block = settingsRoute.slice(start, i + 1);
-      if (/\bmanagedAiActive\b/.test(block)) offenders.push(block.slice(0, 120));
-    }
+    const offenders = dataBlocks()
+      .filter((block) => /\bmanagedAiActive\b/.test(block))
+      .map((block) => block.slice(0, 120));
     expect(offenders, 'a settings write touches managedAiActive').toEqual([]);
   });
 });
 
-describe('the key plaintext stops travelling in managed mode', () => {
-  it('the loader decrypts only when the fields are rendered', () => {
+describe('the key plaintext stops travelling under a plan with AI', () => {
+  it('the loader withholds the keys exactly when a VERIFIED AI plan is served', () => {
     // It used to decrypt unconditionally and ship six credentials to the
-    // browser on every Settings load, including for shops that cannot see
-    // them.
-    expect(settingsRoute).toMatch(/if \(!onManagedAi\) \{[\s\S]{0,400}decryptApiKeyChecked/);
+    // browser on every Settings load. A taster shop has no key by definition
+    // and must be able to add one, so only a verified plan that actually
+    // carries a period budget withholds them (`keyFieldsWithheld`).
+    expect(settingsRoute).toMatch(
+      /const keysWithheld = keyFieldsWithheld\(session\.shop, settings\);/,
+    );
+    expect(settingsRoute).toMatch(/if \(!keysWithheld\) \{[\s\S]{0,400}decryptApiKeyChecked/);
+  });
+
+  it('saveAiKeys writes no key column under a plan with AI, whatever the form says', () => {
+    // Under the plan the tab is seeded with "" for every key, and
+    // `encryptApiKey("")` is null — writing that back would delete every
+    // stored merchant key. The STORED entitlement refuses even when a form
+    // (stale bundle, devtools) omits `keysWithheld`.
+    const body = branch('saveAiKeys');
+    expect(body).toContain('formData.get("keysWithheld") === "true"');
+    expect(body).toMatch(/keyFieldsWithheld\(session\.shop, storedForKeys\)/);
+    expect(body).toMatch(/const keyWrites = keysWithheld\s*\?\s*\{\}/);
   });
 
   it('and the merchant is still told how many are stored', () => {

@@ -216,20 +216,41 @@ describe('a served managed shop is gated per request', () => {
 
   it('hands back the ledger it CHECKED — which is not the one computed at build', async () => {
     // A cancel mid-run drops the shop from its billing-period budget to the
-    // taster. The config was built under the period key; the preflight now
-    // reads the taster's. The service writes THIS call's usage under what the
-    // preflight answers, or the meter fills a row the budget no longer reads.
+    // taster (a shop with no key of its own that confirmed the processing
+    // notice — with a key it would leave managed altogether, below). The
+    // config was built under the period key; the preflight now reads the
+    // taster's. The service writes THIS call's usage under what the preflight
+    // answers, or the meter fills a row the budget no longer reads.
     const { db } = await import('~/db.server');
-    const built = managed({ managedAiPeriodEnd: new Date(Date.now() + 10 * 86_400_000) });
+    const built = managed({
+      openaiApiKey: null,
+      managedAiPeriodEnd: new Date(Date.now() + 10 * 86_400_000),
+    });
     const creds = aiCredentialsFor(built, 'demo.myshopify.com');
     expect(creds.config.usagePeriod).toMatch(/^b:/);
     expect(creds.config.usagePool).toBe('paid');
 
     (db.aISettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      managed({ managedAiActive: false }),
+      managed({ managedAiActive: false, openaiApiKey: null }),
     );
     const verdict = await creds.config.preflight!();
     expect(verdict).toMatchObject({ ok: true, period: 'taster', pool: 'taster' });
+  });
+
+  it('a cancel mid-run on a shop WITH its own key stands the operator credential down', async () => {
+    // The plan decides: without it the merchant's key wins, so the service
+    // holding OUR key must stop rather than keep spending it for the rest of
+    // a bulk run. The next run resolves to the merchant's key by itself.
+    const { db } = await import('~/db.server');
+    const creds = aiCredentialsFor(managed(), 'demo.myshopify.com');
+    expect(creds.config.credentialSource).toBe('managed');
+    (db.aISettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      managed({ managedAiActive: false }),
+    );
+    expect(await creds.config.preflight!()).toMatchObject({
+      ok: false,
+      reason: 'managedUnavailable',
+    });
   });
 
   it('a spent budget reaches the CALL as a refusal', async () => {

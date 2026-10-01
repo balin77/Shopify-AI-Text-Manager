@@ -69,23 +69,25 @@ function buildAiSettingsFlags(
     hasDeepseekApiKey: !!decryptApiKey(settings?.deepseekApiKey),
     preferredProvider: settings?.preferredProvider || null,
     /**
-     * Managed AI is serving this shop — the merchant's stored CHOICE and the
+     * Managed AI is serving this shop — decided by the PLAN (wantsManagedAi) and the
      * CONSENT. Since §10's taster the verified entitlement is no longer part
      * of it: a Free shop on the one-time grant has a working AI source and no
      * key of its own, and raising the app-wide "add an API key" warning at it
      * points to the one thing it does not have to do.
      *
-     * Two residuals, stated rather than hidden, and both err the same way —
-     * no warning where one would be due, never a warning that is wrong. A
-     * shop whose taster is SPENT reads as working here (establishing
-     * otherwise is an aggregate over the usage ledger, on a loader that runs
-     * on every navigation), and so does one whose deployment has managed AI
-     * switched off. Both meet the truth at the point of use, where the
-     * refusal names the two exits — and the spent one is handed back to its
-     * own key by the resolver anyway, if it has one.
+     * One residual, stated rather than hidden, and it errs the safe way — no
+     * warning where one would be due, never a warning that is wrong: a shop
+     * whose taster is SPENT reads as working here (establishing otherwise is
+     * an aggregate over the usage ledger, on a loader that runs on every
+     * navigation). It meets the truth at the point of use, where the refusal
+     * names the two exits — and is handed back to its own key by the resolver
+     * anyway, if it has one. A deployment with managed AI switched off is NOT
+     * working: there the resolver answers "add a key", and so does the warning.
      */
     managedAiWorking:
-      wantsManagedAi(settings ?? null) && hasCurrentAiProcessingConsent(settings ?? null),
+      managedAvailable &&
+      wantsManagedAi(settings ?? null) &&
+      hasCurrentAiProcessingConsent(settings ?? null),
     /**
      * Managed AI is chosen and this deployment serves it, but the current
      * processing consent is missing — every AI call is refused with

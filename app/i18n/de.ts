@@ -1119,14 +1119,10 @@ export const de = {
     aiApiAccess: "KI-API-Zugangscodes",
     managedAi: {
       heading: "Woher die KI kommt",
-      useOwnKey: "Meinen eigenen API-Key verwenden",
-      useIncluded: "Die im Plan enthaltene KI verwenden",
-      includedHint:
-        "Dein Plan enthält KI. Du kannst jederzeit auf deinen eigenen API-Key wechseln — deine gespeicherten Keys bleiben erhalten.",
+      ownKeyHint: "Dein eigener API-Key wird verwendet. KI ohne eigenen Key gibt es mit einem Plan mit enthaltener KI (unter „Plan\").",
+      includedHint: "Dein Plan enthält KI und sie wird automatisch verwendet. Deine gespeicherten API-Keys bleiben erhalten. Um wieder deinen eigenen Key zu nutzen, wähle unter „Plan\" die Variante ohne KI.",
       notIncludedHint:
         "Dein aktueller Plan enthält keine KI. Wähle einen Plan mit KI, oder trage unten deinen eigenen API-Key ein.",
-      entitlementEnded:
-        "Dein Plan enthält keine KI mehr, deshalb wird wieder dein eigener API-Key verwendet. Deine gespeicherten Keys sind erhalten geblieben.",
       storedKeys: "{count} gespeicherte(r) API-Key(s) — aufbewahrt, damit du zurückwechseln kannst",
       storedKeysNone: "Keine API-Keys gespeichert",
       deleteKeys: "Gespeicherte Keys löschen",
@@ -1156,15 +1152,16 @@ export const de = {
       usageUnavailable:
         "Dein KI-Verbrauch konnte gerade nicht geladen werden. Bis dahin können KI-Aktionen abgelehnt werden.",
       tasterHeading: "Kostenlose KI-Testphase",
-      tasterHint:
-        "Teste die enthaltene KI einmalig mit rund {actions} KI-Aktionen — ohne API-Schlüssel, ohne Planwechsel. Dein eigener Schlüssel bleibt kostenlos und unbegrenzt.",
+      tasterHint: "Ohne eigenen API-Key kannst du die enthaltene KI einmalig mit rund {actions} KI-Aktionen testen — bestätige dazu unten die Verarbeitung. Sobald du einen eigenen Key einträgst, wird dieser verwendet.",
       tasterUsed: "{percent}% deines kostenlosen Guthabens verbraucht",
       tasterStarted: "Gestartet am {date}",
       tasterWarning:
         "Du hast {percent}% deines einmaligen kostenlosen KI-Guthabens verbraucht. Es wird nicht erneuert.",
       tasterExhausted:
         "Dein kostenloses KI-Guthaben ist aufgebraucht. Hinterlege deinen eigenen API-Schlüssel, um kostenlos weiterzuarbeiten, oder wähle einen Plan mit enthaltener KI.",
-      planButton: "Mit enthaltener KI — {price}",
+      planToggle: "Mit enthaltener KI",
+      planToggleHelp:
+        "Zeigt die Pläne mit enthaltener KI: Texte werden über unser KI-Konto erstellt und übersetzt, ohne eigenen API-Schlüssel. Ein Volumen pro Abrechnungszeitraum ist im Preis enthalten. Der Plan ändert sich erst mit dem Button unter dem Plan.",
       planVolume: {
         basic: "Reicht für etwa 300–500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
         pro: "Reicht für etwa 600–1.000 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",

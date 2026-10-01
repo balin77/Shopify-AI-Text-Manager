@@ -89,8 +89,8 @@ describe('who gets a PERIOD budget and who gets the taster', () => {
   });
 
   it('a PAID shop that did NOT buy it gets no period volume — the tampering case', () => {
-    // Posting `aiKeySource=managed` from the BYO variant of Pro must not hand
-    // out Pro's monthly budget. `managedAiActive` is mirrored by
+    // A Pro shop on the BYO variant that lands on the taster must not get
+    // Pro's monthly budget. `managedAiActive` is mirrored by
     // checkAndSyncSubscription and settable by nobody else.
     const settings = settingsFor({ subscriptionPlan: 'pro' });
     expect(periodBudgetMicros(shop, settings, 'pro')).toBe(0);
@@ -116,7 +116,12 @@ describe('who gets a PERIOD budget and who gets the taster', () => {
 
 describe('the meter writes under the key the budget reads under', () => {
   it('a taster shop: the credential and the budget agree on `taster`', async () => {
-    const settings = settingsFor({ managedAiPeriodEnd: new Date('2099-10-14T00:00:00Z') });
+    // A taster shop is one with no AI plan and NO key of its own that
+    // confirmed the processing notice — with a key it would run on that key.
+    const settings = settingsFor({
+      openaiApiKey: null,
+      managedAiPeriodEnd: new Date('2099-10-14T00:00:00Z'),
+    });
 
     const decision = resolveAiCredentials({ shop, settings });
     if (!decision.ok || decision.source !== 'managed') throw new Error('expected managed');

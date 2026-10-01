@@ -104,27 +104,58 @@ export function boughtManagedAi(settings: {
   return settings?.managedAiActive === true;
 }
 
+/** The encrypted key column each provider's key lives in — presence only;
+ *  this module is client-safe and never decrypts. */
+const OWN_KEY_COLUMN: Record<string, string> = {
+  huggingface: "huggingfaceApiKey",
+  gemini: "geminiApiKey",
+  claude: "claudeApiKey",
+  openai: "openaiApiKey",
+  grok: "grokApiKey",
+  deepseek: "deepseekApiKey",
+};
+
 /**
- * May this shop's stored choice of "managed" be honoured?
+ * Does the shop hold a key of its own for the provider it chose?
  *
- * It is the merchant's stored choice ALONE, and that widening is what §10's
- * taster costs. Requiring the verified subscription here — which is what this
- * did until Phase 4 — makes the one grant an evaluating shop is offered before
- * it buys anything unreachable by exactly the population it exists for: a Free
- * shop has no managed subscription by definition.
- *
- * Nothing is given away by the move, because the verified half did not go
- * missing, it went DOWN. `periodBudgetMicros` grants a plan's monthly volume
- * only to a shop that bought the variant; everyone else falls to the taster,
- * which is worth cents and is once per shop ever. A merchant who posts
- * `aiKeySource=managed` without buying therefore gets precisely what they
- * would have been offered anyway — and still only after consent (§2), still
- * against the taster pool and the global cap (§9).
+ * Presence of the stored (encrypted) value — the resolver's
+ * `missingMerchantKey` additionally decrypts, so a corrupted key reads as
+ * "has one" here and as missing there; the merchant then gets the existing
+ * "your key could not be read" answer rather than a managed one.
  */
-export function wantsManagedAi(settings: {
-  aiKeySource?: string | null;
-} | null): boolean {
-  return toAiKeySource(settings?.aiKeySource) === "managed";
+export function hasOwnKeyStored(settings: Record<string, unknown> | null): boolean {
+  if (!settings) return false;
+  const provider = typeof settings.preferredProvider === "string" ? settings.preferredProvider : "";
+  const column = OWN_KEY_COLUMN[provider] ?? OWN_KEY_COLUMN.claude;
+  const value = settings[column];
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Is this shop on managed AI? Decided by the PLAN — the merchant no longer
+ * switches it (the owner's decision, 2026-10-01: "allein durch die Pläne").
+ *
+ *  - A verified AI-included subscription (`managedAiActive`, written only by
+ *    the billing sync) ⇒ managed, whether or not a key of its own is stored.
+ *    Its consent is still required — the resolver refuses without it rather
+ *    than silently spending a key the merchant did not choose.
+ *  - Otherwise the merchant's OWN key, wherever one is stored.
+ *  - Otherwise — no plan with AI, no key — the one-time TASTER (§10), but
+ *    only once the merchant has CONFIRMED the processing notice: that
+ *    confirmation is the opt-in to the trial. Without it the shop stays on
+ *    the old "add an API key" path instead of being told to confirm
+ *    something it never asked for.
+ *
+ * `aiKeySource` is no longer read; the column stays only because dropping a
+ * possibly-applied migration is the riskier error.
+ */
+export function wantsManagedAi(settings: Record<string, unknown> | null): boolean {
+  if (!settings) return false;
+  if (settings.managedAiActive === true) return true;
+  if (hasOwnKeyStored(settings)) return false;
+  return hasCurrentAiProcessingConsent(
+    settings as { aiProcessingConsentAt?: Date | string | null; aiProcessingConsentVersion?: string | null },
+  );
 }
 
 /**

@@ -27,8 +27,13 @@ import {
   isManagedAiEnabled,
   readManagedCredential,
   missingMerchantKey,
+  keyFieldsWithheld,
 } from '~/services/ai/ai-credentials.server';
-import { AI_PROCESSING_CONSENT_VERSION } from '~/services/ai/managed-ai.shared';
+import {
+  AI_PROCESSING_CONSENT_VERSION,
+  wantsManagedAi,
+  hasOwnKeyStored,
+} from '~/services/ai/managed-ai.shared';
 import { TASTER_PERIOD } from '~/config/managed-ai-budget';
 import { DEV_APP_CLIENT_ID } from '~/services/dev-plan-override.server';
 
@@ -160,10 +165,14 @@ describe('the kill switch', () => {
   });
 });
 
-describe('the mode comes from the subscription AND the stored choice', () => {
+describe('the mode comes from the PLAN, never from a stored choice', () => {
   beforeEach(configureManaged);
 
-  it('a shop that asked for managed and bought it gets the operator key', () => {
+  /** A shop with no AI plan and no key of its own that confirmed the notice. */
+  const tasterShop = (over: Record<string, unknown> = {}) =>
+    managedShop({ managedAiActive: false, openaiApiKey: null, ...over });
+
+  it('a shop that bought the AI-included plan gets the operator key', () => {
     const decision = resolveAiCredentials({ shop: 's', settings: managedShop() });
 
     expect(decision.ok).toBe(true);
@@ -177,21 +186,12 @@ describe('the mode comes from the subscription AND the stored choice', () => {
     expect(decision.config.selectedModel).toBe('gpt-5-nano');
   });
 
-  it('a shop that asked for managed but did NOT buy it gets the operator key too — on the TASTER', () => {
-    // §10 changed this answer, deliberately. It used to resolve to the
-    // merchant's own key, which put the one grant an evaluating shop is
-    // offered before it buys anything out of reach of every Free shop — the
-    // only population it exists for.
-    //
-    // What did NOT change is what a merchant can give themselves. The
-    // verified half moved DOWN, to the size of the budget: this shop draws on
-    // the taster (worth cents, once per shop ever, its own ledger key and its
-    // own global pool), never on a plan's monthly volume. That half is
-    // `periodBudgetMicros`, and the two tests below pin it.
-    const decision = resolveAiCredentials({
-      shop: 's',
-      settings: managedShop({ managedAiActive: false }),
-    });
+  it('a shop with no AI plan and no key of its own gets the TASTER — once it consented', () => {
+    // Consent is the opt-in to the trial (§10). What a merchant can give
+    // themselves is still bounded: this shop draws on the taster (worth
+    // cents, once per shop ever, its own ledger key and its own global pool),
+    // never on a plan's monthly volume.
+    const decision = resolveAiCredentials({ shop: 's', settings: tasterShop() });
 
     expect(decision.ok).toBe(true);
     if (!decision.ok || decision.source !== 'managed') throw new Error('expected managed');
@@ -200,6 +200,14 @@ describe('the mode comes from the subscription AND the stored choice', () => {
     // the budget is read under, or the cap never fires.
     expect(decision.config.usagePeriod).toBe(TASTER_PERIOD);
     expect(decision.config.usagePool).toBe('taster');
+  });
+
+  it('without consent the same shop is on the "add an API key" path — never on the taster', () => {
+    const decision = resolveAiCredentials({
+      shop: 's',
+      settings: tasterShop({ aiProcessingConsentAt: null, aiProcessingConsentVersion: null }),
+    });
+    expect(decision).toEqual({ ok: false, reason: 'noKey', provider: 'openai' });
   });
 
   it('a shop that BOUGHT it is metered against its billing period and the paid pool', () => {
@@ -216,36 +224,48 @@ describe('the mode comes from the subscription AND the stored choice', () => {
   });
 
   it('a PAID plan with no verified managed purchase still draws on the taster', () => {
-    // The tampering case: posting `aiKeySource=managed` from a Pro shop on the
-    // BYO variant must not hand it Pro's monthly volume.
+    // A Pro shop on the BYO variant must not get Pro's monthly volume: the
+    // size of the grant follows `managedAiActive`, which only the billing
+    // sync writes.
     const decision = resolveAiCredentials({
       shop: 's',
-      settings: managedShop({ subscriptionPlan: 'pro', managedAiActive: false }),
+      settings: tasterShop({ subscriptionPlan: 'pro' }),
     });
     if (!decision.ok || decision.source !== 'managed') throw new Error('expected managed');
     expect(decision.config.usagePeriod).toBe(TASTER_PERIOD);
     expect(decision.config.usagePool).toBe('taster');
   });
 
-  it('a shop that bought managed but kept its own key gets its own key', () => {
-    // The stored CHOICE decides. This is what makes "I hit the cap" one click
-    // rather than a support ticket.
+  it('a shop that bought the AI plan but kept its own key still runs on the operator key', () => {
+    // The plan decides — a stored key is not a switch any more.
     const decision = resolveAiCredentials({
       shop: 's',
       settings: managedShop({ aiKeySource: 'byo' }),
     });
 
     expect(decision.ok).toBe(true);
-    if (!decision.ok) throw new Error('expected ok');
-    expect(decision.source).toBe('byo');
+    if (!decision.ok || decision.source !== 'managed') throw new Error('expected managed');
+    expect(decision.config.openaiApiKey).toBe('sk-operator');
   });
 
-  it('an unrecognised aiKeySource reads as the merchant\'s own key', () => {
-    const decision = resolveAiCredentials({
-      shop: 's',
-      settings: managedShop({ aiKeySource: 'MANAGED' }),
+  it('a shop with its own key and no AI plan uses its own key, whatever aiKeySource says', () => {
+    for (const aiKeySource of ['managed', 'MANAGED', 'byo', null]) {
+      const decision = resolveAiCredentials({
+        shop: 's',
+        settings: managedShop({ managedAiActive: false, aiKeySource }),
+      });
+      expect(decision.ok && decision.source).toBe('byo');
+      expect(decision.ok && decision.config.openaiApiKey).toBe('sk-merchant');
+    }
+  });
+
+  it('with managed AI switched off, a shop that never bought it and has no key gets noKey', () => {
+    delete process.env.MANAGED_AI_ENABLED;
+    expect(resolveAiCredentials({ shop: 's', settings: tasterShop() })).toEqual({
+      ok: false,
+      reason: 'noKey',
+      provider: 'openai',
     });
-    expect(decision.ok && decision.source).toBe('byo');
   });
 });
 
@@ -436,8 +456,78 @@ describe('a spent taster hands the shop back to its own key (§10)', () => {
     // before it bought anything.
     const decision = resolveAiCredentials({
       shop: 's',
-      settings: managedShop({ managedAiTasterSpentAt: new Date('2026-09-01') }),
+      settings: managedShop({
+        subscriptionPlan: 'pro',
+        managedAiTasterSpentAt: new Date('2026-09-01'),
+      }),
     });
     expect(decision.ok && decision.source).toBe('managed');
+  });
+
+  it('an AI-included plan still INSIDE its trial, taster spent, own key ⇒ own key', () => {
+    // The trial carries no period budget (§10: the trial is the taster), so
+    // "bought the AI" alone must not hold this shop on a spent taster while a
+    // working key of its own is stored.
+    const decision = resolveAiCredentials({
+      shop: 's',
+      settings: managedShop({
+        subscriptionPlan: 'pro',
+        trialConsumedAt: new Date(),
+        managedAiTasterSpentAt: new Date('2026-09-01'),
+      }),
+    });
+    expect(decision.ok && decision.source).toBe('byo');
+  });
+
+  it('keyFieldsWithheld: only where a period budget is really served', () => {
+    expect(keyFieldsWithheld('s', managedShop({ subscriptionPlan: 'pro' }))).toBe(true);
+    // Inside the trial the shop may need its own key — the fields stay.
+    expect(
+      keyFieldsWithheld('s', managedShop({ subscriptionPlan: 'pro', trialConsumedAt: new Date() })),
+    ).toBe(false);
+    expect(keyFieldsWithheld('s', byoShop({ subscriptionPlan: 'pro' }))).toBe(false);
+  });
+});
+
+describe('wantsManagedAi — the plan decides, the merchant does not', () => {
+  const consent = {
+    aiProcessingConsentAt: new Date(),
+    aiProcessingConsentVersion: AI_PROCESSING_CONSENT_VERSION,
+  };
+
+  it('a verified AI-included plan is managed even with an own key and without consent', () => {
+    // Consent is then the RESOLVER's refusal (`consentMissing`), never a
+    // silent fall-back to a key the plan replaced.
+    expect(
+      wantsManagedAi({ preferredProvider: 'openai', openaiApiKey: 'sk-x', managedAiActive: true }),
+    ).toBe(true);
+  });
+
+  it('an own key for the preferred provider is BYO, consent or not, aiKeySource or not', () => {
+    expect(
+      wantsManagedAi({
+        preferredProvider: 'openai',
+        openaiApiKey: 'enc',
+        managedAiActive: false,
+        aiKeySource: 'managed',
+        ...consent,
+      }),
+    ).toBe(false);
+  });
+
+  it('no plan and no key: the taster only with CURRENT consent', () => {
+    const base = { preferredProvider: 'openai', openaiApiKey: null, managedAiActive: false };
+    expect(wantsManagedAi({ ...base, ...consent })).toBe(true);
+    expect(wantsManagedAi(base)).toBe(false);
+    expect(wantsManagedAi({ ...base, ...consent, aiProcessingConsentVersion: '2020-01-01.1' })).toBe(
+      false,
+    );
+    expect(wantsManagedAi(null)).toBe(false);
+  });
+
+  it('a key for ANOTHER provider is not an own key for the preferred one', () => {
+    const s = { preferredProvider: 'openai', claudeApiKey: 'enc', openaiApiKey: '  ' };
+    expect(hasOwnKeyStored(s)).toBe(false);
+    expect(wantsManagedAi({ ...s, ...consent })).toBe(true);
   });
 });

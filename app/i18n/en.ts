@@ -1115,14 +1115,10 @@ export const en: Translation = {
     aiApiAccess: "AI API Access Codes",
     managedAi: {
       heading: "Where the AI comes from",
-      useOwnKey: "Use my own API key",
-      useIncluded: "Use the AI included in my plan",
-      includedHint:
-        "Your plan includes AI. You can switch to your own API key at any time — your stored keys are kept.",
+      ownKeyHint: "Your own API key is used. AI without a key of your own comes with a plan that includes AI (under \"Plan\").",
+      includedHint: "Your plan includes AI and it is used automatically. Your stored API keys are kept. To use your own key again, choose the variant without AI under \"Plan\".",
       notIncludedHint:
         "Your current plan does not include AI. Choose an AI-included plan to use ours, or add your own API key below.",
-      entitlementEnded:
-        "Your plan no longer includes AI, so your own API key is being used again. Your stored keys were kept.",
       storedKeys: "{count} stored API key(s), kept so you can switch back",
       storedKeysNone: "No API keys stored",
       deleteKeys: "Delete stored keys",
@@ -1155,15 +1151,16 @@ export const en: Translation = {
       usageUnavailable:
         "Your AI usage could not be loaded right now. AI actions may be refused until it can.",
       tasterHeading: "Free AI trial",
-      tasterHint:
-        "Try the included AI with about {actions} AI actions, once — no API key, no plan change. Your own key stays free and unlimited.",
+      tasterHint: "Without an API key of your own you can try the included AI once with about {actions} AI actions — confirm the processing below. As soon as you add your own key, that key is used.",
       tasterUsed: "{percent}% of your free trial used",
       tasterStarted: "Started on {date}",
       tasterWarning:
         "You have used {percent}% of your one-time free AI trial. It does not reset.",
       tasterExhausted:
         "Your free AI trial is used up. Add your own API key to continue for free, or choose an AI-included plan.",
-      planButton: "With AI included — {price}",
+      planToggle: "With AI included",
+      planToggleHelp:
+        "Shows the plans with AI included: texts are written and translated through our AI account, with no API key of your own. A volume per billing period is included in the price. Your plan only changes with the button below a plan.",
       planVolume: {
         basic: "Enough for about 300–500 products translated into one language each period.",
         pro: "Enough for about 600–1,000 products translated into one language each period.",

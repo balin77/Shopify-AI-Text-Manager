@@ -30,6 +30,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { formatNumber } from "../utils/format";
 import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
 import { MANAGED_BILLING_PLANS } from "../config/billing";
+import { ToggleRow } from "./ToggleRow";
 
 /**
  * Wraps a plan-card value in <strong> when the row differs from the tier below.
@@ -38,26 +39,6 @@ import { MANAGED_BILLING_PLANS } from "../config/billing";
  */
 function PlanValue({ highlight, children }: { highlight: boolean; children: ReactNode }) {
   return highlight ? <strong>{children}</strong> : <>{children}</>;
-}
-
-/** "{price}" etc., with an absent template yielding an empty string. */
-function fillTemplate(template: unknown, values: Record<string, string>): string {
-  let out = typeof template === "string" ? template : "";
-  for (const [k, v] of Object.entries(values)) out = out.replace(`{${k}}`, v);
-  return out;
-}
-
-/**
- * The managed variant's price for a tier.
- *
- * Read from the shared config rather than restated, so the number on the
- * button and the number Shopify charges cannot drift — and the margin guard
- * covers both, because they are the same constant.
- */
-function formatManagedPrice(plan: BillingPlan): string {
-  if (plan === "free") return "";
-  const cfg = MANAGED_BILLING_PLANS[plan];
-  return `${cfg.price.toFixed(2)} ${cfg.currency}`;
 }
 
 interface SettingsPlanTabProps {
@@ -120,6 +101,12 @@ export function SettingsPlanTab({
   // option silently bypasses it → a downgrade with NO confirmation. Use a
   // Polaris Modal (same pattern as the image-delete confirm).
   const [downgradeConfirmOpen, setDowngradeConfirmOpen] = useState(false);
+  // Which VARIANT the cards show: with AI included, or with the merchant's own
+  // key. A VIEW of the price list, not a setting and not a purchase — nothing
+  // is written by flipping it; only the plan button below a card buys. It
+  // starts on the variant the shop holds, so "current plan" reads true at once.
+  const [withAi, setWithAi] = useState(managedAiActive && managedAiOffered);
+  const showAiVariant = managedAiOffered && withAi;
   const availablePlans = getAvailablePlans();
 
   const performDowngrade = async () => {
@@ -234,6 +221,20 @@ export function SettingsPlanTab({
         {t.settings.availablePlans}
       </Text>
 
+      {/* ONE switch for every card, above them — so it sits at one height and
+          the cards below stay comparable. Only where this deployment can
+          actually serve plan-included AI. */}
+      {managedAiOffered && (
+        <ToggleRow
+          layout="inline"
+          label={t.settings.managedAi?.planToggle ?? ""}
+          help={t.settings.managedAi?.planToggleHelp}
+          checked={withAi}
+          onChange={setWithAi}
+          disabled={planLoading !== null}
+        />
+      )}
+
       <div
         style={{
           display: "grid",
@@ -256,9 +257,16 @@ export function SettingsPlanTab({
           // impossible from inside the app, while the managed button stayed
           // clickable on the product they already had.
           const isCurrentTier = id === subscriptionPlan;
-          const isCurrentPlan = isCurrentTier && !managedAiActive;
           const isCurrentManagedPlan = isCurrentTier && managedAiActive;
-          const price = config ? `€${config.price.toFixed(2)}${t.settings.perMonth}` : t.settings.free;
+          // The card shows ONE variant — the one the switch above selects —
+          // and its button buys exactly that variant. Free has no AI variant.
+          const cardWithAi = showAiVariant && id !== "free";
+          const isCurrentPlan = isCurrentTier && (id === "free" || cardWithAi === managedAiActive);
+          const price = !config
+            ? t.settings.free
+            : cardWithAi
+              ? `€${MANAGED_BILLING_PLANS[id as Exclude<BillingPlan, "free">].price.toFixed(2)}${t.settings.perMonth}`
+              : `€${config.price.toFixed(2)}${t.settings.perMonth}`;
           const shouldPulse = hasApproachingLimit && nextPlan === id;
 
           return (
@@ -288,6 +296,14 @@ export function SettingsPlanTab({
                     <Text as="p" variant="headingLg" fontWeight="bold">
                       {price}
                     </Text>
+                    {/* The included volume, as a work unit a merchant thinks
+                        in — never tokens, never one precise-looking number
+                        of "actions" (PLAN_MANAGED_AI_KEY §8). */}
+                    {cardWithAi && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.settings.managedAi?.planVolume?.[id] ?? ""}
+                      </Text>
+                    )}
 
                     <Divider />
 
@@ -545,37 +561,11 @@ export function SettingsPlanTab({
                   </BlockStack>
 
                   <div style={{ marginTop: "auto", paddingTop: "16px" }}>
-                    {/* PLAN_MANAGED_AI_KEY §8 — each paid tier shows TWO
-                        prices: with your own AI key, and with AI included.
-                        The volume is stated as a work unit the merchant
-                        thinks in, never as a token count and never as a
-                        single precise-looking number of "actions" the next
-                        long description falsifies. Rendered only where the
-                        deployment can actually serve it. */}
-                    {managedAiOffered && id !== "free" && (
-                      <BlockStack gap="200">
-                        <Button
-                          disabled={isCurrentManagedPlan || planLoading !== null}
-                          loading={planLoading === id}
-                          onClick={() => handleSelectPlan(id, "managed")}
-                          fullWidth
-                        >
-                          {isCurrentManagedPlan
-                            ? t.settings.currentPlanButton
-                            : fillTemplate(t.settings.managedAi?.planButton, {
-                                price: formatManagedPrice(id),
-                              })}
-                        </Button>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.settings.managedAi?.planVolume?.[id] ?? ""}
-                        </Text>
-                      </BlockStack>
-                    )}
                     <Button
                       variant={isCurrentPlan ? "secondary" : "primary"}
                       disabled={isCurrentPlan || planLoading !== null}
                       loading={planLoading === id}
-                      onClick={() => handleSelectPlan(id)}
+                      onClick={() => handleSelectPlan(id, cardWithAi ? "managed" : "byo")}
                       fullWidth
                     >
                       {isCurrentPlan
@@ -584,6 +574,11 @@ export function SettingsPlanTab({
                             const planHierarchy: BillingPlan[] = ["free", "basic", "pro", "max"];
                             const currentIndex = planHierarchy.indexOf(subscriptionPlan as BillingPlan);
                             const targetIndex = planHierarchy.indexOf(id);
+                            // Same tier, other variant: adding the AI is the
+                            // step up, dropping it the step down.
+                            if (targetIndex === currentIndex) {
+                              return cardWithAi ? t.settings.upgrade || "Upgrade" : t.settings.downgrade;
+                            }
                             return targetIndex < currentIndex
                               ? t.settings.downgrade
                               : t.settings.upgrade || "Upgrade";

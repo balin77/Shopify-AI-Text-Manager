@@ -129,14 +129,11 @@ function isWithinTrialWindow(settings: AISettings): boolean {
  * The PERIOD budget this shop is entitled to, in micro-euro — zero when it has
  * none.
  *
- * `managedAiActive` is asked HERE and nowhere upstream any more, and that move
- * is what §10 costs. Before the taster, the verified subscription gated the
- * MODE: a merchant who posted `aiKeySource=managed` without buying resolved to
- * no managed credential at all. The taster has to reach exactly that shop, so
- * the mode is now the merchant's stored choice alone — and the verified half
- * moved down here, to the only thing it ever really protected. A shop that did
- * not buy the AI-included variant gets the taster and nothing more, whatever
- * its plan column says and whatever it posts.
+ * `managedAiActive` decides the SIZE here. The mode is decided upstream by
+ * the plan (`wantsManagedAi`): a verified AI-included subscription, or — with
+ * no key of its own and the processing notice confirmed — the one-time taster.
+ * A shop that did not buy the AI-included variant gets the taster and nothing
+ * more, whatever its plan column says and whatever it posts.
  */
 export function periodBudgetMicros(
   shop: string,
