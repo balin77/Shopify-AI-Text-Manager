@@ -94,9 +94,9 @@ describe("registerWithDigests", () => {
         ? registerEcho([{ key: "title", locale: "fr", value: "Titre" }])
         : digestResponse({ title: "dt" }),
     );
-    const r = await registerWithDigests(client, RID, [
-      { key: "title", value: "Titre", locale: "fr" },
-      { key: "product_type", value: "Type", locale: "fr" },
+    const r = await registerWithDigests(client, RID, "fr", [
+      { key: "title", value: "Titre" },
+      { key: "product_type", value: "Type" },
     ]);
     expect([...r.confirmedKeys]).toEqual(["title"]);
     expect(r.noDigest).toEqual(["product_type"]);
@@ -110,9 +110,32 @@ describe("registerWithDigests", () => {
 
   it("sends no register call when no key has a digest", async () => {
     const { client, calls } = fakeClient(() => digestResponse({}));
-    const r = await registerWithDigests(client, RID, [{ key: "title", value: "x", locale: "fr" }]);
+    const r = await registerWithDigests(client, RID, "fr", [{ key: "title", value: "x" }]);
     expect(r.noDigest).toEqual(["title"]);
     expect(calls.filter((c) => c.query.includes("translationsRegister"))).toHaveLength(0);
+  });
+
+  it("throws when the resource itself does not answer, never reporting every key as no-digest", async () => {
+    // An absent translatableResource looks exactly like "no key has a digest";
+    // a caller that mirrors no-digest keys locally must never see it as that.
+    const { client, calls } = fakeClient(() => ({ data: { translatableResource: null } }));
+    await expect(registerWithDigests(client, RID, "fr", [{ key: "title", value: "x" }])).rejects.toThrow(
+      /not found/,
+    );
+    expect(calls.filter((c) => c.query.includes("translationsRegister"))).toHaveLength(0);
+  });
+
+  it("sends every value under the ONE locale and market of the call", async () => {
+    const { client, calls } = fakeClient((query) =>
+      query.includes("translationsRegister")
+        ? registerEcho([{ key: "title", locale: "de", value: "T" }])
+        : digestResponse({ title: "dt" }),
+    );
+    await registerWithDigests(client, RID, "de", [{ key: "title", value: "T" }], "gid://shopify/Market/1");
+    const sent = calls.find((c) => c.query.includes("translationsRegister"))!;
+    expect(sent.variables?.translations).toEqual([
+      { key: "title", value: "T", locale: "de", translatableContentDigest: "dt", marketId: "gid://shopify/Market/1" },
+    ]);
   });
 });
 

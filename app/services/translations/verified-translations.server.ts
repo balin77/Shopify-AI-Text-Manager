@@ -52,6 +52,21 @@ export async function fetchDigestsForResource(
   resourceId: string,
   keys?: string[],
 ): Promise<Map<string, string>> {
+  return (await fetchDigestsForResourceDetailed(gateway, resourceId, keys)).digests;
+}
+
+/**
+ * `fetchDigestsForResource` that also says whether the resource ANSWERED. An
+ * absent `translatableResource` (wrong or deleted id, a type that cannot be
+ * translated) yields no digests exactly like a resource whose keys are all
+ * empty -- the `translatableContent` trap -- and a caller that treats "no
+ * digest" as permission to mirror locally must be able to tell them apart.
+ */
+export async function fetchDigestsForResourceDetailed(
+  gateway: GraphqlClient,
+  resourceId: string,
+  keys?: string[],
+): Promise<{ digests: Map<string, string>; found: boolean }> {
   const response = await gateway.graphql(
     `#graphql
       query bulkEditorTranslatableContent($resourceId: ID!) {
@@ -66,14 +81,15 @@ export async function fetchDigestsForResource(
     errors?: { message: string }[];
   };
   if (data.errors && data.errors.length > 0) throw new Error(data.errors[0].message);
+  const resource = data.data?.translatableResource;
   const wanted = keys && keys.length > 0 ? new Set(keys) : null;
   const map = new Map<string, string>();
-  for (const entry of data.data?.translatableResource?.translatableContent ?? []) {
+  for (const entry of resource?.translatableContent ?? []) {
     if (!entry.digest) continue;
     if (wanted && !wanted.has(entry.key)) continue;
     map.set(entry.key, entry.digest);
   }
-  return map;
+  return { digests: map, found: !!resource && Array.isArray(resource.translatableContent) };
 }
 
 /**
@@ -533,9 +549,6 @@ export async function removeAndVerifyAcrossLocales(
 export interface DigestWriteValue {
   key: string;
   value: string;
-  locale: string;
-  /** Market GID for a market-specific override; omit for global. */
-  marketId?: string;
 }
 
 export interface RegisterWithDigestsResult extends VerifiedWriteResult {
@@ -546,23 +559,31 @@ export interface RegisterWithDigestsResult extends VerifiedWriteResult {
 }
 
 /**
- * "Fetch digest -> register -> verify the echo" in one call: ONE
- * translatableResource query for the digests, then registerAndVerify for the
- * keys that have one. A value with no digest is never sent (translationsRegister
- * requires it) and is reported in `noDigest` so the caller decides whether to
- * mirror it locally (see mirrorConfirmedContentTranslations).
+ * "Fetch digest -> register -> verify the echo" in one call, for ONE locale
+ * (and at most one market): ONE translatableResource query for the digests,
+ * then registerAndVerify for the keys that have one. One locale per call
+ * because the result is keyed by KEY -- with two locales in one call, a key
+ * echoed for one of them would read as confirmed for both, and a per-locale
+ * mirror would then write the unechoed one. A value with no digest is never
+ * sent (translationsRegister requires it) and is reported in `noDigest` so the
+ * caller decides whether to mirror it locally.
  *
- * Throws on transport/GraphQL errors, like the helpers it builds on.
+ * Throws on transport/GraphQL errors, like the helpers it builds on, AND when
+ * the resource itself did not answer: "this resource does not exist" must
+ * never read as "these keys have no digest" (which a caller may mirror).
  */
 export async function registerWithDigests(
   client: GraphqlClient,
   resourceId: string,
+  locale: string,
   values: DigestWriteValue[],
+  marketId?: string,
 ): Promise<RegisterWithDigestsResult> {
   if (values.length === 0) {
     return { confirmedKeys: new Set(), confirmedValues: new Map(), userErrors: [], digests: new Map(), noDigest: [] };
   }
-  const digests = await fetchDigestsForResource(client, resourceId, values.map((v) => v.key));
+  const { digests, found } = await fetchDigestsForResourceDetailed(client, resourceId, values.map((v) => v.key));
+  if (!found) throw new Error(`translatableResource not found: ${resourceId}`);
   const inputs: TranslationInput[] = [];
   const noDigest: string[] = [];
   for (const v of values) {
@@ -574,9 +595,9 @@ export async function registerWithDigests(
     inputs.push({
       key: v.key,
       value: v.value,
-      locale: v.locale,
+      locale,
       translatableContentDigest: digest,
-      ...(v.marketId ? { marketId: v.marketId } : {}),
+      ...(marketId ? { marketId } : {}),
     });
   }
   const result = await registerAndVerify(client, resourceId, inputs);
