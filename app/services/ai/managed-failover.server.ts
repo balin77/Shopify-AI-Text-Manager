@@ -23,6 +23,7 @@
  */
 
 import { logger } from "../../utils/logger.server";
+import { notifyOps } from "../ops-alert.server";
 
 /** Failures and successes inside the rolling window. */
 interface BreakerWindow {
@@ -107,6 +108,11 @@ export function recordBreakerOutcome(
     } else {
       w.openedAt = now;
       w.trips += 1;
+      notifyOps(
+        `breaker:${provider}`,
+        `🚨 Enthaltene KI: ${provider} fällt weiterhin aus (Sperre Nr. ${w.trips}). ` +
+          `Ein dauerhaft fehlerhaftes Modell (abgeschaltet, Schlüssel widerrufen) verbraucht das Ausfall-Budget und legt danach die enthaltene KI lahm.`,
+      );
       logger.error(
         `[ManagedAI] Circuit re-opened for ${provider} (trip ${w.trips}); holding for ${Math.round(
           openDuration(w.trips) / 1000,
@@ -125,6 +131,10 @@ export function recordBreakerOutcome(
     w.trips += 1;
     logger.error(
       `[ManagedAI] Circuit opened for ${provider}: ${failures}/${w.events.length} failed in the last minute`,
+    );
+    notifyOps(
+      `breaker:${provider}`,
+      `🚨 Enthaltene KI: ${provider} vorübergehend gesperrt — ${failures} von ${w.events.length} Aufrufen in der letzten Minute fehlgeschlagen.`,
     );
   }
 }

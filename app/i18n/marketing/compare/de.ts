@@ -399,6 +399,7 @@ export const compareDe: CompareCopy = {
       engines: "Mit enthaltener KI: {list}",
     },
     addApp: "Weitere Apps vergleichen",
+    addAvailable: "Noch verfügbar",
     removeApp: "{name} aus dem Vergleich entfernen",
     strengthsGroup: "Stärken",
     strengthsRow: "Wo die App stark ist",

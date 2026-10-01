@@ -233,7 +233,8 @@ export function CompareMatrix({
               <button
                 type="button"
                 className="mk-compare-matrix__add-button"
-                title={g.addApp}
+                aria-label={g.addApp}
+                aria-describedby="compare-add-hint"
                 aria-expanded={addOpen}
                 aria-haspopup="menu"
                 onClick={() => setAddOpen((open) => !open)}
@@ -242,6 +243,15 @@ export function CompareMatrix({
                 <span className="mk-compare-matrix__add-text">{g.addApp}</span>
                 <span className="mk-compare-matrix__add-count">{hidden.length}</span>
               </button>
+              {/* Hovering names what the button would add, so the visitor
+                  sees the choice before opening the menu. Hidden while the
+                  menu is open, which lists the same apps. */}
+              {!addOpen ? (
+                <span id="compare-add-hint" role="tooltip" className="mk-compare-matrix__add-hint">
+                  <span className="mk-compare-matrix__add-hint-title">{g.addAvailable}</span>
+                  {hidden.map((app) => appName(app)).join(", ")}
+                </span>
+              ) : null}
               {addOpen ? (
                 <ul className="mk-compare-matrix__add-menu" role="menu" aria-label={g.addApp}>
                   {hidden.map((app) => (

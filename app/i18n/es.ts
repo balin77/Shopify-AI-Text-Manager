@@ -1143,6 +1143,7 @@ export const es: Translation = {
       planToggleHelp:
         "Muestra los planes con IA incluida: los textos se crean y traducen con nuestra cuenta de IA, sin clave API propia. El precio incluye un volumen por periodo de facturación. Tu plan solo cambia con el botón debajo de cada plan.",
       planVolume: {
+        free: "Prueba única: unas {actions} acciones de IA, sin suscripción. Después, con tu propia clave API o un plan con IA.",
         basic: "Alcanza para unos 300–500 productos traducidos a un idioma por periodo.",
         pro: "Alcanza para unos 600–1.000 productos traducidos a un idioma por periodo.",
         max: "Alcanza para unos 1.500–2.500 productos traducidos a un idioma por periodo.",
@@ -1554,11 +1555,15 @@ export const es: Translation = {
     goToSettings: "Ir a Configuración",
     preferredProviderNoKey: "Sin clave API de {provider}. Por favor, añade la clave en Configuración o cambia el modelo.",
     preferredProviderNoKeyDescription: "Las funciones de IA requieren una clave API para {provider}.",
+    noApiKeyTasterDescription: "Para usar las funciones de IA, añade una clave API de un proveedor de IA, o prueba primero la IA incluida con un crédito de prueba gratuito único, que activas en Ajustes.",
+    tasterAlternative: "También puedes probar la IA incluida una vez con un crédito de prueba gratuito, que activas en Ajustes.",
     noApiKeyAtAllDescription: "Para usar las funciones de IA, primero debes añadir una clave API de un proveedor de IA.",
     corruptedApiKeyWarning: "La clave API guardada para {provider} no se pudo descifrar y se ha borrado. Vuelve a introducirla y guárdala.",
     apiKeyFormatError: "Esta clave no tiene el formato esperado. Compruébala en el panel del proveedor y pégala de nuevo.",
     apiKeySaveErrorIntro: "Algunas entradas no tienen el formato esperado. Los campos con problemas están resaltados a continuación: corrígelos y vuelve a hacer clic en Guardar.",
     imageManagerSaveError: "No se pudo guardar la configuración del gestor de imágenes. Inténtalo de nuevo.",
+    modelUnavailable: "ya no disponible",
+    modelUnavailableHelp: "El proveedor ya no ofrece este modelo. La app usa temporalmente su sucesor: elige un modelo de la lista y guarda.",
     modelsFallback_no_api_key: "Lista predeterminada — se necesita una clave API para cargar la lista de modelos en vivo.",
     modelsFallback_api_error: "Lista predeterminada — no se pudo contactar con la API del proveedor.",
     modelsFallback_invalid_key: "Lista predeterminada — la clave API guardada parece no ser válida.",

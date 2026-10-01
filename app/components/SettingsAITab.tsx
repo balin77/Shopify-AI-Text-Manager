@@ -112,6 +112,10 @@ export function SettingsAITab({
   // the curated fallback list. Surfaced as a subtle hint under the model
   // dropdown so the merchant understands why the choices are limited.
   const [modelsFallbackReason, setModelsFallbackReason] = useState<null | 'no_api_key' | 'api_error' | 'invalid_key' | 'network'>(null);
+  // A model the provider's LIVE list no longer carries (retired). Kept
+  // selectable so a page load never rewrites the stored pair, but labelled —
+  // left unlabelled it looks like a working choice while every call 404s.
+  const [unavailableModel, setUnavailableModel] = useState<string | null>(null);
 
   // The model list arrives asynchronously AFTER the page renders, so anything
   // it writes back into state happens without the merchant touching anything.
@@ -151,13 +155,20 @@ export function SettingsAITab({
         // provider. Doing that on mount marked the form as dirty and lit up the
         // Save button on a page nobody had edited yet.
         const current = selectedModelRef.current;
+        let missing: string | null = null;
         if (current && !options.some(o => o.value === current)) {
           const replacement = restoreModel !== null ? restoreModel : (data.defaultModel || '');
           if (replacement !== current) setSelectedModel(replacement);
           setAvailableModels(withModel(options, replacement));
+          // Only a LIVE list can say a model is gone; the curated fallback
+          // simply does not know every model a provider offers.
+          if (!data.fromFallback && replacement && !options.some(o => o.value === replacement)) {
+            missing = replacement;
+          }
         } else {
           setAvailableModels(options);
         }
+        setUnavailableModel(missing);
         setModelsFallbackReason(data.fromFallback ? (data.reason || 'api_error') : null);
       } else {
         // Endpoint responded with success=false (bad provider / auth). Use
@@ -429,13 +440,23 @@ export function SettingsAITab({
                   {modelsLoading && <Spinner size="small" />}
                 </InlineStack>
               }
-              options={availableModels.length > 0 ? availableModels : [{ label: t.settings.modelDefault, value: '' }]}
+              options={
+                availableModels.length > 0
+                  ? availableModels.map((o) =>
+                      o.value === unavailableModel
+                        ? { ...o, label: `${o.label} (${t.settings.modelUnavailable ?? "not available"})` }
+                        : o,
+                    )
+                  : [{ label: t.settings.modelDefault, value: '' }]
+              }
               value={selectedModel}
               onChange={setSelectedModel}
               disabled={modelsLoading}
               helpText={
                 modelsLoading
                   ? t.settings.loadingModels
+                  : unavailableModel && selectedModel === unavailableModel
+                  ? t.settings.modelUnavailableHelp ?? t.settings.modelHelp
                   : modelsFallbackReason
                   ? (t.settings as unknown as Record<string, string>)?.[`modelsFallback_${modelsFallbackReason}`] || t.settings.modelHelp
                   : t.settings.modelHelp

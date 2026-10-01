@@ -79,9 +79,8 @@ export type GuideTopicId = (typeof GUIDE_CATEGORIES)[number]["topics"][number];
 
 /**
  * One video per topic, `null` until it is recorded. The page renders a
- * "video follows" frame in its place — same three source kinds as the
- * `/videos` page (`marketing-videos.ts`), and the same click-to-load facade
- * for an embed, so an unwatched guide page sets no third-party cookie.
+ * "video follows" frame in its place. The source kinds live in
+ * `marketing-videos.ts`, and an embed gets the click-to-load facade, so an unwatched guide page sets no third-party cookie.
  *
  * To publish a video, replace its `null`, e.g.
  *   "glossary": { kind: "embed", provider: "youtube", videoId: "abc123" },

@@ -201,7 +201,7 @@ const PRICED_AI_MODELS = {
     'claude-opus-5',
     'claude-opus-4-0-20250514',
   ],
-  gemini: ['gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+  gemini: ['gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   grok: ['grok-3-mini', 'grok-3', 'grok-2-vision-1212', 'grok-4-fast-non-reasoning'],
   deepseek: ['deepseek-chat', 'deepseek-flash', 'deepseek-reasoner'],
   huggingface: [],

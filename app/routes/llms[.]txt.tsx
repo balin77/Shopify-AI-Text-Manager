@@ -38,9 +38,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     "",
     `- [Home](${origin}/): what the app does and frequently asked questions`,
     `- [Features](${origin}/features): every feature area in one page`,
+    `- [Pricing](${origin}/pricing): the four plans, their prices and limits side by side`,
     `- [Guide](${origin}/guide): how each part of the app works, one topic per page`,
     `- [Comparison](${origin}/compare): ${compare.intro}`,
-    `- [Videos](${origin}/videos): walkthroughs`,
     `- [Roadmap](${origin}/roadmap): what is planned and recently shipped`,
     "",
   ];

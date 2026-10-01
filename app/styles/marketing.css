@@ -1,5 +1,5 @@
 /*
- * The PUBLIC website (`/`, `/features`, `/videos`, `/install`).
+ * The PUBLIC website (`/`, `/features`, `/install`).
  *
  * Self-contained on purpose: these routes render outside the /app tree, do not
  * load Polaris, and must stay readable if the admin's design system ever moves.
@@ -253,8 +253,8 @@ html {
   }
 }
 
-/* Five items (four links and the language switcher — Videos is hidden here)
-   share the phone's nav
+/* Five items (four links and the language switcher — Videos and Roadmap are
+   hidden here) share the phone's nav
    row; on the narrowest screens the link padding gives way before the row
    wraps. */
 @media (max-width: 420px) {
@@ -496,15 +496,9 @@ a.mk-badge:hover {
   background: var(--mk-border-strong);
 }
 
-.mk-media__img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 /* The empty state is a page with nothing on it, not a grey box with a
-   warning: it has the proportions of the screenshot that will replace it,
-   and a faint label so the layout can be reviewed while every slot is still
+   warning: it has the proportions of the video that will replace it, and a
+   faint label so the layout can be reviewed while every slot is still
    empty. The diagonal hatching is what keeps it from reading as a broken
    image. */
 .mk-media__empty {
@@ -611,18 +605,10 @@ a.mk-badge:hover {
     opacity: 1;
   }
 
-  /* Visually hidden, NOT display: none — these carry the only alt text a
-     screen reader can reach, since the sticky column is aria-hidden. */
+  /* The sticky column carries the players on desktop; an inline copy left in
+     the page would be a second, invisible tab stop for every video. */
   .mk-story[data-enhanced] .mk-story__inline {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+    display: none;
   }
 
   /* The frame sticks at the top of the reading area and STAYS there — not
@@ -639,30 +625,27 @@ a.mk-badge:hover {
     width: 100%;
   }
 
+  /* A faded frame is also `visibility: hidden` once the fade ends, which
+     takes its play button out of the tab order and out of reach of a click. */
   .mk-story__frame {
     position: absolute;
     inset: 0;
     opacity: 0;
-    transition: opacity 0.45s ease;
+    visibility: hidden;
+    transition: opacity 0.45s ease, visibility 0s linear 0.45s;
   }
 
-  /* The first frame stays in flow so the stack has a height — which is why
-     every frame in the stack is pinned to ONE aspect ratio below: the stack
-     is as tall as frame one, and a taller screenshot in frame three would
-     paint past the bottom of the sticky column. */
+  /* The first frame stays in flow so the stack has a height; every video
+     frame is 16:9, so all three are exactly as tall as the first. */
   .mk-story__frame:first-child {
     position: relative;
   }
 
   .mk-story__frame[data-active="true"] {
     opacity: 1;
+    visibility: visible;
+    transition: opacity 0.45s ease, visibility 0s;
   }
-}
-
-.mk-story__frame .mk-media__img,
-.mk-story__frame .mk-media__empty {
-  aspect-ratio: 16 / 10;
-  object-fit: cover;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -868,11 +851,6 @@ a.mk-badge:hover {
 
 /* ── Videos ─────────────────────────────────────────────────────── */
 
-.mk-video {
-  padding: 0;
-  overflow: hidden;
-}
-
 .mk-video__frame {
   position: relative;
   aspect-ratio: 16 / 9;
@@ -927,22 +905,6 @@ a.mk-badge:hover {
   background: rgba(0, 0, 0, 0.6);
   padding: 12px 20px;
   border-radius: 999px;
-}
-
-.mk-video__body {
-  padding: 20px 24px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mk-video__body h3 {
-  font-size: 1.0625rem;
-}
-
-.mk-video__body p {
-  color: var(--mk-text-muted);
-  font-size: 1rem;
 }
 
 .mk-note {
@@ -1968,9 +1930,25 @@ a.mk-badge:hover {
 }
 
 /* The topic's heading sits under the switch, so it is a size smaller than a
-   landing page's. */
+   landing page's, and runs wider than prose so the four topics' titles
+   and leads fit two lines each on a desktop. */
+.mk-compare-head {
+  --mk-compare-head-size: clamp(1.75rem, 3.6vw, 2.375rem);
+  max-width: 60rem;
+}
+
 .mk-compare-head h1 {
-  font-size: clamp(1.75rem, 3.6vw, 2.375rem);
+  font-size: var(--mk-compare-head-size);
+}
+
+/* Room for a two-line title and a two-line lead is reserved under them, so
+   a topic whose title fits one line leaves the table where it was. The
+   numbers are the title's and the lead's own line heights (1.15 and 1.6)
+   plus the head's 14px gap. */
+@media (min-width: 769px) {
+  .mk-compare-head {
+    min-height: calc(2 * 1.15 * var(--mk-compare-head-size) + 14px + 2 * 1.6 * 1.125rem);
+  }
 }
 
 .mk-shell > .mk-compare-preview {
@@ -2104,6 +2082,36 @@ a.mk-badge:hover {
 .mk-compare-matrix__add-button:focus-visible {
   outline: 2px solid var(--mk-brand);
   outline-offset: 2px;
+}
+
+.mk-compare-matrix__add-hint {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-text);
+  color: var(--mk-bg);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+}
+
+.mk-compare-matrix__add-hint-title {
+  display: block;
+  font-weight: 600;
+}
+
+.mk-compare-matrix__add-button:hover + .mk-compare-matrix__add-hint,
+.mk-compare-matrix__add-button:focus-visible + .mk-compare-matrix__add-hint {
+  opacity: 1;
+  visibility: visible;
 }
 
 .mk-compare-matrix__add-menu {
@@ -2386,4 +2394,153 @@ a.mk-badge:hover {
 
 .mk-level-stack__item:not([data-active]) {
   visibility: hidden;
+}
+
+/* ── Pricing (/pricing) ──────────────────────────────────────────── */
+
+.mk-pricing__mode {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.mk-pricing__switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mk-pricing__mode .mk-note {
+  max-width: var(--mk-prose-width);
+}
+
+/* The cards share their ROWS through a subgrid, so the tagline, the price,
+   the AI volume, the limits line, the list and the button sit at the same
+   height on every card of a row — a tagline that wraps to two lines on one
+   card no longer pushes everything below it out of line with its neighbours.
+   Each card spans the seven rows its seven children fill (the badge is
+   absolutely positioned and takes no cell). Where subgrid is unsupported the
+   card falls back to the flex column below, unaligned but intact. */
+.mk-pricing__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 24px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  align-items: stretch;
+}
+
+.mk-pricing__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 22px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-surface);
+}
+
+@supports (grid-template-rows: subgrid) {
+  .mk-pricing__card {
+    display: grid;
+    grid-row: span 7;
+    grid-template-rows: subgrid;
+    row-gap: 10px;
+    align-content: start;
+  }
+}
+
+.mk-pricing__card--highlight {
+  border-color: var(--mk-brand);
+  box-shadow: var(--mk-shadow);
+}
+
+.mk-pricing__badge {
+  position: absolute;
+  top: -12px;
+  left: 22px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  background: var(--mk-brand);
+  color: var(--mk-text-invert);
+}
+
+.mk-pricing__name {
+  font-size: 1.375rem;
+}
+
+.mk-pricing__tagline {
+  color: var(--mk-text-muted);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.mk-pricing__price {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.mk-pricing__unit {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__volume {
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__limits {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+/* The list takes the slack, so every card's button sits on one line. */
+.mk-pricing__points {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.9375rem;
+}
+
+.mk-pricing__points-head {
+  font-size: 0.875rem;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__more {
+  font-size: 0.875rem;
+  color: var(--mk-text-muted);
+}
+
+.mk-pricing__cta {
+  margin-top: 8px;
+  text-align: center;
+}
+
+.mk-pricing__compare {
+  display: inline-block;
+  margin-top: 28px;
+}
+
+/* Five columns fit a tablet; only a phone scrolls the table. */
+.mk-pricing-table {
+  min-width: 600px;
+}
+
+/* `position: relative` keeps each cell's visually-hidden answer word inside
+   the table: absolutely positioned, it otherwise escapes the scroll box and
+   widens the whole page on a phone. */
+.mk-pricing-table td {
+  position: relative;
+  white-space: nowrap;
 }

@@ -112,6 +112,8 @@ export type CompareCopy = {
     };
     /** `+` button at the end of the header row, and its menu's label. */
     addApp: string;
+    /** Heading of the hover hint that lists the apps the add button offers. */
+    addAvailable: string;
     /** Accessible name / tooltip of a column header that hides its app; `{name}` is the app. */
     removeApp: string;
     /** Group heading of the last table section: where each app is strong. */

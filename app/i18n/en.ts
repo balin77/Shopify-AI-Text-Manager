@@ -1163,6 +1163,7 @@ export const en: Translation = {
       planToggleHelp:
         "Shows the plans with AI included: texts are written and translated through our AI account, with no API key of your own. A volume per billing period is included in the price. Your plan only changes with the button below a plan.",
       planVolume: {
+        free: "One-time trial: about {actions} AI actions, no subscription. After that, use your own API key or a plan with AI.",
         basic: "Enough for about 300–500 products translated into one language each period.",
         pro: "Enough for about 600–1,000 products translated into one language each period.",
         max: "Enough for about 1,500–2,500 products translated into one language each period.",
@@ -1574,11 +1575,15 @@ export const en: Translation = {
     goToSettings: "Go to Settings",
     preferredProviderNoKey: "No {provider} API key. Please add key in Settings or change model.",
     preferredProviderNoKeyDescription: "AI features require an API key for {provider}.",
+    noApiKeyTasterDescription: "To use AI features, add an API key for an AI provider — or first try the included AI with a one-time free trial credit, which you activate in Settings.",
+    tasterAlternative: "Alternatively, you can try the included AI once with a free trial credit, which you activate in Settings.",
     noApiKeyAtAllDescription: "To use AI features, you first need to add an API key for an AI provider.",
     corruptedApiKeyWarning: "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.",
     apiKeyFormatError: "This key doesn't match the expected format. Double-check it in the provider dashboard and paste it again.",
     apiKeySaveErrorIntro: "Some entries don't match the expected format. The fields with problems are highlighted below — fix them and click Save again.",
     imageManagerSaveError: "Image manager settings could not be saved. Please try again.",
+    modelUnavailable: "no longer available",
+    modelUnavailableHelp: "The provider no longer offers this model. The app temporarily uses its successor — choose a model from the list and save.",
     modelsFallback_no_api_key: "Default list — an API key is required to load the live model list.",
     modelsFallback_api_error: "Default list — the provider's API couldn't be reached.",
     modelsFallback_invalid_key: "Default list — the stored API key appears to be invalid.",

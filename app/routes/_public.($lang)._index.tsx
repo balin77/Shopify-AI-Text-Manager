@@ -18,7 +18,7 @@ import {
   requireMarketingLocale,
 } from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
-import { MediaSlot } from "../components/marketing/MediaSlot";
+import { VideoSlot } from "../components/marketing/VideoSlot";
 import { ScrollStory } from "../components/marketing/ScrollStory";
 import { InstallLink } from "../components/marketing/InstallLink";
 
@@ -31,7 +31,7 @@ import { InstallLink } from "../components/marketing/InstallLink";
  */
 const SHOPIFY_ENTRY_PARAMS = ["shop", "host", "embedded", "id_token", "session", "hmac"];
 
-/** The three pillars, in order, and the image slot each one tells its story with. */
+/** The three pillars, in order, and the video slot each one tells its story with. */
 const PILLAR_SLOTS = ["pillar-writes", "pillar-translates", "pillar-found"] as const;
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -75,7 +75,7 @@ export default function MarketingIndex() {
 
   // `pillars.items` is typed as a 3-tuple (en.ts), so this zip cannot run
   // past the slots: a fourth pillar fails typecheck rather than silently
-  // reusing the last image and producing two React keys of the same name.
+  // reusing the last video and producing two React keys of the same name.
   const steps = PILLAR_SLOTS.map((slot, index) => ({
     slot,
     title: t.pillars.items[index].title,
@@ -111,7 +111,7 @@ export default function MarketingIndex() {
             <p className="mk-hero__note">{t.hero.note}</p>
           </div>
           <div className="mk-hero__media">
-            <MediaSlot slot="hero" t={t} aspect="4 / 3" />
+            <VideoSlot slot="hero" title={t.video.heroTitle} t={t} />
           </div>
         </div>
       </section>

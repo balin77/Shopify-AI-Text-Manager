@@ -1164,6 +1164,7 @@ export const de = {
       planToggleHelp:
         "Zeigt die Pläne mit enthaltener KI: Texte werden über unser KI-Konto erstellt und übersetzt, ohne eigenen API-Schlüssel. Ein Volumen pro Abrechnungszeitraum ist im Preis enthalten. Der Plan ändert sich erst mit dem Button unter dem Plan.",
       planVolume: {
+        free: "Einmalig zum Testen: rund {actions} KI-Aktionen, ohne Abo. Danach mit eigenem API-Key oder einem Plan mit KI.",
         basic: "Reicht für etwa 300–500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
         pro: "Reicht für etwa 600–1.000 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
         max: "Reicht für etwa 1.500–2.500 Produkte, je in eine Sprache übersetzt, pro Zeitraum.",
@@ -1575,11 +1576,15 @@ export const de = {
     goToSettings: "Zu den Einstellungen",
     preferredProviderNoKey: "Kein {provider} API-Schlüssel. Bitte Schlüssel in den Einstellungen eingeben oder Modell wechseln.",
     preferredProviderNoKeyDescription: "KI-Funktionen benötigen einen API-Schlüssel für {provider}.",
+    noApiKeyTasterDescription: "Um die KI-Funktionen nutzen zu können, hinterlegen Sie einen API-Schlüssel eines KI-Anbieters — oder testen Sie zuerst die enthaltene KI mit einem einmaligen Gratis-Guthaben, das Sie in den Einstellungen aktivieren.",
+    tasterAlternative: "Alternativ können Sie die enthaltene KI einmalig mit einem Gratis-Guthaben testen, das Sie in den Einstellungen aktivieren.",
     noApiKeyAtAllDescription: "Um die KI-Funktionen nutzen zu können, müssen Sie zuerst einen API-Schlüssel eines KI-Anbieters hinterlegen.",
     corruptedApiKeyWarning: "Der gespeicherte API-Schlüssel für {provider} konnte nicht entschlüsselt werden und wurde zurückgesetzt. Bitte erneut eingeben und speichern.",
     apiKeyFormatError: "Der eingegebene Schlüssel hat nicht das erwartete Format. Bitte überprüfen Sie den Code im Anbieter-Dashboard und fügen Sie ihn erneut ein.",
     apiKeySaveErrorIntro: "Einige Einträge haben nicht das erwartete Format. Die betroffenen Felder sind unten rot markiert – bitte korrigieren Sie diese und klicken Sie erneut auf Speichern.",
     imageManagerSaveError: "Bildmanager-Einstellungen konnten nicht gespeichert werden. Bitte erneut versuchen.",
+    modelUnavailable: "nicht mehr verfügbar",
+    modelUnavailableHelp: "Dieses Modell bietet der Anbieter nicht mehr an. Die App verwendet vorübergehend sein Nachfolgemodell — wählen Sie ein Modell aus der Liste und speichern Sie.",
     modelsFallback_no_api_key: "Standardliste – ein API-Schlüssel ist nötig, um die Live-Modelliste zu laden.",
     modelsFallback_api_error: "Standardliste – die Anbieter-API konnte nicht erreicht werden.",
     modelsFallback_invalid_key: "Standardliste – der hinterlegte Schlüssel scheint ungültig zu sein.",

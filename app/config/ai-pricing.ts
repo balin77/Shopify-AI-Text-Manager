@@ -94,6 +94,8 @@ export const MODEL_PRICING: Record<AIProvider, Record<string, ModelPrice>> = {
     "gemini-2.0-flash": price(0.1, 0.4),
     "gemini-1.5-flash": price(0.075, 0.3),
     "gemini-1.5-pro": price(1.25, 5.0),
+    "gemini-2.5-flash": price(0.3, 2.5),
+    "gemini-2.5-pro": price(1.25, 10.0),
   },
   grok: {
     "grok-3-mini": price(0.3, 0.5),

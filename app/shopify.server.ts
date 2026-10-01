@@ -269,7 +269,7 @@ const enhancedAuthenticate = {
     if (!managedSmokeTestFired) {
       managedSmokeTestFired = true;
       void import("./services/ai/managed-smoke-test.server")
-        .then((m) => m.runManagedAiSmokeTest())
+        .then((m) => m.startManagedAiSmokeSchedule())
         .catch(() => undefined);
     }
 

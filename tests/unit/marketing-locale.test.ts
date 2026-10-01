@@ -50,12 +50,12 @@ describe("localizedPath", () => {
   it("prefixes every other locale", () => {
     expect(localizedPath("de", "/")).toBe("/de");
     expect(localizedPath("de", "/features")).toBe("/de/features");
-    expect(localizedPath("es", "/videos")).toBe("/es/videos");
+    expect(localizedPath("es", "/roadmap")).toBe("/es/roadmap");
   });
 
   it("round-trips with the stripper", () => {
     for (const locale of ["en", "de", "es"] as const) {
-      for (const path of ["/", "/features", "/videos"]) {
+      for (const path of ["/", "/features", "/roadmap"]) {
         const built = localizedPath(locale, path);
         const back = stripMarketingLocalePrefix(built);
         expect(back.locale).toBe(locale);
@@ -79,11 +79,11 @@ describe("stripMarketingLocalePrefix", () => {
 
 describe("isMarketingPath", () => {
   it("recognises every public page in every locale", () => {
-    for (const path of ["/", "/features", "/videos", "/roadmap", "/privacy", "/terms"]) {
+    for (const path of ["/", "/features", "/roadmap", "/privacy", "/terms"]) {
       expect(isMarketingPath(path)).toBe(true);
     }
     expect(isMarketingPath("/de")).toBe(true);
-    expect(isMarketingPath("/es/videos")).toBe(true);
+    expect(isMarketingPath("/es/roadmap")).toBe(true);
     expect(isMarketingPath("/de/features/")).toBe(true);
   });
 
@@ -114,7 +114,7 @@ describe("documentLanguageForPath", () => {
   it("reads the locale off the URL", () => {
     expect(documentLanguageForPath("/")).toBe("en");
     expect(documentLanguageForPath("/features")).toBe("en");
-    expect(documentLanguageForPath("/de/videos")).toBe("de");
+    expect(documentLanguageForPath("/de/roadmap")).toBe("de");
     expect(documentLanguageForPath("/es")).toBe("es");
   });
 });
@@ -167,7 +167,7 @@ describe("requireMarketingLocale", () => {
 
   it("hands back a prefixed locale unchanged", async () => {
     const { requireMarketingLocale } = await import("../../app/utils/marketing-route.server");
-    expect(requireMarketingLocale("de", "/videos")).toBe("de");
-    expect(requireMarketingLocale(undefined, "/videos")).toBe(MARKETING_DEFAULT_LOCALE);
+    expect(requireMarketingLocale("de", "/roadmap")).toBe("de");
+    expect(requireMarketingLocale(undefined, "/roadmap")).toBe(MARKETING_DEFAULT_LOCALE);
   });
 });

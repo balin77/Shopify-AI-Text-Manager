@@ -1,24 +1,15 @@
 /**
- * The website's videos, and where they come from.
- *
- * The SOURCE is deliberately one field per video so the hosting decision can
- * be made — and changed — in this file alone. Three states, and the third is
- * the one that lets the page ship before a single video exists:
+ * Where a website video comes from: the guide's topic pages carry one slot
+ * each (`marketing-guide.ts`), every other page's slots are listed below.
  *
  *   { kind: "file"  }  a self-hosted MP4/WebM (Cloudflare R2, Stream, any CDN)
  *   { kind: "embed" }  YouTube or Vimeo, loaded only after a click
- *   null               not produced yet — the card renders as "recording"
  *
  * An embed is rendered as a FACADE: the poster and a play button are ours, and
  * nothing is requested from the provider until the visitor presses play. That
  * is not politeness, it is what keeps a page with an unplayed video free of
  * third-party cookies, and therefore free of a consent banner.
- *
- * The `id` is also the i18n key (`marketing.videos.items[id]`), so title and
- * description live with the rest of the copy in all three languages rather
- * than being duplicated here.
  */
-
 export type MarketingVideoSource =
   | {
       kind: "file";
@@ -34,22 +25,46 @@ export type MarketingVideoSource =
       poster?: string;
     };
 
-export interface MarketingVideo {
-  /** Stable key; also the i18n lookup into `videos.items`. */
-  id: "overview" | "bulk-editor" | "translations" | "seo" | "aeo";
-  /** `null` until the video is produced. */
-  source: MarketingVideoSource | null;
-  /** Shown on the card when known, e.g. "4:12". Free text, not parsed. */
-  duration?: string;
-}
+/**
+ * The website's video positions, named after the PLACE they appear in: one
+ * beside the home page's hero, one per pillar of its scroll story, and one per
+ * feature block on /features. (The guide's topic videos live in
+ * `marketing-guide.ts`.) `null` until the video is recorded; the slot then
+ * shows a "video follows" frame of the same size, so publishing one moves
+ * nothing.
+ *
+ * To publish a video, replace its `null`, e.g.
+ *   hero: { kind: "embed", provider: "youtube", videoId: "abc123" },
+ */
+export const SITE_VIDEO_SLOTS = [
+  "hero",
+  "pillar-writes",
+  "pillar-translates",
+  "pillar-found",
+  "feature-ai",
+  "feature-translations",
+  "feature-bulk",
+  "feature-seo",
+  "feature-aeo",
+  "feature-media",
+  "feature-structure",
+] as const;
 
-export const MARKETING_VIDEOS: MarketingVideo[] = [
-  { id: "overview", source: null },
-  { id: "bulk-editor", source: null },
-  { id: "translations", source: null },
-  { id: "seo", source: null },
-  { id: "aeo", source: null },
-];
+export type SiteVideoSlot = (typeof SITE_VIDEO_SLOTS)[number];
+
+export const SITE_VIDEOS: Record<SiteVideoSlot, MarketingVideoSource | null> = {
+  hero: null,
+  "pillar-writes": null,
+  "pillar-translates": null,
+  "pillar-found": null,
+  "feature-ai": null,
+  "feature-translations": null,
+  "feature-bulk": null,
+  "feature-seo": null,
+  "feature-aeo": null,
+  "feature-media": null,
+  "feature-structure": null,
+};
 
 /**
  * The iframe URL for an embed, built only once the visitor has pressed play.

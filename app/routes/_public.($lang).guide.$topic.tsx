@@ -124,7 +124,7 @@ export default function MarketingGuideTopic() {
             <figcaption className="mk-note">
               {video === null
                 ? t.guide.videoPendingBody
-                : [duration, video.kind === "embed" ? t.videos.externalNote : null]
+                : [duration, video.kind === "embed" ? t.video.externalNote : null]
                     .filter(Boolean)
                     .join(" · ")}
             </figcaption>
