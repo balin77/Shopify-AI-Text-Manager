@@ -104,6 +104,7 @@ export function preferredLocaleFromHeader(header: string | null): MarketingLocal
 export const MARKETING_LOCALIZED_PATHS = [
   "/",
   "/features",
+  "/pricing",
   "/guide",
   "/compare",
   "/videos",

@@ -10,6 +10,7 @@ export const es: MarketingTranslation = {
 
   nav: {
     features: "Funciones",
+    pricing: "Precios",
     videos: "Vídeos",
     roadmap: "Hoja de ruta",
     faq: "Preguntas",
@@ -142,6 +143,135 @@ export const es: MarketingTranslation = {
     ],
   },
 
+  pricing: {
+    title: "Planes y precios",
+    intro:
+      "Cuatro planes que se diferencian en cuánto de su tienda cubren, no en cuántos idiomas puede usar. Todos los planes traducen a todos sus idiomas.",
+    trial: "Cada plan de pago empieza con {days} días de prueba gratuita. Facturado por Shopify, cancelable en cualquier momento.",
+    modeLabel: "Cómo se paga la IA",
+    modeOwnKey: "Con su propia clave de IA",
+    modeIncluded: "IA incluida",
+    modeOwnKeyHint:
+      "Conecta su propia clave de OpenAI, Anthropic, Gemini, DeepSeek, Grok o HuggingFace y paga directamente al proveedor por lo que usa.",
+    modeIncludedHint:
+      "Sin clave y sin segunda factura: un volumen mensual de IA forma parte del precio. Aun así puede conectar su propia clave cuando quiera.",
+    free: "Gratis",
+    perMonth: "/ mes",
+    recommended: "El más elegido",
+    choose: "Instalar y elegir este plan",
+    chooseFree: "Instalar gratis",
+    limitsLine: "{products} productos · {collections} colecciones",
+    everythingIn: "Todo lo de {plan}, y además:",
+    included: "Incluido:",
+    tasterLine: "Unas {taster} acciones de IA una sola vez para probar, sin clave",
+    moreInTable: "+ {n} más en la tabla de abajo",
+    plans: {
+      free: {
+        tagline: "Para probarla con un catálogo pequeño.",
+      },
+      basic: {
+        tagline: "Para tiendas pequeñas.",
+      },
+      pro: {
+        tagline: "Para tiendas en crecimiento.",
+      },
+      max: {
+        tagline: "Para catálogos grandes.",
+      },
+    },
+    includedVolume: {
+      free: "Incluye una sola vez unas {taster} acciones de IA para probar",
+      basic: "IA incluida: unos 300–500 productos al mes, cada uno traducido a un idioma",
+      pro: "IA incluida: unos 600–1.000 productos al mes, cada uno traducido a un idioma",
+      max: "IA incluida: unos 1.500–2.500 productos al mes, cada uno traducido a un idioma",
+    },
+    tableTitle: "Comparar los planes",
+    tableIntro: "Todo lo que contiene cada plan, fila por fila. Las cifras son por tienda.",
+    planColumn: "Función",
+    priceRow: "Precio",
+    groups: {
+      content: "Contenido que puede editar y traducir",
+      workflow: "Traducción e IA",
+      images: "Imágenes",
+      seo: "SEO y visibilidad en IA",
+    },
+    rows: {
+      products: { label: "Productos", help: "Productos que la app carga y edita." },
+      collections: { label: "Colecciones" },
+      pages: { label: "Páginas" },
+      articles: { label: "Blogs y artículos", help: "Número de artículos." },
+      policies: { label: "Políticas de la tienda", help: "Reembolso, privacidad, envío y términos." },
+      menus: { label: "Menús de navegación", help: "Editar y traducir sus menús." },
+      metaobjects: { label: "Metaobjetos" },
+      themeTranslations: { label: "Textos del tema", help: "Textos y ajustes de su tema, traducidos." },
+      checkoutTexts: { label: "Textos de envío y checkout" },
+      notifications: { label: "Notificaciones y albaranes", help: "Los correos y documentos que envía Shopify." },
+      directTranslations: { label: "Traducciones directas", help: "Traducir cualquier texto que aparezca en su tienda." },
+      languages: { label: "Idiomas" },
+      ownKey: { label: "Su propia clave de IA", help: "Seis proveedores a elegir." },
+      aiInstructions: { label: "Instrucciones de IA propias", help: "Tono y reglas por campo, usados en cada prompt." },
+      bulkEditor: { label: "Editor masivo y exportación CSV", help: "Una hoja de cálculo sobre toda su tienda." },
+      csvImport: { label: "Importación CSV" },
+      translateMissing: { label: "Añadir todas las traducciones que faltan de una vez" },
+      autoTranslate: { label: "Traducción automática", help: "Cuando cambia un texto — en la app o en el admin de Shopify — sus traducciones se renuevan." },
+      productImages: { label: "Imágenes de producto" },
+      imageSuite: { label: "Gestor de imágenes", help: "Galerías por variante, subida masiva, textos alternativos en serie, nombres por SKU." },
+      imageOperations: { label: "Subidas de imágenes y conversiones WebP" },
+      seoAudit: { label: "Auditoría SEO, datos estructurados, redirecciones, hreflang" },
+      pageSpeed: { label: "Mediciones de PageSpeed" },
+      keywords: { label: "Palabras clave seguidas" },
+      aiDiscovery: { label: "Descubrimiento por IA (agents.md, llms.txt)", help: "Lo que leen los asistentes de IA sobre su tienda." },
+      crawl: { label: "Rastreo de la tienda e informe on-page" },
+      searchConsole: { label: "Google Search Console" },
+      internalLinks: { label: "Sugerencias de enlaces internos" },
+      sitemap: { label: "Control del sitemap" },
+      indexNow: { label: "Envíos a IndexNow" },
+      scoreHistory: { label: "Historial de la puntuación SEO" },
+      scheduled: { label: "Auditoría nocturna y rastreo semanal automáticos" },
+      seoBulk: { label: "Elementos por corrección SEO masiva" },
+    },
+    formats: {
+      imageOperations: "{n} / mes",
+      pageSpeed: "{n} / día",
+      searchConsole: "{n} días de datos",
+      indexNow: "{n} / mes",
+      scoreHistory: "{n} días",
+    },
+    values: {
+      yes: "Incluido",
+      no: "No incluido",
+      unlimited: "Ilimitado",
+      featuredOnly: "Imagen principal",
+      allImages: "Todas las imágenes",
+    },
+    tableNote:
+      "Los límites se aplican a lo que la app edita. Su tienda puede ser más grande: el contenido por encima del límite simplemente se queda como está.",
+    compareLink: "¿Cómo se comparan estos precios con otras apps?",
+    faqTitle: "Preguntas sobre la facturación",
+    faq: [
+      {
+        q: "¿Cómo se factura la app?",
+        a: "En su factura normal de Shopify, en euros. No hay una cuenta aparte ni una tarjeta de crédito que introducir en este sitio.",
+      },
+      {
+        q: "¿Hay una prueba gratuita?",
+        a: "Sí. Cada plan de pago empieza con {days} días de prueba, y el plan gratuito no tiene límite de tiempo. Si cancela durante la prueba, no paga nada.",
+      },
+      {
+        q: "¿Puedo cambiar de plan más adelante?",
+        a: "Sí, en cualquier momento, en los ajustes de la app. Shopify ajusta el cobro por usted. Bajar de plan nunca borra contenido de su tienda Shopify.",
+      },
+      {
+        q: "¿Clave propia o IA incluida? ¿Qué elijo?",
+        a: "Con su propia clave paga directamente al proveedor de IA por lo que usa y elige el modelo. Con la IA incluida no hay nada que configurar y una sola factura para todo. Ambas opciones tienen las mismas funciones.",
+      },
+      {
+        q: "¿Cuestan más idiomas más dinero?",
+        a: "No. Todos los planes incluyen todos sus idiomas. Los planes se diferencian en el número de productos y en los tipos de contenido que cubren.",
+      },
+    ],
+  },
+
   media: {
     placeholder: "Imagen pendiente",
     alt: {
@@ -264,7 +394,7 @@ export const es: MarketingTranslation = {
       },
       {
         q: "¿Qué proveedor de IA usa?",
-        a: "El que usted conecte: Anthropic, OpenAI, Gemini, DeepSeek, Grok o HuggingFace. Usted aporta su propia clave, así que el coste y la elección del modelo siguen siendo suyos.",
+        a: "El que usted conecte: Anthropic, OpenAI, Gemini, DeepSeek, Grok o HuggingFace. Con su propia clave, el coste y la elección del modelo siguen siendo suyos. Si prefiere no configurar una clave, cada plan de pago está disponible también con la IA incluida.",
       },
       {
         q: "¿Necesito más de un idioma?",
