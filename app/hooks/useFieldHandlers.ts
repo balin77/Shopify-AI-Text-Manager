@@ -40,6 +40,7 @@ import { postContentEditorSave } from "../services/editor/content-action-endpoin
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { fallbackFieldsAfterDiscard, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { buildOwnSaveForm, isUnsavedPrimarySource, hasUnsavedPrimaryTranslateSource } from "../services/editor/own-field-save.shared";
+import { applyAltTranslateAllAnswer } from "../services/alt-text-feedback.shared";
 
 // ============================================================================
 // TYPES
@@ -1268,22 +1269,27 @@ const handleTranslateAll = () => {
               "success"
             );
           }
-          // Update UI state with translated alt texts for current language
-          if (result.translatedResults && currentLanguage !== primaryLocale) {
-            const translatedForCurrentLocale: Record<number, string> = {};
-            const results = result.translatedResults as Record<string, Record<string, string>>;
-            for (const [imgIdxStr, localeMap] of Object.entries(results)) {
-              const idx = parseInt(imgIdxStr, 10);
-              if (!failedImages.includes(idx) && localeMap[currentLanguage]) {
-                translatedForCurrentLocale[idx] = localeMap[currentLanguage];
-              }
-            }
-            if (Object.keys(translatedForCurrentLocale).length > 0) {
-              setImageAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
-              // Only the translated indices are saved; another image's typed
-              // alt stays a draft against its own baseline.
-              setOriginalAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
-            }
+          // Stage every saved (image, locale) under the locale it was written
+          // for, and show the one on screen NOW — not the one the button was
+          // pressed in (always the primary): a merchant who switched language
+          // while the run worked never saw these arrive.
+          const translatedForCurrentLocale = applyAltTranslateAllAnswer(
+            localAltTextOverlayRef.current,
+            result.translatedResults as Record<string, Record<string, string>> | undefined,
+            failedImages,
+            {
+              locale: currentLanguageRef.current,
+              marketId: selectedMarketIdRef.current,
+              primaryLocale,
+              current: imageAltTextsRef.current,
+              original: originalAltTextsRef.current,
+            },
+          );
+          if (Object.keys(translatedForCurrentLocale).length > 0) {
+            setImageAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
+            // Only the translated indices are saved; another image's typed
+            // alt stays a draft against its own baseline.
+            setOriginalAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
           }
           if (revalidatorRef.current.state === 'idle') {
             try { revalidatorRef.current.revalidate(); } catch {}

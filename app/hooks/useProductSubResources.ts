@@ -72,6 +72,8 @@ interface SubResourceFetcherData {
   success: boolean;
   actionType?: string;
   translations?: Record<string, Record<string, string>>;
+  /** translate-to-all-locales: the CONFIRMED values, locale -> resource -> key. */
+  localeTranslations?: Record<string, Record<string, Record<string, string>>>;
   fieldId?: string;
   failedResources?: string[];
   savedResources?: string[];
@@ -1545,6 +1547,21 @@ export function useProductSubResources({
       const answer = (data.translations || {}) as Record<string, Record<string, string>>;
       if (h.stageTranslations(answer, opts.requested) === "apply") {
         applyTranslationsToState(opts.item, answer);
+      }
+      // A translate into EVERY language answers its confirmed values per
+      // locale: each is staged under the locale it was written for, and the one
+      // on screen NOW is shown. Relying on the re-read below alone lost them
+      // for a merchant who switched language while the run worked -- the load
+      // effect does not re-read an already open view, and the re-read is
+      // skipped while another one is in flight.
+      const byLocale = data.localeTranslations;
+      if (byLocale) {
+        for (const [locale, localeAnswer] of Object.entries(byLocale)) {
+          const target = { itemId: opts.itemId, locale, marketId: "" };
+          if (h.stageTranslations(localeAnswer, target) === "apply") {
+            h.applyTranslationsToState(opts.item, localeAnswer);
+          }
+        }
       }
       // A primary-locale translate saves into every language server-side and
       // returns nothing to show: re-read so the locale markers move.

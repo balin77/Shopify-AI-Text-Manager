@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { overlayWritesFromTranslations, overlayIndexWrites } from "../services/alt-text-feedback.shared";
+import { overlayWritesFromTranslations, overlayIndexWrites, applyAltTranslateAllAnswer } from "../services/alt-text-feedback.shared";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
@@ -851,34 +851,25 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         }
 
         // Confirmed values go into the overlay for EVERY locale, so a language
-        // switch (or a stale earlier copy) never shows older text.
-        if (result.translatedResults) {
-          const all = result.translatedResults as Record<string, Record<string, string>>;
-          for (const [imgIdxStr, localeMap] of Object.entries(all)) {
-            const idx = parseInt(imgIdxStr, 10);
-            if (Number.isNaN(idx) || failedImages.includes(idx)) continue;
-            for (const { locale, value } of overlayWritesFromTranslations(localeMap, [])) {
-              if (!localAltTextOverlayRef.current[locale]) localAltTextOverlayRef.current[locale] = {};
-              localAltTextOverlayRef.current[locale][idx] = value;
-            }
-          }
-        }
-
-        // Update UI state with translated alt texts for current language
-        if (result.translatedResults && currentLanguage !== primaryLocale) {
-          const translatedForCurrentLocale: Record<number, string> = {};
-          const results = result.translatedResults as Record<string, Record<string, string>>;
-          for (const [imgIdxStr, localeMap] of Object.entries(results)) {
-            const idx = parseInt(imgIdxStr, 10);
-            if (!failedImages.includes(idx) && localeMap[currentLanguage]) {
-              translatedForCurrentLocale[idx] = localeMap[currentLanguage];
-            }
-          }
-          if (Object.keys(translatedForCurrentLocale).length > 0) {
-            setImageAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
-            // Only the translated indices are saved; anything else stays a draft.
-            setOriginalAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
-          }
+        // switch (or a stale earlier copy) never shows older text — and the
+        // language on screen NOW (not the one the button was pressed in, which
+        // is always the primary) shows them at once.
+        const translatedForCurrentLocale = applyAltTranslateAllAnswer(
+          localAltTextOverlayRef.current,
+          result.translatedResults as Record<string, Record<string, string>> | undefined,
+          failedImages,
+          {
+            locale: currentLanguageRef.current,
+            marketId: selectedMarketIdRefAlt.current,
+            primaryLocale,
+            current: imageAltTextsRef.current,
+            original: originalAltTextsRef.current,
+          },
+        );
+        if (Object.keys(translatedForCurrentLocale).length > 0) {
+          setImageAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
+          // Only the translated indices are saved; anything else stays a draft.
+          setOriginalAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
         }
         if (revalidatorRef.current.state === 'idle') {
           try {
