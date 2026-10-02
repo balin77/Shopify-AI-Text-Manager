@@ -139,6 +139,8 @@ interface ImageGalleryFieldProps {
     availableInBasicPlan?: string;
     altBadge?: string;
     noAltBadge?: string;
+    /** Shown on a foreign alt field whose image has no main-language alt. */
+    altNeedsPrimaryHint?: string;
   };
 }
 
@@ -190,6 +192,20 @@ export function ImageGalleryField({
       setSelectedImageIndex(0);
     }
   }, [images, selectedImageIndex]);
+
+  /**
+   * A FOREIGN alt text can only be stored where the image has one in the main
+   * language: Shopify offers an image's `alt` for translation only when it has
+   * a primary value, so a translation typed here would be refused on save and
+   * left as a draft nothing could ever store (the save bar stuck open). The
+   * field is locked with the reason instead. A value already there stays
+   * visible and can still be cleared.
+   */
+  const needsPrimaryAlt = (img: ImageData | null | undefined): boolean =>
+    !isPrimaryLocale && !!img && !(img.altText || "").trim();
+  const needsPrimaryHint =
+    t.altNeedsPrimaryHint ||
+    "Enter and save an alt text in the main language first — then it can be translated.";
 
   // Determine which image to show in preview
   const getPreviewImage = (): ImageData | null => {
@@ -469,6 +485,9 @@ export function ImageGalleryField({
             ? altTexts[selectedImageIndex]
             : (isPrimaryLocale ? (images[selectedImageIndex]?.altText || "") : "")}
           onChange={(value) => onAltTextChange(selectedImageIndex, value)}
+          readOnly={needsPrimaryAlt(images[selectedImageIndex])}
+          helpText={needsPrimaryAlt(images[selectedImageIndex]) ? needsPrimaryHint : undefined}
+          sourceTextAvailable={!needsPrimaryAlt(images[selectedImageIndex])}
           fieldType={`altText_${selectedImageIndex}`}
           fieldKey={`altText_${selectedImageIndex}`}
           helpKey="altText"
@@ -497,6 +516,9 @@ export function ImageGalleryField({
             ? altTexts[0]
             : (isPrimaryLocale ? (featuredImage.altText || "") : "")}
           onChange={(value) => onAltTextChange(0, value)}
+          readOnly={needsPrimaryAlt(featuredImage)}
+          helpText={needsPrimaryAlt(featuredImage) ? needsPrimaryHint : undefined}
+          sourceTextAvailable={!needsPrimaryAlt(featuredImage)}
           fieldType="altText_0"
           fieldKey="altText_0"
           helpKey="altText"

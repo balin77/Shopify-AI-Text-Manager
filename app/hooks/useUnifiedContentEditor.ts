@@ -53,6 +53,7 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse } from "../services/editor/own-field-save.shared";
+import { settleOwnSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -629,6 +630,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** The partial description of the save IN FLIGHT — bound per request by
    *  `safeSubmit` and the queue drain, consumed by that request's response. */
   const inFlightPartialRef = useRef<PartialSave | null>(null);
+  /**
+   * AI/copy buttons' own saves that have been submitted and not answered yet
+   * (own-save-in-flight.shared.ts). The change detection reads it so the value
+   * such a save is writing does not light the save bar as a draft — the owner's
+   * rule is that those buttons SAVE, and a bar standing over a product save
+   * for its whole round trip reads as "it did not save".
+   */
+  const [ownSavesInFlight, setOwnSavesInFlight] = useState<OwnSaveInFlight[]>([]);
+  /** The answer to `partial` landed (or will never be applied): stop covering it. */
+  const settleOwnSaveFor = useCallback((partial: PartialSave | null) => {
+    if (!partial) return;
+    setOwnSavesInFlight((prev) => settleOwnSave(prev, partial));
+  }, []);
   /** Success text of a translate-and-save, STAGED by the caller right before
    *  `safeSubmit` and bound there to its own request (queue entry or in-flight
    *  slot), like `partialSaveRef`: a shared slot let an earlier unrelated save's
@@ -737,6 +751,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     originalAltTexts,
     baselineValuesRef,
     baselineVersion,
+    ownSavesInFlight,
+    selectedItemId,
+    selectedMarketId,
   });
 
   // ============================================================================
@@ -932,6 +949,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     pendingAltTranslateToastRef,
     inFlightToastRef,
     preserveEditsUntilRef,
+    setOwnSavesInFlight,
   });
 
   // Stable signal that changes when translations arrive for the selected item.
@@ -1065,6 +1083,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Its response will never be applied here (the pending flag is gone), so
       // its partial description must not survive to be read by the next save.
       inFlightPartialRef.current = null;
+      // Nor may any own save keep covering a field: its answer is dropped.
+      setOwnSavesInFlight([]);
       inFlightToastRef.current = null;
       processedTranslateFieldRef.current = null;
       processedTranslateAltTextAllRef.current = null;
@@ -2061,6 +2081,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // would make the NEXT full save count as partial.
       const partial = inFlightPartialRef.current;
       inFlightPartialRef.current = null;
+      // Answered: from here the field's baseline (moved below) decides.
+      settleOwnSaveFor(partial);
 
       // Guard: check if the item that was saved is still the currently-selected item.
       const savedItemId = savedItemIdRef.current;
@@ -2498,7 +2520,47 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           .filter(Boolean)
           .join(" ");
 
-      if (failedAltTextIndices.length > 0) {
+      // The failed alts that CANNOT be saved yet: their image has no alt text in
+      // the main language, so Shopify offers nothing to translate. "Please try
+      // again" would send the merchant round in a circle; they need to fill in
+      // the main language first.
+      const rawNoPrimary = (fetcher.data as unknown as Record<string, unknown>).altTextNoPrimaryIndices;
+      const altNoPrimary: number[] = Array.isArray(rawNoPrimary)
+        ? (rawNoPrimary as number[]).filter((i) => failedAltTextIndices.includes(i))
+        : [];
+      if (altNoPrimary.length > 0) {
+        const otherFailed = failedAltTextIndices.filter((i: number) => !altNoPrimary.includes(i));
+        const noPrimaryMessage = String(
+          t.content?.altTextNeedsPrimary ||
+            "The alt text of image {failedImages} was not saved: that image has no alt text in the main language yet. Enter and save one there first; then it can be translated.",
+        ).replace("{failedImages}", altNoPrimary.map((i) => i + 1).join(", "));
+        const otherMessage = otherFailed.length > 0
+          ? String(
+              config.contentType === "products"
+                ? t.content?.altTextSavePartialImages ||
+                    "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again."
+                : t.content?.altTextSavePartialItem ||
+                    "Changes saved, but the alt text of the image ({failedImages}) could not be saved to Shopify. Please try again.",
+            ).replace("{failedImages}", otherFailed.map((i: number) => i + 1).join(", "))
+          : "";
+        const text = [noPrimaryMessage, otherMessage, serverWarning].filter(Boolean).join(" ");
+        showInfoBox(...withRedirect(text, "warning"));
+        // Not kept as a draft, unlike every other failed alt: no retry can store
+        // it until the main language has an alt text, so a draft here would
+        // hold the save bar open with nothing the Save button could ever do.
+        // The field goes back to what this language holds; the message says why.
+        if (savedItemId === selectedItemIdRef.current) {
+          const baseline = originalAltTextsRef.current;
+          setImageAltTexts((prev) => {
+            const next = { ...prev };
+            for (const i of altNoPrimary) {
+              if (baseline[i] === undefined) delete next[i];
+              else next[i] = baseline[i];
+            }
+            return next;
+          });
+        }
+      } else if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
         // "Sync the product again" is product advice: a collection's or an
         // article's featured image has no product to sync, so those pages get
@@ -2609,6 +2671,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
       inFlightToastRef.current = null;
+      // Refused: the value was NOT stored, so it reads as a draft again (its
+      // baseline never moved) and the Save button can send it.
+      settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;
       setIsSaving(false);
 
@@ -2654,6 +2719,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+      settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;
       isSaveFromTranslateRef.current = false;
       inFlightToastRef.current = null;
@@ -2756,6 +2822,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // merchant can switch item or language in between.
     if (fetcher.state === "submitting") fetcherScopeRef.current = suggestionScopeRef.current;
   }, [fetcher.state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Backstop for the own-save cover: the fetcher went idle with nothing
+  // queued, so no own save is on its way any more. An answer the handlers
+  // above did not recognise (or a request that never answered) must not leave
+  // a field reading "saved" for good. Runs BEFORE the queue effect below, which
+  // empties the queue as it submits — a queued own save stays covered.
+  useEffect(() => {
+    if (fetcher.state !== "idle" || saveQueueRef.current.length > 0) return;
+    setOwnSavesInFlight((prev) => (prev.length === 0 ? prev : []));
+  }, [fetcher.state]);
 
   // Process queued saves when the fetcher becomes idle.
   // IMPORTANT: This effect MUST run AFTER the response handler effects above,

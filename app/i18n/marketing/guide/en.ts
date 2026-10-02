@@ -758,6 +758,7 @@ export const guideEn: GuideCopy = {
           heading: "Translating",
           paragraphs: [
             "Alt texts are translated into every language like any other field, and refreshed by the same rules when the original changes. With a market selected in the editor, the Image Manager shows that market's alt texts (the language's own text where the market has none) and saves changes for that market only. “Translate to all languages” always writes the language's own text, which markets without their own text also use.",
+            "Only an alt text that exists in the main language can be translated. Where an image has none there yet, its alt text field is locked in the other languages and says so — enter it in the main language first and save.",
           ],
         },
       ],

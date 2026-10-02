@@ -7,6 +7,7 @@
  */
 
 import type { PartialSave } from "./useUiDataLoader";
+import type { OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
@@ -68,6 +69,10 @@ interface UseEditorAutoSaveProps {
   inFlightToastRef: React.MutableRefObject<string | null>;
   /** Until when the next data re-read keeps unsaved edits (see the editor). */
   preserveEditsUntilRef: React.MutableRefObject<number>;
+  /** Registers a partial save (an AI/copy button's own result) as in flight,
+   *  so the change detection does not show its value as a draft while it is
+   *  being written. A React state setter: stable, safe in the [] callback. */
+  setOwnSavesInFlight?: React.Dispatch<React.SetStateAction<OwnSaveInFlight[]>>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -112,6 +117,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     pendingAltTranslateToastRef,
     inFlightToastRef,
     preserveEditsUntilRef,
+    setOwnSavesInFlight,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -145,6 +151,25 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       // The reload that follows this save re-reads the item; the fields it did
       // NOT carry may hold unsaved input, which that pass must keep.
       preserveEditsUntilRef.current = Date.now() + 30_000;
+      // What this save carries is being WRITTEN, not drafted: until its answer
+      // lands the save bar must not count it (own-save-in-flight.shared.ts).
+      // Keyed by the partial object itself, which travels with the request
+      // (queue entry / in-flight slot) and is how the answer settles it.
+      const itemId = savedItemIdRef.current;
+      const carriesSomething =
+        Object.keys(partial.values).length > 0 ||
+        (partial.altValues !== undefined && Object.keys(partial.altValues).length > 0);
+      if (setOwnSavesInFlight && itemId && carriesSomething) {
+        const entry: OwnSaveInFlight = {
+          itemId,
+          locale: partial.locale,
+          marketId: partial.marketId ?? "",
+          values: partial.values,
+          altValues: partial.altValues,
+          token: partial,
+        };
+        setOwnSavesInFlight((prev) => [...prev, entry]);
+      }
     }
 
     if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current) {
