@@ -25,7 +25,11 @@
  *
  * Applied to minifiable regions only:
  *   1. `{% comment %}…{% endcomment %}` blocks are removed (incl. the
- *      whitespace-control `{%- comment -%}` spelling).
+ *      whitespace-control `{%- comment -%}` spelling). A dash on the removed
+ *      comment is honoured exactly as Liquid would have honoured it: `{%-`
+ *      trims the whitespace at the end of the directly preceding text, `-%}`
+ *      the whitespace at the start of the directly following text (ASCII
+ *      whitespace only, newlines included). Without a dash nothing is trimmed.
  *   2. Leading indentation is stripped per line.
  *   3. Runs of 2+ blank lines collapse to one.
  *   4. Trailing whitespace is stripped per line.
@@ -36,8 +40,10 @@
  *     Liquid `{{ … }}` and are therefore NOT parseable JSON before rendering,
  *     so re-serialising them is impossible.
  *   - `<style>…</style>`, `<pre>…</pre>`, `<textarea>…</textarea>`.
- *   - The interior of Liquid tags `{% … %}` (including multi-line
- *     `{% liquid %}` / `{% schema %}` openers) and outputs `{{ … }}`.
+ *   - The interior of Liquid tags `{% … %}` and outputs `{{ … }}`, with ONE
+ *     exception: a multi-line `{% liquid %}` tag is minified by
+ *     `minifyLiquidTag` (indentation, blank lines and whole-line `#` comments
+ *     go; lines are never joined, because a newline ends a tag in there).
  *   - `{% raw %}…{% endraw %}` bodies, which Liquid emits verbatim.
  *
  * Note that `{% schema %}` *bodies* are minifiable: they are whitespace-
@@ -207,8 +213,42 @@ function createEmitter() {
   const out = [];
   let lineHasContent = false;
   let blankRun = 0;
+  let markIdx = 0;
 
   return {
+    /** Remember where the plain segment about to be written starts. */
+    mark() {
+      markIdx = out.length;
+    },
+
+    /**
+     * Emulate `{%-` on a removed comment: drop ASCII whitespace at the end of
+     * the output, but only inside the plain segment written since `mark()` --
+     * Liquid trims the directly preceding text token and nothing else.
+     */
+    trimTrailingWhitespace() {
+      while (out.length > markIdx) {
+        const last = out[out.length - 1].replace(/[ \t\n\r\f\v]+$/, '');
+        if (last === '') out.pop();
+        else {
+          out[out.length - 1] = last;
+          break;
+        }
+      }
+      // Resynchronise the line state from what is really at the end now.
+      let tail = '';
+      for (let i = out.length - 1; i >= 0; i--) {
+        const at = out[i].lastIndexOf('\n');
+        if (at !== -1) {
+          tail = out[i].slice(at + 1) + tail;
+          break;
+        }
+        tail = out[i] + tail;
+      }
+      lineHasContent = /\S/.test(tail);
+      blankRun = 0;
+    },
+
     /** Emit untouched bytes and resynchronise the line state from them. */
     pushProtected(text) {
       if (text === '') return;
@@ -272,6 +312,34 @@ function createEmitter() {
   };
 }
 
+const LIQUID_TAG_OPEN = /^\{%-?\s*liquid\b/;
+
+/**
+ * Minify the interior of a `{% liquid %}` tag.
+ *
+ * In there every line is its own tag, so indentation is meaningless, a line
+ * whose first non-blank character is `#` is a comment, and blank lines are
+ * empty. Lines are NEVER joined (the newline is the statement separator), a
+ * `#` after code on the same line is never touched (it may sit in a string),
+ * and the last line -- the one carrying the closing `%}` -- is always kept.
+ * A tag on one line is returned unchanged. Idempotent.
+ *
+ * @param {string} text the whole tag, `{%- liquid` through `-%}`
+ * @returns {string}
+ */
+export function minifyLiquidTag(text) {
+  if (!text.includes('\n')) return text;
+  const lines = text.split('\n');
+  const last = lines.length - 1;
+  const kept = [];
+  for (let i = 0; i <= last; i++) {
+    let line = i === 0 ? lines[i].replace(/[ \t\r]+$/, '') : lines[i].replace(/^[ \t\r]+|[ \t\r]+$/g, '');
+    if (i > 0 && i < last && (line === '' || line.startsWith('#'))) continue;
+    kept.push(line);
+  }
+  return kept.join('\n');
+}
+
 /**
  * Minify one Liquid source file.
  *
@@ -282,11 +350,26 @@ function createEmitter() {
  */
 export function minifyLiquid(source) {
   const emit = createEmitter();
+  let prevKind = null;
+  let trimNext = false;
   for (const segment of scanRegions(source)) {
-    if (segment.kind === 'plain') emit.pushPlain(segment.text);
-    else if (segment.kind === 'protected') emit.pushProtected(segment.text);
-    // 'comment' segments are dropped entirely (rule 1). The whitespace they
-    // leave behind is normalised by rules 2–4 on the surrounding plain text.
+    if (segment.kind === 'plain') {
+      let text = segment.text;
+      // `-%}` on the comment before: Liquid strips this text's leading whitespace.
+      if (trimNext) text = text.replace(/^[ \t\n\r\f\v]+/, '');
+      emit.mark();
+      emit.pushPlain(text);
+      trimNext = false;
+    } else if (segment.kind === 'protected') {
+      emit.pushProtected(LIQUID_TAG_OPEN.test(segment.text) ? minifyLiquidTag(segment.text) : segment.text);
+      trimNext = false;
+    } else {
+      // 'comment' segments are dropped entirely (rule 1), but the dashes still
+      // act: `{%-` trims the preceding text token, `-%}` the following one.
+      if (prevKind === 'plain' && segment.text.startsWith('{%-')) emit.trimTrailingWhitespace();
+      trimNext = segment.text.endsWith('-%}');
+    }
+    prevKind = segment.kind;
   }
   return emit.result();
 }

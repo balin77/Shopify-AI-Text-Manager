@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   minifyLiquid,
+  minifyLiquidTag,
   buildReport,
   scanRegions,
   LIQUID_LIMIT_BYTES,
@@ -34,8 +35,43 @@ describe('minifyLiquid — comment removal (rule 1)', () => {
     expect(out).toBe('ab');
   });
 
-  it('removes an inline comment without eating its neighbours', () => {
-    expect(minifyLiquid('x {%- comment -%} note {%- endcomment -%} y')).toBe('x  y');
+  it("removes an inline comment exactly as Liquid's whitespace control would", () => {
+    // Liquid renders this as `xy`: both dashes trim the spaces next to them.
+    expect(minifyLiquid('x {%- comment -%} note {%- endcomment -%} y')).toBe('xy');
+  });
+
+  it('trims only the side that carries a dash', () => {
+    expect(minifyLiquid('x {%- comment %} n {% endcomment %} y')).toBe('x y');
+    expect(minifyLiquid('x {% comment -%} n {%- endcomment -%} y')).toBe('x y');
+    expect(minifyLiquid('x {% comment %} n {% endcomment -%} y')).toBe('x y');
+  });
+
+  it('trims nothing without dashes (whitespace is only normalised)', () => {
+    expect(minifyLiquid('a \n {% comment %}c{% endcomment %} \n b')).toBe('a\n\nb');
+    expect(minifyLiquid('x {% comment %}c{% endcomment %} y')).toBe('x  y');
+  });
+
+  it('removes the whitespace around a comment inside a quoted string', () => {
+    expect(minifyLiquid('"a {%- comment -%}x{%- endcomment -%} b"')).toBe('"ab"');
+  });
+
+  it('handles two consecutive dashed comments', () => {
+    expect(minifyLiquid('a  {%- comment -%}1{%- endcomment -%}{%- comment -%}2{%- endcomment -%}  b')).toBe('ab');
+  });
+
+  it('trims across newlines, and only ASCII whitespace (NBSP survives)', () => {
+    expect(minifyLiquid('a\n\n  {%- comment -%}c{%- endcomment -%}\n\n  b')).toBe('ab');
+    expect(minifyLiquid('a\u00a0{%- comment -%}c{%- endcomment -%}\u00a0b')).toBe('a\u00a0\u00a0b');
+  });
+
+  it('never trims into a protected region or a Liquid tag next to the comment', () => {
+    expect(minifyLiquid('<script>x </script>{%- comment -%}c{%- endcomment -%} <b>')).toBe('<script>x </script><b>');
+    expect(minifyLiquid('{{ a }} {%- comment -%}c{%- endcomment -%}{{ b }}')).toBe('{{ a }}{{ b }}');
+    expect(minifyLiquid('{{ a }}{% comment %}c{%- endcomment -%} {{ b }}')).toBe('{{ a }}{{ b }}');
+  });
+
+  it('keeps the line state right after trimming back to an earlier line', () => {
+    expect(minifyLiquid('  a\n   {%- comment -%}c{% endcomment %}\n   b')).toBe('a\nb');
   });
 
   it('is non-greedy — two comments are removed, the code between them survives', () => {
@@ -166,9 +202,52 @@ describe('minifyLiquid — Liquid expressions are never reformatted', () => {
     expect(minifyLiquid(src)).toBe('{%- if x -%}\n{{ y }}\n{%- endif -%}');
   });
 
-  it('keeps the indented interior of a multi-line {% liquid %} tag', () => {
+  it('strips indentation inside a multi-line {% liquid %} tag but keeps every statement line', () => {
     const tag = ['{%- liquid', '  assign a = 1', '      assign b = 2', '-%}'].join('\n');
-    expect(minifyLiquid(`  ${tag}\n`)).toBe(`${tag}\n`);
+    expect(minifyLiquid(`  ${tag}\n`)).toBe('{%- liquid\nassign a = 1\nassign b = 2\n-%}\n');
+  });
+
+  it('drops blank and whole-line # lines in {% liquid %}, never a # after code or in a string', () => {
+    const tag = [
+      '{%- liquid',
+      '  # a note',
+      '',
+      "  assign x = '#'",
+      '  assign y = 1 # trailing',
+      '\t# tab note',
+      '  assign z = 2',
+      '-%}',
+    ].join('\n');
+    expect(minifyLiquidTag(tag)).toBe(
+      ['{%- liquid', "assign x = '#'", 'assign y = 1 # trailing', 'assign z = 2', '-%}'].join('\n'),
+    );
+  });
+
+  it('keeps capture / echo / endcapture in order inside {% liquid %}', () => {
+    const tag = ['{% liquid', '  capture c', '    echo a', '', '    echo b', '  endcapture', '%}'].join('\n');
+    expect(minifyLiquidTag(tag)).toBe('{% liquid\ncapture c\necho a\necho b\nendcapture\n%}');
+  });
+
+  it('keeps the last line (closing delimiter) even when it starts with #', () => {
+    expect(minifyLiquidTag('{% liquid\n  assign a = 1\n  # x %}')).toBe('{% liquid\nassign a = 1\n# x %}');
+  });
+
+  it('leaves a one-line {% liquid %} byte-identical', () => {
+    const tag = '{% liquid   assign a = 1   %}';
+    expect(minifyLiquidTag(tag)).toBe(tag);
+    expect(minifyLiquid(`x ${tag} y`)).toBe(`x ${tag} y`);
+  });
+
+  it('removes \\r inside {% liquid %} and is idempotent', () => {
+    const tag = '{%- liquid\r\n  assign a = 1\r\n\r\n  # c\r\n  assign b = 2\r\n-%}';
+    const once = minifyLiquidTag(tag);
+    expect(once).toBe('{%- liquid\nassign a = 1\nassign b = 2\n-%}');
+    expect(minifyLiquidTag(once)).toBe(once);
+  });
+
+  it('does not treat other tags as {% liquid %}', () => {
+    const tag = '{% if a %}\n    # x\n\n    y\n{% endif %}';
+    expect(minifyLiquid(tag)).toBe('{% if a %}\n# x\n\ny\n{% endif %}');
   });
 
   it('keeps filter spacing inside an output expression', () => {
@@ -188,6 +267,9 @@ describe('minifyLiquid — idempotence', () => {
     '<div>\n\n\n   <span>a</span>   \n{% comment %}\n x\n{% endcomment %}\n</div>\n',
     '{%- if a -%}\n   {{ b }}\n{%- endif -%}\n\n\n<script>\n  var x = 1\n</script>\n',
     'a{%- comment -%}c{%- endcomment -%}b',
+    'x  {%- comment -%} c {%- endcomment -%}  \n\n  y',
+    '{%- liquid\n  # n\n  assign a = 1\n\n    assign b = 2\n-%}\n',
+    '<div>\r\n  {%- comment -%}c{%- endcomment -%}\r\n  {% liquid\r\n   assign a = 1\r\n  %}\r\n</div>\r\n',
     '\n\n\n<pre>\n  x\n</pre>\n\n\n',
     '',
   ];
@@ -231,25 +313,43 @@ describe('the real extension bundle', () => {
     expect(withGhost.minifiedBytes).toBe(report.minifiedBytes);
   });
 
-  it('keeps every protected region of every block byte-identical', () => {
+  it('keeps every protected region byte-identical, except {% liquid %} tags which go through minifyLiquidTag', () => {
+    const isLiquidTag = (t: string) => /^\{%-?\s*liquid\b/.test(t);
     for (const block of report.blocks) {
-      const before = scanRegions(block.original).filter((s) => s.kind === 'protected').map((s) => s.text);
+      const before = scanRegions(block.original)
+        .filter((s) => s.kind === 'protected')
+        .map((s) => (isLiquidTag(s.text) ? minifyLiquidTag(s.text) : s.text));
       const after = scanRegions(block.minified).filter((s) => s.kind === 'protected').map((s) => s.text);
       expect(after, block.name).toEqual(before);
     }
   });
 
   it('changes nothing but whitespace outside the protected regions', () => {
-    const plainText = (src: string) =>
-      scanRegions(src)
-        .filter((s) => s.kind === 'plain')
-        .map((s) => s.text)
-        .join('')
-        .replace(/\s+/g, ' ')
-        .trim();
-
+    // Whitespace may only vanish where Liquid's own dash trimming would remove
+    // it, i.e. next to a removed `{%-` / `-%}` comment. The expectation is built
+    // by replaying exactly that on the ORIGINAL segments and then comparing with
+    // runs of whitespace folded to one space -- NOT by deleting all whitespace,
+    // which would hide a lost separator anywhere.
+    const fold = (t: string) => t.replace(/\s+/g, ' ');
     for (const block of report.blocks) {
-      expect(plainText(block.minified), block.name).toBe(plainText(block.original));
+      const segs = scanRegions(block.original);
+      const expected = segs
+        .map((seg, i) => {
+          if (seg.kind !== 'plain') return null;
+          let t = seg.text;
+          const prev = segs[i - 1];
+          const next = segs[i + 1];
+          if (prev?.kind === 'comment' && prev.text.endsWith('-%}')) t = t.replace(/^[ \t\n\r\f\v]+/, '');
+          if (next?.kind === 'comment' && next.text.startsWith('{%-')) t = t.replace(/[ \t\n\r\f\v]+$/, '');
+          return t;
+        })
+        .filter((t): t is string => t !== null);
+      const actual = scanRegions(block.minified)
+        .filter((s) => s.kind === 'plain')
+        .map((s) => s.text);
+      // Plain segments of the two files line up only when no segment vanished
+      // entirely; compare the concatenation instead, folded and trimmed.
+      expect(fold(actual.join('')).trim(), block.name).toBe(fold(expected.join('')).trim());
     }
   });
 
@@ -259,6 +359,19 @@ describe('the real extension bundle', () => {
         scanRegions(block.minified).some((s) => s.kind === 'comment'),
         block.name,
       ).toBe(false);
+    }
+  });
+
+  it('leaves no line starting with # inside any minified {% liquid %} tag', () => {
+    for (const block of report.blocks) {
+      for (const seg of scanRegions(block.minified)) {
+        if (seg.kind !== 'protected' || !/^\{%-?\s*liquid\b/.test(seg.text)) continue;
+        const inner = seg.text.split('\n').slice(1, -1);
+        expect(
+          inner.filter((l) => l.trim() === '' || l.trim().startsWith('#')),
+          block.name,
+        ).toEqual([]);
+      }
     }
   });
 });
