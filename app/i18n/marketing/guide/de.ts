@@ -338,6 +338,7 @@ export const guideDe: GuideCopy = {
           paragraphs: [
             "Eine Übersetzung gilt erst als gespeichert, wenn Shopify sie zurückmeldet. Nimmt Shopify eine Übersetzung nicht an, sehen Sie das am betroffenen Feld — statt einer Erfolgsmeldung über etwas, das nie angekommen ist.",
             "Dasselbe gilt beim Leeren: Eine Übersetzung gilt erst als entfernt, wenn Shopify es bestätigt; sonst bleibt sie sichtbar, das Feld bleibt als geändert markiert, damit Sie erneut speichern können, und Sie werden darüber informiert. Bei Produktoptionen und Metafeldern wird eine von Shopify abgelehnte Sprache in der Aufgabe benannt, die dann „mit Fehlern abgeschlossen“ anzeigt.",
+            "„Alles löschen“ in einer Fremdsprache entfernt bei einem Produkt auch die Übersetzungen seiner Optionsnamen, Optionswerte und Metafelder in dieser Sprache — ist ein Markt gewählt, nur die dieses Marktes.",
           ],
         },
       ],

@@ -49,6 +49,7 @@ import {
   type TranslateTarget,
 } from "../services/editor/sub-resource-overlay.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
+import { buildClearAllSubResourcePayload } from "../services/editor/sub-resource-clear.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -185,6 +186,13 @@ export interface SubResourceHandlers {
   translateAllSubResources: () => void;
   translateAllSubResourcesToAllLocales: () => void;
   saveSubResources: () => void;
+  /**
+   * The sub-resource half of the editor's "clear all" in a FOREIGN locale:
+   * removes every option name, option value and metafield translation of the
+   * viewed layer (selected market, else global). Echo-verified on the server;
+   * the fields are emptied at once and a removal that fails is put back.
+   */
+  clearAllForLocale: () => void;
   resetChanges: () => void;
   resetForReload: () => void;
   /**
@@ -421,6 +429,9 @@ export function useProductSubResources({
     values: Record<string, Record<string, string>>;
   } | null>(null);
   const pendingPrimarySaveIdsRef = useRef<string[]>([]);
+  // Set while a "clear all" removal is in flight: its success is reported by
+  // the editor's own clear, so this hook stays silent about it.
+  const pendingClearAllRef = useRef(false);
   // What the primary save SENT, so a partial failure can still settle the saved subset.
   const pendingPrimarySaveSentRef = useRef<{ options: Record<string, any>; metafields: Record<string, unknown> } | null>(null);
   // The item/language/market a translate was REQUESTED for; its answer is
@@ -719,6 +730,12 @@ export function useProductSubResources({
       // (the edit itself stays pending, like every failed request).
       rollbackPendingCopy();
       clearFailedTranslateSpinners(data, false);
+      // A "clear all" that never reached Shopify removed nothing: the emptied
+      // fields go back to what the layer still holds.
+      if (pendingClearAllRef.current) {
+        pendingClearAllRef.current = false;
+        readTranslationsFromItem(false);
+      }
       return;
     }
 
@@ -850,6 +867,8 @@ export function useProductSubResources({
       // Clear copy loading state (markSubResourceActive was called in copyOptionField)
       const wasCopyOperation = !!pendingCopyFieldIdRef.current;
       const copied = pendingCopyRef.current;
+      const wasClearAll = pendingClearAllRef.current;
+      pendingClearAllRef.current = false;
       if (pendingCopyFieldIdRef.current) {
         markSubResourceCompleted(selectedItem?.id || "", pendingCopyFieldIdRef.current);
         pendingCopyFieldIdRef.current = null;
@@ -992,7 +1011,7 @@ export function useProductSubResources({
         }
       } else {
         // All saved successfully
-        if (showInfoBox) {
+        if (showInfoBox && !wasClearAll) {
           showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
         }
         setHasChanges(false);
@@ -2091,6 +2110,74 @@ export function useProductSubResources({
     }
   }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder]);
 
+  const clearAllForLocale = useCallback(() => {
+    if (!selectedItem || isPrimaryLocale) return;
+    const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
+    const { translationsData, resourceTypes } = buildClearAllSubResourcePayload({
+      item: selectedItem,
+      locale: currentLanguage,
+      marketId: selectedMarketId,
+      optionTranslations,
+      metafieldTranslations,
+      fallbackResourceIds,
+      overlayForLayer: localSubResourceOverlayRef.current[overlayKey],
+    });
+
+    // Empty what this layer holds at once, like the editor's own fields; an
+    // inherited global value stays shown (a market clear does not touch it),
+    // and so does a LINKED option's value (translated on its metaobject).
+    // Unsaved typed values of this locale go too: "clear all" supersedes them.
+    const keepInherited = (id: string | undefined) =>
+      !!id && !!selectedMarketId && fallbackResourceIds.has(id);
+    setOptionTranslations((prev) => {
+      const next: Record<string, OptionTranslation> = {};
+      for (const [optionId, trans] of Object.entries(prev)) {
+        const option = selectedItem.options?.find((o) => o.id === optionId);
+        next[optionId] = {
+          name: keepInherited(optionId) ? trans.name : "",
+          values: trans.values.map((value, index) =>
+            option?.isLinked || keepInherited(option?.values[index]?.id) ? value : "",
+          ),
+        };
+      }
+      return next;
+    });
+    setMetafieldTranslations((prev) => {
+      const next: Record<string, string> = {};
+      for (const [id, value] of Object.entries(prev)) next[id] = keepInherited(id) ? value : "";
+      return next;
+    });
+    setDirtyOptionIds(new Set());
+    setDirtyOptionValueIds(new Set());
+    setDirtyMetafieldIds(new Set());
+    setHasChanges(false);
+
+    if (Object.keys(translationsData).length === 0) return;
+
+    // Settled by the ordinary foreign-save answer: confirmed removals are
+    // staged (global "" / market entry dropped + re-read), failed ones put back.
+    pendingForeignSaveRef.current = {
+      localeKey: overlayKey,
+      marketLayer: !!selectedMarketId,
+      values: translationsData,
+    };
+    pendingClearAllRef.current = true;
+    // This submit replaces a Shopify read-back still in flight on the same
+    // fetcher, whose answer then never arrives to end the spinner.
+    setIsLoading(false);
+    fetcher.submit(
+      {
+        action: "saveSubResourceTranslations",
+        locale: currentLanguage,
+        translationsData: JSON.stringify(translationsData),
+        resourceTypes: JSON.stringify(resourceTypes),
+        itemId: selectedItem.id,
+        marketId: selectedMarketId,
+      },
+      { method: "POST", action: "/app/products" }
+    );
+  }, [selectedItem, isPrimaryLocale, currentLanguage, selectedMarketId, optionTranslations, metafieldTranslations, fallbackResourceIds, fetcher]);
+
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
     setOptionTranslations({});
@@ -2374,6 +2461,7 @@ export function useProductSubResources({
       translateAllSubResources,
       translateAllSubResourcesToAllLocales,
       saveSubResources,
+      clearAllForLocale,
       resetChanges,
       resetForReload,
       refreshTranslations,

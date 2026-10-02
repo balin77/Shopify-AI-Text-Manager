@@ -396,6 +396,62 @@ describe('handleSaveSubResourceTranslations', () => {
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
     expect(result.failedResources).toEqual([VALUE]);
   });
+
+  it('"clear all" of a locale: option name, option value and metafield are each REMOVED on their own resource; only confirmed rows go locally', async () => {
+    // The payload the product page's clear-all sends. The option VALUE's
+    // removal is not echoed and Shopify still holds it: its row stays and it is
+    // reported failed, while the other two are deleted locally.
+    const w = installAdmin({
+      remove: (v: any) => ({
+        data: {
+          translationsRemove: {
+            userErrors: [],
+            translations: v.resourceId === VALUE ? [] : (v.translationKeys as string[]).map((key) => ({ key, locale: 'fr' })),
+          },
+        },
+      }),
+      reread: () => ({ data: { translatableResource: { translations: [{ key: 'name', value: 'Rouge', market: null }] } } }),
+    });
+    const db = makeDb();
+    const result = body(await save(
+      db,
+      w.admin,
+      { [OPTION]: { name: '' }, [VALUE]: { name: '' }, [METAFIELD]: { value: '' } },
+      { [OPTION]: 'ProductOption', [VALUE]: 'ProductOptionValue', [METAFIELD]: 'Metafield' },
+    ));
+
+    expect(w.of('register')).toHaveLength(0);
+    expect(w.of('remove').map((c) => [c.variables.resourceId, c.variables.translationKeys, c.variables.locales])).toEqual([
+      [OPTION, ['name'], ['fr']],
+      [VALUE, ['name'], ['fr']],
+      [METAFIELD, ['value'], ['fr']],
+    ]);
+    const deleted = db.contentTranslation.deleteMany.mock.calls.map((c: any) => c[0].where.resourceId);
+    expect(deleted).toEqual([OPTION, METAFIELD]);
+    expect(result.savedResources).toEqual([OPTION, METAFIELD]);
+    expect(result.failedResources).toEqual([VALUE]);
+  });
+
+  it('"clear all" in a MARKET removes only that market\'s overrides of the sub-resources', async () => {
+    const w = installAdmin({
+      remove: (v: any) => ({
+        data: { translationsRemove: { userErrors: [], translations: (v.translationKeys as string[]).map((key) => ({ key, locale: 'fr', market: { id: 'gid://shopify/Market/9' } })) } },
+      }),
+    });
+    const db = makeDb();
+    await save(
+      db,
+      w.admin,
+      { [OPTION]: { name: '' }, [METAFIELD]: { value: '' } },
+      { [OPTION]: 'ProductOption', [METAFIELD]: 'Metafield' },
+      { marketId: 'gid://shopify/Market/9' },
+    );
+
+    for (const call of w.of('remove')) expect(call.variables.marketIds).toEqual(['gid://shopify/Market/9']);
+    for (const call of db.contentTranslation.deleteMany.mock.calls) {
+      expect(call[0].where).toMatchObject({ shop: SHOP, locale: 'fr', marketId: 'gid://shopify/Market/9' });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

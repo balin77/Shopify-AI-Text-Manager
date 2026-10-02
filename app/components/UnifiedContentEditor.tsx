@@ -2694,7 +2694,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         title={t.content?.clearAllConfirmTitle || "Clear All Fields?"}
         primaryAction={{
           content: t.content?.clearAllConfirm || "Clear All",
-          onAction: state.currentLanguage === primaryLocale ? handlers.handleClearAllConfirm : handlers.handleClearAllForLocaleConfirm,
+          onAction: state.currentLanguage === primaryLocale
+            ? handlers.handleClearAllConfirm
+            : () => {
+                handlers.handleClearAllForLocaleConfirm();
+                // A product's options, option values and metafields translate on
+                // their OWN resources, which the item's clear never reaches.
+                subResourceHandlers?.clearAllForLocale?.();
+              },
           destructive: true,
         }}
         secondaryActions={[
