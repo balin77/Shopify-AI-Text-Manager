@@ -313,7 +313,7 @@ export const compareEn: CompareCopy = {
     blogArticles: "One article from title and keyword; no blog planner",
     autoTranslate: "With your own AI key or AI included",
     aiProvider: "Six providers",
-    imagesPerLanguage: "Not yet",
+    imagesPerLanguage: "Pro and up: product images and videos, theme images, per market too",
     currency: "Shopify Markets does this",
     speedOptimization: "Deliberately not — we never change theme code",
     keywordVolume: "Search Console gives real figures",
@@ -469,6 +469,7 @@ export const compareEn: CompareCopy = {
         "Updates translations automatically when you change the original text ",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and a spreadsheet editor for the whole catalogue.",
+        "Different images and videos per language, and per market too: product images, product videos and theme images (Pro and up).",
       ],
       verdict:
         "Stay with Translate & Adapt if you sell in one or two extra languages and standard machine translation is good enough. Choose ContentPilot when you want translations in your own voice with a glossary, texts from other apps translated, or one app for texts, SEO and translations. Both write into Shopify's own translation storage, so you can switch at any time and keep what you have.",
@@ -522,6 +523,7 @@ export const compareEn: CompareCopy = {
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and AI-search visibility.",
         "A spreadsheet editor for the whole catalogue, plus variant image galleries",
+        "Different images and videos per language and market from Pro, with no cap on the number of products.",
       ],
       verdict:
         "Choose Transcy if you need a currency converter beyond Shopify Markets or text translated inside images. Choose ContentPilot if you want translations in your own voice and one app for texts, SEO and translations.",

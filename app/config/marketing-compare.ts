@@ -11,7 +11,7 @@
  *  - "unstated" is not "no". Where a provider does not say whether it can do
  *    something, the page says exactly that. Claiming a gap we have not seen is
  *    the fastest way to lose a visitor who knows the other app.
- *  - Our own gaps are rows too (currency conversion, images per language).
+ *  - Our own gaps are rows too (currency conversion).
  *    A comparison that only lists rows we win reads as an advert, and an
  *    honest one is the reason this page is worth ranking for.
  */
@@ -338,9 +338,12 @@ export const COMPARE_ROWS: CompareRow[] = [
   {
     id: "imagesPerLanguage",
     group: "international",
-    ours: "no",
+    // Shipped 2026-10-02: product images and videos per language and market,
+    // theme images per language and market; gated with the image manager.
+    ours: "yes",
     them: { "translate-and-adapt": "partial", weglot: "yes", transcy: "yes", langshop: "unstated", "t-lab": "yes", langify: "yes", gtranslate: "unstated" },
     byPlan: {
+      contentpilot: ["higherPlan", "higherPlan", "yes", "yes"],
       langify: ["higherPlan", "yes", "yes", "yes"],
       transcy: ["higherPlan", "higherPlan", "yes", "yes", "yes", "yes"],
     },

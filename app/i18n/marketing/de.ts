@@ -79,6 +79,7 @@ export const de: MarketingTranslation = {
           "Ändern Sie einen Ausgangstext, wird die Übersetzung neu gemacht statt zu veralten",
           "Fehlende Übersetzungen im ganzen Katalog in einem Durchgang füllen",
           "Übersetzte URL-Handles, samt der 301-Weiterleitung, die dazugehört",
+          "Andere Bilder und Videos je Sprache und Markt: Produktgalerie, Teilen-Bild und Theme-Bilder",
         ],
       },
       {
@@ -215,6 +216,7 @@ export const de: MarketingTranslation = {
       autoTranslate: { label: "Automatische Übersetzung", help: "Ändert sich ein Text — in der App oder im Shopify-Admin —, werden seine Übersetzungen erneuert." },
       productImages: { label: "Produktbilder" },
       imageSuite: { label: "Bildmanager", help: "Varianten-Galerien, Bulk-Upload, Alt-Texte in Serie, SKU-Namen." },
+      mediaPerLanguage: { label: "Bilder und Videos je Sprache", help: "Produktbilder, Produktvideos und Theme-Bilder pro Sprache und Markt ersetzen." },
       imageOperations: { label: "Bild-Uploads und WebP-Konvertierungen" },
       seoAudit: { label: "SEO-Audit, strukturierte Daten, Weiterleitungen, hreflang" },
       pageSpeed: { label: "PageSpeed-Messungen" },

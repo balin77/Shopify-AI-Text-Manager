@@ -497,7 +497,7 @@ export const guideEn: GuideCopy = {
           heading: "Product images",
           paragraphs: [
             "You set a replacement image right in the product's image gallery — also when the image manager is switched off. In the main language there is nothing special. Switch to a foreign language (and, if you like, to a market) and select an image in the gallery: in the selection's button row the button “Upload replacement image” appears between “Move” and “Delete”. Clicking it opens your files, where you pick an image or upload a new one; only what can replace the original is offered. The chosen image shows in the gallery right away, in place of the original, marked with a small round symbol in its top-left corner. It is only saved when you press “Save” at the top; the info box reports the result. “Discard” takes your choice back. Clicking the symbol shows you the original (the symbol turns grey), another click shows the replacement again. “Remove replacement image” makes the original apply again — that too is only applied with “Save”. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
-            "For your store to show the replacements, turn on the “Media per language” app embed once (while it is still off, the message after saving links straight to it). The images are replaced in the product page gallery and in the image shown when the link is shared and to search engines.",
+            "For your store to show the replacements, turn on the “Media per language” app embed once (while it is still off, the message after saving links straight to it). The images are replaced in the product page gallery (including its thumbnails and the full-screen view) and in the image shown when the link is shared and to search engines.",
           ],
           list: [
             "A replacement for a specific market takes precedence over the replacement for “All markets”.",
@@ -511,7 +511,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "Videos",
           paragraphs: [
-            "The same way you also replace a product's videos per language and market — for example with a dubbed version. A video uploaded to Shopify is replaced by another uploaded video (from your files or uploaded new), a YouTube or Vimeo video by another YouTube or Vimeo link. An image cannot be replaced by a video or the other way round; 3D models are not replaced.",
+            "The same way you also replace a product's videos per language and market — for example with a dubbed version. A video uploaded to Shopify is replaced by another uploaded video (from your files or uploaded new), a YouTube or Vimeo video by another YouTube or Vimeo link. With a video selected, the button reads “Upload replacement video” or “Enter replacement link” accordingly. An image cannot be replaced by a video or the other way round; 3D models are not replaced.",
             "Shopify processes a newly uploaded video for a few minutes. If a note says so, pick the video from your files a little later.",
             "Videos in the theme settings (for example a video section on the home page) are entered per language as a different link; the AI does not change them.",
           ],
@@ -526,6 +526,7 @@ export const guideEn: GuideCopy = {
       tips: [
         "The AI does not translate or change images. That is why the translate buttons offer nothing for theme images — an image stays until you choose another one.",
         "An image that stays the same in a language does not count as a missing translation.",
+        "Different images and videos per language are included in the Pro and Max plans.",
       ],
     },
 

@@ -502,7 +502,7 @@ export const guideDe: GuideCopy = {
           heading: "Produktbilder",
           paragraphs: [
             "Ein Ersatzbild legen Sie direkt in der Bildergalerie des Produkts fest — auch wenn der Bild-Manager ausgeschaltet ist. In der Hauptsprache gibt es dafür nichts Besonderes. Schalten Sie auf eine Fremdsprache (und, wenn Sie wollen, auf einen Markt) um und wählen Sie ein Bild in der Galerie an: In der Zeile mit den Schaltflächen der Auswahl erscheint zwischen „Verschieben“ und „Löschen“ der Button „Ersatzbild hochladen“. Ein Klick öffnet Ihre Dateien, dort wählen Sie ein Bild aus oder laden ein neues hoch; angeboten wird nur, was das Original ersetzen kann. Das gewählte Bild erscheint sofort in der Galerie an der Stelle des Originals, markiert mit einem kleinen runden Symbol in der linken oberen Ecke. Gespeichert wird es erst, wenn Sie oben auf „Speichern“ drücken; das Ergebnis meldet die Info-Box. „Verwerfen“ nimmt die Wahl zurück. Ein Klick auf das Symbol zeigt Ihnen das Original (das Symbol wird grau), ein weiterer Klick wieder das Ersatzbild. „Ersatzbild entfernen“ lässt wieder das Original gelten — auch das wird erst mit „Speichern“ übernommen. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
-            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Media per language“ (solange sie noch aus ist, verlinkt die Meldung nach dem Speichern direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
+            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Media per language“ (solange sie noch aus ist, verlinkt die Meldung nach dem Speichern direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite (samt Vorschaubildern und Vollbildansicht) und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
           ],
           list: [
             "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
@@ -516,7 +516,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Videos",
           paragraphs: [
-            "Auf demselben Weg ersetzen Sie auch die Videos eines Produkts pro Sprache und Markt — zum Beispiel durch eine vertonte Fassung. Ein in Shopify hochgeladenes Video ersetzen Sie durch ein anderes hochgeladenes Video (aus Ihren Dateien oder neu hochgeladen), ein YouTube- oder Vimeo-Video durch einen anderen YouTube- oder Vimeo-Link. Ein Bild lässt sich nicht durch ein Video ersetzen und umgekehrt; 3D-Modelle werden nicht ersetzt.",
+            "Auf demselben Weg ersetzen Sie auch die Videos eines Produkts pro Sprache und Markt — zum Beispiel durch eine vertonte Fassung. Ein in Shopify hochgeladenes Video ersetzen Sie durch ein anderes hochgeladenes Video (aus Ihren Dateien oder neu hochgeladen), ein YouTube- oder Vimeo-Video durch einen anderen YouTube- oder Vimeo-Link. Haben Sie ein Video angewählt, heißt der Button entsprechend „Ersatzvideo hochladen“ beziehungsweise „Ersatzlink eingeben“. Ein Bild lässt sich nicht durch ein Video ersetzen und umgekehrt; 3D-Modelle werden nicht ersetzt.",
             "Neu hochgeladene Videos verarbeitet Shopify einige Minuten lang. Erscheint ein Hinweis dazu, wählen Sie das Video kurz danach aus Ihren Dateien. Auch bei Videos gilt: Wahl und Entfernen werden erst mit „Speichern“ übernommen.",
             "Videos in den Theme-Einstellungen (zum Beispiel ein Video-Abschnitt auf der Startseite) tragen Sie pro Sprache als anderen Link ein; die KI verändert sie nicht.",
           ],
@@ -531,6 +531,7 @@ export const guideDe: GuideCopy = {
       tips: [
         "Die KI übersetzt oder verändert keine Bilder. Bei Theme-Bildern bieten die Übersetzen-Knöpfe deshalb nichts an — ein Bild behalten Sie, bis Sie ein anderes wählen.",
         "Ein Bild, das in einer Sprache gleich bleiben soll, zählt nicht als fehlende Übersetzung.",
+        "Andere Bilder und Videos je Sprache sind in den Plänen Pro und Max enthalten.",
       ],
     },
 

@@ -92,6 +92,7 @@ export const en = {
           "Change a source text and the translation is re-made, not left stale",
           "Fill only what is missing across the whole catalogue in one run",
           "Translated URL handles, with the 301 redirect written for you",
+          "Different images and videos per language and market: product gallery, sharing image and theme images",
         ],
       },
       {
@@ -228,6 +229,7 @@ export const en = {
       autoTranslate: { label: "Automatic translation", help: "When a text changes — in the app or in the Shopify admin — its translations are renewed." },
       productImages: { label: "Product images" },
       imageSuite: { label: "Image manager", help: "Variant galleries, bulk upload, bulk alt texts, SKU names." },
+      mediaPerLanguage: { label: "Images and videos per language", help: "Replace product images, product videos and theme images per language and market." },
       imageOperations: { label: "Image uploads and WebP conversions" },
       seoAudit: { label: "SEO audit, structured data, redirects, hreflang" },
       pageSpeed: { label: "PageSpeed checks" },

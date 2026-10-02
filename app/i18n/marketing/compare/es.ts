@@ -313,7 +313,7 @@ export const compareEs: CompareCopy = {
     blogArticles: "Un artículo a partir de título y palabra clave; sin planificador de blog",
     autoTranslate: "Con su propia clave de IA o con IA incluida",
     aiProvider: "Seis proveedores",
-    imagesPerLanguage: "Aún no",
+    imagesPerLanguage: "Desde Pro: imágenes y vídeos de producto, imágenes del tema, también por mercado",
     currency: "Lo hace Shopify Markets",
     speedOptimization: "Deliberadamente no: nunca tocamos el código del tema",
     keywordVolume: "Search Console da cifras reales",
@@ -469,6 +469,7 @@ export const compareEs: CompareCopy = {
         "Actualiza las traducciones automáticamente cuando cambia el texto original.",
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y un editor de hoja de cálculo para todo el catálogo.",
+        "Imágenes y vídeos distintos por idioma, y también por mercado: imágenes y vídeos de producto e imágenes del tema (desde Pro).",
       ],
       verdict:
         "Quédese con Translate & Adapt si vende en uno o dos idiomas adicionales y le basta una traducción automática estándar. Elija ContentPilot si quiere traducciones con su propio tono y glosario, traducir los textos de otras apps o una sola app para textos, SEO y traducciones. Ambas guardan en el almacén de traducciones de Shopify, así que puede cambiar cuando quiera y conservar todo.",
@@ -522,6 +523,7 @@ export const compareEs: CompareCopy = {
         "Escribe y mejora textos de producto, títulos SEO y textos alternativos.",
         "Herramientas SEO completas y visibilidad en búsquedas con IA.",
         "Un editor de hoja de cálculo para todo el catálogo y galerías de imágenes por variante.",
+        "Imágenes y vídeos distintos por idioma y mercado desde Pro, sin límite de número de productos.",
       ],
       verdict:
         "Elija Transcy si necesita un conversor de moneda más allá de Shopify Markets o traducir el texto dentro de las imágenes. Elija ContentPilot si quiere traducciones con su propio tono y una sola app para textos, SEO y traducciones.",
