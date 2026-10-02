@@ -365,6 +365,7 @@ export function UnifiedFieldRenderer(
           featuredImage: t.products?.featuredImage || "Featured Image",
           altTextForImage: t.products?.altTextForImage || "Alt-text for image",
           altTextPlaceholder: t.products?.altTextPlaceholder || "Describe the image...",
+          altNeedsPrimaryHint: t.products?.altTextNeedsPrimaryHint,
           generateAllAltTexts: t.products?.generateAllAltTexts || "Generate all alt-texts",
           translateAllAltTexts: t.products?.translateAllAltTexts || "Translate all alt-texts",
           onlyFeaturedImageAvailable:
