@@ -2130,6 +2130,11 @@ export const en: Translation = {
     translateRunTimedOutSaveKept: "The translation may still be running on the server. Your changes were not saved yet – please save again in a moment.",
     ownSaveRefusedWhileTranslating: "A translation into this language is still running – the change stays unsaved. Save it when the translation has finished.",
     ownSaveRefusedWhileItemTranslating: "A translation of this item is still running – the change stays unsaved. Save it when the translation has finished.",
+    actionRefusedWhileTranslating: "A translation into this language is still running – please try again when it has finished.",
+    actionRefusedWhileItemTranslating: "A translation of this item is still running – please try again when it has finished.",
+    actionRefusedWhilePrimarySaveWaits: "A save of the main language is waiting for a translation of this item – please try again when it has finished.",
+    ownSaveRefusedWhilePrimarySaveWaits: "A save of the main language is waiting for a translation of this item – the change stays unsaved. Save it when the translation has finished.",
+    translateToOthersSkippedWhileTranslating: "Saved. The translation into the other languages was skipped because a translation of this item is still running – start it again when that has finished.",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
     fieldTranslatedAndSaved: "{fieldType} translated and saved successfully",
     // Tooltip for locale buttons

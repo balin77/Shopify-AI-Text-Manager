@@ -423,7 +423,7 @@ describe("Clear all in language B while Translate all for language A runs", () =
     await act(async () => { h.editor.current.handlers.handleCopyField("title"); });
     await tick(20);
     expect(h.posted.map((p) => p.action)).toEqual(["translateAllForLocale"]);
-    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("stays unsaved"), "info");
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("try again"), "info");
     expect(h.editor.current.helpers.isOwnSaveInFlight()).toBe(false);
     expect(h.editor.current.state.isSavingCurrentItem).toBe(false);
     // Refused before anything moved: the field is as it was, and the

@@ -2131,6 +2131,11 @@ export const de = {
     translateRunTimedOutSaveKept: "Die Übersetzung läuft möglicherweise noch auf dem Server. Ihre Änderungen wurden noch nicht gespeichert – bitte in einem Moment erneut speichern.",
     ownSaveRefusedWhileTranslating: "In diese Sprache wird gerade noch übersetzt – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn die Übersetzung fertig ist.",
     ownSaveRefusedWhileItemTranslating: "Dieser Eintrag wird gerade noch übersetzt – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn die Übersetzung fertig ist.",
+    actionRefusedWhileTranslating: "In diese Sprache wird gerade noch übersetzt – bitte versuchen Sie es erneut, wenn die Übersetzung fertig ist.",
+    actionRefusedWhileItemTranslating: "Dieser Eintrag wird gerade noch übersetzt – bitte versuchen Sie es erneut, wenn die Übersetzung fertig ist.",
+    actionRefusedWhilePrimarySaveWaits: "Eine Speicherung der Hauptsprache wartet noch auf eine Übersetzung dieses Eintrags – bitte versuchen Sie es erneut, wenn sie fertig ist.",
+    ownSaveRefusedWhilePrimarySaveWaits: "Eine Speicherung der Hauptsprache wartet noch auf eine Übersetzung dieses Eintrags – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn die Übersetzung fertig ist.",
+    translateToOthersSkippedWhileTranslating: "Gespeichert. Die Übersetzung in die anderen Sprachen wurde übersprungen, weil dieser Eintrag gerade noch übersetzt wird – starten Sie sie erneut, wenn das fertig ist.",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
     fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons

@@ -2110,6 +2110,11 @@ export const es: Translation = {
     translateRunTimedOutSaveKept: "Es posible que la traducción siga en curso en el servidor. Tus cambios aún no se han guardado; vuelve a guardar en un momento.",
     ownSaveRefusedWhileTranslating: "Todavía se está traduciendo a este idioma: el cambio queda sin guardar. Guárdalo cuando termine la traducción.",
     ownSaveRefusedWhileItemTranslating: "Todavía se está traduciendo este elemento: el cambio queda sin guardar. Guárdalo cuando termine la traducción.",
+    actionRefusedWhileTranslating: "Todavía se está traduciendo a este idioma: inténtalo de nuevo cuando termine la traducción.",
+    actionRefusedWhileItemTranslating: "Todavía se está traduciendo este elemento: inténtalo de nuevo cuando termine la traducción.",
+    actionRefusedWhilePrimarySaveWaits: "Un guardado del idioma principal está esperando a una traducción de este elemento: inténtalo de nuevo cuando termine.",
+    ownSaveRefusedWhilePrimarySaveWaits: "Un guardado del idioma principal está esperando a una traducción de este elemento: el cambio queda sin guardar. Guárdalo cuando termine la traducción.",
+    translateToOthersSkippedWhileTranslating: "Guardado. Se omitió la traducción a los demás idiomas porque todavía se está traduciendo este elemento; vuelve a iniciarla cuando termine.",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
     fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons

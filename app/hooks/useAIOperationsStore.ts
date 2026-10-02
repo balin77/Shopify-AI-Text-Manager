@@ -187,6 +187,14 @@ export function isTranslateIntoLocaleRunning(resourceId: string, locale: string)
   );
 }
 
+/** Whether any active operation of `resourceId` has one of `actions`. */
+export function hasActiveOperationWithAction(resourceId: string, actions: readonly string[]): boolean {
+  for (const op of activeOps.values()) {
+    if (op.resourceId === resourceId && actions.includes(op.action)) return true;
+  }
+  return false;
+}
+
 export function markOperationActive(
   resourceId: string,
   fieldKey: string,

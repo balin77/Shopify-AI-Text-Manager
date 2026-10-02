@@ -52,7 +52,11 @@ function mediaIdField(image: unknown): { mediaId?: string } {
 interface UseEditorAltTextProps {
   /** Refuses (message, true) an own alt save of (item, locale) while a
    *  "translate all" run blocks it; asked before anything is staged. */
-  refuseOwnSave?: (itemId: string | null, locale: string) => boolean;
+  refuseOwnSave?: (itemId: string | null, locale: string, opts?: { notStarted?: boolean }) => boolean;
+  /** The same rule, silent. */
+  isOwnSaveBlocked?: (itemId: string | null, locale: string) => boolean;
+  /** "Saved; the translation into the other languages was skipped". */
+  sayTranslateToOthersSkipped?: () => void;
   selectedItem: any;
   selectedItemId: string | null;
   selectedItemRef: React.MutableRefObject<any>;
@@ -159,6 +163,8 @@ interface UseEditorAltTextReturn {
 export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltTextReturn {
   const {
     refuseOwnSave,
+    isOwnSaveBlocked,
+    sayTranslateToOthersSkipped,
     selectedItem,
     selectedItemId,
     selectedItemRef,
@@ -407,7 +413,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!selectedItem || allImages.length === 0) return;
     // Its result is saved at once (primary alts): not even requested while a
     // run of the item is out.
-    if (refuseOwnSave?.(selectedItem.id, primaryLocale)) return;
+    if (refuseOwnSave?.(selectedItem.id, primaryLocale, { notStarted: true })) return;
 
     const requestItemId = selectedItem.id;
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
@@ -447,7 +453,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   const handleCopyAltText = (imageIndex: number) => {
     if (!selectedItem || !selectedItemId) return;
-    if (refuseOwnSave?.(selectedItemId, currentLanguage)) return;
+    if (refuseOwnSave?.(selectedItemId, currentLanguage, { notStarted: true })) return;
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
@@ -569,6 +575,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   const handleCopyAltTextToAllLocales = (imageIndex: number) => {
     if (!selectedItem || !selectedItemId) return;
+    // Every language: any run of the item refuses it, before the overlay.
+    if (refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
@@ -655,7 +663,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     const requestLocale = currentLanguage;
     const requestMarketId = selectedMarketId;
     // Saved at once: not even requested while a run writes into this language.
-    if (refuseOwnSave?.(requestItemId, requestLocale)) return;
+    if (refuseOwnSave?.(requestItemId, requestLocale, { notStarted: true })) return;
 
     submitAIAction(
       {
@@ -715,6 +723,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   const handleTranslateAltTextToAllLocales = (imageIndex: number) => {
     if (!selectedItem) return;
+    // Every language: not even requested while any run of the item is out.
+    if (refuseOwnSave?.(selectedItem.id, primaryLocale, { notStarted: true })) return;
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
@@ -1103,7 +1113,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         (result) => {
           if (selectedItemIdRef.current !== requestItemId) return;
           // A run of the item started while the AI worked: none of the three
-          // steps below is made (the accepted text stays the field's draft).
+          // steps below is made; the accepted text stays the field's draft.
           if (refuseOwnSave?.(requestItemId, primaryLocale)) return;
           const primaryTranslated = ((result.translatedAltText as string) || "").trim();
 
@@ -1177,9 +1187,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Immediately update the in-memory item so the fallback display
     // (images[index]?.altText) shows the correct value even if imageAltTexts
     // state gets cleared during revalidation cycles.
-    if (item.images?.[imageIndex]) {
-      item.images[imageIndex].altText = suggestion;
-    }
+    // The in-memory item takes the new primary alt only once its own save
+    // went out (below) -- a refused save must leave the item untouched.
+    const mirrorPrimaryAlt = () => {
+      if (item.images?.[imageIndex]) item.images[imageIndex].altText = suggestion;
+    };
 
     // Check target locales first
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
@@ -1189,12 +1201,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         "warning"
       );
       // No translations needed, just save this primary alt directly.
-      submitOwnAltSave({
+      if (submitOwnAltSave({
         itemId: selectedItemId,
         locale: primaryLocale,
         marketId: "",
         alts: { [imageIndex]: suggestion },
-      });
+      })) mirrorPrimaryAlt();
       return;
     }
 
@@ -1214,6 +1226,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     });
     // Never translate an alt whose own save did not go out.
     if (!savedPrimary) return;
+    mirrorPrimaryAlt();
 
     // Step 2: Translate to all locales
     safeSubmit({

@@ -65,6 +65,7 @@ function mount() {
       shopLocales: [
         { locale: "de", primary: true, published: true },
         { locale: "fr", primary: false, published: true },
+        { locale: "es", primary: false, published: true },
       ],
       primaryLocale: "de", fetcher, showInfoBox, t: {}, initialItemId: ID,
     } as any);
@@ -234,5 +235,58 @@ describe("own saves during a translate-all run are refused before anything is st
     expect(h.editor.current.selectedItem.images[0].altText).toBe("Katze");
     expect(h.editor.current.state.imageAltTexts[0]).toBe("Hund");
     expect(ownSaveRunBackstop.hits).toBe(0);
+  });
+
+  it("(F1) a primary save held behind a run blocks an own save in a THIRD language up front", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    await switchTo(h, "de");
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Neuer Titel"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    expect(h.savesPosted()).toEqual([]);
+    await switchTo(h, "es");
+    h.showInfoBox.mockClear();
+    await act(async () => { h.editor.current.handlers.handleTranslateField("title"); });
+    await tick(20);
+    expect(h.posted.filter((p) => p.action === "translateField")).toEqual([]);
+    expect(h.showInfoBox).toHaveBeenCalledTimes(1);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("waiting for a translation"), "info");
+    expect(h.editor.current.state.hasChanges).toBe(false);
+    expect(ownSaveRunBackstop.hits).toBe(0);
+  });
+
+  it("(F2) copy / translate to every language is refused during any run of the item", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    await switchTo(h, "de");
+    await act(async () => { h.editor.current.handlers.handleCopyFieldToAllLocales("title"); });
+    await act(async () => { h.editor.current.handlers.handleTranslateFieldToAllLocales("title"); });
+    await act(async () => { h.editor.current.handlers.handleCopyAltTextToAllLocales(0); });
+    await act(async () => { h.editor.current.handlers.handleTranslateAltTextToAllLocales(0); });
+    await tick(20);
+    // Only the run itself (its field and alt-text halves) went out.
+    expect(h.posted.map((p) => p.action)).toEqual(["translateAllForLocale", "translateAllAltTextsForLocale"]);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("try again"), "info");
+    expect(ownSaveRunBackstop.hits).toBe(0);
+  });
+
+  it("(F2) a run is refused while a copy to every language is out", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleCopyFieldToAllLocales("title"); });
+    await tick(20);
+    expect(h.posted.filter((p) => p.action === "updateContent").length).toBeGreaterThan(0);
+    h.showInfoBox.mockClear();
+    await act(async () => { expect(h.editor.current.handlers.handleTranslateAll()).toBe(false); });
+    await tick(10);
+    expect(h.posted.filter((p) => p.action === "translateAll")).toEqual([]);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("translate again"), "info");
   });
 });

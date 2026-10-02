@@ -143,7 +143,11 @@ export interface FieldHandlerProps {
   /** Refuses (with a message, returning true) an AI/copy button's own save of
    *  (item, locale) while a "translate all" run blocks it. Asked at the START
    *  of every own-save flow, before anything is staged. */
-  refuseOwnSave?: (itemId: string | null, locale: string) => boolean;
+  refuseOwnSave?: (itemId: string | null, locale: string, opts?: { notStarted?: boolean }) => boolean;
+  /** The same rule, silent. */
+  isOwnSaveBlocked?: (itemId: string | null, locale: string) => boolean;
+  /** "Saved; the translation into the other languages was skipped". */
+  sayTranslateToOthersSkipped?: () => void;
   /** Refuses (with a message, returning true) a "translate all" run while a
    *  save of the item it would race is out or queued. `locale` "*" = every
    *  language. */
@@ -332,6 +336,8 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     refuseTranslateRun,
     deletedMarksOfSavesOut,
     refuseOwnSave,
+    isOwnSaveBlocked,
+    sayTranslateToOthersSkipped,
     buildFieldsForSave,
     getChangedFields,
     getChangedAltTextIndices,
@@ -887,7 +893,7 @@ const handleTranslateField = (fieldKey: string) => {
   const targetLocale = currentLanguage;
   // Its result is saved at once: while a run writes into this language the
   // AI request is not even started.
-  if (refuseOwnSave?.(requestItemId, targetLocale)) return;
+  if (refuseOwnSave?.(requestItemId, targetLocale, { notStarted: true })) return;
 
   submitAIAction(
     {
@@ -912,7 +918,9 @@ const handleTranslateField = (fieldKey: string) => {
         currentLanguageRef.current === targetLocale && selectedMarketIdRef.current === selectedMarketId;
       // A run into this language started while the AI worked: the result is a
       // draft (where it is still on screen), nothing is staged or saved.
-      if (refuseOwnSave?.(requestItemId, targetLocale)) {
+      // Off screen (the merchant moved on) the result is simply dropped,
+      // without a message about a draft that does not exist.
+      if (viewing ? refuseOwnSave?.(requestItemId, targetLocale) : isOwnSaveBlocked?.(requestItemId, targetLocale)) {
         if (viewing && translatedValue) handleValueChange(fieldKey, translatedValue);
         return;
       }
@@ -1029,6 +1037,9 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
   if (!selectedItemId || !selectedItem) return;
 
   const auto = options?.auto === true;
+  // It writes EVERY language: refused (an app-started run silently) while
+  // any run of the item is out, before anything is staged or requested.
+  if (auto ? isOwnSaveBlocked?.(selectedItemId, primaryLocale) : refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
   const requestItemId = selectedItemId;
 
   // Filter out primary locale and disabled languages
@@ -1587,7 +1598,10 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // A run of this item started while the AI worked: the PRIMARY base
         // save below is not made and nothing is staged for it (the server
         // already stored what it translated; a reload shows it).
-        if (refuseOwnSave?.(requestItemId, primaryLocale)) {
+        // The foreign text WAS saved; only the primary save and the other
+        // languages are skipped -- said exactly that way.
+        if (isOwnSaveBlocked?.(requestItemId, primaryLocale)) {
+          sayTranslateToOthersSkipped?.();
           setIsAcceptAndTranslateFlow(false);
           if (revalidatorRef.current.state === 'idle') {
             try { revalidatorRef.current.revalidate(); } catch {}
@@ -2276,7 +2290,7 @@ const handleTranslateAllForLocale = (): boolean | void => {
 
 const handleCopyField = (fieldKey: string): void => {
   if (!selectedItemId || !selectedItem) return;
-  if (refuseOwnSave?.(selectedItemId, currentLanguage)) return;
+  if (refuseOwnSave?.(selectedItemId, currentLanguage, { notStarted: true })) return;
   const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
   if (!field) return;
   const primaryValue = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
@@ -2416,6 +2430,9 @@ const rollbackCopyField = (opts?: { keepVisible?: boolean }): void => {
 
 const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   if (!selectedItemId) return;
+  // It writes EVERY language: any run of the item (or a primary save held
+  // behind one) refuses it, before anything is staged.
+  if (refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
   const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
   if (!field) return;
   const primaryValue = editableValuesRef.current[fieldKey];
