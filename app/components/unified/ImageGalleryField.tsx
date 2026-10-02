@@ -90,6 +90,11 @@ interface ImageGalleryFieldProps {
 
   /** Callback to translate all alt-texts into the current foreign locale */
   onTranslateAllAltTextsForLocale?: () => void;
+  /** "Save first" reason for an image whose PRIMARY alt is an unsaved draft:
+   *  its copy/translate-to-all buttons are disabled with it. */
+  altSaveFirstHint?: (imageIndex: number) => string | undefined;
+  /** The same for "translate all alt texts" (any primary alt unsaved). */
+  translateAllAltsSaveFirstHint?: string;
 
   /** Callback to copy primary alt-text into current foreign locale */
   onCopyAltText?: (imageIndex: number) => void;
@@ -152,6 +157,8 @@ export function ImageGalleryField({
   onGenerateAllAltTexts,
   onTranslateAllAltTexts,
   onTranslateAllAltTextsForLocale,
+  altSaveFirstHint,
+  translateAllAltsSaveFirstHint,
   onCopyAltText,
   onCopyAltTextToAllLocales,
   onTranslateAltText,
@@ -431,12 +438,12 @@ export function ImageGalleryField({
             </Button>
           )}
           {isPrimaryLocale && onTranslateAllAltTexts && (
-            <DisabledActionTooltip hint={singleLocaleHint}>
+            <DisabledActionTooltip hint={singleLocaleHint ?? translateAllAltsSaveFirstHint}>
               <Button
                 size="slim"
                 onClick={onTranslateAllAltTexts}
                 loading={isFieldLoading ? isFieldLoading(-1) : false}
-                disabled={!!singleLocaleHint}
+                disabled={!!singleLocaleHint || !!translateAllAltsSaveFirstHint}
               >
                 🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
               </Button>
@@ -477,6 +484,7 @@ export function ImageGalleryField({
           onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(selectedImageIndex) : undefined}
           onTranslate={() => onTranslateAltText(selectedImageIndex)}
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(selectedImageIndex) : undefined}
+          saveFirstHint={altSaveFirstHint?.(selectedImageIndex)}
           onAcceptSuggestion={() => onAcceptSuggestion(selectedImageIndex)}
           onAcceptAndTranslate={onAcceptAndTranslateSuggestion ? () => onAcceptAndTranslateSuggestion(selectedImageIndex) : undefined}
           onRejectSuggestion={() => onRejectSuggestion(selectedImageIndex)}
@@ -504,6 +512,7 @@ export function ImageGalleryField({
           onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(0) : undefined}
           onTranslate={() => onTranslateAltText(0)}
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(0) : undefined}
+          saveFirstHint={altSaveFirstHint?.(0)}
           onAcceptSuggestion={() => onAcceptSuggestion(0)}
           onAcceptAndTranslate={onAcceptAndTranslateSuggestion ? () => onAcceptAndTranslateSuggestion(0) : undefined}
           onRejectSuggestion={() => onRejectSuggestion(0)}

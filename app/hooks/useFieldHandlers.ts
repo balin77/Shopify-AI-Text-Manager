@@ -38,6 +38,7 @@ import { aiImageCandidates } from "../services/ai/vision-policy.shared";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { buildOwnSaveForm, isUnsavedPrimarySource } from "../services/editor/own-field-save.shared";
 
 // ============================================================================
 // TYPES
@@ -326,6 +327,79 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
 // Wrapper for performAutoSave with default locale
 const performSaveWithValues = (valuesToSave: Record<string, string>, locale: string = currentLanguage) => {
   performAutoSave(valuesToSave, locale);
+};
+
+/** Is this field's PRIMARY value an unsaved draft? (False on a foreign locale.) */
+const isPrimaryFieldUnsaved = (fieldKey: string): boolean =>
+  isUnsavedPrimarySource({
+    currentLanguage: currentLanguageRef.current,
+    primaryLocale,
+    value: editableValuesRef.current[fieldKey],
+    baseline: baselineValuesRef.current[fieldKey],
+  });
+
+const refuseUnsavedSource = (): void => {
+  showInfoBox(
+    String(t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes."),
+    "warning",
+  );
+};
+
+/**
+ * Save ONE field — an AI or copy button's own result — immediately, and
+ * nothing else (owner's rule, 2026-10-02: AI and copy buttons save at once,
+ * typing stays a draft). The other fields and alt texts on screen may hold
+ * the merchant's unsaved input; they stay drafts for the Save button, which is
+ * why the save is PARTIAL (its response moves only this field's baseline).
+ *
+ * On the primary locale a real change of the field travels as `changedFields`
+ * — the merchant's purge / auto-translate policy then applies exactly as if
+ * they had typed it and pressed Save — unless the caller is about to write
+ * the translations itself (`markChanged: false`, accept-and-translate).
+ */
+const submitOwnFieldSave = (
+  fieldKey: string,
+  value: string,
+  opts: { markChanged?: boolean; fromTranslate?: boolean } = {},
+): void => {
+  if (!selectedItemId) return;
+  const locale = currentLanguage;
+  const marketId = selectedMarketId;
+  const isPrimary = locale === primaryLocale;
+  const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+  const changed =
+    isPrimary && opts.markChanged !== false
+      ? getChangedFields({ ...editableValuesRef.current, [fieldKey]: value }).includes(fieldKey)
+      : false;
+  const form = buildOwnSaveForm({
+    itemId: selectedItemId,
+    locale,
+    primaryLocale,
+    marketId,
+    fields: { [fieldKey]: value },
+    changedFields: changed ? [fieldKey] : [],
+    changedAttributeFields: changed && field && isAttributeField(field) ? [fieldKey] : [],
+    policyType: config.resourceType === "ShopPolicy" && selectedItem?.type ? selectedItem.type : undefined,
+  });
+  if (isPrimary) {
+    // The same client-side mirror of the server's purge as handleSave.
+    if (changed && field?.translationKey) {
+      deletedTranslationKeysRef.current.add(field.translationKey);
+    }
+    // resolve() reads this first for the primary locale — this field only.
+    savedPrimaryValuesRef.current[selectedItemId] = {
+      ...(savedPrimaryValuesRef.current[selectedItemId] ?? {}),
+      [fieldKey]: value,
+    };
+  }
+  partialSaveRef.current = { locale, marketId, values: { [fieldKey]: value }, altIndices: [] };
+  savedLocaleRef.current = locale;
+  savedMarketIdRef.current = marketId;
+  savedItemIdRef.current = selectedItemId;
+  isSavePendingRef.current = true;
+  if (opts.fromTranslate) isSaveFromTranslateRef.current = true;
+  setIsSaving(true);
+  safeSubmit(form, { method: "POST" });
 };
 
 const handleSave = () => {
@@ -876,6 +950,13 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
   const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
   if (!field) return;
 
+  // Backstop for the disabled button: the source is the SAVED primary text,
+  // and the draft on screen would purge these translations when it is saved.
+  if (!auto && isPrimaryFieldUnsaved(fieldKey)) {
+    refuseUnsavedSource();
+    return;
+  }
+
   const sourceText =
     savedPrimaryValuesRef.current[selectedItemId]?.[fieldKey] ||
     getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
@@ -1193,18 +1274,31 @@ const handleAcceptSuggestion = (fieldKey: string) => {
       newSet.delete(fieldKey);
       return newSet;
     });
+    // At once, not on the next render: the save below is answered against it.
+    fallbackFieldsRef.current.delete(fieldKey);
   }
 
-  // Create the new values with the accepted suggestion
-  const newValues = {
-    ...editableValues,
-    [fieldKey]: suggestion,
-  };
-
   // Update the UI state
-  setEditableValues(newValues);
+  setEditableValues((prev) => ({ ...prev, [fieldKey]: suggestion }));
 
   clearFieldSuggestion(suggestionScope, fieldKey);
+
+  // Accepting SAVES the field at once — this field only (owner's rule,
+  // 2026-10-02). A foreign field without a translation key has nowhere to be
+  // saved as a translation and stays a draft, as before. A resource-backed
+  // rubric's main language is read-only: refuse rather than send a primary
+  // write the server rejects.
+  if (currentLanguage === primaryLocale && isResourceBackedThemeContent(config.contentType)) {
+    showInfoBox(
+      String(t.content?.primaryReadOnlyHint
+        || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
+      "warning"
+    );
+    return;
+  }
+  const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+  if (currentLanguage !== primaryLocale && !field?.translationKey) return;
+  submitOwnFieldSave(fieldKey, suggestion);
 };
 
 const handleAcceptAndTranslate = (fieldKey: string) => {
@@ -1464,8 +1558,9 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       "warning"
     );
     setIsAcceptAndTranslateFlow(false);
-    // No translations needed, just save the primary text directly
-    performSaveWithValues(newValues, primaryLocale);
+    // No translations needed, just save the primary text directly — this
+    // field only; other unsaved fields stay drafts.
+    submitOwnFieldSave(fieldKey, suggestion);
     return;
   }
 
@@ -1494,16 +1589,19 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   // reads as dirty until the save response finally resets the baseline. This save is
   // automatic ("Übernehmen & Übersetzen" auto-saves), so no dirty state should show.
   if (isThemeContentType(config.contentType)) {
-    baselineValuesRef.current = { ...newValues };
+    // This field only: every other field may hold unsaved input and must
+    // stay dirty against the baseline it had.
+    baselineValuesRef.current = { ...baselineValuesRef.current, [fieldKey]: suggestion };
     setBaselineVersion((v) => v + 1);
-    originalTemplateValuesRef.current = { ...newValues };
+    originalTemplateValuesRef.current = { ...originalTemplateValuesRef.current, [fieldKey]: suggestion };
     setTemplateValuesVersion((v) => v + 1);
   }
 
-  // Step 2: Save the primary text first
-  // After save completes, the useEffect will trigger the translation
+  // Step 2: Save the primary text first — THIS field only, and without
+  // `changedFields` (the flow is about to write its translations itself).
+  // After save completes, the useEffect will trigger the translation.
   debugLog.acceptAndTranslate(' Saving primary text first, then will translate');
-  performSaveWithValues(newValues, primaryLocale);
+  submitOwnFieldSave(fieldKey, suggestion, { markChanged: false });
 };
 
 const handleRejectSuggestion = useCallback((fieldKey: string) => {
@@ -1990,35 +2088,16 @@ const handleCopyField = (fieldKey: string): void => {
     transResult.clearedFallbackKeys.forEach(k => fallbackFieldsRef.current.delete(k));
   }
 
-  const newValues = transResult.updatedValues ?? { ...editableValuesRef.current, [fieldKey]: primaryValue };
-  const formDataObj: Record<string, string> = {
-    action: "updateContent",
-    itemId: selectedItemId,
-    locale: currentLanguage,
-    primaryLocale,
-  };
-  // Copy-to-field persists to the current (foreign) locale under the selected market.
-  if (currentLanguage !== primaryLocale && selectedMarketId) {
-    formDataObj.marketId = selectedMarketId;
-  }
-  Object.assign(formDataObj, buildFieldsForSave(newValues, currentLanguage));
-  formDataObj[fieldKey] = primaryValue;
-
   markOperationActive(selectedItemId, fieldKey, "copy");
   pendingCopyFieldKeyRef.current = fieldKey;
   pendingCopyFieldItemIdRef.current = selectedItemId;
 
-  savedLocaleRef.current = currentLanguage;
-  savedMarketIdRef.current = selectedMarketId;
-  // Track WHICH item is being saved so the save-response handler's
-  // `isSavedItemCurrent` guard passes. Without this, savedItemIdRef stays null
-  // (cleared by a prior save) → the handler early-returns before reaching
-  // markOperationFailed(copy), leaving every button on this field spinning forever.
-  savedItemIdRef.current = selectedItemId;
-  isSavePendingRef.current = true;
-  isSaveFromTranslateRef.current = true;
-  safeSubmit(formDataObj, { method: "POST" });
-  originalLoadedValuesRef.current = { ...newValues };
+  // ONLY the copied field, under the selected market. Other fields may hold
+  // unsaved input, which stays a draft for its own Save. (submitOwnFieldSave
+  // claims the item, so the save-response handler's `isSavedItemCurrent`
+  // guard passes and the copy's spinner is cleared.)
+  submitOwnFieldSave(fieldKey, primaryValue, { fromTranslate: true });
+  originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, [fieldKey]: primaryValue };
 
   // Success/error feedback is deferred to the save-response handler so the
   // InfoBox reflects the actual Shopify result (see pendingCopyFieldKeyRef in
@@ -2095,6 +2174,13 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
 
   const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
   if (targetLocales.length === 0) return;
+
+  // Backstop for the disabled button: copying an UNSAVED primary value into
+  // every language, then saving the primary, would purge what was copied.
+  if (isPrimaryFieldUnsaved(fieldKey)) {
+    refuseUnsavedSource();
+    return;
+  }
 
   const translations: Record<string, string> = Object.fromEntries(
     targetLocales.map(locale => [locale, primaryValue])

@@ -125,7 +125,8 @@ export const guideEn: GuideCopy = {
         {
           heading: "Saving",
           paragraphs: [
-            "Nothing is written before you save. As soon as you change something, Shopify's save bar appears at the top with Save and Discard. That applies to switches in the settings too: a change is a draft until you save it.",
+            "What you type is only written when you save. As soon as you change something, Shopify's save bar appears at the top with Save and Discard. That applies to switches in the settings too: a change is a draft until you save it.",
+            "The AI and copy buttons in the editors, on the other hand, save straight away — but only the one field they act on: an accepted AI suggestion, a translation into the language that is open, a copied text. Whatever you typed in other fields and have not saved stays a draft. Buttons that copy or translate the main-language text into every language are locked while that text has unsaved changes — save it first. In the bulk editor everything stays a draft until you save there.",
           ],
         },
         {
@@ -249,7 +250,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "Accepting a suggestion",
           paragraphs: [
-            "The result lands in the field as a suggestion. You can accept it, discard it or keep editing — nothing is saved behind your back. “Accept & translate” carries the accepted text straight into every language.",
+            "The result first appears as a suggestion above the field. “Accept” puts it into the field and saves exactly that one field straight away — other fields where you still have unsaved changes are left alone. “Decline” leaves everything as it was. “Accept & translate” saves the accepted text and carries it straight into every language.",
           ],
         },
       ],
@@ -737,13 +738,13 @@ export const guideEn: GuideCopy = {
           heading: "Where alt texts live",
           paragraphs: [
             "You edit alt texts on the image in the Image Variant Manager, in the editor for collection and article images, and collectively in the bulk editor, where every row of the Images row type is one image — product images as well as images from your file library.",
-            "An alt text in the Image Variant Manager is not saved when you leave the field: it stays a draft until you press “Save” at the top, like every other change on the page. “Discard” takes it back. If saving fails for an image, the info box tells you why, your text stays in the field and is sent again with the next “Save”. If you already gave an alt text to an image you have only just added, the same “Save” saves it too, as soon as Shopify has created the image. If you switch language, market or product while alt texts are unsaved, the app asks first; whatever you have already saved finishes saving after the switch too. In the main language the alt texts apply to every market, so switching the market there does not ask. If you delete an image, its unsaved alt text goes with it. A YouTube/Vimeo link or a 3D model added to a variant has no alt text — its box says so instead.",
+            "An alt text you type in the Image Variant Manager is not saved when you leave the field: it stays a draft until you press “Save” at the top, like every other change on the page. “Discard” takes it back. If saving fails for an image, the info box tells you why, your text stays in the field and is sent again with the next “Save”. If you already gave an alt text to an image you have only just added, the same “Save” saves it too, as soon as Shopify has created the image. If you switch language, market or product while alt texts are unsaved, the app asks first; whatever you have already saved finishes saving after the switch too. In the main language the alt texts apply to every market, so switching the market there does not ask. If you delete an image, its unsaved alt text goes with it. A YouTube/Vimeo link or a 3D model added to a variant has no alt text — its box says so instead.",
           ],
         },
         {
           heading: "With AI",
           paragraphs: [
-            "The AI writes one alt text per image. The result then sits in the field as a draft and is only applied with “Save”; “Translate to all languages”, by contrast, writes to the other languages straight away — which is why that button only becomes available again once you have saved a changed alt text. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
+            "The AI writes one alt text per image. The result — and likewise a translation into the language that is open — then sits in the field and is saved for that one image straight away; alt texts you typed for other images stay drafts. For an image that has not been saved itself yet, these buttons are locked until you save it. “Translate to all languages” writes to the other languages straight away — which is why that button is only available while the main-language alt text has no unsaved changes. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
           ],
         },
         {

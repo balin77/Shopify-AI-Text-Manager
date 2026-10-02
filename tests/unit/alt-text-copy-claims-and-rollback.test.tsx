@@ -17,6 +17,8 @@ function setup() {
     savedMarketIdRef: ref(""),
     isSavePendingRef: ref(false),
     isSaveFromTranslateRef: ref(false),
+    partialSaveRef: ref<any>(null),
+    pendingAltTranslateToastRef: ref<string | null>(null),
   };
   const props: any = {
     selectedItem: item,
@@ -51,6 +53,21 @@ describe("single alt-text copy", () => {
     expect(safeSubmit).toHaveBeenCalledTimes(1);
     expect(refs.savedItemIdRef.current).toBe("gid://shopify/Product/1");
     expect(refs.isSavePendingRef.current).toBe(true);
+  });
+
+  it("saves ONLY the copied alt: no text field, no other image's draft", () => {
+    const { hook, refs, safeSubmit, props } = setup();
+    props.buildFieldsForSave = () => ({ title: "unsaved title draft" });
+    act(() => hook.result.current.setImageAltTexts({ 3: "typed draft of image 4" }));
+    act(() => hook.result.current.handleCopyAltText(0));
+    const form = safeSubmit.mock.calls[0][0];
+    expect(form.title).toBeUndefined();
+    expect(JSON.parse(form.imageAltTexts)).toEqual({ 0: "Quelle" });
+    expect(form.changedFields).toBeUndefined();
+    // A partial save that stands for this one alt index only.
+    expect(refs.partialSaveRef.current).toMatchObject({ values: {}, altIndices: [0] });
+    // The other image's draft keeps its (absent) baseline: still dirty.
+    expect(hook.result.current.originalAltTexts[3]).toBeUndefined();
   });
 
   it("rollback removes the optimistic overlay entry", () => {

@@ -1929,6 +1929,7 @@ export const es: Translation = {
     translateAlt: "Traducir",
     translateAltAll: "Traducir a todos los idiomas",
     translateAltAllSaveFirst: "Guarda primero el texto alternativo y luego tradúcelo a todos los idiomas.",
+    aiNeedsSavedImage: "Guarda primero la imagen; solo entonces la IA puede escribir o traducir su texto alternativo.",
     primaryRef: "Idioma principal",
     noImages: "Sin imágenes",
     noMainImage: "Sin imagen principal",
@@ -2091,6 +2092,8 @@ export const es: Translation = {
     noTargetLanguagesEnabled: "No hay idiomas de destino habilitados",
     // Tooltip on translate/copy-to-all actions in a single-language shop
     requiresSecondLanguage: "Tu tienda solo tiene un idioma. Añade otro idioma en la configuración de Shopify para poder traducir.",
+    // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
+    saveFirstSource: "Guarda primero: el texto del idioma principal tiene cambios sin guardar.",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
     fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons

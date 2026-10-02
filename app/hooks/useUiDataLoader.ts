@@ -74,6 +74,10 @@ export interface PartialSave {
   /** The market the save was scoped to ("" = global). */
   marketId: string;
   values: Record<string, string>;
+  /** The image indices whose alt text this save carried. Absent = none: a
+   *  partial save never stands for the alt texts it did not send, so their
+   *  baseline (and the merchant's unsaved alt drafts) stay untouched. */
+  altIndices?: number[];
 }
 
 export interface ResolvedField {
@@ -584,6 +588,10 @@ export function useUiDataLoader(
               primaryLocale,
               config
             );
+            // A PARTIAL primary save (an accepted AI suggestion) overlays only
+            // the field it wrote; the others resolve from the item anyway and
+            // say nothing about whether the server caught up.
+            if (!(field.key in savedOverride)) return true;
             const savedValue = savedOverride[field.key] ?? "";
             if (
               field.key === "seoTitle" &&

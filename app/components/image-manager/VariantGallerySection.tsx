@@ -39,6 +39,9 @@ interface VariantGallerySectionProps {
   onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
   /** True while this tile's medium has an unsaved PRIMARY alt: translating it to every language waits for its Save. */
   isAltDirty?: (url: string) => boolean;
+  /** Why ✨ / 🌍 cannot run for this tile (undefined = they can): their result
+   *  is saved at once, and an image without a media id cannot be saved to. */
+  altAiBlockedHint?: (url: string) => string | undefined;
   enabledLanguages?: string[];
   currentLanguage?: string;
   primaryLocale?: string;
@@ -89,6 +92,7 @@ export function VariantGallerySection({
   onGenerateAltText,
   onTranslateAltText,
   onTranslateAltToAllLocales,
+  altAiBlockedHint,
   isAltDirty,
   enabledLanguages = [],
   currentLanguage,
@@ -266,6 +270,7 @@ export function VariantGallerySection({
     })
     : false;
   const altDirty = !!singleSelectedUrl && !!isAltDirty?.(singleSelectedUrl);
+  const aiBlocked = singleSelectedUrl ? altAiBlockedHint?.(singleSelectedUrl) : undefined;
   // In foreign locale don't fall back to primary locale value (would show wrong content)
   const currentAltText = singleSelectedUrl
     ? (isPrimaryLocale
@@ -424,16 +429,16 @@ export function VariantGallerySection({
                 />
                 <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                   {isPrimaryLocale && onGenerateAltText && (
-                    <>
+                    <DisabledActionTooltip hint={aiBlocked}>
                       <Button
                         size="slim"
-                        disabled={isAltTextLoading}
+                        disabled={isAltTextLoading || !!aiBlocked}
                         loading={isAltTextLoading}
                         onClick={() => onGenerateAltText(singleSelectedUrl)}
                       >
                         {`✨ ${t.imageManager.aiGenerate}`}
                       </Button>
-                    </>
+                    </DisabledActionTooltip>
                   )}
                   {isPrimaryLocale && onTranslateAltToAllLocales && (
                     <>
@@ -450,16 +455,16 @@ export function VariantGallerySection({
                     </>
                   )}
                   {!isPrimaryLocale && onTranslateAltText && (
-                    <>
+                    <DisabledActionTooltip hint={aiBlocked}>
                       <Button
                         size="slim"
-                        disabled={isAltTextLoading}
+                        disabled={isAltTextLoading || !!aiBlocked}
                         loading={isAltTextLoading}
                         onClick={() => onTranslateAltText(singleSelectedUrl, currentAltText)}
                       >
                         {`🌍 ${t.imageManager.translateAlt}`}
                       </Button>
-                    </>
+                    </DisabledActionTooltip>
                   )}
                 </div>
               </div>

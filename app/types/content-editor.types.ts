@@ -679,6 +679,13 @@ export interface UseContentEditorReturn {
     getValidationOverlays: () => ValidationOverlays;
     /** Increments whenever overlays change — use as useMemo dependency to trigger recomputation */
     validationVersion: number;
+    /** The PRIMARY value of this field is an unsaved draft (false on a foreign
+     *  locale). A copy/translate-to-all button is disabled while it is. */
+    isPrimaryFieldUnsaved: (fieldKey: string) => boolean;
+    /** The same for one image's primary alt text. */
+    isPrimaryAltUnsaved: (imageIndex: number) => boolean;
+    /** Any primary alt text is an unsaved draft ("translate all alt texts"). */
+    hasUnsavedPrimaryAlts: () => boolean;
     /**
      * Hand a save response from a fetcher the editor does NOT own to the ONE
      * background-task watcher, so the detached re-translation it started is

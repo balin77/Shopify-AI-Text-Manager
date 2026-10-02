@@ -25,7 +25,7 @@ import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../ut
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
-import { planAltFlush, restoreAltDrafts, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
+import { planAltFlush, planImmediateAltSave, restoreAltDrafts, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
 import {
   settlingPollDelayMs,
@@ -2897,11 +2897,32 @@ export function VariantImageManager({
       : data.actionType === "translateAltText" && data.translatedAltText !== undefined ? (data.translatedAltText as string)
       : undefined;
     if (generated === undefined) return;
-    // The result is a DRAFT in the field, like anything the merchant types: the
-    // editor's save bar writes it. It belongs to the language and market the
-    // request was made for; if the view moved on there is no field to put it in.
+    // The result is SAVED at once, for this image only (owner's rule,
+    // 2026-10-02: AI buttons save immediately, typing stays a draft): the text
+    // goes into the field exactly like a typed one, and that one medium's save
+    // is queued behind whatever is already out — with the language and market
+    // the request was made for. Every other image's draft stays a draft. A
+    // confirmed save clears the image's dirty state; a failed one keeps it
+    // dirty and failed, so the page Save sends it again. If the view moved on
+    // there is no field to put it in.
     if (req.locale === currentLanguageRef.current && (req.marketId ?? "") === viewMarketRef.current) {
       applyAltDraft(url, generated);
+      const entry = planImmediateAltSave({
+        url,
+        dirtyUrls: dirtyUrlsRef.current,
+        texts: localAltTextsRef.current,
+        gidOf: (u) => (u === url ? mediaId : gidForUrl(altGidLookup, u)),
+        locale: req.locale,
+        marketId: req.marketId || undefined,
+        productId: req.productId,
+        productTitle,
+        editOrder: altEditOrderRef.current,
+      });
+      if (entry) {
+        failedAltUrlsRef.current.delete(entry.url);
+        for (const alias of entry.aliases ?? []) failedAltUrlsRef.current.delete(alias.url);
+        submitAltSave(entry);
+      }
     } else {
       showInfoBox(String(im?.altAiResultDiscarded ?? "The generated alt text was not applied because you switched language or market."), "warning");
     }
@@ -3230,9 +3251,26 @@ export function VariantImageManager({
     return false;
   };
 
+  /** Why ✨ / 🌍 cannot run for this tile right now: an image with no media id
+   *  yet (an unsaved upload) has nothing its immediate save could address. */
+  const altAiBlockedHint = (url: string | null | undefined): string | undefined => {
+    if (!url) return undefined;
+    const gid = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    return gid && gid.startsWith("gid://")
+      ? undefined
+      : String(t.imageManager?.aiNeedsSavedImage ?? "Save the image first — only then can the AI write or translate its alt text.");
+  };
+
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     if (imageIndex < 0) return;
+    // Backstop for the disabled button: the result is saved at once, and an
+    // image without a media id cannot be saved to.
+    const blocked = altAiBlockedHint(url);
+    if (blocked) {
+      showInfoBox(blocked, "warning");
+      return;
+    }
     altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, marketId: foreignMarketId, productId };
     const form = new FormData();
     form.append("action", "generateAltText");
@@ -3243,11 +3281,16 @@ export function VariantImageManager({
     form.append("productTitle", productTitle ?? "");
     form.append("mainLanguage", primaryLocale ?? "en");
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher, urlToGid, currentLanguage, foreignMarketId]);
+  }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher, urlToGid, currentLanguage, foreignMarketId, altGidLookup, showInfoBox, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     if (!currentLanguage || imageIndex < 0) return;
+    const blocked = altAiBlockedHint(url);
+    if (blocked) {
+      showInfoBox(blocked, "warning");
+      return;
+    }
     altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, marketId: foreignMarketId, productId };
     const form = new FormData();
     form.append("action", "translateAltText");
@@ -3257,7 +3300,7 @@ export function VariantImageManager({
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocale", currentLanguage);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher, urlToGid, foreignMarketId]);
+  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher, urlToGid, foreignMarketId, altGidLookup, showInfoBox, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // GLOBAL layer by design, like the editor's own "translate to all languages":
   // it never carries a market. The image is named by its MEDIA id -- a position
@@ -3340,6 +3383,7 @@ export function VariantImageManager({
   const productPrimaryAltText = productSingleSelected ? (imageMetas[productSingleSelected]?.altText ?? "") : "";
   // Translating to every language is offered only for a SAVED primary alt.
   const productAltDirty = productSingleSelected ? isPrimaryAltDirty(productSingleSelected) : false;
+  const productAltAiBlocked = altAiBlockedHint(productSingleSelected);
   const translateAltAllSaveFirstHint = String(t.imageManager?.translateAltAllSaveFirst ?? "Save the alt text first, then translate it.");
   const productHasTranslation = productSingleSelected
     ? (localAltTexts[productSingleSelected] !== undefined && localAltTexts[productSingleSelected] !== "")
@@ -3720,14 +3764,16 @@ export function VariantImageManager({
               />
               <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                 {isPrimaryLocale && (
-                  <Button
-                    size="slim"
-                    disabled={altTextFetcher.state !== "idle"}
-                    loading={altTextFetcher.state !== "idle"}
-                    onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
-                  >
-                    {`✨ ${t.imageManager.aiGenerate}`}
-                  </Button>
+                  <DisabledActionTooltip hint={productAltAiBlocked}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle" || !!productAltAiBlocked}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
+                    >
+                      {`✨ ${t.imageManager.aiGenerate}`}
+                    </Button>
+                  </DisabledActionTooltip>
                 )}
                 {isPrimaryLocale && (
                   <DisabledActionTooltip hint={singleLocaleHint ?? (productAltDirty ? translateAltAllSaveFirstHint : undefined)}>
@@ -3742,14 +3788,16 @@ export function VariantImageManager({
                   </DisabledActionTooltip>
                 )}
                 {!isPrimaryLocale && (
-                  <Button
-                    size="slim"
-                    disabled={altTextFetcher.state !== "idle"}
-                    loading={altTextFetcher.state !== "idle"}
-                    onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
-                  >
-                    {`🌍 ${t.imageManager.translateAlt}`}
-                  </Button>
+                  <DisabledActionTooltip hint={productAltAiBlocked}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle" || !!productAltAiBlocked}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
+                    >
+                      {`🌍 ${t.imageManager.translateAlt}`}
+                    </Button>
+                  </DisabledActionTooltip>
                 )}
               </div>
             </div>
@@ -3869,6 +3917,7 @@ export function VariantImageManager({
                 onTranslateAltText={handleTranslateAltTextForImage}
                 onTranslateAltToAllLocales={handleTranslateAltTextToAllLocales}
                 isAltDirty={isPrimaryAltDirty}
+                altAiBlockedHint={altAiBlockedHint}
                 enabledLanguages={enabledLanguages}
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}

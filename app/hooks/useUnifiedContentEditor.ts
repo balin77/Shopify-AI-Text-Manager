@@ -50,6 +50,7 @@ import { readLastSelectedId } from "../utils/last-selected-item";
 import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
+import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource } from "../services/editor/own-field-save.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -689,8 +690,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
+    isPrimaryAltUnsaved, hasUnsavedPrimaryAlts,
   } = useEditorAltText({
     pendingAltTranslateToastRef,
+    partialSaveRef,
     selectedItem,
     selectedItemId,
     selectedItemRef,
@@ -1542,24 +1545,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Auto-save the translation immediately
       if (selectedItemId && field) {
-        const newValues = { ...editableValuesRef.current, [fieldType]: translatedValue };
-        const formDataObj: Record<string, string> = {
-          action: "updateContent",
+        // Keep the save's market scope in lock-step with the overlay fold done by
+        // onTranslateFieldComplete above (which reads the same market ref).
+        const saveMarketId = targetLocale !== primaryLocale ? selectedMarketIdRef.current : "";
+        // ONLY the translated field: other fields may hold unsaved input.
+        const formDataObj = buildOwnSaveForm({
           itemId: selectedItemId,
           locale: targetLocale,
           primaryLocale,
+          marketId: saveMarketId,
+          fields: translatedValue && translatedValue.trim() ? { [fieldType]: translatedValue } : {},
+        });
+        partialSaveRef.current = {
+          locale: targetLocale,
+          marketId: saveMarketId,
+          values: { [fieldType]: translatedValue },
+          altIndices: [],
         };
-        // Keep the save's market scope in lock-step with the overlay fold done by
-        // onTranslateFieldComplete above (which reads the same market ref).
-        if (targetLocale !== primaryLocale && selectedMarketIdRef.current) {
-          formDataObj.marketId = selectedMarketIdRef.current;
-        }
-        Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
-
-        // Ensure the translated field is always included in the save
-        if (translatedValue && translatedValue.trim()) {
-          formDataObj[fieldType] = translatedValue;
-        }
 
         savedLocaleRef.current = targetLocale;
         // Legacy translateField auto-save carries marketId when foreign (see above).
@@ -1594,15 +1596,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const { translatedAltText, imageIndex } = fetcher.data as TranslatedAltTextResponse;
       debugLog.altText(' Setting translated alt-text for image', imageIndex, ':', translatedAltText);
 
-      // Merge with existing alt-texts using functional form to avoid stale closure
-      setImageAltTexts(prev => {
-        const updated = { ...prev, [imageIndex]: translatedAltText };
-        // Set original to match so hasChanges = false after save
-        setOriginalAltTexts(updated);
-        // Schedule auto-save
-        pendingAltTextAutoSaveRef.current = updated;
-        return updated;
-      });
+      // This image's alt only — the save's own response moves its baseline;
+      // other typed alts stay drafts.
+      pendingAltTextAutoSaveRef.current = { [imageIndex]: translatedAltText };
+      setImageAltTexts(prev => ({ ...prev, [imageIndex]: translatedAltText }));
     }
   }, [fetcher.data]); // Note: imageAltTexts intentionally not in deps to avoid loops
 
@@ -1653,47 +1650,50 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]);
 
-  // Execute pending alt-text auto-save
+  // Execute pending alt-text auto-save ("generate all alt texts").
+  //
+  // It carries the GENERATED alt texts and nothing else: the text fields and
+  // any alt the merchant typed by hand stay drafts for their own Save (an AI
+  // button saves its own result immediately, and only it). On the primary
+  // locale the generated indices whose text really changed travel as
+  // `changedAltTextIndices`, the same signal a typed-and-saved alt sends — and
+  // NO `changedFields`, because no text field was written.
   useEffect(() => {
     const pendingAltTexts = pendingAltTextAutoSaveRef.current;
     if (!pendingAltTexts || !selectedItemId) return;
 
     // Clear the pending save ref immediately to prevent re-execution
     pendingAltTextAutoSaveRef.current = null;
+    if (Object.keys(pendingAltTexts).length === 0) return;
 
     debugLog.altText(' Executing auto-save for alt-texts:', pendingAltTexts);
 
-    // Build form data for save
-    const formDataObj: Record<string, string> = {
-      action: "updateContent",
+    const indices = Object.keys(pendingAltTexts).map(Number);
+    const changedOnPrimary =
+      currentLanguage === primaryLocale
+        ? getChangedAltTextIndices().filter((i) => indices.includes(i))
+        : [];
+    const formDataObj = buildOwnSaveForm({
       itemId: selectedItemId,
       locale: currentLanguage,
       primaryLocale,
-    };
-
-    // Add all field values (skip fallback fields to prevent registering primary values as translations)
-    effectiveFieldDefinitions.forEach((field) => {
-      if (currentLanguage !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
-        return;
-      }
-      formDataObj[field.key] = editableValues[field.key] || "";
+      // This bulk alt auto-save writes globally (no marketId in the form).
+      marketId: "",
+      altTexts: pendingAltTexts,
+      changedAltTextIndices: changedOnPrimary,
+      policyType: config.resourceType === "ShopPolicy" ? selectedItemRef.current?.type : undefined,
     });
-
-    // Add the alt-texts
-    formDataObj.imageAltTexts = JSON.stringify(pendingAltTexts);
-
-    // Include changedFields so the backend knows which text fields actually changed
-    // This prevents productType from being accidentally cleared when only alt-texts changed
-    if (currentLanguage === primaryLocale) {
-      const changedFields = getChangedFields(editableValues);
-      if (changedFields.length > 0) {
-        formDataObj.changedFields = JSON.stringify(changedFields);
+    // The client's mirror of what the server will purge for those images.
+    if (changedOnPrimary.length > 0) {
+      for (const key of Object.keys(localAltTextOverlayRef.current)) {
+        if (key === primaryLocale) continue;
+        for (const index of changedOnPrimary) delete localAltTextOverlayRef.current[key][index];
       }
     }
 
+    partialSaveRef.current = { locale: currentLanguage, marketId: selectedMarketIdRef.current, values: {}, altIndices: indices };
     savedLocaleRef.current = currentLanguage;
-    // This bulk alt auto-save (generate-all) writes globally — see formDataObj above
-    // (no marketId) — so the mirror must tag the saved alt as global too.
+    // ...so the mirror must tag the saved alt as global too.
     savedMarketIdRef.current = "";
     // Claim the item — see the identical note on the translateField auto-save
     // above. It matters most here: this path carries alt texts, so the
@@ -1702,7 +1702,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedItemIdRef.current = selectedItemId;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
-  }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
+  }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, safeSubmit, getChangedAltTextIndices]);
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -1957,11 +1957,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         savedMarketIdRef.current
       );
 
-      // Image alt-text updates (not managed by dataLoader — separate concern)
+      // Image alt-text updates (not managed by dataLoader — separate concern).
+      // A PARTIAL save stands only for the alt indices it carried (none for a
+      // single-field save): an alt the merchant typed and has not saved must
+      // not be mirrored as saved, or the next Save would not send it.
+      const carriedAlts: Set<number> | null = partial ? new Set(partial.altIndices ?? []) : null;
+      const altCarried = (index: number) => carriedAlts === null || carriedAlts.has(index);
       if (savedLocale === primaryLocale) {
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
+            if (!altCarried(index)) continue;
             if (item.images[index]) {
               item.images[index].altText = altText;
               debugLog.response(' Updated primary alt-text for image', index);
@@ -1981,6 +1987,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
             if (mirrorFailed.includes(index)) continue;
+            if (!altCarried(index)) continue;
             if (item.images[index]) {
               if (!item.images[index].altTextTranslations) {
                 item.images[index].altTextTranslations = [];
@@ -2005,7 +2012,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // so it must stay dirty against the baseline it had before this save.
       {
         const failedAlts: number[] = Array.isArray(fetcher.data.failedAltTextIndices) ? fetcher.data.failedAltTextIndices : [];
-        setOriginalAltTexts(keepFailedAltsDirty(altBaselineSnapshot(failedAlts), failedAlts, imageAltTextsRef.current));
+        setOriginalAltTexts(
+          restrictAltBaseline(
+            keepFailedAltsDirty(altBaselineSnapshot(failedAlts), failedAlts, imageAltTextsRef.current),
+            partial ? (partial.altIndices ?? []) : null,
+          ),
+        );
       }
       debugLog.response(' Updated originalAltTexts:', { ...imageAltTextsRef.current });
 
@@ -2117,24 +2129,44 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // display overlay while the user is on a foreign locale — using it as
           // the baseline there would wrongly flag the field dirty (the overlay
           // holds the primary value, but editableValues holds the foreign value).
-          if (
+          //
+          // A PARTIAL save is checked FIRST: an accepted AI suggestion on the
+          // primary locale merges only its own field into
+          // savedPrimaryValuesRef, so adopting that snapshot wholesale would
+          // leave every other field without a baseline (= dirty).
+          if (partial) {
+            // A partial save: only the fields it carried are now saved, and
+            // only if their locale is still the one on screen; the rest keep
+            // the baseline they are dirty against.
+            if (
+              currentLanguageRef.current === partial.locale &&
+              selectedMarketIdRef.current === partial.marketId &&
+              Object.keys(partial.values).length > 0
+            ) {
+              baselineValuesRef.current = { ...baselineValuesRef.current, ...partial.values };
+              setBaselineVersion(v => v + 1);
+              // The change-detection baselines too, so a later full Save does
+              // not report this field as changed again (on the primary locale
+              // that would purge — or re-translate — what this save started).
+              // A field Shopify did not confirm stays out: it is kept dirty
+              // below and has to be sent again by the next Save.
+              const notConfirmed = unconfirmedClearedFieldSet(fetcher.data);
+              const confirmedValues = Object.fromEntries(
+                Object.entries(partial.values).filter(([key]) => !notConfirmed.has(key)),
+              );
+              originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...confirmedValues };
+              if (isThemeContentType(config.contentType)) {
+                originalTemplateValuesRef.current = { ...originalTemplateValuesRef.current, ...confirmedValues };
+                setTemplateValuesVersion(v => v + 1);
+              }
+            }
+          } else if (
             primarySnapshot &&
             Object.keys(primarySnapshot).length > 0 &&
             currentLanguageRef.current === primaryLocale
           ) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
-          } else if (partial) {
-            // A partial save: only the fields it carried are now saved, and
-            // only if their locale is still the one on screen; the rest keep
-            // the baseline they are dirty against.
-            if (
-              currentLanguageRef.current === partial.locale &&
-              selectedMarketIdRef.current === partial.marketId
-            ) {
-              baselineValuesRef.current = { ...baselineValuesRef.current, ...partial.values };
-              setBaselineVersion(v => v + 1);
-            }
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
@@ -2178,11 +2210,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // after save completes, before the translation starts. Otherwise isLoadingData flips
         // back to false (10ms timer) while the translation is still in-flight, and the stale
         // baseline causes hasFieldChanges to return true → save button flickers active.
+        // THIS field only: the save carried nothing else, and any other field
+        // may hold unsaved input that must stay dirty.
         if (isThemeContentType(config.contentType)) {
-          const snapshot = { ...editableValuesRef.current };
-          originalTemplateValuesRef.current = snapshot;
+          const savedValue = editableValuesRef.current[fieldKey] ?? "";
+          originalTemplateValuesRef.current = { ...originalTemplateValuesRef.current, [fieldKey]: savedValue };
           setTemplateValuesVersion(v => v + 1);
-          baselineValuesRef.current = snapshot;
+          baselineValuesRef.current = { ...baselineValuesRef.current, [fieldKey]: savedValue };
           setBaselineVersion(v => v + 1);
         }
 
@@ -2335,13 +2369,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                   [fieldKey]: translations[currentLanguage]
                 };
               } else if (currentLanguage === primaryLocale) {
-                // Primary locale: sync all original values with current editableValues
-                // so the save button correctly shows "no changes"
-                newTemplateBaseline = { ...editableValuesRef.current };
+                // Primary locale: the accepted field was saved — that field
+                // only; any other field may still hold an unsaved draft.
+                newTemplateBaseline = {
+                  ...originalTemplateValuesRef.current,
+                  [fieldKey]: editableValuesRef.current[fieldKey] ?? "",
+                };
               }
               if (newTemplateBaseline) {
                 originalTemplateValuesRef.current = newTemplateBaseline;
-                baselineValuesRef.current = newTemplateBaseline;
+                baselineValuesRef.current = { ...baselineValuesRef.current, [fieldKey]: newTemplateBaseline[fieldKey] ?? "" };
                 setBaselineVersion(v => v + 1);
               }
               setTemplateValuesVersion(v => v + 1);
@@ -2468,7 +2505,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       // Update original alt-texts to match current values (so hasChanges becomes false)
-      setOriginalAltTexts(keepFailedAltsDirty(altBaselineAfterCopy, copyFailedAlts, imageAltTextsRef.current));
+      setOriginalAltTexts(
+        restrictAltBaseline(
+          keepFailedAltsDirty(altBaselineAfterCopy, copyFailedAlts, imageAltTextsRef.current),
+          partial ? (partial.altIndices ?? []) : null,
+        ),
+      );
 
       // For templates: Do NOT eagerly update originalTemplateValuesRef here.
       // Using the current editableValues would incorrectly bake in any manual edits
@@ -2882,6 +2924,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return isFieldTranslated(fieldKey) ? "#f0f9ff" : "transparent";
   };
 
+  const isPrimaryFieldUnsaved = (fieldKey: string): boolean =>
+    !isLoadingData &&
+    isUnsavedPrimarySource({
+      currentLanguage,
+      primaryLocale,
+      value: editableValues[fieldKey],
+      baseline: baselineValuesRef.current[fieldKey],
+    });
+
   const getEditableValue = (fieldKey: string): string => {
     // If the key exists in editableValues, always use it (even if empty).
     // After data loading, editableValues contains the resolved values for all fields.
@@ -3057,6 +3108,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isFieldLoading,
       getValidationOverlays,
       validationVersion: baselineVersion,
+      /**
+       * Save-first gating: the PRIMARY value a copy/translate-to-all button
+       * would take as its source is an unsaved draft. Such a button is
+       * disabled until it is saved — its write into every language would be
+       * purged by that later Save. Always false on a foreign locale.
+       */
+      isPrimaryFieldUnsaved,
+      isPrimaryAltUnsaved,
+      hasUnsavedPrimaryAlts,
       /**
        * Hand a save response from a fetcher this hook does NOT own to the ONE
        * background-task watcher. The product page's sub-resource save is the

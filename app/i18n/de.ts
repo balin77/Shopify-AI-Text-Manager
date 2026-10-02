@@ -1950,6 +1950,7 @@ export const de = {
     translateAlt: "Übersetzen",
     translateAltAll: "In alle Sprachen übersetzen",
     translateAltAllSaveFirst: "Speichere zuerst den Alt-Text, dann übersetze ihn in alle Sprachen.",
+    aiNeedsSavedImage: "Speichere das Bild zuerst – erst dann kann die KI seinen Alt-Text schreiben oder übersetzen.",
     primaryRef: "Hauptsprache",
     noImages: "Keine Bilder",
     noMainImage: "Kein Hauptbild",
@@ -2112,6 +2113,8 @@ export const de = {
     noTargetLanguagesEnabled: "Keine Zielsprachen aktiviert",
     // Tooltip on translate/copy-to-all actions in a single-language shop
     requiresSecondLanguage: "Dein Shop hat nur eine Sprache. Füge in den Shopify-Einstellungen eine weitere Sprache hinzu, um übersetzen zu können.",
+    // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
+    saveFirstSource: "Zuerst speichern – der Text in der Hauptsprache hat ungespeicherte Änderungen.",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
     fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons

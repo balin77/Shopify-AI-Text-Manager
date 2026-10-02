@@ -125,7 +125,8 @@ export const guideEs: GuideCopy = {
         {
           heading: "Guardar",
           paragraphs: [
-            "No se escribe nada antes de guardar. En cuanto cambias algo, aparece arriba la barra de guardado de Shopify con Guardar y Descartar. También vale para los interruptores de los ajustes: un cambio es un borrador hasta que lo guardas.",
+            "Lo que escribes solo se guarda cuando pulsas Guardar. En cuanto cambias algo, aparece arriba la barra de guardado de Shopify con Guardar y Descartar. También vale para los interruptores de los ajustes: un cambio es un borrador hasta que lo guardas.",
+            "Los botones de IA y de copiar de los editores, en cambio, guardan al instante — pero solo el campo sobre el que actúan: una sugerencia de IA aceptada, una traducción al idioma abierto, un texto copiado. Lo que hayas escrito en otros campos sin guardar sigue siendo un borrador. Los botones que copian o traducen el texto del idioma principal a todos los idiomas están bloqueados mientras ese texto tenga cambios sin guardar: guárdalo primero. En el editor masivo todo sigue siendo un borrador hasta que guardas allí.",
           ],
         },
         {
@@ -249,7 +250,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Aceptar una sugerencia",
           paragraphs: [
-            "El resultado llega al campo como sugerencia. Puedes aceptarla, descartarla o seguir editándola — nada se guarda a tus espaldas. «Aceptar y traducir» lleva el texto aceptado directamente a todos los idiomas.",
+            "El resultado aparece primero como sugerencia encima del campo. «Aceptar» lo pone en el campo y guarda al instante exactamente ese campo — los demás campos con cambios sin guardar no se tocan. «Rechazar» lo deja todo como estaba. «Aceptar y traducir» guarda el texto aceptado y lo lleva directamente a todos los idiomas.",
           ],
         },
       ],
@@ -737,13 +738,13 @@ export const guideEs: GuideCopy = {
           heading: "Dónde están",
           paragraphs: [
             "Editas los textos alternativos en la imagen dentro del Image Variant Manager, en el editor para las imágenes de colecciones y artículos, y en bloque en el editor masivo, donde cada fila del tipo Imágenes es una imagen — tanto de productos como de tu biblioteca de archivos.",
-            "Un texto alternativo del Image Variant Manager no se guarda al salir del campo: sigue siendo un borrador hasta que pulsas «Guardar» arriba, como cualquier otro cambio de la página. «Descartar» lo deshace. Si el guardado de una imagen falla, el cuadro de información indica el motivo, tu texto se queda en el campo y se vuelve a enviar con el siguiente «Guardar». Si ya escribiste un texto alternativo para una imagen que acabas de añadir, el mismo «Guardar» lo guarda también en cuanto Shopify haya creado la imagen. Si cambias de idioma, de mercado o de producto con textos alternativos sin guardar, la app pregunta antes; lo que ya guardaste termina de guardarse también después del cambio. En el idioma principal los textos alternativos valen para todos los mercados, por eso cambiar de mercado allí no pregunta. Si eliminas una imagen, su texto alternativo sin guardar se va con ella. Un enlace de YouTube/Vimeo o un modelo 3D añadido a una variante no tiene texto alternativo: su campo lo indica en su lugar.",
+            "Un texto alternativo que escribes en el Image Variant Manager no se guarda al salir del campo: sigue siendo un borrador hasta que pulsas «Guardar» arriba, como cualquier otro cambio de la página. «Descartar» lo deshace. Si el guardado de una imagen falla, el cuadro de información indica el motivo, tu texto se queda en el campo y se vuelve a enviar con el siguiente «Guardar». Si ya escribiste un texto alternativo para una imagen que acabas de añadir, el mismo «Guardar» lo guarda también en cuanto Shopify haya creado la imagen. Si cambias de idioma, de mercado o de producto con textos alternativos sin guardar, la app pregunta antes; lo que ya guardaste termina de guardarse también después del cambio. En el idioma principal los textos alternativos valen para todos los mercados, por eso cambiar de mercado allí no pregunta. Si eliminas una imagen, su texto alternativo sin guardar se va con ella. Un enlace de YouTube/Vimeo o un modelo 3D añadido a una variante no tiene texto alternativo: su campo lo indica en su lugar.",
           ],
         },
         {
           heading: "Con IA",
           paragraphs: [
-            "La IA escribe un texto alternativo por imagen. El resultado queda como borrador en el campo y solo se aplica con «Guardar»; «Traducir a todos los idiomas», en cambio, escribe de inmediato en los otros idiomas — por eso ese botón solo vuelve a estar disponible cuando has guardado un texto alternativo modificado. Con el envío de imágenes activado ve exactamente esa imagen — y no describe otra que simplemente esté al lado.",
+            "La IA escribe un texto alternativo por imagen. El resultado — igual que una traducción al idioma abierto — queda en el campo y se guarda al instante para esa imagen; los textos alternativos que escribiste para otras imágenes siguen siendo borradores. En una imagen que aún no se ha guardado, estos botones están bloqueados hasta que la guardes. «Traducir a todos los idiomas» escribe de inmediato en los otros idiomas — por eso ese botón solo está disponible mientras el texto alternativo del idioma principal no tenga cambios sin guardar. Con el envío de imágenes activado ve exactamente esa imagen — y no describe otra que simplemente esté al lado.",
           ],
         },
         {

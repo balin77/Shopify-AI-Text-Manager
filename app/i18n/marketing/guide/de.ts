@@ -128,7 +128,8 @@ export const guideDe: GuideCopy = {
         {
           heading: "Speichern",
           paragraphs: [
-            "Nichts wird geschrieben, bevor Sie speichern. Sobald Sie etwas ändern, erscheint oben Shopifys Speicherleiste mit „Speichern“ und „Verwerfen“. Das gilt auch für Schalter in den Einstellungen: Eine Änderung ist ein Entwurf, bis Sie sie speichern.",
+            "Was Sie tippen, wird erst geschrieben, wenn Sie speichern. Sobald Sie etwas ändern, erscheint oben Shopifys Speicherleiste mit „Speichern“ und „Verwerfen“. Das gilt auch für Schalter in den Einstellungen: Eine Änderung ist ein Entwurf, bis Sie sie speichern.",
+            "Die Knöpfe für KI und Kopieren in den Editoren speichern dagegen sofort — aber nur das eine Feld, auf das sie wirken: ein übernommener KI-Vorschlag, eine Übersetzung in die gerade offene Sprache, ein kopierter Text. Was Sie in anderen Feldern getippt und noch nicht gespeichert haben, bleibt ein Entwurf. Knöpfe, die den Text der Hauptsprache in alle Sprachen kopieren oder übersetzen, sind gesperrt, solange dieser Text ungespeicherte Änderungen hat — speichern Sie ihn zuerst. Im Bulk-Editor bleibt alles ein Entwurf, bis Sie dort speichern.",
           ],
         },
         {
@@ -252,7 +253,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Vorschlag annehmen",
           paragraphs: [
-            "Das Ergebnis landet als Vorschlag im Feld. Sie können ihn übernehmen, verwerfen oder weiter bearbeiten — nichts wird hinter Ihrem Rücken gespeichert. Mit „Übernehmen & übersetzen“ wird der akzeptierte Text gleich in alle Sprachen übertragen.",
+            "Das Ergebnis erscheint zuerst als Vorschlag über dem Feld. „Übernehmen“ setzt ihn ins Feld und speichert genau dieses eine Feld sofort — andere Felder, in denen Sie noch ungespeicherte Änderungen haben, bleiben davon unberührt. „Ablehnen“ lässt alles, wie es war. Mit „Übernehmen & übersetzen“ wird der akzeptierte Text gespeichert und gleich in alle Sprachen übertragen.",
           ],
         },
       ],
@@ -747,13 +748,13 @@ export const guideDe: GuideCopy = {
           heading: "Wo Alt-Texte stehen",
           paragraphs: [
             "Alt-Texte bearbeiten Sie am Bild im Image Variant Manager, im Editor bei Kollektions- und Artikelbildern, und gesammelt im Bulk-Editor, wo jede Zeile der Zeilenart „Bilder“ ein Bild ist — Produktbilder ebenso wie Bilder aus Ihrer Dateibibliothek.",
-            "Ein Alt-Text im Image Variant Manager wird nicht gespeichert, wenn Sie das Feld verlassen: Er bleibt ein Entwurf, bis Sie oben auf „Speichern“ drücken — wie jede andere Änderung auf der Seite. „Verwerfen“ nimmt ihn zurück. Gelingt das Speichern bei einem Bild nicht, nennt die Info-Box den Grund, Ihr Text bleibt im Feld stehen und wird beim nächsten „Speichern“ erneut gesendet. Haben Sie einem Bild, das Sie gerade erst hinzugefügt haben, schon einen Alt-Text gegeben, speichert dasselbe „Speichern“ ihn mit, sobald Shopify das Bild angelegt hat. Wechseln Sie mit ungespeicherten Alt-Texten die Sprache, den Markt oder das Produkt, fragt die App zuerst nach; was Sie schon gespeichert haben, wird auch nach dem Wechsel zu Ende gespeichert. In der Hauptsprache gelten die Alt-Texte für alle Märkte, deshalb fragt ein Marktwechsel dort nicht nach. Löschen Sie ein Bild, geht sein ungespeicherter Alt-Text mit. Ein YouTube-/Vimeo-Link oder ein 3D-Modell, das einer Variante hinzugefügt wurde, hat keinen Alt-Text — das Feld sagt das stattdessen.",
+            "Ein Alt-Text, den Sie im Image Variant Manager tippen, wird nicht gespeichert, wenn Sie das Feld verlassen: Er bleibt ein Entwurf, bis Sie oben auf „Speichern“ drücken — wie jede andere Änderung auf der Seite. „Verwerfen“ nimmt ihn zurück. Gelingt das Speichern bei einem Bild nicht, nennt die Info-Box den Grund, Ihr Text bleibt im Feld stehen und wird beim nächsten „Speichern“ erneut gesendet. Haben Sie einem Bild, das Sie gerade erst hinzugefügt haben, schon einen Alt-Text gegeben, speichert dasselbe „Speichern“ ihn mit, sobald Shopify das Bild angelegt hat. Wechseln Sie mit ungespeicherten Alt-Texten die Sprache, den Markt oder das Produkt, fragt die App zuerst nach; was Sie schon gespeichert haben, wird auch nach dem Wechsel zu Ende gespeichert. In der Hauptsprache gelten die Alt-Texte für alle Märkte, deshalb fragt ein Marktwechsel dort nicht nach. Löschen Sie ein Bild, geht sein ungespeicherter Alt-Text mit. Ein YouTube-/Vimeo-Link oder ein 3D-Modell, das einer Variante hinzugefügt wurde, hat keinen Alt-Text — das Feld sagt das stattdessen.",
           ],
         },
         {
           heading: "Mit KI",
           paragraphs: [
-            "Die KI schreibt einen Alt-Text pro Bild. Das Ergebnis steht danach als Entwurf im Feld und wird erst mit „Speichern“ übernommen; „In alle Sprachen übersetzen“ dagegen schreibt sofort in die anderen Sprachen — deshalb ist der Button erst wieder bedienbar, wenn Sie einen geänderten Alt-Text gespeichert haben. Ist die Bildfreigabe eingeschaltet, sieht sie dabei genau dieses eine Bild — und beschreibt nicht eines, das nur zufällig daneben liegt.",
+            "Die KI schreibt einen Alt-Text pro Bild. Das Ergebnis — ebenso eine Übersetzung in die gerade offene Sprache — steht danach im Feld und wird für dieses eine Bild sofort gespeichert; Alt-Texte, die Sie bei anderen Bildern getippt haben, bleiben Entwürfe. Bei einem Bild, das selbst noch nicht gespeichert ist, sind diese Knöpfe gesperrt, bis Sie es gespeichert haben. „In alle Sprachen übersetzen“ schreibt sofort in die anderen Sprachen — deshalb ist der Button nur bedienbar, solange der Alt-Text der Hauptsprache keine ungespeicherten Änderungen hat. Ist die Bildfreigabe eingeschaltet, sieht sie dabei genau dieses eine Bild — und beschreibt nicht eines, das nur zufällig daneben liegt.",
           ],
         },
         {

@@ -766,6 +766,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isSavingCurrentItem]);
 
+  // A copy/translate-to-all button whose PRIMARY source is an unsaved draft
+  // waits for the Save: that Save would purge what the button wrote.
+  const saveFirstSourceHint = String(
+    t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes.",
+  );
+
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
           key={field.key}
@@ -791,6 +797,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
           onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
           onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
+          saveFirstHint={helpers.isPrimaryFieldUnsaved(field.key) ? saveFirstSourceHint : undefined}
+          altSaveFirstHint={(imageIndex: number) => (helpers.isPrimaryAltUnsaved(imageIndex) ? saveFirstSourceHint : undefined)}
+          translateAllAltsSaveFirstHint={helpers.hasUnsavedPrimaryAlts() ? saveFirstSourceHint : undefined}
           onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
           onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
           onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
