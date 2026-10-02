@@ -27,6 +27,20 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return taskErrorText(refusal[0], t) ?? errorMessage;
   }
 
+  // The embedded session token could not be (re)established -- app-fetch.ts's
+  // SessionExpiredError, or the server's 401 for an /api fetch that arrived
+  // without one (api-auth-bounce.server.ts). Never raw "Expected JSON" text.
+  if (errorMessage === "sessionExpired") {
+    return errors?.sessionExpired || "Your session has expired. Please reload the page.";
+  }
+  // Shopify asked for the app's access to be confirmed again (a 401 carrying
+  // X-Shopify-API-Request-Failure-Reauthorize-Url) -- app-fetch.ts's
+  // ReauthorizeRequiredError. Not an expired session: reloading alone does
+  // not end it, the merchant has to approve the request.
+  if (errorMessage === "reauthorizeRequired") {
+    return errors?.reauthorizeRequired || "Shopify asks you to confirm the app's access again. Please reload the page and approve the request.";
+  }
+
   // The image an alt-text action named no longer exists on the product.
   if (errorMessage === "Image not found on this product") {
     const im = (t as unknown as { imageManager?: Record<string, string> }).imageManager;

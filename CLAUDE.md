@@ -796,6 +796,27 @@ Neighbouring facts and rules, each measured rather than assumed:
   code that can run during SSR; server errors are reported by `handleError`
   already. [root-error-boundary.test.tsx](tests/unit/root-error-boundary.test.tsx)
   fails with the exact production TypeError when the guard is removed.
+- **An `/api/*` fetch without a session token gets a 401, never the App Bridge
+  bounce page, and the client calls `/api/*` through `appFetch`.** The library
+  treats a request with no `Authorization: Bearer` as a DOCUMENT request and
+  throws the bounce page (200, `text/html;charset=utf-8`) — which every caller
+  showed as "Expected JSON but got text/html" (2026-10-02).
+  `apiAuthBounceRejection` ([api-auth-bounce.server.ts](app/utils/api-auth-bounce.server.ts)),
+  called in `enhancedAuthenticate.admin`, turns exactly that into a JSON 401
+  with `X-Shopify-Retry-Invalid-Session-Request: 1` plus one warn line — only
+  under `/api/`, only without an `Authorization` header, never for a
+  navigation. `/api/content-editor-action` runs a PAGE's action on the page's
+  URL, so it applies the same conversion itself against the ORIGINAL `/api`
+  request. Client side, [app-fetch.ts](app/utils/app-fetch.ts) sends the token
+  itself and retries ONCE (fresh token, 3 s deadline) only for what is answered
+  before route code runs: the retry header, a 200 HTML page, a redirected HTML
+  page. A 401 WITHOUT the header is `sessionExpired` with no resend (the
+  library also answers 401 from inside a running route, e.g. a failed token
+  exchange), a 401 with `X-Shopify-API-Request-Failure-Reauthorize-Url` is
+  `reauthorizeRequired`, and a route's own JSON 401 (`INVALID_AI_KEY`) passes
+  through. App Bridge's patched `fetch` may retry too; 2 x 2 requests is the
+  bounded worst case. New `/api` callers use `appFetch`/`appFetchJson`, never a
+  bare `fetch`.
 
 **Branch state (2026-09-08):** the whole fix — the `app.tsx` loader hoist and its
 `headers` comment, and all of `entry.server.tsx` (`handleError`, `describeError`,

@@ -6,7 +6,8 @@
 interface Window {
   shopify?: {
     navigate: (path: string) => void;
-    idToken?: string;
+    /** App Bridge v4: resolves with a fresh session token (a JWT). */
+    idToken?: () => Promise<string>;
     /**
      * Native App Bridge Save Bar API. Controls the `ui-save-bar` web component
      * rendered above the embedded app. Required for "Built for Shopify".

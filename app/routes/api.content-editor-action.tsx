@@ -29,6 +29,7 @@ import {
   contentEditorActionPage,
   type ContentEditorActionPage,
 } from "~/services/editor/content-action-endpoint.shared";
+import { apiAuthBounceRejection } from "~/utils/api-auth-bounce.server";
 
 type PageModule = { action: (args: ActionFunctionArgs) => unknown };
 
@@ -90,5 +91,16 @@ export const action = async (args: ActionFunctionArgs) => {
     body: formData,
     signal: request.signal,
   });
-  return pageAction({ ...args, request: pageRequest });
+  try {
+    return await pageAction({ ...args, request: pageRequest });
+  } catch (error) {
+    // The page action authenticates against the PAGE's URL (`/app/...`), so
+    // the `/api/*` bounce conversion in enhancedAuthenticate.admin does not
+    // recognise it: a fetch that arrived without a session token got the App
+    // Bridge bounce page (200 HTML) back through this door. Judged here
+    // against the ORIGINAL `/api` request, which is what the browser sent --
+    // same 401 + retry header and the same warn line as every other `/api`
+    // route. Anything else (a redirect, a real error) is re-thrown unchanged.
+    throw apiAuthBounceRejection(error, request) ?? error;
+  }
 };
