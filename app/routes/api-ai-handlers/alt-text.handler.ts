@@ -14,7 +14,7 @@ import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale, resolveWrittenLocale } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
-import { altTranslateTaskStatus } from "~/services/alt-text-feedback.shared";
+import { ALT_NO_SOURCE_TEXT, altTranslateTaskStatus } from "~/services/alt-text-feedback.shared";
 import { ALT_IMAGE_NOT_FOUND, pickProductImage } from "~/services/product-image-pick.shared";
 
 /**
@@ -399,7 +399,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Data
   const productTitle = getFormString(formData, "productTitle");
 
   if (!sourceAltText) {
-    return json({ success: false, error: "No source alt-text available" }, { status: 400 });
+    return json({ success: false, errorCode: ALT_NO_SOURCE_TEXT, error: "No source alt-text available" }, { status: 400 });
   }
 
   if (!isValidLocale(targetLocale)) {
@@ -547,7 +547,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   const productTitle = getFormString(formData, "productTitle");
 
   if (!sourceAltText) {
-    return json({ success: false, error: "No source alt-text available" }, { status: 400 });
+    return json({ success: false, errorCode: ALT_NO_SOURCE_TEXT, error: "No source alt-text available" }, { status: 400 });
   }
 
   const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];

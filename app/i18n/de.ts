@@ -1950,6 +1950,7 @@ export const de = {
     translateAlt: "Übersetzen",
     translateAltAll: "In alle Sprachen übersetzen",
     translateAltAllSaveFirst: "Speichere zuerst den Alt-Text, dann übersetze ihn in alle Sprachen.",
+    translateAltNoPrimary: "In der Hauptsprache ist für dieses Bild noch kein Alt-Text gespeichert, es gibt also nichts zu übersetzen. Schreibe zuerst den Alt-Text in der Hauptsprache und speichere ihn.",
     aiNeedsSavedImage: "Speichere das Bild zuerst – erst dann kann die KI seinen Alt-Text schreiben oder übersetzen.",
     primaryRef: "Hauptsprache",
     noImages: "Keine Bilder",

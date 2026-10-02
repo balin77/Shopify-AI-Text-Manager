@@ -8,7 +8,7 @@ import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { answerPredatesSave, altConfirmKey, monotonicNow } from "./alt-load-guard";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
-import { classifyAltSaveResponse, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
+import { altTranslateSourceText, classifyAltSaveResponse, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
 import { usePlan } from "../../contexts/PlanContext";
 import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -2881,6 +2881,10 @@ export function VariantImageManager({
       return;
     }
     const aiVerdict = classifyAltAiResponse(data);
+    if (aiVerdict.kind === "noSource") {
+      showInfoBox(String(im?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet."), "warning");
+      return;
+    }
     if (aiVerdict.kind !== "ok") {
       showInfoBox(aiVerdict.kind === "refused" && aiVerdict.message ? aiVerdict.message : failText(aiVerdict.message), "critical");
       return;
@@ -2897,6 +2901,12 @@ export function VariantImageManager({
       : data.actionType === "translateAltText" && data.translatedAltText !== undefined ? (data.translatedAltText as string)
       : undefined;
     if (generated === undefined) return;
+    // An empty translation is not one: applied and saved, it would CLEAR the
+    // alt the merchant asked to fill.
+    if (data.actionType === "translateAltText" && generated.trim() === "") {
+      showInfoBox(failText(""), "critical");
+      return;
+    }
     // The result is SAVED at once, for this image only (owner's rule,
     // 2026-10-02: AI buttons save immediately, typing stays a draft): the text
     // goes into the field exactly like a typed one, and that one medium's save
@@ -3283,12 +3293,23 @@ export function VariantImageManager({
     altTextFetcher.submit(form, { method: "post" });
   }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher, urlToGid, currentLanguage, foreignMarketId, altGidLookup, showInfoBox, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
+  // Translates the image's SAVED primary-language alt into the language on
+  // screen -- never the foreign field's own text: that is already the target
+  // language (a typed draft or an existing translation) or empty, and sending
+  // it made the AI answer in prose, the reply unparseable and every retry fail
+  // the same way. No primary alt = nothing to translate: refused here, with
+  // the reason, before any AI call (the button is disabled for it too).
+  const handleTranslateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     if (!currentLanguage || imageIndex < 0) return;
     const blocked = altAiBlockedHint(url);
     if (blocked) {
       showInfoBox(blocked, "warning");
+      return;
+    }
+    const sourceAltText = altTranslateSourceText(imageMetas[url]?.altText);
+    if (sourceAltText === null) {
+      showInfoBox(String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet."), "warning");
       return;
     }
     altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, marketId: foreignMarketId, productId };
@@ -3299,8 +3320,10 @@ export function VariantImageManager({
     form.append("imageIndex", String(imageIndex));
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocale", currentLanguage);
+    if (primaryLocale) form.append("primaryLocale", primaryLocale);
+    form.append("productTitle", productTitle ?? "");
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher, urlToGid, foreignMarketId, altGidLookup, showInfoBox, t]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher, urlToGid, foreignMarketId, altGidLookup, showInfoBox, t, imageMetas, primaryLocale, productTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // GLOBAL layer by design, like the editor's own "translate to all languages":
   // it never carries a market. The image is named by its MEDIA id -- a position
@@ -3384,6 +3407,11 @@ export function VariantImageManager({
   // Translating to every language is offered only for a SAVED primary alt.
   const productAltDirty = productSingleSelected ? isPrimaryAltDirty(productSingleSelected) : false;
   const productAltAiBlocked = altAiBlockedHint(productSingleSelected);
+  // Translating needs a SAVED primary alt to start from (it is the source).
+  const productTranslateAltBlocked = productAltAiBlocked
+    ?? (productSingleSelected && altTranslateSourceText(productPrimaryAltText) === null
+      ? String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet.")
+      : undefined);
   const translateAltAllSaveFirstHint = String(t.imageManager?.translateAltAllSaveFirst ?? "Save the alt text first, then translate it.");
   const productHasTranslation = productSingleSelected
     ? (localAltTexts[productSingleSelected] !== undefined && localAltTexts[productSingleSelected] !== "")
@@ -3788,12 +3816,12 @@ export function VariantImageManager({
                   </DisabledActionTooltip>
                 )}
                 {!isPrimaryLocale && (
-                  <DisabledActionTooltip hint={productAltAiBlocked}>
+                  <DisabledActionTooltip hint={productTranslateAltBlocked}>
                     <Button
                       size="slim"
-                      disabled={altTextFetcher.state !== "idle" || !!productAltAiBlocked}
+                      disabled={altTextFetcher.state !== "idle" || !!productTranslateAltBlocked}
                       loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
+                      onClick={() => handleTranslateAltTextForImage(productSingleSelected)}
                     >
                       {`🌍 ${t.imageManager.translateAlt}`}
                     </Button>

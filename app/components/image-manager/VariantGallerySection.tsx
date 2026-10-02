@@ -12,6 +12,7 @@ import type { VariantWithGallery, ImageMeta } from "./types";
 import { variantTileReplaceState, variantTileAltEditable } from "./url-gid";
 import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../localized-images/LocalizedMediaReplaceButton";
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
+import { altTranslateSourceText } from "../../services/alt-text-feedback.shared";
 
 interface VariantGallerySectionProps {
   variant: VariantWithGallery;
@@ -35,7 +36,8 @@ interface VariantGallerySectionProps {
   isAltTextLoading?: boolean;
   onAltTextChange?: (url: string, value: string) => void;
   onGenerateAltText?: (url: string) => void;
-  onTranslateAltText?: (url: string, sourceAltText: string) => void;
+  /** Translates the tile's SAVED primary alt into the language on screen (the handler reads the source itself). */
+  onTranslateAltText?: (url: string) => void;
   onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
   /** True while this tile's medium has an unsaved PRIMARY alt: translating it to every language waits for its Save. */
   isAltDirty?: (url: string) => boolean;
@@ -278,6 +280,11 @@ export function VariantGallerySection({
       : (localAltTexts?.[singleSelectedUrl] ?? ""))
     : "";
   const primaryAltText = singleSelectedUrl ? (imageMetas[singleSelectedUrl]?.altText ?? "") : "";
+  // Translating starts from the SAVED primary alt; without one there is nothing to translate.
+  const translateAltBlocked = aiBlocked
+    ?? (singleSelectedUrl && altTranslateSourceText(primaryAltText) === null
+      ? String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet.")
+      : undefined);
   const hasTranslation = singleSelectedUrl
     ? (localAltTexts?.[singleSelectedUrl] !== undefined && localAltTexts[singleSelectedUrl] !== "")
     : false;
@@ -455,12 +462,12 @@ export function VariantGallerySection({
                     </>
                   )}
                   {!isPrimaryLocale && onTranslateAltText && (
-                    <DisabledActionTooltip hint={aiBlocked}>
+                    <DisabledActionTooltip hint={translateAltBlocked}>
                       <Button
                         size="slim"
-                        disabled={isAltTextLoading || !!aiBlocked}
+                        disabled={isAltTextLoading || !!translateAltBlocked}
                         loading={isAltTextLoading}
-                        onClick={() => onTranslateAltText(singleSelectedUrl, currentAltText)}
+                        onClick={() => onTranslateAltText(singleSelectedUrl)}
                       >
                         {`🌍 ${t.imageManager.translateAlt}`}
                       </Button>

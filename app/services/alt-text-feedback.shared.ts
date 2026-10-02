@@ -38,15 +38,61 @@ export function classifyAltSaveResponse(data: unknown): AltSaveVerdict {
   return { kind: "failed", message: errorText(rec) };
 }
 
+/**
+ * The answer code of a single-language alt translate that had no SOURCE: the
+ * image has no saved alt text in the primary language. Refused before any AI
+ * call -- an empty (or foreign) text handed to the translate prompt is what
+ * made the model answer in prose and every retry fail the same way.
+ */
+export const ALT_NO_SOURCE_TEXT = "noSourceAltText";
+
+/**
+ * The text a single-language alt translate starts from: ALWAYS the image's
+ * SAVED primary-language alt, never what the foreign field holds (that is the
+ * target language's own draft or translation, and translating it "into" the
+ * language it is already in has no answer). `null` = nothing to translate,
+ * and the caller must refuse rather than call the AI.
+ */
+export function altTranslateSourceText(primaryAlt: string | null | undefined): string | null {
+  const text = typeof primaryAlt === "string" ? primaryAlt.trim() : "";
+  return text === "" ? null : text;
+}
+
+/**
+ * The server half of a single-language alt translate, decided before any AI
+ * work: the source text (trimmed, never empty) and the language it is in.
+ * A target equal to the primary language has nothing to translate either.
+ */
+export type AltTranslatePlan =
+  | { ok: true; source: string; fromLang: string }
+  | { ok: false; reason: "noSource" | "targetIsPrimary" };
+
+export function planAltTranslate(opts: {
+  sourceAltText: string | null | undefined;
+  targetLocale: string;
+  primaryLocale: string | null | undefined;
+}): AltTranslatePlan {
+  const source = altTranslateSourceText(opts.sourceAltText);
+  if (source === null) return { ok: false, reason: "noSource" };
+  const primary = (opts.primaryLocale ?? "").trim();
+  if (primary && primary.toLowerCase() === opts.targetLocale.trim().toLowerCase()) {
+    return { ok: false, reason: "targetIsPrimary" };
+  }
+  return { ok: true, source, fromLang: primary || "the source language" };
+}
+
 export type AltAiVerdict =
   | { kind: "ok" }
+  | { kind: "noSource" }
   | { kind: "refused"; message: string }
   | { kind: "error"; message: string };
 
-/** A generate / translate answer: ok, a coded refusal (its message is the
- *  server's localised sentence), or any other failure. */
+/** A generate / translate answer: ok, "no primary alt to translate from",
+ *  a coded refusal (its message is the server's localised sentence), or any
+ *  other failure. */
 export function classifyAltAiResponse(data: unknown): AltAiVerdict {
   const rec = asRecord(data);
+  if (rec && rec.errorCode === ALT_NO_SOURCE_TEXT) return { kind: "noSource" };
   if (rec && rec.success !== false && !rec.error) return { kind: "ok" };
   const code = typeof rec?.code === "string" ? rec.code : "";
   if (AI_REFUSAL_CODES.has(code)) return { kind: "refused", message: errorText(rec) };

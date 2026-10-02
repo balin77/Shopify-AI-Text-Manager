@@ -745,7 +745,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "With AI",
           paragraphs: [
-            "The AI writes one alt text per image. The result — and likewise a translation into the language that is open — then sits in the field and is saved for that one image straight away; alt texts you typed for other images stay drafts. For an image that has not been saved itself yet, these buttons are locked until you save it. “Translate to all languages” writes to the other languages straight away — which is why that button is only available while the main-language alt text has no unsaved changes. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
+            "The AI writes one alt text per image. The result — and likewise a translation into the language that is open — then sits in the field and is saved for that one image straight away; alt texts you typed for other images stay drafts. For an image that has not been saved itself yet, these buttons are locked until you save it. “Translate” in another language always starts from the saved main-language alt text, not from what is in the field — so it stays locked, with a hint, for an image that has no main-language alt text yet. “Translate to all languages” writes to the other languages straight away — which is why that button is only available while the main-language alt text has no unsaved changes. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
           ],
         },
         {

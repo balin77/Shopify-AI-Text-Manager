@@ -8,7 +8,7 @@
 import { data as json } from "react-router";
 import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
 import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
-import { altTranslateTaskStatus } from "~/services/alt-text-feedback.shared";
+import { ALT_NO_SOURCE_TEXT, altTranslateSourceText, altTranslateTaskStatus, planAltTranslate } from "~/services/alt-text-feedback.shared";
 import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
 import { decryptApiKey } from "../../utils/encryption.server";
@@ -415,13 +415,41 @@ export async function handleTranslateAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<DataResponse> {
-  const { session, contentConfig, db, itemId, provider, serviceConfig } = ctx;
+  const { admin, session, contentConfig, db, itemId, provider, serviceConfig } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
   const sourceAltText = getFormString(formData, "sourceAltText");
   const targetLocale = getFormString(formData, "targetLocale");
   if (!targetLocale || !isValidLocale(targetLocale)) {
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
+  }
+
+  // The SOURCE is the image's primary-language alt and nothing else. This
+  // handler used to take whatever the client sent -- the image manager sent
+  // the FOREIGN field's own text (a typed draft, or empty) -- and put it into
+  // the JSON-shaped field-translate prompt with no source language named. An
+  // empty or already-target-language text has no translation, the model
+  // answered in prose, "Could not parse JSON from AI response" followed, and
+  // every retry sent the same input and failed the same way. So: refuse an
+  // empty source BEFORE any AI work, name the source language, and use the
+  // plain-text single-value translate the /api/ai alt path uses (no JSON).
+  let primaryLocale = getFormString(formData, "primaryLocale") || "";
+  try {
+    const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
+    const primary = shopLocales.find((l) => l.primary)?.locale;
+    if (primary) primaryLocale = primary;
+  } catch {
+    // A failed lookup only costs the prompt its source-language name.
+  }
+  const plan = planAltTranslate({ sourceAltText, targetLocale, primaryLocale });
+  if (!plan.ok) {
+    return json(
+      plan.reason === "noSource"
+        ? { success: false, errorCode: ALT_NO_SOURCE_TEXT, error: "No primary-language alt text to translate" }
+        : { success: false, error: "The target language is the primary language" },
+      { status: 400 },
+    );
   }
 
   // Name the ITEM. This row stored a `resourceId` and no title at all, so the
@@ -448,22 +476,21 @@ export async function handleTranslateAltText(
   });
 
   try {
-    const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
-
-    const changedFields: Record<string, string> = {};
-    changedFields[`altText_${imageIndex}`] = sourceAltText;
+    const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
 
     await db.task.update({
       where: { id: task.id },
       data: { status: "queued", progress: 10 },
     });
 
-    const translations = await translationServiceWithTask.translateProduct(
-      changedFields,
-      [targetLocale],
-      contentConfig.contentType
-    );
-    const translatedAltText = translations[targetLocale]?.[`altText_${imageIndex}`] || "";
+    const translatedAltText = (
+      await aiServiceWithTask.translateContent(plan.source, plan.fromLang, targetLocale, undefined, "image alt text")
+    ).trim();
+    // An empty answer is not a translation: applied, it would CLEAR the
+    // foreign alt the merchant asked to fill.
+    if (!translatedAltText) {
+      throw new Error("The AI returned an empty alt text translation");
+    }
 
     await db.task.update({
       where: { id: task.id },
@@ -515,6 +542,13 @@ export async function handleTranslateAltTextToAllLocales(
   const targetLocales = getFormJSON<string[]>(formData, "targetLocales");
   if (!targetLocales) {
     return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
+  }
+  // Nothing to translate: refused before any AI work (see handleTranslateAltText).
+  if (altTranslateSourceText(sourceAltText) === null) {
+    return json(
+      { success: false, errorCode: ALT_NO_SOURCE_TEXT, error: "No primary-language alt text to translate" },
+      { status: 400 },
+    );
   }
 
   // The medium is resolved by its id BEFORE any AI work is spent: a client
