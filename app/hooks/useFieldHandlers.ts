@@ -22,7 +22,7 @@ import {
   clearSuggestionsForScope,
   type SuggestionScope,
 } from "./useAISuggestionStore";
-import { confirmNavigation, viewSwitchConfirmPendingRef } from "./useSaveBar";
+import { confirmNavigation } from "./useSaveBar";
 import type {
   TranslatableContentItem,
   ContentImage,
@@ -1684,12 +1684,7 @@ const refuseSwitchDuringOwnSave = (): boolean => {
 const handleLanguageChange = async (locale: string) => {
   if (refuseSwitchDuringOwnSave()) return;
   if (hasChanges || isSavingCurrentItem) {
-    viewSwitchConfirmPendingRef.current = true;
-    try {
-      await confirmNavigation();
-    } finally {
-      viewSwitchConfirmPendingRef.current = false;
-    }
+    await confirmNavigation();
   }
   setCurrentLanguage(locale);
   // This click is the only writer of the remembered working language: the
@@ -1719,12 +1714,7 @@ const handleMarketChange = async (marketId: string) => {
   // Market switch behaves like a locale switch "light": no server round-trip, but
   // unsaved edits would be lost on re-resolve, so guard them the same way.
   if (hasChanges || isSavingCurrentItem) {
-    viewSwitchConfirmPendingRef.current = true;
-    try {
-      await confirmNavigation();
-    } finally {
-      viewSwitchConfirmPendingRef.current = false;
-    }
+    await confirmNavigation();
   }
   setSelectedMarketId(marketId);
 };
@@ -1747,9 +1737,6 @@ const handleToggleLanguage = (locale: string) => {
 const handleItemSelect = async (itemId: string) => {
   if (refuseSwitchDuringOwnSave()) return;
   if (hasChanges || isSavingCurrentItem) {
-    // A product switch supersedes any unanswered language/market dialog:
-    // the [SaveBar] measurement flag must not read true for this one.
-    viewSwitchConfirmPendingRef.current = false;
     await confirmNavigation();
   }
   setSelectedItemId(itemId);
