@@ -98,24 +98,67 @@ export const OWN_SAVE_SWITCH_WAIT_MS = 15_000;
  * confirmation could ask. The switch waits for it instead. Resolves at once
  * when nothing is pending; otherwise registers a release in `waiters` (the
  * caller releases them all once the in-flight list is empty) and gives up
- * after `timeoutMs`.
+ * after `timeoutMs`. An aborted `signal` (the editor unmounted) releases at
+ * once; the timer is cleared on every release, so nothing outlives the wait.
  */
 export function waitForOwnSavesToSettle(
   pending: boolean,
   waiters: Array<() => void>,
   timeoutMs: number = OWN_SAVE_SWITCH_WAIT_MS,
+  signal?: AbortSignal,
 ): Promise<void> {
-  if (!pending) return Promise.resolve();
+  if (!pending || signal?.aborted) return Promise.resolve();
   return new Promise<void>((resolve) => {
     let done = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const release = () => {
       if (done) return;
       done = true;
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", release);
       resolve();
     };
     waiters.push(release);
-    setTimeout(release, timeoutMs);
+    signal?.addEventListener("abort", release);
+    timer = setTimeout(release, timeoutMs);
   });
+}
+
+/**
+ * What a waiting switch learns once the wait is over: `proceed` is false when a
+ * NEWER switch was started meanwhile (only the latest intent may move the view
+ * -- the same rule `confirmNavigation`'s token applies) or the editor unmounted.
+ * `isCurrent` asks the same question again later, e.g. after a second
+ * confirmation the switch had to show.
+ */
+export interface OwnSaveSwitchTicket {
+  proceed: boolean;
+  isCurrent: () => boolean;
+}
+
+/**
+ * The latest-intent token and the unmount signal of the editor's view
+ * switches. One per mounted editor; `dispose` on unmount abandons every
+ * waiting switch (its continuation, including the remembered locale/item
+ * writes, never runs).
+ */
+export function createSwitchIntents(): {
+  signal: AbortSignal;
+  claim: () => () => boolean;
+  dispose: () => void;
+} {
+  let latest = 0;
+  const controller = new AbortController();
+  return {
+    signal: controller.signal,
+    claim() {
+      const mine = ++latest;
+      return () => mine === latest && !controller.signal.aborted;
+    },
+    dispose() {
+      controller.abort();
+    },
+  };
 }
 
 /**

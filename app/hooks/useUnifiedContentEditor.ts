@@ -53,7 +53,7 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
-import { settleOwnSave, waitForOwnSavesToSettle, backstopOwnSaves, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { settleOwnSave, waitForOwnSavesToSettle, backstopOwnSaves, createSwitchIntents, OWN_SAVE_SWITCH_WAIT_MS, type OwnSaveInFlight, type OwnSaveSwitchTicket } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -663,10 +663,31 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     ownSaveWaitersRef.current = [];
     for (const release of waiters) release();
   }, [ownSavesInFlight]);
-  const waitForOwnSaves = useCallback(
-    (): Promise<void> => waitForOwnSavesToSettle(ownSavesInFlightRef.current.length > 0, ownSaveWaitersRef.current),
-    [],
-  );
+  // Latest-intent token + unmount signal for the waiting switches: a switch
+  // superseded by a newer one, or one the editor unmounted under, never
+  // continues (created per mount, so a StrictMode re-mount gets a live one).
+  const switchIntentsRef = useRef<ReturnType<typeof createSwitchIntents> | null>(null);
+  useEffect(() => {
+    const intents = createSwitchIntents();
+    switchIntentsRef.current = intents;
+    return () => {
+      intents.dispose();
+      if (switchIntentsRef.current === intents) switchIntentsRef.current = null;
+    };
+  }, []);
+  const waitForOwnSaves = useCallback(async (): Promise<OwnSaveSwitchTicket> => {
+    const intents = switchIntentsRef.current;
+    // Not mounted (yet / any more): nothing may move the view.
+    if (!intents) return { proceed: false, isCurrent: () => false };
+    const isCurrent = intents.claim();
+    await waitForOwnSavesToSettle(
+      ownSavesInFlightRef.current.length > 0,
+      ownSaveWaitersRef.current,
+      OWN_SAVE_SWITCH_WAIT_MS,
+      intents.signal,
+    );
+    return { proceed: isCurrent(), isCurrent };
+  }, []);
   /** Success text of a translate-and-save, STAGED by the caller right before
    *  `safeSubmit` and bound there to its own request (queue entry or in-flight
    *  slot), like `partialSaveRef`: a shared slot let an earlier unrelated save's

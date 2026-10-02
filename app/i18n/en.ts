@@ -1905,6 +1905,7 @@ export const en: Translation = {
     altSaveFailedOtherLanguage: "The alt text for language {locale} could not be saved and was not kept. Please redo it.",
     altSaveFailedOtherMarket: "The alt text for language {locale} in another market could not be saved and was not kept. Please redo it.",
     altSaveLateSuccess: "The alt text was saved after all.",
+    altSavedNotMirrored: "The alt text is saved in Shopify but could not be stored in the app. It will reappear after a sync.",
     altDraftsSaved: "Alt texts saved.",
     altAiResultDiscarded: "The generated alt text was not applied because you switched language or market.",
     altDraftNotSavableYet: "The alt text of an image that is not saved yet can only be saved after the image itself. Save again once the image is uploaded.",

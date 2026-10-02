@@ -23,6 +23,8 @@ import {
   type SuggestionScope,
 } from "./useAISuggestionStore";
 import { confirmNavigation, viewSwitchConfirmPendingRef } from "./useSaveBar";
+import { useLatestRef } from "./useLatestRef";
+import type { OwnSaveSwitchTicket } from "../services/editor/own-save-in-flight.shared";
 import type {
   TranslatableContentItem,
   ContentImage,
@@ -104,7 +106,7 @@ export interface FieldHandlerProps {
   /** Resolves once no AI/copy button's own save is in flight (bounded). Those
    *  saves are kept out of `hasChanges`, so no confirmation can ask about
    *  them: a view switch waits for their answer instead. */
-  waitForOwnSaves?: () => Promise<void>;
+  waitForOwnSaves?: () => Promise<OwnSaveSwitchTicket | void>;
   isSaveFromTranslateRef: { current: boolean };
   /** Set by a save that carries only SOME fields (a single-field translate),
    *  read by the save-response handling so it treats only those as saved. */
@@ -329,6 +331,15 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     setFieldErrors,
     setIsSaving,
   } = props;
+
+  // What a view switch re-reads AFTER it waited for an own save: the closure
+  // of the click is a render old by then, and the answer that landed meanwhile
+  // may have changed all of it (a refused save leaves its field dirty).
+  const switchStateRef = useLatestRef({
+    dirty: !!(hasChanges || isSavingCurrentItem),
+    selectedMarketId,
+    markets,
+  });
 
 // ============================================================================
 // EVENT HANDLERS
@@ -1659,8 +1670,38 @@ const handleRejectSuggestion = useCallback((fieldKey: string) => {
   clearFieldSuggestion(suggestionScope, fieldKey);
 }, [suggestionScope]);
 
+/**
+ * After the switch's own confirmation: wait for the AI/copy buttons' own saves
+ * to be answered (bounded). False => the switch is abandoned: a NEWER switch
+ * was started meanwhile (only the latest intent moves the view) or the editor
+ * unmounted. If the answer that landed left the view dirty (a refused save
+ * keeps its field a draft), the merchant is asked again, exactly as if it had
+ * been dirty at the click (only when it was NOT: a merchant already asked is
+ * not asked twice). `viewSwitch` marks a language/market switch for the
+ * save bar's measurement flag; an item switch clears it.
+ */
+const settleOwnSavesBeforeSwitch = async (viewSwitch: boolean, alreadyConfirmed: boolean): Promise<boolean> => {
+  if (!waitForOwnSaves) return true;
+  const ticket = await waitForOwnSaves();
+  if (!ticket) return true;
+  if (!ticket.proceed) return false;
+  // Asked at most ONCE per switch: a merchant who already agreed to leave the
+  // view's drafts behind is not asked again because the wait re-rendered.
+  if (!alreadyConfirmed && switchStateRef.current.dirty) {
+    viewSwitchConfirmPendingRef.current = viewSwitch;
+    try {
+      await confirmNavigation();
+    } finally {
+      viewSwitchConfirmPendingRef.current = false;
+    }
+    if (!ticket.isCurrent()) return false;
+  }
+  return true;
+};
+
 const handleLanguageChange = async (locale: string) => {
-  if (hasChanges || isSavingCurrentItem) {
+  const confirmed = hasChanges || isSavingCurrentItem;
+  if (confirmed) {
     viewSwitchConfirmPendingRef.current = true;
     try {
       await confirmNavigation();
@@ -1670,7 +1711,7 @@ const handleLanguageChange = async (locale: string) => {
   }
   // An own save (AI/copy button) is not in hasChanges and shows no bar, so
   // nothing above asked about it: let its answer land on this view first.
-  await waitForOwnSaves?.();
+  if (!(await settleOwnSavesBeforeSwitch(true, confirmed))) return;
   setCurrentLanguage(locale);
   // This click is the only writer of the remembered working language: the
   // editor unmounts on every main-nav navigation, and coming back in the
@@ -1683,10 +1724,12 @@ const handleLanguageChange = async (locale: string) => {
   // If the currently-selected market does not serve the new locale, fall back to
   // "global" — a market-specific translation only makes sense for locales the
   // market actually offers (and the primary locale is always global).
-  if (selectedMarketId && locale === primaryLocale) {
+  // Read NOW: the switch may have waited, and the market may have moved.
+  const { selectedMarketId: marketNow, markets: marketsNow } = switchStateRef.current;
+  if (marketNow && locale === primaryLocale) {
     setSelectedMarketId("");
-  } else if (selectedMarketId) {
-    const market = markets.find((m) => m.id === selectedMarketId);
+  } else if (marketNow) {
+    const market = marketsNow.find((m) => m.id === marketNow);
     if (!market || !market.localeCodes.includes(locale)) {
       setSelectedMarketId("");
     }
@@ -1697,7 +1740,8 @@ const handleMarketChange = async (marketId: string) => {
   if (marketId === selectedMarketId) return;
   // Market switch behaves like a locale switch "light": no server round-trip, but
   // unsaved edits would be lost on re-resolve, so guard them the same way.
-  if (hasChanges || isSavingCurrentItem) {
+  const confirmed = hasChanges || isSavingCurrentItem;
+  if (confirmed) {
     viewSwitchConfirmPendingRef.current = true;
     try {
       await confirmNavigation();
@@ -1707,7 +1751,8 @@ const handleMarketChange = async (marketId: string) => {
   }
   // An own save (AI/copy button) is not in hasChanges and shows no bar, so
   // nothing above asked about it: let its answer land on this view first.
-  await waitForOwnSaves?.();
+  if (!(await settleOwnSavesBeforeSwitch(true, confirmed))) return;
+  if (marketId === switchStateRef.current.selectedMarketId) return;
   setSelectedMarketId(marketId);
 };
 
@@ -1727,7 +1772,8 @@ const handleToggleLanguage = (locale: string) => {
 };
 
 const handleItemSelect = async (itemId: string) => {
-  if (hasChanges || isSavingCurrentItem) {
+  const confirmed = hasChanges || isSavingCurrentItem;
+  if (confirmed) {
     // A product switch supersedes any unanswered language/market dialog:
     // the [SaveBar] measurement flag must not read true for this one.
     viewSwitchConfirmPendingRef.current = false;
@@ -1735,7 +1781,7 @@ const handleItemSelect = async (itemId: string) => {
   }
   // An own save (AI/copy button) is not in hasChanges and shows no bar, so
   // nothing above asked about it: let its answer land on this view first.
-  await waitForOwnSaves?.();
+  if (!(await settleOwnSavesBeforeSwitch(false, confirmed))) return;
   setSelectedItemId(itemId);
   // Persist only on explicit user selection. Restore-effects and the
   // disappear-fallback in useUnifiedContentEditor must NOT write — see

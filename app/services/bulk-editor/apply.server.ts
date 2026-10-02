@@ -71,6 +71,7 @@ import {
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP,
+  mirrorLibraryImageAlt,
   type TranslationInput,
 } from "../translations/verified-translations.server";
 import { logger } from "../../utils/logger.server";
@@ -3147,27 +3148,14 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
               create: { imageId: cacheId, locale, marketId, altText: storedValue },
             });
           } else {
-            await db.contentTranslation.upsert({
-              where: {
-                shop_resourceId_key_locale_marketId: {
-                  shop,
-                  resourceId,
-                  key: write.key,
-                  locale,
-                  marketId,
-                },
-              },
-              update: { value: storedValue, digest: write.digest, resourceType: "MediaImage" },
-              create: {
-                shop,
-                resourceId,
-                resourceType: "MediaImage",
-                key: write.key,
-                value: storedValue,
-                locale,
-                marketId,
-                digest: write.digest,
-              },
+            await mirrorLibraryImageAlt(db, {
+              shop,
+              mediaId: resourceId,
+              key: write.key,
+              locale,
+              marketId,
+              value: storedValue,
+              digest: write.digest,
             });
           }
         } else if (group.rowType === "metaobject") {
@@ -3276,9 +3264,7 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
               where: { imageId: cacheId, locale, marketId },
             });
           } else {
-            await db.contentTranslation.deleteMany({
-              where: { shop, resourceId, resourceType: "MediaImage", key: clear.key, locale, marketId },
-            });
+            await mirrorLibraryImageAlt(db, { shop, mediaId: resourceId, key: clear.key, locale, marketId, value: "" });
           }
         } else if (group.rowType === "metaobject") {
           await db.metaobjectTranslation.deleteMany({

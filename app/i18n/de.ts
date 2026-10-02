@@ -1906,6 +1906,7 @@ export const de = {
     altSaveFailedOtherLanguage: "Der Alt-Text für die Sprache {locale} konnte nicht gespeichert werden und wurde nicht beibehalten. Bitte erneut eingeben.",
     altSaveFailedOtherMarket: "Der Alt-Text für die Sprache {locale} in einem anderen Markt konnte nicht gespeichert werden und wurde nicht beibehalten. Bitte erneut eingeben.",
     altSaveLateSuccess: "Der Alt-Text wurde doch noch gespeichert.",
+    altSavedNotMirrored: "Der Alt-Text ist in Shopify gespeichert, konnte aber in der App nicht abgelegt werden. Nach einer Synchronisierung erscheint er wieder.",
     altDraftsSaved: "Alt-Texte gespeichert.",
     altAiResultDiscarded: "Der erzeugte Alt-Text wurde nicht übernommen, weil du Sprache oder Markt gewechselt hast.",
     altDraftNotSavableYet: "Der Alt-Text eines noch nicht gespeicherten Bildes kann erst nach dem Bild selbst gespeichert werden. Speichere noch einmal, sobald das Bild hochgeladen ist.",

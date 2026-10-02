@@ -912,3 +912,60 @@ export async function mirrorProductMediaAlt(
   }
   return "mirrored";
 }
+
+/**
+ * Mirror a CONFIRMED alt translation of an image that has NO ProductImage row
+ * (a media-library file -- e.g. a library pick in a variant gallery) into the
+ * generic ContentTranslation table under resourceType "MediaImage", the store
+ * the bulk editor's image rows read and write for such an image. `value: ""`
+ * deletes ONLY the row of the layer written (global, or this market's) -- the
+ * caller sends it only after Shopify CONFIRMED the removal. The ONE
+ * implementation: the bulk editor's image-row write and the image manager's
+ * per-image save both call it.
+ */
+export async function mirrorLibraryImageAlt(
+  db: Pick<PrismaClient, "contentTranslation">,
+  params: {
+    shop: string;
+    mediaId: string;
+    locale: string;
+    value: string;
+    marketId?: string;
+    /** The digest the register used (null/absent when unknown). */
+    digest?: string | null;
+    key?: string;
+  },
+): Promise<void> {
+  const { shop, mediaId, locale, value } = params;
+  const marketId = params.marketId ?? "";
+  const key = params.key ?? MEDIA_ALT_KEY;
+  if (value.trim() === "") {
+    await db.contentTranslation.deleteMany({
+      where: { shop, resourceId: mediaId, resourceType: "MediaImage", key, locale, marketId },
+    });
+    return;
+  }
+  const digest = params.digest ?? null;
+  await db.contentTranslation.upsert({
+    where: { shop_resourceId_key_locale_marketId: { shop, resourceId: mediaId, key, locale, marketId } },
+    update: { value, digest, resourceType: "MediaImage" },
+    create: { shop, resourceId: mediaId, resourceType: "MediaImage", key, value, locale, marketId, digest },
+  });
+}
+
+/**
+ * Mirror a CONFIRMED alt translation into whichever store owns the image: the
+ * ProductImage cache row's ProductImageAltTranslation when one exists for the
+ * GID (shop-scoped, resolved now), otherwise ContentTranslation("MediaImage")
+ * -- the same split the bulk editor's write path applies. Answers which store
+ * was written. Throws on a DB error; the caller reports it.
+ */
+export async function mirrorImageAltAnyStore(
+  db: Pick<PrismaClient, "productImage" | "productImageAltTranslation" | "contentTranslation">,
+  params: { shop: string; mediaId: string; locale: string; value: string; marketId?: string; digest?: string | null },
+): Promise<"product" | "library"> {
+  const product = await mirrorProductMediaAlt(db, params);
+  if (product === "mirrored") return "product";
+  await mirrorLibraryImageAlt(db, params);
+  return "library";
+}

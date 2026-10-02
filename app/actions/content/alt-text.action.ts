@@ -156,6 +156,17 @@ export async function saveImageAltTextPrimary(opts: {
   }).catch((e) => {
     logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
   });
+  // A media-library file (no ProductImage row -- e.g. a library pick in a
+  // variant gallery) is cached in MediaLibraryImage instead; fileUpdate above
+  // is the right write for both. Shop-scoped like the product cache write.
+  try {
+    await db.mediaLibraryImage.updateMany({
+      where: { shop, id: mediaId },
+      data: { altText: stored || null },
+    });
+  } catch (e: unknown) {
+    logger.warn("[saveImageAltText] media-library cache update failed", { error: e instanceof Error ? e.message : String(e) });
+  }
 
   // The foreign translations of the alt that just changed: re-translated with
   // auto-translate on, otherwise the merchant's stored deletion answer. This
@@ -927,6 +938,7 @@ export async function handleSaveImageAltText(
   }
 
   let shopifySaved = false;
+  let notMirrored = false;
   let retranslationTaskIds: string[] = [];
 
   if (!locale || locale === primaryLocale) {
@@ -943,11 +955,12 @@ export async function handleSaveImageAltText(
     const {
       registerMediaAltAndVerify,
       removeMediaAltAndVerify,
-      mirrorProductMediaAlt,
+      mirrorImageAltAnyStore,
     } = await import("~/services/translations/verified-translations.server");
 
     const marketId = rawMarketId;
     let storedAlt = altText;
+    let storedDigest: string | null = null;
     try {
       if (altText.trim() === "") {
         // Clearing means REMOVING the translation (a register of "" is
@@ -969,7 +982,10 @@ export async function handleSaveImageAltText(
           );
         }
         shopifySaved = verified.confirmed;
-        if (shopifySaved) storedAlt = verified.storedValue ?? altText;
+        if (shopifySaved) {
+          storedAlt = verified.storedValue ?? altText;
+          storedDigest = verified.digest ?? null;
+        }
         else logger.error("[saveImageAltText] Shopify did not confirm the alt translation", { errors: verified.userErrors });
       }
     } catch (err: unknown) {
@@ -996,10 +1012,30 @@ export async function handleSaveImageAltText(
         // Shop-scoped, resolved now (R4-DI7): an unscoped mediaId lookup could
         // resolve another tenant's ProductImage. A cleared value deletes ONLY
         // the row of the layer that was written -- the global one, or this
-        // market's -- never the other layer.
-        await mirrorProductMediaAlt(db, { shop: session.shop, mediaId, locale, marketId, value: altText.trim() === "" ? "" : storedAlt });
-      } catch {
-        // DB update is best-effort; Shopify is the source of truth
+        // market's -- never the other layer. An image with NO ProductImage row
+        // (a media-library file picked into a variant gallery) mirrors into
+        // ContentTranslation("MediaImage"), the bulk editor's store for it;
+        // this used to answer "imageGone" silently while the save reported
+        // success, and the next load wiped the value from the field.
+        await mirrorImageAltAnyStore(db, {
+          shop: session.shop,
+          mediaId,
+          locale,
+          marketId,
+          value: altText.trim() === "" ? "" : storedAlt,
+          digest: storedDigest,
+        });
+      } catch (err: unknown) {
+        // Shopify holds the value, so the save stays a success -- but the
+        // local mirror every editor renders from does not, and that is said
+        // rather than swallowed.
+        notMirrored = true;
+        logger.error("[saveImageAltText] translation saved on Shopify but not mirrored locally", {
+          mediaId,
+          locale,
+          marketId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
@@ -1007,6 +1043,7 @@ export async function handleSaveImageAltText(
   return json({
     actionType: "saveImageAltText",
     success: shopifySaved,
+    ...(notMirrored ? { notMirrored: true } : {}),
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
   });
 }
@@ -1015,6 +1052,47 @@ export async function handleSaveImageAltText(
 // LOAD IMAGE ALT-TEXT TRANSLATIONS (for a given product + locale)
 // Returns { mediaId → altText } map from DB
 // ============================================================================
+
+const MEDIA_IMAGE_GID_RE = /^gid:\/\/shopify\/MediaImage\/\d+$/;
+/** A gallery shows at most a few hundred media; the cap only bounds a direct POST. */
+const MAX_GALLERY_MEDIA_IDS = 500;
+
+export interface ImageAltLayerRow {
+  mediaId: string;
+  marketId: string;
+  altText: string;
+}
+
+/**
+ * ONE layer out of alt rows of both stores: the global rows, overlaid by the
+ * selected market's rows; with a market, every image whose value comes from
+ * the GLOBAL fallback (non-empty, no own market row) is listed in
+ * `inheritedMediaIds` so the client shows it as a placeholder, never a value.
+ */
+export function layerImageAltRows(
+  rows: readonly ImageAltLayerRow[],
+  marketId: string,
+): { altTexts: Record<string, string>; inheritedMediaIds: string[] } {
+  const altTexts: Record<string, string> = {};
+  const inheritedMediaIds: string[] = [];
+  // Global first, so a market row of the same image overrides it.
+  for (const row of rows) {
+    if ((row.marketId ?? "") === "") altTexts[row.mediaId] = row.altText;
+  }
+  if (marketId) {
+    const overridden = new Set<string>();
+    for (const row of rows) {
+      if ((row.marketId ?? "") === marketId) {
+        altTexts[row.mediaId] = row.altText;
+        overridden.add(row.mediaId);
+      }
+    }
+    for (const mediaId of Object.keys(altTexts)) {
+      if (!overridden.has(mediaId) && altTexts[mediaId].trim() !== "") inheritedMediaIds.push(mediaId);
+    }
+  }
+  return { altTexts, inheritedMediaIds };
+}
 
 export async function handleLoadImageAltTranslations(
   ctx: ContentActionHandlerContext,
@@ -1032,34 +1110,80 @@ export async function handleLoadImageAltTranslations(
     return json({ success: false, error: "Invalid marketId" }, { status: 400 });
   }
 
+  // Media-library files shown in this product's galleries (a library pick in a
+  // variant gallery has no ProductImage row). The client names the GIDs it
+  // shows; only well-formed MediaImage GIDs are taken, capped, and every read
+  // below is shop-scoped, so a foreign id can read nothing of another tenant.
+  let galleryMediaIds: string[] = [];
+  const rawMediaIds = getFormString(formData, "mediaIds");
+  if (rawMediaIds) {
+    try {
+      const parsed = JSON.parse(rawMediaIds);
+      if (Array.isArray(parsed)) {
+        galleryMediaIds = [...new Set(parsed.filter((v): v is string => typeof v === "string" && MEDIA_IMAGE_GID_RE.test(v)))]
+          .slice(0, MAX_GALLERY_MEDIA_IDS);
+      }
+    } catch {
+      // A malformed list reads the product's own images only.
+    }
+  }
+
   // ONE layer per answer. The rows of every market and the global one share
   // (image, locale) and used to be mixed here, the last row winning. With a
   // market selected the market's rows are read plus the global ones as the
   // fallback, exactly the editor's display chain (market, else global); with
   // none, the global layer alone.
-  const rows = await db.productImageAltTranslation.findMany({
-    where: { locale, image: { productId, product: { shop: session.shop } }, marketId: marketId ? { in: ["", marketId] } : "" },
+  const marketFilter = marketId ? { in: ["", marketId] } : "";
+  const productRows = await db.productImageAltTranslation.findMany({
+    where: {
+      locale,
+      marketId: marketFilter,
+      image: {
+        product: { shop: session.shop },
+        ...(galleryMediaIds.length > 0
+          ? { OR: [{ productId }, { mediaId: { in: galleryMediaIds } }] }
+          : { productId }),
+      },
+    },
     select: { altText: true, marketId: true, image: { select: { mediaId: true } } },
   });
+  const rows: ImageAltLayerRow[] = productRows
+    .filter((r: { image?: { mediaId?: string | null } | null }) => !!r.image?.mediaId)
+    .map((r: { altText: string; marketId: string; image: { mediaId: string | null } | null }) => ({
+      mediaId: r.image!.mediaId as string,
+      marketId: r.marketId ?? "",
+      altText: r.altText,
+    }));
 
-  const altTexts: Record<string, string> = {};
-  const inheritedMediaIds: string[] = [];
-  // Global first, so a market row of the same image overrides it.
-  for (const row of rows.filter((r: { marketId: string }) => (r.marketId ?? "") === "")) {
-    if (row.image?.mediaId) altTexts[row.image.mediaId] = row.altText;
-  }
-  if (marketId) {
-    const overridden = new Set<string>();
-    for (const row of rows.filter((r: { marketId: string }) => (r.marketId ?? "") === marketId)) {
-      if (row.image?.mediaId) {
-        altTexts[row.image.mediaId] = row.altText;
-        overridden.add(row.image.mediaId);
+  // The library half: a GID with NO ProductImage row anywhere in the shop is
+  // mirrored in ContentTranslation("MediaImage") -- the same split the save
+  // and the bulk editor apply ("by whether a ProductImage row exists").
+  if (galleryMediaIds.length > 0) {
+    const productBacked = await db.productImage.findMany({
+      where: { mediaId: { in: galleryMediaIds }, product: { shop: session.shop } },
+      select: { mediaId: true },
+    });
+    const backed = new Set(productBacked.map((r: { mediaId: string | null }) => r.mediaId));
+    const libraryIds = galleryMediaIds.filter((id) => !backed.has(id));
+    if (libraryIds.length > 0) {
+      const libraryRows = await db.contentTranslation.findMany({
+        where: {
+          shop: session.shop,
+          resourceType: "MediaImage",
+          resourceId: { in: libraryIds },
+          key: "alt",
+          locale,
+          marketId: marketFilter,
+        },
+        select: { resourceId: true, marketId: true, value: true },
+      });
+      for (const r of libraryRows) {
+        rows.push({ mediaId: r.resourceId, marketId: r.marketId ?? "", altText: r.value ?? "" });
       }
     }
-    for (const mediaId of Object.keys(altTexts)) {
-      if (!overridden.has(mediaId) && altTexts[mediaId].trim() !== "") inheritedMediaIds.push(mediaId);
-    }
   }
+
+  const { altTexts, inheritedMediaIds } = layerImageAltRows(rows, marketId);
 
   return json({ actionType: "loadImageAltTranslations", locale, marketId, altTexts, inheritedMediaIds });
 }

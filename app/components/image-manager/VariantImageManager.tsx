@@ -602,6 +602,14 @@ export function VariantImageManager({
       timedOutAltSaveRef.current = null;
       onSaveResponse?.(data);
       finishAltSave(classifyAltSaveResponse(data));
+      // Saved on Shopify, but the local mirror the editors render from could
+      // not be written: said, not swallowed (the next load would show nothing).
+      if (data.success && data.notMirrored) {
+        showInfoBox(
+          String(t.imageManager?.altSavedNotMirrored ?? "The alt text is saved in Shopify but could not be stored in the app. It will reappear after a sync."),
+          "warning",
+        );
+      }
       return;
     }
     if (altSaveSawBusyRef.current) finishAltSave({ kind: "failed", message: "" });
@@ -727,6 +735,15 @@ export function VariantImageManager({
   // must not drop (or re-read over) the primary drafts.
   const altLayerMarket = foreignMarketId ?? "";
   const altViewRef = useRef({ productId, currentLanguage, altLayerMarket });
+  // The MediaImage GIDs the galleries show (Shopify's live media map: product
+  // media AND media-library files picked into a variant gallery). A library
+  // file has no ProductImage row, so its alt translations live in another
+  // store the server only reads for GIDs it is named -- sent with every load,
+  // and a changed SET re-reads (the map arrives after the first load).
+  const galleryMediaIdsKey = useMemo(
+    () => Object.keys(shopifyMediaMap).filter((gid) => gid.startsWith("gid://shopify/MediaImage/")).sort().join(","),
+    [shopifyMediaMap],
+  );
   useEffect(() => {
     // A background refresh only RE-READS: text the merchant is typing or a save
     // that failed must survive it.
@@ -764,9 +781,10 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     if (selectedMarketId) form.append("marketId", selectedMarketId);
+    if (galleryMediaIdsKey) form.append("mediaIds", JSON.stringify(galleryMediaIdsKey.split(",")));
     altLoadRequestedAtRef.current = monotonicNow();
     translationsFetcher.submit(form, { method: "post" });
-  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, altLayerMarket]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, altLayerMarket, galleryMediaIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-read the open language's alt texts after the server wrote foreign values.
   const reloadForeignAlts = useCallback(() => {
@@ -776,9 +794,10 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     if (selectedMarketId) form.append("marketId", selectedMarketId);
+    if (galleryMediaIdsKey) form.append("mediaIds", JSON.stringify(galleryMediaIdsKey.split(",")));
     altLoadRequestedAtRef.current = monotonicNow();
     translationsFetcher.submit(form, { method: "post" });
-  }, [productId, currentLanguage, primaryLocale, translationsFetcher, selectedMarketId]);
+  }, [productId, currentLanguage, primaryLocale, translationsFetcher, selectedMarketId, galleryMediaIdsKey]);
 
   // Apply loaded translations to localAltTexts (mediaId → url → altText)
   useEffect(() => {
