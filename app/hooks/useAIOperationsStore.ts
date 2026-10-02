@@ -63,20 +63,48 @@ export const TRANSLATE_RUN_DEADLINE_MS = STALE_TIMEOUT_MS - 30_000;
 
 /**
  * The client operation key a server Task row (`/api/running-field-tasks`)
- * stands for. A whole-item run has `fieldType: "all"`: with ONE target locale
- * it is "translate all for that language", with none it is "translate all"
- * into every language, and with a comma list it is the alt texts into every
- * language. Mapping all three to `__translateAll__` deleted a running
+ * stands for, or `null` when the row cannot be mapped unambiguously (then it
+ * is not seeded). A per-field task names its client key in `fieldType`
+ * (`title`, `altText_<i>`, ...). A whole-item "translate all" task has
+ * `fieldType: "all"`, type `bulkTranslation`: with ONE target locale it is
+ * "translate all for that language", with none it is "translate all" into
+ * every language. Mapping both to `__translateAll__` deleted a running
  * per-language spinner on re-select, or seeded a "translate all" that refused
- * "clear all" in every language.
+ * "clear all" in every language. An "all" row with a locale LIST is a legacy
+ * single-image alt translate-to-all (now written as `altText_<i>`): unmapped.
  */
-export function taskOperationKey(task: { fieldType?: string | null; targetLocale?: string | null }): string | null {
+export function taskOperationKey(task: {
+  fieldType?: string | null;
+  targetLocale?: string | null;
+  type?: string | null;
+}): string | null {
   if (!task.fieldType) return null;
   if (task.fieldType !== "all") return task.fieldType;
+  if (task.type && task.type !== "bulkTranslation") return null;
   const target = task.targetLocale ?? "";
   if (!target) return "__translateAll__";
-  if (target.includes(",")) return "allAltTextsTranslate";
+  if (target.includes(",")) return null;
   return `__translateAllForLocale__${target}`;
+}
+
+/**
+ * Whether a running task should SHOW as busy in the view of `currentLanguage`.
+ * A per-field task of another language must not spin (and block) the same
+ * field here; a run keyed by its own locale, an every-language run and a task
+ * with no target locale show everywhere. A per-field every-language task (a
+ * locale LIST) is started from the primary view and shows there.
+ */
+export function taskShowsInView(
+  task: { targetLocale?: string | null },
+  operationKey: string,
+  currentLanguage: string,
+  primaryLocale: string,
+): boolean {
+  if (operationKey === "__translateAll__" || operationKey.startsWith("__translateAllForLocale__")) return true;
+  const target = task.targetLocale ?? "";
+  if (!target) return true;
+  if (target.includes(",")) return currentLanguage === primaryLocale;
+  return target === currentLanguage;
 }
 
 /** Composite key: `${resourceId}::${fieldKey}` */

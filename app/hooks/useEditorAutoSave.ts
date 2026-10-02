@@ -85,6 +85,10 @@ interface UseEditorAutoSaveProps {
   saveBlockedByTranslateRunRef?: React.MutableRefObject<(locale: string | null, itemId: string | null, beforeIndex?: number) => boolean>;
   /** Called when a save is held back that way (the page says why it waits). */
   onSaveHeldByRunRef?: React.MutableRefObject<() => void>;
+  /** Called when an OWN save (an AI/copy button's) is refused because a run
+   *  writes into its language: it is not held -- a held own save would make
+   *  every switch refuse for the whole run -- and its value stays a draft. */
+  onOwnSaveRefusedRef?: React.MutableRefObject<() => void>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -133,6 +137,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     inFlightScopeRef,
     saveBlockedByTranslateRunRef,
     onSaveHeldByRunRef,
+    onOwnSaveRefusedRef,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -162,6 +167,23 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     partialSaveRef.current = null;
     const successToast = pendingAltTranslateToastRef.current;
     pendingAltTranslateToastRef.current = null;
+    // Only a SAVE waits for a "translate all" run of its language.
+    const blockedByRun =
+      data.action === "updateContent" &&
+      !!saveBlockedByTranslateRunRef?.current(savedLocaleRef.current, savedItemIdRef.current);
+    const nothingInFlight = fetcherRef.current.state === "idle" && !justSubmittedRef.current;
+    if (blockedByRun && partial) {
+      // An own save is REFUSED, never held: nothing was sent, so the field
+      // keeps the value as a draft for the Save button.
+      if (nothingInFlight) isSavePendingRef.current = false;
+      onOwnSaveRefusedRef?.current();
+      return;
+    }
+    if (blockedByRun && nothingInFlight) {
+      // The caller marked a save pending, but nothing is in flight: the
+      // queue drain marks it again when it really goes.
+      isSavePendingRef.current = false;
+    }
     if (partial) {
       // The reload that follows this save re-reads the item; the fields it did
       // NOT carry may hold unsaved input, which that pass must keep.
@@ -187,7 +209,6 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       }
     }
 
-    const blockedByRun = !!saveBlockedByTranslateRunRef?.current(savedLocaleRef.current, savedItemIdRef.current);
     if (blockedByRun) onSaveHeldByRunRef?.current();
     if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current || blockedByRun) {
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
@@ -226,6 +247,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       justSubmittedRef.current = false;
       if (error instanceof Error && error.name === 'AbortError') {
         debugLog.submit(' AbortError caught (data likely saved):', error.message);
+        // No answer will come for it: nothing may keep reading as pending.
+        isSavePendingRef.current = false;
       } else {
         // The request never left: settle what was staged for it (shared
         // with the queued-save drain in useUnifiedContentEditor).

@@ -867,6 +867,18 @@ export default function ProductsPage() {
     return true;
   };
 
+  // A "translate all" must not race the card's own saves either (its "clear
+  // all", the options & metafields save): refused like the editor's own.
+  const refuseTranslateWhileSubResourcesSave = (locale: string): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isSaveInFlight(itemId, locale)) return false;
+    showInfoBox(
+      String(t.common?.translateWhileSaving || "Still saving \u2013 please wait a moment and then translate again."),
+      "info",
+    );
+    return true;
+  };
+
   const editorWithSubResources = {
     ...editor,
     handlers: {
@@ -882,10 +894,12 @@ export default function ProductsPage() {
           return;
         }
         // Refused (a save it would race is still out): neither half runs.
+        if (refuseTranslateWhileSubResourcesSave("*")) return;
         if (editor.handlers.handleTranslateAll() === false) return;
         subResources.handlers.translateAllSubResourcesToAllLocales();
       },
       handleTranslateAllForLocale: () => {
+        if (refuseTranslateWhileSubResourcesSave(editor.state.currentLanguage)) return;
         if (editor.handlers.handleTranslateAllForLocale() === false) return;
         subResources.handlers.translateAllSubResources();
       },

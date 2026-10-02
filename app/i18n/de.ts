@@ -2128,6 +2128,8 @@ export const de = {
     translateWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut übersetzen.",
     saveWaitsForTranslation: "Wartet, bis die Übersetzung fertig ist – danach wird gespeichert.",
     translateRunTimedOut: "Die Übersetzung dauert länger als erwartet. Laden Sie die Seite später neu, um zu sehen, was gespeichert wurde.",
+    translateRunTimedOutSaveKept: "Die Übersetzung läuft möglicherweise noch auf dem Server. Ihre Änderungen wurden noch nicht gespeichert – bitte in einem Moment erneut speichern.",
+    ownSaveRefusedWhileTranslating: "In diese Sprache wird gerade noch übersetzt – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn die Übersetzung fertig ist.",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
     fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons

@@ -615,8 +615,7 @@ export async function handleTranslateAltTextToAllLocales(
   }
 
   // Same fallback as its siblings: the form's title first, the cached one
-  // next. The image number stays in the composed string here because this
-  // row's `fieldType` is "all" and would otherwise never name the image.
+  // next. The image number stays in the composed string as well.
   const itemTitle = await taskTitleOrFallback(
     db, session.shop, contentConfig.resourceType, itemId, productTitle,
   );
@@ -633,7 +632,10 @@ export async function handleTranslateAltTextToAllLocales(
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
       resourceTitle,
-      fieldType: "all",
+      // The client's own operation key for this button, like its siblings:
+      // the editor's spinner reconcile maps a running row back to it
+      // (`taskOperationKey`). As "all" it read as a whole-item run.
+      fieldType: `altText_${imageIndex}`,
       targetLocale: targetLocales.join(","),
       progress: 0,
       expiresAt: getTaskExpirationDate(),

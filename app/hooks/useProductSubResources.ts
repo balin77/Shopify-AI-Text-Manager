@@ -335,6 +335,10 @@ export interface SubResourceHandlers {
   /** Whether a "translate all" of the options & metafields is writing INTO
    *  `locale` of `itemId` now (its own language, or every language). */
   isTranslateAllRunning: (itemId: string, locale: string) => boolean;
+  /** Whether a save of the card (its "clear all", or the options & metafields
+   *  save) is out for `itemId` in `locale` ("*" = any language; a PRIMARY
+   *  save counts for every language): a "translate all" must not race it. */
+  isSaveInFlight: (itemId: string, locale: string) => boolean;
   resetChanges: () => void;
   resetForReload: () => void;
   /**
@@ -1887,6 +1891,24 @@ export function useProductSubResources({
       // unhandled one here.
       .catch(() => {});
   }, []);
+  // The card's own "clear all" requests that are out, as `<item>|<locale>`.
+  const clearsOutRef = useRef<Map<string, number>>(new Map());
+  const fetcherForSaveCheckRef = useRef(fetcher);
+  fetcherForSaveCheckRef.current = fetcher;
+  const isSaveInFlight = useCallback((itemId: string, locale: string) => {
+    for (const key of clearsOutRef.current.keys()) {
+      const [clearItem, clearLocale] = key.split("|");
+      if (clearItem === itemId && (locale === "*" || clearLocale === locale)) return true;
+    }
+    const f = fetcherForSaveCheckRef.current;
+    const action = f.formData?.get("action");
+    if (f.state === "idle" || !f.formData || action === "loadSubResourceTranslations") return false;
+    if (f.formData.get("itemId") !== itemId) return false;
+    const savedLocale = String(f.formData.get("locale") ?? "");
+    // No locale on the form = the PRIMARY save, which reaches every language.
+    return !savedLocale || locale === "*" || savedLocale === locale;
+  }, []);
+
   const isTranslateAllRunning = useCallback((itemId: string, locale: string) => {
     const runs = translateAllRunsRef.current;
     return runs.has(`${itemId}|${locale}`) || runs.has(`${itemId}|*`);
@@ -2297,8 +2319,20 @@ export function useProductSubResources({
     fd.set("itemId", selectedItem.id);
     fd.set("marketId", selectedMarketId);
 
+    const clearKey = `${requested.itemId}|${requested.locale}`;
+    clearsOutRef.current.set(clearKey, (clearsOutRef.current.get(clearKey) ?? 0) + 1);
+    const clearDone = () => {
+      const left = (clearsOutRef.current.get(clearKey) ?? 1) - 1;
+      if (left > 0) clearsOutRef.current.set(clearKey, left);
+      else clearsOutRef.current.delete(clearKey);
+    };
     void (async () => {
-      const data = await postSubResourceRequest(fd);
+      let data: Awaited<ReturnType<typeof postSubResourceRequest>>;
+      try {
+        data = await postSubResourceRequest(fd);
+      } finally {
+        clearDone();
+      }
       const h = answerHandlersRef.current;
       const view = currentViewRef.current;
       // A different item reset the overlay and the stamps; nothing here is
@@ -2719,6 +2753,7 @@ export function useProductSubResources({
       saveSubResources,
       clearAllForLocale,
       isTranslateAllRunning,
+      isSaveInFlight,
       resetChanges,
       resetForReload,
       refreshTranslations,

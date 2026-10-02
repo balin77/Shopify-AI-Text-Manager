@@ -5,7 +5,7 @@ import {
   dropMarksAfterSave,
   isMarkedDeleted,
 } from "~/services/editor/deleted-translation-marks.shared";
-import { taskOperationKey, markOperationActive, isOperationActive, reconcileWithServer, clearAllForResource } from "~/hooks/useAIOperationsStore";
+import { taskOperationKey, taskShowsInView, markOperationActive, isOperationActive, reconcileWithServer, clearAllForResource } from "~/hooks/useAIOperationsStore";
 
 describe("deleted marks", () => {
   it("a locale mark hides one locale only, a layer mark every locale", () => {
@@ -35,9 +35,24 @@ describe("server task -> operation key", () => {
   it("a per-language run is its own key", () => {
     expect(taskOperationKey({ fieldType: "all", targetLocale: "fr" })).toBe("__translateAllForLocale__fr");
     expect(taskOperationKey({ fieldType: "all", targetLocale: null })).toBe("__translateAll__");
-    expect(taskOperationKey({ fieldType: "all", targetLocale: "fr,it" })).toBe("allAltTextsTranslate");
+    // A legacy "all" row with a locale list (the single-image alt translate
+    // now writes `altText_<i>`) cannot be mapped unambiguously: not seeded.
+    expect(taskOperationKey({ fieldType: "all", targetLocale: "fr,it" })).toBeNull();
+    expect(taskOperationKey({ fieldType: "altText_2", targetLocale: "fr,it" })).toBe("altText_2");
+    // Only the editor's own whole-item task type is a run.
+    expect(taskOperationKey({ fieldType: "all", targetLocale: null, type: "seoBulkMeta" })).toBeNull();
     expect(taskOperationKey({ fieldType: "title" })).toBe("title");
     expect(taskOperationKey({ fieldType: null })).toBeNull();
+  });
+
+  it("a per-field task of another language does not show in this view", () => {
+    expect(taskShowsInView({ targetLocale: "fr" }, "title", "de", "en")).toBe(false);
+    expect(taskShowsInView({ targetLocale: "de" }, "title", "de", "en")).toBe(true);
+    expect(taskShowsInView({ targetLocale: null }, "title", "de", "en")).toBe(true);
+    expect(taskShowsInView({ targetLocale: "fr" }, "__translateAllForLocale__fr", "de", "en")).toBe(true);
+    expect(taskShowsInView({ targetLocale: null }, "__translateAll__", "de", "en")).toBe(true);
+    expect(taskShowsInView({ targetLocale: "fr,de" }, "altText_0", "en", "en")).toBe(true);
+    expect(taskShowsInView({ targetLocale: "fr,de" }, "altText_0", "de", "en")).toBe(false);
   });
 
   it("reconcile keeps a run the client still awaits", () => {

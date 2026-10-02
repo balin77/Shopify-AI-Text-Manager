@@ -35,6 +35,7 @@ import { useFieldHandlers } from "~/hooks/useFieldHandlers";
 import { clearAllForResource, isOperationActive, markOperationActive } from "~/hooks/useAIOperationsStore";
 
 const ID = "gid://shopify/Product/1";
+const ID2 = "gid://shopify/Product/2";
 const tick = (ms = 0) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 
 type Row = { key: string; locale: string; value: string };
@@ -43,7 +44,7 @@ const KEY_OF: Record<string, string> = {
   metaDescription: "meta_description", productType: "product_type",
 };
 
-function mount(opts: { rows: Row[] }) {
+function mount(opts: { rows: Row[]; tasks?: unknown[]; secondItem?: boolean }) {
   const store: any = {
     id: ID, title: "Titel", descriptionHtml: "<p>Text</p>", handle: "titel",
     seo: { title: "SEO", description: "Meta" },
@@ -94,6 +95,9 @@ function mount(opts: { rows: Row[] }) {
       const body = await serve(form);
       return new Response(JSON.stringify(body), { status: body.success ? 200 : 500, headers: { "content-type": "application/json" } });
     }
+    if (String(input).startsWith("/api/running-field-tasks")) {
+      return new Response(JSON.stringify({ tasks: opts.tasks ?? [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     return realFetch(input, init);
   });
 
@@ -116,7 +120,14 @@ function mount(opts: { rows: Row[] }) {
     {
       path: "/",
       element: <Page />,
-      loader: async () => (loads.count++, { items: [{ ...store, translations: store.translations.map((r: Row) => ({ ...r })), seo: { ...store.seo } }] }),
+      loader: async () => (loads.count++, {
+        items: [
+          { ...store, translations: store.translations.map((r: Row) => ({ ...r })), seo: { ...store.seo } },
+          ...(opts.secondItem
+            ? [{ id: ID2, title: "Zweites", descriptionHtml: "", handle: "zweites", seo: { title: "", description: "" }, translations: [], images: [], status: "ACTIVE" }]
+            : []),
+        ],
+      }),
       action: async ({ request }) => serve(Object.fromEntries((await request.formData()) as any) as Record<string, string>),
     },
   ]);
@@ -364,6 +375,82 @@ describe("Clear all in language B while Translate all for language A runs", () =
     expect(h.editor.current.state.editableValues.title).toBe("");
   });
 
+  it("a refused save answer with no error text does not refuse later runs", async () => {
+    const h = mount({ rows: ROWS });
+    await tick(50);
+    await switchTo(h, "it");
+    await act(async () => { h.editor.current.handlers.handleClearAllForLocaleConfirm(); });
+    await tick(10);
+    await h.respond("updateContent", { success: false, actionType: "updateContent" });
+    await tick(150);
+    expect(h.editor.current.state.isSavingCurrentItem).toBe(false);
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    expect(h.posted.map((p) => p.action)).toEqual(["updateContent", "translateAllForLocale"]);
+  });
+
+  it("a held save of one language does not count an earlier, answered save of another", async () => {
+    const h = mount({ rows: ROWS });
+    await tick(50);
+    // An Italian save, answered.
+    await switchTo(h, "it");
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Titolo a mano"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(10);
+    await h.respond("updateContent", SAVED);
+    await tick(150);
+    // A French run, and a French save held behind it.
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Titre à la main"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    // Italian translate all is NOT refused: nothing Italian is out.
+    await act(async () => { h.editor.current.handlers.handleDiscard(); });
+    await switchTo(h, "it");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    expect(h.posted.filter((p) => p.action === "translateAllForLocale").map((p) => p.targetLocale)).toEqual(["fr", "it"]);
+  });
+
+  it("an own (copy) save in the language being translated is refused and stays a draft, never held", async () => {
+    const h = mount({ rows: ROWS });
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleCopyField("title"); });
+    await tick(20);
+    expect(h.posted.map((p) => p.action)).toEqual(["translateAllForLocale"]);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("stays unsaved"), "info");
+    expect(h.editor.current.helpers.isOwnSaveInFlight()).toBe(false);
+    expect(h.editor.current.state.isSavingCurrentItem).toBe(false);
+    expect(h.editor.current.state.editableValues.title).toBe("Titel");
+    expect(h.editor.current.state.hasChanges).toBe(true);
+    expect(isOperationActive(ID, "title")).toBe(false);
+    // The run answering sends nothing by itself.
+    await h.respond("translateAllForLocale", TA_FR);
+    await tick(150);
+    expect(h.posted.map((p) => p.action)).toEqual(["translateAllForLocale"]);
+  });
+
+  it("returning to an item whose save answered while another item was open is not busy", async () => {
+    const h = mount({ rows: ROWS, secondItem: true });
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Titre à la main"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(10);
+    expect(h.editor.current.state.isSavingCurrentItem).toBe(true);
+    await act(async () => { await h.editor.current.handlers.handleItemSelect(ID2); });
+    await tick(50);
+    await h.respond("updateContent", SAVED);
+    await tick(150);
+    await act(async () => { await h.editor.current.handlers.handleItemSelect(ID); });
+    await tick(80);
+    expect(h.editor.current.state.isSavingCurrentItem).toBe(false);
+  });
+
   it("two runs answering before one render are both applied", async () => {
     const h = mount({ rows: ROWS });
     await tick(50);
@@ -566,5 +653,34 @@ describe("Clear all while a translation into the SAME language runs", () => {
     act(() => h.result.current.handleClearAllForLocaleConfirm());
     expect(h.overlay.current).toEqual({ fr: { 0: "Chat" } });
     expect(h.known.deletedTranslationKeysRef).toEqual({ current: new Set(["title##it"]) });
+  });
+});
+
+
+describe("spinner seeding from running server tasks", () => {
+  beforeEach(() => {
+    clearAllForResource(ID);
+    // The editor reopens in the last language worked in; this view is German.
+    try { window.localStorage.clear(); } catch { /* none */ }
+    window.history.replaceState({}, "", "/app/products");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearAllForResource(ID);
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("a French field task does not spin in German; a French run keeps its own key", async () => {
+    mount({
+      rows: ROWS,
+      tasks: [
+        { fieldType: "title", targetLocale: "fr", type: "translation" },
+        { fieldType: "all", targetLocale: "fr", type: "bulkTranslation" },
+      ],
+    });
+    await tick(100);
+    expect(isOperationActive(ID, "title")).toBe(false);
+    expect(isOperationActive(ID, "__translateAllForLocale__fr")).toBe(true);
+    expect(isOperationActive(ID, "__translateAll__")).toBe(false);
   });
 });

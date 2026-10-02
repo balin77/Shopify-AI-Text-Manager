@@ -210,7 +210,9 @@ export interface FieldHandlers {
   handleCopyField: (fieldKey: string) => void;
   /** The single-field Copy's save was refused: take back the overlay value,
    *  the baselines and the visible value it wrote up front. */
-  rollbackCopyField: () => void;
+  /** `keepVisible`: the copied text stays on screen as an unsaved draft (a
+   *  refused own save); only what marked it saved is undone. */
+  rollbackCopyField: (opts?: { keepVisible?: boolean }) => void;
   /** The copy LANDED: forget its rollback record. */
   discardCopyFieldRecord: () => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
@@ -2295,7 +2297,7 @@ const discardCopyFieldRecord = (): void => {
   copyFieldRollbackRef.current = null;
 };
 
-const rollbackCopyField = (): void => {
+const rollbackCopyField = (opts?: { keepVisible?: boolean }): void => {
   const rec = copyFieldRollbackRef.current;
   copyFieldRollbackRef.current = null;
   if (!rec) return;
@@ -2338,6 +2340,12 @@ const rollbackCopyField = (): void => {
       originalTemplateValuesRef.current = restoreKey(originalTemplateValuesRef.current, rec.prevOriginalLoaded);
     }
     setTemplateValuesVersion((v) => v + 1);
+  }
+  if (opts?.keepVisible) {
+    // The text stays, as a draft: no longer inherited, and changed against
+    // the restored baseline.
+    fallbackFieldsRef.current.delete(rec.fieldKey);
+    return;
   }
   // The visible value goes back only while it still holds the copied text.
   if (editableValuesRef.current[rec.fieldKey] === rec.value) {
