@@ -493,7 +493,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Imágenes de producto",
           paragraphs: [
-            "Defines un reemplazo directamente en la galería de imágenes del producto, también si el gestor de imágenes está desactivado. En el idioma principal no hay nada especial. Cambia a un idioma extranjero (y, si quieres, a un mercado) y selecciona una imagen de la galería: junto a los controles de la imagen aparece el botón «Subir imagen de reemplazo». Al hacer clic se abren tus archivos, donde eliges una imagen o subes una nueva; solo se ofrece lo que puede reemplazar al original. La imagen elegida aparece enseguida en la galería, en lugar del original, marcada con un pequeño símbolo redondo en la esquina superior izquierda. Solo se guarda cuando pulsas «Guardar» arriba; el cuadro de información comunica el resultado. «Descartar» deshace tu elección. Un clic en el símbolo te muestra el original (el símbolo se vuelve gris) y otro clic vuelve a mostrar el reemplazo. «Quitar imagen de reemplazo» hace que vuelva a valer el original, y eso también se aplica solo con «Guardar». Usa una imagen con las mismas proporciones que la original: la tienda mantiene el marco de la original, así que otro formato se recorta o deja huecos.",
+            "Defines un reemplazo directamente en la galería de imágenes del producto, también si el gestor de imágenes está desactivado. En el idioma principal no hay nada especial. Cambia a un idioma extranjero (y, si quieres, a un mercado) y selecciona una imagen de la galería: en la fila de botones de la selección aparece, entre «Mover» y «Eliminar», el botón «Subir imagen de reemplazo». Al hacer clic se abren tus archivos, donde eliges una imagen o subes una nueva; solo se ofrece lo que puede reemplazar al original. La imagen elegida aparece enseguida en la galería, en lugar del original, marcada con un pequeño símbolo redondo en la esquina superior izquierda. Solo se guarda cuando pulsas «Guardar» arriba; el cuadro de información comunica el resultado. «Descartar» deshace tu elección. Un clic en el símbolo te muestra el original (el símbolo se vuelve gris) y otro clic vuelve a mostrar el reemplazo. «Quitar imagen de reemplazo» hace que vuelva a valer el original, y eso también se aplica solo con «Guardar». Usa una imagen con las mismas proporciones que la original: la tienda mantiene el marco de la original, así que otro formato se recorta o deja huecos.",
             "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Images and videos per language» (el mensaje tras guardar enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
           ],
           list: [
@@ -736,12 +736,13 @@ export const guideEs: GuideCopy = {
           heading: "Dónde están",
           paragraphs: [
             "Editas los textos alternativos en la imagen dentro del Image Variant Manager, en el editor para las imágenes de colecciones y artículos, y en bloque en el editor masivo, donde cada fila del tipo Imágenes es una imagen — tanto de productos como de tu biblioteca de archivos.",
+            "Un texto alternativo del Image Variant Manager no se guarda al salir del campo: sigue siendo un borrador hasta que pulsas «Guardar» arriba, como cualquier otro cambio de la página. «Descartar» lo deshace. Si el guardado de una imagen falla, el cuadro de información indica el motivo, tu texto se queda en el campo y se vuelve a enviar con el siguiente «Guardar». Si cambias de idioma, de mercado o de producto con textos alternativos sin guardar, la app pregunta antes.",
           ],
         },
         {
           heading: "Con IA",
           paragraphs: [
-            "La IA escribe un texto alternativo por imagen. Con el envío de imágenes activado ve exactamente esa imagen — y no describe otra que simplemente esté al lado.",
+            "La IA escribe un texto alternativo por imagen. El resultado queda como borrador en el campo y solo se aplica con «Guardar»; «Traducir a todos los idiomas», en cambio, escribe de inmediato en los otros idiomas. Con el envío de imágenes activado ve exactamente esa imagen — y no describe otra que simplemente esté al lado.",
           ],
         },
         {

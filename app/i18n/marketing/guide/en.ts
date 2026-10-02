@@ -493,7 +493,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "Product images",
           paragraphs: [
-            "You set a replacement image right in the product's image gallery — also when the image manager is switched off. In the main language there is nothing special. Switch to a foreign language (and, if you like, to a market) and select an image in the gallery: next to the image's controls the button “Upload replacement image” appears. Clicking it opens your files, where you pick an image or upload a new one; only what can replace the original is offered. The chosen image shows in the gallery right away, in place of the original, marked with a small round symbol in its top-left corner. It is only saved when you press “Save” at the top; the info box reports the result. “Discard” takes your choice back. Clicking the symbol shows you the original (the symbol turns grey), another click shows the replacement again. “Remove replacement image” makes the original apply again — that too is only applied with “Save”. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
+            "You set a replacement image right in the product's image gallery — also when the image manager is switched off. In the main language there is nothing special. Switch to a foreign language (and, if you like, to a market) and select an image in the gallery: in the selection's button row the button “Upload replacement image” appears between “Move” and “Delete”. Clicking it opens your files, where you pick an image or upload a new one; only what can replace the original is offered. The chosen image shows in the gallery right away, in place of the original, marked with a small round symbol in its top-left corner. It is only saved when you press “Save” at the top; the info box reports the result. “Discard” takes your choice back. Clicking the symbol shows you the original (the symbol turns grey), another click shows the replacement again. “Remove replacement image” makes the original apply again — that too is only applied with “Save”. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
             "For your store to show the replacements, turn on the “Images and videos per language” app embed once (the message after saving links straight to it). The images are replaced in the product page gallery and in the image shown when the link is shared and to search engines.",
           ],
           list: [
@@ -736,12 +736,13 @@ export const guideEn: GuideCopy = {
           heading: "Where alt texts live",
           paragraphs: [
             "You edit alt texts on the image in the Image Variant Manager, in the editor for collection and article images, and collectively in the bulk editor, where every row of the Images row type is one image — product images as well as images from your file library.",
+            "An alt text in the Image Variant Manager is not saved when you leave the field: it stays a draft until you press “Save” at the top, like every other change on the page. “Discard” takes it back. If saving fails for an image, the info box tells you why, your text stays in the field and is sent again with the next “Save”. If you switch language, market or product while alt texts are unsaved, the app asks first.",
           ],
         },
         {
           heading: "With AI",
           paragraphs: [
-            "The AI writes one alt text per image. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
+            "The AI writes one alt text per image. The result then sits in the field as a draft and is only applied with “Save”; “Translate to all languages”, by contrast, writes to the other languages straight away. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
           ],
         },
         {

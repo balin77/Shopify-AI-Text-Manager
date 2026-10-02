@@ -24,7 +24,9 @@ import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./typ
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
-import { splitLoadedAltTexts, altFieldView, shouldSaveAltText } from "./alt-market-layer";
+import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
+import { planAltFlush, restoreAltDrafts, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, altFlushSummary, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter } from "./alt-draft";
+import { gidForUrl, tilesByUrl } from "./url-gid";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -166,6 +168,9 @@ interface VariantImageManagerProps {
   /** Every alt-text save response, so the editor can watch the background
    *  re-translation a primary alt change starts (it carries its task ids). */
   onSaveResponse?: (response: unknown) => void;
+  /** Filled by the manager with the two calls the editor's save bar needs for
+   *  the alt-text DRAFTS: `flush` (send every dirty alt) and `discard`. */
+  altDraftApiRef?: React.MutableRefObject<AltDraftApi | null>;
   onMissingMainImageChange?: (hasMissing: boolean) => void;
   onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
   onGallerySelectionGidsChange?: (gids: string[]) => void;
@@ -228,6 +233,7 @@ export function VariantImageManager({
   enabledLanguages = [],
   onDirtyChange,
   onSaveResponse,
+  altDraftApiRef,
   onMissingMainImageChange,
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
@@ -356,10 +362,21 @@ export function VariantImageManager({
   const altSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const altSaveSawBusyRef = useRef(false);
   const lastHandledSaveDataRef = useRef<unknown>(null);
-  // Images whose last save FAILED: their text stays in the field, is not part of
-  // the page-level Save (that one never writes alts) and is not overwritten by a
-  // reload. Re-saving happens on the next blur.
+  // Images whose last save FAILED: their text stays in the field as a DRAFT
+  // (still dirty, so the save bar stays up and the next Save retries it) and is
+  // not overwritten by a reload.
   const failedAltUrlsRef = useRef(new Set<string>());
+  // What each edited image's own alt was BEFORE its first edit (undefined = it
+  // had no own value): Discard puts exactly that back.
+  const altBaselinesRef = useRef(new Map<string, string | undefined>());
+  // Page Saves waiting for their alt saves to be answered.
+  const altFlushWaitersRef = useRef<Array<{ waiter: AltFlushWaiter; resolve: (s: AltFlushSummary) => void }>>([]);
+  /** Saves taken out of the queue (a switch, Discard) will never be answered: release whoever waits for them. */
+  const releaseAltFlushWaiters = () => {
+    const waiting = altFlushWaitersRef.current;
+    altFlushWaitersRef.current = [];
+    for (const w of waiting) w.resolve(altFlushSummary(w.waiter));
+  };
   // When each image's own alt was last CONFIRMED saved, and when the open
   // load request was made: an answer requested before a save must not undo it.
   const altConfirmedAtRef = useRef(new Map<string, number>());
@@ -368,6 +385,16 @@ export function VariantImageManager({
     onDirtyChange?.(dirtyUrlsRef.current.size > 0);
   }, [onDirtyChange]);
   const settleAltSave = useCallback((entry: QueuedAltSave, verdict: { kind: "saved" } | { kind: "failed"; message: string }) => {
+    // Wake the page Save that sent this one (it reports only what was confirmed).
+    if (altFlushWaitersRef.current.length > 0) {
+      const key = altFlushKey(entry);
+      const still: typeof altFlushWaitersRef.current = [];
+      for (const w of altFlushWaitersRef.current) {
+        if (settleAltFlushWaiter(w.waiter, key, verdict.kind === "saved")) w.resolve(altFlushSummary(w.waiter));
+        else still.push(w);
+      }
+      altFlushWaitersRef.current = still;
+    }
     const scope = altSaveScope(entry, { productId: productIdRef.current, locale: currentLanguageRef.current, marketId: viewMarketRef.current });
     const { sameProduct } = scope;
     // The text only stays in the field where the view still shows exactly the
@@ -381,15 +408,19 @@ export function VariantImageManager({
         const current = localAltTextsRef.current[entry.url];
         if (current === undefined || current === entry.altText) {
           dirtyUrlsRef.current.delete(entry.url);
+          altBaselinesRef.current.delete(entry.url);
           syncAltDirty();
+        } else {
+          // Typed on after the save was sent: still a draft, but its way back is now the saved text.
+          altBaselinesRef.current.set(entry.url, entry.altText);
         }
       }
       return;
     }
-    if (sameProduct) {
-      // The page Save never writes alts, so a failed one must not light it.
-      dirtyUrlsRef.current.delete(entry.url);
-      if (sameLocale) failedAltUrlsRef.current.add(entry.url);
+    if (sameProduct && sameLocale) {
+      // A failed save is a draft that was not written: it stays dirty (the save
+      // bar stays up, the next Save sends it again) and is kept over a reload.
+      failedAltUrlsRef.current.add(entry.url);
       syncAltDirty();
     }
     const im = t.imageManager;
@@ -503,7 +534,8 @@ export function VariantImageManager({
   // The market layer a foreign-language edit is written to ("" = global).
   const foreignMarketId = currentLanguage && currentLanguage !== primaryLocale ? selectedMarketId || undefined : undefined;
   viewMarketRef.current = foreignMarketId ?? "";
-  const productGalleryBlurSkipRef = useRef(false);
+  // Images whose alt text is an unsaved DRAFT (typed, generated or translated):
+  // the editor's one save bar sends them (see flushAltDrafts).
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
@@ -573,8 +605,9 @@ export function VariantImageManager({
     pendingMediaOrderRef.current = [];
     setMediaError(null);
     setWebpError(null);
-    dirtyUrlsRef.current.clear();
-    onDirtyChange?.(false);
+    // The alt-text drafts are NOT touched here: this key also bumps after every
+    // gallery save, and a failed alt must stay a draft. A product / language /
+    // market switch drops them in the effect below, Discard through the api ref.
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reload variant data (e.g. after alt text templates are applied) without clearing pending state
@@ -586,15 +619,33 @@ export function VariantImageManager({
   // Load foreign-locale alt text translations from DB when language changes
   // or after a bulk apply (variantReloadKey bump) so freshly saved translations show up.
   const lastBgRefreshRef = useRef(backgroundRefreshVersion);
+  const altViewRef = useRef({ productId, currentLanguage, selectedMarketId });
   useEffect(() => {
     // A background refresh only RE-READS: text the merchant is typing or a save
     // that failed must survive it.
     const isBackgroundRefresh = lastBgRefreshRef.current !== backgroundRefreshVersion;
     lastBgRefreshRef.current = backgroundRefreshVersion;
-    if (!isBackgroundRefresh) {
+    const prevView = altViewRef.current;
+    const viewChanged = prevView.productId !== productId || prevView.currentLanguage !== currentLanguage || prevView.selectedMarketId !== selectedMarketId;
+    altViewRef.current = { productId, currentLanguage, selectedMarketId };
+    if (viewChanged) {
+      // Another product, language or market: the drafts belonged to the view
+      // that is gone (the editor confirms the switch while any are unsaved).
       setLocalAltTexts({});
       setInheritedAltTexts({});
       failedAltUrlsRef.current.clear();
+      altBaselinesRef.current.clear();
+      altSaveQueueRef.current = [];
+      releaseAltFlushWaiters();
+      if (dirtyUrlsRef.current.size > 0) {
+        dirtyUrlsRef.current.clear();
+        onDirtyChange?.(false);
+      }
+    } else if (!isBackgroundRefresh) {
+      // A plain reload (a gallery save, a bulk apply): the server's answer
+      // replaces what is shown, except what the merchant still has as a draft.
+      setLocalAltTexts((prev) => Object.fromEntries(Object.entries(prev).filter(([url]) => isAltUrlBusy(url))));
+      setInheritedAltTexts({});
     }
     if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
     const form = new FormData();
@@ -2745,34 +2796,81 @@ export function VariantImageManager({
       : data.actionType === "translateAltText" && data.translatedAltText !== undefined ? (data.translatedAltText as string)
       : undefined;
     if (generated === undefined) return;
+    // The result is a DRAFT in the field, like anything the merchant types: the
+    // editor's save bar writes it. It belongs to the language and market the
+    // request was made for; if the view moved on there is no field to put it in.
     if (req.locale === currentLanguageRef.current && (req.marketId ?? "") === viewMarketRef.current) {
-      setLocalAltTexts(p => ({ ...p, [url]: generated }));
-      localAltTextsRef.current = { ...localAltTextsRef.current, [url]: generated };
+      applyAltDraft(url, generated);
+    } else {
+      showInfoBox(String(im?.altAiResultDiscarded ?? "The generated alt text was not applied because you switched language or market."), "warning");
     }
-    // Auto-save the result immediately; a failed save says so.
-    submitAltSave({ url, mediaId, altText: generated, locale: req.locale, marketId: req.marketId, productId: req.productId, productTitle });
   }, [altTextFetcher.data, effectiveProductImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAltTextChange = useCallback((url: string, value: string) => {
-    setLocalAltTexts(p => ({ ...p, [url]: value }));
-    if (!dirtyUrlsRef.current.has(url)) {
-      dirtyUrlsRef.current.add(url);
-      if (dirtyUrlsRef.current.size === 1) onDirtyChange?.(true);
+  // Typing, AI generate and AI translate all end here: the text goes into the
+  // field and the image counts as dirty (the page's save bar lights up). Nothing
+  // is written until the merchant presses Save.
+  const applyAltDraft = useCallback((url: string, value: string) => {
+    if (!dirtyUrlsRef.current.has(url) && !altBaselinesRef.current.has(url)) {
+      altBaselinesRef.current.set(url, localAltTextsRef.current[url]);
     }
-  }, [onDirtyChange]);
+    localAltTextsRef.current = { ...localAltTextsRef.current, [url]: value };
+    setLocalAltTexts(p => ({ ...p, [url]: value }));
+    dirtyUrlsRef.current.add(url);
+    syncAltDirty();
+  }, [syncAltDirty]);
 
-  const handleSaveAltText = useCallback((url: string, altText: string) => {
-    const mediaId = urlToGid[url];
-    if (!mediaId) return;
-    // The inputs save on every blur: without an edit (or a failed save to
-    // retry) there is nothing to write -- and an inherited fallback must never
-    // be pinned as a market override.
-    if (!shouldSaveAltText(dirtyUrlsRef.current.has(url) || failedAltUrlsRef.current.has(url))) return;
-    // The dirty flag stays until the server CONFIRMS the save (see the answer
-    // effect above); a failed one keeps the text and the flag.
-    failedAltUrlsRef.current.delete(url);
-    submitAltSave({ url, mediaId, altText, locale: currentLanguage, marketId: foreignMarketId, productId, productTitle });
-  }, [urlToGid, currentLanguage, submitAltSave, productId, productTitle, foreignMarketId]);
+  const handleAltTextChange = applyAltDraft;
+
+  /** The page Save: every alt draft through the serial save queue. Resolves when each was answered. */
+  const flushAltDrafts = useCallback((): Promise<AltFlushSummary> => {
+    const plan = planAltFlush({
+      dirtyUrls: [...dirtyUrlsRef.current],
+      texts: localAltTextsRef.current,
+      urlToGid,
+      locale: currentLanguage,
+      marketId: foreignMarketId,
+      productId,
+      productTitle,
+    });
+    if (plan.unaddressable.length > 0) {
+      showInfoBox(String(t.imageManager?.altDraftNotSavableYet ?? "The alt text of an image that is not saved yet can only be saved after the image itself. Save again once the image is uploaded."), "warning");
+    }
+    // A second Save while the first one's saves are still out must not send them again.
+    const alreadySent = new Set(altFlushWaitersRef.current.flatMap((w) => [...w.waiter.pending]));
+    const entries = plan.entries.filter((e) => !alreadySent.has(altFlushKey(e)));
+    if (entries.length === 0) return Promise.resolve({ ok: 0, failed: 0, unsent: plan.unaddressable.length });
+    return new Promise<AltFlushSummary>((resolve) => {
+      altFlushWaitersRef.current = [
+        ...altFlushWaitersRef.current,
+        { waiter: createAltFlushWaiter(entries.map(altFlushKey), plan.unaddressable.length), resolve },
+      ];
+      for (const entry of entries) {
+        failedAltUrlsRef.current.delete(entry.url);
+        submitAltSave(entry);
+      }
+    });
+  }, [urlToGid, currentLanguage, foreignMarketId, productId, productTitle, showInfoBox, t, submitAltSave]);
+
+  /** Discard: every alt draft goes back to what it was; what is already in flight cannot be taken back. */
+  const discardAltDrafts = useCallback(() => {
+    const urls = new Set([...dirtyUrlsRef.current, ...failedAltUrlsRef.current]);
+    if (urls.size === 0) return;
+    const restored = restoreAltDrafts(localAltTextsRef.current, altBaselinesRef.current, urls);
+    localAltTextsRef.current = restored;
+    setLocalAltTexts(restored);
+    dirtyUrlsRef.current.clear();
+    failedAltUrlsRef.current.clear();
+    altBaselinesRef.current.clear();
+    altSaveQueueRef.current = altSaveQueueRef.current.filter((q) => !urls.has(q.url));
+    releaseAltFlushWaiters();
+    syncAltDirty();
+  }, [syncAltDirty]);
+  if (altDraftApiRef) altDraftApiRef.current = { flush: flushAltDrafts, discard: discardAltDrafts };
+  useEffect(() => () => {
+    if (altDraftApiRef) altDraftApiRef.current = null;
+    // Unmounted with drafts: they are gone, so the page's dirty flag must not outlive them.
+    onDirtyChange?.(false);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
@@ -2886,19 +2984,16 @@ export function VariantImageManager({
   // tile has no GID and is not offered; a still-processing one is said to be
   // unavailable by the button. Tiles stay keyed by the ORIGINAL's URL.
   const localizedMedia = localizedMediaState;
+  // Resolved per SHOWN tile url (exact, then without the `?v=` query -- the same
+  // lookup the replace button uses), never by walking the url->gid map: a tile
+  // whose url is not a key of that map got no replacement although its button
+  // worked, so a pick (draft) or a saved replacement never showed on it.
   const replacementsByUrl = useMemo(() => {
-    const out: Record<string, LocalizedMediaTile> = {};
-    if (!localizedMedia?.active) return out;
-    for (const [url, gid] of Object.entries(urlToGid)) {
-      const tile = localizedMedia.tileOf(gid);
-      if (tile) out[url] = tile;
-    }
-    return out;
-  }, [localizedMedia, urlToGid]);
+    if (!localizedMedia?.active) return {} as Record<string, LocalizedMediaTile>;
+    return tilesByUrl(displayedProductUrls, urlToGid, (gid) => localizedMedia.tileOf(gid));
+  }, [localizedMedia, urlToGid, displayedProductUrls]);
   const productSingleSelectedGid = productSingleSelected
-    ? (urlToGid[productSingleSelected]
-      ?? Object.entries(urlToGid).find(([k]) => k.split("?")[0] === productSingleSelected.split("?")[0])?.[1]
-      ?? null)
+    ? (gidForUrl(urlToGid, productSingleSelected) ?? urlToGid[productSingleSelected] ?? null)
     : null;
 
   return (
@@ -3118,6 +3213,9 @@ export function VariantImageManager({
             >
               {activeAction === "move" ? t.imageManager.moveActive : t.imageManager.move}
             </Button>
+            {/* The replacement buttons of the ONE selected medium (foreign language
+                only) sit between "move" and "delete"; nothing renders otherwise. */}
+            {productSingleSelectedGid && <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />}
             {productSelectedUrls.length > 0 && (
               <Button
                 size="slim"
@@ -3222,54 +3320,42 @@ export function VariantImageManager({
                 onBlur={(e) => {
                   e.target.style.borderColor = "var(--app-field-border-color)";
                   e.target.style.background = !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white";
-                  if (productGalleryBlurSkipRef.current) {
-                    productGalleryBlurSkipRef.current = false;
-                    return;
-                  }
-                  handleSaveAltText(productSingleSelected, e.target.value);
+                  // No save here: the text is a draft until the editor's save bar writes it.
                 }}
               />
               <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                 {isPrimaryLocale && (
-                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
-                    <Button
-                      size="slim"
-                      disabled={altTextFetcher.state !== "idle"}
-                      loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
-                    >
-                      {`✨ ${t.imageManager.aiGenerate}`}
-                    </Button>
-                  </div>
+                  <Button
+                    size="slim"
+                    disabled={altTextFetcher.state !== "idle"}
+                    loading={altTextFetcher.state !== "idle"}
+                    onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
+                  >
+                    {`✨ ${t.imageManager.aiGenerate}`}
+                  </Button>
                 )}
                 {isPrimaryLocale && (
-                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
-                    <DisabledActionTooltip hint={singleLocaleHint}>
-                      <Button
-                        size="slim"
-                        disabled={altTextFetcher.state !== "idle" || !!singleLocaleHint}
-                        loading={altTextFetcher.state !== "idle"}
-                        onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
-                      >
-                        {`🌍 ${t.imageManager.translateAltAll}`}
-                      </Button>
-                    </DisabledActionTooltip>
-                  </div>
-                )}
-                {!isPrimaryLocale && (
-                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
+                  <DisabledActionTooltip hint={singleLocaleHint}>
                     <Button
                       size="slim"
-                      disabled={altTextFetcher.state !== "idle"}
+                      disabled={altTextFetcher.state !== "idle" || !!singleLocaleHint}
                       loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
+                      onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
                     >
-                      {`🌍 ${t.imageManager.translateAlt}`}
+                      {`🌍 ${t.imageManager.translateAltAll}`}
                     </Button>
-                  </div>
+                  </DisabledActionTooltip>
                 )}
-                {/* Replacement for the selected image/video in this foreign language: one more button. */}
-                {productSingleSelectedGid && <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />}
+                {!isPrimaryLocale && (
+                  <Button
+                    size="slim"
+                    disabled={altTextFetcher.state !== "idle"}
+                    loading={altTextFetcher.state !== "idle"}
+                    onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
+                  >
+                    {`🌍 ${t.imageManager.translateAlt}`}
+                  </Button>
+                )}
               </div>
             </div>
             {!isPrimaryLocale && productPrimaryAltText && (
@@ -3384,7 +3470,6 @@ export function VariantImageManager({
                 isAltTextLoading={altTextFetcher.state !== "idle"}
                 onAltTextChange={handleAltTextChange}
                 inheritedAltTexts={inheritedAltTexts}
-                onSaveAltText={handleSaveAltText}
                 onGenerateAltText={handleGenerateAltTextForImage}
                 onTranslateAltText={handleTranslateAltTextForImage}
                 onTranslateAltToAllLocales={handleTranslateAltTextToAllLocales}

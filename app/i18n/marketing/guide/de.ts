@@ -498,7 +498,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Produktbilder",
           paragraphs: [
-            "Ein Ersatzbild legen Sie direkt in der Bildergalerie des Produkts fest — auch wenn der Bild-Manager ausgeschaltet ist. In der Hauptsprache gibt es dafür nichts Besonderes. Schalten Sie auf eine Fremdsprache (und, wenn Sie wollen, auf einen Markt) um und wählen Sie ein Bild in der Galerie an: Neben den Bedienelementen des Bildes erscheint der Button „Ersatzbild hochladen“. Ein Klick öffnet Ihre Dateien, dort wählen Sie ein Bild aus oder laden ein neues hoch; angeboten wird nur, was das Original ersetzen kann. Das gewählte Bild erscheint sofort in der Galerie an der Stelle des Originals, markiert mit einem kleinen runden Symbol in der linken oberen Ecke. Gespeichert wird es erst, wenn Sie oben auf „Speichern“ drücken; das Ergebnis meldet die Info-Box. „Verwerfen“ nimmt die Wahl zurück. Ein Klick auf das Symbol zeigt Ihnen das Original (das Symbol wird grau), ein weiterer Klick wieder das Ersatzbild. „Ersatzbild entfernen“ lässt wieder das Original gelten — auch das wird erst mit „Speichern“ übernommen. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
+            "Ein Ersatzbild legen Sie direkt in der Bildergalerie des Produkts fest — auch wenn der Bild-Manager ausgeschaltet ist. In der Hauptsprache gibt es dafür nichts Besonderes. Schalten Sie auf eine Fremdsprache (und, wenn Sie wollen, auf einen Markt) um und wählen Sie ein Bild in der Galerie an: In der Zeile mit den Schaltflächen der Auswahl erscheint zwischen „Verschieben“ und „Löschen“ der Button „Ersatzbild hochladen“. Ein Klick öffnet Ihre Dateien, dort wählen Sie ein Bild aus oder laden ein neues hoch; angeboten wird nur, was das Original ersetzen kann. Das gewählte Bild erscheint sofort in der Galerie an der Stelle des Originals, markiert mit einem kleinen runden Symbol in der linken oberen Ecke. Gespeichert wird es erst, wenn Sie oben auf „Speichern“ drücken; das Ergebnis meldet die Info-Box. „Verwerfen“ nimmt die Wahl zurück. Ein Klick auf das Symbol zeigt Ihnen das Original (das Symbol wird grau), ein weiterer Klick wieder das Ersatzbild. „Ersatzbild entfernen“ lässt wieder das Original gelten — auch das wird erst mit „Speichern“ übernommen. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
             "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Images and videos per language“ (die Meldung nach dem Speichern verlinkt direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite und das Bild, das beim Teilen des Links und für Suchmaschinen erscheint.",
           ],
           list: [
@@ -746,12 +746,13 @@ export const guideDe: GuideCopy = {
           heading: "Wo Alt-Texte stehen",
           paragraphs: [
             "Alt-Texte bearbeiten Sie am Bild im Image Variant Manager, im Editor bei Kollektions- und Artikelbildern, und gesammelt im Bulk-Editor, wo jede Zeile der Zeilenart „Bilder“ ein Bild ist — Produktbilder ebenso wie Bilder aus Ihrer Dateibibliothek.",
+            "Ein Alt-Text im Image Variant Manager wird nicht gespeichert, wenn Sie das Feld verlassen: Er bleibt ein Entwurf, bis Sie oben auf „Speichern“ drücken — wie jede andere Änderung auf der Seite. „Verwerfen“ nimmt ihn zurück. Gelingt das Speichern bei einem Bild nicht, nennt die Info-Box den Grund, Ihr Text bleibt im Feld stehen und wird beim nächsten „Speichern“ erneut gesendet. Wechseln Sie mit ungespeicherten Alt-Texten die Sprache, den Markt oder das Produkt, fragt die App zuerst nach.",
           ],
         },
         {
           heading: "Mit KI",
           paragraphs: [
-            "Die KI schreibt einen Alt-Text pro Bild. Ist die Bildfreigabe eingeschaltet, sieht sie dabei genau dieses eine Bild — und beschreibt nicht eines, das nur zufällig daneben liegt.",
+            "Die KI schreibt einen Alt-Text pro Bild. Das Ergebnis steht danach als Entwurf im Feld und wird erst mit „Speichern“ übernommen; „In alle Sprachen übersetzen“ dagegen schreibt sofort in die anderen Sprachen. Ist die Bildfreigabe eingeschaltet, sieht sie dabei genau dieses eine Bild — und beschreibt nicht eines, das nur zufällig daneben liegt.",
           ],
         },
         {

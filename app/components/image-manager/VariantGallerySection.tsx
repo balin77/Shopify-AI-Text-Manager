@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { altFieldView } from "./alt-market-layer";
@@ -31,7 +31,6 @@ interface VariantGallerySectionProps {
   inheritedAltTexts?: Record<string, string>;
   isAltTextLoading?: boolean;
   onAltTextChange?: (url: string, value: string) => void;
-  onSaveAltText?: (url: string, altText: string) => void;
   onGenerateAltText?: (url: string) => void;
   onTranslateAltText?: (url: string, sourceAltText: string) => void;
   onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
@@ -74,7 +73,6 @@ export function VariantGallerySection({
   inheritedAltTexts,
   isAltTextLoading,
   onAltTextChange,
-  onSaveAltText,
   onGenerateAltText,
   onTranslateAltText,
   onTranslateAltToAllLocales,
@@ -108,7 +106,6 @@ export function VariantGallerySection({
   // Parallel array to effectiveThreeDModelUrls: index N is the preview JPG
   // URL for the model at index N. Comes from custom.variant_3d_previews.
   const effectiveThreeDPreviewUrls = variant.threeDPreviewUrls ?? [];
-  const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
     .map(gid => fileUrlMap[gid])
@@ -330,7 +327,7 @@ export function VariantGallerySection({
           </div>
 
           {/* Alt text editor — only when exactly 1 image is selected */}
-          {singleSelectedUrl && onSaveAltText && (
+          {singleSelectedUrl && onAltTextChange && (
             <div style={{
               marginTop: 10,
               padding: "10px 12px",
@@ -363,16 +360,12 @@ export function VariantGallerySection({
                   onBlur={(e) => {
                     e.target.style.borderColor = "var(--app-field-border-color)";
                     e.target.style.background = !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white";
-                    if (skipNextBlurRef.current) {
-                      skipNextBlurRef.current = false;
-                      return;
-                    }
-                    onSaveAltText(singleSelectedUrl, e.target.value);
+                    // No save here: the text is a draft until the editor's save bar writes it.
                   }}
                 />
                 <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                   {isPrimaryLocale && onGenerateAltText && (
-                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                    <>
                       <Button
                         size="slim"
                         disabled={isAltTextLoading}
@@ -381,10 +374,10 @@ export function VariantGallerySection({
                       >
                         {`✨ ${t.imageManager.aiGenerate}`}
                       </Button>
-                    </div>
+                    </>
                   )}
                   {isPrimaryLocale && onTranslateAltToAllLocales && (
-                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                    <>
                       <DisabledActionTooltip hint={singleLocaleHint}>
                         <Button
                           size="slim"
@@ -395,10 +388,10 @@ export function VariantGallerySection({
                           {`🌍 ${t.imageManager.translateAltAll}`}
                         </Button>
                       </DisabledActionTooltip>
-                    </div>
+                    </>
                   )}
                   {!isPrimaryLocale && onTranslateAltText && (
-                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                    <>
                       <Button
                         size="slim"
                         disabled={isAltTextLoading}
@@ -407,7 +400,7 @@ export function VariantGallerySection({
                       >
                         {`🌍 ${t.imageManager.translateAlt}`}
                       </Button>
-                    </div>
+                    </>
                   )}
                 </div>
               </div>

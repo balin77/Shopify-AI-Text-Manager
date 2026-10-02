@@ -5,8 +5,8 @@
  * names the media whose value is INHERITED from the global layer. An inherited
  * value is a fallback to look at, not content of this layer: putting it into
  * the field would (a) count the image as translated for the market and
- * (b) let a plain click in and out of the box -- the inputs save on blur --
- * pin the global wording as a market override.
+ * (b) make the field's value a DRAFT the page Save would write -- pinning the
+ * global wording as a market override nobody typed.
  */
 
 export interface LoadedAltLayer {
@@ -47,9 +47,4 @@ export function altFieldView(args: {
     isTranslated: value !== "",
     showsInherited: inherited !== "",
   };
-}
-
-/** A blur without an edit writes nothing. */
-export function shouldSaveAltText(dirty: boolean): boolean {
-  return dirty;
 }
