@@ -553,6 +553,25 @@ const handleSave = () => {
 const handleDiscard = () => {
   if (!selectedItem) return;
 
+  // Discard returns to the BASELINE -- the exact values change detection
+  // compares against (`useEditorChangeDetection`), installed by every load and
+  // every confirmed save. Re-deriving the values here from the raw item (the old
+  // body below) was a second, narrower resolve chain: it knew no market layer,
+  // no handle / SEO-title fallback, no local overlay and no deleted key. In a
+  // market view the market overrides came back as their GLOBAL wording, which
+  // differs from the baseline -- so the "discarded" editor was dirty again and
+  // the save bar never closed. That is what the leave dialog's discard after a
+  // MARKET switch produced (it lands on the new market's view); a language switch
+  // happened to resolve both ways to the same values. Same for the alt texts:
+  // their baseline is `originalAltTexts`.
+  const baseline = baselineValuesRef.current;
+  if (Object.keys(baseline).length > 0) {
+    setEditableValues({ ...baseline });
+    setImageAltTexts({ ...originalAltTextsRef.current });
+    return;
+  }
+
+  // No baseline yet (nothing loaded): the older derivation from the item.
   const newValues: Record<string, string> = {};
 
   if (currentLanguage === primaryLocale) {
