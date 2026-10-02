@@ -3024,8 +3024,11 @@ export function VariantImageManager({
     const carried: string[] = [];
     // An earlier Save already carried a draft over and its image is still
     // being processed: this Save waits for that one (with the current text)
-    // instead of reporting it as not sendable.
-    const stillCarried = plan.unaddressable.filter((url) => deferredAltRef.current.has(url) && !opts?.galleryApply);
+    // instead of reporting it as not sendable. That holds when THIS Save also
+    // applies the gallery (another upload): the carried draft belongs to the
+    // earlier, finished gallery save, and tying it to the new one would release
+    // it as "not saved yet" if the new one failed.
+    const stillCarried = plan.unaddressable.filter((url) => deferredAltRef.current.has(url));
     for (const url of stillCarried) {
       const d = deferredAltRef.current.get(url)!;
       d.draft = { ...d.draft, altText: localAltTextsRef.current[url] };
@@ -3139,7 +3142,10 @@ export function VariantImageManager({
     // 4. A draft under a url that no tile shows any more, that no medium
     //    resolves and that nothing will move (an upload removed before it was
     //    saved, a medium deleted or swapped for a WebP copy): dropped with a
-    //    note rather than holding the bar up and failing every Save.
+    //    note rather than holding the bar up and failing every Save. Not while
+    //    a delete is in flight: its tiles are already removed optimistically,
+    //    and a refused delete brings them back -- with their drafts.
+    if (isDeleting) return;
     const shown = new Set<string>([...displayedProductUrls, ...Object.values(fileUrlMap)]);
     const altLookup: Record<string, string> = {};
     for (const [gid, url] of Object.entries(fileUrlMap)) if (url) altLookup[url] = gid;
@@ -3159,7 +3165,7 @@ export function VariantImageManager({
         ? (t.imageManager?.altDraftDroppedNoImage ?? "An alt text typed for an image that was removed before it was saved was dropped.")
         : (t.imageManager?.altDraftDroppedImageGone ?? "An alt text draft was dropped because its image no longer exists.")), "warning");
     }
-  }, [settlingMedia, shopifyMediaMap, productId, deferredAltTick, displayedProductUrls, fileUrlMap, urlToGid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settlingMedia, shopifyMediaMap, productId, deferredAltTick, displayedProductUrls, fileUrlMap, urlToGid, isDeleting]); // eslint-disable-line react-hooks/exhaustive-deps
   // The settling poll gave up while a carried-over draft's image was still
   // processing: the Save stops waiting for it (it stays a draft for a later Save).
   releaseStuckDeferredAltsRef.current = () =>
