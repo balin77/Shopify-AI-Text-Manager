@@ -22,6 +22,10 @@ import { clearAllForResource, isOperationActive } from "~/hooks/useAIOperationsS
 
 const ID = "gid://shopify/Product/1";
 const tick = (ms = 0) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
+/** Until the editor finished its load pass (`hasChanges` reads false while loading). */
+async function settled(editor: { current: any }) {
+  for (let i = 0; i < 60 && editor.current.state.isLoadingData; i++) await tick(50);
+}
 
 function mount() {
   const posted: string[] = [];
@@ -67,7 +71,7 @@ function mount() {
     {
       path: "/",
       element: <Page />,
-      loader: async () => ({ items: [{ ...store }] }),
+      loader: async () => ({ items: [{ ...store, translations: store.translations.map((r) => ({ ...r })) }] }),
       action: async ({ request }) => {
         posted.push(String((await request.formData()).get("action")));
         return { success: true, actionType: "updateContent" };
@@ -75,7 +79,7 @@ function mount() {
     },
   ]);
   const { unmount } = render(<RouterProvider router={router} />);
-  return { editor, showInfoBox, posted, aborted, unmount };
+  return { editor, showInfoBox, posted, aborted, unmount, store };
 }
 
 describe("translate run deadline", () => {
@@ -90,7 +94,7 @@ describe("translate run deadline", () => {
   });
 
   it("gives up on a run that never answers and returns the save behind it to a draft", async () => {
-    const { editor, showInfoBox, posted } = mount();
+    const { editor, showInfoBox, posted, store } = mount();
     await tick(50);
     await act(async () => { await editor.current.handlers.handleLanguageChange("fr"); });
     await tick(50);
@@ -101,6 +105,9 @@ describe("translate run deadline", () => {
     expect(posted).toEqual(["run"]);
     expect(isOperationActive(ID, "__translateAllForLocale__fr")).toBe(true);
     expect(editor.current.state.isSavingCurrentItem).toBe(true);
+    // Meanwhile the run writes French on the server: the reload after the
+    // deadline brings it, and must not replace what was typed and never sent.
+    store.translations = [{ key: "title", locale: "fr", value: "Titre du serveur" }];
 
     await tick(400);
     expect(isOperationActive(ID, "__translateAllForLocale__fr")).toBe(false);
@@ -109,8 +116,17 @@ describe("translate run deadline", () => {
     expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("save again in a moment"), "warning");
     expect(posted).toEqual(["run"]);
     expect(editor.current.state.isSavingCurrentItem).toBe(false);
+    await tick(200);
     expect(editor.current.state.hasChanges).toBe(true);
     expect(editor.current.state.editableValues.title).toBe("Titre à la main");
+    // ...and through a later reload too.
+    store.translations = [{ key: "title", locale: "fr", value: "Titre du serveur 2" }];
+    await act(async () => { editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(400);
+    await settled(editor);
+    expect(editor.current.state.editableValues.title).toBe("Titre à la main");
+    expect(editor.current.state.hasChanges).toBe(true);
+    posted.length = 1;
     // Saving again goes out now.
     await act(async () => { editor.current.handlers.handleSave(); });
     await tick(50);

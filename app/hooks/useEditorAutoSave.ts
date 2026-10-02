@@ -103,6 +103,15 @@ interface UseEditorAutoSaveReturn {
 // Hook implementation
 // ---------------------------------------------------------------------------
 
+/**
+ * How often `safeSubmit` had to refuse an OWN save because a "translate all"
+ * run writes into its language. It is a BACKSTOP: every own-save caller asks
+ * `refuseOwnSave` at its very start, before anything is staged, so in the
+ * covered flows this stays 0 (tests assert it). A hit means a caller staged
+ * state and then lost its save.
+ */
+export const ownSaveRunBackstop = { hits: 0 };
+
 export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoSaveReturn {
   const {
     selectedItemId,
@@ -176,6 +185,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       // An own save is REFUSED, never held: nothing was sent, so the field
       // keeps the value as a draft for the Save button.
       if (nothingInFlight) isSavePendingRef.current = false;
+      ownSaveRunBackstop.hits++;
       onOwnSaveRefusedRef?.current();
       return;
     }

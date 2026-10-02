@@ -614,14 +614,13 @@ export async function handleTranslateAltTextToAllLocales(
     }
   }
 
-  // Same fallback as its siblings: the form's title first, the cached one
-  // next. The image number stays in the composed string as well.
-  const itemTitle = await taskTitleOrFallback(
+  // Same as its siblings: the item's title only (the form's first, the cached
+  // one next). The image is named by `fieldType: altText_<i>`, which the Tasks
+  // views render in the merchant's language ("Image 3 alt text") -- a number
+  // composed into the title as well repeated it, in German on every UI.
+  const resourceTitle = await taskTitleOrFallback(
     db, session.shop, contentConfig.resourceType, itemId, productTitle,
   );
-  const resourceTitle = itemTitle
-    ? `${itemTitle} – Bild ${imageIndex + 1}`
-    : `Bild ${imageIndex + 1}`;
 
   // Create task entry
   const task = await db.task.create({

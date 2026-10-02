@@ -79,6 +79,21 @@ import {
   type SuggestionScope,
 } from "./useAISuggestionStore";
 
+/**
+ * Whether a "translate all" run blocks a save of (item, locale): a run writing
+ * into that language, or ANY run of the item for the primary language (a
+ * primary save purges or re-translates every language).
+ */
+export function ownSaveBlockedByRuns(
+  runs: ReadonlyArray<{ itemId: string | null; locale: string }>,
+  itemId: string | null,
+  locale: string | null,
+  primaryLocale: string,
+): boolean {
+  if (!itemId) return false;
+  return runs.some((run) => run.itemId === itemId && (locale === primaryLocale || run.locale === "*" || run.locale === locale));
+}
+
 /** Whether a sent-request scope is a SAVE of `itemId`. */
 function isSaveScopeOf(scope: SentSaveScope | null | undefined, itemId: string | null): boolean {
   const fields = scope?.sentFields;
@@ -125,6 +140,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // `saveBlockedByTranslateRunRef` in useEditorAutoSave and the queue drain).
   const primaryLocaleRef = useLatestRef(primaryLocale);
   const translateRunsRef = useRef<Array<{ itemId: string | null; locale: string }>>([]);
+  const ownSaveBlockedByRun = (itemId: string | null, locale: string | null): boolean =>
+    ownSaveBlockedByRuns(translateRunsRef.current, itemId, locale, primaryLocaleRef.current);
   const [translateRunsVersion, setTranslateRunsVersion] = useState(0);
   // Held back: by a run writing into the save's language (a PRIMARY save by
   // any run of the item), or by a PRIMARY save of the item queued ahead of it
@@ -132,9 +149,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // translation saved later. `beforeIndex` = the entry's own queue position
   // (the drain); a new save looks at the whole queue.
   const saveBlockedByTranslateRunRef = useRef((locale: string | null, itemId: string | null, beforeIndex?: number): boolean => {
-    if (translateRunsRef.current.some((run) =>
-      run.itemId === itemId && (locale === primaryLocaleRef.current || run.locale === "*" || run.locale === locale),
-    )) return true;
+    if (ownSaveBlockedByRun(itemId, locale)) return true;
     const queue = saveQueueRef.current;
     const limit = beforeIndex ?? queue.length;
     for (let j = 0; j < limit; j++) {
@@ -152,6 +167,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
   const showInfoBoxRef = useLatestRef(showInfoBox);
   const tRef = useLatestRef(t);
+  /**
+   * THE rule for an AI/copy button's own save while a "translate all" run of
+   * the item is out (the same rule `saveBlockedByTranslateRunRef` holds a
+   * Save-bar save by). Every own-save caller asks `refuseOwnSave` at its very
+   * START -- before any baseline, cache, overlay, mark, item mutation or
+   * toast -- and changes nothing on a refusal (an AI result that already
+   * arrived goes into the field as a plain draft). `safeSubmit` refusing it is
+   * only the backstop (`ownSaveRunBackstop`).
+   */
+  const refuseOwnSave = (itemId: string | null, locale: string): boolean => {
+    if (!ownSaveBlockedByRun(itemId, locale)) return false;
+    const isPrimary = locale === primaryLocaleRef.current;
+    showInfoBoxRef.current(
+      isPrimary
+        ? String(tRef.current?.common?.ownSaveRefusedWhileItemTranslating || "A translation of this item is still running \u2013 the change stays unsaved. Save it when the translation has finished.")
+        : String(tRef.current?.common?.ownSaveRefusedWhileTranslating || "A translation into this language is still running \u2013 the change stays unsaved. Save it when the translation has finished."),
+      "info",
+    );
+    return true;
+  };
   /** A save waits for a "translate all" run: say so, or the merchant sees a
    *  spinner with no reason for minutes. */
   const onSaveHeldByRunRef = useRef(() => {
@@ -329,9 +364,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Clear global store entries that the server says are no longer running
         reconcileWithServer(selectedItemId, serverFieldKeys, keepRunOperation(selectedItemId));
 
-        if (activeTasks.length === 0 || cancelled) return;
+        // Polled while ANY mapped task runs (another language's included):
+        // its completion still has to bring the reload, only its spinner is
+        // not seeded here.
+        if (mappedTasks.length === 0 || cancelled) return;
 
-        // Poll until all seeded tasks finish
+        // Poll until all running tasks finish
         const pollUntilDone = async (remaining: Set<string>) => {
           if (cancelled || remaining.size === 0) return;
           await new Promise((res) => setTimeout(res, 2000));
@@ -837,7 +875,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
     isSaveFromTranslateRef.current = false;
     showInfoBox(
-      String(t.common?.ownSaveRefusedWhileTranslating || "A translation into this language is still running \u2013 the change stays unsaved; save it when the translation has finished."),
+      savedLocaleRef.current === primaryLocale
+        ? String(t.common?.ownSaveRefusedWhileItemTranslating || "A translation of this item is still running \u2013 the change stays unsaved. Save it when the translation has finished.")
+        : String(t.common?.ownSaveRefusedWhileTranslating || "A translation into this language is still running \u2013 the change stays unsaved. Save it when the translation has finished."),
       "info",
     );
   };
@@ -890,6 +930,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleRejectAltTextSuggestion,
     isPrimaryAltUnsaved, hasUnsavedPrimaryAlts,
   } = useEditorAltText({
+    refuseOwnSave,
     pendingAltTranslateToastRef,
     partialSaveRef,
     selectedItem,
@@ -936,6 +977,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItemId,
     selectedMarketId,
   });
+
+  // Drafts a run deadline gave back stay protected until the merchant saved
+  // or discarded them, i.e. until the view is clean again -- never while a
+  // load forces `hasChanges` false.
+  useEffect(() => {
+    if (!hasChanges && !isLoadingData) keptDraftViewRef.current = null;
+  }, [hasChanges, isLoadingData]);
 
   // ============================================================================
   // BACKGROUND RE-TRANSLATION — the detached run this save started
@@ -1321,6 +1369,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (switchedDuringRefresh) {
       preserveEditsUntilRef.current = 0;
       unconfirmedKeptKeysRef.current = new Set();
+      keptDraftViewRef.current = null;
     }
     // The re-read that follows a PARTIAL save (a single-field translate):
     // the fields that save did not carry may hold unsaved input, and the
@@ -1332,6 +1381,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !(refreshTriggered && !isBackgroundRefresh) &&
       (Date.now() < preserveEditsUntilRef.current ||
         unconfirmedKeptKeysRef.current.size > 0 ||
+        // Drafts a run deadline gave back (never sent): kept until saved or
+        // discarded.
+        (keptDraftViewRef.current !== null &&
+          keptDraftViewRef.current.itemId === selectedItemId &&
+          !saveAnswerViewMoved(keptDraftViewRef.current, { locale: currentLanguage, marketId: selectedMarketId ?? "" }, primaryLocale)) ||
         // A save of this item is out, or still waits in the queue (behind a
         // "translate all" run of its language). A reload landing meanwhile --
         // the run's, or the save's own arriving in the same render as its
@@ -1733,6 +1787,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return mine;
   };
   const translateRunRevalidatePendingRef = useRef(false);
+  /** The view whose held save a run deadline turned back into drafts (see
+   *  `dropSavesHeldByRun`); its reloads keep the typed text. */
+  const keptDraftViewRef = useRef<{ itemId: string; locale: string; marketId: string } | null>(null);
   /** Aborts of the runs still out; the editor's unmount fires them. */
   const translateRunAbortsRef = useRef<Set<() => void>>(new Set());
   const unmountedRef = useRef(false);
@@ -1755,6 +1812,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return touches(run) && !others.some((r) => r.itemId === run.itemId && touches(r));
     };
     const droppedEntries = saveQueueRef.current.filter(heldByThis);
+    // Their text was never sent: every reload until the merchant saves or
+    // discards must keep it (the queue no longer says a save is coming).
+    for (const entry of droppedEntries) {
+      if (entry.savedItemId) {
+        keptDraftViewRef.current = { itemId: entry.savedItemId, locale: entry.savedLocale ?? "", marketId: entry.savedMarketId ?? "" };
+      }
+    }
     saveQueueRef.current = saveQueueRef.current.filter((entry) => !heldByThis(entry));
     const dropped = droppedEntries.length;
     for (const entry of droppedEntries) {
@@ -2058,6 +2122,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Clear the pending save ref immediately to prevent re-execution
     pendingAltTextAutoSaveRef.current = null;
     if (Object.keys(pendingAltTexts).length === 0) return;
+    // A run blocks this own save: the texts already in the fields stay drafts,
+    // and nothing (no overlay drop, no save) happens.
+    if (refuseOwnSave(selectedItemId, currentLanguage)) return;
 
     debugLog.altText(' Executing auto-save for alt-texts:', pendingAltTexts);
 
@@ -3284,6 +3351,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSaveFromTranslateRef.current = false;
       inFlightToastRef.current = null;
       setIsSaving(false);
+      // A copy that was refused stops its spinner and gives back what it
+      // wrote up front, exactly like the error branches above.
+      if (pendingCopyFieldKeyRef.current) {
+        const failedFieldItemId = pendingCopyFieldItemIdRef.current ?? savedItemIdRef.current;
+        if (failedFieldItemId) markOperationFailed(failedFieldItemId, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+        pendingCopyFieldItemIdRef.current = null;
+        rollbackCopyField();
+      }
+      if (pendingCopyAltTextIndexRef.current !== null) {
+        const failedAltItemId = getPendingCopyAltItemId() ?? savedItemIdRef.current;
+        if (failedAltItemId) markOperationFailed(failedAltItemId, `altText_${pendingCopyAltTextIndexRef.current}`);
+        pendingCopyAltTextIndexRef.current = null;
+        rollbackCopyAltText();
+      }
       if (savedItemIdRef.current === selectedItemIdRef.current) {
         showInfoBox(translateErrorMessage("", t), "critical");
       }
@@ -3411,21 +3493,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // ============================================================================
   // DERIVED STATE: isSavingCurrentItem
   // Must be computed BEFORE useFieldHandlers which uses it for navigation guards.
-  // True only when the fetcher is busy AND the in-flight save is for the
-  // currently-selected item (not a previously-selected one the user navigated from).
+  // Derived from what is TRUE now, never from a flag a lost answer can leave
+  // set (`isSaving` alone stuck after an item switch and an aborted queued
+  // submit): the fetcher carrying a save of THIS item -- "submitting", and
+  // "loading" too, the render in which its answer lands before the response
+  // effect has moved the baseline (counting it idle there flickered the dirty
+  // state on) -- or a save of this item waiting in the queue (held behind a
+  // "translate all" run of its language).
   // ============================================================================
-
-  // isSaving drives the spinner. fetcher.state is not used because React 18 automatic batching
-  // can collapse idle→submitting→loading→idle into one render, making state always appear idle.
-  // ...and a save of this item that is still out or waits in the queue (held
-  // behind a "translate all" run of its language) counts as saving too, even
-  // when another save's answer has meanwhile reset `isSaving` / `savedItemIdRef`.
-  // Derived from what is TRUE now: the fetcher carrying a save of this item,
-  // or one waiting in the queue. `isSaving` alone stuck after an item switch
-  // (the dropped answer never cleared it) and after an aborted queued submit.
   const isSavingCurrentItem =
     !!selectedItemId &&
-    ((fetcher.state === "submitting" &&
+    ((fetcher.state !== "idle" &&
       (isSaveScopeOf(inFlightScopeRef.current, selectedItemId) || (isSaving && savedItemIdRef.current === selectedItemId))) ||
       saveQueueRef.current.some(
         (entry) => entry.savedItemId === selectedItemId && entry.formData.get("action") === "updateContent",
@@ -3523,6 +3601,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     performAutoSave,
     safeSubmit,
     submitTranslateRun,
+    refuseOwnSave,
     refuseTranslateRun,
     deletedMarksOfSavesOut,
     buildFieldsForSave,

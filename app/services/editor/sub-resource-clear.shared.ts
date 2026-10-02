@@ -244,3 +244,25 @@ export function applyStagedMetafieldClears(
   }
   return next;
 }
+
+
+/**
+ * Whether the options & metafields card's request on its fetcher (read
+ * through `get`, a FormData getter) is a SAVE that a "translate all" of
+ * (`itemId`, `locale`) would race. `locale` "*" = a run into every language.
+ * The foreign save names `itemId` and its `locale`; the PRIMARY save
+ * (`savePrimarySubResources`) names `productId` and no locale, and reaches
+ * every language. The Phase-2 load is not a save.
+ */
+export function subResourceSaveRacesRun(
+  get: (key: string) => unknown,
+  itemId: string,
+  locale: string,
+): boolean {
+  const action = String(get("action") ?? "");
+  if (!action || action === "loadSubResourceTranslations") return false;
+  const formItem = String(get("itemId") ?? get("productId") ?? "");
+  if (formItem !== itemId) return false;
+  const savedLocale = String(get("locale") ?? "");
+  return !savedLocale || locale === "*" || savedLocale === locale;
+}

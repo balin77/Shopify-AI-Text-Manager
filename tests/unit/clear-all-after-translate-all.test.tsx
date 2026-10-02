@@ -32,6 +32,7 @@ vi.mock("~/hooks/useBackgroundTaskRefresh", () => ({ useBackgroundTaskRefresh: (
 import { useUnifiedContentEditor } from "~/hooks/useUnifiedContentEditor";
 import { PRODUCTS_CONFIG } from "~/config/content-fields.config";
 import { useFieldHandlers } from "~/hooks/useFieldHandlers";
+import { ownSaveRunBackstop } from "~/hooks/useEditorAutoSave";
 import { clearAllForResource, isOperationActive, markOperationActive } from "~/hooks/useAIOperationsStore";
 
 const ID = "gid://shopify/Product/1";
@@ -413,7 +414,7 @@ describe("Clear all in language B while Translate all for language A runs", () =
     expect(h.posted.filter((p) => p.action === "translateAllForLocale").map((p) => p.targetLocale)).toEqual(["fr", "it"]);
   });
 
-  it("an own (copy) save in the language being translated is refused and stays a draft, never held", async () => {
+  it("an own (copy) save in the language being translated is refused up front, never held", async () => {
     const h = mount({ rows: ROWS });
     await tick(50);
     await switchTo(h, "fr");
@@ -425,9 +426,12 @@ describe("Clear all in language B while Translate all for language A runs", () =
     expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("stays unsaved"), "info");
     expect(h.editor.current.helpers.isOwnSaveInFlight()).toBe(false);
     expect(h.editor.current.state.isSavingCurrentItem).toBe(false);
-    expect(h.editor.current.state.editableValues.title).toBe("Titel");
-    expect(h.editor.current.state.hasChanges).toBe(true);
+    // Refused before anything moved: the field is as it was, and the
+    // backstop in safeSubmit was never reached.
+    expect(h.editor.current.state.editableValues.title).toBe("Titre ancien");
+    expect(h.editor.current.state.hasChanges).toBe(false);
     expect(isOperationActive(ID, "title")).toBe(false);
+    expect(ownSaveRunBackstop.hits).toBe(0);
     // The run answering sends nothing by itself.
     await h.respond("translateAllForLocale", TA_FR);
     await tick(150);

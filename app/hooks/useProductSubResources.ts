@@ -62,6 +62,7 @@ import {
   confirmedClearIds,
   settleClearAll,
   stageClearAll,
+  subResourceSaveRacesRun,
 } from "../services/editor/sub-resource-clear.shared";
 
 /**
@@ -1901,12 +1902,9 @@ export function useProductSubResources({
       if (clearItem === itemId && (locale === "*" || clearLocale === locale)) return true;
     }
     const f = fetcherForSaveCheckRef.current;
-    const action = f.formData?.get("action");
-    if (f.state === "idle" || !f.formData || action === "loadSubResourceTranslations") return false;
-    if (f.formData.get("itemId") !== itemId) return false;
-    const savedLocale = String(f.formData.get("locale") ?? "");
-    // No locale on the form = the PRIMARY save, which reaches every language.
-    return !savedLocale || locale === "*" || savedLocale === locale;
+    if (f.state === "idle" || !f.formData) return false;
+    const form = f.formData;
+    return subResourceSaveRacesRun((key) => form.get(key), itemId, locale);
   }, []);
 
   const isTranslateAllRunning = useCallback((itemId: string, locale: string) => {

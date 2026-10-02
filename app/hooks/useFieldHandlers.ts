@@ -140,6 +140,10 @@ export interface FieldHandlerProps {
    *  shared fetcher (see useUnifiedContentEditor). Optional for callers that
    *  render the handlers alone; they fall back to the fetcher. */
   submitTranslateRun?: (data: Record<string, string>, itemId: string | null) => void;
+  /** Refuses (with a message, returning true) an AI/copy button's own save of
+   *  (item, locale) while a "translate all" run blocks it. Asked at the START
+   *  of every own-save flow, before anything is staged. */
+  refuseOwnSave?: (itemId: string | null, locale: string) => boolean;
   /** Refuses (with a message, returning true) a "translate all" run while a
    *  save of the item it would race is out or queued. `locale` "*" = every
    *  language. */
@@ -327,6 +331,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     submitTranslateRun,
     refuseTranslateRun,
     deletedMarksOfSavesOut,
+    refuseOwnSave,
     buildFieldsForSave,
     getChangedFields,
     getChangedAltTextIndices,
@@ -401,9 +406,11 @@ const submitOwnFieldSave = (
   fieldKey: string,
   value: string,
   opts: { markChanged?: boolean; fromTranslate?: boolean } = {},
-): void => {
-  if (!selectedItemId) return;
+): boolean => {
+  if (!selectedItemId) return false;
   const locale = currentLanguage;
+  // Before anything below is staged (the saved-primary cache, the marks).
+  if (refuseOwnSave?.(selectedItemId, locale)) return false;
   const marketId = selectedMarketId;
   const isPrimary = locale === primaryLocale;
   const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
@@ -440,6 +447,14 @@ const submitOwnFieldSave = (
   if (opts.fromTranslate) isSaveFromTranslateRef.current = true;
   setIsSaving(true);
   safeSubmit(form, { method: "POST" });
+  return true;
+};
+
+/** An AI result that arrived while its own save is blocked: into the field as
+ *  a plain draft through the typing path (dirty, save bar up, nothing staged). */
+const applyAsDraft = (fieldKey: string, value: string) => {
+  handleValueChange(fieldKey, value);
+  clearFieldSuggestion(suggestionScope, fieldKey);
 };
 
 const handleSave = () => {
@@ -870,6 +885,9 @@ const handleTranslateField = (fieldKey: string) => {
   }
 
   const targetLocale = currentLanguage;
+  // Its result is saved at once: while a run writes into this language the
+  // AI request is not even started.
+  if (refuseOwnSave?.(requestItemId, targetLocale)) return;
 
   submitAIAction(
     {
@@ -892,6 +910,12 @@ const handleTranslateField = (fieldKey: string) => {
       // but nothing of it may land in the locale now on screen.
       const viewing =
         currentLanguageRef.current === targetLocale && selectedMarketIdRef.current === selectedMarketId;
+      // A run into this language started while the AI worked: the result is a
+      // draft (where it is still on screen), nothing is staged or saved.
+      if (refuseOwnSave?.(requestItemId, targetLocale)) {
+        if (viewing && translatedValue) handleValueChange(fieldKey, translatedValue);
+        return;
+      }
       if (field.translationKey) {
         // Delegate ref mutations to transition method
         const transResult = dataLoader.onTranslateFieldComplete(
@@ -1361,6 +1385,17 @@ const handleAcceptSuggestion = (fieldKey: string) => {
     return;
   }
 
+  // A run blocks the save this accept would make: the suggestion becomes a
+  // plain draft and nothing else moves.
+  {
+    const acceptField = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+    const wouldSave = currentLanguage === primaryLocale || !!acceptField?.translationKey;
+    if (wouldSave && refuseOwnSave?.(selectedItemId, currentLanguage)) {
+      applyAsDraft(fieldKey, suggestion);
+      return;
+    }
+  }
+
   // Force isLoadingData to false to ensure change detection works
   setIsLoadingData(false);
 
@@ -1402,6 +1437,13 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
       "warning"
     );
+    return;
+  }
+
+  // It writes the primary text and every language (a foreign accept writes
+  // the primary too): ANY run of the item blocks it, before anything is armed.
+  if (refuseOwnSave?.(selectedItemId, primaryLocale)) {
+    applyAsDraft(fieldKey, suggestion);
     return;
   }
 
@@ -1542,6 +1584,16 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       fieldKey,
       (result) => {
         if (selectedItemIdRef.current !== requestItemId) return;
+        // A run of this item started while the AI worked: the PRIMARY base
+        // save below is not made and nothing is staged for it (the server
+        // already stored what it translated; a reload shows it).
+        if (refuseOwnSave?.(requestItemId, primaryLocale)) {
+          setIsAcceptAndTranslateFlow(false);
+          if (revalidatorRef.current.state === 'idle') {
+            try { revalidatorRef.current.revalidate(); } catch {}
+          }
+          return;
+        }
         const translations = (result.translations as Record<string, string>) || {};
 
         // Save the primary-language value as BASE content (this field only, NO
@@ -2224,6 +2276,7 @@ const handleTranslateAllForLocale = (): boolean | void => {
 
 const handleCopyField = (fieldKey: string): void => {
   if (!selectedItemId || !selectedItem) return;
+  if (refuseOwnSave?.(selectedItemId, currentLanguage)) return;
   const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
   if (!field) return;
   const primaryValue = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);

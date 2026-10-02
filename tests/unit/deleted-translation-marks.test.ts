@@ -5,6 +5,7 @@ import {
   dropMarksAfterSave,
   isMarkedDeleted,
 } from "~/services/editor/deleted-translation-marks.shared";
+import { subResourceSaveRacesRun } from "~/services/editor/sub-resource-clear.shared";
 import { taskOperationKey, taskShowsInView, markOperationActive, isOperationActive, reconcileWithServer, clearAllForResource } from "~/hooks/useAIOperationsStore";
 
 describe("deleted marks", () => {
@@ -63,5 +64,24 @@ describe("server task -> operation key", () => {
     reconcileWithServer(id, new Set(), (key) => key === "__translateAllForLocale__fr");
     expect(isOperationActive(id, "__translateAllForLocale__fr")).toBe(true);
     expect(isOperationActive(id, "title")).toBe(false);
+  });
+});
+
+describe("the options & metafields card's save races a run", () => {
+  const form = (entries: Record<string, string>) => (key: string) => entries[key] ?? null;
+  it("the PRIMARY save (productId, no locale) races a run into any language", () => {
+    const primary = form({ action: "savePrimarySubResources", productId: "P1" });
+    expect(subResourceSaveRacesRun(primary, "P1", "fr")).toBe(true);
+    expect(subResourceSaveRacesRun(primary, "P1", "*")).toBe(true);
+    expect(subResourceSaveRacesRun(primary, "P2", "fr")).toBe(false);
+  });
+  it("a foreign save races a run of its language or every language only", () => {
+    const foreign = form({ action: "saveSubResourceTranslations", itemId: "P1", locale: "it" });
+    expect(subResourceSaveRacesRun(foreign, "P1", "it")).toBe(true);
+    expect(subResourceSaveRacesRun(foreign, "P1", "*")).toBe(true);
+    expect(subResourceSaveRacesRun(foreign, "P1", "fr")).toBe(false);
+  });
+  it("the Phase-2 load is not a save", () => {
+    expect(subResourceSaveRacesRun(form({ action: "loadSubResourceTranslations", itemId: "P1" }), "P1", "fr")).toBe(false);
   });
 });
