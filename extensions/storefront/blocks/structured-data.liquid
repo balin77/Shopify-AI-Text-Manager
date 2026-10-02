@@ -765,24 +765,11 @@
   referrer to the app-proxy collector (Seo404Hit) so the merchant can see
   frequent 404s and one-click a redirect. Best-effort: sendBeacon with a fetch
   fallback, wrapped in try/catch so it can never disturb the storefront.
+  The code lives in assets/seo-404.js (assets do not count against the 100 KiB
+  Liquid budget).
 {%- endcomment -%}
 {%- if request.page_type == '404' -%}
-<script>
-  (function () {
-    try {
-      var payload = JSON.stringify({
-        path: window.location.pathname + window.location.search,
-        referrer: document.referrer || ''
-      });
-      var url = '/apps/contentpilot/seo-404';
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
-      } else {
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true });
-      }
-    } catch (e) { /* never break the storefront */ }
-  })();
-</script>
+<script src="{{ 'seo-404.js' | asset_url }}" defer></script>
 {%- endif -%}
 
 {% schema %}

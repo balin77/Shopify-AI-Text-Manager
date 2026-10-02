@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
- * `shopify app deploy` wrapper that minifies the theme app extension blocks
+ * `shopify app deploy` wrapper that minifies the theme app extension Liquid
+ * (blocks AND snippets)
  * for the duration of the deploy and always restores the commented sources.
  *
  * WHY A WRAPPER AND NOT pre/post SCRIPTS
  * --------------------------------------
  * A theme app extension has no build output directory — the CLI uploads
- * `extensions/storefront/blocks/*.liquid` in place. So the minified form has to
+ * `extensions/storefront/blocks/*.liquid` and `snippets/*.liquid` in place. So the minified form has to
  * exist on disk while the CLI runs, and something has to put the originals back
  * even when the deploy crashes or is Ctrl-C'd. npm `pre*`/`post*` scripts cannot
  * do that (`post` never runs on failure), so the whole cycle lives in one
  * process with the restore in a `finally` plus an `exit` backstop.
  *
  * The minified blocks therefore never survive the command and must never be
- * committed: `blocks/` stays fully commented in git.
+ * committed: `blocks/` and `snippets/` stay fully commented in git.
  *
  * USAGE
  *   npm run deploy -- -c dev --allow-updates
@@ -29,7 +30,7 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
-  BLOCKS_DIR,
+  LIQUID_DIRS,
   LIQUID_LIMIT_BYTES,
   LIQUID_TARGET_BYTES,
   buildReport,
@@ -59,7 +60,7 @@ function restore() {
   if (failed > 0) {
     console.error(
       `[deploy-minified] ${failed} block(s) are still minified on disk. ` +
-        `Run \`git checkout -- ${'extensions/storefront/blocks'}\` to recover the sources.`,
+        `Run \`git checkout -- ${'extensions/storefront/blocks extensions/storefront/snippets'}\` to recover the sources.`,
     );
   } else {
     console.log(`[deploy-minified] restored ${originals.size} commented block source(s).`);
@@ -108,7 +109,7 @@ async function main() {
 
   const report = buildReport();
   if (report.blocks.length === 0) {
-    console.error(`[deploy-minified] no *.liquid blocks found in ${BLOCKS_DIR}`);
+    console.error(`[deploy-minified] no *.liquid files found in ${LIQUID_DIRS.join(', ')}`);
     return 1;
   }
 
