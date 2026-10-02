@@ -66,7 +66,7 @@ Die genaue Metrik ist im Sandbox nicht verfügbar (kein `node_modules`, keine Sh
 | `external_video` | `thumb`, `poster`, `w`, `h`, `alt`, `host`, `external_id` |
 | `model` | `thumb`, `poster`, `w`, `h`, `alt`, `model_src` |
 
-Der Vertrag ist **`JSON.parse`-Gleichheit**, nicht Byte-Gleichheit: Whitespace zwischen Tokens und die Schreibweise `<` statt `<` innerhalb eines Strings ergeben nach `JSON.parse` dieselben Werte.
+Der Vertrag ist **`JSON.parse`-Gleichheit**, nicht Byte-Gleichheit: Whitespace zwischen Tokens und die Schreibweise `\u003c` statt `<` innerhalb eines Strings ergeben nach `JSON.parse` dieselben Werte.
 
 ### 0.5 Die 19 Objekt-Körper im Embed (verifiziert)
 
@@ -223,7 +223,7 @@ Id und Element bleiben gleich; Setter und Controller merken nichts. Damit liegt 
 
 Vorrang im Snippet: `url` → `model` → `kind`/`m.media_type`. Alt wird einmal berechnet: `alt | default: fb | json`.
 
-**Escape-Regel (wichtig):** Das Snippet sammelt sein Objekt in `capture cp_i_out` und gibt es **einmal** aus als `{{- cp_i_out | replace: '<', '<' | replace: '>', '>' -}}`. Das ersetzt die bisherigen Einzel-`replace`s am `alt` (R3-H1) und hat zwei Folgen, beide gewollt:
+**Escape-Regel (wichtig):** Das Snippet sammelt sein Objekt in `capture cp_i_out` und gibt es **einmal** aus als `{{- cp_i_out | replace: "<", "\u003c" | replace: ">", "\u003e" -}}`. Das ersetzt die bisherigen Einzel-`replace`s am `alt` (R3-H1) und hat zwei Folgen, beide gewollt:
 
 1. Die Ausgabe enthält **garantiert kein `<` und kein `>`**. JSON-Struktur enthält diese Zeichen nie, sie können nur in String-Werten stehen, und dort ist `<` ein gültiges Escape, das `JSON.parse` zurückverwandelt. Daraus folgt, dass das Abschneiden von Shopifys `<!-- BEGIN app snippet … -->`-Annotation mit `split: '-->' | last | split: '<!--' | first` beim Aufrufer **beweisbar** nichts vom Objekt abschneidet — heute könnte eine Modell-URL mit `-->` das theoretisch.
 2. Auch `model_src` und Video-`src` (bisher nur `| json`) können das `<script>`-Element nicht mehr verlassen — eine kostenlose Härtung, `JSON.parse`-gleich.
@@ -298,7 +298,7 @@ Liquid lässt sich in Vitest nicht ausführen (kein Liquid-Renderer in den Abhä
 
 1. **Schlüssel-Vertrag:** Für jeden `type` aus §0.4 enthält `cp-vg-item.liquid` `"type":"<type>"` und jeden dort gelisteten Schlüssel als `"<key>":`. Die Tabelle steht einmal im Test als Konstante.
 2. **Konsument liest nichts anderes:** Jede Eigenschaft, die `variant-gallery-embed.js` auf einem Galerie-Eintrag liest (`img.` / `item.` / `s.`-Zugriffe in den Render-Funktionen), steht in dieser Tabelle — per Regex `/\b(?:img|item|s)\.(\w+)/g` über den Datei-Abschnitt Z. 455–600 (Zeilen nicht hart kodieren: zwischen `_renderImage`/`_renderModel` o. ä. schneiden — Funktionsnamen im Test nachschlagen).
-3. **Escape-Regel:** Der Snippet endet mit `replace: '<', '<' | replace: '>', '>'`; ein `"alt":` ohne vorheriges `| json` gibt es nicht.
+3. **Escape-Regel:** Der Snippet endet mit `replace: "<", "\u003c" | replace: ">", "\u003e"`; ein `"alt":` ohne vorheriges `| json` gibt es nicht.
 4. **Annotation:** Anzahl `render 'cp-vg-item'` im Block === Anzahl `assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip`.
 5. **Keine Rückkehr der Duplikate:** Der Block enthält **kein** `"type":` mehr (alle Objekt-Körper leben im Snippet), und das `<script type="application/json" id="cp-embed-data-{{ block.id }}">` umschließt ausschließlich `{{ cp_vg_json }}`.
 6. **Platzhalter bleibt letztes Element** (Head-Invariante aus dem Block-Kommentar): `<cp-embed-gallery` steht nach dem `variant-gallery-embed.js`-`<script>` und vor `{%- endif -%}`.
@@ -444,7 +444,7 @@ Was die Tests **nicht** abdecken: Liquid-Ausführung. Deshalb §9.3.
 
 ## 10. Invarianten, die sich nicht ändern dürfen
 
-1. `JSON.parse` der Embed-Insel liefert für jede Variante dieselbe Liste mit denselben Objekten in derselben Reihenfolge (einzige zulässige Abweichung auf Byte-Ebene: Whitespace und `<`/`>`).
+1. `JSON.parse` der Embed-Insel liefert für jede Variante dieselbe Liste mit denselben Objekten in derselben Reihenfolge (einzige zulässige Abweichung auf Byte-Ebene: Whitespace und `\u003c`/`\u003e` statt `<`/`>`).
 2. Die Insel-Id `cp-embed-data-{{ block.id }}`, der FOUC-Setter, die Prehide-Styles, die Reihenfolge der Head-Elemente und `<cp-embed-gallery>` als **letztes** Element im `if` bleiben unverändert.
 3. Dedup-Regeln unverändert: Datei-Ids, URL-Tokens per `url_encode`, Modell-Tokens per `url_encode`; Default-Pfad „alle Bilder, dann alle Videos, dann URLs, dann Modelle".
 4. Jeder `{% render %}`-Aufruf, dessen Ausgabe gecaptured wird, schneidet Shopifys Annotation mit `split: '-->' | last | split: '<!--' | first | strip` ab.
@@ -543,7 +543,7 @@ Der Docstring ist hier gekürzt; im echten Snippet ausformulieren: Zweck, Parame
     {%- endif -%}
   {%- endif -%}
 {%- endcapture -%}
-{{- cp_i_out | replace: '<', '<' | replace: '>', '>' -}}
+{{- cp_i_out | replace: "<", "\u003c" | replace: ">", "\u003e" -}}
 ```
 
 Hinweis zum Video-Zweig: Die Bedingung des Originals ist `preview_image != blank and sources.size > 0`. Hier steht `preview_image != blank` außen und `sources.size > 0` innen — gleiche Wirkung.
@@ -738,3 +738,22 @@ Hinweise für die Umsetzung:
 - Im Order-Pfad ist `alt: cp_rm.alt` für URL-/Modell-Einträge `nil` (weil `cp_rm` `''` ist) → `fb: variant.title` greift, wie bisher bei URL und Modell.
 - Das Memo steht **innerhalb** von `{%- if product != blank -%}` (Z. 44) und **vor** dem `capture`.
 - `cp_vfi_id` wird jetzt mit `''` statt `blank` initialisiert, weil es danach per `append: ''` zum String wird; ohne Featured-Bild stimmt `''` mit keiner Media-Id überein — wie bisher.
+
+## Anhang C — Entscheidungen nach dem Plan-Review (verbindlich, geht allem oben vor)
+
+Ein unabhängiges Review hat den Plan mit Änderungen freigegeben. Wo Anhang C dem Text oben widerspricht, gilt Anhang C.
+
+1. **Escape-Regel, byte-genau.** Die Ausgabe des Snippets endet mit `| replace: "<", "<" | replace: ">", ">"` — doppelte Anführungszeichen, Backslash, `u003c`/`u003e`, exakt wie heute im Embed. ACHTUNG: Werkzeuge können `<` beim Schreiben zu `<` dekodieren. Nach jedem Schreiben mit `grep -c 'u003c'` prüfen. Der neue Test pinnt die exakten Bytes `<`/`>` und schlägt fehl, wenn Muster und Ersatz gleich sind.
+2. **liquidjs-Differenztest ist Pflicht** (devDependency `liquidjs`, nur Tests). (a) Für Schritt 1+2: für jeden Block/jedes Snippet `render(source) === render(minify(source))` mit Stub-Kontext und Stub-Filtern (`image_url`, `asset_url`, `json` usw. als einfache Funktionen). (b) Für Schritt 3: alte Insel vs. neue Insel + Snippet über Fixtures (Produkt ohne Metafelder, mit Galerie-Reihenfolge, mit Video, mit externem Video, mit 3D-Modell, mit Alt-Text `</script><b>`), verglichen über `JSON.parse`. Vorher prüfen, dass liquidjs-`split` leere Endstücke wie Ruby verwirft; falls nicht, den Annotation-Schnitt im Test entsprechend stubben und das dokumentieren. Wo ein Shopify-Konstrukt in liquidjs nicht nachbildbar ist, im Test begründet überspringen, nicht stillschweigend.
+3. **Schritt 3 in zwei Commits:** 3a = nur `capture`-Umzug (Ausgabe unverändert), 3b = Snippet + Memo.
+4. **Verschachteltes Render absichern:** Das Snippet gibt ein `external_video`-Objekt nur aus, wenn `cp_i_host == 'youtube' or cp_i_host == 'vimeo'`. §9.3 Punkt 8 / §11 entsprechend.
+5. **Tests in §5.6 korrigiert:** Test #2 nimmt eine explizite Liste der Eigenschaften, die `assets/variant-gallery-embed.js` liest (inkl. `thumb`; keine DOM-Aufrufe wie `img.decode`). Neuer Test: Aufrufer übergeben nur Parameter, die das Snippet kennt. Test #4 prüft, dass auf jede `capture` mit `render 'cp-vg-item'` direkt die Annotation-Schnitt-Zeile folgt.
+6. **§3.3 Hilfsfunktion nicht auf `/\s+/g` lockern.** Erwartung durch Nachbilden des Liquid-Dash-Trims neben entfernten Kommentaren aufbauen (oder: Whitespace verschwindet nur neben entfernten `{%-`/`-%}`-Kommentaren).
+7. **Fallback-Memo lazy:** erst beim ersten Varianten-Fallback aufbauen (Flag).
+8. **Leerer Platzhalter `nil`** statt `''`.
+9. **§9.3 Punkt 5:** auch auf "Memory limits exceeded" achten (100 Varianten × ~20 Medien im Fallback).
+10. **`minifyLiquidTag`:** `\r` mit entfernen; Idempotenz-Test.
+11. **CLAUDE.md im selben Commit wie Schritt 2** anpassen (Deploy-Gotcha zum Minifier), nicht erst nach dem Merge. §4.4 ist damit überholt.
+12. Schritt-2-Ersparnis: −8 051 B (gemessen), nicht 7,4 KB.
+
+**Umfang:** Schritte 1, 2, 3a, 3b, 6a, 6b, 7 werden umgesetzt. **Schritt 4 entfällt** (nach Schritt 2 nur ~200 B, berührt JSON-LD). **Schritt 5 wird zurückgestellt** (nur Warnung; Snippet-in-Snippet auf JSON-LD erst nach Bewährung von 3b im Dev-Shop). Die Complexity-Warnung in `structured-data.liquid` bleibt damit bewusst bestehen.
