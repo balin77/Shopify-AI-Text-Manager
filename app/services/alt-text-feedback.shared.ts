@@ -221,6 +221,58 @@ export function overlayIndexWrites(
 }
 
 /**
+ * A "translate every alt text into every language" answer
+ * (`translatedResults`: image index -> locale -> saved text), applied by the
+ * locale each value was WRITTEN for, never by the view the button was pressed
+ * in.
+ *
+ * Every saved (image, locale) goes into the GLOBAL overlay (`overlay[locale]`),
+ * which the alt-text load reads before the loaded item: the answer is often
+ * the last thing to land, and the loader data a revalidation brings may have
+ * been read before the write — or no revalidation runs at all, because another
+ * one was already in flight. Returned are the values of `view.locale` that the
+ * caller should put on screen NOW: only for a foreign locale in the global
+ * view (a translate writes no market override), and only for images whose
+ * field is CLEAN (`current === original`), so a draft the merchant typed while
+ * the run worked is never overwritten.
+ *
+ * The answer used to be applied against the locale captured at CLICK time —
+ * the primary one, since the button lives there — so a merchant who switched
+ * to a foreign language while it ran never saw it arrive, and the overlay was
+ * never written at all on the whole-item "Translate all" path.
+ */
+export function applyAltTranslateAllAnswer(
+  overlay: Record<string, Record<number, string>>,
+  translatedResults: Record<string, Record<string, string>> | undefined | null,
+  failedImages: number[],
+  view: {
+    locale: string;
+    marketId: string;
+    primaryLocale: string;
+    current: Record<number, string>;
+    original: Record<number, string>;
+  },
+): Record<number, string> {
+  const visible: Record<number, string> = {};
+  if (!translatedResults) return visible;
+  const failed = new Set(failedImages);
+  const showsGlobalForeign = view.locale !== view.primaryLocale && !view.marketId;
+  for (const [idxStr, localeMap] of Object.entries(translatedResults)) {
+    const idx = parseInt(idxStr, 10);
+    if (Number.isNaN(idx) || failed.has(idx)) continue;
+    for (const { locale, value } of overlayWritesFromTranslations(localeMap, [])) {
+      if (locale === view.primaryLocale) continue;
+      (overlay[locale] ??= {})[idx] = value;
+      if (showsGlobalForeign && locale === view.locale) {
+        const isClean = (view.current[idx] ?? "") === (view.original[idx] ?? "");
+        if (isClean) visible[idx] = value;
+      }
+    }
+  }
+  return visible;
+}
+
+/**
  * The save queue of the image manager. Alt saves share ONE fetcher, so a second
  * save fired before the first answer landed dropped that answer (and its
  * re-translation task ids). Saves are therefore serialised: one in flight, the

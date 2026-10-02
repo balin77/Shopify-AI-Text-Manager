@@ -788,6 +788,11 @@ export async function handleTranslateSubResourceToAllLocales(
     // and reporting it as translated made a run that changed nothing read as a
     // clean "completed".
     const writtenLocales = new Set<string>();
+    // The values Shopify CONFIRMED, per locale -> resource -> key: the client
+    // stages them under the locale they were written for, so a merchant who
+    // switched language while this ran sees them without a reload (the
+    // loader re-read alone did not reach a view that was already open).
+    const confirmedByLocale: Record<string, Record<string, Record<string, string>>> = {};
     for (const [locale, translations] of Object.entries(allTranslations)) {
       for (const [resourceId, fields] of Object.entries(translations)) {
         try {
@@ -811,6 +816,10 @@ export async function handleTranslateSubResourceToAllLocales(
             });
             if (result.confirmedKeys.size > 0) {
               writtenLocales.add(locale);
+              for (const input of translationInputs) {
+                if (!result.confirmedKeys.has(input.key)) continue;
+                ((confirmedByLocale[locale] ??= {})[resourceId] ??= {})[input.key] = input.value;
+              }
               // Same claim as the single-locale path, global layer.
               markTranslationSaved(resourceId);
               markSubResourceSyncShield(itemId);
@@ -864,7 +873,8 @@ export async function handleTranslateSubResourceToAllLocales(
     return json({
       actionType: "translateSubResourceToAllLocales",
       success: true,
-      translations: {}, // Already saved to Shopify, no need to return
+      translations: {}, // Already saved to Shopify; the confirmed values travel per locale below
+      localeTranslations: confirmedByLocale,
       translatedLocales,
       failedLocales,
       failedResources,
