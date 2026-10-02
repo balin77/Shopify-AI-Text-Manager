@@ -215,6 +215,38 @@ button of its own.**
   one small control inside a field, and at 44px each they stack it to ~96px.
   Measured in Chromium: 32px on desktop, 44px on a touch tablet and a phone,
   for button, Select, TextField and the rate-limit field alike.
+- **A single-line text field WRAPS and grows; its value never gains a line
+  break.** A one-line `<input>` hid a long title, SEO title or handle past its
+  right edge. Every one-line text field in the editors is now
+  [SingleLineTextField.tsx](app/components/unified/SingleLineTextField.tsx)
+  (`AIEditableField` without `multiline`, option names/values, non-multi-line
+  metafields, menu item titles) or, where the box is hand-built (the image
+  manager's alt text), [AutoGrowTextarea.tsx](app/components/unified/AutoGrowTextarea.tsx):
+  a one-row textarea that rests at `--pg-control-height` / `--app-control-height`
+  like the input it replaced, so nothing moves on load. The VALUE stays single-line
+  ([single-line-text.ts](app/utils/single-line-text.ts)): Enter is cancelled
+  (never during an IME composition), and a break that still arrives — a paste,
+  a drop — is collapsed to ONE space before `onChange`, so a handle or a
+  `<title>` never carries `\n`; a value that was already STORED with a break is
+  shown and kept as it is (`normalizeSingleLineChange`). Polaris' own multiline
+  field breaks this look in three ways the `.app-single-line-autogrow` rules in
+  responsive.css undo: it wraps the suffix and the character count onto a
+  second row inside the box (permanently one line taller), it measures on a
+  copy as wide as the whole field (inset by the suffix's width via
+  `--app-autogrow-resizer-inset`), and it pads that copy 1px less than the
+  textarea (every measured height 2px short, a scrollbar on every wrapped
+  value). A field that is multi-line ON PURPOSE keeps a plain `multiline`
+  TextField. The bulk grid's cells already auto-grow (`CellTextArea`) and are
+  not this component.
+- **The navigation's InfoBox strip never changes height.** It is fixed at the
+  old one-line strip's height (`INFO_BOX_STRIP_HEIGHT`,
+  [info-box-fit.ts](app/utils/info-box-fit.ts)); a message that does not fit
+  one line at 14px is drawn compact (12px / 15px line height, two clamped
+  lines in the same box), decided by measuring an invisible one-line copy
+  against the text box's width in a layout effect
+  ([InfoBoxMessageText.tsx](app/components/InfoBoxMessageText.tsx)); the
+  deep link sits BESIDE the text, not under it. The full text stays in the
+  title and in the bell's history.
 - **A grey frame is one of THREE tokens, and which one is a question about the
   thing being framed.** `--app-field-border-color` is a box a merchant types in
   (every input, the body editors, the probe textareas, and the formatting

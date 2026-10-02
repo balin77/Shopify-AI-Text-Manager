@@ -27,6 +27,7 @@ import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
 import { planAltFlush, planImmediateAltSave, hasImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
+import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -3879,21 +3880,20 @@ export function VariantImageManager({
               </Text>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <input
-                type="text"
+              <AutoGrowTextarea
                 value={productCurrentAltText}
                 readOnly={productAltLocked}
                 aria-readonly={productAltLocked || undefined}
                 title={productAltLocked ? altNeedsPrimaryHint : undefined}
-                onChange={(e) => { if (!productAltLocked) handleAltTextChange(productSingleSelected, e.target.value); }}
+                onValueChange={(next) => { if (!productAltLocked) handleAltTextChange(productSingleSelected, next); }}
                 placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: productCurrentAltText, inherited: productInheritedAlt, primaryAlt: productPrimaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                 style={{
                   flex: "1 1 200px",
                   minWidth: 180,
-                  // As tall as the buttons beside it (responsive.css token).
-                  height: "var(--app-control-height)",
-                  boxSizing: "border-box",
-                  padding: "0 8px",
+                  // At rest as tall as the buttons beside it (AutoGrowTextarea's
+                  // minimum is the responsive.css token); a long alt text wraps
+                  // and grows instead of scrolling sideways.
+                  padding: "5px 8px",
                   fontSize: 13,
                   border: "1px solid var(--app-field-border-color)",
                   borderRadius: "var(--app-field-border-radius)",

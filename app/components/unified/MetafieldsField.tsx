@@ -11,7 +11,13 @@
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge } from "@shopify/polaris";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
+import { SingleLineTextField } from "./SingleLineTextField";
 import "../../styles/AIEditableField.css";
+
+/** A metafield whose value is multi-line by type; every other one is ONE line that wraps as it grows. */
+function isMultiLineMetafield(type: string): boolean {
+  return type === "multi_line_text_field" || type === "rich_text_field";
+}
 
 export interface MetafieldData {
   id: string;       // gid://shopify/Metafield/...
@@ -122,14 +128,23 @@ export function MetafieldsField({
                         </Text>
                         <Badge tone="info">{TYPE_LABELS[mf.type] || mf.type}</Badge>
                       </div>
-                      <TextField
-                        label={`${mf.namespace}.${mf.key}`}
-                        labelHidden
-                        value={currentValue}
-                        onChange={(value) => onPrimaryMetafieldChange?.(mf.id, value)}
-                        autoComplete="off"
-                        multiline={mf.type === "multi_line_text_field" || mf.type === "rich_text_field" ? 3 : undefined}
-                      />
+                      {isMultiLineMetafield(mf.type) ? (
+                        <TextField
+                          label={`${mf.namespace}.${mf.key}`}
+                          labelHidden
+                          value={currentValue}
+                          onChange={(value) => onPrimaryMetafieldChange?.(mf.id, value)}
+                          autoComplete="off"
+                          multiline={3}
+                        />
+                      ) : (
+                        <SingleLineTextField
+                          label={`${mf.namespace}.${mf.key}`}
+                          labelHidden
+                          value={currentValue}
+                          onChange={(value) => onPrimaryMetafieldChange?.(mf.id, value)}
+                        />
+                      )}
                       {onTranslate && (
                         <div className="ai-field-footer">
                           <div className="ai-field-footer-left" />
@@ -187,13 +202,21 @@ export function MetafieldsField({
                       {/* Translation input */}
                       <div>
                         <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(mf.id) ? "bg-fallback" : (hasTranslation ? "bg-white" : "bg-untranslated")}`}>
-                          <TextField
-                            label={`${mf.namespace}.${mf.key} (${currentLanguage})`}
-                            value={translation}
-                            onChange={(value) => onMetafieldChange(mf.id, value)}
-                            autoComplete="off"
-                            multiline={mf.type === "multi_line_text_field" || mf.type === "rich_text_field" ? 3 : undefined}
-                          />
+                          {isMultiLineMetafield(mf.type) ? (
+                            <TextField
+                              label={`${mf.namespace}.${mf.key} (${currentLanguage})`}
+                              value={translation}
+                              onChange={(value) => onMetafieldChange(mf.id, value)}
+                              autoComplete="off"
+                              multiline={3}
+                            />
+                          ) : (
+                            <SingleLineTextField
+                              label={`${mf.namespace}.${mf.key} (${currentLanguage})`}
+                              value={translation}
+                              onChange={(value) => onMetafieldChange(mf.id, value)}
+                            />
+                          )}
                         </div>
                         <div className="ai-field-footer">
                           <div className="ai-field-footer-left" />

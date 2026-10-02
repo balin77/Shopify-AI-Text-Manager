@@ -413,6 +413,61 @@
   border: var(--p-border-width-0165, 0.04125rem) solid var(--app-field-border-color-disabled);
 }
 
+/* A SINGLE-LINE value that wraps instead of scrolling sideways
+   (SingleLineTextField.tsx). It is a Polaris `multiline` textarea of one line
+   minimum, so it rests at the old input's height, and three things keep it
+   looking like the one-line field it replaces:
+   - the row does NOT wrap: Polaris' multiline field is `flex-wrap: wrap` with a
+     100%-wide textarea, which pushes a suffix (the SEO title's " - Shop Name")
+     and the character count onto a second row INSIDE the box — permanently one
+     line taller than before. Here they stay beside the text, as on an input;
+   - Polaris measures the needed height on a hidden copy that spans the whole
+     field, so the copy is inset by what the suffix / count take
+     (`--app-autogrow-resizer-inset`, written by the component) — otherwise a
+     value just short of the full width measures as one line and scrolls;
+   - long tokens (a handle, a URL) break like the measuring copy does. */
+.app-single-line-autogrow .Polaris-TextField--multiline {
+  flex-wrap: nowrap;
+}
+.app-single-line-autogrow .Polaris-TextField--multiline > .Polaris-TextField__Input {
+  width: auto;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  /* No scrollbar: the box is always as tall as its text (the measuring copy
+     below is padded exactly like it), and `auto` flashed a scrollbar for the
+     one frame between a keystroke and Polaris' re-measure. */
+  overflow: hidden;
+}
+/* Polaris gives the character count `width: 100%` so it takes a row of its
+   own under a multi-line text; here it sits beside the text like the suffix,
+   at the height of the LAST line. */
+.app-single-line-autogrow .Polaris-TextField--multiline > .Polaris-TextField__CharacterCount,
+.app-single-line-autogrow .Polaris-TextField--multiline > .Polaris-TextField__Suffix {
+  width: auto;
+  flex: 0 0 auto;
+  align-self: flex-end;
+  padding-bottom: var(--p-space-150);
+}
+.app-single-line-autogrow .Polaris-TextField__Resizer {
+  right: var(--app-autogrow-resizer-inset, 0px);
+}
+/* Polaris pads its measuring copy by `--pg-control-vertical-padding` (5px)
+   while the textarea it measures for is padded by `--p-space-150` (6px), so
+   every measured height came out 2px short and the last line overflowed. */
+.app-single-line-autogrow .Polaris-TextField__DummyInput {
+  padding-top: var(--p-space-150);
+  padding-bottom: var(--p-space-150);
+}
+/* Below 48em Polaris draws the field at a larger font than its measuring copy
+   (font-size 400 / line-height 600 against 325 / 500), which under-measures a
+   wrapped value; the copy follows the field here. */
+@media (max-width: 47.9975em) {
+  .app-single-line-autogrow .Polaris-TextField__DummyInput {
+    font-size: var(--p-font-size-400);
+    line-height: var(--p-font-line-height-600);
+  }
+}
+
 /* Buttons as tall as the fields beside them — app-wide, not per toolbar.
    Polaris 13 renders `size="medium"` AND `size="slim"` (the two are identical)
    at `--p-height-700` = 28px from 48em up, while TextField and Select sit at

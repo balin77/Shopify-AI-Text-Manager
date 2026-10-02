@@ -3,6 +3,7 @@ import { TextField, Button } from "@shopify/polaris";
 import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { FieldClearOverlay, FieldLabel } from "./unified/FieldChrome";
+import { SingleLineTextField } from "./unified/SingleLineTextField";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ActionTooltip } from "./ActionTooltip";
 import { aiActionTooltip } from "../utils/ai-action-tooltip";
@@ -167,22 +168,42 @@ export function AIEditableField({
           same card. */}
       <FieldClearOverlay onClear={onClear} hasValue={!!value} fieldLabel={label}>
         <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
-          <TextField
-            label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}
-            value={value}
-            onChange={onChange}
-            disabled={readOnly}
-            autoComplete="off"
-            helpText={helpText}
-            multiline={multiline}
-            maxLength={maxLength}
-            placeholder={placeholder}
-            showCharacterCount={!!maxLength}
-            error={error}
-            suffix={seoSuffix ? (
-              <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
-            ) : undefined}
-          />
+          {/* A field without `multiline` holds ONE line (title, SEO title,
+              handle, product type, …): it wraps and grows instead of scrolling
+              sideways, and its value stays free of line breaks. */}
+          {multiline ? (
+            <TextField
+              label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}
+              value={value}
+              onChange={onChange}
+              disabled={readOnly}
+              autoComplete="off"
+              helpText={helpText}
+              multiline={multiline}
+              maxLength={maxLength}
+              placeholder={placeholder}
+              showCharacterCount={!!maxLength}
+              error={error}
+              suffix={seoSuffix ? (
+                <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
+              ) : undefined}
+            />
+          ) : (
+            <SingleLineTextField
+              label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}
+              value={value}
+              onChange={onChange}
+              disabled={readOnly}
+              helpText={helpText}
+              maxLength={maxLength}
+              placeholder={placeholder}
+              showCharacterCount={!!maxLength}
+              error={error}
+              suffix={seoSuffix ? (
+                <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
+              ) : undefined}
+            />
+          )}
         </div>
       </FieldClearOverlay>
 

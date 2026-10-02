@@ -59,7 +59,6 @@ import {
   InlineStack,
   Banner,
   Button,
-  TextField,
   Tooltip,
 } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
@@ -102,6 +101,7 @@ import {
   type MenuEditorNode,
 } from "~/services/menu-tree.shared";
 import { MenuTreeEditor, newMenuNode } from "~/components/menus/MenuTreeEditor";
+import { SingleLineTextField } from "~/components/unified/SingleLineTextField";
 import {
   MenuTargetPicker,
   type MenuTargetPickerStrings,
@@ -1554,7 +1554,7 @@ export default function MenusPage() {
 
     return (
       <div className={`ai-editable-field-wrapper ${background}`}>
-        <TextField
+        <SingleLineTextField
           label={
             <Text as="span" variant="bodySm">
               {isPrimary ? (node.id ? primaryTitle || t.content?.menuNewItem : t.content?.menuNewItem) : primaryTitle}
@@ -1585,7 +1585,6 @@ export default function MenusPage() {
                   : t.content?.menuNotTranslatable
                 : undefined
           }
-          autoComplete="off"
         />
       </div>
     );
