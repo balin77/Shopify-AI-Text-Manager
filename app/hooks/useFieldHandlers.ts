@@ -148,6 +148,7 @@ export interface FieldHandlerProps {
   isOwnSaveBlocked?: (itemId: string | null, locale: string) => boolean;
   /** "Saved; the translation into the other languages was skipped". */
   sayTranslateToOthersSkipped?: () => void;
+  sayPrimaryTextSkipped?: () => void;
   /** Refuses (with a message, returning true) a "translate all" run while a
    *  save of the item it would race is out or queued. `locale` "*" = every
    *  language. */
@@ -338,6 +339,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     refuseOwnSave,
     isOwnSaveBlocked,
     sayTranslateToOthersSkipped,
+    sayPrimaryTextSkipped,
     buildFieldsForSave,
     getChangedFields,
     getChangedAltTextIndices,
@@ -1598,10 +1600,11 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // A run of this item started while the AI worked: the PRIMARY base
         // save below is not made and nothing is staged for it (the server
         // already stored what it translated; a reload shows it).
-        // The foreign text WAS saved; only the primary save and the other
-        // languages are skipped -- said exactly that way.
+        // The foreign text AND the other languages WERE saved (the request
+        // ran with skipSaveLocales=[primary]); only the primary save is
+        // skipped -- said exactly that way.
         if (isOwnSaveBlocked?.(requestItemId, primaryLocale)) {
-          sayTranslateToOthersSkipped?.();
+          sayPrimaryTextSkipped?.();
           setIsAcceptAndTranslateFlow(false);
           if (revalidatorRef.current.state === 'idle') {
             try { revalidatorRef.current.revalidate(); } catch {}

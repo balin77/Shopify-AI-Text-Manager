@@ -2132,9 +2132,10 @@ export const en: Translation = {
     ownSaveRefusedWhileItemTranslating: "A translation of this item is still running – the change stays unsaved. Save it when the translation has finished.",
     actionRefusedWhileTranslating: "A translation into this language is still running – please try again when it has finished.",
     actionRefusedWhileItemTranslating: "A translation of this item is still running – please try again when it has finished.",
-    actionRefusedWhilePrimarySaveWaits: "A save of the main language is waiting for a translation of this item – please try again when it has finished.",
-    ownSaveRefusedWhilePrimarySaveWaits: "A save of the main language is waiting for a translation of this item – the change stays unsaved. Save it when the translation has finished.",
-    translateToOthersSkippedWhileTranslating: "Saved. The translation into the other languages was skipped because a translation of this item is still running – start it again when that has finished.",
+    actionRefusedWhilePrimarySaveWaits: "A save of the main language of this item has not finished yet – please try again when it has.",
+    ownSaveRefusedWhilePrimarySaveWaits: "A save of the main language of this item has not finished yet – the change stays unsaved. Save it when that is done.",
+    primaryTextSkippedWhileBusy: "The translations in the other languages are saved. Only the main-language text was not saved, because a translation or save of this item is still running – accept it again when that has finished.",
+    translateToOthersSkippedWhileTranslating: "Saved. The translation into the other languages was skipped because a translation or save of this item is still running – start it again when that has finished.",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
     fieldTranslatedAndSaved: "{fieldType} translated and saved successfully",
     // Tooltip for locale buttons

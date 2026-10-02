@@ -2133,9 +2133,10 @@ export const de = {
     ownSaveRefusedWhileItemTranslating: "Dieser Eintrag wird gerade noch übersetzt – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn die Übersetzung fertig ist.",
     actionRefusedWhileTranslating: "In diese Sprache wird gerade noch übersetzt – bitte versuchen Sie es erneut, wenn die Übersetzung fertig ist.",
     actionRefusedWhileItemTranslating: "Dieser Eintrag wird gerade noch übersetzt – bitte versuchen Sie es erneut, wenn die Übersetzung fertig ist.",
-    actionRefusedWhilePrimarySaveWaits: "Eine Speicherung der Hauptsprache wartet noch auf eine Übersetzung dieses Eintrags – bitte versuchen Sie es erneut, wenn sie fertig ist.",
-    ownSaveRefusedWhilePrimarySaveWaits: "Eine Speicherung der Hauptsprache wartet noch auf eine Übersetzung dieses Eintrags – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn die Übersetzung fertig ist.",
-    translateToOthersSkippedWhileTranslating: "Gespeichert. Die Übersetzung in die anderen Sprachen wurde übersprungen, weil dieser Eintrag gerade noch übersetzt wird – starten Sie sie erneut, wenn das fertig ist.",
+    actionRefusedWhilePrimarySaveWaits: "Eine Speicherung der Hauptsprache dieses Eintrags ist noch nicht abgeschlossen – bitte versuchen Sie es erneut, wenn sie fertig ist.",
+    ownSaveRefusedWhilePrimarySaveWaits: "Eine Speicherung der Hauptsprache dieses Eintrags ist noch nicht abgeschlossen – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn das erledigt ist.",
+    primaryTextSkippedWhileBusy: "Die Übersetzungen in den Fremdsprachen sind gespeichert. Nur der Text der Hauptsprache wurde nicht gespeichert, weil für diesen Eintrag noch eine Übersetzung oder Speicherung läuft – übernehmen Sie ihn erneut, wenn das fertig ist.",
+    translateToOthersSkippedWhileTranslating: "Gespeichert. Die Übersetzung in die anderen Sprachen wurde übersprungen, weil für diesen Eintrag noch eine Übersetzung oder Speicherung läuft – starten Sie sie erneut, wenn das fertig ist.",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
     fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons

@@ -217,7 +217,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  other languages because a translation of the item is running. */
   const sayTranslateToOthersSkipped = () => {
     showInfoBoxRef.current(
-      String(tRef.current?.common?.translateToOthersSkippedWhileTranslating || "Saved. The translation into the other languages was skipped because a translation of this item is still running \u2013 start it again when that has finished."),
+      String(tRef.current?.common?.translateToOthersSkippedWhileTranslating || "Saved. The translation into the other languages was skipped because a translation or save of this item is still running \u2013 start it again when that has finished."),
+      "info",
+    );
+  };
+  /** Said where the OTHER languages were already stored (foreign
+   *  accept-and-translate) and only the main-language save was skipped. */
+  const sayPrimaryTextSkipped = () => {
+    showInfoBoxRef.current(
+      String(tRef.current?.common?.primaryTextSkippedWhileBusy || "The translations in the other languages are saved. Only the main-language text was not saved, because a translation or save of this item is still running \u2013 accept it again when that has finished."),
       "info",
     );
   };
@@ -3553,6 +3561,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     refuseOwnSave,
     isOwnSaveBlocked,
     sayTranslateToOthersSkipped,
+    sayPrimaryTextSkipped,
     refuseTranslateRun,
     deletedMarksOfSavesOut,
     buildFieldsForSave,

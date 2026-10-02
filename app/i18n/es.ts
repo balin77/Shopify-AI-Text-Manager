@@ -2112,9 +2112,10 @@ export const es: Translation = {
     ownSaveRefusedWhileItemTranslating: "Todavía se está traduciendo este elemento: el cambio queda sin guardar. Guárdalo cuando termine la traducción.",
     actionRefusedWhileTranslating: "Todavía se está traduciendo a este idioma: inténtalo de nuevo cuando termine la traducción.",
     actionRefusedWhileItemTranslating: "Todavía se está traduciendo este elemento: inténtalo de nuevo cuando termine la traducción.",
-    actionRefusedWhilePrimarySaveWaits: "Un guardado del idioma principal está esperando a una traducción de este elemento: inténtalo de nuevo cuando termine.",
-    ownSaveRefusedWhilePrimarySaveWaits: "Un guardado del idioma principal está esperando a una traducción de este elemento: el cambio queda sin guardar. Guárdalo cuando termine la traducción.",
-    translateToOthersSkippedWhileTranslating: "Guardado. Se omitió la traducción a los demás idiomas porque todavía se está traduciendo este elemento; vuelve a iniciarla cuando termine.",
+    actionRefusedWhilePrimarySaveWaits: "Un guardado del idioma principal de este elemento aún no ha terminado: inténtalo de nuevo cuando termine.",
+    ownSaveRefusedWhilePrimarySaveWaits: "Un guardado del idioma principal de este elemento aún no ha terminado: el cambio queda sin guardar. Guárdalo cuando termine.",
+    primaryTextSkippedWhileBusy: "Las traducciones de los demás idiomas están guardadas. Solo el texto del idioma principal no se guardó, porque todavía hay una traducción o un guardado en curso para este elemento; vuelve a aceptarlo cuando termine.",
+    translateToOthersSkippedWhileTranslating: "Guardado. Se omitió la traducción a los demás idiomas porque todavía hay una traducción o un guardado en curso para este elemento; vuelve a iniciarla cuando termine.",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
     fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons
