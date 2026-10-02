@@ -52,7 +52,7 @@
   them, so data is unchanged). Image URLs are Shopify CDN and
   IDs/dimensions are numeric, so only variant.title needs this.
 {%- endcomment -%}
-{%- capture cp_vg_json -%}
+<script type="application/json" id="cp-embed-data-{{ block.id }}">
   {
     {%- for variant in product.variants -%}
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
@@ -600,8 +600,7 @@
       ]{% unless forloop.last %},{% endunless %}
     {%- endfor -%}
   }
-{%- endcapture -%}
-<script type="application/json" id="cp-embed-data-{{ block.id }}">{{ cp_vg_json }}</script>
+</script>
 
 {%- comment -%}
   Pre-paint setter. Reads the JSON island above (single source of truth,
