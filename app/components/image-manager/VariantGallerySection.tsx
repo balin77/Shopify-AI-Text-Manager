@@ -449,7 +449,10 @@ export function VariantGallerySection({
                   style={{
                     flex: "1 1 200px",
                     minWidth: 180,
-                    padding: "5px 8px",
+                    // Height and vertical padding: AutoGrowTextarea's class
+                    // (button height at rest, 44px on touch).
+                    paddingLeft: 8,
+                    paddingRight: 8,
                     fontSize: 13,
                     border: "1px solid var(--app-field-border-color)",
                     borderRadius: 4,

@@ -1029,8 +1029,15 @@ export function MainNavigation() {
                     one part of a message that has to stay reachable. It sits
                     BESIDE the text (it used to sit under it, which made every
                     message with a link two rows tall). */}
+                {/* Capped, so a long label can never squeeze the message
+                    itself to nothing; the label ellipsizes (responsive.css,
+                    `.info-box-link`) and keeps its full text as the tooltip. */}
                 {infoBox.link && (
-                  <div style={{ flexShrink: 0, whiteSpace: "nowrap" }}>
+                  <div
+                    className="info-box-link"
+                    title={infoBox.link.label}
+                    style={{ flex: "0 1 auto", minWidth: 0, maxWidth: "40%", whiteSpace: "nowrap" }}
+                  >
                     <Button
                       variant="plain"
                       onClick={() => handleInfoBoxLink(infoBox.link!.url)}

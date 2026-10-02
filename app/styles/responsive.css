@@ -415,7 +415,7 @@
 
 /* A SINGLE-LINE value that wraps instead of scrolling sideways
    (SingleLineTextField.tsx). It is a Polaris `multiline` textarea of one line
-   minimum, so it rests at the old input's height, and three things keep it
+   minimum, so it rests at the old input's height, and these rules keep it
    looking like the one-line field it replaces:
    - the row does NOT wrap: Polaris' multiline field is `flex-wrap: wrap` with a
      100%-wide textarea, which pushes a suffix (the SEO title's " - Shop Name")
@@ -423,48 +423,107 @@
      line taller than before. Here they stay beside the text, as on an input;
    - Polaris measures the needed height on a hidden copy that spans the whole
      field, so the copy is inset by what the suffix / count take
-     (`--app-autogrow-resizer-inset`, written by the component) — otherwise a
-     value just short of the full width measures as one line and scrolls;
-   - long tokens (a handle, a URL) break like the measuring copy does. */
+     (`--app-autogrow-resizer-inset`, written by the component), and it is
+     padded, sized and line-spaced EXACTLY like the textarea — Polaris pads it
+     1px less per side (every measured height 2px short) and does not follow
+     the phone font size;
+   - on a touch target (44px) one line is CENTRED: the vertical padding is
+     what centres one line in 44px rather than Polaris' 6px, so a one-line
+     value is not stuck to the top of a box taller than its text, and a
+     wrapped value grows from there;
+   - long tokens (a handle, a URL) break like the measuring copy does.
+   `overflow: auto`, not hidden: should a measurement ever lag (it follows
+   width changes through the component's observer), the worst case is a
+   scrollbar, never text cut off invisibly. */
+.app-single-line-autogrow {
+  --app-autogrow-line: var(--p-font-line-height-500);
+  --app-autogrow-pad-y: var(--p-space-150);
+}
+@media (max-width: 47.9975em) {
+  .app-single-line-autogrow {
+    --app-autogrow-line: var(--p-font-line-height-600);
+  }
+}
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
+  .app-single-line-autogrow {
+    --app-autogrow-pad-y: calc((var(--touch-target-min) - var(--app-autogrow-line)) / 2);
+  }
+}
 .app-single-line-autogrow .Polaris-TextField--multiline {
   flex-wrap: nowrap;
 }
 .app-single-line-autogrow .Polaris-TextField--multiline > .Polaris-TextField__Input {
   width: auto;
+  padding-top: var(--app-autogrow-pad-y);
+  padding-bottom: var(--app-autogrow-pad-y);
   overflow-wrap: break-word;
   word-break: break-word;
-  /* No scrollbar: the box is always as tall as its text (the measuring copy
-     below is padded exactly like it), and `auto` flashed a scrollbar for the
-     one frame between a keystroke and Polaris' re-measure. */
-  overflow: hidden;
+  overflow: auto;
 }
 /* Polaris gives the character count `width: 100%` so it takes a row of its
    own under a multi-line text; here it sits beside the text like the suffix,
-   at the height of the LAST line. */
+   on the LAST line (same padding and line height as the text). */
 .app-single-line-autogrow .Polaris-TextField--multiline > .Polaris-TextField__CharacterCount,
 .app-single-line-autogrow .Polaris-TextField--multiline > .Polaris-TextField__Suffix {
   width: auto;
   flex: 0 0 auto;
   align-self: flex-end;
-  padding-bottom: var(--p-space-150);
+  margin-top: 0 !important; /* AIEditableField.css pushes the count down 4px */
+  padding-bottom: var(--app-autogrow-pad-y);
+  line-height: var(--app-autogrow-line);
 }
 .app-single-line-autogrow .Polaris-TextField__Resizer {
   right: var(--app-autogrow-resizer-inset, 0px);
 }
-/* Polaris pads its measuring copy by `--pg-control-vertical-padding` (5px)
-   while the textarea it measures for is padded by `--p-space-150` (6px), so
-   every measured height came out 2px short and the last line overflowed. */
 .app-single-line-autogrow .Polaris-TextField__DummyInput {
-  padding-top: var(--p-space-150);
-  padding-bottom: var(--p-space-150);
+  padding-top: var(--app-autogrow-pad-y);
+  padding-bottom: var(--app-autogrow-pad-y);
+  line-height: var(--app-autogrow-line);
 }
-/* Below 48em Polaris draws the field at a larger font than its measuring copy
-   (font-size 400 / line-height 600 against 325 / 500), which under-measures a
-   wrapped value; the copy follows the field here. */
+/* Below 48em Polaris draws the field at font-size 400 (and the phone rule
+   further down at 16px) while its copy stays at 325. */
 @media (max-width: 47.9975em) {
   .app-single-line-autogrow .Polaris-TextField__DummyInput {
     font-size: var(--p-font-size-400);
-    line-height: var(--p-font-line-height-600);
+  }
+}
+@media (max-width: 768px) {
+  .app-single-line-autogrow .Polaris-TextField__DummyInput {
+    font-size: 16px;
+  }
+}
+
+/* The navigation InfoBox's deep link (MainNavigation.tsx): its wrapper is
+   capped so a long label cannot squeeze the message, and the label ellipsizes
+   inside it instead of being cut mid-letter. */
+.info-box-link .Polaris-Button {
+  max-width: 100%;
+  min-width: 0;
+}
+.info-box-link .Polaris-Button > *,
+.info-box-link .Polaris-Button .Polaris-Text--root {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The hand-built twin (AutoGrowTextarea.tsx — the image manager's alt box):
+   at rest as tall as the buttons beside it, and a 44px touch target on phones
+   and coarse pointers with the one line centred in it. Its line height is 20px
+   (set inline by the component) and its border 1px. A class rather than an
+   inline style, because an inline min-height would beat the touch rule. */
+.app-autogrow-textarea {
+  box-sizing: border-box;
+  min-height: var(--app-control-height);
+  padding-top: calc((var(--app-control-height) - 22px) / 2);
+  padding-bottom: calc((var(--app-control-height) - 22px) / 2);
+}
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
+  .app-autogrow-textarea {
+    min-height: var(--touch-target-min);
+    padding-top: calc((var(--touch-target-min) - 22px) / 2);
+    padding-bottom: calc((var(--touch-target-min) - 22px) / 2);
   }
 }
 

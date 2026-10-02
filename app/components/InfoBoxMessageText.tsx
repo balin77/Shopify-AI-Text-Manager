@@ -30,12 +30,31 @@ export function InfoBoxMessageText({ message }: { message: string }) {
       setMode(infoBoxFitMode(measure.getBoundingClientRect().width, box.clientWidth));
     };
     fit();
-    if (typeof ResizeObserver === "undefined") return;
-    // Only the box's WIDTH decides; its height is the same in both modes, so
-    // a mode change cannot feed back into this observer.
-    const observer = new ResizeObserver(fit);
-    observer.observe(box);
-    return () => observer.disconnect();
+    // A web font arriving late changes the message's natural width without
+    // touching the box: re-measure then too.
+    let cancelled = false;
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+    const onFontsLoaded = () => {
+      if (!cancelled) fit();
+    };
+    fonts?.ready.then(onFontsLoaded).catch(() => {});
+    fonts?.addEventListener?.("loadingdone", onFontsLoaded);
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      // The box's WIDTH and the measuring copy's width are the inputs. The
+      // mode changes the text's font size and therefore the box's HEIGHT
+      // (one 20px line or two 15px lines), and a height change can fire this
+      // observer too — harmless: the decision reads widths only, the copy is
+      // always at the normal size, so a repeat answers the same mode.
+      observer = new ResizeObserver(fit);
+      observer.observe(box);
+      observer.observe(measure);
+    }
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+      fonts?.removeEventListener?.("loadingdone", onFontsLoaded);
+    };
   }, [message]);
 
   const size = mode === "compact" ? INFO_BOX_COMPACT : INFO_BOX_NORMAL;

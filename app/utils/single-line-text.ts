@@ -7,8 +7,9 @@
  * that WRAPS and grows with its content (`SingleLineTextField`,
  * `AutoGrowTextarea`) — and a textarea accepts line breaks, which none of
  * these values may ever carry (a "\n" in a handle or an SEO title is a broken
- * URL / a broken `<title>`). These two helpers are the guard, so what is saved
- * stays byte-identical to what the old `<input>` produced:
+ * URL / a broken `<title>`). These helpers are the guard: typing or pasting
+ * never ADDS a line break (a value already stored with one is left as it is —
+ * see `normalizeSingleLineChange`):
  *
  * - `toSingleLine` collapses every line break in a CHANGED value (a paste, an
  *   IME commit, a drag-and-drop) into ONE space. An `<input>` would have

@@ -130,6 +130,29 @@ describe("AutoGrowTextarea", () => {
   });
 });
 
+describe("spellcheck", () => {
+  it("is off by default in both boxes and can be switched on", () => {
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <SingleLineTextField label="Handle" value="my-handle" onChange={() => {}} />
+        <AutoGrowTextarea value="alt" />
+        <AutoGrowTextarea value="alt" spellCheck />
+      </AppProvider>,
+    );
+    const areas = container.querySelectorAll("textarea");
+    expect(areas[0].getAttribute("spellcheck")).toBe("false");
+    expect(areas[1].getAttribute("spellcheck")).toBe("false");
+    expect(areas[2].getAttribute("spellcheck")).toBe("true");
+  });
+
+  it("the hand-built box carries the sizing class (its min-height lives in CSS, not inline)", () => {
+    const { container } = render(<AutoGrowTextarea value="" placeholder="inherited" />);
+    const area = container.querySelector("textarea")!;
+    expect(area.className).toContain("app-autogrow-textarea");
+    expect(area.style.minHeight).toBe("");
+  });
+});
+
 describe("infoBoxFitMode", () => {
   it("keeps a message that fits on one line at the normal size", () => {
     expect(infoBoxFitMode(300, 400)).toBe("single");

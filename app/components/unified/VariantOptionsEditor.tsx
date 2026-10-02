@@ -88,9 +88,9 @@ import {
   Popover,
   Tag,
   Text,
-  TextField,
   Tooltip,
 } from "@shopify/polaris";
+import { SingleLineTextField } from "./SingleLineTextField";
 import { DeleteIcon, DragHandleIcon, PlusIcon } from "@shopify/polaris-icons";
 import {
   DndContext,
@@ -1026,12 +1026,11 @@ export function VariantOptionsEditor({
                   className={missingClass(option.id, nameOf(option))}
                   style={{ maxWidth: "var(--app-short-field-width)" }}
                 >
-                  <TextField
+                  <SingleLineTextField
                     label={t.optionNameLabel || "Option name"}
                     labelHidden
                     value={nameOf(option)}
                     onChange={(value) => onNameChange(option.id, value)}
-                    autoComplete="off"
                   />
                 </div>
 
@@ -1209,7 +1208,7 @@ export function VariantOptionsEditor({
                         <DragHandle label={reorderValueLabel(value.name)} />
                         <Swatch swatch={resolveSwatch(value.name, swatches[value.id], { isColourOption })} />
                         <div className={missingClass(value.id, value.name)} style={{ flex: 1, minWidth: 0 }}>
-                          <TextField
+                          <SingleLineTextField
                             label={t.valueLabel || "Value"}
                             labelHidden
                             value={value.name}
@@ -1231,7 +1230,6 @@ export function VariantOptionsEditor({
                               all[target] = next;
                               onValuesChange(option.id, all);
                             }}
-                            autoComplete="off"
                           />
                         </div>
                         <Button
@@ -1281,13 +1279,12 @@ export function VariantOptionsEditor({
                           lines up with the row above rather than running 150px
                           past it. */}
                       <div style={{ flex: 1, maxWidth: "var(--app-value-chip-width)" }}>
-                        <TextField
+                        <SingleLineTextField
                           label={t.addValue || "Add another value"}
                           labelHidden
                           placeholder={t.addValue || "Add another value"}
                           value={valueDrafts[option.id] ?? ""}
                           onChange={(next) => setValueDrafts((prev) => ({ ...prev, [option.id]: next }))}
-                          autoComplete="off"
                         />
                       </div>
                       <Button
@@ -1371,11 +1368,10 @@ export function VariantOptionsEditor({
           <Card padding="300">
             <BlockStack gap="300">
               <div style={{ maxWidth: "var(--app-short-field-width)" }}>
-                <TextField
+                <SingleLineTextField
                   label={t.optionNameLabel || "Option name"}
                   value={draft.name}
                   onChange={(name) => setDraft({ ...draft, name })}
-                  autoComplete="off"
                   placeholder={t.optionNamePlaceholder || "Size, Colour, Material"}
                 />
               </div>
@@ -1385,7 +1381,7 @@ export function VariantOptionsEditor({
                   <InlineStack key={index} gap="200" blockAlign="center" wrap={false}>
                     <Swatch swatch={resolveSwatch(value, null, { isColourOption: looksLikeColourOption(draft.name) })} />
                     <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
-                      <TextField
+                      <SingleLineTextField
                         label={t.valueLabel || "Value"}
                         labelHidden
                         value={value}
@@ -1398,7 +1394,6 @@ export function VariantOptionsEditor({
                           if (next.trim() && index === values.length - 1) values.push("");
                           setDraft({ ...draft, values });
                         }}
-                        autoComplete="off"
                       />
                     </div>
                     <Button
