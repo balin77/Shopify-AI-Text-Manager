@@ -20,6 +20,69 @@ export function storefrontFilename(url) {
   return last || null;
 }
 
+const VIDEO_MIME = /^(video\/[a-z0-9.+-]+|application\/x-mpegurl|application\/vnd\.apple\.mpegurl)$/i;
+
+function isVideoMime(m) {
+  return typeof m === "string" && VIDEO_MIME.test(m);
+}
+
+export function isShopifyCdnUrl(url) {
+  if (typeof url !== "string" || url.length > 2048) return false;
+  if (/["'<>\s\\]/.test(url)) return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && u.hostname === "cdn.shopify.com";
+  } catch {
+    return false;
+  }
+}
+
+function isSafeEmbedUrl(url) {
+  return typeof url === "string" && (
+    /^https:\/\/www\.youtube\.com\/embed\/[A-Za-z0-9_-]{11}$/.test(url) ||
+    /^https:\/\/player\.vimeo\.com\/video\/\d{6,12}$/.test(url)
+  );
+}
+
+function isSafeExternalThumbnail(url) {
+  return typeof url === "string" && /^https:\/\/img\.youtube\.com\/vi\/[A-Za-z0-9_-]{11}\/hqdefault\.jpg$/.test(url);
+}
+
+/** Port of the per-entry rules of TS parseLocalizedMediaValue: true = the app would keep this entry. */
+export function isUsableEntry(e) {
+  if (!e || typeof e !== "object") return false;
+  if (!isSafeFilename(e.o) || typeof e.m !== "string" || !e.m) return false;
+  if (typeof e.l !== "string" || !e.l || typeof e.k !== "string") return false;
+  if (typeof e.f !== "string") return false;
+  const u = typeof e.u === "string" ? e.u : "";
+  const posterOk = e.p === undefined || e.p === "" || isSafeFilename(e.p);
+  if (e.x === undefined) return isShopifyCdnUrl(u);
+  if (e.x === "v") {
+    const sources = Array.isArray(e.w) ? e.w.filter((s) => !!s && isShopifyCdnUrl(s.u) && isVideoMime(s.t)) : [];
+    if (!posterOk || sources.length === 0) return false;
+    return u === "" || isShopifyCdnUrl(u);
+  }
+  if (e.x === "e") {
+    if (!posterOk || !isSafeEmbedUrl(e.r)) return false;
+    return u === "" || isSafeExternalThumbnail(u);
+  }
+  return false;
+}
+
+/** Same verdict as TS isForeignLocalizedMediaValue (string input). */
+export function isForeignLocalizedMediaValue(raw) {
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw === "string" && raw.trim() === "") return false;
+  let data = raw;
+  if (typeof raw === "string") {
+    try { data = JSON.parse(raw); } catch { return true; }
+  }
+  const list = data && data.e;
+  if (!Array.isArray(list)) return true;
+  if (list.length === 0) return false;
+  return !list.some(isUsableEntry);
+}
+
 /**
  * Pure. Returns { changed: false, reason } or { changed: true, value, count }.
  * Only entries of the image kind (no `x`) whose `m` is the old GID are touched;
@@ -37,11 +100,8 @@ export function rekeyLocalizedMediaValue(raw, oldMediaId, newMediaId, newUrl) {
   if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.e)) {
     return { changed: false, reason: "foreign" };
   }
-  // Same rule as TS isForeignLocalizedMediaValue: entries present but none of
-  // the shape this app writes (o, m, l strings) means someone else's document.
-  const usable = (e) => e && typeof e === "object" && isSafeFilename(e.o) && typeof e.m === "string" && e.m && typeof e.l === "string" && e.l && typeof e.k === "string";
-  if (data.e.length > 0 && !data.e.some(usable)) return { changed: false, reason: "foreign" };
-  const hit = (e) => e && typeof e === "object" && e.x === undefined && e.m === oldMediaId;
+  if (isForeignLocalizedMediaValue(data)) return { changed: false, reason: "foreign" };
+  const hit = (e) => e && typeof e === "object" && e.x === undefined && e.m === oldMediaId && isUsableEntry(e);
   if (!data.e.some(hit)) return { changed: false, reason: "no-entries" };
   if (!oldMediaId || !newMediaId || oldMediaId === newMediaId) return { changed: false, reason: "bad-ids" };
   const name = storefrontFilename(newUrl);
@@ -59,13 +119,25 @@ const NS = "custom";
 const KEY = "localized_media";
 const DEADLINE_MS = 20000;
 
-// No compareDigest precedent in this repo and the 2026-07 field name is
-// unconfirmed, so concurrent conversions of one product are serialised here
-// instead (the worker runs in one process). Cross-process races stay open.
+// Concurrent conversions of one product are serialised here (the worker runs
+// in one process). compareDigest (Metafield / MetafieldsSetInput) is NOT used:
+// its existence in 2026-07 could not be confirmed (schema proxy unreachable
+// from the build sandbox) and it is not guessed. RESIDUAL: the editor's
+// localizedMediaSet/Remove and removeEntriesForDeletedMedia run in the web
+// process and can write between this job's read and write; that lost update is
+// not prevented. The window is one product's read-to-write (typically < 1 s).
+// Each job gets its own timeout, started when the job RUNS; a hung job is
+// abandoned (not killed) so the chain advances.
 const chains = new Map();
-function serialise(productId, job) {
+function serialise(productId, job, timeoutMs) {
   const prev = chains.get(productId) || Promise.resolve();
-  const run = prev.then(job, job);
+  const run = prev.catch(() => {}).then(() => {
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve("timed out after " + timeoutMs + "ms, may still complete in background"), timeoutMs);
+    });
+    return Promise.race([Promise.resolve().then(job), timeout]).finally(() => clearTimeout(timer));
+  });
   const tail = run.catch(() => {});
   chains.set(productId, tail);
   tail.then(() => { if (chains.get(productId) === tail) chains.delete(productId); });
@@ -81,14 +153,14 @@ function sameJson(a, b) {
   try { return canonical(JSON.parse(a)) === canonical(JSON.parse(b)); } catch { return false; }
 }
 
-async function gql(fetchFn, shopifyApiUrl, headers, query, variables, label) {
+async function gql(fetchFn, shopifyApiUrl, headers, query, variables, label, sleep) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetchFn(shopifyApiUrl, { method: "POST", headers, body: JSON.stringify({ query, variables }) }, label);
     if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
     const body = await res.json();
     if (body.errors) {
       const throttled = JSON.stringify(body.errors).includes("THROTTLED");
-      if (throttled && attempt === 0) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+      if (throttled && attempt === 0) { await sleep(1000); continue; }
       throw new Error(`${label} errors: ${JSON.stringify(body.errors).slice(0, 300)}`);
     }
     return body.data;
@@ -103,19 +175,18 @@ async function gql(fetchFn, shopifyApiUrl, headers, query, variables, label) {
 export function rekeyLocalizedMediaAfterConversion(opts) {
   const { productId } = opts;
   if (!productId) return Promise.resolve("skipped: missing ids");
-  let timer;
-  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve("failed: deadline exceeded"), DEADLINE_MS); });
-  const work = serialise(productId, () => doRekey(opts));
-  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+  return serialise(productId, () => doRekey(opts), opts.deadlineMs ?? DEADLINE_MS)
+    .catch((err) => `failed: ${err && err.message ? err.message : String(err)}`);
 }
 
-async function doRekey({ fetchFn, shopifyApiUrl, headers, productId, oldMediaId, newMediaId, resolvedUrl, fetchUrl, sleep, delayMs = 2000 }) {
+async function doRekey({ fetchFn, shopifyApiUrl, headers, productId, oldMediaId, newMediaId, resolvedUrl, fetchUrl, sleep: sleepOpt, delayMs = 2000 }) {
+  const sleep = sleepOpt || ((ms) => new Promise((r) => setTimeout(r, ms)));
   try {
     if (!oldMediaId || !newMediaId) return "skipped: missing ids";
     const read = await gql(
       fetchFn, shopifyApiUrl, headers,
       `query($id: ID!) { product(id: $id) { metafield(namespace: "custom", key: "localized_media") { value } } }`,
-      { id: productId }, "localized media read",
+      { id: productId }, "localized media read", sleep,
     );
     const raw = read?.product?.metafield?.value ?? null;
     const probe = rekeyLocalizedMediaValue(raw, oldMediaId, newMediaId, "https://cdn.shopify.com/x/probe.webp");
@@ -123,7 +194,7 @@ async function doRekey({ fetchFn, shopifyApiUrl, headers, productId, oldMediaId,
 
     let url = resolvedUrl || null;
     if (!url) {
-      await (sleep ? sleep(delayMs) : new Promise((r) => setTimeout(r, delayMs)));
+      await sleep(delayMs);
       url = await fetchUrl();
     }
     if (!url) return "orphaned: new media URL unavailable";
@@ -134,7 +205,7 @@ async function doRekey({ fetchFn, shopifyApiUrl, headers, productId, oldMediaId,
       fetchFn, shopifyApiUrl, headers,
       `mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { namespace key value owner { ... on Product { id } } } userErrors { field message } } }`,
       { m: [{ ownerId: productId, namespace: NS, key: KEY, type: "json", value: next.value }] },
-      "localized media write",
+      "localized media write", sleep,
     );
     const errs = data?.metafieldsSet?.userErrors ?? [];
     if (errs.length) return `failed: userErrors ${JSON.stringify(errs).slice(0, 300)}`;

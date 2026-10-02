@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { isSafeFilename as tsSafe, storefrontFilename as tsName } from "~/services/localized-media/localized-media.shared";
+import { describe, it, expect, vi } from "vitest";
+import { isSafeFilename as tsSafe, storefrontFilename as tsName, isForeignLocalizedMediaValue as tsForeign } from "~/services/localized-media/localized-media.shared";
 import * as js from "../../localized-media-rekey.js";
 
 const NAMES: unknown[] = [
@@ -17,6 +17,36 @@ describe("webp re-key parity with the TS rules", () => {
   });
   it("storefrontFilename agrees", () => {
     for (const u of URLS) expect(js.storefrontFilename(u), String(u)).toBe(tsName(u as any));
+  });
+});
+
+describe("foreign-value classification parity", () => {
+  const O = "gid://shopify/MediaImage/1";
+  const img = (o: any = {}) => ({ o: "a.png", m: O, l: "de", k: "", u: "https://cdn.shopify.com/r.png", f: "gid://shopify/File/9", ...o });
+  const vid = (o: any = {}) => ({ ...img({ u: "" }), x: "v", p: "p.jpg", w: [{ u: "https://cdn.shopify.com/v.mp4", t: "video/mp4" }], ...o });
+  const emb = (o: any = {}) => ({ ...img({ u: "" }), x: "e", r: "https://www.youtube.com/embed/abcdefghijk", ...o });
+  const doc = (e: any[]) => JSON.stringify({ v: 1, e });
+  const { f: _f, ...noF } = img();
+  const FIXTURES: Array<[string, unknown]> = [
+    ["valid image", doc([img()])], ["missing f", doc([noF])], ["non-CDN u", doc([img({ u: "https://evil.com/r.png" })])],
+    ["empty k string missing", doc([{ ...img(), k: undefined }])],
+    ["valid video", doc([vid()])], ["video no sources", doc([vid({ w: [] })])], ["video bad mime", doc([vid({ w: [{ u: "https://cdn.shopify.com/v.mp4", t: "text/html" }] })])],
+    ["video bad poster", doc([vid({ p: "a/b" })])], ["video non-CDN u", doc([vid({ u: "https://evil.com/x" })])],
+    ["valid embed", doc([emb()])], ["embed bad r", doc([emb({ r: "https://evil.com/embed/x" })])],
+    ["embed bad u", doc([emb({ u: "https://cdn.shopify.com/x.png" })])],
+    ["unknown x", doc([img({ x: "z" })])], ["mixed list", doc([img({ u: "http://x" }), img()])],
+    ["empty list", doc([])], ["no e", JSON.stringify({ v: 1 })], ["array", "[]"], ["non-JSON", "nope"], ["blank", "  "], ["null", null],
+    ["entry null", doc([null as any])],
+  ];
+  for (const [name, raw] of FIXTURES) {
+    it(name, () => expect(js.isForeignLocalizedMediaValue(raw), name).toBe(tsForeign(raw)));
+  }
+  it("does not rewrite what TS calls foreign", () => {
+    for (const [name, raw] of FIXTURES) {
+      if (typeof raw === "string" && tsForeign(raw)) {
+        expect(js.rekeyLocalizedMediaValue(raw, O, "gid://shopify/MediaImage/2", "https://cdn.shopify.com/n.webp").changed, name).toBe(false);
+      }
+    }
   });
 });
 
@@ -107,5 +137,67 @@ describe("rekeyLocalizedMediaAfterConversion", () => {
   it("userErrors or missing echo is not success", async () => {
     expect((await run(stored, "errors", URL2))?.r).toMatch(/^failed/);
     expect((await run(stored, "none", URL2))?.r).toMatch(/^failed/);
+  });
+});
+
+describe("rekeyLocalizedMediaAfterConversion: retries, deadline, chain, echo", () => {
+  const stored = JSON.stringify({ v: 1, e: [e({})] });
+  const base = (fetchFn: any, extra: any = {}) => ({
+    fetchFn, shopifyApiUrl: "u", headers: {}, productId: "p", oldMediaId: OLD, newMediaId: NEW,
+    resolvedUrl: URL2, fetchUrl: async () => null, sleep: async () => {}, ...extra,
+  });
+  const ok = (data: any) => ({ ok: true, json: async () => ({ data }) });
+  const writeOk = (v: string, id = "p", value?: string) => ok({ metafieldsSet: { metafields: [{ owner: { id }, namespace: "custom", key: "localized_media", value: value ?? v }], userErrors: [] } });
+  const throttled = { ok: true, json: async () => ({ errors: [{ extensions: { code: "THROTTLED" } }] }) };
+
+  it("retries a THROTTLED read once, using the injected sleep", async () => {
+    let reads = 0;
+    const sleep = vi.fn(async () => {});
+    const fetchFn = async (_u: string, o: any) => {
+      const { query, variables } = JSON.parse(o.body);
+      if (!query.includes("mutation")) { reads += 1; return reads === 1 ? throttled : ok({ product: { metafield: { value: stored } } }); }
+      return writeOk(variables.m[0].value);
+    };
+    expect(await js.rekeyLocalizedMediaAfterConversion(base(fetchFn, { sleep }))).toBe("rekeyed 1 entry");
+    expect(reads).toBe(2);
+    expect(sleep).toHaveBeenCalledWith(1000);
+  });
+  it("fails after two THROTTLED answers", async () => {
+    let n = 0;
+    const fetchFn = async () => { n += 1; return throttled; };
+    expect(await js.rekeyLocalizedMediaAfterConversion(base(fetchFn))).toMatch(/^failed: .*THROTTLED/);
+    expect(n).toBe(2);
+  });
+  it("deadline starts when the job runs and reports a timeout, not a failure", async () => {
+    const fetchFn = () => new Promise(() => {});
+    const r = await js.rekeyLocalizedMediaAfterConversion(base(fetchFn, { productId: "dl", deadlineMs: 20 }));
+    expect(r).toMatch(/^timed out/);
+    expect(r).toMatch(/may still complete in background/);
+  });
+  it("the chain continues after a hung job and after a rejecting one", async () => {
+    let first = true;
+    const hang = () => new Promise(() => {});
+    const good = async (_u: string, o: any) => {
+      const { query, variables } = JSON.parse(o.body);
+      return !query.includes("mutation") ? ok({ product: { metafield: { value: stored } } }) : writeOk(variables.m[0].value, variables.m[0].ownerId);
+    };
+    const fetchFn = (u: string, o: any) => { if (first) { first = false; return hang(); } return good(u, o); };
+    const a = js.rekeyLocalizedMediaAfterConversion(base(fetchFn, { productId: "ch", deadlineMs: 20 }));
+    const b = js.rekeyLocalizedMediaAfterConversion(base(fetchFn, { productId: "ch", deadlineMs: 200 }));
+    expect(await a).toMatch(/^timed out/);
+    expect(await b).toBe("rekeyed 1 entry");
+    const rej = async () => { throw new Error("boom"); };
+    const c = js.rekeyLocalizedMediaAfterConversion(base(rej, { productId: "ch2" }));
+    const d = js.rekeyLocalizedMediaAfterConversion(base(good, { productId: "ch2" }));
+    expect(await c).toBe("failed: boom");
+    expect(await d).toBe("rekeyed 1 entry");
+  });
+  it("an echo with a different value, or another owner, is not success", async () => {
+    const mk = (id: string, value?: string) => async (_u: string, o: any) => {
+      const { query, variables } = JSON.parse(o.body);
+      return !query.includes("mutation") ? ok({ product: { metafield: { value: stored } } }) : writeOk(variables.m[0].value, id, value);
+    };
+    expect(await js.rekeyLocalizedMediaAfterConversion(base(mk("p", JSON.stringify({ v: 1, e: [] }))))).toBe("failed: not confirmed by echo");
+    expect(await js.rekeyLocalizedMediaAfterConversion(base(mk("other")))).toBe("failed: not confirmed by echo");
   });
 });
