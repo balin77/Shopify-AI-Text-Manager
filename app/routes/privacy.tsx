@@ -18,7 +18,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     lastUpdated: '2026-09-30',
     companyName: 'Gubler - Multimedia und Print',
     appName: 'ContentPilot AI',
-    supportEmail: 'gublerra@gmail.com',
+    supportEmail: 'info@contentpilot-ai.com',
   });
 };
 

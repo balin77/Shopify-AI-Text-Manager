@@ -347,6 +347,31 @@ DATABASE_URL=${{Postgres.DATABASE_URL}} (automatisch von dev-database)
 3. Klicke **"Generate Domain"** für eine separate Railway Domain
 4. Diese URL ist für Testing gedacht
 
+### Öffentliche Webseite: `contentpilot-ai.com` (eingerichtet 2026-10-02)
+
+Die Marketing-Seite läuft im Production-Service `Contentpilot`; die Domain ist
+bei Infomaniak registriert und der DNS liegt dort (Infomaniak Manager →
+Domains → `contentpilot-ai.com` → DNS-Zone). Mail (`info@contentpilot-ai.com`)
+läuft ebenfalls über Infomaniak — deren MX/SPF/DKIM-Einträge in der Zone nicht
+löschen.
+
+| Railway Custom Domain | Port |
+|---|---|
+| `www.contentpilot-ai.com` | 8080 (wie `contentpilotai.up.railway.app`) |
+
+DNS-Einträge bei Infomaniak (Name ohne Domain-Suffix):
+
+| Typ | Name | Wert |
+|---|---|---|
+| CNAME | `www` | `pi3g5r7t.up.railway.app` |
+| TXT | `_railway-verify.www` | `railway-verify=b85dc7fad0930d0d50ae74175ed4cfdf925e6cba31a82d9ec455a605daf1d41d` |
+
+Die Hauptdomain ohne `www` braucht bei Railway einen ALIAS-Eintrag oder
+CNAME-Flattening; ob Infomaniak das kann, ist offen. Nach der Verbindung
+`PUBLIC_SITE_URL=https://www.contentpilot-ai.com` im Production-Service
+setzen (Sitemap- und Canonical-URLs der Webseite). Die App-URL in
+`shopify.app.prod.toml` bleibt bewusst auf `contentpilotai.up.railway.app`.
+
 ## 5. Shopify App Configuration
 
 ### Production App:

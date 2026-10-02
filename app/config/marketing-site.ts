@@ -10,7 +10,7 @@ export const MARKETING_SITE = {
   /** Matches `companyName` in app/routes/privacy.tsx. */
   companyName: "Gubler - Multimedia und Print",
   appName: "ContentPilot AI",
-  supportEmail: "gublerra@gmail.com",
+  supportEmail: "info@contentpilot-ai.com",
   /**
    * The embedded app's own path. The site does NOT link to it — `/app` only
    * works from inside the Shopify admin — but the landing route still
