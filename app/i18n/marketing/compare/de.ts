@@ -313,7 +313,7 @@ export const compareDe: CompareCopy = {
     blogArticles: "Ein Artikel aus Titel und Keyword; kein Blog-Planer",
     autoTranslate: "Mit eigenem KI-Key oder enthaltener KI",
     aiProvider: "Sechs Anbieter",
-    imagesPerLanguage: "Ab Pro: Produktbilder und -videos, Theme-Bilder, auch je Markt",
+    imagesPerLanguage: "Ab Pro: Produktbilder und -videos, Theme-Bilder, auch je Markt; keine Kollektions- und Artikelbilder",
     currency: "Macht Shopify Markets",
     speedOptimization: "Bewusst nicht – wir ändern keinen Theme-Code",
     keywordVolume: "Search Console liefert echte Zahlen",
@@ -523,7 +523,7 @@ export const compareDe: CompareCopy = {
         "Schreibt und verbessert Produkttexte, SEO-Titel und Alt-Texte.",
         "Umfassende SEO-Werkzeuge und Sichtbarkeit in KI-Suchen.",
         "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
-        "Andere Bilder und Videos je Sprache und Markt ab Pro, ohne Begrenzung auf eine Zahl von Produkten.",
+        "Andere Bilder und Videos je Sprache und Markt ab Pro, für jedes Produkt Ihres Plans, ohne eigenes Bildkontingent.",
       ],
       verdict:
         "Wählen Sie Transcy, wenn Sie einen Währungsumrechner über Shopify Markets hinaus oder übersetzten Text in Bildern brauchen. Wählen Sie ContentPilot, wenn Übersetzungen in Ihrer eigenen Tonalität entstehen sollen und Sie eine App für Texte, SEO und Übersetzungen suchen.",
@@ -578,7 +578,7 @@ export const compareDe: CompareCopy = {
         "Ein Tabellen-Editor für den ganzen Katalog und Bildergalerien pro Variante.",
       ],
       verdict:
-        "Wählen Sie T Lab, wenn Sie wenige Sprachen günstig mit KI übersetzen wollen und Bilder, Texte anderer Apps oder Währungen übersetzen müssen. Wählen Sie ContentPilot, wenn Sie alle Sprachen Ihres Shops in Ihrer eigenen Tonalität, ohne einmaliges Kontingent pro Sprache, und eine App für Texte, SEO und Übersetzungen wollen.",
+        "Wählen Sie T Lab, wenn Sie wenige Sprachen günstig mit KI übersetzen wollen und Texte anderer Apps oder Währungen übersetzen oder Bilder auch auf Kollektions- und Artikelseiten ersetzen müssen. Wählen Sie ContentPilot, wenn Sie alle Sprachen Ihres Shops in Ihrer eigenen Tonalität, ohne einmaliges Kontingent pro Sprache, und eine App für Texte, SEO und Übersetzungen wollen.",
       notes: {
         nativeStorage: "Bilder und eigene Ersetzungen über die App",
         brandVoice: "Shop-Kontext; Tonalität nur mit eigenem Key",

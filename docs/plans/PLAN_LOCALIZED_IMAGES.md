@@ -1,6 +1,6 @@
 # Andere Bilder je Sprache — Plan
 
-**Status:** **In Umsetzung bis Phase 1b** (Owner-Entscheid 2026-09-30). Phase 2 wird nur VORBEREITET (Datenfelder, Veraltet-Erkennung), nicht gebaut. Roadmap-Einträge `localized-images` und `image-translation` in [roadmap.server.ts](../../app/config/roadmap.server.ts). Theme-Bilder: Schreibweg **gemessen** (Probe Phase 0, Live-Shop 2026-10-02, API 2026-07) — Bildeinstellungen sind übersetzbar, Register/Lesen/Entfernen klappt global und pro Markt. Ob der Shop ein anderes Bild tatsächlich ausliefert, ist weiter nur Changelog-Aussage.
+**Status:** **Phase 0, 1a und 1b ausgeliefert (2026-10-02)** (Umfang per Owner-Entscheid 2026-09-30). Phase 2 ist nur VORBEREITET (Datenfelder, Veraltet-Erkennung), nicht gebaut. Roadmap-Einträge `localized-images` und `image-translation` in [roadmap.server.ts](../../app/config/roadmap.server.ts). Theme-Bilder: Schreibweg **gemessen** (Probe Phase 0, Live-Shop 2026-10-02, API 2026-07) — Bildeinstellungen sind übersetzbar, Register/Lesen/Entfernen klappt global und pro Markt. Ob der Shop ein anderes Bild tatsächlich ausliefert, ist weiter nur Changelog-Aussage.
 
 ## Owner-Entscheide (2026-09-30)
 

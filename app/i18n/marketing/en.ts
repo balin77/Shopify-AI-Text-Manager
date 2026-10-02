@@ -92,7 +92,7 @@ export const en = {
           "Change a source text and the translation is re-made, not left stale",
           "Fill only what is missing across the whole catalogue in one run",
           "Translated URL handles, with the 301 redirect written for you",
-          "Different images and videos per language and market: product gallery, sharing image and theme images",
+          "Different images and videos per language and market: product gallery and theme images, plus the sharing and search-engine image with the matching embeds",
         ],
       },
       {

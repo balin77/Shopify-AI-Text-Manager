@@ -79,7 +79,7 @@ export const de: MarketingTranslation = {
           "Ändern Sie einen Ausgangstext, wird die Übersetzung neu gemacht statt zu veralten",
           "Fehlende Übersetzungen im ganzen Katalog in einem Durchgang füllen",
           "Übersetzte URL-Handles, samt der 301-Weiterleitung, die dazugehört",
-          "Andere Bilder und Videos je Sprache und Markt: Produktgalerie, Teilen-Bild und Theme-Bilder",
+          "Andere Bilder und Videos je Sprache und Markt: Produktgalerie und Theme-Bilder, mit den passenden Einbettungen auch Teilen-Bild und Suchmaschinen-Bild",
         ],
       },
       {

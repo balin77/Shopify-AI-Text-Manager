@@ -79,7 +79,7 @@ export const es: MarketingTranslation = {
           "Cambie un texto de origen y la traducción se rehace en lugar de quedar obsoleta",
           "Rellene lo que falta en todo el catálogo en una sola pasada",
           "Handles de URL traducidos, con la redirección 301 que les corresponde",
-          "Imágenes y vídeos distintos por idioma y mercado: galería de producto, imagen al compartir e imágenes del tema",
+          "Imágenes y vídeos distintos por idioma y mercado: galería de producto e imágenes del tema, y con las inserciones correspondientes también la imagen al compartir y la de los buscadores",
         ],
       },
       {
