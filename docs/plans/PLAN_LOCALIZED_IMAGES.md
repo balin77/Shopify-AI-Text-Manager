@@ -1,6 +1,6 @@
 # Andere Bilder je Sprache — Plan
 
-**Status:** **In Umsetzung bis Phase 1b** (Owner-Entscheid 2026-09-30). Phase 2 wird nur VORBEREITET (Datenfelder, Veraltet-Erkennung), nicht gebaut. Roadmap-Einträge `localized-images` und `image-translation` in [roadmap.server.ts](../../app/config/roadmap.server.ts). Plattform-Aussagen zu Theme-Bildern stammen aus Shopify-Changelog und Drittquellen — **nicht gemessen**; die Probe aus Phase 0 misst sie mit einem Klick.
+**Status:** **In Umsetzung bis Phase 1b** (Owner-Entscheid 2026-09-30). Phase 2 wird nur VORBEREITET (Datenfelder, Veraltet-Erkennung), nicht gebaut. Roadmap-Einträge `localized-images` und `image-translation` in [roadmap.server.ts](../../app/config/roadmap.server.ts). Theme-Bilder: Schreibweg **gemessen** (Probe Phase 0, Live-Shop 2026-10-02, API 2026-07) — Bildeinstellungen sind übersetzbar, Register/Lesen/Entfernen klappt global und pro Markt. Ob der Shop ein anderes Bild tatsächlich ausliefert, ist weiter nur Changelog-Aussage.
 
 ## Owner-Entscheide (2026-09-30)
 
@@ -23,7 +23,7 @@
 
 | Bildtyp | Pro Sprache nativ? | Quelle / Status |
 |---|---|---|
-| Theme-Bilder (`image_picker` in Sektionen, JSON-Templates) | **Ja**, pro Sprache **und** pro Markt, über `translationsRegister`; Wert `shopify://shop_images/<datei>` | Shopify-Changelog „Online store media localizable to different languages/markets“ — **nicht gemessen** |
+| Theme-Bilder (`image_picker` in Sektionen, JSON-Templates) | **Ja**, pro Sprache **und** pro Markt, über `translationsRegister`; Wert `shopify://shop_images/<datei>` | Shopify-Changelog „Online store media localizable to different languages/markets“; **gemessen 2026-10-02** (Probe): als übersetzbar gemeldet (u. a. `general.logo`, Slideshow-Bilder in JSON-Templates), Register mit Echo, Rücklesen und Entfernen global und mit `marketId` bestätigt. Die Auslieferung eines ANDEREN Bildes im Shop ist nicht gemessen (die Probe schreibt das eigene Bild). |
 | Produktmedien / Galerie | **Nein** | `MediaImage` trägt nur den Schlüssel `alt` (gemessen, siehe CLAUDE.md „Image rows“); Translate & Adapt kann es ebenfalls nicht |
 | Kollektions-/Artikelbild | **Nein**, nur `alt` | gemessen 2026-08 (CLAUDE.md) |
 | `file_reference`-Metafelder | Laut Drittquellen **nein** (nur Text-Metafelder) | widersprüchliche Quellen — **messen** |
@@ -117,7 +117,7 @@ Damit niemand annimmt, was nicht gebaut ist. Jeder Punkt sagt, was der Händler 
 14. **Original gelöscht**: Ersatzbilder ohne Original werden in der Karte gesondert gelistet und können gelöscht werden; im Shop sind sie wirkungslos.
 15. **Sprache aus dem Shop entfernt**: ihre Einträge bleiben im Metafeld (wirkungslos), die Karte zeigt sie nicht mehr in der Sprachauswahl.
 16. **Zwei gleichzeitige Bearbeitungen desselben Produkts**: die spätere gewinnt.
-17. **Theme-Bilder sind NICHT gemessen** (Changelog-Aussage). Bis die Probe auf einem echten Shop JA sagt, ist offen, ob ein anderes Theme-Bild im Shop tatsächlich ausgeliefert wird.
+17. **Theme-Bilder: Schreibweg gemessen, Auslieferung nicht** (Probe 2026-10-02: übersetzbar, Register/Lesen/Entfernen global und pro Markt JA). Ob der Shop ein anderes Theme-Bild in der Sprache tatsächlich anzeigt, ist nicht gemessen — die Probe schreibt nur das eigene Bild in einen leeren Platz. Am schnellsten prüft es ein echter Versuch im Theme-Editor der App mit Blick auf den Shop.
 18. **Theme-Bild in der Marktansicht**: wird dort das geerbte Sprachbild für alle Märkte gezeigt, nimmt „Originalbild verwenden“ nichts weg — es entfernt nur eine eigene Marktwahl.
 
 **Technische Rest-Effekte**
