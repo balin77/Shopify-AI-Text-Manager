@@ -512,7 +512,7 @@ export async function action({ request }: ActionFunctionArgs) {
   // `kind=imageStamp`: does an alt-only edit change a MediaImage's url query?
   if (formData?.get("kind") === "imageStamp") {
     const { runImageStampProbeRoute } = await import("../services/localized-media/image-stamp-probe.server");
-    return runImageStampProbeRoute({ admin, formData });
+    return runImageStampProbeRoute({ admin, formData, shop: session.shop });
   }
   const wantsWriteTest = formData?.get("writeTest") === "true";
 

@@ -21,9 +21,13 @@ function makeAdmin(opts: {
   urlAfterChange: string;
   failChangeRead?: boolean;
   restoreFails?: boolean;
+  restoreThrowsOnce?: boolean;
+  startAlt?: string;
+  slow?: boolean;
   metafield?: string | null;
 }) {
-  let alt = "Red shoe";
+  let alt = opts.startAlt ?? "Red shoe";
+  let restoreThrown = false;
   let url = `${BASE}?v=1`;
   const alts: string[] = [];
   const graphql = vi.fn(async (query: string, o?: { variables?: Record<string, unknown> }) => {
@@ -35,7 +39,9 @@ function makeAdmin(opts: {
     }
     if (query.includes("imageStampSetAlt")) {
       const next = (v.media as Array<{ alt: string }>)[0].alt;
-      const isRestore = next === "Red shoe";
+      if (opts.slow) await new Promise((r) => setTimeout(r, 20));
+      const isRestore = next === (opts.startAlt ?? "Red shoe");
+      if (isRestore && opts.restoreThrowsOnce && !restoreThrown) { restoreThrown = true; throw new Error("throttled"); }
       if (isRestore && opts.restoreFails) return reply({ productUpdateMedia: { media: [], mediaUserErrors: [{ field: [], message: "nope" }] } });
       alts.push(next);
       alt = next;
@@ -51,7 +57,12 @@ function makeAdmin(opts: {
   return { graphql, alts, getAlt: () => alt };
 }
 
-const fast = { sleep: async () => {}, pollAttempts: 3, pollMs: 0 };
+function makeDb() {
+  const calls: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
+  return { calls, db: { productImage: { updateMany: vi.fn(async (a: { where: Record<string, unknown>; data: Record<string, unknown> }) => { calls.push(a); return { count: 1 }; }) } } };
+}
+
+const fast = { sleep: async () => {}, pollAttempts: 3, pollMs: 0, db: makeDb().db };
 
 describe("image stamp probe", () => {
   it("reports an unchanged query and restores the alt", async () => {
@@ -97,6 +108,54 @@ describe("image stamp probe", () => {
     expect(a.alts).toEqual([]);
     expect(r.mediaId).toBeNull();
     expect(r.verdict[0]).toContain("INCONCLUSIVE");
+  });
+});
+
+describe("image stamp probe guards", () => {
+  it("refuses an image whose alt already ends with the marker", async () => {
+    const a = makeAdmin({ urlAfterChange: `${BASE}?v=2`, startAlt: "Red shoe [probe]" });
+    const r = await runImageStampProbe(a.graphql, fast);
+    expect(a.alts).toEqual([]);
+    expect(r.mediaId).toBeNull();
+  });
+
+  it("answers 'already running' to a concurrent second run and touches nothing", async () => {
+    const a = makeAdmin({ urlAfterChange: `${BASE}?v=2`, slow: true });
+    const first = runImageStampProbe(a.graphql, fast);
+    const second = await runImageStampProbe(a.graphql, fast);
+    expect(second.error).toBe("already running");
+    expect(second.verdict[0]).toContain("already running");
+    const r = await first;
+    expect(r.restoreConfirmed).toBe(true);
+    expect(a.alts).toEqual(["Red shoe [probe]", "Red shoe"]);
+    const third = await runImageStampProbe(makeAdmin({ urlAfterChange: `${BASE}?v=2` }).graphql, fast);
+    expect(third.error).toBeNull();
+  });
+
+  it("shields the cached row before the marker write and puts a leaked marker back", async () => {
+    const m = makeDb();
+    const a = makeAdmin({ urlAfterChange: `${BASE}?v=2` });
+    await runImageStampProbe(a.graphql, { ...fast, db: m.db, shop: "s.myshopify.com" });
+    expect(m.calls[0].data.altTextModifiedAt).toBeInstanceOf(Date);
+    expect(m.calls[0].data).not.toHaveProperty("altText");
+    expect(m.calls[0].where).toMatchObject({ mediaId: IMG, product: { shop: "s.myshopify.com" } });
+    expect(m.calls[1].where).toMatchObject({ mediaId: IMG, altText: "Red shoe [probe]" });
+    expect(m.calls[1].data).toEqual({ altText: "Red shoe" });
+  });
+
+  it("retries a thrown restore once", async () => {
+    const a = makeAdmin({ urlAfterChange: `${BASE}?v=2`, restoreThrowsOnce: true });
+    const r = await runImageStampProbe(a.graphql, fast);
+    expect(r.restoreConfirmed).toBe(true);
+    expect(r.restoreFailed).toBe(false);
+    expect(a.getAlt()).toBe("Red shoe");
+  });
+
+  it("skips a product whose localized_media value is non-empty, even an unparseable one", async () => {
+    const a = makeAdmin({ urlAfterChange: `${BASE}?v=2`, metafield: "not json" });
+    const r = await runImageStampProbe(a.graphql, fast);
+    expect(a.alts).toEqual([]);
+    expect(r.mediaId).toBeNull();
   });
 });
 

@@ -7,6 +7,14 @@
  * ALWAYS puts the original back (try/finally, echo-verified). An image that is
  * a replacement or an original of a replacement entry is never touched. If the
  * restore cannot be confirmed the report says so loudly with the original text.
+ *
+ * Guards: one run at a time per process (a second concurrent run would read the
+ * first one's marker as the "original" alt); an image whose alt already ends
+ * with the marker is never a candidate (a crashed earlier run); a product with
+ * ANY custom.localized_media value is skipped whole; the cached ProductImage
+ * row is shielded (altTextModifiedAt) so the products/update sync does not
+ * adopt the marker, and put back if it did. An image with no alt (null) is
+ * restored as "" - Shopify reads both back the same, the report says so.
  */
 import { data as json } from "react-router";
 import { logger } from "~/utils/logger.server";
@@ -24,6 +32,16 @@ import {
 type Graphql = (query: string, opts?: { variables?: Record<string, unknown> }) => Promise<Response>;
 
 const MARKER = " [probe]";
+
+type ProbeDb = {
+  productImage: {
+    updateMany: (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<unknown>;
+  };
+};
+
+// Module-level single flight: a concurrent second run would snapshot the first
+// run's marker alt as its "original" and write it back for good.
+let probeRunning = false;
 
 // Prose stays out of the documents (CLAUDE.md: #graphql literals are sent verbatim).
 const CANDIDATES = `#graphql
@@ -80,16 +98,25 @@ async function pickCandidate(graphql: Graphql): Promise<Candidate | null> {
     }> };
   }>(graphql, CANDIDATES, { namespace: LOCALIZED_MEDIA_NAMESPACE, key: LOCALIZED_MEDIA_KEY });
   const withoutAlt: Candidate[] = [];
-  for (const p of data?.products?.nodes ?? []) {
-    const entries = parseLocalizedMediaValue(p.metafield?.value ?? null);
-    const taken = new Set<string>();
-    for (const e of entries) {
+  const products = data?.products?.nodes ?? [];
+  // Built over EVERY scanned product first: a replacement file of one product
+  // may be an image of another.
+  const taken = new Set<string>();
+  for (const p of products) {
+    for (const e of parseLocalizedMediaValue(p.metafield?.value ?? null)) {
       if (e.m) taken.add(e.m);
       if (e.f) taken.add(e.f);
     }
+  }
+  for (const p of products) {
+    // Any value at all (even one this app cannot parse) means the product
+    // belongs to the localized-media feature or to the merchant: hands off.
+    if ((p.metafield?.value ?? "").trim()) continue;
     for (const m of p.media?.nodes ?? []) {
       if (m.mediaContentType !== "IMAGE" || m.status !== "READY" || !m.image?.url) continue;
       if (taken.has(m.id)) continue;
+      // A leftover marker means an earlier run died before restoring it.
+      if ((m.alt ?? "").endsWith(MARKER)) continue;
       const c = { productId: p.id, mediaId: m.id, alt: m.alt ?? null, url: m.image.url };
       if (c.alt && c.alt.trim()) return c;
       withoutAlt.push(c);
@@ -116,18 +143,59 @@ async function setAlt(graphql: Graphql, productId: string, mediaId: string, alt:
 
 export async function runImageStampProbe(
   graphql: Graphql,
-  opts: { sleep?: (ms: number) => Promise<void>; pollAttempts?: number; pollMs?: number } = {},
+  opts: ProbeOpts = {},
 ): Promise<ImageStampProbeReport> {
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const attempts = opts.pollAttempts ?? 5;
-  const pollMs = opts.pollMs ?? 2000;
-  const report: ImageStampProbeReport = {
+  if (probeRunning) {
+    const r = emptyReport();
+    r.error = "already running";
+    r.verdict = ["INCONCLUSIVE: the image-stamp probe is already running; wait for it to finish."];
+    return r;
+  }
+  probeRunning = true;
+  try {
+    return await runImageStampProbeInner(graphql, opts);
+  } finally {
+    probeRunning = false;
+  }
+}
+
+interface ProbeOpts {
+  sleep?: (ms: number) => Promise<void>;
+  pollAttempts?: number;
+  pollMs?: number;
+  shop?: string;
+  db?: ProbeDb;
+}
+
+function emptyReport(): ImageStampProbeReport {
+  return {
     ranAt: new Date().toISOString(),
     productId: null, mediaId: null, originalAlt: null, markerAlt: null,
     urlBefore: null, urlAfterAltChange: null, urlAfterRestore: null,
     altChangeConfirmed: false, restoreConfirmed: false,
     pathChanged: null, queryChanged: null, restoreQueryChanged: null,
     attemptsAfterChange: 0, verdict: [], restoreFailed: false, error: null,
+  };
+}
+
+async function runImageStampProbeInner(graphql: Graphql, opts: ProbeOpts): Promise<ImageStampProbeReport> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const attempts = opts.pollAttempts ?? 5;
+  const pollMs = opts.pollMs ?? 2000;
+  const report = emptyReport();
+  let cacheDb: ProbeDb | null = opts.db ?? null;
+  const cacheWhere = (mediaId: string, extra: Record<string, unknown> = {}) => ({
+    mediaId,
+    ...(opts.shop ? { product: { shop: opts.shop } } : {}),
+    ...extra,
+  });
+  const cacheUpdate = async (mediaId: string, where: Record<string, unknown>, data: Record<string, unknown>) => {
+    try {
+      cacheDb ??= (await import("~/db.server")).db as unknown as ProbeDb;
+      await cacheDb.productImage.updateMany({ where: cacheWhere(mediaId, where), data });
+    } catch (error) {
+      logger.warn("[image-stamp-probe] cache update failed", { error: error instanceof Error ? error.message : String(error) });
+    }
   };
 
   let candidate: Candidate | null = null;
@@ -152,6 +220,11 @@ export async function runImageStampProbe(
     const before = await readImage(graphql, candidate.mediaId);
     report.urlBefore = before?.url ?? candidate.url;
 
+    // Shield the cached row first: the marker write fires products/update, and
+    // the sync would otherwise adopt the marker as the primary alt (the 5-min
+    // preserve window keys on altTextModifiedAt; altText stays the original).
+    await cacheUpdate(candidate.mediaId, {}, { altTextModifiedAt: new Date() });
+
     touched = true;
     report.altChangeConfirmed = await setAlt(graphql, candidate.productId, candidate.mediaId, report.markerAlt);
 
@@ -166,15 +239,25 @@ export async function runImageStampProbe(
     report.error = error instanceof Error ? error.message : String(error);
   } finally {
     if (touched) {
-      try {
-        report.restoreConfirmed = await setAlt(graphql, candidate.productId, candidate.mediaId, originalAlt);
-        if (!report.restoreConfirmed) {
-          const read = await readImage(graphql, candidate.mediaId);
-          report.restoreConfirmed = !!read && (read.alt ?? "") === originalAlt;
+      // One retry after a short pause when the restore THROWS (a throttle or a
+      // dropped connection is the likely cause, and the marker must not stay).
+      for (let attempt = 0; attempt < 2 && !report.restoreConfirmed; attempt++) {
+        try {
+          if (attempt > 0) await sleep(pollMs);
+          report.restoreConfirmed = await setAlt(graphql, candidate.productId, candidate.mediaId, originalAlt);
+          if (!report.restoreConfirmed) {
+            const read = await readImage(graphql, candidate.mediaId);
+            report.restoreConfirmed = !!read && (read.alt ?? "") === originalAlt;
+          }
+          break;
+        } catch (error) {
+          const msg = `restore threw: ${error instanceof Error ? error.message : String(error)}`;
+          if (attempt === 1) report.error = (report.error ? report.error + "; " : "") + msg;
+          else logger.warn("[image-stamp-probe] restore threw, retrying once", { error: msg });
         }
-      } catch (error) {
-        report.error = (report.error ? report.error + "; " : "") + `restore threw: ${error instanceof Error ? error.message : String(error)}`;
       }
+      // If the sync adopted the marker into the cache anyway, put the original back.
+      await cacheUpdate(candidate.mediaId, { altText: report.markerAlt }, { altText: originalAlt });
       report.restoreFailed = !report.restoreConfirmed;
       try {
         for (let i = 0; i < 2; i++) {
@@ -202,15 +285,20 @@ export async function runImageStampProbe(
       `RESTORE FAILED: set the alt of ${report.mediaId} (product ${report.productId}) back by hand to exactly: ${JSON.stringify(report.originalAlt)}`,
     );
   }
+  if (candidate.alt === null) {
+    report.verdict.push("NOTE: the image had no alt text (null); it was restored as an empty string, which Shopify reads back the same.");
+  }
   return report;
 }
 
 export async function runImageStampProbeRoute({
   admin,
   formData,
+  shop,
 }: {
   admin: { graphql: unknown };
   formData: FormData | null;
+  shop?: string;
 }) {
   // Directly POST-reachable and it writes: same dev-only gate as the Probes tab.
   if (process.env.APP_ENV !== "development") {
@@ -219,6 +307,6 @@ export async function runImageStampProbeRoute({
   if (formData?.get("confirm") !== "true") {
     return json({ error: "confirm=true required (this probe edits one image alt and restores it)." }, { status: 400 });
   }
-  const report = await runImageStampProbe(admin.graphql as unknown as Graphql);
+  const report = await runImageStampProbe(admin.graphql as unknown as Graphql, { shop });
   return json({ report });
 }

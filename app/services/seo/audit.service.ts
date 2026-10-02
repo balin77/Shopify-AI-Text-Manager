@@ -15,6 +15,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { computeSeoScore, type SeoSeverity } from "../../utils/seo-score";
 import { PLAN_CONFIG, type Plan, type ContentType } from "../../config/plans";
+import { AUDIT_TYPE_TO_PLAN_CONTENT_TYPE } from "../../config/audit-plan-types.shared";
 import { getSeoScoreHistoryDays } from "../../utils/planUtils";
 import { computeHeadDrift, classifyLinkStatus } from "./crawl.service";
 import {
@@ -165,12 +166,7 @@ export interface AuditAggregate {
 }
 
 /** Which content-cache type maps to which plan entitlement. */
-export const TYPE_TO_CONTENT_TYPE: Record<AuditType, ContentType> = {
-  product: "products",
-  collection: "collections",
-  article: "articles",
-  page: "pages",
-};
+export const TYPE_TO_CONTENT_TYPE: Record<AuditType, ContentType> = AUDIT_TYPE_TO_PLAN_CONTENT_TYPE;
 
 // Finding code → dashboard problem-bucket key. Every non-success finding code
 // computeSeoScore can emit must map to a bucket here, otherwise the item counts

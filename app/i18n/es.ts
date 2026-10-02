@@ -2653,6 +2653,7 @@ export const es: Translation = {
       showIssues: "Mostrar problemas",
       hideIssues: "Ocultar problemas",
       bulkFixStarted: "Corrección con IA iniciada — sigue el progreso en la pestaña Tareas.",
+      bulkFixSkippedGated: "{count} elementos omitidos — no incluidos en tu plan.",
       bulkFixRunning: "Ya hay una corrección con IA en curso para esta tienda.",
       bulkFixError: "No se pudo iniciar la corrección con IA. Inténtalo de nuevo.",
       rescan: "Volver a analizar",

@@ -2676,6 +2676,7 @@ export const de = {
       showIssues: "Probleme anzeigen",
       hideIssues: "Probleme ausblenden",
       bulkFixStarted: "KI-Fix gestartet — Fortschritt im Tab \"Aufgaben\" verfolgen.",
+      bulkFixSkippedGated: "{count} Elemente übersprungen — nicht in deinem Tarif enthalten.",
       bulkFixRunning: "Für diesen Shop läuft bereits ein KI-Fix.",
       bulkFixError: "Der KI-Fix konnte nicht gestartet werden. Bitte erneut versuchen.",
       rescan: "Neu scannen",

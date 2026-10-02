@@ -13,6 +13,7 @@
  * Pure and import-light: unit-testable without the route.
  */
 import type { ContentType, Plan } from "../config/plans";
+import { AUDIT_TYPE_TO_PLAN_CONTENT_TYPE } from "../config/audit-plan-types.shared";
 import { canAccessContentType } from "./planUtils";
 
 const GID_TYPE_TO_PLAN_TYPE: Record<string, ContentType> = {
@@ -23,6 +24,8 @@ const GID_TYPE_TO_PLAN_TYPE: Record<string, ContentType> = {
   // blog container are one rubric.
   Blog: "articles",
   Page: "pages",
+  // Older shops / API versions spell the page resource this way.
+  OnlineStorePage: "pages",
   ShopPolicy: "policies",
 };
 
@@ -33,12 +36,7 @@ export function planTypeOfGid(id: string | null | undefined): ContentType | null
 }
 
 /** SEO audit item type -> plan content type. */
-export const AUDIT_ITEM_TYPE_TO_PLAN_TYPE: Record<string, ContentType> = {
-  product: "products",
-  collection: "collections",
-  article: "articles",
-  page: "pages",
-};
+export const AUDIT_ITEM_TYPE_TO_PLAN_TYPE: Record<string, ContentType> = AUDIT_TYPE_TO_PLAN_CONTENT_TYPE;
 
 /** Keyword target type (Product / Collection / Article / Page) -> plan content type. */
 export const KEYWORD_TARGET_TO_PLAN_TYPE: Record<string, ContentType> = {

@@ -17,6 +17,7 @@
  * "Fix with AI" bulk action uses.
  */
 
+import { gatedAwareError, skippedGatedNote } from "../utils/gated-error.shared";
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -404,7 +405,7 @@ export default function SeoDashboard() {
   // the same bulk-AI pipeline as alt-text bulk generation. The button only
   // triggers the run; progress lives in the Tasks tab (heartbeat-updated Task
   // row), not in this fetcher.
-  const fixFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
+  const fixFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string; skippedGated?: unknown[] }>();
   const [fixingCode, setFixingCode] = useState<string | null>(null);
   const [fixBanner, setFixBanner] = useState<{ tone: "success" | "critical"; message: string } | null>(null);
   // Once the server confirms a run started (or is already running), disable
@@ -415,10 +416,11 @@ export default function SeoDashboard() {
   useEffect(() => {
     if (fixFetcher.state !== "idle" || !fixFetcher.data) return;
     if (fixFetcher.data.success) {
-      setFixBanner({ tone: "success", message: d.bulkFixStarted });
+      const skippedNote = skippedGatedNote(fixFetcher.data.skippedGated, d.bulkFixSkippedGated);
+      setFixBanner({ tone: "success", message: skippedNote ? `${d.bulkFixStarted} ${skippedNote}` : d.bulkFixStarted });
       setFixStarted(true);
     } else {
-      setFixBanner({ tone: "critical", message: fixFetcher.data.error || d.bulkFixError });
+      setFixBanner({ tone: "critical", message: gatedAwareError(fixFetcher.data.error, t.content.upgradeRequired, d.bulkFixError) });
     }
     setFixingCode(null);
     // Only re-run when the fetcher settles with new data.

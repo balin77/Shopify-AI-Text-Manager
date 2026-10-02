@@ -2670,6 +2670,7 @@ export const en: Translation = {
       showIssues: "Show issues",
       hideIssues: "Hide issues",
       bulkFixStarted: "AI fix started — track progress in the Tasks tab.",
+      bulkFixSkippedGated: "{count} items skipped — not included in your plan.",
       bulkFixRunning: "An AI fix is already running for this store.",
       bulkFixError: "Couldn't start the AI fix. Please try again.",
       rescan: "Rescan",
