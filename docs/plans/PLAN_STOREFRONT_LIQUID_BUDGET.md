@@ -755,5 +755,6 @@ Ein unabhängiges Review hat den Plan mit Änderungen freigegeben. Wo Anhang C d
 10. **`minifyLiquidTag`:** `\r` mit entfernen; Idempotenz-Test.
 11. **CLAUDE.md im selben Commit wie Schritt 2** anpassen (Deploy-Gotcha zum Minifier), nicht erst nach dem Merge. §4.4 ist damit überholt.
 12. Schritt-2-Ersparnis: −8 051 B (gemessen), nicht 7,4 KB.
+13. **Bewusste Abweichung (Schritt 3b):** Ein `variant.featured_image` ohne URL erzeugt keinen Eintrag mehr (früher einen Bild-Eintrag mit leerem `src`); das Snippet gibt für ein Bild ohne URL nichts aus, und ein Eintrag ohne Bild nützt der Galerie nicht. Der Differenztest bildet das als einzigen erwarteten Unterschied ab (Variante 9011 im Review-Harness).
 
 **Umfang:** Schritte 1, 2, 3a, 3b, 6a, 6b, 7 werden umgesetzt. **Schritt 4 entfällt** (nach Schritt 2 nur ~200 B, berührt JSON-LD). **Schritt 5 wird zurückgestellt** (nur Warnung; Snippet-in-Snippet auf JSON-LD erst nach Bewährung von 3b im Dev-Shop). Die Complexity-Warnung in `structured-data.liquid` bleibt damit bewusst bestehen.

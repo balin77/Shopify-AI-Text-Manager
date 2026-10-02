@@ -50,11 +50,9 @@ const video = (id: number, extra: Record<string, unknown> = {}) => ({
 });
 const mf = (value: unknown) => ({ value });
 
-// NOT in the list: a model without a GLB source. liquidjs evaluates
-// `assign x = blank` differently from Ruby Liquid (the comparison against
-// `blank` that follows the loop is true for the literal itself), so the
-// "no GLB, emit nothing" rule cannot be rendered here -- it is pinned
-// statically in the snippet test instead.
+// Models without a usable GLB are in the list on purpose (131: only a usdz
+// source, 132: no sources at all, 133: a GLB but no preview image): the rule
+// "a model without a GLB source emits nothing" is rendered, not just read.
 const productMedia = [
   img(101, { alt: 'front </script><b>', preview_image: img(101, { media_type: undefined }) }),
   img(102),
@@ -73,6 +71,10 @@ const productMedia = [
       { url: 'https://cdn.example/m.glb', format: 'GLB' },
     ],
   },
+  { id: 131, media_type: 'model', alt: 'noglb', preview_image: img(1131), sources: [{ url: 'https://cdn.example/n.usdz', format: 'usdz' }] },
+  { id: 132, media_type: 'model', alt: 'nosrc', preview_image: img(1132), sources: [] },
+  { id: 133, media_type: 'model', alt: 'nopreview', preview_image: null, sources: [{ url: 'https://cdn.example/q.glb', format: 'glb' }] },
+  img(134, { alt: null }),
 ];
 
 const YT = 'https://youtu.be/dQw4w9WgXcQ?t=3';
@@ -182,7 +184,12 @@ async function renderIsland(source: string, variant: Variant, annotate: Annotate
 // ---------------------------------------------------------------------------
 
 describe('variant-gallery-embed: island built in a capture renders like the frozen block', () => {
-  const frozen = read(FROZEN);
+  // The frozen block starts its GLB search with `assign cp_glb = blank`, which liquidjs
+  // evaluates differently from Ruby Liquid (the literal is not "blank" afterwards). `''`
+  // is the Ruby-equivalent spelling (`'' == blank`), so the test renders the frozen text
+  // with that one substitution; the file itself stays untouched.
+  const frozenRaw = read(FROZEN);
+  const frozen = frozenRaw.replace('{%- assign cp_glb = blank -%}', "{%- assign cp_glb = '' -%}");
   const current = read(BLOCK);
 
   for (const [scopeName, prod] of Object.entries(SCOPES)) {
@@ -200,6 +207,11 @@ describe('variant-gallery-embed: island built in a capture renders like the froz
     }
   }
 
+  it('the frozen-text substitution applies (otherwise the frozen side would not be comparable)', () => {
+    expect(frozenRaw).toContain('{%- assign cp_glb = blank -%}');
+    expect(frozenRaw).not.toBe(frozen);
+  });
+
   it('the fixtures are not vacuous: every item type and every path shows up', async () => {
     const { data } = await renderIsland(current, 'source', 'none', product);
     const all = Object.values(data).flat();
@@ -211,6 +223,11 @@ describe('variant-gallery-embed: island built in a capture renders like the froz
     expect(data['9001'].length).toBeGreaterThan(3);
     // gallery set but every image URL empty: nothing emitted by the gallery, so the fallback runs
     expect(data['9007'].length).toBeGreaterThan(3);
+    // models: only the one with a GLB source (and a preview) is emitted; a usdz-only
+    // model, one without sources and one without preview emit nothing
+    const fallbackModels = data['9003'].filter((e: any) => e.type === 'model');
+    expect(fallbackModels.map((e: any) => e.model_src)).toEqual(['https://cdn.example/m.glb']);
+    expect(all.every((e: any) => e.type !== 'model' || e.model_src !== '')).toBe(true);
     // an alt text with markup survives as DATA
     expect(JSON.stringify(data)).toContain('front </script><b>');
     // ... and never as markup: the island text itself carries no raw `<` in a value
@@ -270,7 +287,11 @@ const READ_BY_CONTROLLER_SOURCE = ['src', 'mime'];
 
 const SNIPPET_PARAMS = ['m', 'kind', 'alt', 'fb', 'url', 'model', 'preview'];
 
-const CUT_LINE = "{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}";
+// The cut of Shopify's snippet annotation, printed inline (no extra assign: every assign counts
+// against Shopify's memory limit). The emptiness test is `contains '"type"'`: an emitted object
+// always has a type key, an annotation never does.
+const CUT_PRINT = "{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}";
+const CALL_LINE_RE = /^\s*\{%- if cp_o contains '"type"' -%\}.*\{%- endif -%\}$/;
 const CUT_LINE_SNIPPET = "{%- assign cp_i_pair = cp_i_pair | split: '-->' | last | split: '<!--' | first | strip -%}";
 
 describe('cp-vg-item: static contract', () => {
@@ -352,9 +373,13 @@ describe('cp-vg-item: static contract', () => {
     expect(renders.length).toBeGreaterThanOrEqual(10);
     for (const { l, i } of renders) {
       expect(l, `line ${i + 1}`).toMatch(/^\s*\{%- capture cp_o -%\}\{%- render 'cp-vg-item'.*\{%- endcapture -%\}$/);
-      expect(lines[i + 1], `line ${i + 2}`).toBe(CUT_LINE); // column 0, exactly
+      expect(lines[i + 1], `line ${i + 2}`).toMatch(CALL_LINE_RE);
+      expect(lines[i + 1], `line ${i + 2}`).toContain(CUT_PRINT);
     }
     expect((block.match(/split: '-->'/g) ?? []).length).toBe(renders.length);
+    // no captured render is ever printed or tested without the cut: cp_o appears only in the capture and these lines
+    expect(block.match(/\{\{\s*cp_o\s*\}\}/g)).toBeNull();
+    expect(block).not.toMatch(/cp_o != blank/);
     // The snippet's own nested render of the URL parser is cut the same way.
     const own = snippet.split('\n');
     const at = own.findIndex((l) => l.includes("render 'cp-external-video'"));

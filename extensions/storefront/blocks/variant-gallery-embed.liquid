@@ -60,10 +60,12 @@
   every product.media is rendered once, and only when the first variant needs
   it (cp_fb_built): the item's media id, `<`, its JSON object, `>`. `<` and
   `>` are safe separators because cp-vg-item's output never contains either
-  (it escapes both inside strings). cp_fb stays '' for a product whose
+  (it escapes both inside strings). It is ONE capture over product.media (a per-media
+  append would copy the growing memo every time), split once into cp_fb_items;
+  cp_fb_items stays nil for a product whose
   variants all have metafields.
 {%- endcomment -%}
-{%- assign cp_fb = '' -%}
+{%- assign cp_fb_items = nil -%}
 {%- assign cp_fb_built = false -%}
 {%- capture cp_vg_json -%}
   {
@@ -89,12 +91,14 @@
         {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}{%- assign cp_has_models = true -%}{%- endif -%}
         {%- comment -%}
           Every entry below is ONE render of snippets/cp-vg-item, always in
-          these three lines. The snippet prints a JSON object or nothing.
+          these two lines. The snippet prints a JSON object or nothing.
           Shopify wraps a snippet's output in "<!-- BEGIN app snippet -->"
           comments that `capture` keeps, so the second line cuts them off
-          (cp-external-video documents why; the cut line stays at column 0 so
-          it is easy to find). The comma and cp_has_any stay HERE because
-          `render` is scope-isolated.
+          while printing (cp-external-video documents why) and tests for an
+          object with `contains '"type"'` (every object has that key, the
+          annotation never does) instead of assigning the cut value first:
+          every assign counts against Shopify's memory limit. The comma and
+          cp_has_any stay HERE because `render` is scope-isolated.
         {%- endcomment -%}
         {%- comment -%}
           Voll-mix path: variant_gallery_order (json) is a unified array of
@@ -110,8 +114,7 @@
             {%- assign vfi_id_str = vfi.id | append: '' -%}
             {%- assign cp_seen_file_ids = cp_seen_file_ids | append: vfi_id_str | append: ',' -%}
             {%- capture cp_o -%}{%- render 'cp-vg-item', m: vfi, kind: 'image', fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-            {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
           {%- endif -%}
           {%- for entry in cp_order_mf.value -%}
             {%- comment -%}
@@ -169,8 +172,7 @@
               {%- endif -%}
             {%- endif -%}
             {%- capture cp_o -%}{%- render 'cp-vg-item', m: cp_rm, url: cp_ru, model: cp_rmod, preview: cp_rpv, alt: cp_rm.alt, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-            {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
           {%- endfor -%}
           {%- comment -%}
             Tail-emit: any vg.value items whose id is missing from the order
@@ -186,8 +188,7 @@
               {%- assign cp_seen_file_ids = cp_seen_file_ids | append: item_id_str | append: ',' -%}
               {%- if item.media_type == 'image' or item.media_type == 'video' -%}
                 {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-                {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+                {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
               {%- endif -%}
             {%- endfor -%}
           {%- endif -%}
@@ -200,8 +201,7 @@
               {%- if cp_seen_urls contains url_tail_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_urls = cp_seen_urls | append: url_tail_token | append: ',' -%}
               {%- capture cp_o -%}{%- render 'cp-vg-item', url: cp_url, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
           {%- comment -%}
@@ -228,8 +228,7 @@
                 {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
               {%- endif -%}
               {%- capture cp_o -%}{%- render 'cp-vg-item', model: cp_model_url, preview: cp_model_preview, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
         {%- comment -%}
@@ -242,8 +241,7 @@
         {%- elsif cp_has_vg or cp_has_models -%}
           {%- if variant.featured_image != blank -%}
             {%- capture cp_o -%}{%- render 'cp-vg-item', m: variant.featured_image, kind: 'image', fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-            {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
           {%- endif -%}
           {%- comment -%}
             Default order (when variant_gallery_order is not set):
@@ -262,15 +260,13 @@
           {%- for item in vg.value -%}
             {%- if item.media_type == 'image' -%}
               {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endif -%}
           {%- endfor -%}
           {%- for item in vg.value -%}
             {%- if item.media_type == 'video' -%}
               {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endif -%}
           {%- endfor -%}
           {%- comment -%}
@@ -286,8 +282,7 @@
             {%- for cp_url_raw in cp_extvids.value -%}
               {%- assign cp_url = cp_url_raw | strip -%}
               {%- capture cp_o -%}{%- render 'cp-vg-item', url: cp_url, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
           {%- comment -%}
@@ -306,8 +301,7 @@
                 {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
               {%- endif -%}
               {%- capture cp_o -%}{%- render 'cp-vg-item', model: cp_model_url, preview: cp_model_preview, fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
         {%- endif -%}
@@ -316,22 +310,22 @@
           {%- assign cp_vfi_id = '' -%}
           {%- if variant.featured_image != blank -%}
             {%- capture cp_o -%}{%- render 'cp-vg-item', m: variant.featured_image, kind: 'image', fb: variant.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-            {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- assign cp_vfi_id = variant.featured_image.id -%}
           {%- endif -%}
           {%- comment -%} Built lazily, once per product (see the memo comment above the capture). {%- endcomment -%}
           {%- unless cp_fb_built -%}
             {%- assign cp_fb_built = true -%}
-            {%- for media in product.media -%}
-              {%- capture cp_o -%}{%- render 'cp-vg-item', m: media, alt: media.alt, fb: product.title -%}{%- endcapture -%}
-{%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- if cp_o != blank -%}{%- assign cp_fb = cp_fb | append: media.id | append: '<' | append: cp_o | append: '>' -%}{%- endif -%}
-            {%- endfor -%}
+            {%- capture cp_fb -%}
+              {%- for media in product.media -%}
+                {%- capture cp_o -%}{%- render 'cp-vg-item', m: media, alt: media.alt, fb: product.title -%}{%- endcapture -%}
+                {%- if cp_o contains '"type"' -%}{{ media.id }}<{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}>{%- endif -%}
+              {%- endfor -%}
+            {%- endcapture -%}
+            {%- assign cp_fb_items = cp_fb | split: '>' -%}
           {%- endunless -%}
           {%- comment -%} Ids compare as strings; no featured image is '', which matches no media id (as blank did). {%- endcomment -%}
           {%- assign cp_vfi_key = cp_vfi_id | append: '' -%}
-          {%- assign cp_fb_items = cp_fb | split: '>' -%}
           {%- for cp_fb_item in cp_fb_items -%}
             {%- assign cp_fb_id = cp_fb_item | split: '<' | first -%}
             {%- if cp_fb_id != cp_vfi_key -%}{%- if cp_has_any %},{% endif -%}{{ cp_fb_item | split: '<' | last }}{%- assign cp_has_any = true -%}{%- endif -%}

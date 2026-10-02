@@ -43,12 +43,12 @@
 
   CALLERS MUST CUT SHOPIFY'S ANNOTATION from the captured output, exactly as for
   cp-external-video (see its header; the cut is a no-op on an unannotated
-  value). Every call site is these three lines:
+  value). Every call site is these two lines:
 
     {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
-    {%- assign cp_o = cp_o | split: '-->' | last | split: '<!--' | first | strip -%}
-    {%- if cp_o != blank -%}{%- if cp_has_any %},{% endif -%}{{ cp_o }}{%- assign cp_has_any = true -%}{%- endif -%}
+    {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
 
+  (Test for the type key, print the cut: no intermediate assign.)
   The comma and `cp_has_any` stay with the caller: `render` is scope-isolated,
   so this snippet knows no state.
 {%- endcomment -%}
@@ -93,7 +93,7 @@
     {%- elsif cp_i_kind == 'external_video' -%}
       {"type":"external_video",{{ cp_i_media }},"host":{{ m.host | json }},"external_id":{{ m.external_id | json }}}
     {%- elsif cp_i_kind == 'model' -%}
-      {%- assign cp_i_glb = blank -%}
+      {%- assign cp_i_glb = '' -%}
       {%- for s in m.sources -%}
         {%- assign cp_i_fmt = s.format | downcase -%}
         {%- if cp_i_fmt == 'glb' and cp_i_glb == blank -%}{%- assign cp_i_glb = s.url -%}{%- endif -%}
