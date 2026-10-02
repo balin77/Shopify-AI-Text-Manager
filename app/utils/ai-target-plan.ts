@@ -29,10 +29,15 @@ const GID_TYPE_TO_PLAN_TYPE: Record<string, ContentType> = {
   ShopPolicy: "policies",
 };
 
+/** A posted key like "toString" must not read the object's prototype. */
+function ownLookup<V>(map: Readonly<Record<string, V>>, key: string): V | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+}
+
 /** Plan content type of a Shopify GID, or null for an id this does not know (never gate on a guess). */
 export function planTypeOfGid(id: string | null | undefined): ContentType | null {
   const m = /^gid:\/\/shopify\/([A-Za-z]+)\//.exec(id ?? "");
-  return m ? (GID_TYPE_TO_PLAN_TYPE[m[1]] ?? null) : null;
+  return m ? (ownLookup(GID_TYPE_TO_PLAN_TYPE, m[1]) ?? null) : null;
 }
 
 /** SEO audit item type -> plan content type. */
@@ -60,10 +65,10 @@ export function targetPlanTypes(actionType: string, get: (key: string) => string
   add(out, planTypeOfGid(get("itemId")));
   switch (actionType) {
     case "seoBulkFix":
-      add(out, AUDIT_ITEM_TYPE_TO_PLAN_TYPE[get("itemType")]);
+      add(out, ownLookup(AUDIT_ITEM_TYPE_TO_PLAN_TYPE, get("itemType")));
       break;
     case "distributeKeywords":
-      add(out, KEYWORD_TARGET_TO_PLAN_TYPE[get("targetType")]);
+      add(out, ownLookup(KEYWORD_TARGET_TO_PLAN_TYPE, get("targetType")));
       break;
     default:
       break;
@@ -90,7 +95,7 @@ export function partitionItemsByPlan<T extends { type: string }>(
   const allowed: T[] = [];
   const gated: T[] = [];
   for (const it of items) {
-    const t = AUDIT_ITEM_TYPE_TO_PLAN_TYPE[it.type];
+    const t = ownLookup(AUDIT_ITEM_TYPE_TO_PLAN_TYPE, it.type);
     // An unknown item type is not a plan question; the handler's own checks decide.
     (t && !canAccessContentType(p, t) ? gated : allowed).push(it);
   }
