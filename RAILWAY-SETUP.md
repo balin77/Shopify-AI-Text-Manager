@@ -366,8 +366,11 @@ DNS-Einträge bei Infomaniak (Name ohne Domain-Suffix):
 | CNAME | `www` | `pi3g5r7t.up.railway.app` |
 | TXT | `_railway-verify.www` | `railway-verify=b85dc7fad0930d0d50ae74175ed4cfdf925e6cba31a82d9ec455a605daf1d41d` |
 
-Die Hauptdomain ohne `www` braucht bei Railway einen ALIAS-Eintrag oder
-CNAME-Flattening; ob Infomaniak das kann, ist offen. Nach der Verbindung
+Die Hauptdomain ohne `www` hängt NICHT an Railway (das bräuchte ALIAS oder
+CNAME-Flattening, und Infomaniaks DNS bietet kein ALIAS): sie ist bei
+Infomaniak eine Web-Weiterleitung (Domain → Web-Weiterleitungen, 301) auf
+`https://www.contentpilot-ai.com` — OHNE das Häkchen „auch www weiterleiten“,
+das den CNAME oben überschreiben würde. Nach der Verbindung
 `PUBLIC_SITE_URL=https://www.contentpilot-ai.com` im Production-Service
 setzen (Sitemap- und Canonical-URLs der Webseite). Die App-URL in
 `shopify.app.prod.toml` bleibt bewusst auf `contentpilotai.up.railway.app`.
