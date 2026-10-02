@@ -165,7 +165,7 @@ export interface AuditAggregate {
 }
 
 /** Which content-cache type maps to which plan entitlement. */
-const TYPE_TO_CONTENT_TYPE: Record<AuditType, ContentType> = {
+export const TYPE_TO_CONTENT_TYPE: Record<AuditType, ContentType> = {
   product: "products",
   collection: "collections",
   article: "articles",

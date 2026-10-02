@@ -24,6 +24,11 @@ vi.mock("../../app/routes/api-ai-handlers/text-translation.handler", () => ({
   handleTranslateFieldToAllLocales: vi.fn(),
 }));
 
+const distribute = vi.fn(async () => ({ handled: true }));
+vi.mock("../../app/routes/api-ai-handlers/keyword-distribution.handler", () => ({
+  handleDistributeKeywords: distribute,
+}));
+
 const { action } = await import("../../app/routes/api.ai");
 
 function post(fields: Record<string, string>) {
@@ -68,5 +73,42 @@ describe("api.ai content-type plan gate", () => {
     aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "free" });
     const { status } = await run({ action: "unknownAction", contentType: "products" });
     expect(status).toBe(400);
+  });
+});
+
+describe("api.ai gates by the real target, not the posted placeholder", () => {
+  beforeEach(() => distribute.mockClear());
+
+  it("refuses insertKeyword on a Page GID for a plan without pages, although contentType says products", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "free" });
+    const { status, body } = await run({ action: "insertKeyword", contentType: "products", itemId: "gid://shopify/Page/1" });
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: "gated", actionType: "insertKeyword" });
+  });
+
+  it("refuses seoBulkFix (single and fix-all) for article/page item types on a lower plan", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "free" });
+    for (const itemType of ["article", "page"]) {
+      for (const extra of [{} as Record<string, string>, { fixAllForItem: "true" }]) {
+        const { status } = await run({ action: "seoBulkFix", contentType: "products", itemType, itemId: "x", ...extra });
+        expect(status).toBe(403);
+      }
+    }
+  });
+
+  it("refuses distributeKeywords for a Page target on a lower plan and allows Product", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "free" });
+    const refused = await run({ action: "distributeKeywords", contentType: "products", targetType: "Page" });
+    expect(refused.status).toBe(403);
+    expect(distribute).not.toHaveBeenCalled();
+    const ok = await run({ action: "distributeKeywords", contentType: "products", targetType: "Product" });
+    expect(ok.status).toBe(200);
+    expect(distribute).toHaveBeenCalled();
+  });
+
+  it("allows a plan that includes the type", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
+    const { status } = await run({ action: "distributeKeywords", contentType: "products", targetType: "Article" });
+    expect(status).toBe(200);
   });
 });

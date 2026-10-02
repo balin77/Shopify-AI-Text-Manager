@@ -15,6 +15,7 @@ import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isManagedRefusal } from "../../src/services/ai.service";
+import { targetPlanTypes, firstGatedTarget } from "~/utils/ai-target-plan";
 import { planGateRefusal } from "~/utils/content-route-action.server";
 import { aiRefusalFor } from "~/utils/ai-refusal-response.server";
 import { PLAN_CONFIG, type ContentType } from "~/config/plans";
@@ -126,6 +127,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const gated = planGateRefusal(settings?.subscriptionPlan, planType, formData);
         if (gated) return gated;
       }
+      // The posted contentType is a client claim (the SEO pages post
+      // "products" for everything): judge the plan on what the payload really
+      // targets as well. The content-type gate wins over the SEO feature tier.
+      const gatedTarget = firstGatedTarget(
+        settings?.subscriptionPlan,
+        targetPlanTypes(actionType, (k) => getFormString(formData, k) || ""),
+      );
+      if (gatedTarget) return planGateRefusal(settings?.subscriptionPlan, gatedTarget, formData);
     }
 
     const refusal = NON_AI_ACTIONS.has(actionType)

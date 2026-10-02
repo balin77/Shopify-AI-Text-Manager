@@ -25,6 +25,7 @@ import { getSeoBulkBatchSize } from "~/utils/planUtils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement, type SeoLimits } from "~/utils/character-limits";
+import { partitionItemsByPlan } from "~/utils/ai-target-plan";
 import { analyzeStore, type AuditType, type AuditProblemBucket } from "~/services/seo/audit.service";
 import { seoTitleEffectiveLimit } from "~/utils/seo-score";
 import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
@@ -184,9 +185,18 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
 
   // Single-item mode filters the bucket down; verifying against the
   // server-derived bucket is what makes a POSTed GID safe to trust.
-  const items = singleItemId
+  const candidateItems = singleItemId
     ? bucketItems.filter((it) => it.id === singleItemId && it.type === singleItemType).slice(0, 1)
     : bucketItems.slice(0, planBatchSize);
+
+  // Second line of defence behind the audit's own plan filter: an item whose
+  // content type the plan does not include never runs. A whole-bucket run keeps
+  // going over the allowed items and names the skipped ones; a run left with
+  // nothing (or a single targeted item) is refused like every gated action.
+  const { allowed: items, gated: gatedItems } = partitionItemsByPlan(plan, candidateItems);
+  if (gatedItems.length > 0 && items.length === 0) {
+    return json({ success: false, error: "gated", actionType: "seoBulkFix" }, { status: 403 });
+  }
 
   if (items.length === 0) {
     return json(
@@ -276,7 +286,14 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
       .catch(() => {});
   });
 
-  return json({ success: true, taskId: task.id, total: items.length });
+  return json({
+    success: true,
+    taskId: task.id,
+    total: items.length,
+    ...(gatedItems.length > 0
+      ? { skippedGated: gatedItems.map((it) => ({ type: it.type, id: it.id, error: "gated" })) }
+      : {}),
+  });
 }
 
 // ─── "Fix all issues for one item" mode ────────────────────────────────────
