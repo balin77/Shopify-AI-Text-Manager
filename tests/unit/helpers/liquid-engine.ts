@@ -14,14 +14,21 @@ import { minifyLiquid, EXTENSION_DIR } from '../../../scripts/minify-liquid-bloc
 export const read = (p: string) => readFileSync(p, 'utf8');
 
 /**
- * liquidjs decodes backslash escapes inside string literals ("<" becomes
- * "<"), Shopify's Ruby Liquid does NOT (the backslash stays). The extension
- * relies on the Ruby behaviour (`replace: "<", "<"` must emit the six
+ * Two liquidjs/Ruby differences the extension relies on, bridged here.
+ * (1) liquidjs decodes backslash escapes inside string literals (backslash-u003c
+ * becomes "<"), Shopify's Ruby Liquid does NOT (the backslash stays). The extension
+ * relies on the Ruby behaviour (`replace: "<", "\u003c"` must emit the six
  * characters), so every template handed to liquidjs goes through this first:
  * the backslash of those two sequences is doubled, which liquidjs reads back as
  * one literal backslash.
  */
-export const forLiquidjs = (s: string) => s.replace(/\\u003([ce])/g, '\\\\u003$1');
+export const forLiquidjs = (s: string) =>
+  s
+    .replace(/\\u003([ce])/g, '\\\\u003$1')
+    // Second difference: `assign x = nil` is `blank` in Ruby (nil == blank), but
+    // liquidjs keeps an explicit null that does NOT equal `blank` (a variable that
+    // was never set does). An unset variable is the faithful stand-in.
+    .replace(/=\s*nil\b/g, '= __nil__');
 
 export type Variant = 'source' | 'minified';
 
