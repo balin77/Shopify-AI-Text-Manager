@@ -184,3 +184,67 @@ export function hasUnsavedPrimaryTranslateSource(input: {
   }
   return false;
 }
+
+/** What a save request was SENT under: its locale, its market and the alt
+ *  texts it carried. Captured at submit time (the response arrives later, and
+ *  the merchant may have switched view or kept typing in between). */
+export interface SentSaveScope {
+  locale: string;
+  marketId: string;
+  sentAlts: Record<number, string>;
+}
+
+/** Reads the alt texts a save form carried (`imageAltTexts`, a JSON object). */
+export function sentAltsFromForm(raw: unknown): Record<number, string> {
+  if (typeof raw !== "string" || raw === "") return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<number, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const i = Number(k);
+      if (Number.isInteger(i) && typeof v === "string") out[i] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * A foreign alt Shopify could not store because the image has no PRIMARY alt
+ * (`altTextNoPrimaryIndices`): no retry can store it, so the field goes back
+ * to what the language held before the edit — but only where the answer still
+ * describes what is on screen. The editor's twin of the image manager's
+ * `revertAltDraftsWithoutPrimary`:
+ *  - the view must still be the save's locale AND market (another view's
+ *    fields hold another language's text — reverting them would discard it);
+ *  - an index whose text is no longer what was SENT holds a newer draft the
+ *    merchant typed after Save and is left alone;
+ *  - an index the save did not carry is left alone.
+ * `scope === null` (unknown) reverts nothing: the draft stays, which costs a
+ * save bar, never a merchant's text.
+ */
+export function revertAltsWithoutPrimary(args: {
+  current: Readonly<Record<number, string>>;
+  baseline: Readonly<Record<number, string>>;
+  indices: readonly number[];
+  scope: SentSaveScope | null;
+  view: { locale: string; marketId: string };
+}): { next: Record<number, string>; reverted: number[] } {
+  const next: Record<number, string> = { ...args.current };
+  const reverted: number[] = [];
+  const scope = args.scope;
+  if (!scope) return { next, reverted };
+  if (scope.locale !== args.view.locale || (scope.marketId ?? "") !== (args.view.marketId ?? "")) {
+    return { next, reverted };
+  }
+  for (const i of args.indices) {
+    if (!(i in scope.sentAlts)) continue;
+    if ((args.current[i] ?? "") !== scope.sentAlts[i]) continue;
+    if (args.baseline[i] === undefined) delete next[i];
+    else next[i] = args.baseline[i];
+    reverted.push(i);
+  }
+  return { next, reverted };
+}

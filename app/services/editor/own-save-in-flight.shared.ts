@@ -86,3 +86,51 @@ export function isAltCoveredByOwnSave(
     (entry) => inView(entry, view) && entry.altValues !== undefined && entry.altValues[index] === value,
   );
 }
+
+/** How long a view switch waits for an own save to be answered before it
+ *  goes ahead anyway (the save still finishes; only its answer may then land
+ *  on another view, which the response handling already tolerates). */
+export const OWN_SAVE_SWITCH_WAIT_MS = 15_000;
+
+/**
+ * A view switch (item, language, market) while an own save is in flight: the
+ * cover keeps such a save out of `hasChanges`, so no save bar shows and no
+ * confirmation could ask. The switch waits for it instead. Resolves at once
+ * when nothing is pending; otherwise registers a release in `waiters` (the
+ * caller releases them all once the in-flight list is empty) and gives up
+ * after `timeoutMs`.
+ */
+export function waitForOwnSavesToSettle(
+  pending: boolean,
+  waiters: Array<() => void>,
+  timeoutMs: number = OWN_SAVE_SWITCH_WAIT_MS,
+): Promise<void> {
+  if (!pending) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const release = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    waiters.push(release);
+    setTimeout(release, timeoutMs);
+  });
+}
+
+/**
+ * The idle backstop: the fetcher is idle with nothing queued, so no own save
+ * is on its way any more — except the one submitted in this very effect flush
+ * (`justSubmittedToken`, the in-flight partial while the submit has not yet
+ * moved the fetcher state), whose entry must survive or its field would read
+ * as a draft for the whole round trip.
+ */
+export function backstopOwnSaves(
+  entries: OwnSaveInFlight[],
+  justSubmittedToken: unknown,
+): OwnSaveInFlight[] {
+  if (entries.length === 0) return entries;
+  if (justSubmittedToken == null) return [];
+  const kept = entries.filter((entry) => entry.token === justSubmittedToken);
+  return kept.length === entries.length ? entries : kept;
+}

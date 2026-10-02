@@ -46,6 +46,8 @@ interface VariantGallerySectionProps {
   /** Why ✨ / 🌍 cannot run for this tile (undefined = they can): their result
    *  is saved at once, and an image without a media id cannot be saved to. */
   altAiBlockedHint?: (url: string) => string | undefined;
+  /** The SAVED primary alt of the medium behind a tile; `undefined` = not known here (see VariantImageManager). */
+  primaryAltForUrl?: (url: string) => string | undefined;
   enabledLanguages?: string[];
   currentLanguage?: string;
   primaryLocale?: string;
@@ -97,6 +99,7 @@ export function VariantGallerySection({
   onTranslateAltText,
   onTranslateAltToAllLocales,
   altAiBlockedHint,
+  primaryAltForUrl,
   isAltDirty,
   isAltDraftDirty,
   enabledLanguages = [],
@@ -282,10 +285,17 @@ export function VariantGallerySection({
       ? (localAltTexts?.[singleSelectedUrl] ?? imageMetas[singleSelectedUrl]?.altText ?? "")
       : (localAltTexts?.[singleSelectedUrl] ?? ""))
     : "";
-  const primaryAltText = singleSelectedUrl ? (imageMetas[singleSelectedUrl]?.altText ?? "") : "";
+  // The tile's SAVED primary alt, `undefined` when it is not KNOWN (a media-
+  // library file that is not one of the product's images): unknown locks
+  // nothing and disables nothing -- the server reads it and answers.
+  const knownPrimaryAltText: string | undefined = singleSelectedUrl
+    ? (primaryAltForUrl ? primaryAltForUrl(singleSelectedUrl) : (imageMetas[singleSelectedUrl]?.altText ?? ""))
+    : undefined;
+  const primaryAltText = knownPrimaryAltText ?? "";
+  const primaryAltKnown = knownPrimaryAltText !== undefined;
   // Translating starts from the SAVED primary alt; without one there is nothing to translate.
   const translateAltBlocked = aiBlocked
-    ?? (singleSelectedUrl && altTranslateSourceText(primaryAltText) === null
+    ?? (singleSelectedUrl && primaryAltKnown && altTranslateSourceText(primaryAltText) === null
       ? String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet.")
       : undefined);
   const hasTranslation = singleSelectedUrl
@@ -294,7 +304,7 @@ export function VariantGallerySection({
   // A FOREIGN alt can only be stored where the image has a saved primary alt:
   // the box is locked with the reason instead of collecting a draft no Save
   // could ever store.
-  const altLocked = !!singleSelectedUrl && foreignAltLocked({
+  const altLocked = !!singleSelectedUrl && primaryAltKnown && foreignAltLocked({
     isPrimaryLocale,
     primaryAlt: primaryAltText,
     own: localAltTexts?.[singleSelectedUrl],

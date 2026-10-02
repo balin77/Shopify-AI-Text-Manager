@@ -150,11 +150,69 @@ describe("handleTranslateAltText (content route action)", () => {
     expect(body.translatedAltText).toBeUndefined();
   });
 
-  it("falls back to the form's primaryLocale when the shop lookup fails", async () => {
-    getCachedShopLocales.mockRejectedValue(new Error("boom"));
+  it("falls back to the form's primaryLocale when the shop lookup found nothing", async () => {
+    // getCachedShopLocales maps a failed (non-401) lookup to [] by itself.
+    getCachedShopLocales.mockResolvedValue([]);
     translateContent.mockResolvedValue("Red box");
     await run({ imageIndex: "0", sourceAltText: "Rote Kiste", targetLocale: "en", primaryLocale: "de" });
     expect(translateContent.mock.calls[0][1]).toBe("de");
+  });
+
+  it("lets a re-thrown 401 from the shop-locale lookup through (re-authentication), never swallows it", async () => {
+    const unauthorized = new Response(null, { status: 401 });
+    getCachedShopLocales.mockRejectedValue(unauthorized);
+    await expect(
+      run({ imageIndex: "0", sourceAltText: "Rote Kiste", targetLocale: "en", primaryLocale: "de" }),
+    ).rejects.toBe(unauthorized);
+    expect(translateContent).not.toHaveBeenCalled();
+  });
+
+  function dbWith(images: Array<{ mediaId: string; altText: string | null }>, library: { altText: string | null } | null = null) {
+    return {
+      ...makeDb(),
+      product: { findUnique: vi.fn(async () => ({ images })) },
+      mediaLibraryImage: { findUnique: vi.fn(async () => library) },
+    };
+  }
+
+  it("takes the source from the SERVER's cached product image named by mediaId, not from the client", async () => {
+    translateContent.mockResolvedValue("Red box");
+    const db = dbWith([{ mediaId: "gid://shopify/MediaImage/9", altText: "Rote Kiste" }]);
+    const { body } = await run(
+      { imageIndex: "3", mediaId: "gid://shopify/MediaImage/9", sourceAltText: "something the client made up", targetLocale: "en" },
+      db as never,
+    );
+    expect(body.success).toBe(true);
+    expect(translateContent.mock.calls[0][0]).toBe("Rote Kiste");
+  });
+
+  it("refuses with noSource when the server's primary alt is empty, whatever the client sent", async () => {
+    const db = dbWith([{ mediaId: "gid://shopify/MediaImage/9", altText: null }]);
+    const { body, status } = await run(
+      { mediaId: "gid://shopify/MediaImage/9", sourceAltText: "Kiste", targetLocale: "en" },
+      db as never,
+    );
+    expect(status).toBe(400);
+    expect(body.errorCode).toBe(ALT_NO_SOURCE_TEXT);
+    expect(translateContent).not.toHaveBeenCalled();
+  });
+
+  it("reads a media-library file (variant gallery) from the library cache", async () => {
+    translateContent.mockResolvedValue("Blue vase");
+    const db = dbWith([], { altText: "Blaue Vase" });
+    await run({ mediaId: "gid://shopify/MediaImage/77", sourceAltText: "", targetLocale: "en" }, db as never);
+    expect(translateContent.mock.calls[0][0]).toBe("Blaue Vase");
+  });
+
+  it("refuses an unknown mediaId instead of translating the client's text", async () => {
+    const db = dbWith([], null);
+    const { body, status } = await run(
+      { mediaId: "gid://shopify/MediaImage/404", sourceAltText: "Kiste", targetLocale: "en" },
+      db as never,
+    );
+    expect(status).toBe(404);
+    expect(body.errorCode).toBe("imageNotFound");
+    expect(translateContent).not.toHaveBeenCalled();
   });
 });
 

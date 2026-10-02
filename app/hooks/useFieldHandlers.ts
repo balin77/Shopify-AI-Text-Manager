@@ -101,6 +101,10 @@ export interface FieldHandlerProps {
   savedItemIdRef: { current: string | null };
   isSavePendingRef: { current: boolean };
   isSavingCurrentItem: boolean;
+  /** Resolves once no AI/copy button's own save is in flight (bounded). Those
+   *  saves are kept out of `hasChanges`, so no confirmation can ask about
+   *  them: a view switch waits for their answer instead. */
+  waitForOwnSaves?: () => Promise<void>;
   isSaveFromTranslateRef: { current: boolean };
   /** Set by a save that carries only SOME fields (a single-field translate),
    *  read by the save-response handling so it treats only those as saved. */
@@ -287,6 +291,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     savedItemIdRef,
     isSavePendingRef,
     isSavingCurrentItem,
+    waitForOwnSaves,
     isSaveFromTranslateRef,
     partialSaveRef,
     currentLanguageRef,
@@ -1663,6 +1668,9 @@ const handleLanguageChange = async (locale: string) => {
       viewSwitchConfirmPendingRef.current = false;
     }
   }
+  // An own save (AI/copy button) is not in hasChanges and shows no bar, so
+  // nothing above asked about it: let its answer land on this view first.
+  await waitForOwnSaves?.();
   setCurrentLanguage(locale);
   // This click is the only writer of the remembered working language: the
   // editor unmounts on every main-nav navigation, and coming back in the
@@ -1697,6 +1705,9 @@ const handleMarketChange = async (marketId: string) => {
       viewSwitchConfirmPendingRef.current = false;
     }
   }
+  // An own save (AI/copy button) is not in hasChanges and shows no bar, so
+  // nothing above asked about it: let its answer land on this view first.
+  await waitForOwnSaves?.();
   setSelectedMarketId(marketId);
 };
 
@@ -1722,6 +1733,9 @@ const handleItemSelect = async (itemId: string) => {
     viewSwitchConfirmPendingRef.current = false;
     await confirmNavigation();
   }
+  // An own save (AI/copy button) is not in hasChanges and shows no bar, so
+  // nothing above asked about it: let its answer land on this view first.
+  await waitForOwnSaves?.();
   setSelectedItemId(itemId);
   // Persist only on explicit user selection. Restore-effects and the
   // disappear-fallback in useUnifiedContentEditor must NOT write — see

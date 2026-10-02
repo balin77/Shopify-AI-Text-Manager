@@ -13,6 +13,8 @@ import {
   isUnsavedPrimaryAlt,
   altValuesForSaveResponse,
   hasUnsavedPrimaryTranslateSource,
+  revertAltsWithoutPrimary,
+  sentAltsFromForm,
 } from "~/services/editor/own-field-save.shared";
 import { planImmediateAltSave } from "~/components/image-manager/alt-draft";
 
@@ -230,5 +232,50 @@ describe("planImmediateAltSave — an AI result in the image manager saves that 
       gidOf,
       productId: "p",
     })).toBeNull();
+  });
+});
+
+describe("revertAltsWithoutPrimary — a no-primary answer reverts only what it describes", () => {
+  const scope = { locale: "fr", marketId: "", sentAlts: { 0: "Boîte", 1: "Vase" } };
+  const baseline = { 0: "ancien", 1: "vieux" };
+
+  it("reverts the sent indices to the baseline in the save's own view", () => {
+    const { next, reverted } = revertAltsWithoutPrimary({
+      current: { 0: "Boîte", 1: "Vase" }, baseline, indices: [0], scope, view: { locale: "fr", marketId: "" },
+    });
+    expect(reverted).toEqual([0]);
+    expect(next).toEqual({ 0: "ancien", 1: "Vase" });
+  });
+
+  it("touches nothing after a switch to another locale or market", () => {
+    const current = { 0: "Kiste" };
+    expect(revertAltsWithoutPrimary({ current, baseline, indices: [0], scope, view: { locale: "de", marketId: "" } }).reverted).toEqual([]);
+    expect(
+      revertAltsWithoutPrimary({ current: { 0: "Boîte" }, baseline, indices: [0], scope, view: { locale: "fr", marketId: "gid://shopify/Market/1" } }).next,
+    ).toEqual({ 0: "Boîte" });
+  });
+
+  it("keeps a newer draft typed while the save was in flight", () => {
+    const { next, reverted } = revertAltsWithoutPrimary({
+      current: { 0: "Boîte rouge" }, baseline, indices: [0], scope, view: { locale: "fr", marketId: "" },
+    });
+    expect(reverted).toEqual([]);
+    expect(next).toEqual({ 0: "Boîte rouge" });
+  });
+
+  it("drops an index without a baseline, and reverts nothing for an unknown scope", () => {
+    expect(
+      revertAltsWithoutPrimary({ current: { 1: "Vase" }, baseline: {}, indices: [1], scope, view: { locale: "fr", marketId: "" } }).next,
+    ).toEqual({});
+    expect(
+      revertAltsWithoutPrimary({ current: { 1: "Vase" }, baseline: {}, indices: [1], scope: null, view: { locale: "fr", marketId: "" } }).next,
+    ).toEqual({ 1: "Vase" });
+  });
+
+  it("sentAltsFromForm reads the form's imageAltTexts and ignores garbage", () => {
+    expect(sentAltsFromForm(JSON.stringify({ 0: "a", 2: "b" }))).toEqual({ 0: "a", 2: "b" });
+    expect(sentAltsFromForm(null)).toEqual({});
+    expect(sentAltsFromForm("not json")).toEqual({});
+    expect(sentAltsFromForm("[1,2]")).toEqual({});
   });
 });

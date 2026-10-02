@@ -418,10 +418,41 @@ export async function handleTranslateAltText(
   const { admin, session, contentConfig, db, itemId, provider, serviceConfig } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
-  const sourceAltText = getFormString(formData, "sourceAltText");
+  const requestedMediaId = (getFormString(formData, "mediaId") || "").trim();
+  const clientSourceAltText = getFormString(formData, "sourceAltText");
   const targetLocale = getFormString(formData, "targetLocale");
   if (!targetLocale || !isValidLocale(targetLocale)) {
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
+  }
+
+  // A named MEDIUM has its primary alt read here, from the cache this app
+  // writes on every primary alt save -- the product's own image first, then
+  // the media library (a library file shown only in a variant gallery). The
+  // client's text is only the fallback for a caller that names no medium
+  // (collections/articles, the editor's featured image). An id found in
+  // neither is refused, never translated from whatever the client sent.
+  let sourceAltText = clientSourceAltText;
+  if (requestedMediaId && contentConfig.resourceType === "Product") {
+    const dbProduct = await db.product.findUnique({
+      where: { shop_id: { shop: session.shop, id: itemId } },
+      include: { images: { orderBy: { position: "asc" } } },
+    });
+    const productImage = pickProductImage(dbProduct?.images, { mediaId: requestedMediaId });
+    if (productImage) {
+      sourceAltText = productImage.altText ?? "";
+    } else {
+      const libraryImage = await db.mediaLibraryImage.findUnique({
+        where: { shop_id: { shop: session.shop, id: requestedMediaId } },
+        select: { altText: true },
+      });
+      if (!libraryImage) {
+        return json(
+          { success: false, errorCode: ALT_IMAGE_NOT_FOUND, error: "Image not found on this product" },
+          { status: 404 },
+        );
+      }
+      sourceAltText = libraryImage.altText ?? "";
+    }
   }
 
   // The SOURCE is the image's primary-language alt and nothing else. This
@@ -433,15 +464,14 @@ export async function handleTranslateAltText(
   // every retry sent the same input and failed the same way. So: refuse an
   // empty source BEFORE any AI work, name the source language, and use the
   // plain-text single-value translate the /api/ai alt path uses (no JSON).
+  // No try/catch: getCachedShopLocales maps every failure but a 401 to []
+  // itself (which only costs the prompt its source-language name) and
+  // re-throws the 401 on purpose, so the request can re-authenticate.
   let primaryLocale = getFormString(formData, "primaryLocale") || "";
-  try {
-    const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
-    const shopLocales = await getCachedShopLocales(admin, session.shop);
-    const primary = shopLocales.find((l) => l.primary)?.locale;
-    if (primary) primaryLocale = primary;
-  } catch {
-    // A failed lookup only costs the prompt its source-language name.
-  }
+  const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
+  const shopLocales = await getCachedShopLocales(admin, session.shop);
+  const primary = shopLocales.find((l) => l.primary)?.locale;
+  if (primary) primaryLocale = primary;
   const plan = planAltTranslate({ sourceAltText, targetLocale, primaryLocale });
   if (!plan.ok) {
     return json(

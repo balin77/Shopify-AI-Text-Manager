@@ -8,7 +8,7 @@ import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { answerPredatesSave, altConfirmKey, monotonicNow } from "./alt-load-guard";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
-import { altTranslateSourceText, foreignAltLocked, classifyAltSaveResponse, type AltSaveVerdict, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
+import { altTranslateSourceText, foreignAltLocked, knownPrimaryAlt, classifyAltSaveResponse, type AltSaveVerdict, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
 import { usePlan } from "../../contexts/PlanContext";
 import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -2908,6 +2908,8 @@ export function VariantImageManager({
         reloadForeignAlts();
       } else if (verdict.kind === "refused") {
         showInfoBox(verdict.message || failText(""), "critical");
+      } else if (verdict.kind === "noSource") {
+        showInfoBox(String(im?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet."), "warning");
       } else {
         showInfoBox(failText(verdict.message), "critical");
       }
@@ -2927,8 +2929,10 @@ export function VariantImageManager({
     const req = altAiRequestRef.current;
     if (!req || req.productId !== productIdRef.current) return;
     const url = req.url;
-    const mediaId = urlToGid[url];
-    if (!effectiveProductImages.some((i) => i.url === url) || !mediaId || (req.mediaId && req.mediaId !== mediaId)) return;
+    // The tile must still show the medium the request was made for -- a
+    // product image or a library file in a variant gallery alike.
+    const mediaId = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    if (!mediaId || (req.mediaId && req.mediaId !== mediaId)) return;
     const generated =
       data.actionType === "generateAltText" && data.altText !== undefined ? (data.altText as string)
       : data.actionType === "translateAltText" && data.translatedAltText !== undefined ? (data.translatedAltText as string)
@@ -3307,6 +3311,14 @@ export function VariantImageManager({
       : String(t.imageManager?.aiNeedsSavedImage ?? "Save the image first — only then can the AI write or translate its alt text.");
   };
 
+  /** The SAVED primary alt of the medium behind a tile, or `undefined` when it
+   *  is not KNOWN here: a variant-gallery tile can be a media-library file that
+   *  is not one of the product's images, and nothing in this component holds
+   *  its primary alt. Unknown never locks a box or disables a button -- the
+   *  server reads the alt and answers (noSource / noPrimary) itself. */
+  const primaryAltForUrl = (url: string): string | undefined =>
+    knownPrimaryAlt({ url, gid: urlToGid[url] ?? gidForUrl(altGidLookup, url), images: effectiveProductImages });
+
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     if (imageIndex < 0) return;
@@ -3337,24 +3349,31 @@ export function VariantImageManager({
   // the reason, before any AI call (the button is disabled for it too).
   const handleTranslateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
-    if (!currentLanguage || imageIndex < 0) return;
+    const mediaId = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    if (!currentLanguage || (imageIndex < 0 && !mediaId)) return;
     const blocked = altAiBlockedHint(url);
     if (blocked) {
       showInfoBox(blocked, "warning");
       return;
     }
-    const sourceAltText = altTranslateSourceText(imageMetas[url]?.altText);
-    if (sourceAltText === null) {
+    // Refused here only where the primary alt is KNOWN to be empty; a library
+    // file's is not known here, and the server reads it (and refuses with the
+    // same noSource answer when it is empty).
+    const knownPrimary = primaryAltForUrl(url);
+    const sourceAltText = altTranslateSourceText(knownPrimary);
+    if (knownPrimary !== undefined && sourceAltText === null) {
       showInfoBox(String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet."), "warning");
       return;
     }
-    altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, marketId: foreignMarketId, productId };
+    altAiRequestRef.current = { url, mediaId, locale: currentLanguage, marketId: foreignMarketId, productId };
     const form = new FormData();
     form.append("action", "translateAltText");
     form.append("itemId", productId);
     form.append("productId", productId);
-    form.append("imageIndex", String(imageIndex));
-    form.append("sourceAltText", sourceAltText);
+    form.append("imageIndex", String(Math.max(imageIndex, 0)));
+    // The server takes the source from its own cache by this id.
+    if (mediaId) form.append("mediaId", mediaId);
+    form.append("sourceAltText", sourceAltText ?? "");
     form.append("targetLocale", currentLanguage);
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     form.append("productTitle", productTitle ?? "");
@@ -4004,6 +4023,7 @@ export function VariantImageManager({
                 isAltDirty={isPrimaryAltDirty}
                 isAltDraftDirty={isAltDraftDirty}
                 altAiBlockedHint={altAiBlockedHint}
+                primaryAltForUrl={primaryAltForUrl}
                 enabledLanguages={enabledLanguages}
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}

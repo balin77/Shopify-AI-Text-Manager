@@ -71,6 +71,25 @@ export function foreignAltLocked(args: {
 }
 
 /**
+ * The SAVED primary alt of the medium a tile shows, or `undefined` when it is
+ * not KNOWN on the client. A product image is known (by its url, else by its
+ * media GID -- one medium may be shown under several urls); anything else in a
+ * variant gallery is a media-library file whose primary alt nothing here
+ * holds. Unknown must never lock the foreign box or disable "translate": the
+ * server reads the alt itself and answers with noSource / noPrimary.
+ */
+export function knownPrimaryAlt(args: {
+  url: string;
+  gid: string | null | undefined;
+  images: ReadonlyArray<{ url: string; mediaId?: string | null; altText?: string | null }>;
+}): string | undefined {
+  const byUrl = args.images.find((img) => img.url === args.url);
+  const img = byUrl ?? (args.gid ? args.images.find((i) => i.mediaId === args.gid) : undefined);
+  if (!img) return undefined;
+  return img.altText ?? "";
+}
+
+/**
  * The answer code of a single-language alt translate that had no SOURCE: the
  * image has no saved alt text in the primary language. Refused before any AI
  * call -- an empty (or foreign) text handed to the translate prompt is what
@@ -135,15 +154,19 @@ export type AltAllLocalesVerdict =
   | { kind: "success"; savedCount: number }
   | { kind: "partial"; savedCount: number; failedLocales: string[] }
   | { kind: "refused"; message: string }
+  | { kind: "noSource" }
   | { kind: "error"; message: string };
 
 /** A `translateAltTextToAllLocales` answer: success, partial (named failed
- *  locales), refused, or error. */
+ *  locales), refused, no source (no primary alt), or error. */
 export function classifyAllLocalesResponse(data: unknown, targetLocales: string[] = []): AltAllLocalesVerdict {
   const rec = asRecord(data);
   if (!rec || rec.success !== true) {
     const ai = classifyAltAiResponse(data);
     if (ai.kind === "refused") return ai;
+    // No primary alt to translate from: the caller words it in the merchant's
+    // language (the same sentence as the single-language translate).
+    if (ai.kind === "noSource") return ai;
     return { kind: "error", message: errorText(rec) };
   }
   const failed = Array.isArray(rec.failedLocales)

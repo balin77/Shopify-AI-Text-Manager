@@ -8,6 +8,7 @@
 
 import type { PartialSave } from "./useUiDataLoader";
 import type { OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { sentAltsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
@@ -73,6 +74,9 @@ interface UseEditorAutoSaveProps {
    *  so the change detection does not show its value as a draft while it is
    *  being written. A React state setter: stable, safe in the [] callback. */
   setOwnSavesInFlight?: React.Dispatch<React.SetStateAction<OwnSaveInFlight[]>>;
+  /** The locale, market and alt texts of the request IN FLIGHT, bound at
+   *  submit time like `inFlightPartialRef` (see `revertAltsWithoutPrimary`). */
+  inFlightScopeRef?: React.MutableRefObject<SentSaveScope | null>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -118,6 +122,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     inFlightToastRef,
     preserveEditsUntilRef,
     setOwnSavesInFlight,
+    inFlightScopeRef,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -187,6 +192,13 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     }
     inFlightPartialRef.current = partial;
     inFlightToastRef.current = successToast;
+    if (inFlightScopeRef) {
+      inFlightScopeRef.current = {
+        locale: savedLocaleRef.current ?? "",
+        marketId: savedMarketIdRef.current ?? "",
+        sentAlts: sentAltsFromForm(data.imageAltTexts),
+      };
+    }
 
     try {
       justSubmittedRef.current = true;
