@@ -11,6 +11,8 @@ import {
   restrictAltBaseline,
   isUnsavedPrimarySource,
   isUnsavedPrimaryAlt,
+  altValuesForSaveResponse,
+  hasUnsavedPrimaryTranslateSource,
 } from "~/services/editor/own-field-save.shared";
 import { planImmediateAltSave } from "~/components/image-manager/alt-draft";
 
@@ -113,6 +115,50 @@ describe("restrictAltBaseline — a partial save moves only the alts it carried"
   it("an index the update removed (rolled-back copy) is removed", () => {
     const update = () => ({ 1: "x" });
     expect(restrictAltBaseline(update, [0])({ 0: "stale", 1: "y" })).toEqual({ 1: "y" });
+  });
+});
+
+describe("altValuesForSaveResponse — a partial save is answered with what it SENT", () => {
+  it("text typed while the save was in flight is not taken as saved", () => {
+    const live = { 0: "sent + typed later", 1: "other draft" };
+    const sent = altValuesForSaveResponse(live, { altValues: { 0: "sent" } });
+    expect(sent[0]).toBe("sent");
+    // The baseline of the carried index becomes the SENT value, so the live
+    // field still differs from it and stays a draft for the next Save.
+    const baseline = restrictAltBaseline(() => sent, [0])({ 0: "before", 1: "old 1" });
+    expect(baseline).toEqual({ 0: "sent", 1: "old 1" });
+    expect(live[0]).not.toBe(baseline[0]);
+  });
+  it("without altValues (a full save) the live map is used unchanged", () => {
+    const live = { 0: "a" };
+    expect(altValuesForSaveResponse(live, null)).toBe(live);
+    expect(altValuesForSaveResponse(live, {})).toBe(live);
+  });
+});
+
+describe("hasUnsavedPrimaryTranslateSource — whole-item Translate all waits for Save", () => {
+  const base = {
+    currentLanguage: "de",
+    primaryLocale: "de",
+    fieldKeys: ["title", "body"],
+    values: { title: "Titel", body: "Text", status: "DRAFT" },
+    baseline: { title: "Titel", body: "Text", status: "ACTIVE" },
+    alts: {} as Record<number, string>,
+    originalAlts: {} as Record<number, string>,
+  };
+  it("clean primary: allowed (an unsaved ATTRIBUTE is not a translate source)", () => {
+    expect(hasUnsavedPrimaryTranslateSource(base)).toBe(false);
+  });
+  it("an unsaved translatable primary field blocks it", () => {
+    expect(hasUnsavedPrimaryTranslateSource({ ...base, values: { ...base.values, title: "Neu" } })).toBe(true);
+  });
+  it("an unsaved primary alt text blocks it", () => {
+    expect(hasUnsavedPrimaryTranslateSource({ ...base, alts: { 0: "neu" }, originalAlts: { 0: "alt" } })).toBe(true);
+  });
+  it("never on a foreign locale", () => {
+    expect(
+      hasUnsavedPrimaryTranslateSource({ ...base, currentLanguage: "fr", values: { ...base.values, title: "Neu" } }),
+    ).toBe(false);
   });
 });
 

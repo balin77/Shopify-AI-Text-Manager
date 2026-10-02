@@ -31,6 +31,28 @@ export async function getLocalizedMediaEmbedActive(admin: Admin, shop: string): 
   }
 }
 
+export const EMBED_STATUS_TIMEOUT_MS = 1500;
+
+/**
+ * The same lookup, bounded: the products page must not wait on a theme-file
+ * read for a reminder. Past `timeoutMs` it answers `null` (unknown — the
+ * reminder stays); the lookup itself carries on and caches a KNOWN answer for
+ * the next load. A timeout is never cached.
+ */
+export function getLocalizedMediaEmbedActiveWithin(
+  admin: Admin,
+  shop: string,
+  timeoutMs: number = EMBED_STATUS_TIMEOUT_MS,
+): Promise<boolean | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  return Promise.race([getLocalizedMediaEmbedActive(admin, shop), timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 /** Test seam. */
 export function clearLocalizedMediaEmbedCache(): void {
   cache.clear();

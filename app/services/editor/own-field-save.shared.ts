@@ -91,6 +91,21 @@ export function restrictAltBaseline(
 }
 
 /**
+ * The alt texts a save response is read against: the live field map, with the
+ * indices a PARTIAL save carried replaced by the values it actually SENT. A
+ * merchant may keep typing in that field while the save is in flight; the
+ * typed text was not sent and must stay a draft. `altValues` absent (a full
+ * save, or an older caller) reads the live map as before.
+ */
+export function altValuesForSaveResponse(
+  live: Record<number, string>,
+  partial: { altValues?: Record<number, string> } | null | undefined,
+): Record<number, string> {
+  if (!partial?.altValues) return live;
+  return { ...live, ...partial.altValues };
+}
+
+/**
  * Is the PRIMARY value a button would take as its source still unsaved?
  * Only ever true on the primary locale. `baseline === undefined` means the
  * field has no baseline yet (nothing loaded), which is not a draft.
@@ -119,4 +134,53 @@ export function isUnsavedPrimaryAlt(input: {
 }): boolean {
   if (input.currentLanguage !== input.primaryLocale) return false;
   return input.value !== input.original;
+}
+
+/**
+ * The whole-item "Translate all" (primary locale) takes the SAVED primary
+ * values as its source and writes every language; a primary field or alt text
+ * that is still an unsaved draft would then be saved later, and that Save
+ * purges (or re-translates) exactly what the button just wrote. So the button
+ * waits, like the per-field translate-to-all, until every primary draft the
+ * run would cover is saved. `fieldKeys` are the TRANSLATABLE fields only — a
+ * merchandising attribute is not translated and its save purges nothing.
+ * Always false on a foreign locale.
+ */
+export function hasUnsavedPrimaryTranslateSource(input: {
+  currentLanguage: string;
+  primaryLocale: string;
+  fieldKeys: readonly string[];
+  values: Record<string, string | undefined>;
+  baseline: Record<string, string | undefined>;
+  alts: Record<number, string>;
+  originalAlts: Record<number, string>;
+}): boolean {
+  if (input.currentLanguage !== input.primaryLocale) return false;
+  for (const key of input.fieldKeys) {
+    if (
+      isUnsavedPrimarySource({
+        currentLanguage: input.currentLanguage,
+        primaryLocale: input.primaryLocale,
+        value: input.values[key],
+        baseline: input.baseline[key],
+      })
+    ) {
+      return true;
+    }
+  }
+  const altKeys = new Set([...Object.keys(input.alts), ...Object.keys(input.originalAlts)]);
+  for (const k of altKeys) {
+    const i = Number(k);
+    if (
+      isUnsavedPrimaryAlt({
+        currentLanguage: input.currentLanguage,
+        primaryLocale: input.primaryLocale,
+        value: input.alts[i],
+        original: input.originalAlts[i],
+      })
+    ) {
+      return true;
+    }
+  }
+  return false;
 }

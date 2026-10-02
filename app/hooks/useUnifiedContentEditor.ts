@@ -17,6 +17,7 @@ import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
 import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, preserveUnsavedEdits } from "./useUiDataLoader";
 import type { PartialSave } from "./useUiDataLoader";
+import type { LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -50,7 +51,8 @@ import { readLastSelectedId } from "../utils/last-selected-item";
 import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
-import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource } from "../services/editor/own-field-save.shared";
+import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
+import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse } from "../services/editor/own-field-save.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -193,6 +195,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [fallbackFields, setFallbackFields] = useState<Set<string>>(new Set());
 
   const fallbackFieldsRef = useLatestRef(fallbackFields);
+  const loadedFallbackRef = useRef<LoadedFallbackSnapshot | null>(null);
 
   // NOTE: originalLoadedValuesRef now lives in useUiDataLoader (destructured above)
 
@@ -1081,6 +1084,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
 
     setFallbackFields(newFallbackFields);
+    // What Discard restores the fallback flags against (see
+    // fallbackFieldsAfterDiscard): the inherited fields of THIS load and the
+    // values they were resolved with.
+    loadedFallbackRef.current = { fields: new Set(newFallbackFields), values: { ...newValues } };
 
     // Update the unified baseline and legacy refs via onDataLoaded.
     // This is the single authoritative update point — never update these refs
@@ -1691,7 +1698,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
 
-    partialSaveRef.current = { locale: currentLanguage, marketId: selectedMarketIdRef.current, values: {}, altIndices: indices };
+    partialSaveRef.current = { locale: currentLanguage, marketId: selectedMarketIdRef.current, values: {}, altIndices: indices, altValues: { ...pendingAltTexts } };
     savedLocaleRef.current = currentLanguage;
     // ...so the mirror must tag the saved alt as global too.
     savedMarketIdRef.current = "";
@@ -1963,9 +1970,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // not be mirrored as saved, or the next Save would not send it.
       const carriedAlts: Set<number> | null = partial ? new Set(partial.altIndices ?? []) : null;
       const altCarried = (index: number) => carriedAlts === null || carriedAlts.has(index);
+      // What the save SENT for its carried indices — not what the field holds
+      // now (the merchant may have kept typing while it was in flight).
+      const sentAlts = altValuesForSaveResponse(imageAltTextsRef.current, partial);
       if (savedLocale === primaryLocale) {
-        if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
-          for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
+        if (item.images && Object.keys(sentAlts).length > 0) {
+          for (const [indexStr, altText] of Object.entries(sentAlts)) {
             const index = parseInt(indexStr, 10);
             if (!altCarried(index)) continue;
             if (item.images[index]) {
@@ -1980,11 +1990,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // submit time) — not the live market, which may differ for a global save
         // (bulk / Accept & Translate) or after a mid-save market switch.
         const savedMarketId = savedMarketIdRef.current;
-        if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
+        if (item.images && Object.keys(sentAlts).length > 0) {
           const mirrorFailed: number[] = Array.isArray(fetcher.data?.failedAltTextIndices)
             ? fetcher.data.failedAltTextIndices
             : [];
-          for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
+          for (const [indexStr, altText] of Object.entries(sentAlts)) {
             const index = parseInt(indexStr, 10);
             if (mirrorFailed.includes(index)) continue;
             if (!altCarried(index)) continue;
@@ -2014,12 +2024,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const failedAlts: number[] = Array.isArray(fetcher.data.failedAltTextIndices) ? fetcher.data.failedAltTextIndices : [];
         setOriginalAltTexts(
           restrictAltBaseline(
-            keepFailedAltsDirty(altBaselineSnapshot(failedAlts), failedAlts, imageAltTextsRef.current),
+            keepFailedAltsDirty(altBaselineSnapshot(failedAlts, sentAlts), failedAlts, sentAlts),
             partial ? (partial.altIndices ?? []) : null,
           ),
         );
       }
-      debugLog.response(' Updated originalAltTexts:', { ...imageAltTextsRef.current });
+      debugLog.response(' Updated originalAltTexts:', { ...sentAlts });
 
       // Clear the saved locale ref after processing
       savedLocaleRef.current = null;
@@ -2074,7 +2084,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         : [];
       // Taken BEFORE the rollback clears its pending record, and reused for the
       // later baseline write, so that write cannot override the rollback.
-      const altBaselineAfterCopy = altBaselineSnapshot(copyFailedAlts);
+      const sentAltsForBaseline = altValuesForSaveResponse(imageAltTextsRef.current, partial);
+      const altBaselineAfterCopy = altBaselineSnapshot(copyFailedAlts, sentAltsForBaseline);
       const copyFieldItemId = pendingCopyFieldItemIdRef.current ?? savedItemId;
       const copyAltItemId = getPendingCopyAltItemId() ?? savedItemId;
       pendingCopyFieldItemIdRef.current = null;
@@ -2507,7 +2518,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Update original alt-texts to match current values (so hasChanges becomes false)
       setOriginalAltTexts(
         restrictAltBaseline(
-          keepFailedAltsDirty(altBaselineAfterCopy, copyFailedAlts, imageAltTextsRef.current),
+          keepFailedAltsDirty(altBaselineAfterCopy, copyFailedAlts, sentAltsForBaseline),
           partial ? (partial.altIndices ?? []) : null,
         ),
       );
@@ -2827,6 +2838,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     originalAltTextsRef,
     localAltTextOverlayRef,
     fallbackFieldsRef,
+    loadedFallbackRef,
     isAcceptAndTranslateFlowRef,
     deletedTranslationKeysRef,
     localTranslationsRef,
@@ -2932,6 +2944,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       value: editableValues[fieldKey],
       baseline: baselineValuesRef.current[fieldKey],
     });
+
+  /** Any primary draft the whole-item "Translate all" would take as its
+   *  source (a translatable field or an alt text) — the button waits for Save. */
+  const hasUnsavedTranslateAllSource = (): boolean =>
+    currentLanguage === primaryLocale &&
+    (effectiveFieldDefinitions.some((f) => isTranslatableFieldDefinition(f) && isPrimaryFieldUnsaved(f.key)) ||
+      hasUnsavedPrimaryAlts());
 
   const getEditableValue = (fieldKey: string): string => {
     // If the key exists in editableValues, always use it (even if empty).
@@ -3117,6 +3136,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isPrimaryFieldUnsaved,
       isPrimaryAltUnsaved,
       hasUnsavedPrimaryAlts,
+      hasUnsavedTranslateAllSource,
       /**
        * Hand a save response from a fetcher this hook does NOT own to the ONE
        * background-task watcher. The product page's sub-resource save is the

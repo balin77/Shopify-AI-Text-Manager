@@ -133,7 +133,9 @@ interface UseEditorAltTextReturn {
   /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
   rollbackCopyAltText: () => void;
   discardCopyAltRecord: () => void;
-  altBaselineSnapshot: (failedIndices?: number[]) => Record<number, string>;
+  /** `source` overrides the live field map for the indices it names (what a
+   *  partial save SENT — see altValuesForSaveResponse). */
+  altBaselineSnapshot: (failedIndices?: number[], source?: Record<number, string>) => Record<number, string>;
   getPendingCopyAltItemId: () => string | null;
   handleTranslateAllAltTextsForLocale: () => void;
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
@@ -327,11 +329,15 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         }
       }
     }
+    const viewIndices = opts.viewAltIndices ?? indices;
+    const sentForView: Record<number, string> = {};
+    for (const i of viewIndices) if (opts.alts[i] !== undefined) sentForView[i] = opts.alts[i];
     partialSaveRef.current = {
       locale: currentLanguageRef.current,
       marketId: selectedMarketIdRefAlt.current,
       values: {},
-      altIndices: opts.viewAltIndices ?? indices,
+      altIndices: viewIndices,
+      altValues: sentForView,
     };
     if (opts.successToast) pendingAltTranslateToastRef.current = opts.successToast;
     savedItemIdRef.current = opts.itemId;
@@ -490,8 +496,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
    *  index whose copy FAILED (and will be rolled back) keeps its previous
    *  original, so the later non-functional baseline write cannot override
    *  the rollback. */
-  const altBaselineSnapshot = (failedIndices: number[] = []): Record<number, string> => {
-    const base = { ...imageAltTextsRef.current };
+  const altBaselineSnapshot = (failedIndices: number[] = [], source?: Record<number, string>): Record<number, string> => {
+    const base = { ...(source ?? imageAltTextsRef.current) };
     const pending = copyOverlayRollbackRef.current;
     if (
       pending &&

@@ -320,6 +320,7 @@ export const guideEs: GuideCopy = {
           heading: "Un campo o todo",
           paragraphs: [
             "Elige un idioma extranjero arriba. Cada campo tiene ahora un botón de traducir que trae el texto del idioma principal. En el idioma principal, el botón del globo traduce un campo a todos los idiomas a la vez; «Traducir todo» en la barra de acciones traduce la entrada entera.",
+            "Ambos traducen el texto guardado. Si cambiaste algo en el idioma principal y aún no lo has guardado — un campo, un texto alternativo o un metacampo —, quedan bloqueados hasta que guardes; el aviso en el botón lo indica. De lo contrario, el guardado posterior eliminaría las traducciones que acaban de escribir.",
             "Con Ctrl+clic (Mac: Cmd+clic) sobre un botón de idioma lo excluyes de esas ejecuciones — por ejemplo, si lo traduces a mano.",
           ],
         },

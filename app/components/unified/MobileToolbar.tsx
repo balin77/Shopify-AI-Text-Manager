@@ -68,6 +68,9 @@ interface MobileToolbarProps {
   onClearAll: () => void;
   /** Hides Translate All / Clear All — used for locked app-embed technical groups. */
   disableBulkActions?: boolean;
+  /** Greys out Translate All with this reason (e.g. a primary draft that has
+   *  to be saved first). */
+  translateAllDisabledHint?: string;
 
 
   // Global AI action state (from global store, persists across navigation)
@@ -113,6 +116,7 @@ export function MobileToolbar({
   onClearAll,
   itemActions,
   disableBulkActions = false,
+  translateAllDisabledHint,
   isTranslatingGlobal = false,
   reloadResourceId,
   reloadResourceType,
@@ -198,8 +202,8 @@ export function MobileToolbar({
                   },
                   // Greyed out with the reason inline (ActionList can't host a
                   // hover tooltip) when the shop has nothing to translate into.
-                  disabled: isTranslating || isSingleLocale,
-                  helpText: singleLocaleHint,
+                  disabled: isTranslating || isSingleLocale || !!translateAllDisabledHint,
+                  helpText: singleLocaleHint ?? translateAllDisabledHint,
                 },
                 {
                   content: t.clearAll || "Clear All",

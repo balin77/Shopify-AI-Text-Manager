@@ -23,6 +23,7 @@ import {
   type SuggestionScope,
 } from "./useAISuggestionStore";
 import { confirmNavigation } from "./useSaveBar";
+import { confirmViewSwitch } from "./view-switch-discard";
 import type {
   TranslatableContentItem,
   ContentImage,
@@ -38,7 +39,8 @@ import { aiImageCandidates } from "../services/ai/vision-policy.shared";
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
-import { buildOwnSaveForm, isUnsavedPrimarySource } from "../services/editor/own-field-save.shared";
+import { fallbackFieldsAfterDiscard, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
+import { buildOwnSaveForm, isUnsavedPrimarySource, hasUnsavedPrimaryTranslateSource } from "../services/editor/own-field-save.shared";
 
 // ============================================================================
 // TYPES
@@ -84,6 +86,9 @@ export interface FieldHandlerProps {
   localAltTextOverlayRef: { current: Record<string, Record<number, string>> };
   originalAltTextsRef: { current: Record<number, string> };
   fallbackFieldsRef: { current: Set<string> };
+  /** Which fields the last load resolved as INHERITED, and with what value —
+   *  Discard restores their fallback flag (see fallbackFieldsAfterDiscard). */
+  loadedFallbackRef?: { current: LoadedFallbackSnapshot | null };
   isAcceptAndTranslateFlowRef: { current: boolean };
   deletedTranslationKeysRef: { current: Set<string> };
   localTranslationsRef: { current: Record<string, Record<string, string>> };
@@ -269,6 +274,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     localAltTextOverlayRef,
     originalAltTextsRef,
     fallbackFieldsRef,
+    loadedFallbackRef,
     isAcceptAndTranslateFlowRef,
     deletedTranslationKeysRef,
     localTranslationsRef,
@@ -336,6 +342,19 @@ const isPrimaryFieldUnsaved = (fieldKey: string): boolean =>
     primaryLocale,
     value: editableValuesRef.current[fieldKey],
     baseline: baselineValuesRef.current[fieldKey],
+  });
+
+/** Any primary draft the whole-item "Translate all" would take as its source
+ *  (a translatable field or an alt text). False on a foreign locale. */
+const hasUnsavedTranslateAllSource = (): boolean =>
+  hasUnsavedPrimaryTranslateSource({
+    currentLanguage: currentLanguageRef.current,
+    primaryLocale,
+    fieldKeys: effectiveFieldDefinitions.filter(isTranslatableFieldDefinition).map((f) => f.key),
+    values: editableValuesRef.current,
+    baseline: baselineValuesRef.current,
+    alts: imageAltTexts,
+    originalAlts: originalAltTextsRef.current,
   });
 
 const refuseUnsavedSource = (): void => {
@@ -568,6 +587,12 @@ const handleDiscard = () => {
   if (Object.keys(baseline).length > 0) {
     setEditableValues({ ...baseline });
     setImageAltTexts({ ...originalAltTextsRef.current });
+    // A field typed over an inherited value lost its fallback flag; back at
+    // the baseline it is inherited again. (Alt texts keep theirs: nothing
+    // clears `fallbackAltTextIndices` but a load.)
+    const restoredFallbacks = fallbackFieldsAfterDiscard(loadedFallbackRef?.current ?? null, baseline);
+    setFallbackFields(restoredFallbacks);
+    fallbackFieldsRef.current = new Set(restoredFallbacks);
     return;
   }
 
@@ -1132,6 +1157,13 @@ const handleTranslateAll = () => {
   // Guard against double-click: if translateAll is already running, ignore
   if (isOperationActive(selectedItemId, "__translateAll__")) return;
 
+  // Its source is the SAVED primary text: with a primary draft open, the
+  // later Save would purge what this run writes into every language.
+  if (hasUnsavedTranslateAllSource()) {
+    refuseUnsavedSource();
+    return;
+  }
+
   const requestItemId = selectedItemId;
 
   // Filter out primary locale and disabled languages
@@ -1248,11 +1280,10 @@ const handleTranslateAll = () => {
               }
             }
             if (Object.keys(translatedForCurrentLocale).length > 0) {
-              setImageAltTexts(prev => {
-                const updated = { ...prev, ...translatedForCurrentLocale };
-                setOriginalAltTexts(updated);
-                return updated;
-              });
+              setImageAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
+              // Only the translated indices are saved; another image's typed
+              // alt stays a draft against its own baseline.
+              setOriginalAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
             }
           }
           if (revalidatorRef.current.state === 'idle') {
@@ -1283,6 +1314,18 @@ const handleAcceptSuggestion = (fieldKey: string) => {
   const suggestion = aiSuggestions[fieldKey];
   if (!suggestion) return;
 
+  // A resource-backed rubric's main language is read-only: refuse BEFORE any
+  // state moves, or the refused accept would leave a dirty draft behind that
+  // no save can ever write (and the suggestion would be gone with it).
+  if (currentLanguage === primaryLocale && isResourceBackedThemeContent(config.contentType)) {
+    showInfoBox(
+      String(t.content?.primaryReadOnlyHint
+        || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
+      "warning"
+    );
+    return;
+  }
+
   // Force isLoadingData to false to ensure change detection works
   setIsLoadingData(false);
 
@@ -1304,17 +1347,7 @@ const handleAcceptSuggestion = (fieldKey: string) => {
 
   // Accepting SAVES the field at once — this field only (owner's rule,
   // 2026-10-02). A foreign field without a translation key has nowhere to be
-  // saved as a translation and stays a draft, as before. A resource-backed
-  // rubric's main language is read-only: refuse rather than send a primary
-  // write the server rejects.
-  if (currentLanguage === primaryLocale && isResourceBackedThemeContent(config.contentType)) {
-    showInfoBox(
-      String(t.content?.primaryReadOnlyHint
-        || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
-      "warning"
-    );
-    return;
-  }
+  // saved as a translation and stays a draft, as before.
   const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
   if (currentLanguage !== primaryLocale && !field?.translationKey) return;
   submitOwnFieldSave(fieldKey, suggestion);
@@ -1629,7 +1662,9 @@ const handleRejectSuggestion = useCallback((fieldKey: string) => {
 
 const handleLanguageChange = async (locale: string) => {
   if (hasChanges || isSavingCurrentItem) {
-    await confirmNavigation();
+    // A VIEW switch: a discard from its dialog drops this view's drafts only
+    // (view-switch-discard.ts), never the shared gallery / media / stock ones.
+    await confirmViewSwitch();
   }
   setCurrentLanguage(locale);
   // This click is the only writer of the remembered working language: the
@@ -1658,7 +1693,7 @@ const handleMarketChange = async (marketId: string) => {
   // Market switch behaves like a locale switch "light": no server round-trip, but
   // unsaved edits would be lost on re-resolve, so guard them the same way.
   if (hasChanges || isSavingCurrentItem) {
-    await confirmNavigation();
+    await confirmViewSwitch();
   }
   setSelectedMarketId(marketId);
 };
@@ -2032,11 +2067,10 @@ const handleTranslateAllForLocale = () => {
             });
 
             if (Object.keys(translated).length > 0) {
-              setImageAltTexts(prev => {
-                const updated = { ...prev, ...translated };
-                setOriginalAltTexts(updated);
-                return updated;
-              });
+              setImageAltTexts(prev => ({ ...prev, ...translated }));
+              // Only the translated indices are saved; another image's typed
+              // alt stays a draft against its own baseline.
+              setOriginalAltTexts(prev => ({ ...prev, ...translated }));
               // No auto-save needed - server already saved to Shopify and DB
             }
           }

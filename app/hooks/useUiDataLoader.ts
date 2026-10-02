@@ -78,6 +78,12 @@ export interface PartialSave {
    *  partial save never stands for the alt texts it did not send, so their
    *  baseline (and the merchant's unsaved alt drafts) stay untouched. */
   altIndices?: number[];
+  /** The alt texts this save SENT, keyed like `altIndices`. The response
+   *  handling takes the baseline and the in-memory mirror of the carried
+   *  indices from here, never from the live field: a merchant who kept typing
+   *  while the save was in flight holds text that was not sent, and marking it
+   *  saved would keep the next Save from sending it. */
+  altValues?: Record<number, string>;
 }
 
 export interface ResolvedField {

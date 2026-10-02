@@ -686,6 +686,9 @@ export interface UseContentEditorReturn {
     isPrimaryAltUnsaved: (imageIndex: number) => boolean;
     /** Any primary alt text is an unsaved draft ("translate all alt texts"). */
     hasUnsavedPrimaryAlts: () => boolean;
+    /** A primary field or alt the whole-item "Translate all" would take as its
+     *  source is an unsaved draft (false on a foreign locale). */
+    hasUnsavedTranslateAllSource: () => boolean;
     /**
      * Hand a save response from a fetcher the editor does NOT own to the ONE
      * background-task watcher, so the detached re-translation it started is

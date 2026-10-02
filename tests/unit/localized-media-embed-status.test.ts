@@ -38,8 +38,36 @@ describe("appEmbedActiveInSettingsData", () => {
     expect(appEmbedActiveInSettingsData(BANNER + JSON.stringify({ current: { logo: "x" } }))).toBe(false);
   });
 
-  it("matches by handle only: another app's block of the same handle counts (stated limit)", () => {
+  it("with no embed of ours recognisable in the file, the handle alone decides (fallback)", () => {
     expect(appEmbedActiveInSettingsData(settings({ a: { type: "shopify://apps/someone-else/blocks/localized-media/abc" } }))).toBe(true);
+  });
+
+  it("another app's same-named block does not count once our app is recognisable in the file", () => {
+    expect(
+      appEmbedActiveInSettingsData(
+        settings({
+          a: { type: "shopify://apps/contentpilot-ai/blocks/json-ld/abc" },
+          b: { type: "shopify://apps/someone-else/blocks/localized-media/abc" },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("our own disabled block answers, whatever another app's same-named block says", () => {
+    expect(
+      appEmbedActiveInSettingsData(
+        settings({
+          a: { type: OURS, disabled: true },
+          b: { type: "shopify://apps/someone-else/blocks/localized-media/abc" },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("recognises the dev app's handle as ours", () => {
+    expect(
+      appEmbedActiveInSettingsData(settings({ a: { type: "shopify://apps/contentpilot-ai-dev/blocks/localized-media/abc" } })),
+    ).toBe(true);
   });
 
   it("parses a file without the banner", () => {
@@ -95,4 +123,20 @@ describe("getLocalizedMediaEmbedActive", () => {
     themeMocks.readThemeFile.mockResolvedValueOnce(settings({ a: { type: OURS, disabled: true } }));
     expect(await getLocalizedMediaEmbedActive({} as never, "b.myshopify.com")).toBe(false);
   });
+
+  it("a lookup slower than the bound answers null at once, and its later answer is cached", async () => {
+    const { getLocalizedMediaEmbedActiveWithin, getLocalizedMediaEmbedActive } = await import(
+      "../../app/services/localized-media/embed-status.server"
+    );
+    let release: (v: string) => void = () => {};
+    themeMocks.getMainThemeId.mockResolvedValue("t");
+    themeMocks.readThemeFile.mockReturnValueOnce(new Promise<string>((r) => { release = r; }));
+    expect(await getLocalizedMediaEmbedActiveWithin({} as never, "c.myshopify.com", 10)).toBeNull();
+    release(settings({ a: { type: OURS } }));
+    await new Promise((r) => setTimeout(r, 0));
+    // The read carried on and cached the known answer for the next load.
+    expect(await getLocalizedMediaEmbedActive({} as never, "c.myshopify.com")).toBe(true);
+    expect(themeMocks.readThemeFile).toHaveBeenCalledTimes(1);
+  });
 });
+

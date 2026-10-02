@@ -13,7 +13,11 @@ import { act, renderHook } from "@testing-library/react";
 
 import { useFieldHandlers } from "~/hooks/useFieldHandlers";
 
-function setup(baseline: Record<string, string>, originalAlts: Record<number, string> = {}) {
+function setup(
+  baseline: Record<string, string>,
+  originalAlts: Record<number, string> = {},
+  loadedFallback: { fields: Set<string>; values: Record<string, string> } | null = null,
+) {
   const item = {
     id: "gid://shopify/Product/1",
     title: "Titel",
@@ -23,6 +27,7 @@ function setup(baseline: Record<string, string>, originalAlts: Record<number, st
   };
   const setEditableValues = vi.fn();
   const setImageAltTexts = vi.fn();
+  const setFallbackFields = vi.fn();
   const known: Record<string, unknown> = {
     config: { contentType: "products" },
     primaryLocale: "de",
@@ -40,6 +45,9 @@ function setup(baseline: Record<string, string>, originalAlts: Record<number, st
     originalAltTextsRef: { current: originalAlts },
     setEditableValues,
     setImageAltTexts,
+    setFallbackFields,
+    loadedFallbackRef: { current: loadedFallback },
+    fallbackFieldsRef: { current: new Set<string>() },
   };
   // Every other prop is irrelevant to Discard: a ref-shaped stub or a no-op.
   const props = new Proxy(known, {
@@ -47,7 +55,7 @@ function setup(baseline: Record<string, string>, originalAlts: Record<number, st
       key in target ? target[key] : key.endsWith("Ref") ? { current: null } : vi.fn(),
   });
   const { result } = renderHook(() => useFieldHandlers(props as any));
-  return { result, setEditableValues, setImageAltTexts };
+  return { result, setEditableValues, setImageAltTexts, setFallbackFields };
 }
 
 describe("editor Discard", () => {
@@ -70,5 +78,25 @@ describe("editor Discard", () => {
     act(() => result.current.handleDiscard());
     expect(setEditableValues).toHaveBeenCalledTimes(1);
     expect(setEditableValues.mock.calls[0][0].title).toBe("Titre global");
+  });
+
+  it("a field typed over an inherited value is inherited again after Discard", () => {
+    const baseline = { title: "Titre global", handle: "titel" };
+    const { result, setFallbackFields } = setup(baseline, {}, {
+      fields: new Set(["title"]),
+      values: { title: "Titre global", handle: "titel" },
+    });
+    act(() => result.current.handleDiscard());
+    expect(setFallbackFields).toHaveBeenCalledWith(new Set(["title"]));
+  });
+
+  it("a field saved since the load (baseline moved) is not flagged as inherited", () => {
+    const baseline = { title: "Titre CH neu", handle: "titel" };
+    const { result, setFallbackFields } = setup(baseline, {}, {
+      fields: new Set(["title"]),
+      values: { title: "Titre global", handle: "titel" },
+    });
+    act(() => result.current.handleDiscard());
+    expect(setFallbackFields).toHaveBeenCalledWith(new Set());
   });
 });

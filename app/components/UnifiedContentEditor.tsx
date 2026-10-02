@@ -46,6 +46,7 @@ import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
 import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
+import { routeSaveBarDiscard } from "../hooks/view-switch-discard";
 import { HelpTooltip } from "./HelpTooltip";
 import { ItemSidebar } from "./ItemSidebar";
 import { SidebarTabBar } from "./SidebarTabBar";
@@ -771,6 +772,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const saveFirstSourceHint = String(
     t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes.",
   );
+
+  // The whole-item "Translate all" on the primary locale translates the SAVED
+  // values into every language; a primary draft would be saved later and that
+  // Save purges what the button wrote. So it waits, like the per-field one.
+  const translateAllSaveFirstHint =
+    state.currentLanguage === primaryLocale &&
+    (helpers.hasUnsavedTranslateAllSource() || !!subResourceState?.translateAllSaveFirst)
+      ? saveFirstSourceHint
+      : undefined;
 
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
@@ -1750,13 +1760,26 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   void commerceSave.save?.();
                 }}
                 onDiscard={() => {
-                  handlers.handleDiscard();
-                  subResourceHandlers?.resetChanges?.();
-                  // Third writer, same button — as with Save. Without this a
-                  // discarded quantity stayed in the input AND kept the bar
-                  // visible, and the next unrelated Save fired the stock write
-                  // the merchant thought they had dropped.
-                  commerceSave.discard();
+                  // Inside a LANGUAGE/MARKET switch (its leave dialog's
+                  // "Discard"), only the drafts of the view being left go:
+                  // gallery changes, replacement-media drafts and stock edits
+                  // are the same in every view and survive the switch. A plain
+                  // Discard click discards both halves (view-switch-discard.ts).
+                  routeSaveBarDiscard({
+                    view: () => {
+                      handlers.handleDiscard();
+                      if (subResourceHandlers?.resetViewChanges) subResourceHandlers.resetViewChanges();
+                      else subResourceHandlers?.resetChanges?.();
+                    },
+                    shared: () => {
+                      subResourceHandlers?.resetSharedChanges?.();
+                      // Third writer, same button — as with Save. Without this a
+                      // discarded quantity stayed in the input AND kept the bar
+                      // visible, and the next unrelated Save fired the stock write
+                      // the merchant thought they had dropped.
+                      commerceSave.discard();
+                    },
+                  });
                 }}
                 saveText={t.content?.save || "Save"}
                 discardText={t.content?.discardChanges || "Discard"}
@@ -1781,6 +1804,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
+                  translateAllDisabledHint={state.currentLanguage === primaryLocale ? translateAllSaveFirstHint : undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -1942,11 +1966,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               Hidden for app-embed technical groups — translating
                               CSS selectors / config would break the embed. */}
                           {!isEmbedTechnical && (
-                          <DisabledActionTooltip hint={singleLocaleHint}>
+                          <DisabledActionTooltip hint={singleLocaleHint ?? translateAllSaveFirstHint}>
                             <Button
                               onClick={handlers.handleTranslateAll}
                               loading={isAllLocalesActionRunning}
-                              disabled={isAllLocalesActionRunning || !!singleLocaleHint}
+                              disabled={isAllLocalesActionRunning || !!singleLocaleHint || !!translateAllSaveFirstHint}
                               size="slim"
                             >
                               {isAllLocalesActionRunning

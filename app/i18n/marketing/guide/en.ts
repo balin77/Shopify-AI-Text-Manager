@@ -320,6 +320,7 @@ export const guideEn: GuideCopy = {
           heading: "One field or everything",
           paragraphs: [
             "Choose a foreign language at the top. Every field now has a translate button that carries the text over from the primary language. In the primary language, the globe button translates a field into every language at once; “Translate all” in the action bar translates the whole entry.",
+            "Both translate the saved text. If you changed something in the primary language and have not saved it yet — a field, an alt text or a metafield — they stay locked until you save; the hint on the button says so. Otherwise the later save would remove the translations they had just written.",
             "Ctrl+click (Mac: Cmd+click) on a language button takes that language out of such runs — for example when you have it translated by hand.",
           ],
         },

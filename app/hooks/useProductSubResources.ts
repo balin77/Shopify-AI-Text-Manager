@@ -126,6 +126,14 @@ export interface SubResourceState {
   /** Whether there are unsaved changes */
   hasChanges: boolean;
   /**
+   * Set by the products page: a PRIMARY draft outside the content fields that
+   * the whole-item "Translate all" would translate from its saved value and the
+   * later Save would purge — an edited metafield, or an alt text drafted in the
+   * image manager. (Edited OPTIONS are already left out of that run, see
+   * `optionTranslationBlockedIds`.) The button waits for Save while it is true.
+   */
+  translateAllSaveFirst?: boolean;
+  /**
    * Translations written by a copy / translate and not yet in the loaded item,
    * `{ locale: { resourceId: { key: value } } }` (market-folded keys for market
    * layers). Read-only for callers; `overlayVersion` changes when it does.
@@ -178,6 +186,15 @@ export interface SubResourceHandlers {
   translateAllSubResourcesToAllLocales: () => void;
   saveSubResources: () => void;
   resetChanges: () => void;
+  /**
+   * Set by the products page, which splits `resetChanges` for the save bar's
+   * Discard during a LANGUAGE/MARKET switch (see view-switch-discard.ts):
+   * `resetViewChanges` drops the drafts of the view on screen (these sub-resource
+   * edits, the image manager's alt drafts), `resetSharedChanges` what is the same
+   * in every view (pending gallery changes). `resetChanges` = both.
+   */
+  resetViewChanges?: () => void;
+  resetSharedChanges?: () => void;
   resetForReload: () => void;
   /**
    * Re-read the translations of the CURRENT item/locale/market from the item

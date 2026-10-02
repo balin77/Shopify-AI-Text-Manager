@@ -323,6 +323,7 @@ export const guideDe: GuideCopy = {
           heading: "Ein Feld oder alles",
           paragraphs: [
             "Wählen Sie oben eine Fremdsprache. Jedes Feld hat nun einen Übersetzen-Knopf, der den Text aus der Hauptsprache überträgt. In der Hauptsprache übersetzt der Weltkugel-Knopf ein Feld direkt in alle Sprachen; „Alles übersetzen“ in der Aktionsleiste übersetzt den ganzen Eintrag.",
+            "Beide übersetzen den gespeicherten Text. Haben Sie in der Hauptsprache etwas geändert und noch nicht gespeichert — ein Feld, einen Alt-Text oder ein Metafeld —, bleiben sie gesperrt, bis Sie speichern; der Hinweis am Knopf sagt es. Sonst würde das spätere Speichern die eben geschriebenen Übersetzungen wieder entfernen.",
             "Mit Strg+Klick (Mac: Cmd+Klick) auf einen Sprach-Knopf nehmen Sie eine Sprache aus solchen Läufen heraus, etwa wenn Sie sie selbst übersetzen lassen.",
           ],
         },
