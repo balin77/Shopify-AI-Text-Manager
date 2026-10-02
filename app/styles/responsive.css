@@ -439,7 +439,9 @@
   --app-autogrow-line: var(--p-font-line-height-500);
   --app-autogrow-pad-y: var(--p-space-150);
 }
-@media (max-width: 47.9975em) {
+/* 768px, not Polaris' 47.9975em: the phone rule further down puts the field
+   at 16px/24px up to and INCLUDING 768px, and the copy has to match it there. */
+@media (max-width: 768px) {
   .app-single-line-autogrow {
     --app-autogrow-line: var(--p-font-line-height-600);
   }
@@ -456,6 +458,9 @@
   width: auto;
   padding-top: var(--app-autogrow-pad-y);
   padding-bottom: var(--app-autogrow-pad-y);
+  /* Stated, not inherited: the copy Polaris measures uses the same variable,
+     so the two can never disagree about a line (they did at exactly 768px). */
+  line-height: var(--app-autogrow-line);
   overflow-wrap: break-word;
   word-break: break-word;
   overflow: auto;
