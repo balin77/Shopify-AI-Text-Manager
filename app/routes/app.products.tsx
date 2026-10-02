@@ -379,7 +379,15 @@ export const loader = createContentLoader({
     // the storefront after a downgrade or when the image manager is switched
     // off, so listing and removing them is open to every plan.
     const showLocalizedImages = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages };
+    // Whether that embed is already ON (true / false / null = unknown): only
+    // `true` drops the activation reminder after a save. Read only where the
+    // reminder could be shown, cached per shop, and never fatal (null).
+    let localizedImagesEmbedActive: boolean | null = null;
+    if (showLocalizedImages && localizedImagesEmbedUrl) {
+      const { getLocalizedMediaEmbedActive } = await import("../services/localized-media/embed-status.server");
+      localizedImagesEmbedActive = await getLocalizedMediaEmbedActive(ctx.admin as never, ctx.session.shop);
+    }
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, localizedImagesEmbedActive, showLocalizedImages };
   },
 });
 
@@ -394,7 +402,7 @@ export const action = makeContentRouteAction({ config: PRODUCTS_CONFIG, planCont
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, localizedImagesEmbedActive, showLocalizedImages } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -1090,6 +1098,7 @@ export default function ProductsPage() {
       currentLanguage={editor.state.currentLanguage}
       selectedMarketId={editor.state.selectedMarketId}
       embedActivationUrl={localizedImagesEmbedUrl}
+      embedActive={localizedImagesEmbedActive ?? null}
       draftsPendingRef={localizedDraftsPendingRef}
       // The image list the manager last confirmed: an image added or removed
       // there is reflected in the next foreign-language view without a reload.
