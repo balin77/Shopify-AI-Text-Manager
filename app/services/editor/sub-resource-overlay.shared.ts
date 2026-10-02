@@ -192,3 +192,63 @@ export function savedIdsAfterPartialSave(
   for (const [id, change] of Object.entries(metafieldChanges)) if (!failedMetafields.has(id)) okMetafields[id] = change;
   return changedIdsOfPrimarySave(okOptions, okMetafields);
 }
+
+// ============================================================================
+// Expiry of staged entries
+// ============================================================================
+//
+// An overlay entry exists to bridge the window between a confirmed write and
+// the loaded item catching up with it. Nothing used to END that window: a
+// staged value (a translate answer, a confirmed clear's "") outlived every
+// locale switch and revalidation and kept shadowing newer server values --
+// e.g. the translations a primary translate-to-all had just written. Each
+// staged pair is therefore STAMPED (per layer key and resource) when it is
+// written, and a reader prunes an entry once it is older than the keep window
+// AND the item was loaded after it was staged -- by then the item carries the
+// write, so the entry has nothing left to bridge.
+
+/** `${layerKey}\u0000${resourceId}` -> when that entry was staged. */
+export type OverlayStamps = Map<string, number>;
+
+export function overlayStampKey(layerKey: string, resourceId: string): string {
+  return `${layerKey}\u0000${resourceId}`;
+}
+
+/** Stamps the given resources of one layer key as staged at `at`. */
+export function stampOverlay(
+  stamps: OverlayStamps,
+  layerKey: string,
+  resourceIds: Iterable<string>,
+  at: number,
+): void {
+  for (const id of resourceIds) stamps.set(overlayStampKey(layerKey, id), at);
+}
+
+/**
+ * Removes every stamped entry older than `maxAgeMs` that the item, loaded at
+ * `itemLoadedAt`, post-dates. Unstamped entries and `keepIds` (translations a
+ * primary save could not remove -- still live) are left alone. Returns whether
+ * anything was removed.
+ */
+export function pruneExpiredOverlay(
+  overlay: SubResourceOverlay,
+  stamps: OverlayStamps,
+  opts: { now: number; itemLoadedAt: number; maxAgeMs: number; keepIds?: ReadonlySet<string> },
+): boolean {
+  let touched = false;
+  for (const layerKey of Object.keys(overlay)) {
+    const byResource = overlay[layerKey];
+    for (const resourceId of Object.keys(byResource)) {
+      if (opts.keepIds?.has(resourceId)) continue;
+      const stampKey = overlayStampKey(layerKey, resourceId);
+      const at = stamps.get(stampKey);
+      if (at === undefined) continue;
+      if (opts.now - at <= opts.maxAgeMs || opts.itemLoadedAt <= at) continue;
+      delete byResource[resourceId];
+      stamps.delete(stampKey);
+      touched = true;
+    }
+    if (Object.keys(byResource).length === 0) delete overlay[layerKey];
+  }
+  return touched;
+}

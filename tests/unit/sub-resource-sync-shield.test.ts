@@ -1,5 +1,5 @@
 /**
- * The product sync's translation-cache shield and the SYNC-ONLY key the
+ * The product sync's translation-cache shields and the SYNC-ONLY key the
  * options & metafields card marks (translation-locks.shared.ts).
  *
  * An interactive sub-resource translate marks each sub-resource GID (which the
@@ -8,6 +8,8 @@
  * metafield translation cache from a Shopify read taken before the write. The
  * new key shields that rewrite -- and must NOT be the repair's lock, or one
  * translate button would abort a running re-translation of the whole group.
+ * It also must NOT shield the product's own FIELD translations: an option
+ * translate says nothing about them.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -16,7 +18,10 @@ vi.mock("~/utils/logger.server", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { productTranslationCacheShielded } from "~/services/product-sync.service";
+import {
+  productTranslationCacheShielded,
+  subResourceTranslationCacheShielded,
+} from "~/services/product-sync.service";
 import {
   altTextLockId,
   altTextSyncShieldId,
@@ -34,14 +39,16 @@ beforeEach(() => {
   product = `gid://shopify/Product/9${n}00`;
 });
 
-describe("productTranslationCacheShielded", () => {
+describe("productTranslationCacheShielded (the whole block)", () => {
   it("is off when nothing was written", () => {
     expect(productTranslationCacheShielded(product)).toBe(false);
+    expect(subResourceTranslationCacheShielded(product)).toBe(false);
   });
 
-  it("an interactive sub-resource write (the sync-only shield) shields the cache rewrite", () => {
+  it("an interactive sub-resource write shields ONLY the sub-resource rewrite, not the product fields", () => {
     markTranslationSaved(subResourceSyncShieldId(product));
-    expect(productTranslationCacheShielded(product)).toBe(true);
+    expect(subResourceTranslationCacheShielded(product)).toBe(true);
+    expect(productTranslationCacheShielded(product)).toBe(false);
   });
 
   it("the shield is NOT the repair's lock: a running re-translation does not see it", () => {
@@ -52,7 +59,7 @@ describe("productTranslationCacheShielded", () => {
     expect(subResourceSyncShieldId(product)).not.toBe(altTextSyncShieldId(product));
   });
 
-  it("every other key a write of ours marks still shields", () => {
+  it("every key it asked for before the sync-only shield still shields the whole block", () => {
     for (const key of [
       product,
       subResourceLockId(product),
@@ -67,8 +74,25 @@ describe("productTranslationCacheShielded", () => {
     }
   });
 
+  it("the sub-resource guard asks for the repair lock (both layers) and the sync-only shield, nothing else", () => {
+    for (const [key, expected] of [
+      [subResourceSyncShieldId(product), true],
+      [subResourceLockId(product), true],
+      [marketLayerLockId(subResourceLockId(product)), true],
+      [product, false],
+      [altTextLockId(product), false],
+      [altTextSyncShieldId(product), false],
+    ] as const) {
+      n += 1;
+      const p = `gid://shopify/Product/7${n}00`;
+      markTranslationSaved(key.replace(product, p));
+      expect(subResourceTranslationCacheShielded(p)).toBe(expected);
+    }
+  });
+
   it("another product's shield does not shield this one", () => {
     markTranslationSaved(subResourceSyncShieldId(`${product}1`));
+    expect(subResourceTranslationCacheShielded(product)).toBe(false);
     expect(productTranslationCacheShielded(product)).toBe(false);
   });
 });

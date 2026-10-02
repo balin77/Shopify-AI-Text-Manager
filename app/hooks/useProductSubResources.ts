@@ -41,7 +41,11 @@ import {
   changedIdsOfPrimarySave,
   dropOverlayForPrimaryChange,
   overlayKeepingOnly,
+  overlayStampKey,
+  pruneExpiredOverlay,
   recordConfirmedForeignSave,
+  stampOverlay,
+  type OverlayStamps,
   stageTranslateAnswer,
   translateAnswerPlan,
   updateKeepIds,
@@ -539,6 +543,22 @@ export function useProductSubResources({
   // another), so its overlay reset keeps them for a while -- the staged value
   // is a translation Shopify echoed, never a guess.
   const recentlyStagedRef = useRef<Map<string, number>>(new Map());
+  // When each overlay entry was staged (per layer key + resource), and when
+  // the loaded item last changed. Together they END an entry's life: once it
+  // is older than the keep window and the item was loaded after it, the item
+  // carries the write and the entry would only shadow newer server values
+  // (see `pruneExpiredOverlay`).
+  const overlayStampsRef = useRef<OverlayStamps>(new Map());
+  const itemLoadedAtRef = useRef(0);
+  // The view a Phase-2 load was submitted for (and the ids it asked), so its
+  // answer is applied only while that view still shows. `deferredLoadRef`
+  // holds a load that could not go out (the shared fetcher was busy with a
+  // save, or a save aborted it) until the fetcher is idle again.
+  const pendingLoadRef = useRef<(TranslateTarget & { resourceIds: string[] }) | null>(null);
+  const deferredLoadRef = useRef<(TranslateTarget & { resourceIds: string[] }) | null>(null);
+  // A reload asked for while the revalidator was busy: the run in flight may
+  // have read before the write that asked for it, so another one follows.
+  const pendingRevalidateRef = useRef(false);
   // The latest pending sets, for response handlers that run from effects.
   const pendingStateRef = useRef<SubResourcePendingState | null>(null);
   const [overlayVersion, setOverlayVersion] = useState(0);
@@ -581,6 +601,39 @@ export function useProductSubResources({
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const itemId = selectedItem?.id;
   const currentViewRef = useLatestRef({ itemId, locale: currentLanguage, marketId: selectedMarketId });
+  const revalidatorRef = useLatestRef(revalidator);
+
+  /** Stamps overlay entries of one layer as staged now (see `overlayStampsRef`). */
+  const stampStaged = useCallback((layerKey: string, resourceIds: Iterable<string>) => {
+    stampOverlay(overlayStampsRef.current, layerKey, resourceIds, Date.now());
+  }, []);
+
+  /** Drops staged entries the loaded item has caught up with. */
+  const pruneOverlay = useCallback(() => {
+    if (
+      pruneExpiredOverlay(localSubResourceOverlayRef.current, overlayStampsRef.current, {
+        now: Date.now(),
+        itemLoadedAt: itemLoadedAtRef.current,
+        maxAgeMs: RECENT_TRANSLATE_KEEP_MS,
+        keepIds: keepOverlayIdsRef.current,
+      })
+    ) {
+      touchOverlay();
+    }
+  }, [touchOverlay]);
+
+  /**
+   * Reload the item now, or -- while a reload is already running, which may
+   * have read before the write that asks for this one -- right after it.
+   * Skipping it then (the old `state === "idle"` guard) left the loaded item
+   * carrying a removed market row until something else happened to reload.
+   */
+  const requestRevalidate = useCallback(() => {
+    const r = revalidatorRef.current;
+    if (!r) return;
+    if (r.state === "idle") r.revalidate();
+    else pendingRevalidateRef.current = true;
+  }, [revalidatorRef]);
 
   // Stable sub-resource IDs (only recompute when item changes)
   const subResourceIds = useMemo((): string[] => {
@@ -615,6 +668,8 @@ export function useProductSubResources({
 
     // Merge overlay (from copy operations) on top of DB data. Overlay is
     // market-folded so a market override doesn't leak into the global view.
+    // Entries the item has caught up with go first: they would only shadow it.
+    pruneOverlay();
     const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
     const overlayForLocale = localSubResourceOverlayRef.current[overlayKey] || {};
     const mergedMap = { ...dbMap };
@@ -637,20 +692,42 @@ export function useProductSubResources({
     const missingFromDb = subResourceIds.filter(id => !dbMap[id]);
 
     if (missingFromDb.length > 0 && fetchMissing) {
-      setIsLoading(true);
-      fetcher.submit(
-        {
-          action: "loadSubResourceTranslations",
-          locale: currentLanguage,
-          resourceIds: JSON.stringify(missingFromDb),
-          itemId,
-        },
-        { method: "POST", action: "/app/products" }
-      );
+      submitPhase2Load({ itemId, locale: currentLanguage, marketId: selectedMarketId, resourceIds: missingFromDb });
     } else {
       setIsLoading(false);
     }
   };
+
+  /**
+   * Phase 2 on the shared fetcher, TAGGED with the view it was asked for. Never
+   * submitted while a save bar's save is in flight (a second `submit()` would
+   * abort it): it is deferred until the fetcher is idle again.
+   */
+  const submitPhase2Load = (load: TranslateTarget & { resourceIds: string[] }) => {
+    if (fetcher.state !== "idle") {
+      deferredLoadRef.current = load;
+      setIsLoading(true);
+      return;
+    }
+    deferredLoadRef.current = null;
+    pendingLoadRef.current = load;
+    setIsLoading(true);
+    fetcher.submit(
+      {
+        action: "loadSubResourceTranslations",
+        locale: load.locale,
+        resourceIds: JSON.stringify(load.resourceIds),
+        itemId: load.itemId,
+      },
+      { method: "POST", action: "/app/products" }
+    );
+  };
+
+  // When the loaded item last changed (a reload delivers a new object). Runs
+  // before the load effect below, so a re-read sees the new stamp.
+  useEffect(() => {
+    itemLoadedAtRef.current = Date.now();
+  }, [selectedItem]);
 
   // ============================================================================
   // LOAD — Two-phase: DB pre-load (instant) + Shopify fetch (supplement)
@@ -694,6 +771,7 @@ export function useProductSubResources({
       // The kept ids belong to the previous item's live translations.
       keepOverlayIdsRef.current = new Set();
       recentlyStagedRef.current = new Map();
+      overlayStampsRef.current = new Map();
       pendingForeignSaveRef.current = null;
       pendingPrimarySaveIdsRef.current = [];
       pendingPrimarySaveSentRef.current = null;
@@ -732,9 +810,9 @@ export function useProductSubResources({
       overlayResetKeepIds(),
     );
     touchOverlay();
-    // Phase 2 goes through the SAME fetcher as a save; submitting while it is
-    // busy would abort that request, so the Shopify supplement is skipped then.
-    readTranslationsFromItem(fetcher.state === "idle");
+    // Phase 2 goes through the SAME fetcher as a save; while it is busy the
+    // Shopify supplement is deferred until it is idle (`submitPhase2Load`).
+    readTranslationsFromItem();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone; reads the render it runs in
   }, [refreshVersion]);
 
@@ -780,9 +858,11 @@ export function useProductSubResources({
     // A translate writes the global layer, so it is staged under the global key
     // for a market target too (the plan never applies it visibly there).
     if (plan === "skip" || !target || !translations) return plan;
-    if (stageTranslateAnswer(localSubResourceOverlayRef.current, buildLocaleKey(target.locale, ""), translations)) {
+    const layerKey = buildLocaleKey(target.locale, "");
+    if (stageTranslateAnswer(localSubResourceOverlayRef.current, layerKey, translations)) {
       const now = Date.now();
       for (const resourceId of Object.keys(translations)) recentlyStagedRef.current.set(resourceId, now);
+      stampStaged(layerKey, Object.keys(translations));
       touchOverlay();
     }
     return plan;
@@ -869,6 +949,7 @@ export function useProductSubResources({
       // (a plan refusal, a proxy error), which used to leave `isLoading` stuck.
       setIsLoading(false);
       if (data.actionType === "loadSubResourceTranslations") {
+        pendingLoadRef.current = null;
         return;
       }
       // A request that failed as a whole (server error, plan refusal, managed
@@ -888,8 +969,22 @@ export function useProductSubResources({
 
     // Phase 2 complete: merge Shopify data into state
     if (data.actionType === "loadSubResourceTranslations") {
-      setIsLoading(false);
-      const translations = data.translations as Record<string, Record<string, string>>;
+      // Applied ONLY to the view it was asked for: a load answer that lands
+      // after a language/market/item switch carries another layer's values
+      // (Phase 2 reads per locale), and merging it here showed them as this
+      // view's translations -- and a save would then have written them.
+      const load = pendingLoadRef.current;
+      pendingLoadRef.current = null;
+      if (!deferredLoadRef.current) setIsLoading(false);
+      const viewMatches =
+        !!load &&
+        load.itemId === itemId &&
+        load.locale === currentLanguage &&
+        load.marketId === selectedMarketId;
+      if (!viewMatches) return;
+      const translations = (data.translations || {}) as Record<string, Record<string, string>>;
+      // Entries the item has caught up with must not be merged back on top.
+      pruneOverlay();
       if (selectedItem) {
         // Merge FIELD BY FIELD: Shopify data overrides DB data (Shopify is
         // fresher) where it carries a value, and the overlay goes back on top
@@ -955,6 +1050,7 @@ export function useProductSubResources({
             { marketLayer: !!sentSave.marketLayer, savedIds: Array.isArray(data.savedResources) ? data.savedResources : null },
           )
         ) {
+          stampStaged(sentSave.localeKey, Object.keys(sentSave.values));
           touchOverlay();
         }
         // A confirmed removal of a MARKET override leaves the market inheriting
@@ -967,9 +1063,7 @@ export function useProductSubResources({
               !failedResources.includes(resourceId) &&
               Object.values(fields || {}).some((value) => value === ""),
           );
-        if (removedMarketOverride && revalidator && revalidator.state === "idle") {
-          revalidator.revalidate();
-        }
+        if (removedMarketOverride) requestRevalidate();
       }
 
       if (failedResources.length > 0) {
@@ -1148,6 +1242,24 @@ export function useProductSubResources({
       }
     }
   }, [fetcher.state, fetcher.data, selectedItem, selectedMarketId, currentLanguage]);
+
+  // A Phase-2 load that waited for the save bar's save (or was aborted by it)
+  // goes out once the fetcher is idle -- for the view it was asked for only.
+  // Declared AFTER the answer effect: both read the same render, so the save's
+  // answer is processed before this submit replaces `fetcher.data`.
+  useEffect(() => {
+    if (fetcher.state !== "idle") return;
+    const load = deferredLoadRef.current;
+    if (!load) return;
+    deferredLoadRef.current = null;
+    const view = currentViewRef.current;
+    if (view.itemId !== load.itemId || view.locale !== load.locale || view.marketId !== load.marketId) {
+      setIsLoading(false);
+      return;
+    }
+    submitPhase2Load(load);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- submitPhase2Load reads the render it runs in
+  }, [fetcher.state]);
 
   // ============================================================================
   // Handlers
@@ -1378,7 +1490,12 @@ export function useProductSubResources({
     if (previous !== "idle" && revalidatorState === "idle") {
       setAwaitingOptionReload(false);
     }
-  }, [revalidatorState]);
+    // A reload asked for while one was running (`requestRevalidate`).
+    if (revalidatorState === "idle" && pendingRevalidateRef.current) {
+      pendingRevalidateRef.current = false;
+      revalidatorRef.current?.revalidate();
+    }
+  }, [revalidatorState, revalidatorRef]);
 
   // Two more ways out, because a lock nothing releases is worse than the bug
   // it prevents: the item the reload brings back is a NEW object (if React
@@ -1491,6 +1608,21 @@ export function useProductSubResources({
     setMetafieldTranslations(prev => mergeMetafieldTranslations(prev, item, translations));
   }, []);
 
+  // Drops every staged entry of these resources, in every locale and layer,
+  // with their stamps and keep marks: a primary translate-to-all just wrote
+  // newer translations for them than anything the overlay holds.
+  const dropStagedFor = (resourceIds: readonly string[]) => {
+    for (const id of resourceIds) {
+      recentlyStagedRef.current.delete(id);
+      keepOverlayIdsRef.current.delete(id);
+    }
+    const overlay = localSubResourceOverlayRef.current;
+    for (const layerKey of Object.keys(overlay)) {
+      for (const id of resourceIds) overlayStampsRef.current.delete(overlayStampKey(layerKey, id));
+    }
+    if (dropOverlayForPrimaryChange(overlay, resourceIds, [])) touchOverlay();
+  };
+
   // The caller passes `strings` as a fresh object every render; read it through
   // a ref so the callbacks below are not rebuilt each time.
   const stringsRef = useLatestRef(strings);
@@ -1510,6 +1642,8 @@ export function useProductSubResources({
     settleCopiedResource,
     syncHasChanges,
     revalidator,
+    requestRevalidate,
+    dropStagedFor,
     showInfoBox,
   });
 
@@ -1531,6 +1665,8 @@ export function useProductSubResources({
     /** The primary-locale translate of ONE field says it landed (nothing shows). */
     confirmPrimary: boolean;
     revalidateAfter: boolean;
+    /** Resources whose staged overlay entries a successful answer supersedes. */
+    dropOverlayIds?: string[];
   }) => {
     try {
       const data = await postSubResourceRequest(opts.form);
@@ -1544,13 +1680,22 @@ export function useProductSubResources({
       }
       const answer = (data.translations || {}) as Record<string, Record<string, string>>;
       if (h.stageTranslations(answer, opts.requested) === "apply") {
-        applyTranslationsToState(opts.item, answer);
+        // Merged against the item showing NOW (a reload may have replaced the
+        // one the button was pressed on -- new value ids after a save), never
+        // the captured one; the plan already guarantees it is the same item.
+        const current = h.item && h.item.id === opts.itemId ? h.item : opts.item;
+        applyTranslationsToState(current, answer);
+      }
+      // A primary-locale translate-to-all wrote NEW translations into every
+      // language: whatever the overlay staged for those resources (an older
+      // translate answer, a confirmed clear's "") is older than them and would
+      // shadow them after the reload. Dropped in every locale and layer.
+      if (opts.dropOverlayIds && opts.dropOverlayIds.length > 0) {
+        h.dropStagedFor(opts.dropOverlayIds);
       }
       // A primary-locale translate saves into every language server-side and
       // returns nothing to show: re-read so the locale markers move.
-      if (opts.revalidateAfter && h.revalidator && h.revalidator.state === "idle") {
-        h.revalidator.revalidate();
-      }
+      if (opts.revalidateAfter) h.requestRevalidate();
       // Only the translated fields are saved; other pending edits stay pending.
       h.syncHasChanges();
       // A run in which fields or languages failed is never reported as done.
@@ -1600,6 +1745,7 @@ export function useProductSubResources({
       requested,
       confirmPrimary: isPrimaryLocale,
       revalidateAfter: isPrimaryLocale,
+      dropOverlayIds: isPrimaryLocale ? sourceData.map((s) => s.resourceId) : undefined,
     });
   }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, selectedMarketId, runTranslateRequest]);
 
@@ -1725,8 +1871,19 @@ export function useProductSubResources({
       requested: null,
       confirmPrimary: false,
       revalidateAfter: true,
+      dropOverlayIds: sourceData.map((s) => s.resourceId),
     });
   }, [isPrimaryLocale, buildSourceData, selectedItem, primaryLocale, translateAllFieldIds, runTranslateRequest]);
+
+  // The save bar's save shares the fetcher with Phase 2, and its submit ABORTS
+  // a load still in flight: that load is re-queued for when the save is done
+  // (see the deferred-load effect) instead of leaving `isLoading` stuck and
+  // the Shopify supplement lost.
+  const yieldLoadToSave = useCallback(() => {
+    if (!pendingLoadRef.current) return;
+    deferredLoadRef.current = pendingLoadRef.current;
+    pendingLoadRef.current = null;
+  }, []);
 
   // Unified save handler - automatically detects primary vs foreign locale
   const saveSubResources = useCallback(() => {
@@ -1936,6 +2093,7 @@ export function useProductSubResources({
 
       pendingPrimarySaveIdsRef.current = changedIdsOfPrimarySave(optionsChanges, metafieldChanges);
       pendingPrimarySaveSentRef.current = { options: optionsChanges, metafields: metafieldChanges };
+      yieldLoadToSave();
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
       // FOREIGN LOCALE: Save translations
@@ -1977,6 +2135,7 @@ export function useProductSubResources({
         marketLayer: !!selectedMarketId,
         values: translationsData,
       };
+      yieldLoadToSave();
       fetcher.submit(
         {
           action: "saveSubResourceTranslations",
@@ -1989,7 +2148,7 @@ export function useProductSubResources({
         { method: "POST", action: "/app/products" }
       );
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder, yieldLoadToSave]);
 
   const clearAllForLocale = useCallback(() => {
     if (!selectedItem || isPrimaryLocale) return;
@@ -2055,6 +2214,7 @@ export function useProductSubResources({
       // loader may have read the rows before the removal deleted them.
       recentlyStagedRef.current.set(resourceId, stagedAt);
     }
+    stampStaged(overlayKey, Object.keys(translationsData));
     touchOverlay();
 
     const fd = new FormData();
@@ -2087,6 +2247,9 @@ export function useProductSubResources({
         else if (previous === undefined) recentlyStagedRef.current.delete(resourceId);
         else recentlyStagedRef.current.set(resourceId, previous);
       }
+      // The confirmed "" lives from the confirmation on; a restored pair keeps
+      // the clear's stamp, which is never older than what it restored.
+      if (confirmed.size > 0 && !marketLayer) stampStaged(overlayKey, confirmed);
       h.touchOverlay();
 
       if (!data || data.success === false) {
@@ -2138,11 +2301,10 @@ export function useProductSubResources({
       // The loaded item still carries the removed rows; a reload brings it in
       // line (the staged "" keeps a global clear empty until it lands). No
       // success message: the editor's own clear reports the clear.
-      if (confirmed.size > 0 && h.revalidator && h.revalidator.state === "idle") {
-        h.revalidator.revalidate();
-      }
+      // A reload already running may have read before the removal: queued.
+      if (confirmed.size > 0) h.requestRevalidate();
     })();
-  }, [selectedItem, isPrimaryLocale, currentLanguage, selectedMarketId, optionTranslations, metafieldTranslations, fallbackResourceIds, touchOverlay, answerHandlersRef, currentViewRef, stringsRef]);
+  }, [selectedItem, isPrimaryLocale, currentLanguage, selectedMarketId, optionTranslations, metafieldTranslations, fallbackResourceIds, touchOverlay, stampStaged, answerHandlersRef, currentViewRef, stringsRef]);
 
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
@@ -2234,6 +2396,7 @@ export function useProductSubResources({
       if (!overlay[overlayKey][resourceId]) overlay[overlayKey][resourceId] = {};
       overlay[overlayKey][resourceId]["name"] = fields.name;
     }
+    stampStaged(overlayKey, Object.keys(translationsData));
     touchOverlay();
 
     const itemId = selectedItem.id;
@@ -2332,6 +2495,7 @@ export function useProductSubResources({
       if (!overlay[locale]) overlay[locale] = {};
       if (!overlay[locale][resourceId]) overlay[locale][resourceId] = {};
       overlay[locale][resourceId]["name"] = primaryValue;
+      stampStaged(locale, [resourceId]);
     }
     touchOverlay();
 
@@ -2400,6 +2564,7 @@ export function useProductSubResources({
         if (!overlay[locale][e.resourceId]) overlay[locale][e.resourceId] = {};
         overlay[locale][e.resourceId]["name"] = e.value;
       }
+      stampStaged(locale, entries.map((e) => e.resourceId));
     }
     touchOverlay();
 

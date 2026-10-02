@@ -18,7 +18,7 @@ import { parseValueOrderPayload } from "~/services/product-options.shared";
 import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
-import { subResourceLockId, subResourceSyncShieldId } from "~/services/translations/translation-locks.shared";
+import { marketLayerLockId, subResourceLockId, subResourceSyncShieldId } from "~/services/translations/translation-locks.shared";
 import {
   LOCALE_KEY_SEP,
   mirrorConfirmedContentTranslations,
@@ -313,7 +313,12 @@ export async function handleSaveSubResourceTranslations(
         // value landed while it was working — without it the AI overwrites the
         // merchant minutes later, which is the one outcome
         // `isTranslationRecentlySaved` exists to prevent.
-        markTranslationSaved(resourceId);
+        //
+        // GLOBAL layer only: the repair writes global rows, so a MARKET
+        // override cannot collide with it, and a bare mark would abort its run
+        // mid-locale for nothing. A market write marks the market variant,
+        // which only the syncs ask for (translation-locks.shared.ts).
+        markTranslationSaved(marketId ? marketLayerLockId(resourceId) : resourceId);
 
         // Remove the cleared keys. marketIds null = remove the global
         // translation; a market removes only that override. VERIFIED (echo, then

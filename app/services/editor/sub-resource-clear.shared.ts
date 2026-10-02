@@ -168,8 +168,16 @@ export function confirmedClearIds(
 /**
  * Settles the overlay once the answer is in:
  * - UNCONFIRMED ids get back what the overlay held before (the translation is
- *   still live, so the staged "" would hide it);
- * - a confirmed GLOBAL removal keeps its staged "" (see the note above);
+ *   still live, so the staged "" would hide it) -- but only while the pair
+ *   still holds the clear's own staged "". Anything else there was written
+ *   AFTER the clear was staged (a translate answer, a confirmed save) and is
+ *   newer than the snapshot; a pair that is gone was settled by something else
+ *   (a primary change dropped it) and stays gone;
+ * - a confirmed GLOBAL removal keeps its staged "" (see the note above). A
+ *   value staged over it while the clear was in flight is DROPPED back to "":
+ *   it was staged before the removal was confirmed, so the removal is the
+ *   later evidence and showing the value would display a translation Shopify
+ *   just deleted. A pair that is GONE stays gone (see above);
  * - a confirmed MARKET removal drops the entry: the market now inherits the
  *   global value, which a staged "" would hide behind an empty field.
  */
@@ -182,8 +190,14 @@ export function settleClearAll(
 ): void {
   for (const [resourceId, keys] of Object.entries(snapshot)) {
     for (const [key, previous] of Object.entries(keys)) {
-      if (!confirmed.has(resourceId)) restorePair(overlay, layerKey, resourceId, key, previous);
-      else if (marketLayer) restorePair(overlay, layerKey, resourceId, key, undefined);
+      const current = overlay[layerKey]?.[resourceId]?.[key];
+      if (!confirmed.has(resourceId)) {
+        if (current === "") restorePair(overlay, layerKey, resourceId, key, previous);
+      } else if (marketLayer) {
+        restorePair(overlay, layerKey, resourceId, key, undefined);
+      } else if (current !== undefined && current !== "") {
+        ((overlay[layerKey] ??= {})[resourceId] ??= {})[key] = "";
+      }
     }
   }
 }

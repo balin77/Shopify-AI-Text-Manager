@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ShopifyContentService } from '../../src/services/shopify-content.service';
 import { markTranslationSaved } from '~/utils/translation-save-lock.server';
-import { subResourceLockId, subResourceSyncShieldId } from '~/services/translations/translation-locks.shared';
+import { marketLayerLockId, subResourceLockId, subResourceSyncShieldId } from '~/services/translations/translation-locks.shared';
 
 vi.mock('~/utils/logger.server', () => ({
   loggers: { translation: vi.fn(), seo: vi.fn() },
@@ -843,6 +843,33 @@ describe('the SYNC-ONLY shield of the options & metafields card', () => {
       expect(marks()).toContain(SHIELD);
       expect(marks()).not.toContain(LOCK);
     }
+  });
+
+  it('a MARKET-layer save marks the market variant of the sub-resource, never the bare GID a repair watches', async () => {
+    const w = installAdmin();
+    await handleSaveSubResourceTranslations(
+      makeCtx(w.admin, makeDb()),
+      form({
+        locale: 'fr',
+        marketId: 'gid://shopify/Market/5',
+        translationsData: JSON.stringify({ [OPTION]: { name: 'Couleur' } }),
+        resourceTypes: JSON.stringify({ [OPTION]: 'ProductOption' }),
+      }),
+    );
+    expect(marks()).toContain(marketLayerLockId(OPTION));
+    expect(marks()).not.toContain(OPTION);
+
+    vi.mocked(markTranslationSaved).mockClear();
+    await handleSaveSubResourceTranslations(
+      makeCtx(installAdmin().admin, makeDb()),
+      form({
+        locale: 'fr',
+        translationsData: JSON.stringify({ [OPTION]: { name: 'Couleur' } }),
+        resourceTypes: JSON.stringify({ [OPTION]: 'ProductOption' }),
+      }),
+    );
+    expect(marks()).toContain(OPTION);
+    expect(marks()).not.toContain(marketLayerLockId(OPTION));
   });
 
   it('a "clear all" (every value "") marks it too', async () => {
