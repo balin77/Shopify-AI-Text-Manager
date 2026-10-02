@@ -497,7 +497,7 @@ export const guideEs: GuideCopy = {
           heading: "Imágenes de producto",
           paragraphs: [
             "Defines un reemplazo directamente en la galería de imágenes del producto, también si el gestor de imágenes está desactivado. En el idioma principal no hay nada especial. Cambia a un idioma extranjero (y, si quieres, a un mercado) y selecciona una imagen de la galería: en la fila de botones de la selección aparece, entre «Mover» y «Eliminar», el botón «Subir imagen de reemplazo». Al hacer clic se abren tus archivos, donde eliges una imagen o subes una nueva; solo se ofrece lo que puede reemplazar al original. La imagen elegida aparece enseguida en la galería, en lugar del original, marcada con un pequeño símbolo redondo en la esquina superior izquierda. Solo se guarda cuando pulsas «Guardar» arriba; el cuadro de información comunica el resultado. «Descartar» deshace tu elección. Un clic en el símbolo te muestra el original (el símbolo se vuelve gris) y otro clic vuelve a mostrar el reemplazo. «Quitar imagen de reemplazo» hace que vuelva a valer el original, y eso también se aplica solo con «Guardar». Usa una imagen con las mismas proporciones que la original: la tienda mantiene el marco de la original, así que otro formato se recorta o deja huecos.",
-            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Media per language» (mientras siga desactivada, el mensaje tras guardar enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
+            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Media per language» (mientras siga desactivada, el mensaje tras guardar enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto (incluidas sus miniaturas y la vista a pantalla completa). Si además usas las inserciones de app «Open Graph / Twitter» y «JSON-LD Structured Data», también se reemplazan la imagen principal que aparece al compartir el enlace y las imágenes que leen los buscadores.",
           ],
           list: [
             "Un reemplazo para un mercado concreto tiene prioridad sobre el reemplazo para «Todos los mercados».",
@@ -511,7 +511,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Vídeos",
           paragraphs: [
-            "Del mismo modo también reemplazas los vídeos de un producto por idioma y mercado, por ejemplo por una versión doblada. Un vídeo subido a Shopify se reemplaza por otro vídeo subido (de tus archivos o subido nuevo), un vídeo de YouTube o Vimeo por otro enlace de YouTube o Vimeo. Una imagen no se puede reemplazar por un vídeo ni al revés; los modelos 3D no se reemplazan.",
+            "Del mismo modo también reemplazas los vídeos de un producto por idioma y mercado, por ejemplo por una versión doblada. Un vídeo subido a Shopify se reemplaza por otro vídeo subido (de tus archivos o subido nuevo), un vídeo de YouTube o Vimeo por otro enlace de YouTube o Vimeo. Con un vídeo seleccionado, el botón se llama «Subir vídeo de reemplazo» o «Introducir enlace de reemplazo», según el caso. Una imagen no se puede reemplazar por un vídeo ni al revés; los modelos 3D no se reemplazan.",
             "Shopify procesa un vídeo recién subido durante unos minutos. Si aparece un aviso, elige el vídeo de tus archivos un poco más tarde.",
             "Los vídeos de los ajustes del tema (por ejemplo una sección de vídeo en la página de inicio) se introducen por idioma como otro enlace; la IA no los modifica.",
           ],
@@ -526,6 +526,7 @@ export const guideEs: GuideCopy = {
       tips: [
         "La IA no traduce ni modifica imágenes. Por eso los botones de traducir no ofrecen nada para las imágenes del tema: una imagen se mantiene hasta que eliges otra.",
         "Una imagen que se mantiene igual en un idioma no cuenta como traducción pendiente.",
+        "Las imágenes y vídeos distintos por idioma están incluidos en los planes Pro y Max.",
       ],
     },
 
