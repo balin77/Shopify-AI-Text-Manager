@@ -28,6 +28,27 @@ import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
 
+/**
+ * Put a GLOBAL translation into one locale's cached rows (in place). Only a row
+ * with no market scope is updated: the cache holds a market override of the
+ * same key as a separate row, and a lookup by key alone overwrote that override
+ * with the global value a translate-all wrote -- the market then showed the
+ * global wording as its own until the next load.
+ */
+export function upsertGlobalThemeRow(
+  localeCache: ThemeTranslationRecord[],
+  key: string,
+  value: string,
+  locale: string,
+): void {
+  const index = localeCache.findIndex((tr) => tr.key === key && (tr.marketId ?? "") === "");
+  if (index >= 0) {
+    localeCache[index] = { ...localeCache[index], value };
+  } else {
+    localeCache.push({ key, value, locale, marketId: "" });
+  }
+}
+
 interface ThemeContentDomainPageProps {
   data: {
     themes: ThemeNavItem[];
@@ -829,13 +850,8 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
       for (const [locale, translatedValue] of Object.entries(translations)) {
         const localeCache = [...(groupCache[locale] || [])];
 
-        // Find and update or add the translation
-        const existingIndex = localeCache.findIndex((tr) => tr.key === fieldType);
-        if (existingIndex >= 0) {
-          localeCache[existingIndex] = { ...localeCache[existingIndex], value: translatedValue };
-        } else {
-          localeCache.push({ key: fieldType, value: translatedValue, locale });
-        }
+        // The copy/translate-to-all writes the GLOBAL row only.
+        upsertGlobalThemeRow(localeCache, fieldType, translatedValue, locale);
 
         groupCache[locale] = localeCache;
       }
@@ -845,62 +861,60 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     });
   }, [fetcher.data, selectedGroupId]);
 
-  // Update loadedTranslations cache after translateAll (all fields → all locales) completes
+  // Update loadedTranslations cache after translateAll (all fields → all locales) completes.
+  // The run writes the GLOBAL rows of the group it was STARTED on: the group is
+  // taken when the request goes out (the merchant may switch groups while the
+  // AI works), and only a global row is updated -- a market override of the same
+  // key is a different row the run never wrote.
   const processedTranslateAllRef = useRef<unknown>(null);
+  const submittedGroupIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (fetcher.state === 'submitting') submittedGroupIdRef.current = selectedGroupIdRef.current ?? null;
+  }, [fetcher.state]);
   useEffect(() => {
     if (!fetcher.data || typeof fetcher.data !== 'object') return;
     if (!('success' in fetcher.data) || !fetcher.data.success) return;
     if (!('actionType' in fetcher.data)) return;
     if (processedTranslateAllRef.current === fetcher.data) return;
 
-    if (!selectedGroupId) return;
+    const groupId = submittedGroupIdRef.current ?? selectedGroupId;
+    if (!groupId) return;
 
     if (fetcher.data.actionType === 'translateAll') {
       processedTranslateAllRef.current = fetcher.data;
       // translations shape: { locale: { key: value, ... }, ... }
-      const translations = (fetcher.data as { translations: Record<string, Record<string, string>> }).translations;
+      const translations = (fetcher.data as { translations: Record<string, Record<string, string>> }).translations || {};
       setLoadedTranslations(prev => {
         const newCache = { ...prev };
-        const groupCache = { ...(newCache[selectedGroupId] || {}) };
+        const groupCache = { ...(newCache[groupId] || {}) };
 
         for (const [locale, fields] of Object.entries(translations)) {
           const localeCache = [...(groupCache[locale] || [])];
-
-          for (const [key, value] of Object.entries(fields)) {
-            const existingIndex = localeCache.findIndex((tr) => tr.key === key);
-            if (existingIndex >= 0) {
-              localeCache[existingIndex] = { ...localeCache[existingIndex], value };
-            } else {
-              localeCache.push({ key, value, locale });
-            }
+          for (const [key, value] of Object.entries(fields || {})) {
+            if (value) upsertGlobalThemeRow(localeCache, key, value, locale);
           }
-
           groupCache[locale] = localeCache;
         }
 
-        newCache[selectedGroupId] = groupCache;
+        newCache[groupId] = groupCache;
         return newCache;
       });
     } else if (fetcher.data.actionType === 'translateAllForLocale') {
       processedTranslateAllRef.current = fetcher.data;
       // translations shape: { key: value, ... }, targetLocale: string
       const { translations, targetLocale } = fetcher.data as { translations: Record<string, string>; targetLocale: string };
+      if (!targetLocale) return;
       setLoadedTranslations(prev => {
         const newCache = { ...prev };
-        const groupCache = { ...(newCache[selectedGroupId] || {}) };
+        const groupCache = { ...(newCache[groupId] || {}) };
         const localeCache = [...(groupCache[targetLocale] || [])];
 
-        for (const [key, value] of Object.entries(translations)) {
-          const existingIndex = localeCache.findIndex((tr) => tr.key === key);
-          if (existingIndex >= 0) {
-            localeCache[existingIndex] = { ...localeCache[existingIndex], value };
-          } else {
-            localeCache.push({ key, value, locale: targetLocale });
-          }
+        for (const [key, value] of Object.entries(translations || {})) {
+          if (value) upsertGlobalThemeRow(localeCache, key, value, targetLocale);
         }
 
         groupCache[targetLocale] = localeCache;
-        newCache[selectedGroupId] = groupCache;
+        newCache[groupId] = groupCache;
         return newCache;
       });
     }

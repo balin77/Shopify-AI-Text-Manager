@@ -1103,8 +1103,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       inFlightToastRef.current = null;
       processedTranslateFieldRef.current = null;
       processedTranslateAltTextAllRef.current = null;
-      processedTranslateAllRef.current = null;
-      processedTranslateAllForLocaleRef.current = null;
+      // processedTranslateAllRef / processedTranslateAllForLocaleRef are NOT
+      // reset: a translate-all answer is applied once, ever. Resetting them
+      // let the answer still held in fetcher.data be re-applied (and its toast
+      // shown again) the next time those effects re-ran on another item.
       acceptedPrimaryValueRef.current = null;
       setIsInitialDataReady(false); // Reset data ready flag for new item
       debugLog.dataLoad(' Cleared refs for new item');
@@ -1753,10 +1755,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (fetcher.data === processedTranslateAllRef.current) return;
       processedTranslateAllRef.current = fetcher.data;
 
+      // The item the request was made for (taken at submit time): the
+      // merchant may have switched items while the AI worked.
+      const requestItemId = fetcherScopeRef.current?.resourceId || selectedItemIdRef.current;
+
       // Clear the global store spinner for translateAll
-      if (selectedItemIdRef.current) {
-        markOperationFailed(selectedItemIdRef.current, "__translateAll__");
+      if (requestItemId) {
+        markOperationFailed(requestItemId, "__translateAll__");
       }
+      // Another item's answer: the server stored it, and the overlay refs
+      // belong to the item showing now -- staging it there would put item A's
+      // translations into item B's fields.
+      if (requestItemId !== selectedItemIdRef.current) return;
 
       const { translations, failedLocales } = fetcher.data as TranslationsResponse;
       {
@@ -1865,10 +1875,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       const { targetLocale, failedLocales } = fetcher.data as TranslationsResponse & { targetLocale: string };
 
+      // See the translateAll effect: the item the request was made for.
+      const requestItemId = fetcherScopeRef.current?.resourceId || selectedItemIdRef.current;
+
       // Clear the global store spinner for translateAllForLocale
-      if (selectedItemIdRef.current) {
-        markOperationFailed(selectedItemIdRef.current, `__translateAllForLocale__${targetLocale}`);
+      if (requestItemId) {
+        markOperationFailed(requestItemId, `__translateAllForLocale__${targetLocale}`);
       }
+      // Another item's answer is never staged into the item showing now.
+      if (requestItemId !== selectedItemIdRef.current) return;
       const translations = (fetcher.data as TranslationsResponse).translations as Record<string, string>;
       {
         // Delegate ref mutations to transition method
@@ -1877,7 +1892,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           effectiveFieldDefinitions,
           targetLocale,
           currentLanguage,
-          editableValues
+          editableValues,
+          // The run wrote the GLOBAL layer; a market view is not touched (see
+          // onTranslateAllForLocaleComplete).
+          currentLanguage === primaryLocale ? "" : (selectedMarketIdRef.current ?? "")
         );
 
         // Apply UI updates from transition result
