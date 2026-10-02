@@ -1877,11 +1877,15 @@ export function useProductSubResources({
     const key = `${itemId}|${locale}`;
     const runs = translateAllRunsRef.current;
     runs.set(key, (runs.get(key) ?? 0) + 1);
-    void run.finally(() => {
-      const left = (runs.get(key) ?? 1) - 1;
-      if (left > 0) runs.set(key, left);
-      else runs.delete(key);
-    });
+    void run
+      .finally(() => {
+        const left = (runs.get(key) ?? 1) - 1;
+        if (left > 0) runs.set(key, left);
+        else runs.delete(key);
+      })
+      // The run reports its own failure; a rejection must not surface as an
+      // unhandled one here.
+      .catch(() => {});
   }, []);
   const isTranslateAllRunning = useCallback((itemId: string, locale: string) => {
     const runs = translateAllRunsRef.current;

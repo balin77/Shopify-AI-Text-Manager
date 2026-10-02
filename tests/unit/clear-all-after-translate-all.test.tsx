@@ -54,6 +54,7 @@ function mount(opts: { rows: Row[] }) {
   const posted: Array<Record<string, string>> = [];
   const editor: { current: any } = { current: null };
   const showInfoBox = vi.fn();
+  const loads = { count: 0 };
 
   const serve = async (form: Record<string, string>) => {
     posted.push(form);
@@ -65,7 +66,15 @@ function mount(opts: { rows: Row[] }) {
         store.translations.push({ key, locale: form.targetLocale, value });
       }
     }
-    if (form.action === "updateContent" && body.success) {
+    if (form.action === "updateContent" && body.success && form.locale === "de") {
+      // A primary save purges the changed fields' translations everywhere.
+      const changed: string[] = form.changedFields ? JSON.parse(form.changedFields) : [];
+      for (const field of changed) {
+        const key = KEY_OF[field] ?? field;
+        store.translations = store.translations.filter((r: Row) => r.key !== key);
+      }
+      if (form.title) store.title = form.title;
+    } else if (form.action === "updateContent" && body.success) {
       // Every field the save sent: "" removes, a value is stored.
       for (const [field, value] of Object.entries(form)) {
         if (!["title", "seoTitle", "metaDescription", "body", "description", "handle", "productType"].includes(field)) continue;
@@ -107,7 +116,7 @@ function mount(opts: { rows: Row[] }) {
     {
       path: "/",
       element: <Page />,
-      loader: async () => ({ items: [{ ...store, translations: store.translations.map((r: Row) => ({ ...r })), seo: { ...store.seo } }] }),
+      loader: async () => (loads.count++, { items: [{ ...store, translations: store.translations.map((r: Row) => ({ ...r })), seo: { ...store.seo } }] }),
       action: async ({ request }) => serve(Object.fromEntries((await request.formData()) as any) as Record<string, string>),
     },
   ]);
@@ -118,7 +127,7 @@ function mount(opts: { rows: Row[] }) {
     const [entry] = pending.splice(index, 1);
     await act(async () => { entry.resolve(body); });
   };
-  return { editor, respond, posted, pending, store, showInfoBox };
+  return { editor, respond, posted, pending, store, showInfoBox, loads };
 }
 
 const switchTo = async (h: ReturnType<typeof mount>, locale: string) => {
@@ -256,6 +265,105 @@ describe("Clear all in language B while Translate all for language A runs", () =
     expect(h.posted.filter((p) => p.action === "updateContent").map((p) => p.locale)).toEqual(["de", "it"]);
   });
 
+  it("a run is refused while a save of its language (or any primary save) is still out", async () => {
+    const h = mount({ rows: ROWS });
+    await tick(50);
+    await switchTo(h, "it");
+    await act(async () => { h.editor.current.handlers.handleClearAllForLocaleConfirm(); });
+    await tick(10);
+    expect(h.posted.map((p) => p.action)).toEqual(["updateContent"]);
+    // Translate all for Italian right after "clear all": refused, nothing sent.
+    await act(async () => { expect(h.editor.current.handlers.handleTranslateAllForLocale()).toBe(false); });
+    await act(async () => { expect(h.editor.current.handlers.handleTranslateAll()).toBe(false); });
+    await tick(10);
+    expect(h.posted.map((p) => p.action)).toEqual(["updateContent"]);
+    expect(isOperationActive(ID, "__translateAllForLocale__it")).toBe(false);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("translate again"), "info");
+    await h.respond("updateContent", SAVED);
+    await tick(150);
+    // Once answered, the run goes.
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    expect(h.posted.map((p) => p.action)).toEqual(["updateContent", "translateAllForLocale"]);
+  });
+
+  it("a run in another language is not refused by a save that is out", async () => {
+    const h = mount({ rows: ROWS });
+    await tick(50);
+    await switchTo(h, "it");
+    await act(async () => { h.editor.current.handlers.handleClearAllForLocaleConfirm(); });
+    await tick(10);
+    // The clear is out; switching asks (no save bar in tests) and goes.
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    expect(h.posted.map((p) => p.action)).toEqual(["updateContent", "translateAllForLocale"]);
+  });
+
+  it("a failed run reloads too (it may have stored some languages)", async () => {
+    const h = await startTranslateInFrThenClearIt();
+    await h.respond("updateContent", SAVED);
+    await tick(150);
+    const before = h.loads.count;
+    await h.respond("translateAllForLocale", { success: false, actionType: "translateAllForLocale", targetLocale: "fr", error: "boom" });
+    await tick(150);
+    expect(h.loads.count).toBeGreaterThan(before);
+  });
+
+  it("a held save says why it waits and reads as saving until it went out", async () => {
+    const h = mount({ rows: ROWS });
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Titre à la main"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("Waiting until the translation"), "info");
+    expect(h.editor.current.state.isSavingCurrentItem).toBe(true);
+    await h.respond("translateAllForLocale", TA_FR);
+    await tick(100);
+    expect(h.editor.current.state.isSavingCurrentItem).toBe(true);
+    await h.respond("updateContent", SAVED);
+    await tick(150);
+    expect(h.editor.current.state.isSavingCurrentItem).toBe(false);
+  });
+
+  it("a primary save held behind a run leaves none of the run's translations of the OLD text on screen", async () => {
+    const h = mount({ rows: ROWS });
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    await tick(10);
+    await switchTo(h, "de");
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Neuer Titel"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    // The run answers with a translation of the OLD title...
+    await h.respond("translateAllForLocale", TA_FR);
+    await tick(100);
+    // ...then the held primary save goes out and purges it on the server.
+    const save = h.posted.find((p) => p.action === "updateContent")!;
+    expect(save.locale).toBe("de");
+    await h.respond("updateContent", SAVED);
+    await tick(150);
+    await switchTo(h, "fr");
+    expect(h.editor.current.state.editableValues.title).not.toBe("Titre nouveau");
+    expect(h.editor.current.state.editableValues.title).toBe("");
+  });
+
+  it("leaving a language whose clear was sent keeps only the marks that save carries", async () => {
+    const h = await startTranslateInFrThenClearIt();
+    await switchTo(h, "fr");
+    await h.respond("updateContent", SAVED);
+    await tick(150);
+    await switchTo(h, "it");
+    // The handle was empty in Italian (inherited from the primary): the clear
+    // sent nothing for it, and its mark does not hide the inherited value.
+    expect(h.editor.current.state.editableValues.handle).toBe("titel");
+    expect(h.editor.current.state.editableValues.title).toBe("");
+  });
+
   it("two runs answering before one render are both applied", async () => {
     const h = mount({ rows: ROWS });
     await tick(50);
@@ -323,7 +431,7 @@ describe("Clear all in language B while Translate all for language A runs", () =
 // useFieldHandlers in isolation: the alt-text half and the refusal
 // ---------------------------------------------------------------------------
 
-function setupHandlers(language = "fr") {
+function setupHandlers(language = "fr", overrides: Record<string, unknown> = {}) {
   const item = { id: ID, title: "Titel", images: [{ url: "a.jpg", altText: "Katze", altTextTranslations: [] as any[] }] };
   const currentLanguageRef = { current: language };
   const overlay = { current: { it: { 0: "Gatto vecchio" } } as Record<string, Record<number, string>> };
@@ -365,6 +473,7 @@ function setupHandlers(language = "fr") {
     baselineValuesRef: { current: { title: "x" } },
     revalidatorRef: { current: { state: "idle", revalidate } },
     ...spies,
+    ...overrides,
   };
   const props = new Proxy(known, {
     get: (target, key: string) =>
@@ -420,6 +529,35 @@ describe("Clear all while a translation into the SAME language runs", () => {
     // The confirm is refused too (the run may have started while the dialog was open).
     act(() => h.result.current.handleClearAllForLocaleConfirm());
     expect(h.safeSubmit).not.toHaveBeenCalled();
+  });
+
+  it("Discard drops the view's draft-clear marks except those a save that is out still carries", () => {
+    const marks = { current: new Set(["title##it", "body_html##it", "title##fr"]) };
+    const h = setupHandlers("it", {
+      deletedTranslationKeysRef: marks,
+      isSavingCurrentItem: true,
+      deletedMarksOfSavesOut: () => new Set(["body_html##it"]),
+    });
+    act(() => h.result.current.handleDiscard());
+    expect([...marks.current].sort()).toEqual(["body_html##it", "title##fr"]);
+  });
+
+  it("a language switch drops the left view's draft-clear marks", async () => {
+    const marks = { current: new Set(["title##it", "title##fr"]) };
+    const h = setupHandlers("it", { deletedTranslationKeysRef: marks, deletedMarksOfSavesOut: () => new Set<string>() });
+    await act(async () => { await h.result.current.handleLanguageChange("fr"); });
+    expect([...marks.current]).toEqual(["title##fr"]);
+  });
+
+  it("clear all also clears a per-language theme image", () => {
+    const h = setupHandlers("it", {
+      effectiveFieldDefinitions: [
+        { key: "title", translationKey: "title", type: "text", label: "Title" },
+        { key: "logo", translationKey: "general.logo", type: "themeImage", supportsTranslation: false, label: "Logo" },
+      ],
+    });
+    act(() => h.result.current.handleClearAllForLocaleConfirm());
+    expect([...(h.known.deletedTranslationKeysRef as any).current].sort()).toEqual(["general.logo##it", "title##it"]);
   });
 
   it("clears its own layer's staged alt translations, never another language's", () => {

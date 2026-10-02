@@ -54,6 +54,31 @@ export interface CompletedResult {
 
 const STALE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
+/**
+ * How long the editor waits for a "translate all" run before it gives up on
+ * the answer (useUnifiedContentEditor.submitTranslateRun). Shorter than the
+ * stale purge, so the purge never drops the spinner of a run still out.
+ */
+export const TRANSLATE_RUN_DEADLINE_MS = STALE_TIMEOUT_MS - 30_000;
+
+/**
+ * The client operation key a server Task row (`/api/running-field-tasks`)
+ * stands for. A whole-item run has `fieldType: "all"`: with ONE target locale
+ * it is "translate all for that language", with none it is "translate all"
+ * into every language, and with a comma list it is the alt texts into every
+ * language. Mapping all three to `__translateAll__` deleted a running
+ * per-language spinner on re-select, or seeded a "translate all" that refused
+ * "clear all" in every language.
+ */
+export function taskOperationKey(task: { fieldType?: string | null; targetLocale?: string | null }): string | null {
+  if (!task.fieldType) return null;
+  if (task.fieldType !== "all") return task.fieldType;
+  const target = task.targetLocale ?? "";
+  if (!target) return "__translateAll__";
+  if (target.includes(",")) return "allAltTextsTranslate";
+  return `__translateAllForLocale__${target}`;
+}
+
 /** Composite key: `${resourceId}::${fieldKey}` */
 const activeOps = new Map<string, ActiveOperation>();
 const completedResults = new Map<string, CompletedResult>();
@@ -209,11 +234,15 @@ export function getCompletedResultsForResource(resourceId: string): CompletedRes
 export function reconcileWithServer(
   resourceId: string,
   serverActiveFieldKeys: Set<string>,
+  /** Operations this client knows are still out (a request awaiting its
+   *  answer): the server may not have created their Task row yet. */
+  keep?: (fieldKey: string) => boolean,
 ) {
   purgeStale(); // opportunistic cleanup on write (safe — not in render path)
   let changed = false;
   for (const [key, op] of activeOps) {
     if (op.resourceId !== resourceId) continue;
+    if (keep?.(op.fieldKey)) continue;
     if (!serverActiveFieldKeys.has(op.fieldKey)) {
       activeOps.delete(key);
       changed = true;

@@ -82,9 +82,18 @@ export function dropMarksAfterSave(
   }
 }
 
-/** Every locale mark of exactly (locale, market) goes (a discarded clear). */
-export function dropLocaleMarks(marks: Set<string>, locale: string, marketId: string): void {
+/** Every locale mark of exactly (locale, market) goes (a discarded or
+ *  abandoned clear) -- except the ones in `keep`: a save that is out or queued
+ *  still carries that clear, and its answer settles the mark. */
+export function dropLocaleMarks(
+  marks: Set<string> | null | undefined,
+  locale: string,
+  marketId: string,
+  keep?: ReadonlySet<string> | null,
+): void {
+  if (!marks) return;
   for (const mark of [...marks]) {
+    if (keep?.has(mark)) continue;
     if (isLocaleMarkOf(mark, locale, marketId)) marks.delete(mark);
   }
 }

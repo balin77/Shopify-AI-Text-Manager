@@ -83,6 +83,8 @@ interface UseEditorAutoSaveProps {
    *  is not overwritten by the AI, and a primary purge is not undone by
    *  translations of the old text. A save of another language goes at once. */
   saveBlockedByTranslateRunRef?: React.MutableRefObject<(locale: string | null, itemId: string | null, beforeIndex?: number) => boolean>;
+  /** Called when a save is held back that way (the page says why it waits). */
+  onSaveHeldByRunRef?: React.MutableRefObject<() => void>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -130,6 +132,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     setOwnSavesInFlight,
     inFlightScopeRef,
     saveBlockedByTranslateRunRef,
+    onSaveHeldByRunRef,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -185,6 +188,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     }
 
     const blockedByRun = !!saveBlockedByTranslateRunRef?.current(savedLocaleRef.current, savedItemIdRef.current);
+    if (blockedByRun) onSaveHeldByRunRef?.current();
     if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current || blockedByRun) {
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
       saveQueueRef.current.push({

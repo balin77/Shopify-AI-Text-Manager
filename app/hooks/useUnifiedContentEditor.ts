@@ -57,12 +57,15 @@ import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, 
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import { appFetchJson } from "../utils/app-fetch";
-import { isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
+import { isMarkedDeleted, buildLocaleDeletedKey, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, contentEditorActionPage, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 import {
   markOperationActive,
   markOperationCompleted,
   markOperationFailed,
+  isOperationActive,
+  taskOperationKey,
+  TRANSLATE_RUN_DEADLINE_MS,
   reconcileWithServer,
   useLoadingFieldKeys as useGlobalLoadingFieldKeys,
   useCompletedResults,
@@ -74,6 +77,21 @@ import {
   useFieldSuggestions,
   type SuggestionScope,
 } from "./useAISuggestionStore";
+
+/** The translation keys of the fields a primary save's form named as changed. */
+function changedTranslationKeysOf(
+  sentFields: Record<string, string> | undefined,
+  fieldDefinitions: Array<{ key: string; translationKey?: string }>,
+): string[] {
+  const raw = sentFields?.changedFields;
+  if (!raw) return [];
+  let changed: unknown;
+  try { changed = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(changed)) return [];
+  return fieldDefinitions
+    .filter((f) => changed.includes(f.key) && !!f.translationKey)
+    .map((f) => f.translationKey as string);
+}
 
 interface TaskData {
   fieldType?: string | null;
@@ -116,8 +134,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
     return false;
   });
+  /** An operation key of a run this client still awaits (reconcile must not
+   *  drop it before the server's Task row exists). */
+  const keepRunOperation = (itemId: string) => (fieldKey: string) =>
+    translateRunsRef.current.some(
+      (run) =>
+        run.itemId === itemId &&
+        (run.locale === "*" ? fieldKey === "__translateAll__" : fieldKey === `__translateAllForLocale__${run.locale}`),
+    );
   const showInfoBoxRef = useLatestRef(showInfoBox);
   const tRef = useLatestRef(t);
+  /** A save waits for a "translate all" run: say so, or the merchant sees a
+   *  spinner with no reason for minutes. */
+  const onSaveHeldByRunRef = useRef(() => {
+    showInfoBoxRef.current(
+      String(tRef.current?.common?.saveWaitsForTranslation || "Waiting until the translation has finished \u2013 then it is saved."),
+      "info",
+    );
+  });
   const configRef = useLatestRef(config);
 
   // ============================================================================
@@ -255,28 +289,29 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (!response.ok || cancelled) return;
         const data = await response.json();
 
-        const lang = currentLanguageRef.current;
+        // Every running task, whatever its language: a per-language run is its
+        // own key (`taskOperationKey`), so the one on screen is never confused
+        // with another language's or with "translate all".
         const activeTasks: TaskData[] =
-          (data.tasks as TaskData[] || []).filter((task) => {
-            if (!task.fieldType) return false;
-            if (task.targetLocale && task.targetLocale !== lang) return false;
-            return true;
-          });
+          (data.tasks as TaskData[] || []).filter((task) => !!taskOperationKey(task));
 
-        const serverFieldKeys = new Set(
-          activeTasks.map((t) =>
-            t.fieldType === "all" ? "__translateAll__" : t.fieldType!
-          )
-        );
+        const serverFieldKeys = new Set(activeTasks.map((t) => taskOperationKey(t)!));
 
         // Seed any server-side tasks that aren't in the global store yet
         for (const task of activeTasks) {
-          const fk = task.fieldType === "all" ? "__translateAll__" : task.fieldType!;
-          markOperationActive(selectedItemId, fk, "server-task", task.targetLocale || undefined);
+          const fk = taskOperationKey(task)!;
+          if (isOperationActive(selectedItemId, fk)) continue;
+          const perLocale = fk.startsWith("__translateAllForLocale__");
+          markOperationActive(
+            selectedItemId,
+            fk,
+            perLocale ? "translateAllForLocale" : fk === "__translateAll__" ? "translateAll" : "server-task",
+            perLocale ? task.targetLocale || undefined : undefined,
+          );
         }
 
         // Clear global store entries that the server says are no longer running
-        reconcileWithServer(selectedItemId, serverFieldKeys);
+        reconcileWithServer(selectedItemId, serverFieldKeys, keepRunOperation(selectedItemId));
 
         if (activeTasks.length === 0 || cancelled) return;
 
@@ -295,12 +330,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
             const stillRunning = new Set<string>(
               ((d2.tasks as TaskData[]) || [])
-                .filter((t): t is TaskData & { fieldType: string } => !!t.fieldType)
-                .map((t) => t.fieldType === "all" ? "__translateAll__" : t.fieldType)
+                .map((t) => taskOperationKey(t))
+                .filter((k): k is string => !!k)
             );
 
             // Reconcile: clear anything the server says is done
-            reconcileWithServer(selectedItemId, stillRunning);
+            reconcileWithServer(selectedItemId, stillRunning, keepRunOperation(selectedItemId));
 
             const nowDone = [...remaining].filter((k) => !stillRunning.has(k));
             if (nowDone.length > 0) {
@@ -662,6 +697,60 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** Locale, market and alt texts of the save IN FLIGHT (full or partial),
    *  bound at submit time beside `inFlightPartialRef`. */
   const inFlightScopeRef = useRef<SentSaveScope | null>(null);
+
+  /** The saves of the selected item that are out (in flight on the fetcher)
+   *  or waiting in the queue, with the form fields each carries. */
+  const savesOfItemOut = (itemId: string | null): Array<{ locale: string; marketId: string; fields: Record<string, string> }> => {
+    if (!itemId) return [];
+    const out: Array<{ locale: string; marketId: string; fields: Record<string, string> }> = [];
+    const scope = inFlightScopeRef.current;
+    if (isSavePendingRef.current && savedItemIdRef.current === itemId && scope) {
+      out.push({ locale: scope.locale, marketId: scope.marketId ?? "", fields: scope.sentFields ?? {} });
+    }
+    for (const entry of saveQueueRef.current) {
+      if (entry.savedItemId !== itemId) continue;
+      out.push({
+        locale: entry.savedLocale ?? "",
+        marketId: entry.savedMarketId ?? "",
+        fields: sentFieldsFromForm(entry.formData.entries()),
+      });
+    }
+    return out;
+  };
+
+  /** The "deleted" marks a save that is out or queued stands behind (its
+   *  answer settles them): a discard, a switch or a background refresh must
+   *  not take them. A primary save stands behind the LAYER marks of the
+   *  fields it carries, a foreign one behind its own locale marks. */
+  const deletedMarksOfSavesOut = (): ReadonlySet<string> => {
+    const keep = new Set<string>();
+    for (const save of savesOfItemOut(selectedItemIdRef.current)) {
+      for (const field of effectiveFieldDefinitionsRef.current) {
+        if (!field.translationKey || !(field.key in save.fields)) continue;
+        if (save.locale === primaryLocaleRef.current) keep.add(field.translationKey);
+        else keep.add(buildLocaleDeletedKey(field.translationKey, save.marketId, save.locale));
+      }
+    }
+    return keep;
+  };
+
+  /**
+   * A "translate all" run (its own request) must not race a save of the same
+   * item that is still out or queued: a "clear all" pressed a moment before
+   * would land its removals AFTER the run's registrations and leave the
+   * language empty on Shopify while the editor shows the AI text. Refused,
+   * never queued -- the same rule as a switch during an own save.
+   */
+  const refuseTranslateRun = (itemId: string, locale: string): boolean => {
+    const touches = (savedLocale: string) =>
+      locale === "*" || savedLocale === locale || savedLocale === primaryLocaleRef.current;
+    if (!savesOfItemOut(itemId).some((save) => touches(save.locale))) return false;
+    showInfoBoxRef.current(
+      String(tRef.current?.common?.translateWhileSaving || "Still saving \u2013 please wait a moment and then translate again."),
+      "info",
+    );
+    return true;
+  };
   /**
    * AI/copy buttons' own saves that have been submitted and not answered yet
    * (own-save-in-flight.shared.ts). The change detection reads it so the value
@@ -962,6 +1051,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     safeSubmit,
   } = useEditorAutoSave({
     saveBlockedByTranslateRunRef,
+    onSaveHeldByRunRef,
     selectedItemId,
     selectedItemIdRef,
     currentLanguage,
@@ -1107,7 +1197,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // reloaded from an API here either, so the theme early return above does
       // not apply: the loader data this re-resolves from IS the fresh data.
       debugLog.dataLoad(' Data refresh after a background re-translation');
-      dataLoader.onBackgroundRetranslation();
+      dataLoader.onBackgroundRetranslation(deletedMarksOfSavesOut());
     }
 
     // Mark as loading immediately
@@ -1608,15 +1698,40 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Saves that waited for this run may go now (queue drain).
       setTranslateRunsVersion((v) => v + 1);
     };
+    // A run that never answers must not hold the saves behind it for good:
+    // past the deadline the answer is given up (the server may still finish;
+    // a reload shows what it stored), the held saves go, the spinner stops.
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), TRANSLATE_RUN_DEADLINE_MS);
     void (async () => {
       let answer: FetcherData;
       try {
-        const { data: body } = await appFetchJson<FetcherData>(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: form });
+        const { data: body } = await appFetchJson<FetcherData>(CONTENT_EDITOR_ACTION_ENDPOINT, {
+          method: "POST",
+          body: form,
+          signal: controller.signal,
+        });
         answer = body;
       } catch (error) {
-        answer = { success: false, error: error instanceof Error ? error.message : String(error) } as FetcherData;
+        answer = controller.signal.aborted
+          ? ({
+              success: false,
+              error: String(tRef.current?.common?.translateRunTimedOut || "The translation is taking longer than expected. Reload the page later to see what was stored."),
+              timedOut: true,
+            } as unknown as FetcherData)
+          : ({ success: false, error: error instanceof Error ? error.message : String(error) } as FetcherData);
+      } finally {
+        clearTimeout(deadline);
       }
       settleRun();
+      // A fetcher action revalidates by itself; this request does not -- in
+      // EITHER outcome: a failed run may have stored some languages, and the
+      // fresh rows move the locale markers and back the staged overlay.
+      if (revalidatorRef.current.state === "idle") {
+        try { revalidatorRef.current.revalidate(); } catch { /* ignored */ }
+      } else {
+        translateRunRevalidatePendingRef.current = true;
+      }
       if (!answer || !answer.success) {
         // A failed run: its spinner stops and the merchant is told. Never read
         // as a save's answer -- it does not go near the fetcher.
@@ -1625,7 +1740,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           else markOperationFailed(itemId, "__translateAll__");
         }
         const message = String((answer as { error?: unknown } | null)?.error ?? "");
-        showInfoBoxRef.current(translateErrorMessage(message, tRef.current), "critical");
+        if ((answer as { timedOut?: boolean }).timedOut) showInfoBoxRef.current(message, "warning");
+        else showInfoBoxRef.current(translateErrorMessage(message, tRef.current), "critical");
         return;
       }
       // Its spinner stops here, not only in the answer effect: an editor that
@@ -1639,13 +1755,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (answeredAction === "translateAll" || answeredAction === "translateAllForLocale") {
         translateRunQueueRef.current.push({ data: answer, itemId });
         setTranslateRunVersion((v) => v + 1);
-      }
-      // A fetcher action revalidates by itself; this request does not. The
-      // fresh rows move the locale markers and back the staged overlay.
-      if (revalidatorRef.current.state === "idle") {
-        try { revalidatorRef.current.revalidate(); } catch { /* ignored */ }
-      } else {
-        translateRunRevalidatePendingRef.current = true;
       }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2175,6 +2284,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         effectiveFieldDefinitions.map((f) => f.key),
         unconfirmedCleared,
       );
+      // A PRIMARY save purged the translations of the fields it CHANGED. A
+      // "translate all" answer that landed while this save waited (it holds
+      // primary saves back) dropped their layer marks and staged translations
+      // of the OLD text; the marks go back here, so the primary branch below
+      // drops those overlays in every locale and layer like any other purge.
+      if (savedLocale === primaryLocale) {
+        for (const tKey of changedTranslationKeysOf(sentScope?.sentFields, effectiveFieldDefinitions)) {
+          deletedTranslationKeysRef.current.add(tKey);
+        }
+      }
       const result = dataLoader.onSaveComplete(
         savedLocale,
         partial ? { ...editableValues, ...partial.values } : viewMoved ? sentFieldValues : editableValues,
@@ -2183,6 +2302,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         onlyKeys,
         savedMarketIdRef.current
       );
+      // A full save answered after a switch: its marks on fields it did NOT
+      // send (an empty or inherited field "clear all" marked) had nothing to
+      // remove -- they go too, unless another save out still carries them.
+      if (viewMoved && savedLocale !== primaryLocale) {
+        dropLocaleMarks(deletedTranslationKeysRef.current, savedLocale, savedMarketIdRef.current ?? "", deletedMarksOfSavesOut());
+      }
 
       // Image alt-text updates (not managed by dataLoader — separate concern).
       // A PARTIAL save stands only for the alt indices it carried (none for a
@@ -3112,6 +3237,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         sentFields: sentFieldsFromForm(next.formData.entries()),
       };
       isSavePendingRef.current = true;
+      // A save held behind a "translate all" run: another view's answer may
+      // have reset the busy flag meanwhile.
+      setIsSaving(true);
 
       try {
         fetcherRef.current.submit(next.formData, next.options);
@@ -3147,7 +3275,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // isSaving drives the spinner. fetcher.state is not used because React 18 automatic batching
   // can collapse idle→submitting→loading→idle into one render, making state always appear idle.
-  const isSavingCurrentItem = isSaving && savedItemIdRef.current === selectedItemId;
+  // ...and a save of this item that is still out or waits in the queue (held
+  // behind a "translate all" run of its language) counts as saving too, even
+  // when another save's answer has meanwhile reset `isSaving` / `savedItemIdRef`.
+  const isSavingCurrentItem =
+    (isSaving && savedItemIdRef.current === selectedItemId) ||
+    (!!selectedItemId && saveQueueRef.current.some((entry) => entry.savedItemId === selectedItemId));
 
   // ============================================================================
   // FIELD EVENT HANDLERS (extracted to useFieldHandlers)
@@ -3241,6 +3374,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     performAutoSave,
     safeSubmit,
     submitTranslateRun,
+    refuseTranslateRun,
+    deletedMarksOfSavesOut,
     buildFieldsForSave,
     getChangedFields,
     getChangedAltTextIndices,

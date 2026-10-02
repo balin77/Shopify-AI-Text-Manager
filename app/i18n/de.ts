@@ -2125,6 +2125,9 @@ export const de = {
     saveFirstSource: "Zuerst speichern – der Text in der Hauptsprache hat ungespeicherte Änderungen.",
     switchWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut wechseln.",
     clearWhileTranslating: "In diese Sprache wird gerade noch übersetzt – bitte warten, bis die Übersetzung fertig ist, und dann löschen.",
+    translateWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut übersetzen.",
+    saveWaitsForTranslation: "Wartet, bis die Übersetzung fertig ist – danach wird gespeichert.",
+    translateRunTimedOut: "Die Übersetzung dauert länger als erwartet. Laden Sie die Seite später neu, um zu sehen, was gespeichert wurde.",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
     fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons

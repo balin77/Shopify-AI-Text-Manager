@@ -881,11 +881,12 @@ export default function ProductsPage() {
           );
           return;
         }
-        editor.handlers.handleTranslateAll();
+        // Refused (a save it would race is still out): neither half runs.
+        if (editor.handlers.handleTranslateAll() === false) return;
         subResources.handlers.translateAllSubResourcesToAllLocales();
       },
       handleTranslateAllForLocale: () => {
-        editor.handlers.handleTranslateAllForLocale();
+        if (editor.handlers.handleTranslateAllForLocale() === false) return;
         subResources.handlers.translateAllSubResources();
       },
       // The options & metafields translate on their own requests: a "clear

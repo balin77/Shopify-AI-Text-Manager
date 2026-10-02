@@ -210,7 +210,8 @@ export interface UseUiDataLoaderReturn {
   /** After a BACKGROUND re-translation this save started has finished and the
    *  loader has been re-read. See the implementation for why it clears exactly
    *  these two refs and leaves the primary cache alone. */
-  onBackgroundRetranslation: () => void;
+  /** `keepMarks`: the marks a save that is out or queued still stands behind. */
+  onBackgroundRetranslation: (keepMarks?: ReadonlySet<string>) => void;
 
   /** After resolveAll() completes — sets unified baseline and keeps legacy refs in sync */
   onDataLoaded: (values: Record<string, string>) => void;
@@ -1212,9 +1213,13 @@ export function useUiDataLoader(
    * merchant's unsaved input, and the refresh is only ever allowed to run when
    * there is none (see `useUnifiedContentEditor`).
    */
-  const onBackgroundRetranslation = useCallback(() => {
+  const onBackgroundRetranslation = useCallback((keepMarks?: ReadonlySet<string>) => {
     debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
-    deletedTranslationKeysRef.current.clear();
+    // A clear whose removal is still on its way keeps its marks: the server
+    // has not caught up with it, and the re-read would show what it removes.
+    for (const mark of [...deletedTranslationKeysRef.current]) {
+      if (!keepMarks?.has(mark)) deletedTranslationKeysRef.current.delete(mark);
+    }
     clearedDeletedByCopyRef.current.clear();
     clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};

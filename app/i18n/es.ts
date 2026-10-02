@@ -2104,6 +2104,9 @@ export const es: Translation = {
     saveFirstSource: "Guarda primero: el texto del idioma principal tiene cambios sin guardar.",
     switchWhileSaving: "Todavía se está guardando: espera un momento y vuelve a cambiar.",
     clearWhileTranslating: "Todavía se está traduciendo a este idioma: espera a que termine la traducción y luego borra.",
+    translateWhileSaving: "Todavía se está guardando: espera un momento y vuelve a traducir.",
+    saveWaitsForTranslation: "Esperando a que termine la traducción; después se guarda.",
+    translateRunTimedOut: "La traducción está tardando más de lo esperado. Vuelve a cargar la página más tarde para ver lo que se guardó.",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
     fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons

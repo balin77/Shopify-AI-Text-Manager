@@ -140,6 +140,13 @@ export interface FieldHandlerProps {
    *  shared fetcher (see useUnifiedContentEditor). Optional for callers that
    *  render the handlers alone; they fall back to the fetcher. */
   submitTranslateRun?: (data: Record<string, string>, itemId: string | null) => void;
+  /** Refuses (with a message, returning true) a "translate all" run while a
+   *  save of the item it would race is out or queued. `locale` "*" = every
+   *  language. */
+  refuseTranslateRun?: (itemId: string, locale: string) => boolean;
+  /** The "deleted" marks a save that is out or queued still stands behind:
+   *  they are not a discarded draft's, and stay. */
+  deletedMarksOfSavesOut?: () => ReadonlySet<string>;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   getChangedFields: (valuesToCheck: Record<string, string>) => string[];
   getChangedAltTextIndices: () => number[];
@@ -207,7 +214,8 @@ export interface FieldHandlers {
   /** The copy LANDED: forget its rollback record. */
   discardCopyFieldRecord: () => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
-  handleTranslateAll: () => void;
+  /** `false` when the run was refused (nothing was started). */
+  handleTranslateAll: () => boolean | void;
   handleAcceptSuggestion: (fieldKey: string) => void;
   handleAcceptAndTranslate: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
@@ -223,7 +231,7 @@ export interface FieldHandlers {
   handleClearAllCancel: () => void;
   handleClearAllForLocaleClick: () => void;
   handleClearAllForLocaleConfirm: () => boolean | void;
-  handleTranslateAllForLocale: () => void;
+  handleTranslateAllForLocale: () => boolean | void;
 }
 
 // ============================================================================
@@ -315,6 +323,8 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     performAutoSave,
     safeSubmit,
     submitTranslateRun,
+    refuseTranslateRun,
+    deletedMarksOfSavesOut,
     buildFieldsForSave,
     getChangedFields,
     getChangedAltTextIndices,
@@ -596,8 +606,8 @@ const handleDiscard = () => {
   // or a later re-read would keep showing the field empty while Shopify still
   // serves the translation. Not while a save of this view is out -- a sent
   // clear's marks belong to its answer.
-  if (currentLanguage !== primaryLocale && !isSavingCurrentItem) {
-    dropLocaleMarks(deletedTranslationKeysRef.current, currentLanguage, selectedMarketId);
+  if (currentLanguage !== primaryLocale) {
+    dropLocaleMarks(deletedTranslationKeysRef.current, currentLanguage, selectedMarketId, deletedMarksOfSavesOut?.());
   }
   const baseline = baselineValuesRef.current;
   if (Object.keys(baseline).length > 0) {
@@ -1168,10 +1178,11 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
   );
 };
 
-const handleTranslateAll = () => {
+const handleTranslateAll = (): boolean | void => {
   if (!selectedItemId || !selectedItem) return;
   // Guard against double-click: if translateAll is already running, ignore
   if (isOperationActive(selectedItemId, "__translateAll__")) return;
+  if (refuseTranslateRun?.(selectedItemId, "*")) return false;
 
   // Its source is the SAVED primary text: with a primary draft open, the
   // later Save would purge what this run writes into every language.
@@ -1708,6 +1719,11 @@ const handleLanguageChange = async (locale: string) => {
       viewSwitchConfirmPendingRef.current = false;
     }
   }
+  // A clear the merchant just left behind unsaved is discarded with the view:
+  // its marks would otherwise keep that field empty there for the session.
+  if (currentLanguage !== primaryLocale) {
+    dropLocaleMarks(deletedTranslationKeysRef.current, currentLanguage, selectedMarketId, deletedMarksOfSavesOut?.());
+  }
   setCurrentLanguage(locale);
   // This click is the only writer of the remembered working language: the
   // editor unmounts on every main-nav navigation, and coming back in the
@@ -1742,6 +1758,9 @@ const handleMarketChange = async (marketId: string) => {
     } finally {
       viewSwitchConfirmPendingRef.current = false;
     }
+  }
+  if (currentLanguage !== primaryLocale) {
+    dropLocaleMarks(deletedTranslationKeysRef.current, currentLanguage, selectedMarketId, deletedMarksOfSavesOut?.());
   }
   setSelectedMarketId(marketId);
 };
@@ -1946,7 +1965,11 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
   // merchandising attributes (status, vendor, tags, ...) and the gallery hold
   // ONE value per item and have no translation: blanking them showed a status
   // select without its value, and the field then read as changed for good.
-  const translatableFields = effectiveFieldDefinitions.filter(isTranslatableFieldDefinition);
+  // A per-language theme IMAGE is a stored foreign value too (it is not
+  // AI-translatable, but it is translated): clear-all removes it as well.
+  const translatableFields = effectiveFieldDefinitions.filter(
+    (field) => isTranslatableFieldDefinition(field) || (field.type === "themeImage" && !!field.translationKey),
+  );
   const clearedValues: Record<string, string> = { ...editableValuesRef.current };
   translatableFields.forEach((field) => {
     clearedValues[field.key] = "";
@@ -2072,10 +2095,14 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
   safeSubmit(formDataObj, { method: "POST" });
 };
 
-const handleTranslateAllForLocale = () => {
+const handleTranslateAllForLocale = (): boolean | void => {
   if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
   // Guard against double-click: if translateAllForLocale is already running for this locale, ignore
   if (isOperationActive(selectedItemId, `__translateAllForLocale__${currentLanguage}`)) return;
+  // A save of this language (a "clear all", say) is still on its way: on its
+  // own request the run could land BEFORE its removals and be wiped by them,
+  // while the screen shows the AI text. Refused, never queued.
+  if (refuseTranslateRun?.(selectedItemId, currentLanguage)) return false;
 
   const requestItemId = selectedItemId;
   const requestedLocale = currentLanguage;

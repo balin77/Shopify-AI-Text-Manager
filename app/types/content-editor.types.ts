@@ -565,7 +565,8 @@ export interface EditorHandlers {
   handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
-  handleTranslateAll: () => void;
+  /** `false` when the run was refused (nothing was started). */
+  handleTranslateAll: () => boolean | void;
   handleAcceptSuggestion: (fieldKey: string) => void;
   handleAcceptAndTranslate: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
@@ -582,7 +583,7 @@ export interface EditorHandlers {
   handleClearAllForLocaleClick: () => void;
   /** `false` when the clear was refused (nothing was cleared). */
   handleClearAllForLocaleConfirm: () => boolean | void;
-  handleTranslateAllForLocale: () => void;
+  handleTranslateAllForLocale: () => boolean | void;
   handleAltTextChange: (imageIndex: number, value: string) => void;
   handleGenerateAltText: (imageIndex: number, userInstruction?: string) => void;
   handleGenerateAllAltTexts: () => void;

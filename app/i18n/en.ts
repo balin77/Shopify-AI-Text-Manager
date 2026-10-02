@@ -2124,6 +2124,9 @@ export const en: Translation = {
     saveFirstSource: "Save first — the main-language text has unsaved changes.",
     switchWhileSaving: "Still saving – please wait a moment and then switch again.",
     clearWhileTranslating: "A translation into this language is still running – please wait until it has finished and then clear.",
+    translateWhileSaving: "Still saving – please wait a moment and then translate again.",
+    saveWaitsForTranslation: "Waiting until the translation has finished – then it is saved.",
+    translateRunTimedOut: "The translation is taking longer than expected. Reload the page later to see what was stored.",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
     fieldTranslatedAndSaved: "{fieldType} translated and saved successfully",
     // Tooltip for locale buttons
