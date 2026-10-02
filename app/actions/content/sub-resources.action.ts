@@ -18,7 +18,7 @@ import { parseValueOrderPayload } from "~/services/product-options.shared";
 import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
-import { subResourceLockId } from "~/services/translations/translation-locks.shared";
+import { subResourceLockId, subResourceSyncShieldId } from "~/services/translations/translation-locks.shared";
 import {
   LOCALE_KEY_SEP,
   mirrorConfirmedContentTranslations,
@@ -30,6 +30,19 @@ import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
+
+/**
+ * Shields the product's sub-resource translation CACHE from a sync that read
+ * Shopify before this interactive write (or clear) landed. Sync-only: no
+ * repair watches this key, so a merchant's translate never aborts a running
+ * re-translation of the group (see translation-locks.shared.ts). Marked for
+ * either layer -- the sync's rewrite deletes every layer it fetched.
+ */
+function markSubResourceSyncShield(productId: string | null | undefined): void {
+  if (productId && productId.startsWith("gid://shopify/Product/")) {
+    markTranslationSaved(subResourceSyncShieldId(productId));
+  }
+}
 
 // ============================================================================
 // LOAD SUB-RESOURCE TRANSLATIONS (Options + Metafields)
@@ -214,6 +227,11 @@ export async function handleSaveSubResourceTranslations(
      *  which is a property of the field and not a refused write. */
     const notTranslatable: string[] = [];
 
+    // Before the first write (a sync that read Shopify a moment ago must not
+    // rewrite the cache under it) and again after the last one (below).
+    const shieldProductId = ctx.itemId || getFormString(formData, "itemId");
+    if (Object.keys(translationsData).length > 0) markSubResourceSyncShield(shieldProductId);
+
     logger.info('[UnifiedContent] saveSubResourceTranslations - Starting save operation', {
       context: "UnifiedContent",
       locale,
@@ -345,6 +363,8 @@ export async function handleSaveSubResourceTranslations(
         failedResources.push(resourceId);
       }
     }
+
+    if (Object.keys(translationsData).length > 0) markSubResourceSyncShield(shieldProductId);
 
     logger.info('[UnifiedContent] saveSubResourceTranslations - Completed save operation', {
       context: "UnifiedContent",
@@ -508,7 +528,10 @@ export async function handleTranslateSubResources(
           // Claim the sub-resource (global layer) after a CONFIRMED write: a
           // detached repair watches each resource it is about to write and
           // must abandon it rather than overwrite this value.
-          if (result.confirmedKeys.size > 0) markTranslationSaved(resourceId);
+          if (result.confirmedKeys.size > 0) {
+            markTranslationSaved(resourceId);
+            markSubResourceSyncShield(itemId);
+          }
           if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
             notTranslatable.push(resourceId);
           }
@@ -785,6 +808,7 @@ export async function handleTranslateSubResourceToAllLocales(
               writtenLocales.add(locale);
               // Same claim as the single-locale path, global layer.
               markTranslationSaved(resourceId);
+              markSubResourceSyncShield(itemId);
             }
             if (result.noDigest.length > 0 && !notTranslatable.includes(resourceId)) {
               notTranslatable.push(resourceId);
@@ -1185,6 +1209,9 @@ export async function handleSavePrimarySubResources(
     // removing (kept locally); surfaced as a warning on a save that worked.
     const purgeUnconfirmed: string[] = [];
     if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
+      // The purge deletes translation rows a sync reading Shopify a moment
+      // earlier would put straight back; marked again once it is done.
+      markSubResourceSyncShield(productId);
       // The MARKET overrides of every sub-resource this save moved. Nothing
       // re-translates one (the repair writes global rows only), so once the
       // option name or the metafield value changes the override is as stale as
@@ -1327,6 +1354,7 @@ export async function handleSavePrimarySubResources(
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });
       }
+      markSubResourceSyncShield(productId);
     }
 
     // 4b. …or, with auto-translate on, REPLACE the stale translations instead

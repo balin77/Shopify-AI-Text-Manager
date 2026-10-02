@@ -10,6 +10,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ShopifyContentService } from '../../src/services/shopify-content.service';
+import { markTranslationSaved } from '~/utils/translation-save-lock.server';
+import { subResourceLockId, subResourceSyncShieldId } from '~/services/translations/translation-locks.shared';
 
 vi.mock('~/utils/logger.server', () => ({
   loggers: { translation: vi.fn(), seo: vi.fn() },
@@ -813,3 +815,96 @@ describe('early 400s carry the actionType (and fieldId) of the request', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+describe('the SYNC-ONLY shield of the options & metafields card', () => {
+  const marks = () => vi.mocked(markTranslationSaved).mock.calls.map((c) => c[0]);
+  const SHIELD = subResourceSyncShieldId(PRODUCT);
+  const LOCK = subResourceLockId(PRODUCT);
+  const source = [{ resourceId: METAFIELD, resourceType: 'Metafield', key: 'value', value: 'Red', label: 'Colour' }];
+
+  beforeEach(() => {
+    vi.mocked(markTranslationSaved).mockClear();
+  });
+
+  it('a foreign save marks it (and never the repair lock), on the global AND the market layer', async () => {
+    for (const marketId of ['', 'gid://shopify/Market/5']) {
+      vi.mocked(markTranslationSaved).mockClear();
+      const w = installAdmin();
+      await handleSaveSubResourceTranslations(
+        makeCtx(w.admin, makeDb()),
+        form({
+          locale: 'fr',
+          marketId,
+          translationsData: JSON.stringify({ [OPTION]: { name: 'Couleur' } }),
+          resourceTypes: JSON.stringify({ [OPTION]: 'ProductOption' }),
+        }),
+      );
+      expect(marks()).toContain(SHIELD);
+      expect(marks()).not.toContain(LOCK);
+    }
+  });
+
+  it('a "clear all" (every value "") marks it too', async () => {
+    const w = installAdmin();
+    await handleSaveSubResourceTranslations(
+      makeCtx(w.admin, makeDb()),
+      form({
+        locale: 'fr',
+        translationsData: JSON.stringify({ [OPTION]: { name: '' }, [METAFIELD]: { value: '' } }),
+        resourceTypes: JSON.stringify({ [OPTION]: 'ProductOption', [METAFIELD]: 'Metafield' }),
+      }),
+    );
+    expect(marks()).toContain(SHIELD);
+    expect(marks()).not.toContain(LOCK);
+  });
+
+  it('a translate and a translate-to-all mark it after a confirmed write, never the repair lock', async () => {
+    ai.translateBatchValues = async (values) => values.map(() => 'Rouge');
+    await handleTranslateSubResources(
+      makeCtx(installAdmin().admin, makeDb()),
+      form({ targetLocale: 'fr', primaryLocale: 'de', sourceData: JSON.stringify(source) }),
+    );
+    expect(marks()).toContain(SHIELD);
+    expect(marks()).not.toContain(LOCK);
+
+    vi.mocked(markTranslationSaved).mockClear();
+    ai.translateBatchValuesToLocales = async (_v, _p, locales) => Object.fromEntries(locales.map((l) => [l, [`Rot-${l}`]]));
+    await handleTranslateSubResourceToAllLocales(
+      makeCtx(installAdmin().admin, makeDb()),
+      form({ primaryLocale: 'de', sourceData: JSON.stringify(source) }),
+    );
+    expect(marks()).toContain(SHIELD);
+    expect(marks()).not.toContain(LOCK);
+  });
+
+  it('a translate Shopify refused marks nothing for the sync', async () => {
+    ai.translateBatchValues = async (values) => values.map(() => 'Rouge');
+    const w = installAdmin({
+      register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'no' }], translations: [] } } }),
+    });
+    await handleTranslateSubResources(
+      makeCtx(w.admin, makeDb()),
+      form({ targetLocale: 'fr', primaryLocale: 'de', sourceData: JSON.stringify(source) }),
+    );
+    expect(marks()).not.toContain(SHIELD);
+  });
+
+  it("a primary save's purge marks it", async () => {
+    const w = installAdmin({
+      remove: (v) => ({
+        data: {
+          translationsRemove: {
+            userErrors: [],
+            translations: v.locales.flatMap((locale: string) => v.translationKeys.map((key: string) => ({ key, locale }))),
+          },
+        },
+      }),
+    });
+    await handleSavePrimarySubResources(
+      makeCtx(w.admin, makeDb()),
+      form({ productId: PRODUCT, optionsChanges: JSON.stringify({ [OPTION]: { name: 'Farbe' } }), metafieldChanges: '{}' }),
+    );
+    expect(marks()).toContain(SHIELD);
+  });
+});
