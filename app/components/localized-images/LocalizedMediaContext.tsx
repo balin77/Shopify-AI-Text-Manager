@@ -29,6 +29,7 @@ export function LocalizedMediaProvider({
   currentLanguage,
   selectedMarketId,
   embedActivationUrl,
+  embedActive,
   reloadKey,
   enabled,
   canReplace,
@@ -41,6 +42,8 @@ export function LocalizedMediaProvider({
   currentLanguage?: string;
   selectedMarketId?: string;
   embedActivationUrl?: string | null;
+  /** The embed is on in the live theme (true / false / null = unknown). */
+  embedActive?: boolean | null;
   reloadKey?: string;
   /** A product being selected. */
   enabled: boolean;
@@ -60,6 +63,7 @@ export function LocalizedMediaProvider({
     canReplace,
     reloadKey,
     embedActivationUrl,
+    embedActive,
   });
   useEffect(() => {
     if (draftsPendingRef) draftsPendingRef.current = state.hasDrafts;
