@@ -40,10 +40,21 @@
  *   4. Trailing whitespace is stripped per line.
  *
  * Kept byte-identical (never rewritten, never scanned for comments):
- *   - `<script>…</script>` in any flavour — JS bodies (ASI) as well as
- *     `application/json` / `application/ld+json` islands. Those islands contain
- *     Liquid `{{ … }}` and are therefore NOT parseable JSON before rendering,
- *     so re-serialising them is impossible.
+ *   - `<script>…</script>` in every flavour but one — JS bodies (ASI) and
+ *     `application/ld+json` islands. Islands contain Liquid `{{ … }}` and are
+ *     therefore NOT parseable JSON before rendering, so re-serialising them is
+ *     impossible.
+ *
+ * The ONE exception is `<script type="application/json">` (exactly that type;
+ * see `splitJsonIsland`/`minifyJsonIslandBody`): its body gets the same
+ * rules as a plain region (comments with their dash trims, `{% liquid %}`
+ * interiors) plus indentation and ALL blank lines gone. Layout whitespace
+ * outside a JSON string is insignificant and a raw newline cannot occur inside
+ * one; bytes inside `{% %}` / `{{ }}` are never touched (a Liquid tag may span
+ * lines), lines are never joined, and a body that cannot be parsed safely stays
+ * verbatim. Why not an outer `capture` so the generic rules reach it: every
+ * byte written into a capture counts (again per nesting level) against
+ * Shopify's undisclosed Liquid memory limit, direct output does not.
  *   - `<style>…</style>`, `<pre>…</pre>`, `<textarea>…</textarea>`.
  *   - The interior of Liquid tags `{% … %}` and outputs `{{ … }}`, with ONE
  *     exception: a multi-line `{% liquid %}` tag is minified by
@@ -109,16 +120,18 @@ const PROTECTED_ELEMENTS = ['script', 'style', 'pre', 'textarea'];
  * `{% COMMENT %}` as a comment would delete literal text); the HTML ones are
  * spelled out case-insensitively.
  */
+const LIQUID_OPENERS = [
+  String.raw`\{%-?\s*comment\s*-?%\}`,
+  String.raw`\{%-?\s*raw\s*-?%\}`,
+  String.raw`\{\{`,
+  String.raw`\{%`,
+];
 const OPENER = new RegExp(
-  [
-    String.raw`\{%-?\s*comment\s*-?%\}`,
-    String.raw`\{%-?\s*raw\s*-?%\}`,
-    String.raw`\{\{`,
-    String.raw`\{%`,
-    ...PROTECTED_ELEMENTS.map((tag) => `<${ci(tag)}\\b`),
-  ].join('|'),
+  [...LIQUID_OPENERS, ...PROTECTED_ELEMENTS.map((tag) => `<${ci(tag)}\\b`)].join('|'),
   'g',
 );
+/** Inside a JSON island only Liquid matters: no HTML element can start there. */
+const LIQUID_ONLY_OPENER = new RegExp(LIQUID_OPENERS.join('|'), 'g');
 
 const COMMENT_OPEN = /^\{%-?\s*comment/;
 const RAW_OPEN = /^\{%-?\s*raw/;
@@ -158,20 +171,71 @@ function endOf(src, from, closer, what) {
   return end;
 }
 
+
+/**
+ * Split a `<script ...>body</script>` element into open tag, body and closer
+ * when it is a JSON island the minifier may reach into, else `null`.
+ *
+ * Only the EXACT type `application/json` qualifies (not `ld+json`, not JS, not
+ * an unknown type): the body is Liquid around whitespace-insensitive JSON, and
+ * a raw newline cannot occur inside a JSON string, so layout whitespace there
+ * is structural only. The open tag must carry no Liquid tag `{% %}` (a type
+ * built by Liquid cannot be judged) and exactly one literal `type` attribute
+ * (quoting and attribute order are free; `{{ … }}` is fine, e.g. an id) and no
+ * `src`.
+ *
+ * @param {string} element the whole element, `<script` through `</script>`
+ * @returns {{open: string, body: string, close: string} | null}
+ */
+function splitJsonIsland(element) {
+  // End of the open tag: the first `>` outside quotes and outside `{{ }}`.
+  let quote = '';
+  let i = '<script'.length;
+  for (; i < element.length; i++) {
+    const c = element[i];
+    if (quote) {
+      if (c === quote) quote = '';
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === '{' && (element[i + 1] === '{' || element[i + 1] === '%')) {
+      const closer = element[i + 1] === '{' ? '}}' : '%}';
+      const at = element.indexOf(closer, i + 2);
+      if (at === -1) return null;
+      i = at + 1;
+    } else if (c === '>') {
+      break;
+    }
+  }
+  if (i >= element.length || quote) return null;
+  const open = element.slice(0, i + 1);
+  if (open.includes('{%')) return null;
+  // Blank out `{{ … }}` so a quote or `type=` inside one cannot be misread.
+  const bare = open.replace(/\{\{[\s\S]*?\}\}/g, '{{}}');
+  const attrs = [...bare.matchAll(/[\s"'](type|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>=]+))/gi)];
+  const named = attrs.map((m) => m[1].toLowerCase());
+  if (named.filter((n) => n === 'type').length !== 1 || named.includes('src')) return null;
+  const type = attrs.find((m) => m[1].toLowerCase() === 'type');
+  if ((type[2] ?? type[3] ?? type[4]) !== 'application/json') return null;
+  const closeAt = element.search(/<\/[sS][cC][rR][iI][pP][tT]\s*>$/);
+  if (closeAt < open.length) return null;
+  return { open, body: element.slice(open.length, closeAt), close: element.slice(closeAt) };
+}
+
 /**
  * Split a source file into ordered segments.
  *
  * @param {string} src
  * @returns {Array<{kind: 'plain'|'protected'|'comment', text: string}>}
  */
-export function scanRegions(src) {
-  /** @type {Array<{kind: 'plain'|'protected'|'comment', text: string}>} */
+export function scanRegions(src, { liquidOnly = false } = {}) {
+  /** @type {Array<{kind: 'plain'|'protected'|'comment'|'island', text: string}>} */
   const segments = [];
   let cursor = 0;
 
-  OPENER.lastIndex = 0;
+  const OPENER_RE = liquidOnly ? LIQUID_ONLY_OPENER : OPENER;
+  OPENER_RE.lastIndex = 0;
   let match;
-  while ((match = OPENER.exec(src)) !== null) {
+  while ((match = OPENER_RE.exec(src)) !== null) {
     const start = match.index;
     const token = match[0];
 
@@ -191,13 +255,23 @@ export function scanRegions(src) {
     } else {
       const tag = token.slice(1).toLowerCase();
       end = endOf(src, start + token.length, CLOSERS.get(tag), `<${tag}> element`);
+      const parts = tag === 'script' ? splitJsonIsland(src.slice(start, end)) : null;
+      if (parts) {
+        if (start > cursor) segments.push({ kind: 'plain', text: src.slice(cursor, start) });
+        segments.push({ kind: 'protected', text: parts.open });
+        segments.push({ kind: 'island', text: parts.body });
+        segments.push({ kind: 'protected', text: parts.close });
+        cursor = end;
+        OPENER_RE.lastIndex = end;
+        continue;
+      }
     }
 
     if (start > cursor) segments.push({ kind: 'plain', text: src.slice(cursor, start) });
     segments.push({ kind, text: src.slice(start, end) });
 
     cursor = end;
-    OPENER.lastIndex = end;
+    OPENER_RE.lastIndex = end;
   }
 
   if (cursor < src.length) segments.push({ kind: 'plain', text: src.slice(cursor) });
@@ -213,10 +287,10 @@ export function scanRegions(src) {
  * built already has non-whitespace content (so mid-line spacing is never
  * mistaken for indentation), and how many blank lines were just emitted.
  */
-function createEmitter() {
+function createEmitter({ maxBlankRun = 1, startsMidLine = false } = {}) {
   /** @type {string[]} */
   const out = [];
-  let lineHasContent = false;
+  let lineHasContent = startsMidLine;
   let blankRun = 0;
   let markIdx = 0;
 
@@ -300,7 +374,7 @@ function createEmitter() {
 
         if (!lineHasContent && line === '') {
           // Rule 3 — keep the first blank line of a run, drop the rest.
-          if (blankRun < 1) {
+          if (blankRun < maxBlankRun) {
             out.push(eol);
             blankRun++;
           }
@@ -357,8 +431,35 @@ export function minifyLiquidTag(text) {
  * @returns {string} minified contents
  */
 export function minifyLiquid(source) {
-  const emit = createEmitter();
-  const segments = scanRegions(source);
+  return minifySegments(source, false);
+}
+
+/**
+ * Minify the body of a `<script type="application/json">` island.
+ *
+ * Same rules as for plain regions (comments with their dash trims, `{% liquid %}`
+ * interiors, indentation, trailing blanks) and blank lines go entirely, because
+ * layout whitespace outside a JSON string is insignificant and a raw newline
+ * cannot occur inside one. Bytes inside `{% %}` / `{{ }}` are never touched
+ * except by the `{% liquid %}` rule, so a Liquid tag spanning lines (a string
+ * literal with a newline) survives as written. Lines are never joined. If the
+ * body cannot be parsed safely (unterminated Liquid construct) it is returned
+ * VERBATIM -- refusing beats guessing.
+ *
+ * @param {string} body text between the open tag and `</script>`
+ * @returns {string}
+ */
+export function minifyJsonIslandBody(body) {
+  try {
+    return minifySegments(body, true);
+  } catch {
+    return body;
+  }
+}
+
+function minifySegments(source, island) {
+  const emit = island ? createEmitter({ maxBlankRun: 0, startsMidLine: true }) : createEmitter();
+  const segments = scanRegions(source, { liquidOnly: island });
   let prevKind = null;
   let trimNext = false;
   // What the Liquid token boundary before the current plain text looks like:
@@ -366,7 +467,8 @@ export function minifyLiquid(source) {
   // tag/output/comment (NOT after a <script>/<pre> element, which is text);
   // `boundaryDash` says that tag ended in `-%}`/`-}}` and therefore already
   // stripped the text that follows.
-  let atTagBoundary = true;
+  // An island body starts right behind the `>` of its open tag, i.e. inside a text token.
+  let atTagBoundary = !island;
   let boundaryDash = false;
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
@@ -404,6 +506,12 @@ export function minifyLiquid(source) {
       emit.mark();
       emit.pushPlain(text);
       trimNext = false;
+    } else if (segment.kind === 'island') {
+      emit.pushProtected(minifyJsonIslandBody(segment.text));
+      trimNext = false;
+      // The `>` of the open tag precedes it: that is text, not a Liquid boundary.
+      atTagBoundary = false;
+      boundaryDash = false;
     } else if (segment.kind === 'protected') {
       emit.pushProtected(LIQUID_TAG_OPEN.test(segment.text) ? minifyLiquidTag(segment.text) : segment.text);
       trimNext = false;

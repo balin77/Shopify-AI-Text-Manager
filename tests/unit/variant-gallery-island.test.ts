@@ -4,8 +4,10 @@ import { minifyLiquid, EXTENSION_DIR } from '../../scripts/minify-liquid-blocks.
 import { forLiquidjs, makeEngine, read, type Variant } from './helpers/liquid-engine';
 
 /**
- * variant-gallery.liquid (the section block): its JSON island is built in a
- * `capture` and printed into the unchanged <script id="cp-gallery-data-...">.
+ * variant-gallery.liquid (the section block): its JSON island is printed
+ * directly inside the unchanged <script id="cp-gallery-data-..."> (no outer
+ * capture: captured bytes count against Shopify's Liquid memory limit); the
+ * minifier reaches the island interior itself.
  * Differential render against the FROZEN pre-refactor block
  * (tests/fixtures/liquid/variant-gallery.a8da7d1.frozen.liquid, a copy from
  * commit a8da7d1 -- never edit it), compared per variant after JSON.parse.
@@ -45,7 +47,7 @@ async function island(source: string, variant: Variant, prod: unknown) {
   return { html, text: m![1], data: JSON.parse(m![1]) as Record<string, any[]> };
 }
 
-describe('variant-gallery: island built in a capture renders like the frozen block', () => {
+describe('variant-gallery: island printed directly renders like the frozen block', () => {
   for (const variant of ['source', 'minified'] as const) {
     for (const [name, prod] of Object.entries({ product, 'no product': undefined })) {
       it(`${name} -- ${variant}`, async () => {
@@ -65,10 +67,11 @@ describe('variant-gallery: island built in a capture renders like the frozen blo
     expect(html).toContain('<script type="application/json" id="cp-gallery-data-blk1">');
   });
 
-  it('the block wraps only {{ cp_g_json }} in the island element', () => {
+  it('the island Liquid is printed directly in the element, with no outer capture', () => {
     const src = read(CURRENT);
-    expect(src).toContain(
-      '{%- endcapture -%}\n<script type="application/json" id="cp-gallery-data-{{ block.id }}">{{ cp_g_json }}</script>',
-    );
+    expect(src).not.toContain('cp_g_json');
+    expect(src).not.toMatch(/\{%-?\s*capture/);
+    expect(src).toContain('<script type="application/json" id="cp-gallery-data-{{ block.id }}">\n  {\n');
+    expect((src.match(/id="cp-gallery-data-\{\{ block\.id \}\}"/g) ?? []).length).toBe(1);
   });
 });

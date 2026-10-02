@@ -5,9 +5,11 @@ import { minifyLiquid, EXTENSION_DIR } from '../../scripts/minify-liquid-blocks.
 import { forLiquidjs, makeEngine, read, type Annotate, type Variant } from './helpers/liquid-engine';
 
 /**
- * Variant-gallery embed: the JSON island is built in a `capture` and printed
- * into the unchanged <script id="cp-embed-data-...">, and every object body
- * lives ONCE in snippets/cp-vg-item.liquid.
+ * Variant-gallery embed: the JSON island's Liquid is printed directly inside
+ * the unchanged <script id="cp-embed-data-..."> (NOT built in an outer
+ * capture: every byte written into a capture counts against Shopify's Liquid
+ * memory limit, nested captures again), and every object body lives ONCE in
+ * snippets/cp-vg-item.liquid. The minifier reaches the island interior itself.
  *
  * Differential render test: the FROZEN pre-refactor block
  * (tests/fixtures/liquid/variant-gallery-embed.a8da7d1.frozen.liquid -- a copy
@@ -183,7 +185,7 @@ async function renderIsland(source: string, variant: Variant, annotate: Annotate
 
 // ---------------------------------------------------------------------------
 
-describe('variant-gallery-embed: island built in a capture renders like the frozen block', () => {
+describe('variant-gallery-embed: island printed directly renders like the frozen block', () => {
   // The frozen block starts its GLB search with `assign cp_glb = blank`, which liquidjs
   // evaluates differently from Ruby Liquid (the literal is not "blank" afterwards). `''`
   // is the Ruby-equivalent spelling (`'' == blank`), so the test renders the frozen text
@@ -206,6 +208,45 @@ describe('variant-gallery-embed: island built in a capture renders like the froz
       }
     }
   }
+
+  // Variant 9011 (plan Anhang C item 13): the featured image has no URL and there is no
+  // usable gallery. EXPECTED DIFFERENCE, stated explicitly and not hidden in a tolerance:
+  //   frozen  -> one image entry with EMPTY src_* (the featured entry set cp_has_any, so the
+  //              product.media fallback never ran);
+  //   current -> cp-vg-item prints nothing for an image without a URL, cp_has_any stays false
+  //              and the variant FALLS THROUGH to the product.media fallback, i.e. it gets the
+  //              gallery of every usable product medium instead of one broken image.
+  describe('variant with a URL-less featured image and a URL-less gallery (9011)', () => {
+    const v9011 = {
+      id: 9011,
+      title: 'No URL featured',
+      featured_image: { ...img(601), no_url: true },
+      metafields: { custom: { variant_gallery: mf([{ ...img(602), no_url: true }]) } },
+    };
+    const scope = { ...product, variants: [v9011], selected_or_first_available_variant: v9011 };
+
+    for (const variant of ['source', 'minified'] as const) {
+      it(`differs from the frozen block in exactly the stated way -- ${variant}`, async () => {
+        const before = await renderIsland(frozen, variant, 'none', scope);
+        const after = await renderIsland(current, variant, 'none', scope);
+        // frozen: a single broken image entry
+        expect(before.data['9011']).toHaveLength(1);
+        expect(before.data['9011'][0].type).toBe('image');
+        expect(before.data['9011'][0].src_800).toBe('');
+        // current: no entry without a URL; the product.media fallback supplies the gallery
+        const fallback = after.data['9011'];
+        expect(fallback.length).toBeGreaterThan(3);
+        expect(fallback.every((e: any) => e.type !== 'image' || e.src_800 !== '')).toBe(true);
+        // the fallback is the same list a plain variant without a featured image gets
+        const plain = await renderIsland(current, variant, 'none', {
+          ...product,
+          variants: [variants[2]],
+          selected_or_first_available_variant: variants[2],
+        });
+        expect(fallback).toEqual(plain.data['9003']);
+      });
+    }
+  });
 
   it('the frozen-text substitution applies (otherwise the frozen side would not be comparable)', () => {
     expect(frozenRaw).toContain('{%- assign cp_glb = blank -%}');
@@ -400,11 +441,16 @@ describe('cp-vg-item: static contract', () => {
     for (const p of SNIPPET_PARAMS) expect(snippet).toMatch(new RegExp(`^    ${p}\\s+\\S`, 'm'));
   });
 
-  it('the island element wraps only the captured JSON', () => {
-    expect(block).toContain('{%- capture cp_vg_json -%}');
-    expect(block).toContain(
-      '{%- endcapture -%}\n<script type="application/json" id="cp-embed-data-{{ block.id }}">{{ cp_vg_json }}</script>',
-    );
+  it('the island Liquid is printed directly in the element, with no outer capture around it', () => {
+    expect(block).not.toContain('cp_vg_json');
+    expect(block).toContain('<script type="application/json" id="cp-embed-data-{{ block.id }}">\n  {\n');
+    const open = block.indexOf('<script type="application/json" id="cp-embed-data-{{ block.id }}">');
+    const close = block.indexOf('\n</script>', open);
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(open);
+    // the only captures inside the island are the small per-item ones (cp_o, cp_fb)
+    const names = [...block.slice(open, close).matchAll(/\{%-?\s*capture\s+(\w+)/g)].map((m) => m[1]);
+    expect(new Set(names)).toEqual(new Set(['cp_o', 'cp_fb']));
     expect((block.match(/id="cp-embed-data-\{\{ block\.id \}\}"/g) ?? []).length).toBe(1);
   });
 

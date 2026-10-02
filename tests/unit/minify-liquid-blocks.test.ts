@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   minifyLiquid,
   minifyLiquidTag,
+  minifyJsonIslandBody,
   buildReport,
   scanRegions,
   LIQUID_LIMIT_BYTES,
@@ -181,14 +182,6 @@ describe('minifyLiquid — protected regions stay byte-identical', () => {
     expect(out).toBe(`<div>\n${island}\n</div>\n`);
   });
 
-  it('leaves an application/json island untouched', () => {
-    const island =
-      '<script type="application/json" id="cp-gallery-data-{{ block.id }}">\n' +
-      '  {\n     "a":   {{ variant.id | json }}\n\n\n  }\n' +
-      '</script>';
-    expect(minifyLiquid(island)).toBe(island);
-  });
-
   it('leaves an inline <script> with JS untouched (ASI hazard)', () => {
     const js = [
       '<script>',
@@ -214,9 +207,11 @@ describe('minifyLiquid — protected regions stay byte-identical', () => {
     expect(minifyLiquid(`  ${pre}\n  ${textarea}\n`)).toBe(`${pre}\n${textarea}\n`);
   });
 
-  it('does not strip {% comment %} inside a protected region', () => {
-    const island = '<script type="application/json">\n  {% comment %} kept verbatim {% endcomment %}\n</script>';
-    expect(minifyLiquid(island)).toBe(island);
+  it('does not strip {% comment %} inside a JS or ld+json script', () => {
+    for (const type of ['', ' type="text/javascript"', ' type="application/ld+json"', ' type="module"']) {
+      const el = `<script${type}>\n  {% comment %} kept verbatim {% endcomment %}\n</script>`;
+      expect(minifyLiquid(el)).toBe(el);
+    }
   });
 
   it('handles a <script> tag whose attributes contain Liquid', () => {
@@ -420,5 +415,120 @@ describe('the real extension bundle', () => {
         ).toEqual([]);
       }
     }
+  });
+});
+
+describe('minifyLiquid — <script type="application/json"> islands', () => {
+  const wrap = (body: string, attrs = 'type="application/json" id="cp-x-{{ block.id }}"') =>
+    `<script ${attrs}>${body}</script>`;
+
+  it('strips indentation and blank lines but never joins lines', () => {
+    const el = wrap('\n  {\n     "a":   {{ v | json }},\n\n\n      "b": 1   \n  }\n');
+    expect(minifyLiquid(el)).toBe(wrap('\n{\n"a":   {{ v | json }},\n"b": 1\n}\n'));
+  });
+
+  it('removes comment blocks inside the island', () => {
+    const el = wrap('\n  {\n    {% comment %}\n      explain\n    {% endcomment %}\n    "a": 1\n  }\n');
+    const out = minifyLiquid(el);
+    expect(out).not.toContain('explain');
+    expect(out).toBe(wrap('\n{\n"a": 1\n}\n'));
+  });
+
+  it('replays the dash trims of a removed comment like Liquid', () => {
+    // `{%-` eats the whitespace before, `-%}` the whitespace after, newlines included.
+    expect(minifyJsonIslandBody('"a": 1,  {%- comment -%} x {%- endcomment -%}\n   "b": 2')).toBe('"a": 1,"b": 2');
+    // no dash: nothing trimmed (indentation still goes, as everywhere)
+    expect(minifyJsonIslandBody('"a": 1\n  {% comment %}x{% endcomment %}\n  "b": 2')).toBe('"a": 1\n"b": 2');
+  });
+
+  it('keeps a bug-compatible-ambiguous comment as an inline comment', () => {
+    const out = minifyJsonIslandBody('{% if a %}\n   {%- comment -%}x{%- endcomment -%}\n"a"{%- endif -%}');
+    expect(out).toContain('{%-#-%}');
+    expect(out).not.toContain('x{%-');
+  });
+
+  it('minifies a multi-line {% liquid %} tag inside the island', () => {
+    const el = wrap('\n  {% liquid\n    # a note\n    assign a = 1\n\n    if a\n      echo a\n    endif\n  %}\n  "x": 1\n');
+    expect(minifyLiquid(el)).toBe(wrap('\n{% liquid\nassign a = 1\nif a\necho a\nendif\n%}\n"x": 1\n'));
+  });
+
+  it('never touches bytes inside a multi-line Liquid tag or output (string with a newline)', () => {
+    const output = '{{ "line one\n      line   two\n\n\n   three" | json }}';
+    const tag = '{% assign t = "x\n    y" %}';
+    const el = wrap(`\n  ${tag}\n  "a": ${output}\n`);
+    const out = minifyLiquid(el);
+    expect(out).toContain(output);
+    expect(out).toContain(tag);
+    expect(out).toBe(wrap(`\n${tag}\n"a": ${output}\n`));
+  });
+
+  it('keeps whitespace in the middle of a line (it may sit between two outputs inside a string)', () => {
+    const body = '\n"alt": "{{ a }}   {{ b }}",\n';
+    expect(minifyJsonIslandBody(body)).toBe(body);
+  });
+
+  it('keeps {% raw %} bodies verbatim inside the island', () => {
+    const body = '\n  {% raw %}\n    {{ x }}\n\n\n  {% endraw %}\n  "a": 1\n';
+    expect(minifyJsonIslandBody(body)).toBe('\n{% raw %}\n    {{ x }}\n\n\n  {% endraw %}\n"a": 1\n');
+  });
+
+  it('is idempotent', () => {
+    const el = wrap(
+      '\n  {\n    {%- for v in vs -%}\n      {% comment %}c{% endcomment %}\n      {%- liquid\n        assign a = 1\n\n        # n\n      -%}\n      "{{ v.id }}": [\n\n   1\n  ]{% unless forloop.last %},{% endunless %}\n    {%- endfor -%}\n  }\n',
+    );
+    const once = minifyLiquid(el);
+    expect(minifyLiquid(once)).toBe(once);
+  });
+
+  it('accepts attribute order, quoting and spacing variants of the type', () => {
+    for (const attrs of [
+      'id="a" type="application/json"',
+      "type='application/json'",
+      'type = "application/json" data-x="{{ y }}"',
+      'type=application/json',
+      'id="{{ block.id }}" data-type="x" type="application/json"',
+    ]) {
+      expect(minifyLiquid(`<script ${attrs}>\n  {\n  }\n</script>`), attrs).toBe(`<script ${attrs}>\n{\n}\n</script>`);
+    }
+  });
+
+  it('reaches only the exact type: ld+json, JS, other types and typeless scripts stay byte-identical', () => {
+    const body = '\n  {% comment %}c{% endcomment %}\n     {\n\n\n  "a": 1 }\n';
+    for (const attrs of [
+      'type="application/ld+json"',
+      'type="application/JSON"',
+      'type="application/json "',
+      'type="application/jsonx"',
+      'type="text/template"',
+      'type="module"',
+      'src="{{ x | asset_url }}" type="application/json"',
+      'data-type="application/json"',
+      'type="application/json" type="text/javascript"',
+      '',
+    ]) {
+      const el = `<script ${attrs}>${body}</script>`;
+      expect(minifyLiquid(el), attrs).toBe(el);
+    }
+  });
+
+  it('refuses an open tag built by a Liquid tag', () => {
+    const el = '<script {% if a %}type="application/json"{% endif %}>\n   {\n\n  }\n</script>';
+    expect(minifyLiquid(el)).toBe(el);
+  });
+
+  it('keeps an island verbatim when its body cannot be parsed safely', () => {
+    const el = '<script type="application/json">\n   {\n  {% if a\n  }\n</script>';
+    expect(minifyLiquid(el)).toBe(el);
+    expect(minifyJsonIslandBody('  {{ unterminated\n  x')).toBe('  {{ unterminated\n  x');
+  });
+
+  it('leaves the surrounding page minifiable and unaffected', () => {
+    const out = minifyLiquid('  <div>\n    <script type="application/json">\n      {}\n    </script>\n\n\n\n    <p>x</p>\n  </div>\n');
+    expect(out).toBe('<div>\n<script type="application/json">\n{}\n</script>\n\n<p>x</p>\n</div>\n');
+  });
+
+  it('does not take a <style> or <pre> inside the island body for HTML', () => {
+    const body = '\n   "a": "<style>",\n   "b": "<pre>"\n';
+    expect(minifyJsonIslandBody(body)).toBe('\n"a": "<style>",\n"b": "<pre>"\n');
   });
 });
