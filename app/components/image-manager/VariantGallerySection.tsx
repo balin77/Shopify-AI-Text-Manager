@@ -9,7 +9,7 @@ import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { parseExternalVideoUrl } from "../../utils/mediaKind";
 import type { VariantWithGallery, ImageMeta } from "./types";
-import { variantTileReplaceState } from "./url-gid";
+import { variantTileReplaceState, variantTileAltEditable } from "./url-gid";
 import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../localized-images/LocalizedMediaReplaceButton";
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 
@@ -252,6 +252,19 @@ export function VariantGallerySection({
       productMediaIds,
     })
     : null;
+  // A link or 3D model stored on the variant is not a medium: no alt text can
+  // be stored for it, so its box says so instead of collecting a draft that
+  // no Save could ever send.
+  const altEditable = singleSelectedUrl
+    ? variantTileAltEditable({
+      url: singleSelectedUrl,
+      galleryFileGids: variant.galleryFileGids,
+      fileUrlMap,
+      urlToGid,
+      externalVideoUrls: effectiveExternalVideoUrls,
+      threeDModelUrls: effectiveThreeDModelUrls,
+    })
+    : false;
   const altDirty = !!singleSelectedUrl && !!isAltDirty?.(singleSelectedUrl);
   // In foreign locale don't fall back to primary locale value (would show wrong content)
   const currentAltText = singleSelectedUrl
@@ -366,7 +379,14 @@ export function VariantGallerySection({
           </div>
 
           {/* Alt text editor — only when exactly 1 image is selected */}
-          {singleSelectedUrl && onAltTextChange && (
+          {singleSelectedUrl && onAltTextChange && !altEditable && (
+            <div style={{ marginTop: 10, padding: "10px 12px", background: "#f6f6f7", borderRadius: 6, border: "1px solid #e1e3e5" }}>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.imageManager.altNotAvailableForLink ?? "Alt texts can only be stored for images and videos in the gallery, not for a YouTube/Vimeo link or a 3D model added to this variant."}
+              </Text>
+            </div>
+          )}
+          {singleSelectedUrl && onAltTextChange && altEditable && (
             <div style={{
               marginTop: 10,
               padding: "10px 12px",

@@ -25,7 +25,7 @@ import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../ut
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
-import { planAltFlush, restoreAltDrafts, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
+import { planAltFlush, restoreAltDrafts, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
 import {
   settlingPollDelayMs,
@@ -172,7 +172,8 @@ interface VariantImageManagerProps {
    *  the alt-text DRAFTS: `flush` (send every dirty alt) and `discard`. */
   altDraftApiRef?: React.MutableRefObject<AltDraftApi | null>;
   /** True while alt saves the merchant already pressed Save for are still out
-   *  (queued, in flight, or carried over until a new image exists). */
+   *  (queued or in flight; a draft carried over until a new image exists is
+   *  not counted -- it would hold the save bar for the whole processing). */
   onAltSavingChange?: (saving: boolean) => void;
   onMissingMainImageChange?: (hasMissing: boolean) => void;
   onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
@@ -412,11 +413,15 @@ export function VariantImageManager({
       return w.pending.size === 0;
     });
   };
-  // Saves the merchant pressed Save for that are still out: the page shows
-  // its Save as busy meanwhile (and a switch does not cost them anything).
+  // Saves the merchant pressed Save for that are being SENT: the page shows
+  // its Save as busy meanwhile. A draft carried over until its new image
+  // exists does not count: Shopify may process the image for most of a
+  // minute, and holding the whole save bar busy for that would block every
+  // unrelated save. It is still sent once the image settles, and a switch
+  // still counts it as pressed-Save (not as an unsent draft).
   const altSavingRef = useRef(false);
   const syncAltSaving = () => {
-    const busy = !!altSaveInFlightRef.current || altSaveQueueRef.current.length > 0 || deferredAltRef.current.size > 0;
+    const busy = !!altSaveInFlightRef.current || altSaveQueueRef.current.length > 0;
     if (busy === altSavingRef.current) return;
     altSavingRef.current = busy;
     onAltSavingChange?.(busy);
@@ -684,15 +689,19 @@ export function VariantImageManager({
   // Load foreign-locale alt text translations from DB when language changes
   // or after a bulk apply (variantReloadKey bump) so freshly saved translations show up.
   const lastBgRefreshRef = useRef(backgroundRefreshVersion);
-  const altViewRef = useRef({ productId, currentLanguage, selectedMarketId });
+  // The market only matters for the layer it selects: a FOREIGN language's.
+  // Primary alts are global, so a market change there is no view change and
+  // must not drop (or re-read over) the primary drafts.
+  const altLayerMarket = foreignMarketId ?? "";
+  const altViewRef = useRef({ productId, currentLanguage, altLayerMarket });
   useEffect(() => {
     // A background refresh only RE-READS: text the merchant is typing or a save
     // that failed must survive it.
     const isBackgroundRefresh = lastBgRefreshRef.current !== backgroundRefreshVersion;
     lastBgRefreshRef.current = backgroundRefreshVersion;
     const prevView = altViewRef.current;
-    const viewChanged = prevView.productId !== productId || prevView.currentLanguage !== currentLanguage || prevView.selectedMarketId !== selectedMarketId;
-    altViewRef.current = { productId, currentLanguage, selectedMarketId };
+    const viewChanged = prevView.productId !== productId || prevView.currentLanguage !== currentLanguage || prevView.altLayerMarket !== altLayerMarket;
+    altViewRef.current = { productId, currentLanguage, altLayerMarket };
     if (viewChanged) {
       // Another product, language or market: the drafts belonged to the view
       // that is gone (the editor confirms the switch while any are unsent).
@@ -724,7 +733,7 @@ export function VariantImageManager({
     if (selectedMarketId) form.append("marketId", selectedMarketId);
     altLoadRequestedAtRef.current = monotonicNow();
     translationsFetcher.submit(form, { method: "post" });
-  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, selectedMarketId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, altLayerMarket]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-read the open language's alt texts after the server wrote foreign values.
   const reloadForeignAlts = useCallback(() => {
@@ -2593,7 +2602,14 @@ export function VariantImageManager({
     } catch {
       deleteOk = false;
     }
-    if (switchedAway()) { setIsDeleting(false); return; }
+    if (switchedAway()) {
+      // The drafts went with the switch; a queued save of a deleted medium
+      // would only come back as "image not found".
+      const deletedForQueue = new Set(deletedGids);
+      if (deletedForQueue.size > 0) dropQueuedAltSaves(q => deletedForQueue.has(q.mediaId));
+      setIsDeleting(false);
+      return;
+    }
     const failedSet = new Set(failedGids);
     // URLs with no GID were never sent, so they are not deleted either.
     const unsentSet = new Set(unsentUrls(urls, urlToGid, queuedUrls));
@@ -2666,8 +2682,19 @@ export function VariantImageManager({
         );
       }
     }
+    // The alt drafts of what is really gone go with it: media Shopify CONFIRMED
+    // deleted (looked up in the maps as they were BEFORE the delete -- both
+    // galleries, `?v=`-tolerant) and the unsaved uploads removed from the queue.
+    const deletedAltLookup: Record<string, string> = {};
+    for (const [gid, url] of Object.entries(fileUrlMap)) if (url) deletedAltLookup[url] = gid;
+    Object.assign(deletedAltLookup, urlToGid);
+    dropAltDraftsOfDeletedMedia(
+      new Set(deletedGids),
+      new Set(removedQueued.map(m => m.previewUrl).filter((u): u is string => !!u)),
+      deletedAltLookup,
+    );
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t]);
+  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -2904,8 +2931,12 @@ export function VariantImageManager({
     return out;
   };
 
-  /** Releases every carried-over draft matching `pick` (it will not be sent) and says so once. */
-  const releaseDeferredAlts = (pick: (url: string, d: { draft: Omit<QueuedAltSave, "mediaId">; applied: string }) => boolean, warn: boolean) => {
+  /**
+   * Releases every carried-over draft matching `pick` (it will not be sent)
+   * and says so once: `true` = the image is not there yet, a string = that
+   * sentence instead (the reason differs), false = silently (Discard, a delete).
+   */
+  const releaseDeferredAlts = (pick: (url: string, d: { draft: Omit<QueuedAltSave, "mediaId">; applied: string }) => boolean, warn: boolean | string) => {
     const tokens: object[] = [];
     for (const [url, d] of [...deferredAltRef.current]) {
       if (!pick(url, d)) continue;
@@ -2915,9 +2946,59 @@ export function VariantImageManager({
     if (tokens.length === 0) return;
     releaseAltTokens(tokens);
     syncAltSaving();
-    if (warn) {
+    if (typeof warn === "string") showInfoBox(warn, "warning");
+    else if (warn) {
       showInfoBox(String(t.imageManager?.altDraftNotSavableYet ?? "The alt text of an image that is not saved yet can only be saved after the image itself. Save again once the image is uploaded."), "warning");
     }
+  };
+
+  /** Takes the drafts of these urls out entirely (text, dirty and failed flags, baseline, edit order). */
+  const dropAltDraftUrls = (urls: readonly string[]) => {
+    if (urls.length === 0) return;
+    const next = dropAltDrafts({
+      texts: localAltTextsRef.current,
+      dirty: dirtyUrlsRef.current,
+      baselines: altBaselinesRef.current,
+      failed: failedAltUrlsRef.current,
+      editOrder: altEditOrderRef.current,
+    }, urls);
+    localAltTextsRef.current = next.texts;
+    setLocalAltTexts(next.texts);
+    dirtyUrlsRef.current = next.dirty;
+    altBaselinesRef.current = next.baselines;
+    failedAltUrlsRef.current = next.failed;
+    altEditOrderRef.current = next.editOrder;
+    syncAltDirty();
+  };
+
+  /** Drops the QUEUED saves (never the one in flight) matching `drop`; whoever waited for them counts them as unsent. */
+  const dropQueuedAltSaves = (drop: (q: QueuedAltSave) => boolean) => {
+    const { kept, dropped } = partitionAltQueue(altSaveQueueRef.current, drop);
+    if (dropped.length === 0) return;
+    altSaveQueueRef.current = kept;
+    releaseAltTokens(dropped);
+    syncAltSaving();
+  };
+
+  /**
+   * After a CONFIRMED delete: the deleted media's drafts, failed flags and
+   * queued saves go with them (every language and market -- the medium is
+   * gone in all of them), and so do the drafts of removed unsaved uploads.
+   * Left behind they kept the save bar up, failed every Save with
+   * "image not found" and locked translate-to-all for good.
+   */
+  const dropAltDraftsOfDeletedMedia = (deletedGids: ReadonlySet<string>, removedPreviewUrls: ReadonlySet<string>, lookup: Readonly<Record<string, string>>) => {
+    const urls = altDraftUrlsOfDeletedMedia(
+      new Set([...dirtyUrlsRef.current, ...failedAltUrlsRef.current, ...altBaselinesRef.current.keys(), ...Object.keys(localAltTextsRef.current)]),
+      lookup,
+      deletedGids,
+      removedPreviewUrls,
+      gidForUrl,
+    );
+    dropAltDraftUrls(urls);
+    const urlSet = new Set(urls);
+    dropQueuedAltSaves((q) => deletedGids.has(q.mediaId) || urlSet.has(resolveAltUrl(q.url)));
+    releaseDeferredAlts((url) => removedPreviewUrls.has(url) || urlSet.has(url), false);
   };
 
   /** The page Save: every alt draft through the serial save queue. Resolves when each was answered. */
@@ -2941,13 +3022,23 @@ export function VariantImageManager({
     // wait for, so it is not sendable now and says so.
     let unsent = 0;
     const carried: string[] = [];
-    if (plan.unaddressable.length > 0) {
+    // An earlier Save already carried a draft over and its image is still
+    // being processed: this Save waits for that one (with the current text)
+    // instead of reporting it as not sendable.
+    const stillCarried = plan.unaddressable.filter((url) => deferredAltRef.current.has(url) && !opts?.galleryApply);
+    for (const url of stillCarried) {
+      const d = deferredAltRef.current.get(url)!;
+      d.draft = { ...d.draft, altText: localAltTextsRef.current[url] };
+      tokens.push(d.token);
+    }
+    const notCarried = plan.unaddressable.filter((url) => !stillCarried.includes(url));
+    if (notCarried.length > 0) {
       const apply = opts?.galleryApply;
       if (!apply) {
-        unsent = plan.unaddressable.length;
+        unsent = notCarried.length;
         showInfoBox(String(t.imageManager?.altDraftNotSavableYet ?? "The alt text of an image that is not saved yet can only be saved after the image itself. Save again once the image is uploaded."), "warning");
       } else {
-        for (const url of plan.unaddressable) {
+        for (const url of notCarried) {
           const token = {};
           const prev = deferredAltRef.current.get(url);
           // A newer Save of the same draft: whoever waited for the older one waits for this one.
@@ -3039,25 +3130,36 @@ export function VariantImageManager({
       submitAltSave(entry);
     }
     // 3. What can never be sent: another product's (its uploads are no longer
-    //    tracked), or an image the finished gallery save did not create.
-    releaseDeferredAlts((url, d) =>
-      d.draft.productId !== productId || (d.applied === "done" && !knownSettledAltRef.current.has(url)), true);
-    // 4. A draft under an upload preview that no tile shows any more and that
-    //    nothing will move: dropped with a note rather than holding the bar up.
+    //    tracked once the merchant switched away -- the image itself WAS
+    //    created, so the note says what really happened), or an image the
+    //    finished gallery save did not create.
+    releaseDeferredAlts((_url, d) => d.draft.productId !== productId,
+      String(t.imageManager?.altDraftProductSwitched ?? "The alt text of a newly uploaded image was not saved because you switched to another product while Shopify was still processing the image. Open the product again and enter it once the image shows in the gallery."));
+    releaseDeferredAlts((url, d) => d.applied === "done" && !knownSettledAltRef.current.has(url), true);
+    // 4. A draft under a url that no tile shows any more, that no medium
+    //    resolves and that nothing will move (an upload removed before it was
+    //    saved, a medium deleted or swapped for a WebP copy): dropped with a
+    //    note rather than holding the bar up and failing every Save.
     const shown = new Set<string>([...displayedProductUrls, ...Object.values(fileUrlMap)]);
-    const stranded = [...dirtyUrlsRef.current].filter((url) =>
-      (url.startsWith("blob:") || url.startsWith("data:")) && !shown.has(url)
-      && !deferredAltRef.current.has(url) && !knownSettledAltRef.current.has(url));
+    const altLookup: Record<string, string> = {};
+    for (const [gid, url] of Object.entries(fileUrlMap)) if (url) altLookup[url] = gid;
+    Object.assign(altLookup, urlToGid);
+    const stranded = strandedAltDraftUrls({
+      dirtyUrls: dirtyUrlsRef.current,
+      lookup: altLookup,
+      shown,
+      carried: new Set(deferredAltRef.current.keys()),
+      settlingPreviews: new Set(knownSettledAltRef.current.keys()),
+      gidOf: gidForUrl,
+    });
     if (stranded.length > 0) {
-      for (const url of stranded) {
-        dirtyUrlsRef.current.delete(url);
-        failedAltUrlsRef.current.delete(url);
-        altBaselinesRef.current.delete(url);
-      }
-      syncAltDirty();
-      showInfoBox(String(t.imageManager?.altDraftDroppedNoImage ?? "An alt text typed for an image that was removed before it was saved was dropped."), "warning");
+      const anyPreview = stranded.some((url) => url.startsWith("blob:") || url.startsWith("data:"));
+      dropAltDraftUrls(stranded);
+      showInfoBox(String(anyPreview
+        ? (t.imageManager?.altDraftDroppedNoImage ?? "An alt text typed for an image that was removed before it was saved was dropped.")
+        : (t.imageManager?.altDraftDroppedImageGone ?? "An alt text draft was dropped because its image no longer exists.")), "warning");
     }
-  }, [settlingMedia, shopifyMediaMap, productId, deferredAltTick, displayedProductUrls, fileUrlMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settlingMedia, shopifyMediaMap, productId, deferredAltTick, displayedProductUrls, fileUrlMap, urlToGid]); // eslint-disable-line react-hooks/exhaustive-deps
   // The settling poll gave up while a carried-over draft's image was still
   // processing: the Save stops waiting for it (it stays a draft for a later Save).
   releaseStuckDeferredAltsRef.current = () =>
@@ -3066,8 +3168,13 @@ export function VariantImageManager({
   /** Discard: every alt draft goes back to what it was; what is already in flight cannot be taken back. */
   const discardAltDrafts = useCallback(() => {
     const urls = new Set([...dirtyUrlsRef.current, ...failedAltUrlsRef.current]);
-    // Carried-over drafts are not in flight yet: they go too.
-    releaseDeferredAlts(() => true, false);
+    // Only what the merchant is looking at is taken back: a save queued for
+    // another product, language or market (pressed Save, then switched) is
+    // not this Discard's -- the same image can have a queued save in another
+    // language under the very same url.
+    const view = { productId, locale: currentLanguage, marketId: foreignMarketId };
+    // Carried-over drafts of this view are not in flight yet: they go too.
+    releaseDeferredAlts((_url, d) => altSaveInView(d.draft, view), false);
     if (urls.size === 0) return;
     const restored = restoreAltDrafts(localAltTextsRef.current, altBaselinesRef.current, urls);
     localAltTextsRef.current = restored;
@@ -3076,12 +3183,10 @@ export function VariantImageManager({
     failedAltUrlsRef.current.clear();
     altBaselinesRef.current.clear();
     altEditOrderRef.current.clear();
-    const dropped = altSaveQueueRef.current.filter((q) => urls.has(resolveAltUrl(q.url)));
-    altSaveQueueRef.current = altSaveQueueRef.current.filter((q) => !dropped.includes(q));
-    releaseAltTokens(dropped);
+    dropQueuedAltSaves((q) => urls.has(resolveAltUrl(q.url)) && altSaveInView(q, view));
     syncAltSaving();
     syncAltDirty();
-  }, [syncAltDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [syncAltDirty, productId, currentLanguage, foreignMarketId]); // eslint-disable-line react-hooks/exhaustive-deps
   if (altDraftApiRef) {
     altDraftApiRef.current = {
       flush: flushAltDrafts,

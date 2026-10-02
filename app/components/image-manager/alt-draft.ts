@@ -115,10 +115,122 @@ export function selectAltSends(
     const key = altFlushKey(entry);
     // The LAST matching pending save is the one that decides what is stored.
     const same = [...pending].reverse().find((p) => altFlushKey(p) === key);
-    if (same && same.altText === entry.altText) reuse.push(same);
-    else send.push(entry);
+    if (same && same.altText === entry.altText) {
+      // Reused -- but a tile of the same medium planned only NOW (the merchant
+      // typed the same text on a second tile after the first Save) rides on it
+      // as an alias, or it never settles and the bar stays up. The pending
+      // save is mutated on purpose: it is the very object the queue sends and
+      // the answer settles (its identity is the page Save's token).
+      const extra = mergeAltAliases(same, entry);
+      if (extra.length > 0) same.aliases = [...(same.aliases ?? []), ...extra];
+      reuse.push(same);
+    } else send.push(entry);
   }
   return { send, reuse };
+}
+
+/**
+ * The tiles a planned save covers (its own url and its aliases) that a reused
+ * pending save of the same medium and text does not cover yet.
+ */
+export function mergeAltAliases(
+  pending: Pick<QueuedAltSave, "url" | "aliases">,
+  planned: Pick<QueuedAltSave, "url" | "altText" | "aliases">,
+): Array<{ url: string; altText: string }> {
+  const covered = new Set<string>([pending.url, ...(pending.aliases ?? []).map((a) => a.url)]);
+  const out: Array<{ url: string; altText: string }> = [];
+  for (const c of [{ url: planned.url, altText: planned.altText }, ...(planned.aliases ?? [])]) {
+    if (covered.has(c.url)) continue;
+    covered.add(c.url);
+    out.push({ url: c.url, altText: c.altText });
+  }
+  return out;
+}
+
+/** Is a queued save (or carried-over draft) one of the view the merchant is looking at? Discard only takes back those. */
+export function altSaveInView(
+  entry: Pick<QueuedAltSave, "productId" | "locale" | "marketId">,
+  view: { productId: string; locale?: string; marketId?: string },
+): boolean {
+  return (entry.productId ?? view.productId) === view.productId
+    && (entry.locale ?? "") === (view.locale ?? "")
+    && (entry.marketId ?? "") === (view.marketId ?? "");
+}
+
+/**
+ * The draft urls that belong to media that no longer exist: a url whose
+ * medium (resolved through the url -> gid lookup, `?v=`-tolerant) was
+ * DELETED, or an unsaved upload's preview url that was removed with it.
+ */
+export function altDraftUrlsOfDeletedMedia(
+  urls: Iterable<string>,
+  lookup: Readonly<Record<string, string>>,
+  deletedGids: ReadonlySet<string>,
+  removedPreviewUrls: ReadonlySet<string>,
+  gidOf: (lookup: Readonly<Record<string, string>>, url: string) => string | null,
+): string[] {
+  const out: string[] = [];
+  for (const url of urls) {
+    if (removedPreviewUrls.has(url)) {
+      out.push(url);
+      continue;
+    }
+    const gid = gidOf(lookup, url);
+    if (gid && deletedGids.has(gid)) out.push(url);
+  }
+  return out;
+}
+
+/**
+ * Drafts stranded under a url that nothing can address any more: no medium
+ * resolves it, no tile shows it, and no carried-over or settling upload will
+ * move it (a medium deleted elsewhere, a WebP swap that replaced it with a new
+ * one). Left alone such a draft keeps the save bar up and fails every Save.
+ * A non-preview url is only judged while the gallery is LOADED: an empty
+ * lookup is a gallery still loading, not one in which every medium vanished.
+ */
+export function strandedAltDraftUrls(args: {
+  dirtyUrls: Iterable<string>;
+  lookup: Readonly<Record<string, string>>;
+  shown: ReadonlySet<string>;
+  carried: ReadonlySet<string>;
+  settlingPreviews: ReadonlySet<string>;
+  gidOf: (lookup: Readonly<Record<string, string>>, url: string) => string | null;
+}): string[] {
+  const loaded = Object.keys(args.lookup).length > 0 || args.shown.size > 0;
+  const out: string[] = [];
+  for (const url of args.dirtyUrls) {
+    if (args.shown.has(url) || args.carried.has(url) || args.settlingPreviews.has(url)) continue;
+    const isPreview = url.startsWith("blob:") || url.startsWith("data:");
+    if (!isPreview && (!loaded || args.gidOf(args.lookup, url))) continue;
+    out.push(url);
+  }
+  return out;
+}
+
+/** The draft state without the given urls (texts, dirty, baselines, failed flags, edit order). */
+export function dropAltDrafts(state: AltDraftState, urls: Iterable<string>): AltDraftState {
+  const texts = { ...state.texts };
+  const dirty = new Set(state.dirty);
+  const baselines = new Map(state.baselines);
+  const failed = new Set(state.failed);
+  const editOrder = new Map(state.editOrder);
+  for (const url of urls) {
+    delete texts[url];
+    dirty.delete(url);
+    baselines.delete(url);
+    failed.delete(url);
+    editOrder.delete(url);
+  }
+  return { texts, dirty, baselines, failed, editOrder };
+}
+
+/** Splits the QUEUE (never the save in flight -- it cannot be taken back) into what stays and what is dropped. */
+export function partitionAltQueue<T>(queue: readonly T[], drop: (entry: T) => boolean): { kept: T[]; dropped: T[] } {
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const q of queue) (drop(q) ? dropped : kept).push(q);
+  return { kept, dropped };
 }
 
 /** What Discard puts back: the value an image's alt had before its first edit (undefined = no own value). */

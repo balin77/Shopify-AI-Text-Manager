@@ -95,3 +95,27 @@ export function variantTileReplaceState(args: {
   if (isModel3dGid(gid)) return { kind: "model3d" };
   return args.productMediaIds?.has(gid) ? { kind: "replace", mediaId: gid } : { kind: "notProductMedium" };
 }
+
+/**
+ * Can the selected tile of a VARIANT gallery carry an alt text? Only a
+ * medium can (Shopify stores the alt on the media node): a YouTube/Vimeo
+ * link or a 3D model url stored on the VARIANT is not one, and a draft typed
+ * there could never be sent -- it would hold the save bar up for good. An
+ * unsaved upload can (its alt is carried over until the image exists).
+ */
+export function variantTileAltEditable(args: {
+  url: string;
+  galleryFileGids: readonly string[];
+  fileUrlMap: Readonly<Record<string, string>>;
+  urlToGid: Readonly<Record<string, string>>;
+  externalVideoUrls: readonly string[];
+  threeDModelUrls: readonly string[];
+}): boolean {
+  const { url } = args;
+  if (args.externalVideoUrls.includes(url) || args.threeDModelUrls.includes(url)) return false;
+  // Stored under a key of the variant's own gallery: a medium (a GID) or an
+  // unsaved upload (its staging url).
+  if (args.galleryFileGids.some((k) => args.fileUrlMap[k] === url)) return true;
+  if (gidForUrl(args.urlToGid, url)) return true;
+  return url.startsWith("blob:") || url.startsWith("data:");
+}

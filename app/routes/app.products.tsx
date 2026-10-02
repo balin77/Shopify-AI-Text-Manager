@@ -845,7 +845,9 @@ export default function ProductsPage() {
         editor.handlers.handleLanguageChange(locale);
       },
       handleMarketChange: async (marketId: string) => {
-        if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
+        // Primary alt texts are global: a market change in the primary
+        // language keeps them, so it has nothing to ask about.
+        if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
           await confirmNavigation();
         }
         editor.handlers.handleMarketChange(marketId);
