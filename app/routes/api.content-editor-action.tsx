@@ -19,8 +19,11 @@
  * A resource route (no default export) serialises that as JSON.
  *
  * It is not a second door to the editors: only the pages in the shared list,
- * and per page only `updateContent` plus the actions that page's plain-fetch
- * callers send (`CONTENT_EDITOR_EXTRA_ACTIONS`).
+ * and per page only `updateContent`, the editor's "translate all" runs on
+ * every listed page (`CONTENT_EDITOR_EVERY_PAGE_ACTIONS`: `translateAll`,
+ * `translateAllForLocale` -- their own request so a save never queues behind
+ * an AI run on the editor's one fetcher), plus the actions that page's
+ * plain-fetch callers send (`CONTENT_EDITOR_EXTRA_ACTIONS`).
  */
 
 import { data as json, type ActionFunctionArgs } from "react-router";

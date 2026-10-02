@@ -19,6 +19,7 @@ import {
   type MetaobjectEntryLike,
 } from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
+import { buildLocaleDeletedKey, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
@@ -60,7 +61,9 @@ export function buildLocaleKey(locale: string, marketId: string): string {
  */
 export const LOCALE_MARKET_SEP = "@@";
 
-/** Same folding for deletedTranslationKeysRef entries (keyed by translationKey). */
+/** Same folding for deletedTranslationKeysRef entries (keyed by translationKey).
+ *  This is the LAYER mark (every locale); one locale's cleared value carries a
+ *  LOCALE mark (`buildLocaleDeletedKey`, deleted-translation-marks.shared.ts). */
 export function buildDeletedKey(translationKey: string, marketId: string): string {
   return marketId ? `${translationKey}${LOCALE_MARKET_SEP}${marketId}` : translationKey;
 }
@@ -207,7 +210,8 @@ export interface UseUiDataLoaderReturn {
   /** After a BACKGROUND re-translation this save started has finished and the
    *  loader has been re-read. See the implementation for why it clears exactly
    *  these two refs and leaves the primary cache alone. */
-  onBackgroundRetranslation: () => void;
+  /** `keepMarks`: the marks a save that is out or queued still stands behind. */
+  onBackgroundRetranslation: (keepMarks?: ReadonlySet<string>) => void;
 
   /** After resolveAll() completes — sets unified baseline and keeps legacy refs in sync */
   onDataLoaded: (values: Record<string, string>) => void;
@@ -394,6 +398,8 @@ export function useUiDataLoader(
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
   // Keys whose "deleted" marker the last copy-to-all-locales cleared (see onCopyToLocalesFailed).
   const clearedDeletedByCopyRef = useRef<Set<string>>(new Set());
+  /** The LOCALE marks a copy to every locale dropped, per translation key. */
+  const clearedLocaleMarksByCopyRef = useRef<Map<string, string[]>>(new Map());
 
   /** Currently-selected market ("" = global). Held in a ref so resolve()/the
    *  transition methods can read it without bloating their useCallback deps. The
@@ -501,8 +507,8 @@ export function useUiDataLoader(
       //     global). Global deletion → empty (as before).
       const marketDeleted =
         isMarket &&
-        deletedTranslationKeysRef.current.has(buildDeletedKey(translationKey, marketId));
-      const globalDeleted = deletedTranslationKeysRef.current.has(translationKey);
+        isMarkedDeleted(deletedTranslationKeysRef.current, translationKey, marketId, locale);
+      const globalDeleted = isMarkedDeleted(deletedTranslationKeysRef.current, translationKey, "", locale);
 
       // 1b. Market layer (only when a market is selected and not market-deleted)
       if (isMarket && !marketDeleted) {
@@ -694,6 +700,7 @@ export function useUiDataLoader(
         deletedTranslationKeysRef.current.delete(delKey);
         debugLog.transition(`  cleared deletedKey: ${delKey}`);
       }
+      deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(translationKey, marketId, targetLocale));
 
       // 2. Store in localTranslationsRef (overlay — replaces item mutation)
       if (!localTranslationsRef.current[translationKey]) {
@@ -764,13 +771,14 @@ export function useUiDataLoader(
       // 1. Clear the GLOBAL deleted marks of the fields the answer carries a
       // value for -- never the rest (another field's pending clear stays
       // pending) and never a market's (the run wrote no market override).
-      for (const fieldMap of Object.values(translations)) {
+      for (const [answeredLocale, fieldMap] of Object.entries(translations)) {
         for (const fieldDef of fieldDefinitions) {
           if (!fieldMap?.[fieldDef.key]) continue;
           const delKey = buildDeletedKey(fieldDef.translationKey, "");
           if (deletedTranslationKeysRef.current.delete(delKey)) {
             debugLog.transition(`  cleared deletedKey: ${delKey}`);
           }
+          deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(fieldDef.translationKey, "", answeredLocale));
         }
       }
 
@@ -859,12 +867,15 @@ export function useUiDataLoader(
 
       // 1. Clear the GLOBAL deleted marks of the fields the answer carries a
       // value for -- never another field's pending clear, never a market's.
+      // Another locale's own mark (its clear may still be on its way) is never
+      // touched: that one is a mark of THIS target locale only.
       for (const fieldDef of fieldDefinitions) {
         if (!translations[fieldDef.key]) continue;
         const delKey = buildDeletedKey(fieldDef.translationKey, "");
         if (deletedTranslationKeysRef.current.delete(delKey)) {
           debugLog.transition(`  cleared deletedKey: ${delKey}`);
         }
+        deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(fieldDef.translationKey, "", targetLocale));
       }
 
       // 2. Store translations in localTranslationsRef (overlay — replaces item
@@ -958,7 +969,9 @@ export function useUiDataLoader(
             clearedCount++;
           }
         }
-        deletedTranslationKeysRef.current.clear();
+        // Every layer mark goes; a foreign clear's own locale marks stay until
+        // ITS save answers (dropMarksAfterSave).
+        dropMarksAfterSave(deletedTranslationKeysRef.current, null);
         if (clearedCount > 0) {
           debugLog.transition(
             `  cleared ${clearedCount} localTranslation entries for changed primary fields`
@@ -1023,8 +1036,16 @@ export function useUiDataLoader(
         // revalidation from restoring stale data. Now that the save succeeded,
         // revalidation will fetch fresh data and the protection is no longer
         // needed. Keeping them would incorrectly show empty fields in OTHER
-        // locales because deletedTranslationKeysRef is not locale-specific.
-        deletedTranslationKeysRef.current.clear();
+        // locales because the layer marks are not locale-specific. Another
+        // locale's own marks stay: its clear may still be on its way, and a
+        // re-read would otherwise show the values it is removing.
+        dropMarksAfterSave(
+          deletedTranslationKeysRef.current,
+          { locale: savedLocale, marketId },
+          onlyKeys
+            ? new Set(fieldDefinitions.filter((f) => onlyKeys.has(f.key)).map((f) => f.translationKey))
+            : null,
+        );
 
         debugLog.transition(
           `  upserted=${upserted}, deleted=${deleted} translations`
@@ -1061,6 +1082,15 @@ export function useUiDataLoader(
       } else {
         clearedDeletedByCopyRef.current.delete(translationKey);
       }
+      // The written locales' own marks too (a clear of that locale is
+      // superseded by the value written there now).
+      const clearedLocaleMarks: string[] = [];
+      for (const locale of Object.keys(translations)) {
+        const mark = buildLocaleDeletedKey(translationKey, "", locale);
+        if (deletedTranslationKeysRef.current.delete(mark)) clearedLocaleMarks.push(mark);
+      }
+      if (clearedLocaleMarks.length > 0) clearedLocaleMarksByCopyRef.current.set(translationKey, clearedLocaleMarks);
+      else clearedLocaleMarksByCopyRef.current.delete(translationKey);
 
       // 2. Store in localTranslationsRef (overlay — replaces item mutation)
       if (!localTranslationsRef.current[translationKey]) {
@@ -1094,6 +1124,15 @@ export function useUiDataLoader(
       // the one the copy ran on AND no locale took the value (a partial copy
       // did write a translation, so the field is no longer deleted).
       const hadCleared = clearedDeletedByCopyRef.current.delete(translationKey);
+      const clearedLocaleMarks = clearedLocaleMarksByCopyRef.current.get(translationKey) ?? [];
+      clearedLocaleMarksByCopyRef.current.delete(translationKey);
+      if (opts?.itemUnchanged !== false) {
+        // A failed locale did not get the copied value: its own clear stands.
+        for (const locale of locales) {
+          const mark = buildLocaleDeletedKey(translationKey, "", locale);
+          if (clearedLocaleMarks.includes(mark)) deletedTranslationKeysRef.current.add(mark);
+        }
+      }
       if (
         hadCleared &&
         locales.length > 0 &&
@@ -1125,6 +1164,7 @@ export function useUiDataLoader(
     debugLog.transition("onItemSwitch: clearing all caches");
     deletedTranslationKeysRef.current.clear();
     clearedDeletedByCopyRef.current.clear();
+    clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 
@@ -1137,6 +1177,7 @@ export function useUiDataLoader(
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
     clearedDeletedByCopyRef.current.clear();
+    clearedLocaleMarksByCopyRef.current.clear();
   }, []);
 
   /**
@@ -1172,10 +1213,15 @@ export function useUiDataLoader(
    * merchant's unsaved input, and the refresh is only ever allowed to run when
    * there is none (see `useUnifiedContentEditor`).
    */
-  const onBackgroundRetranslation = useCallback(() => {
+  const onBackgroundRetranslation = useCallback((keepMarks?: ReadonlySet<string>) => {
     debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
-    deletedTranslationKeysRef.current.clear();
+    // A clear whose removal is still on its way keeps its marks: the server
+    // has not caught up with it, and the re-read would show what it removes.
+    for (const mark of [...deletedTranslationKeysRef.current]) {
+      if (!keepMarks?.has(mark)) deletedTranslationKeysRef.current.delete(mark);
+    }
     clearedDeletedByCopyRef.current.clear();
+    clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 

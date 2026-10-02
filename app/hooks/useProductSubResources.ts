@@ -62,6 +62,7 @@ import {
   confirmedClearIds,
   settleClearAll,
   stageClearAll,
+  subResourceSaveRacesRun,
 } from "../services/editor/sub-resource-clear.shared";
 
 /**
@@ -332,6 +333,13 @@ export interface SubResourceHandlers {
    * the fields are emptied at once and a removal that fails is put back.
    */
   clearAllForLocale: () => void;
+  /** Whether a "translate all" of the options & metafields is writing INTO
+   *  `locale` of `itemId` now (its own language, or every language). */
+  isTranslateAllRunning: (itemId: string, locale: string) => boolean;
+  /** Whether a save of the card (its "clear all", or the options & metafields
+   *  save) is out for `itemId` in `locale` ("*" = any language; a PRIMARY
+   *  save counts for every language): a "translate all" must not race it. */
+  isSaveInFlight: (itemId: string, locale: string) => boolean;
   resetChanges: () => void;
   resetForReload: () => void;
   /**
@@ -1867,6 +1875,43 @@ export function useProductSubResources({
     return [...fieldIds];
   }, []);
 
+  // Which "translate all" runs are out, as `<item>|<locale>` (`*` = every
+  // language): the editor's "clear all" of that language waits for them.
+  const translateAllRunsRef = useRef<Map<string, number>>(new Map());
+  const trackTranslateAllRun = useCallback((itemId: string, locale: string, run: Promise<unknown>) => {
+    const key = `${itemId}|${locale}`;
+    const runs = translateAllRunsRef.current;
+    runs.set(key, (runs.get(key) ?? 0) + 1);
+    void run
+      .finally(() => {
+        const left = (runs.get(key) ?? 1) - 1;
+        if (left > 0) runs.set(key, left);
+        else runs.delete(key);
+      })
+      // The run reports its own failure; a rejection must not surface as an
+      // unhandled one here.
+      .catch(() => {});
+  }, []);
+  // The card's own "clear all" requests that are out, as `<item>|<locale>`.
+  const clearsOutRef = useRef<Map<string, number>>(new Map());
+  const fetcherForSaveCheckRef = useRef(fetcher);
+  fetcherForSaveCheckRef.current = fetcher;
+  const isSaveInFlight = useCallback((itemId: string, locale: string) => {
+    for (const key of clearsOutRef.current.keys()) {
+      const [clearItem, clearLocale] = key.split("|");
+      if (clearItem === itemId && (locale === "*" || clearLocale === locale)) return true;
+    }
+    const f = fetcherForSaveCheckRef.current;
+    if (f.state === "idle" || !f.formData) return false;
+    const form = f.formData;
+    return subResourceSaveRacesRun((key) => form.get(key), itemId, locale);
+  }, []);
+
+  const isTranslateAllRunning = useCallback((itemId: string, locale: string) => {
+    const runs = translateAllRunsRef.current;
+    return runs.has(`${itemId}|${locale}`) || runs.has(`${itemId}|*`);
+  }, []);
+
   const translateAllSubResources = useCallback(() => {
     if (isPrimaryLocale || !selectedItem) return;
 
@@ -1883,7 +1928,7 @@ export function useProductSubResources({
     fd.set("sourceData", JSON.stringify(sourceData));
     fd.set("itemId", selectedItem.id);
     fd.set("fieldId", "all:subresources");
-    void runTranslateRequest({
+    trackTranslateAllRun(selectedItem.id, currentLanguage, runTranslateRequest({
       itemId: selectedItem.id,
       item: selectedItem,
       fieldIds,
@@ -1891,8 +1936,8 @@ export function useProductSubResources({
       requested: { itemId: selectedItem.id, locale: currentLanguage, marketId: selectedMarketId },
       confirmPrimary: false,
       revalidateAfter: false,
-    });
-  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, selectedItem, selectedMarketId, translateAllFieldIds, runTranslateRequest]);
+    }));
+  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, selectedItem, selectedMarketId, translateAllFieldIds, runTranslateRequest, trackTranslateAllRun]);
 
   // Translate ALL sub-resources to ALL foreign locales (called from primary locale "Translate All")
   const translateAllSubResourcesToAllLocales = useCallback(() => {
@@ -1910,7 +1955,7 @@ export function useProductSubResources({
     fd.set("itemId", selectedItem.id);
     fd.set("primaryLocale", primaryLocale);
     fd.set("fieldId", "all:subresources");
-    void runTranslateRequest({
+    trackTranslateAllRun(selectedItem.id, "*", runTranslateRequest({
       itemId: selectedItem.id,
       item: selectedItem,
       fieldIds,
@@ -1919,8 +1964,8 @@ export function useProductSubResources({
       confirmPrimary: false,
       revalidateAfter: true,
       dropOverlayIds: sourceData.map((s) => s.resourceId),
-    });
-  }, [isPrimaryLocale, buildSourceData, selectedItem, primaryLocale, translateAllFieldIds, runTranslateRequest]);
+    }));
+  }, [isPrimaryLocale, buildSourceData, selectedItem, primaryLocale, translateAllFieldIds, runTranslateRequest, trackTranslateAllRun]);
 
   // The save bar's save shares the fetcher with Phase 2, and its submit ABORTS
   // a load still in flight: that load is re-queued for when the save is done
@@ -2272,8 +2317,20 @@ export function useProductSubResources({
     fd.set("itemId", selectedItem.id);
     fd.set("marketId", selectedMarketId);
 
+    const clearKey = `${requested.itemId}|${requested.locale}`;
+    clearsOutRef.current.set(clearKey, (clearsOutRef.current.get(clearKey) ?? 0) + 1);
+    const clearDone = () => {
+      const left = (clearsOutRef.current.get(clearKey) ?? 1) - 1;
+      if (left > 0) clearsOutRef.current.set(clearKey, left);
+      else clearsOutRef.current.delete(clearKey);
+    };
     void (async () => {
-      const data = await postSubResourceRequest(fd);
+      let data: Awaited<ReturnType<typeof postSubResourceRequest>>;
+      try {
+        data = await postSubResourceRequest(fd);
+      } finally {
+        clearDone();
+      }
       const h = answerHandlersRef.current;
       const view = currentViewRef.current;
       // A different item reset the overlay and the stamps; nothing here is
@@ -2693,6 +2750,8 @@ export function useProductSubResources({
       translateAllSubResourcesToAllLocales,
       saveSubResources,
       clearAllForLocale,
+      isTranslateAllRunning,
+      isSaveInFlight,
       resetChanges,
       resetForReload,
       refreshTranslations,

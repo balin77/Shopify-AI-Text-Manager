@@ -20,6 +20,8 @@ function setup(overrides: Record<string, unknown>) {
     showInfoBox: vi.fn(),
     setEditableValues: vi.fn(),
     submitAIAction: vi.fn(),
+    // "Translate all" goes out as its own request (useUnifiedContentEditor).
+    submitTranslateRun: vi.fn(),
   };
   const known: Record<string, unknown> = {
     config: { contentType: "products" },
@@ -52,27 +54,30 @@ function setup(overrides: Record<string, unknown>) {
 
 describe("whole-item Translate all (primary)", () => {
   it("is refused while a primary field is an unsaved draft", () => {
-    const { result, safeSubmit, showInfoBox } = setup({
+    const { result, safeSubmit, submitTranslateRun, showInfoBox } = setup({
       editableValuesRef: { current: { title: "Neuer Titel" } },
     });
     act(() => result.current.handleTranslateAll());
     expect(safeSubmit).not.toHaveBeenCalled();
+    expect(submitTranslateRun).not.toHaveBeenCalled();
     expect(showInfoBox).toHaveBeenCalledWith(expect.stringMatching(/save first/i), "warning");
   });
 
   it("is refused while a primary alt text is an unsaved draft", () => {
-    const { result, safeSubmit } = setup({
+    const { result, safeSubmit, submitTranslateRun } = setup({
       imageAltTexts: { 0: "neu" },
       originalAltTextsRef: { current: { 0: "alt" } },
     });
     act(() => result.current.handleTranslateAll());
     expect(safeSubmit).not.toHaveBeenCalled();
+    expect(submitTranslateRun).not.toHaveBeenCalled();
   });
 
   it("runs when the primary has no draft", () => {
-    const { result, safeSubmit } = setup({});
+    const { result, safeSubmit, submitTranslateRun } = setup({});
     act(() => result.current.handleTranslateAll());
-    expect(safeSubmit).toHaveBeenCalledTimes(1);
+    expect(submitTranslateRun).toHaveBeenCalledTimes(1);
+    expect(safeSubmit).not.toHaveBeenCalled();
   });
 });
 
