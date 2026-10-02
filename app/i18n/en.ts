@@ -1952,6 +1952,7 @@ export const en: Translation = {
     translateAltAll: "Translate to all languages",
     translateAltAllSaveFirst: "Save the alt text first, then translate it into all languages.",
     translateAltNoPrimary: "This image has no saved alt text in the primary language yet, so there is nothing to translate. Write and save the primary-language alt text first.",
+    altSaveNeedsPrimary: "This alt text was not saved: the image has no alt text in the main language yet. Enter and save one there first — then it can be translated.",
     aiNeedsSavedImage: "Save the image first — only then can the AI write or translate its alt text.",
     primaryRef: "Primary language",
     noImages: "No images",

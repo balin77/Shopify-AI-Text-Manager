@@ -12,7 +12,7 @@ import type { VariantWithGallery, ImageMeta } from "./types";
 import { variantTileReplaceState, variantTileAltEditable } from "./url-gid";
 import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../localized-images/LocalizedMediaReplaceButton";
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
-import { altTranslateSourceText } from "../../services/alt-text-feedback.shared";
+import { altTranslateSourceText, foreignAltLocked } from "../../services/alt-text-feedback.shared";
 
 interface VariantGallerySectionProps {
   variant: VariantWithGallery;
@@ -41,6 +41,8 @@ interface VariantGallerySectionProps {
   onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
   /** True while this tile's medium has an unsaved PRIMARY alt: translating it to every language waits for its Save. */
   isAltDirty?: (url: string) => boolean;
+  /** True while this tile carries an unsaved alt draft of the view on screen (keeps a foreign box open while it is being cleared). */
+  isAltDraftDirty?: (url: string) => boolean;
   /** Why ✨ / 🌍 cannot run for this tile (undefined = they can): their result
    *  is saved at once, and an image without a media id cannot be saved to. */
   altAiBlockedHint?: (url: string) => string | undefined;
@@ -96,6 +98,7 @@ export function VariantGallerySection({
   onTranslateAltToAllLocales,
   altAiBlockedHint,
   isAltDirty,
+  isAltDraftDirty,
   enabledLanguages = [],
   currentLanguage,
   primaryLocale,
@@ -288,6 +291,19 @@ export function VariantGallerySection({
   const hasTranslation = singleSelectedUrl
     ? (localAltTexts?.[singleSelectedUrl] !== undefined && localAltTexts[singleSelectedUrl] !== "")
     : false;
+  // A FOREIGN alt can only be stored where the image has a saved primary alt:
+  // the box is locked with the reason instead of collecting a draft no Save
+  // could ever store.
+  const altLocked = !!singleSelectedUrl && foreignAltLocked({
+    isPrimaryLocale,
+    primaryAlt: primaryAltText,
+    own: localAltTexts?.[singleSelectedUrl],
+    dirty: !!isAltDraftDirty?.(singleSelectedUrl),
+  });
+  const altNeedsPrimaryHint = String(
+    t.products?.altTextNeedsPrimaryHint
+      ?? "Enter and save an alt text in the main language first — then it can be translated.",
+  );
 
   const variantTitlePulseStyle = useMemo<React.CSSProperties | undefined>(() => {
     if (!hasMainImage) {
@@ -415,7 +431,10 @@ export function VariantGallerySection({
                 <input
                   type="text"
                   value={currentAltText}
-                  onChange={(e) => onAltTextChange?.(singleSelectedUrl, e.target.value)}
+                  readOnly={altLocked}
+                  aria-readonly={altLocked || undefined}
+                  title={altLocked ? altNeedsPrimaryHint : undefined}
+                  onChange={(e) => { if (!altLocked) onAltTextChange?.(singleSelectedUrl, e.target.value); }}
                   placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: currentAltText, inherited: singleSelectedUrl ? inheritedAltTexts?.[singleSelectedUrl] : undefined, primaryAlt: primaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                   style={{
                     flex: "1 1 200px",
@@ -475,6 +494,11 @@ export function VariantGallerySection({
                   )}
                 </div>
               </div>
+              {altLocked && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                  {altNeedsPrimaryHint}
+                </div>
+              )}
               {!isPrimaryLocale && primaryAltText && (
                 <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
                   <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>

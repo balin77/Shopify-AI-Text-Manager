@@ -8,7 +8,7 @@ import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { answerPredatesSave, altConfirmKey, monotonicNow } from "./alt-load-guard";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
-import { altTranslateSourceText, classifyAltSaveResponse, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
+import { altTranslateSourceText, foreignAltLocked, classifyAltSaveResponse, type AltSaveVerdict, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
 import { usePlan } from "../../contexts/PlanContext";
 import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -25,7 +25,7 @@ import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../ut
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
-import { planAltFlush, planImmediateAltSave, restoreAltDrafts, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
+import { planAltFlush, planImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
 import {
   settlingPollDelayMs,
@@ -436,7 +436,7 @@ export function VariantImageManager({
     setAltDirtyVersion((v) => v + 1);
     onDirtyChange?.(dirtyUrlsRef.current.size > 0);
   }, [onDirtyChange]);
-  const settleAltSave = useCallback((entry: QueuedAltSave, verdict: { kind: "saved" } | { kind: "failed"; message: string }) => {
+  const settleAltSave = useCallback((entry: QueuedAltSave, verdict: AltSaveVerdict) => {
     // Wake the page Save that sent this one (it reports only what was confirmed).
     settleAltTokens((w) => settleAltFlushWaiter(w, entry, verdict.kind === "saved"));
     const scope = altSaveScope(entry, { productId: productIdRef.current, locale: currentLanguageRef.current, marketId: viewMarketRef.current });
@@ -473,6 +473,39 @@ export function VariantImageManager({
         for (const alias of entry.aliases ?? []) settleUrl(resolveAltUrl(alias.url), alias.altText, entry.altText);
         syncAltDirty();
       }
+      return;
+    }
+    if (verdict.kind === "noPrimary") {
+      // The image has no alt text in the PRIMARY language, so Shopify offers
+      // nothing to translate and no retry could ever store this text. Kept as
+      // a failed draft it would hold the save bar open for good, so the field
+      // goes back to what this language (and market) holds and the message
+      // says what to do instead -- the editor's own rule for the same case.
+      if (sameProduct && sameLocale) {
+        const plan = revertAltDraftsWithoutPrimary({
+          texts: localAltTextsRef.current,
+          baselines: altBaselinesRef.current,
+          planned: [
+            { url, altText: entry.altText },
+            ...(entry.aliases ?? []).map((a) => ({ url: resolveAltUrl(a.url), altText: a.altText })),
+          ],
+        });
+        for (const u of plan.reverted) {
+          failedAltUrlsRef.current.delete(u);
+          dirtyUrlsRef.current.delete(u);
+          altBaselinesRef.current.delete(u);
+        }
+        if (plan.reverted.length > 0) {
+          localAltTextsRef.current = plan.texts;
+          setLocalAltTexts(plan.texts);
+        }
+        syncAltDirty();
+      }
+      const needsPrimary = String(
+        t.imageManager?.altSaveNeedsPrimary
+          ?? "This alt text was not saved: the image has no alt text in the main language yet. Enter and save one there first, then it can be translated.",
+      );
+      showInfoBox(!sameProduct && entry.productTitle ? `${entry.productTitle}: ${needsPrimary}` : needsPrimary, "warning");
       return;
     }
     if (sameProduct && sameLocale) {
@@ -526,7 +559,7 @@ export function VariantImageManager({
       dispatchNextAltSave();
     }, 90000);
   }, [saveAltTextFetcher, settleAltSave]); // eslint-disable-line react-hooks/exhaustive-deps
-  const finishAltSave = useCallback((verdict: { kind: "saved" } | { kind: "failed"; message: string }) => {
+  const finishAltSave = useCallback((verdict: AltSaveVerdict) => {
     const entry = altSaveInFlightRef.current;
     altSaveInFlightRef.current = null;
     if (altSaveTimerRef.current) { clearTimeout(altSaveTimerRef.current); altSaveTimerRef.current = null; }
@@ -3261,6 +3294,9 @@ export function VariantImageManager({
     return false;
   };
 
+  /** True while this tile carries an unsaved alt draft of the view on screen. */
+  const isAltDraftDirty = (url: string) => dirtyUrlsRef.current.has(url);
+
   /** Why ✨ / 🌍 cannot run for this tile right now: an image with no media id
    *  yet (an unsaved upload) has nothing its immediate save could address. */
   const altAiBlockedHint = (url: string | null | undefined): string | undefined => {
@@ -3412,6 +3448,19 @@ export function VariantImageManager({
     ?? (productSingleSelected && altTranslateSourceText(productPrimaryAltText) === null
       ? String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet.")
       : undefined);
+  // A FOREIGN alt can only be stored where the image has a saved primary alt
+  // (Shopify offers nothing to translate otherwise): the box is locked with the
+  // reason rather than collecting a draft no Save could ever store.
+  const altNeedsPrimaryHint = String(
+    t.products?.altTextNeedsPrimaryHint
+      ?? "Enter and save an alt text in the main language first — then it can be translated.",
+  );
+  const productAltLocked = !!productSingleSelected && foreignAltLocked({
+    isPrimaryLocale,
+    primaryAlt: productPrimaryAltText,
+    own: localAltTexts[productSingleSelected],
+    dirty: dirtyUrlsRef.current.has(productSingleSelected),
+  });
   const translateAltAllSaveFirstHint = String(t.imageManager?.translateAltAllSaveFirst ?? "Save the alt text first, then translate it.");
   const productHasTranslation = productSingleSelected
     ? (localAltTexts[productSingleSelected] !== undefined && localAltTexts[productSingleSelected] !== "")
@@ -3768,7 +3817,10 @@ export function VariantImageManager({
               <input
                 type="text"
                 value={productCurrentAltText}
-                onChange={(e) => handleAltTextChange(productSingleSelected, e.target.value)}
+                readOnly={productAltLocked}
+                aria-readonly={productAltLocked || undefined}
+                title={productAltLocked ? altNeedsPrimaryHint : undefined}
+                onChange={(e) => { if (!productAltLocked) handleAltTextChange(productSingleSelected, e.target.value); }}
                 placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: productCurrentAltText, inherited: productInheritedAlt, primaryAlt: productPrimaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                 style={{
                   flex: "1 1 200px",
@@ -3829,6 +3881,11 @@ export function VariantImageManager({
                 )}
               </div>
             </div>
+            {productAltLocked && (
+              <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                {altNeedsPrimaryHint}
+              </div>
+            )}
             {!isPrimaryLocale && productPrimaryAltText && (
               <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
                 <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
@@ -3945,6 +4002,7 @@ export function VariantImageManager({
                 onTranslateAltText={handleTranslateAltTextForImage}
                 onTranslateAltToAllLocales={handleTranslateAltTextToAllLocales}
                 isAltDirty={isPrimaryAltDirty}
+                isAltDraftDirty={isAltDraftDirty}
                 altAiBlockedHint={altAiBlockedHint}
                 enabledLanguages={enabledLanguages}
                 currentLanguage={currentLanguage}

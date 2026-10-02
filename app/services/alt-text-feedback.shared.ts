@@ -29,13 +29,45 @@ function errorText(rec: Record<string, unknown> | null): string {
   return typeof e === "string" ? e : "";
 }
 
-export type AltSaveVerdict = { kind: "saved" } | { kind: "failed"; message: string };
+/**
+ * The answer code of a FOREIGN `saveImageAltText` that could not be stored
+ * because the image has no alt text in the primary language: Shopify then
+ * offers no `alt` key (and no digest) to translate, so no retry can ever store
+ * it until the primary alt exists.
+ */
+export const ALT_NO_PRIMARY = "altTextNoPrimary";
+
+export type AltSaveVerdict =
+  | { kind: "saved" }
+  | { kind: "noPrimary" }
+  | { kind: "failed"; message: string };
 
 /** A `saveImageAltText` answer: only an explicit `success: true` is a save. */
 export function classifyAltSaveResponse(data: unknown): AltSaveVerdict {
   const rec = asRecord(data);
   if (rec && rec.success === true) return { kind: "saved" };
+  if (rec && rec.errorCode === ALT_NO_PRIMARY) return { kind: "noPrimary" };
   return { kind: "failed", message: errorText(rec) };
+}
+
+/**
+ * Whether a FOREIGN alt box is locked: the image has no saved primary alt, so
+ * a translation typed there could never be stored (the save would be refused
+ * and the draft would hold the save bar open for good). A value the language
+ * already holds stays editable so it can still be cleared, and so does a box
+ * the merchant is in the middle of editing (it is dirty), or the lock would
+ * snap shut the moment the last character is deleted.
+ */
+export function foreignAltLocked(args: {
+  isPrimaryLocale: boolean;
+  primaryAlt: string | null | undefined;
+  own: string | null | undefined;
+  dirty: boolean;
+}): boolean {
+  if (args.isPrimaryLocale) return false;
+  if (altTranslateSourceText(args.primaryAlt) !== null) return false;
+  if ((args.own ?? "") !== "") return false;
+  return !args.dirty;
 }
 
 /**

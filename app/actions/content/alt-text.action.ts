@@ -8,7 +8,7 @@
 import { data as json } from "react-router";
 import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
 import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
-import { ALT_NO_SOURCE_TEXT, altTranslateSourceText, altTranslateTaskStatus, planAltTranslate } from "~/services/alt-text-feedback.shared";
+import { ALT_NO_PRIMARY, ALT_NO_SOURCE_TEXT, altTranslateSourceText, altTranslateTaskStatus, planAltTranslate } from "~/services/alt-text-feedback.shared";
 import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
 import { decryptApiKey } from "../../utils/encryption.server";
@@ -930,7 +930,13 @@ export async function handleSaveImageAltText(
       } else {
         const verified = await registerMediaAltAndVerify(admin, mediaId, locale, altText, marketId || undefined);
         if (verified.noDigest) {
-          return json({ success: false, error: "No digest found for alt-text translation" }, { status: 400 });
+          // The image has no PRIMARY alt: Shopify offers nothing to translate.
+          // Named, so the image manager can say so and drop the draft instead
+          // of keeping one no retry can ever store.
+          return json(
+            { actionType: "saveImageAltText", success: false, errorCode: ALT_NO_PRIMARY, error: "The image has no alt text in the primary language" },
+            { status: 400 },
+          );
         }
         shopifySaved = verified.confirmed;
         if (shopifySaved) storedAlt = verified.storedValue ?? altText;

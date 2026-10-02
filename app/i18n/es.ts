@@ -1932,6 +1932,7 @@ export const es: Translation = {
     translateAltAll: "Traducir a todos los idiomas",
     translateAltAllSaveFirst: "Guarda primero el texto alternativo y luego tradúcelo a todos los idiomas.",
     translateAltNoPrimary: "Esta imagen aún no tiene texto alternativo guardado en el idioma principal, así que no hay nada que traducir. Escribe y guarda primero el texto alternativo en el idioma principal.",
+    altSaveNeedsPrimary: "Este texto alt no se guardó: la imagen aún no tiene texto alt en el idioma principal. Introdúcelo y guárdalo allí primero; después se podrá traducir.",
     aiNeedsSavedImage: "Guarda primero la imagen; solo entonces la IA puede escribir o traducir su texto alternativo.",
     primaryRef: "Idioma principal",
     noImages: "Sin imágenes",

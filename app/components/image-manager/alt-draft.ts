@@ -290,6 +290,27 @@ export function restoreAltDrafts(
 }
 
 /**
+ * A foreign save Shopify could not store because the image has no PRIMARY alt
+ * (`noPrimary`): no retry can ever store it, so instead of a failed draft the
+ * tiles go back to what the language held before the edit (the Discard value).
+ * A tile typed on after the save was sent shows a NEWER draft and is left
+ * alone. Returns the new texts and the urls that were reverted.
+ */
+export function revertAltDraftsWithoutPrimary(args: {
+  texts: Readonly<Record<string, string>>;
+  baselines: ReadonlyMap<string, string | undefined>;
+  planned: ReadonlyArray<{ url: string; altText: string }>;
+}): { texts: Record<string, string>; reverted: string[] } {
+  const reverted: string[] = [];
+  for (const p of args.planned) {
+    const current = args.texts[p.url];
+    if (current !== undefined && current !== p.altText) continue;
+    if (!reverted.includes(p.url)) reverted.push(p.url);
+  }
+  return { texts: restoreAltDrafts(args.texts, args.baselines, reverted), reverted };
+}
+
+/**
  * One page Save waiting for its saves to be answered. It waits for TOKENS:
  * the queued save objects themselves (so a second save of the same medium is
  * told apart from the first), or a placeholder for a draft carried over until
