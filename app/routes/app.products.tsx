@@ -748,8 +748,10 @@ export default function ProductsPage() {
     // active during the wait, the merchant double-clicked, and the second
     // POST hit /api/update-variant-galleries with the same staging URL
     // (duplicate productCreateMedia → Shopify 422).
-    isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages]);
+    // The alt saves of a pressed Save are still out (queued / in flight /
+    // waiting for a new image): the Save shows busy until they are answered.
+    isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages || imageManagerState.isSavingAltTexts,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
@@ -758,36 +760,43 @@ export default function ProductsPage() {
       // main images for media that survives a failed delete.
       if (imageManagerStateRef.current.isDeletingImages) return;
       subResources.handlers.saveSubResources();
+      // The gallery half starts FIRST: the alt text of an image this Save is
+      // only uploading has no media id yet, so the manager carries it over and
+      // sends it once the gallery save has created the image (or reports it as
+      // not sent when that save failed).
+      let galleryApply: Promise<boolean> | undefined;
+      if (hasPendingGalleryChanges && editor.selectedItem) {
+        const productId = editor.selectedItem.id;
+        galleryApply = imageManagerState.handleApply(productId).then(err => {
+          if (err) {
+            showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
+            return false;
+          }
+          showInfoBox(t.products.gallerySaveSuccess, "success");
+          // Kick off background polling for 3D model previews. Shopify
+          // takes minutes to generate the .glb thumbnail server-side —
+          // the save route only waits ~25s (enough for source URL), the
+          // preview lands later. This loop calls /api/refresh-3d-previews
+          // with exponential backoff until every Model3d has a preview
+          // or we hit the ~5min budget. Each successful update triggers
+          // a variant data refresh so the merchant sees the thumbnail
+          // appear automatically.
+          schedulePreviewBackfill(productId);
+          return true;
+        }).catch(() => {
+          showInfoBox(t.products.gallerySaveError, "critical");
+          return false;
+        });
+      }
       // The alt-text drafts go out through the manager's own save queue; only an
       // answered-and-confirmed one is reported as saved.
       if (showImageManager && imageManagerState.hasAltTextEdits) {
-        altDraftApiRef.current?.flush().then(summary => {
+        altDraftApiRef.current?.flush({ galleryApply }).then(summary => {
           if (summary.ok > 0 && summary.failed === 0 && summary.unsent === 0) {
             showInfoBox(t.imageManager.altDraftsSaved, "success");
           }
         }).catch(() => {
           showInfoBox(t.imageManager.altSaveFailed, "critical");
-        });
-      }
-      if (hasPendingGalleryChanges && editor.selectedItem) {
-        const productId = editor.selectedItem.id;
-        imageManagerState.handleApply(productId).then(err => {
-          if (err) {
-            showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
-          } else {
-            showInfoBox(t.products.gallerySaveSuccess, "success");
-            // Kick off background polling for 3D model previews. Shopify
-            // takes minutes to generate the .glb thumbnail server-side —
-            // the save route only waits ~25s (enough for source URL), the
-            // preview lands later. This loop calls /api/refresh-3d-previews
-            // with exponential backoff until every Model3d has a preview
-            // or we hit the ~5min budget. Each successful update triggers
-            // a variant data refresh so the merchant sees the thumbnail
-            // appear automatically.
-            schedulePreviewBackfill(productId);
-          }
-        }).catch(() => {
-          showInfoBox(t.products.gallerySaveError, "critical");
         });
       }
     },
@@ -824,15 +833,19 @@ export default function ProductsPage() {
       // external videos). When image changes are pending, the native save
       // bar is visible and confirmNavigation() shows the native confirm
       // dialog before letting the action proceed.
+      // A language or market switch costs only the alt-text drafts nobody has
+      // pressed Save for yet: gallery changes are the same in every language
+      // and stay pending, saves already sent finish on their own, and the
+      // per-language media drafts are keyed by language and market. So only
+      // UNSENT alt drafts ask -- the same rule for both switches.
       handleLanguageChange: async (locale: string) => {
-        if (hasPendingImageChanges && !editor.state.hasChanges) {
+        if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
           await confirmNavigation();
         }
         editor.handlers.handleLanguageChange(locale);
       },
-      // A market switch re-resolves the alt-text drafts like a language switch.
       handleMarketChange: async (marketId: string) => {
-        if (hasPendingImageChanges && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
+        if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
           await confirmNavigation();
         }
         editor.handlers.handleMarketChange(marketId);
@@ -1197,6 +1210,7 @@ export default function ProductsPage() {
               variantReloadKey={imageManagerState.variantReloadCounter}
               onDirtyChange={imageManagerState.setHasAltTextEdits}
               altDraftApiRef={altDraftApiRef}
+              onAltSavingChange={imageManagerState.setIsSavingAltTexts}
               onMissingMainImageChange={handleMissingMainImageChangeForSelected}
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}

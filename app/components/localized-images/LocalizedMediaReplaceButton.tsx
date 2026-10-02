@@ -214,15 +214,17 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
  * product's own media (a file that lives only in the variant gallery, or a
  * YouTube/Vimeo link stored on the variant): the storefront swap works on the
  * product's media, so such a tile gets the button disabled with that reason,
- * never silently nothing. Foreign locale only, like the real button.
+ * never silently nothing. Foreign locale only, like the real button. A 3D model
+ * (either gallery) gets its own reason: the swap never touches a model viewer,
+ * and without it the product gallery showed "still processing" for good.
  */
-export function LocalizedMediaNotReplaceable() {
+export function LocalizedMediaNotReplaceable({ reason = "notProductMedium" }: { reason?: "notProductMedium" | "model3d" } = {}) {
   const ctx = useLocalizedMediaContext();
   const { t } = useI18n();
   const state = ctx?.state;
   if (!state || !state.active || !state.canReplace || state.foreignValue) return null;
   return (
-    <DisabledActionTooltip hint={t.localizedImages.notProductMedium}>
+    <DisabledActionTooltip hint={reason === "model3d" ? t.localizedImages.model3dNotReplaceable : t.localizedImages.notProductMedium}>
       <Button size="slim" disabled>{t.localizedImages.replace}</Button>
     </DisabledActionTooltip>
   );

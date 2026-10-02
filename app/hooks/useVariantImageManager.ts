@@ -76,6 +76,8 @@ export function useVariantImageManager() {
   const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
+  // Alt saves already sent by a page Save and not answered yet (owned by the image manager).
+  const [isSavingAltTexts, setIsSavingAltTexts] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
   const [variantsForBulk, setVariantsForBulk] = useState<VariantWithGallery[]>([]);
   const [missingMainImageProductIds, setMissingMainImageProductIds] = useState<Set<string>>(new Set());
@@ -487,6 +489,8 @@ export function useVariantImageManager() {
     resetCounter,
     hasAltTextEdits,
     setHasAltTextEdits,
+    isSavingAltTexts,
+    setIsSavingAltTexts,
     variantsForBulk,
     missingMainImageProductIds,
     selectedGalleryGids,

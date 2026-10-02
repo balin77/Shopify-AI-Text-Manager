@@ -20,7 +20,7 @@ vi.mock("~/components/image-manager/SortableImageGrid", () => ({
 }));
 vi.mock("~/components/localized-images/LocalizedMediaReplaceButton", () => ({
   LocalizedMediaReplaceButtons: ({ mediaId }: { mediaId: string }) => <span data-testid="replace">{mediaId}</span>,
-  LocalizedMediaNotReplaceable: () => <span data-testid="not-replaceable" />,
+  LocalizedMediaNotReplaceable: ({ reason }: { reason?: string }) => <span data-testid="not-replaceable" data-reason={reason ?? "notProductMedium"} />,
 }));
 
 import { VariantGallerySection } from "~/components/image-manager/VariantGallerySection";
@@ -37,12 +37,12 @@ const fileUrlMap = {
   [LIBRARY_ONLY]: "https://cdn.shopify.com/b.jpg",
 };
 
-function renderSection(selected: string, extra: Record<string, unknown> = {}) {
+function renderSection(selected: string, extra: Record<string, unknown> = {}, gids: string[] = [PRODUCT_MEDIUM, LIBRARY_ONLY]) {
   const variant = {
     id: "gid://shopify/ProductVariant/9",
     title: "Red",
     sku: null,
-    galleryFileGids: [PRODUCT_MEDIUM, LIBRARY_ONLY],
+    galleryFileGids: gids,
     galleryOrderJson: null,
     externalVideoUrls: [],
     threeDModelUrls: [],
@@ -96,5 +96,30 @@ describe("VariantGallerySection — per-language replacements", () => {
     renderSection(yt, { externalVideoUrls: [yt] });
     expect(screen.queryByTestId("replace")).toBeNull();
     expect(screen.getByTestId("not-replaceable")).toBeTruthy();
+  });
+
+  it("an unsaved upload offers nothing (no false 'only in the variant gallery' reason)", () => {
+    const upload = "staged://upload-1";
+    renderSection("blob:http://localhost/preview", { fileUrlMap: { ...fileUrlMap, [upload]: "blob:http://localhost/preview" } }, [PRODUCT_MEDIUM, upload]);
+    expect(screen.queryByTestId("replace")).toBeNull();
+    expect(screen.queryByTestId("not-replaceable")).toBeNull();
+  });
+
+  it("a 3D model gets its own reason", () => {
+    const glb = "https://cdn.shopify.com/m.glb";
+    renderSection(glb, { threeDModelUrls: [glb] });
+    expect(screen.getByTestId("not-replaceable").getAttribute("data-reason")).toBe("model3d");
+  });
+
+  it("translate-to-all is disabled while the image's primary alt is an unsaved draft", () => {
+    const url = fileUrlMap[PRODUCT_MEDIUM];
+    const common = { onAltTextChange: () => {}, onTranslateAltToAllLocales: () => {}, enabledLanguages: ["en", "de"], primaryLocale: "en", currentLanguage: "en" };
+    renderSection(url, { ...common, isAltDirty: () => true });
+    const dirtyButton = screen.getByRole("button", { name: /Translate to all languages/ });
+    expect(dirtyButton.hasAttribute("disabled") || dirtyButton.getAttribute("aria-disabled") === "true").toBe(true);
+    cleanup();
+    renderSection(url, { ...common, isAltDirty: () => false });
+    const cleanButton = screen.getByRole("button", { name: /Translate to all languages/ });
+    expect(cleanButton.hasAttribute("disabled") || cleanButton.getAttribute("aria-disabled") === "true").toBe(false);
   });
 });

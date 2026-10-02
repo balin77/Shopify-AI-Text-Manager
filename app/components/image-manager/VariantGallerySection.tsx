@@ -9,7 +9,7 @@ import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { parseExternalVideoUrl } from "../../utils/mediaKind";
 import type { VariantWithGallery, ImageMeta } from "./types";
-import { gidForUrl } from "./url-gid";
+import { variantTileReplaceState } from "./url-gid";
 import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../localized-images/LocalizedMediaReplaceButton";
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 
@@ -37,6 +37,8 @@ interface VariantGallerySectionProps {
   onGenerateAltText?: (url: string) => void;
   onTranslateAltText?: (url: string, sourceAltText: string) => void;
   onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
+  /** True while this tile's medium has an unsaved PRIMARY alt: translating it to every language waits for its Save. */
+  isAltDirty?: (url: string) => boolean;
   enabledLanguages?: string[];
   currentLanguage?: string;
   primaryLocale?: string;
@@ -87,6 +89,7 @@ export function VariantGallerySection({
   onGenerateAltText,
   onTranslateAltText,
   onTranslateAltToAllLocales,
+  isAltDirty,
   enabledLanguages = [],
   currentLanguage,
   primaryLocale,
@@ -236,8 +239,20 @@ export function VariantGallerySection({
   const singleSelectedUrl = localSelectedUrls.length === 1 ? localSelectedUrls[0] : null;
   // The selected tile's product medium (null for a file that lives only in
   // the variant gallery, or a YouTube/Vimeo link stored on the variant).
-  const singleSelectedGid = singleSelectedUrl ? gidForUrl(urlToGid, singleSelectedUrl) : null;
-  const singleSelectedIsProductMedium = !!singleSelectedGid && !!productMediaIds?.has(singleSelectedGid);
+  // An unsaved upload (or a settling one without its own key yet) offers
+  // nothing, like the product gallery; a 3D model says it cannot be replaced.
+  const replaceState = singleSelectedUrl
+    ? variantTileReplaceState({
+      url: singleSelectedUrl,
+      galleryFileGids: variant.galleryFileGids,
+      fileUrlMap,
+      urlToGid,
+      externalVideoUrls: effectiveExternalVideoUrls,
+      threeDModelUrls: effectiveThreeDModelUrls,
+      productMediaIds,
+    })
+    : null;
+  const altDirty = !!singleSelectedUrl && !!isAltDirty?.(singleSelectedUrl);
   // In foreign locale don't fall back to primary locale value (would show wrong content)
   const currentAltText = singleSelectedUrl
     ? (isPrimaryLocale
@@ -330,9 +345,9 @@ export function VariantGallerySection({
             {/* The replacement buttons of the ONE selected medium (foreign
                 language only; nothing renders otherwise), before "remove" like
                 in the product gallery. They write the same entry as there. */}
-            {singleSelectedUrl && (singleSelectedIsProductMedium && singleSelectedGid
-              ? <LocalizedMediaReplaceButtons mediaId={singleSelectedGid} />
-              : <LocalizedMediaNotReplaceable />)}
+            {replaceState?.kind === "replace" && <LocalizedMediaReplaceButtons mediaId={replaceState.mediaId} />}
+            {replaceState?.kind === "notProductMedium" && <LocalizedMediaNotReplaceable />}
+            {replaceState?.kind === "model3d" && <LocalizedMediaNotReplaceable reason="model3d" />}
             {hasLocalSelection && (
               <Button
                 size="slim"
@@ -402,10 +417,10 @@ export function VariantGallerySection({
                   )}
                   {isPrimaryLocale && onTranslateAltToAllLocales && (
                     <>
-                      <DisabledActionTooltip hint={singleLocaleHint}>
+                      <DisabledActionTooltip hint={singleLocaleHint ?? (altDirty ? t.imageManager.translateAltAllSaveFirst : undefined)}>
                         <Button
                           size="slim"
-                          disabled={isAltTextLoading || !!singleLocaleHint}
+                          disabled={isAltTextLoading || !!singleLocaleHint || altDirty}
                           loading={isAltTextLoading}
                           onClick={() => onTranslateAltToAllLocales(singleSelectedUrl, currentAltText)}
                         >

@@ -52,3 +52,46 @@ export function fileTilesByUrl<T>(
   Object.assign(lookup, urlToGid);
   return tilesByUrl(Object.values(fileUrlMap), lookup, tileOf);
 }
+
+/** A 3D model medium: the storefront swap rewrites images and videos only, never a model viewer. */
+export function isModel3dGid(gid: string | null | undefined): boolean {
+  return typeof gid === "string" && gid.startsWith("gid://shopify/Model3d/");
+}
+
+/** What the selected tile of a VARIANT gallery offers for a per-language replacement. */
+export type VariantTileReplaceState =
+  | { kind: "replace"; mediaId: string }
+  /** An unsaved upload (no media id yet): nothing, like the product gallery. */
+  | { kind: "none" }
+  /** A file or link that lives only on the variant. */
+  | { kind: "notProductMedium" }
+  /** A 3D model: never replaceable. */
+  | { kind: "model3d" };
+
+/**
+ * Decides it from the variant's OWN gallery keys first (the GID the tile was
+ * stored under), the url lookup only as the fallback: a url can collide across
+ * media, the stored key cannot.
+ */
+export function variantTileReplaceState(args: {
+  url: string;
+  galleryFileGids: readonly string[];
+  fileUrlMap: Readonly<Record<string, string>>;
+  urlToGid: Readonly<Record<string, string>>;
+  externalVideoUrls: readonly string[];
+  threeDModelUrls: readonly string[];
+  productMediaIds?: ReadonlySet<string>;
+}): VariantTileReplaceState {
+  const { url } = args;
+  if (args.threeDModelUrls.includes(url) || /\.glb(\?|#|$)/i.test(url)) return { kind: "model3d" };
+  if (args.externalVideoUrls.includes(url)) return { kind: "notProductMedium" };
+  const key = args.galleryFileGids.find((k) => args.fileUrlMap[k] === url);
+  if (key !== undefined && !key.startsWith("gid://")) return { kind: "none" };
+  const gid = key ?? gidForUrl(args.urlToGid, url);
+  if (!gid) {
+    // A local preview with no medium behind it yet is an unsaved upload.
+    return url.startsWith("blob:") || url.startsWith("data:") ? { kind: "none" } : { kind: "notProductMedium" };
+  }
+  if (isModel3dGid(gid)) return { kind: "model3d" };
+  return args.productMediaIds?.has(gid) ? { kind: "replace", mediaId: gid } : { kind: "notProductMedium" };
+}

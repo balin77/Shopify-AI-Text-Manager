@@ -500,7 +500,7 @@ export const guideEn: GuideCopy = {
             "A replacement for a specific market takes precedence over the replacement for “All markets”.",
             "Your choices apply per language and market: you can choose something in one language, switch to another, and apply everything at the end with one click on “Save”.",
             "If you delete an image in the app, all of its replacement images (in every language and market) are deleted with it.",
-            "In the image manager, the variant galleries show the replacement image too, and you can set it there as well: select the image in a variant gallery and the same button appears. It is the same replacement as under “All images” — what you choose in one place shows in both. Images that are only in a variant gallery (not under “All images”) and YouTube or Vimeo links in a variant gallery cannot be replaced yet; the button is greyed out there and says why.",
+            "In the image manager, the variant galleries show the replacement image too, and you can set it there as well: select the image in a variant gallery and the same button appears. It is the same replacement as under “All images” — what you choose in one place shows in both. Images that are only in a variant gallery (not under “All images”) and YouTube or Vimeo links in a variant gallery cannot be replaced yet, and 3D models not at all; the button is greyed out there and says why.",
             "If your plan does not (or no longer) include replacement images and videos, for example after a plan change, your store keeps showing the replacements that already exist. You see them in the gallery and can remove them there; new replacements can no longer be set. An uploaded video can take Shopify a few minutes to process; the file is already in your files by then and can be picked from there.",
             "If there are replacement images that no longer belong to anything (for example to a market or language that no longer exists in your store), a warning appears below the gallery where you can remove them. If you convert an image to WebP, the old image's replacement images are carried over to the new file automatically; only if that fails do they appear in this warning and have to be set again. Unsaved replacement images from a foreign language stay when you switch to the main language; a line below the gallery names the languages in which something is still waiting for “Save”.",
           ],
@@ -737,13 +737,13 @@ export const guideEn: GuideCopy = {
           heading: "Where alt texts live",
           paragraphs: [
             "You edit alt texts on the image in the Image Variant Manager, in the editor for collection and article images, and collectively in the bulk editor, where every row of the Images row type is one image — product images as well as images from your file library.",
-            "An alt text in the Image Variant Manager is not saved when you leave the field: it stays a draft until you press “Save” at the top, like every other change on the page. “Discard” takes it back. If saving fails for an image, the info box tells you why, your text stays in the field and is sent again with the next “Save”. If you switch language, market or product while alt texts are unsaved, the app asks first.",
+            "An alt text in the Image Variant Manager is not saved when you leave the field: it stays a draft until you press “Save” at the top, like every other change on the page. “Discard” takes it back. If saving fails for an image, the info box tells you why, your text stays in the field and is sent again with the next “Save”. If you already gave an alt text to an image you have only just added, the same “Save” saves it too, as soon as Shopify has created the image. If you switch language, market or product while alt texts are unsaved, the app asks first; whatever you have already saved finishes saving after the switch too.",
           ],
         },
         {
           heading: "With AI",
           paragraphs: [
-            "The AI writes one alt text per image. The result then sits in the field as a draft and is only applied with “Save”; “Translate to all languages”, by contrast, writes to the other languages straight away. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
+            "The AI writes one alt text per image. The result then sits in the field as a draft and is only applied with “Save”; “Translate to all languages”, by contrast, writes to the other languages straight away — which is why that button only becomes available again once you have saved a changed alt text. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
           ],
         },
         {
