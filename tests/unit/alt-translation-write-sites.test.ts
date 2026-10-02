@@ -145,6 +145,8 @@ function makeDb() {
     product: { findUnique: vi.fn(async () => ({ id: "p1", title: "Box", images: [row] })) },
     productImage: {
       findFirst: vi.fn(async () => ({ id: row.id })),
+      // The alt mirror resolves EVERY cache row of the shop carrying the medium.
+      findMany: vi.fn(async () => [{ id: row.id }]),
       upsert: vi.fn(async () => ({ id: row.id })),
     },
     productImageAltTranslation: {
@@ -240,14 +242,15 @@ describe("alt-text.action handleTranslateAltTextToAllLocales (product path)", ()
     const db = makeDb();
     await run(admin, db);
     expect(altWrites(db)[0]).toBe("Kiste (normalisiert)");
-    expect(db.productImage.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ mediaId: MEDIA, productId: "p1", product: { shop: SHOP } }) }),
+    expect(db.productImage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { mediaId: MEDIA, product: { shop: SHOP } } }),
     );
   });
 
   it("an image deleted by a concurrent sync is not mirrored under a guessed id", async () => {
     const db = makeDb();
     db.productImage.findFirst.mockResolvedValue(null);
+    db.productImage.findMany.mockResolvedValue([]);
     const res = await run(fakeAdmin(), db);
     expect(altWrites(db)).toEqual([]);
     expect(res.failedLocales).toEqual([]);
@@ -317,8 +320,29 @@ describe("alt-text.action handleSaveImageAltText (foreign locale)", () => {
     const { body } = await run(fakeAdmin({ removeEcho: true }), db, "");
     expect(body.success).toBe(true);
     expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
-      where: { imageId: "img-row", locale: "de", marketId: "" },
+      where: { imageId: { in: ["img-row"] }, locale: "de", marketId: "" },
     });
+  });
+
+  it("a medium SHARED by products A and B: a confirmed clear on A removes B's row too", async () => {
+    const db = makeDb();
+    db.productImage.findMany.mockResolvedValue([{ id: "row-of-A" }, { id: "row-of-B" }]);
+    const { body } = await run(fakeAdmin({ removeEcho: true }), db, "");
+    expect(body.success).toBe(true);
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { imageId: { in: ["row-of-A", "row-of-B"] }, locale: "de", marketId: "" },
+    });
+  });
+
+  it("a medium SHARED by products A and B: a confirmed write updates BOTH rows", async () => {
+    const db = makeDb();
+    db.productImage.findMany.mockResolvedValue([{ id: "row-of-A" }, { id: "row-of-B" }]);
+    const { body } = await run(fakeAdmin(), db);
+    expect(body.success).toBe(true);
+    const ids = db.productImageAltTranslation.upsert.mock.calls.map(
+      (c: any) => c[0].where.imageId_locale_marketId.imageId,
+    );
+    expect(ids).toEqual(["row-of-A", "row-of-B"]);
   });
 
   it("clearing: an unconfirmed removal keeps the local row", async () => {

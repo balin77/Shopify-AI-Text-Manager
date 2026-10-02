@@ -195,7 +195,7 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
     // the removal — by its echo, or, for a locale with a local row the echo
     // skipped, by the single-locale re-read (a row Shopify never held is
     // "gone" there and confirms).
-    const { removeAndVerify, removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
+    const { removeAndVerify, removeAndVerifyAcrossLocales, LOCALE_KEY_SEP, mirrorProductMediaAlt } = await import(
       "./verified-translations.server"
     );
     const confirmedByMedia = new Map<string, Set<string>>();
@@ -234,10 +234,10 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
           // Unconfirmed: the local row stays; the next look corrects it.
         }
       }
-      if (confirmed.size > 0) {
-        await db.productImageAltTranslation.deleteMany({
-          where: { imageId, marketId: "", locale: { in: [...confirmed] } },
-        });
+      // A confirmed removal is a fact about the ONE MediaImage, so it clears
+      // every product's cache row of a shared medium, not only this one's.
+      for (const locale of confirmed) {
+        await mirrorProductMediaAlt(db, { shop, mediaId, locale, marketId: "", value: "" });
       }
     }
 

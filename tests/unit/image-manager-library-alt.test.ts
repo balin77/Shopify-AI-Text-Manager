@@ -59,9 +59,11 @@ function makeDb() {
   return {
     productImage: {
       findFirst: vi.fn(async ({ where }: any) => productImages.find((i) => i.mediaId === where.mediaId) ?? null),
-      findMany: vi.fn(async ({ where }: any) =>
-        productImages.filter((i) => where.mediaId.in.includes(i.mediaId)).map((i) => ({ mediaId: i.mediaId })),
-      ),
+      // Two shapes: the loader asks `mediaId: { in }`, the alt mirror one GID.
+      findMany: vi.fn(async ({ where }: any) => {
+        const wanted: string[] = typeof where.mediaId === "string" ? [where.mediaId] : where.mediaId.in;
+        return productImages.filter((i) => wanted.includes(i.mediaId)).map((i) => ({ id: i.id, mediaId: i.mediaId }));
+      }),
     },
     productImageAltTranslation: {
       findMany: vi.fn(async () => [] as any[]),
@@ -207,11 +209,11 @@ describe("shared media: this product's row wins (F4)", () => {
     ]);
   });
 
-  it("the foreign save mirrors into THIS product's ProductImage row", async () => {
+  it("the foreign save mirrors onto EVERY ProductImage row of the medium, this product's included", async () => {
     const db = makeDb();
     const P1 = "gid://shopify/Product/1";
-    db.productImage.findFirst.mockImplementation(async ({ where }: any) =>
-      where.mediaId === PRODUCT_MEDIA && (!where.productId || where.productId === P1) ? { id: "row-own", productId: P1 } : null,
+    db.productImage.findMany.mockImplementation(async ({ where }: any) =>
+      where.mediaId === PRODUCT_MEDIA ? [{ id: "row-own" }, { id: "row-other-product" }] : [],
     );
     const { handleSaveImageAltText } = await import("~/actions/content/alt-text.action");
     const fd = new FormData();
@@ -223,9 +225,12 @@ describe("shared media: this product's row wins (F4)", () => {
     const res: any = await handleSaveImageAltText({ admin: fakeAdmin(), db, session: { shop: SHOP } } as never, fd);
     const body = res.data ?? res;
     expect(body.success).toBe(true);
-    const scoped = db.productImage.findFirst.mock.calls.find(([a]: any) => a.where.productId === P1);
-    expect(scoped).toBeTruthy();
-    expect(db.productImageAltTranslation.upsert.mock.calls[0][0].create.imageId).toBe("row-own");
+    const lookup = db.productImage.findMany.mock.calls.find(([a]: any) => a.where.mediaId === PRODUCT_MEDIA);
+    expect(lookup?.[0].where).toEqual({ mediaId: PRODUCT_MEDIA, product: { shop: SHOP } });
+    expect(db.productImageAltTranslation.upsert.mock.calls.map((c: any) => c[0].create.imageId)).toEqual([
+      "row-own",
+      "row-other-product",
+    ]);
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 

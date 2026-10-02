@@ -2783,13 +2783,16 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
   // merchant's bulk fix and overwrites it minutes later.
   markTranslationSaved(mediaId);
 
-  await db.productImageAltTranslation.upsert({
-    where: {
-      imageId_locale_marketId: { imageId: job.productImageId, locale, marketId: "" },
-    },
-    update: { altText },
-    create: { imageId: job.productImageId, locale, altText, marketId: "" },
-  });
+  // The ONE product-alt mirror: every ProductImage row of the shop carrying
+  // this MediaImage (a medium shared by several products) gets the value,
+  // resolved now rather than through the captured `productImageId`.
+  const { mirrorProductMediaAlt } = await import("~/services/translations/verified-translations.server");
+  const mirrored = await mirrorProductMediaAlt(db, { shop, productId: job.id, mediaId, locale, value: altText });
+  if (mirrored === "imageGone") {
+    throw new Error(
+      `The alt translation of ${mediaId} is live on Shopify but no cached product image row was found to mirror it — resync the product.`,
+    );
+  }
 }
 
 /**

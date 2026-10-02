@@ -16,7 +16,7 @@ import {
   revertAltsWithoutPrimary,
   sentAltsFromForm,
 } from "~/services/editor/own-field-save.shared";
-import { planImmediateAltSave } from "~/components/image-manager/alt-draft";
+import { planImmediateAltSave, hasImmediateAltSave, planAltFlush } from "~/components/image-manager/alt-draft";
 
 describe("buildOwnSaveForm — a button's save carries its own field and nothing else", () => {
   it("primary: the one field, with changedFields only for that field", () => {
@@ -222,6 +222,33 @@ describe("planImmediateAltSave — an AI result in the image manager saves that 
     });
     expect(entry).toMatchObject({ url: "https://cdn/a.jpg?v=1", altText: "AI text", marketId: "gid://shopify/Market/3" });
     expect(entry?.aliases).toEqual([{ url: "https://cdn/a.jpg?v=2", altText: "older draft" }]);
+  });
+
+  it("an AI button's save is marked IMMEDIATE; a page Save's is not — only the first refuses a view switch", () => {
+    const immediate = planImmediateAltSave({
+      url: "https://cdn/a.jpg?v=1",
+      dirtyUrls: ["https://cdn/a.jpg?v=1"],
+      texts: { "https://cdn/a.jpg?v=1": "AI text" },
+      gidOf,
+      locale: "de",
+      productId: "p",
+    })!;
+    expect(immediate.immediate).toBe(true);
+    const { entries } = planAltFlush({
+      dirtyUrls: ["https://cdn/b.jpg?v=1"],
+      texts: { "https://cdn/b.jpg?v=1": "typed" },
+      urlToGid: { "https://cdn/b.jpg?v=1": G2 },
+      locale: "de",
+      productId: "p",
+    });
+    const pageSave = entries[0];
+    expect(pageSave.immediate).toBeUndefined();
+    // Page-Save alt saves out (queued or in flight): the switch is allowed.
+    expect(hasImmediateAltSave(pageSave, [pageSave])).toBe(false);
+    expect(hasImmediateAltSave(null, [])).toBe(false);
+    // An immediate one queued behind a page Save's, or in flight: refused.
+    expect(hasImmediateAltSave(pageSave, [immediate])).toBe(true);
+    expect(hasImmediateAltSave(immediate, [])).toBe(true);
   });
 
   it("an image without a media id (unsaved upload) cannot be saved: null", () => {

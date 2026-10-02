@@ -137,7 +137,15 @@ export function planImmediateAltSave(args: {
     productTitle: args.productTitle,
     editOrder: args.editOrder,
   });
-  return entries[0] ?? null;
+  return entries[0] ? { ...entries[0], immediate: true } : null;
+}
+
+/** Is a save an AI button sent at once still queued or in flight? */
+export function hasImmediateAltSave(
+  inFlight: QueuedAltSave | null | undefined,
+  queue: readonly QueuedAltSave[],
+): boolean {
+  return !!inFlight?.immediate || queue.some((q) => !!q.immediate);
 }
 
 /**

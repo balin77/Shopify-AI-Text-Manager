@@ -1028,8 +1028,10 @@ export async function handleSaveImageAltText(
         // ContentTranslation("MediaImage"), the bulk editor's store for it;
         // this used to answer "imageGone" silently while the save reported
         // success, and the next load wiped the value from the field.
-        // THIS product's row is preferred (one GID may be cached under several
-        // products); a product medium whose row a concurrent sync is
+        // One GID may be cached under several products: the value (or the
+        // confirmed clear) goes onto EVERY ProductImage row of the shop with
+        // that mediaId, because the translation lives on the one MediaImage
+        // they all show. A product medium whose rows a concurrent sync is
         // recreating is retried once and otherwise reported, never written
         // as a stray library row.
         const store = await mirrorImageAltAnyStore(db, {
@@ -1119,10 +1121,12 @@ export function layerImageAltRows(
 
 /**
  * One MediaImage GID may be cached under SEVERAL products (a shared medium),
- * each with its own ProductImageAltTranslation rows. The rows of OTHER
- * products only stand in for a medium THIS product has no row for: where this
- * product holds a row for the medium (any layer), every foreign-product row of
- * it is dropped, so it can never override the editor's own value.
+ * each with its own ProductImageAltTranslation rows. Every writer mirrors onto
+ * ALL of those rows (`mirrorProductMediaAlt`), so they normally agree and this
+ * is only a TIE-BREAK (rows written before that rule, or a row a sync just
+ * recreated): the rows of OTHER products only stand in for a medium THIS
+ * product has no row for; where this product holds a row for the medium (any
+ * layer), every foreign-product row of it is dropped.
  */
 export function preferOwnProductAltRows(
   rows: ReadonlyArray<{ altText: string; marketId: string | null; image: { mediaId: string | null; productId: string } | null }>,

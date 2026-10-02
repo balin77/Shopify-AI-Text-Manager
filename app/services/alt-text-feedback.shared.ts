@@ -244,6 +244,12 @@ export interface QueuedAltSave {
    * showing the planned text takes over the saved one.
    */
   aliases?: Array<{ url: string; altText: string }>;
+  /**
+   * Saved at once by an AI button (generate / translate), not by the page
+   * Save. Only such a save, queued or in flight, refuses a language, market
+   * or product switch; a page Save's alt saves finish on their own.
+   */
+  immediate?: boolean;
 }
 
 export function enqueueAltSave(queue: QueuedAltSave[], entry: QueuedAltSave): QueuedAltSave[] {

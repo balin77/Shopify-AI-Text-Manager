@@ -25,7 +25,7 @@ import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../ut
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
-import { planAltFlush, planImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
+import { planAltFlush, planImmediateAltSave, hasImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
 import {
   settlingPollDelayMs,
@@ -175,6 +175,9 @@ interface VariantImageManagerProps {
    *  (queued or in flight; a draft carried over until a new image exists is
    *  not counted -- it would hold the save bar for the whole processing). */
   onAltSavingChange?: (saving: boolean) => void;
+  /** True while an alt save an AI button sent AT ONCE (generate / translate)
+   *  is queued or in flight -- the only alt save a view switch waits for. */
+  onImmediateAltSavingChange?: (saving: boolean) => void;
   onMissingMainImageChange?: (hasMissing: boolean) => void;
   onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
   onGallerySelectionGidsChange?: (gids: string[]) => void;
@@ -239,6 +242,7 @@ export function VariantImageManager({
   onSaveResponse,
   altDraftApiRef,
   onAltSavingChange,
+  onImmediateAltSavingChange,
   onMissingMainImageChange,
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
@@ -420,7 +424,14 @@ export function VariantImageManager({
   // unrelated save. It is still sent once the image settles, and a switch
   // still counts it as pressed-Save (not as an unsent draft).
   const altSavingRef = useRef(false);
+  const immediateAltSavingRef = useRef(false);
   const syncAltSaving = () => {
+    // The AI buttons' own saves, separately: only those refuse a view switch.
+    const immediate = hasImmediateAltSave(altSaveInFlightRef.current, altSaveQueueRef.current);
+    if (immediate !== immediateAltSavingRef.current) {
+      immediateAltSavingRef.current = immediate;
+      onImmediateAltSavingChange?.(immediate);
+    }
     const busy = !!altSaveInFlightRef.current || altSaveQueueRef.current.length > 0;
     if (busy === altSavingRef.current) return;
     altSavingRef.current = busy;
@@ -627,7 +638,10 @@ export function VariantImageManager({
     }
     altSaveQueueRef.current = enqueueAltSave(altSaveQueueRef.current, entry);
     dispatchNextAltSave();
-  }, [dispatchNextAltSave]);
+    // Queued behind one already in flight: dispatch returned early, so the
+    // busy signals (an AI button's immediate save among them) are synced here.
+    syncAltSaving();
+  }, [dispatchNextAltSave]); // eslint-disable-line react-hooks/exhaustive-deps
   /** True while a text of this image must not be overwritten by a reload. */
   const isAltUrlBusy = (url: string) =>
     (altSaveInFlightRef.current ? resolveAltUrl(altSaveInFlightRef.current.url) === url : false) ||
@@ -3311,6 +3325,7 @@ export function VariantImageManager({
     // Unmounted with drafts: they are gone, so the page's dirty flag must not outlive them.
     onDirtyChange?.(false);
     onAltSavingChange?.(false);
+    onImmediateAltSavingChange?.(false);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // url -> media GID over both galleries (the variant tiles' fileUrlMap inverse

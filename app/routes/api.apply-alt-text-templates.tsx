@@ -7,7 +7,7 @@ import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
-import { registerMediaAltAndVerify } from "~/services/translations/verified-translations.server";
+import { mirrorProductMediaAlt, registerMediaAltAndVerify } from "~/services/translations/verified-translations.server";
 
 // Resolve a fresh image URL from Shopify for stub-row creation. Returns the gid
 // itself as a last-resort placeholder so we never lose a translation due to a
@@ -96,7 +96,7 @@ async function persistAltText(
     const createUrl = existing ? gid : await resolveImageUrl(admin, gid);
 
     await db.$transaction(async (tx) => {
-      const img = await tx.productImage.upsert({
+      await tx.productImage.upsert({
         where: { productId_mediaId: { productId, mediaId: gid } },
         create: {
           productId,
@@ -112,11 +112,14 @@ async function persistAltText(
         // write (translation-locks.shared.ts); without this claim it never sees
         // the merchant write and overwrites it minutes later.
         markTranslationSaved(gid);
-        await tx.productImageAltTranslation.upsert({
-          where: { imageId_locale_marketId: { marketId: "",  imageId: img.id, locale } },
-          create: { imageId: img.id, locale, altText },
-          update: { altText },
-        });
+        // The ONE product-alt mirror: this product's row (just upserted, so
+        // the lookup inside the transaction sees it) AND every other
+        // product's row of a shared medium -- the translation lives on the
+        // one MediaImage they all show.
+        const mirrored = await mirrorProductMediaAlt(tx, { shop, productId, mediaId: gid, locale, value: altText });
+        if (mirrored === "imageGone") {
+          throw new Error(`No cached ProductImage row for ${gid} -- the alt translation could not be mirrored`);
+        }
       }
     });
   });

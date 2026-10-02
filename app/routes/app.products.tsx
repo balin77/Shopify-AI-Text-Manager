@@ -838,12 +838,15 @@ export default function ProductsPage() {
   // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
   // with the shared fetcher used by the main editor.
   // A view switch while an own save is on its way -- an AI/copy button's
-  // (kept out of hasChanges, so no bar shows) or an image-manager alt save
-  // (queued or in flight) -- is REFUSED with a message, never queued: the
-  // answer must land on the view it was made for. Checked BEFORE this page's
-  // own confirmation, so the merchant is never asked and then refused.
+  // (kept out of hasChanges, so no bar shows) or an image-manager alt save an
+  // AI button (generate / translate) sent AT ONCE (queued or in flight) -- is
+  // REFUSED with a message, never queued: the answer must land on the view it
+  // was made for. Alt saves sent by the page's own Save do NOT refuse: each
+  // queued save carries its own product, language and market, and a save
+  // already sent finishes on its own. Checked BEFORE this page's own
+  // confirmation, so the merchant is never asked and then refused.
   const refuseSwitchWhileSaving = (): boolean => {
-    const altSaveOut = showImageManager && imageManagerState.isSavingAltTexts;
+    const altSaveOut = showImageManager && imageManagerState.isSavingImmediateAltTexts;
     if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut) return false;
     showInfoBox(
       String(t.common?.switchWhileSaving || "Still saving \u2013 please wait a moment and then switch again."),
@@ -1277,6 +1280,7 @@ export default function ProductsPage() {
               onDirtyChange={imageManagerState.setHasAltTextEdits}
               altDraftApiRef={altDraftApiRef}
               onAltSavingChange={imageManagerState.setIsSavingAltTexts}
+              onImmediateAltSavingChange={imageManagerState.setIsSavingImmediateAltTexts}
               onMissingMainImageChange={handleMissingMainImageChangeForSelected}
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}

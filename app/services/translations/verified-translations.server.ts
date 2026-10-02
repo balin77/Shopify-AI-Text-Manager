@@ -878,11 +878,23 @@ export async function removeMediaAltAndVerify(
 
 /**
  * Mirror a CONFIRMED product-media alt translation into
- * ProductImageAltTranslation. The cache row is resolved from
- * (productId?, mediaId) NOW -- never captured: a product sync recreates
- * ProductImage rows with fresh ids. `imageGone` = no row to attach to (deleted
- * or not cached): nothing is written under a guessed id, the caller decides
- * how to report it. `value: ""` deletes the global-layer row.
+ * ProductImageAltTranslation -- on EVERY ProductImage cache row of the shop
+ * that carries this MediaImage GID.
+ *
+ * The translation lives on ONE Shopify resource (the MediaImage GID), while
+ * the cache holds one ProductImage row per product that shows the medium (a
+ * file shared by several products). Writing only one of those rows left the
+ * other products' editors reading a stale value, and a confirmed CLEAR that
+ * deleted only one row left the translation "present" in the other products'
+ * mirrors although Shopify no longer serves it. So every row is written (or,
+ * for `value: ""`, every row of that layer deleted) -- the ONE implementation
+ * every product-alt writer goes through.
+ *
+ * The rows are resolved from (shop, mediaId) NOW -- never captured: a product
+ * sync recreates ProductImage rows with fresh ids. `productId` is accepted for
+ * the callers' context and does not narrow the write. `imageGone` = no row
+ * anywhere in the shop to attach to (deleted or not cached): nothing is
+ * written under a guessed id, the caller decides how to report it.
  */
 export async function mirrorProductMediaAlt(
   db: Pick<PrismaClient, "productImage" | "productImageAltTranslation">,
@@ -890,27 +902,34 @@ export async function mirrorProductMediaAlt(
 ): Promise<"mirrored" | "imageGone"> {
   const { shop, mediaId, locale, value } = params;
   const marketId = params.marketId ?? "";
-  const image = await db.productImage.findFirst({
-    where: { mediaId, product: { shop }, ...(params.productId ? { productId: params.productId } : {}) },
+  if (!mediaId) return "imageGone";
+  const images = await db.productImage.findMany({
+    where: { mediaId, product: { shop } },
     select: { id: true },
   });
-  if (!image) return "imageGone";
-  try {
-    if (value.trim() === "") {
-      await db.productImageAltTranslation.deleteMany({ where: { imageId: image.id, locale, marketId } });
-    } else {
+  if (!images || images.length === 0) return "imageGone";
+  const imageIds = images.map((image: { id: string }) => image.id);
+  if (value.trim() === "") {
+    await db.productImageAltTranslation.deleteMany({ where: { imageId: { in: imageIds }, locale, marketId } });
+    return "mirrored";
+  }
+  let written = 0;
+  for (const imageId of imageIds) {
+    try {
       await db.productImageAltTranslation.upsert({
-        where: { imageId_locale_marketId: { imageId: image.id, locale, marketId } },
-        create: { imageId: image.id, locale, marketId, altText: value },
+        where: { imageId_locale_marketId: { imageId, locale, marketId } },
+        create: { imageId, locale, marketId, altText: value },
         update: { altText: value },
       });
+      written += 1;
+    } catch (error: unknown) {
+      // That row was deleted between the lookup and the write (a concurrent
+      // sync recreating that product's rows) -- skip it, keep the others.
+      if ((error as { code?: string })?.code === "P2003") continue;
+      throw error;
     }
-  } catch (error: unknown) {
-    // The image was deleted between the lookup and the write (concurrent sync).
-    if ((error as { code?: string })?.code === "P2003") return "imageGone";
-    throw error;
   }
-  return "mirrored";
+  return written > 0 ? "mirrored" : "imageGone";
 }
 
 /**
@@ -960,10 +979,9 @@ export async function mirrorLibraryImageAlt(
  * -- the same split the bulk editor's write path applies. Answers which store
  * was written.
  *
- * `productId` (the product the merchant is editing) is preferred: one
- * MediaImage GID may be cached under SEVERAL products, and THIS product's row
- * is the one its editor reads. Without a row of its own, any product's row of
- * the shop is taken (a medium shared with another product).
+ * One MediaImage GID may be cached under SEVERAL products; the product store
+ * is written on EVERY one of those rows (`mirrorProductMediaAlt`), because the
+ * translation lives on the one Shopify resource they all show.
  *
  * The library branch is taken ONLY for a MediaImage GID with NO ProductImage
  * row anywhere in the shop. A product medium whose row is momentarily gone (a
@@ -986,10 +1004,8 @@ export async function mirrorImageAltAnyStore(
     retryDelayMs?: number;
   },
 ): Promise<"product" | "library" | "notMirrored"> {
-  const tryProductStores = async (): Promise<boolean> => {
-    if (params.productId && (await mirrorProductMediaAlt(db, params)) === "mirrored") return true;
-    return (await mirrorProductMediaAlt(db, { ...params, productId: undefined })) === "mirrored";
-  };
+  const tryProductStores = async (): Promise<boolean> =>
+    (await mirrorProductMediaAlt(db, params)) === "mirrored";
   if (await tryProductStores()) return "product";
   if (!MEDIA_IMAGE_GID_RE.test(params.mediaId)) return "notMirrored";
   // One retry: a sync recreating this product's rows answers "imageGone" for
