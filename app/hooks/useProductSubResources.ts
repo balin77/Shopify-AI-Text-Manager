@@ -49,6 +49,14 @@ import {
   type TranslateTarget,
 } from "../services/editor/sub-resource-overlay.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
+import {
+  applyStagedMetafieldClears,
+  applyStagedOptionClears,
+  buildClearAllSubResourcePayload,
+  confirmedClearIds,
+  settleClearAll,
+  stageClearAll,
+} from "../services/editor/sub-resource-clear.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -309,6 +317,13 @@ export interface SubResourceHandlers {
   translateAllSubResources: () => void;
   translateAllSubResourcesToAllLocales: () => void;
   saveSubResources: () => void;
+  /**
+   * The sub-resource half of the editor's "clear all" in a FOREIGN locale:
+   * removes every option name, option value and metafield translation of the
+   * viewed layer (selected market, else global). Echo-verified on the server;
+   * the fields are emptied at once and a removal that fails is put back.
+   */
+  clearAllForLocale: () => void;
   resetChanges: () => void;
   resetForReload: () => void;
   /**
@@ -885,10 +900,20 @@ export function useProductSubResources({
         const overlayForView =
           localSubResourceOverlayRef.current[buildLocaleKey(currentLanguage, selectedMarketId)] || {};
         setOptionTranslations(prev =>
-          mergeOptionTranslations(mergeOptionTranslations(prev, selectedItem, translations || {}), selectedItem, overlayForView),
+          // A staged EMPTY value (a confirmed or in-flight "clear all") is
+          // applied last: the merges skip empties, so a read taken before the
+          // removal would otherwise put the cleared value back.
+          applyStagedOptionClears(
+            mergeOptionTranslations(mergeOptionTranslations(prev, selectedItem, translations || {}), selectedItem, overlayForView),
+            selectedItem,
+            overlayForView,
+          ),
         );
         setMetafieldTranslations(prev =>
-          mergeMetafieldTranslations(mergeMetafieldTranslations(prev, selectedItem, translations || {}), selectedItem, overlayForView),
+          applyStagedMetafieldClears(
+            mergeMetafieldTranslations(mergeMetafieldTranslations(prev, selectedItem, translations || {}), selectedItem, overlayForView),
+            overlayForView,
+          ),
         );
 
         // Phase-2 returns GLOBAL values (server reads marketId ""). In a market
@@ -1473,6 +1498,11 @@ export function useProductSubResources({
   // (the view, the overlay, the pending sets), never the one the button was
   // pressed in -- several requests are out at once and land in any order.
   const answerHandlersRef = useLatestRef({
+    item: selectedItem,
+    readTranslationsFromItem,
+    applyTranslationsToState,
+    setFallbackResourceIds,
+    touchOverlay,
     stageTranslations,
     reportFailedRequest,
     rollbackCopy,
@@ -1961,6 +1991,159 @@ export function useProductSubResources({
     }
   }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder]);
 
+  const clearAllForLocale = useCallback(() => {
+    if (!selectedItem || isPrimaryLocale) return;
+    const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
+    const { translationsData, resourceTypes } = buildClearAllSubResourcePayload({
+      item: selectedItem,
+      locale: currentLanguage,
+      marketId: selectedMarketId,
+      optionTranslations,
+      metafieldTranslations,
+      fallbackResourceIds,
+      overlayForLayer: localSubResourceOverlayRef.current[overlayKey],
+    });
+
+    // Empty what this layer holds at once, like the editor's own fields; an
+    // inherited global value stays shown (a market clear does not touch it),
+    // and so does a LINKED option's value (translated on its metaobject).
+    // Unsaved typed values of this locale go too: "clear all" supersedes them.
+    const keepInherited = (id: string | undefined) =>
+      !!id && !!selectedMarketId && fallbackResourceIds.has(id);
+    setOptionTranslations((prev) => {
+      const next: Record<string, OptionTranslation> = {};
+      for (const [optionId, trans] of Object.entries(prev)) {
+        const option = selectedItem.options?.find((o) => o.id === optionId);
+        next[optionId] = {
+          name: keepInherited(optionId) ? trans.name : "",
+          values: trans.values.map((value, index) =>
+            option?.isLinked || keepInherited(option?.values[index]?.id) ? value : "",
+          ),
+        };
+      }
+      return next;
+    });
+    setMetafieldTranslations((prev) => {
+      const next: Record<string, string> = {};
+      for (const [id, value] of Object.entries(prev)) next[id] = keepInherited(id) ? value : "";
+      return next;
+    });
+    setDirtyOptionIds(new Set());
+    setDirtyOptionValueIds(new Set());
+    setDirtyMetafieldIds(new Set());
+    setHasChanges(false);
+
+    if (Object.keys(translationsData).length === 0) return;
+
+    // Its OWN request, like every translate and copy: on the shared fetcher it
+    // aborted a Phase-2 load or the save bar's save (and was aborted by them),
+    // and its answer was then read as theirs.
+    //
+    // While it is in flight the cleared fields are STAGED EMPTY values in the
+    // overlay, so a reload's re-read or a Phase-2 Shopify answer that lands
+    // meanwhile cannot put them back (both merge the overlay over the item,
+    // which still carries the rows); the record of what was staged travels
+    // with this request and settles exactly its own fields.
+    const requested = { itemId: selectedItem.id, locale: currentLanguage, marketId: selectedMarketId };
+    const marketLayer = !!selectedMarketId;
+    const snapshot = stageClearAll(localSubResourceOverlayRef.current, overlayKey, translationsData);
+    const stagedAt = Date.now();
+    const previousStamps = new Map<string, number | undefined>();
+    for (const resourceId of Object.keys(translationsData)) {
+      previousStamps.set(resourceId, recentlyStagedRef.current.get(resourceId));
+      // Kept through a reload's overlay reset like a translate answer: the
+      // loader may have read the rows before the removal deleted them.
+      recentlyStagedRef.current.set(resourceId, stagedAt);
+    }
+    touchOverlay();
+
+    const fd = new FormData();
+    fd.set("action", "saveSubResourceTranslations");
+    fd.set("locale", currentLanguage);
+    fd.set("translationsData", JSON.stringify(translationsData));
+    fd.set("resourceTypes", JSON.stringify(resourceTypes));
+    fd.set("itemId", selectedItem.id);
+    fd.set("marketId", selectedMarketId);
+
+    void (async () => {
+      const data = await postSubResourceRequest(fd);
+      const h = answerHandlersRef.current;
+      const view = currentViewRef.current;
+      // A different item reset the overlay and the stamps; nothing here is
+      // that item's to settle. Another language or market of the SAME item
+      // still gets its overlay settled, only the visible state is left alone.
+      if (view.itemId !== requested.itemId) {
+        if (!data || data.success === false) {
+          h.reportFailedRequest(data ?? { success: false, actionType: "saveSubResourceTranslations" });
+        }
+        return;
+      }
+      const sameView = view.locale === requested.locale && view.marketId === requested.marketId;
+      const confirmed = confirmedClearIds(translationsData, data);
+      settleClearAll(localSubResourceOverlayRef.current, overlayKey, snapshot, confirmed, marketLayer);
+      for (const [resourceId, previous] of previousStamps) {
+        const keepStaged = confirmed.has(resourceId) && !marketLayer;
+        if (keepStaged) recentlyStagedRef.current.set(resourceId, Date.now());
+        else if (previous === undefined) recentlyStagedRef.current.delete(resourceId);
+        else recentlyStagedRef.current.set(resourceId, previous);
+      }
+      h.touchOverlay();
+
+      if (!data || data.success === false) {
+        // Nothing reached Shopify, nothing was removed: the emptied fields go
+        // back to what the layer still holds (overlay restored above).
+        h.reportFailedRequest(data ?? { success: false, actionType: "saveSubResourceTranslations" });
+        if (sameView) h.readTranslationsFromItem(false);
+        return;
+      }
+
+      const unconfirmed = Object.keys(translationsData).filter((id) => !confirmed.has(id));
+      if (unconfirmed.length > 0) {
+        // Shopify kept these translations: they are live, so they show again.
+        h.showInfoBox?.(
+          (stringsRef.current.saveFailedOptions || "Failed to save {count} option(s). Changes have been reverted to original values.").replace("{count}", String(unconfirmed.length)),
+          "critical",
+        );
+        if (sameView && h.item) {
+          h.restoreFailedResources(unconfirmed);
+          const restoredOverlay: Record<string, Record<string, string>> = {};
+          const layer = localSubResourceOverlayRef.current[overlayKey] || {};
+          for (const id of unconfirmed) if (layer[id]) restoredOverlay[id] = layer[id];
+          h.applyTranslationsToState(h.item, restoredOverlay);
+        }
+      }
+
+      if (marketLayer && sameView && confirmed.size > 0 && h.item) {
+        // A removed market override leaves the market INHERITING the global
+        // value: shown greyed at once, from the global rows (and staged global
+        // values) the clear did not touch.
+        const { map: globalMap } = dbPreloadToMap(h.item.subResourceTranslations, requested.locale, "");
+        const globalOverlay = localSubResourceOverlayRef.current[buildLocaleKey(requested.locale, "")] || {};
+        const inherited: Record<string, Record<string, string>> = {};
+        for (const id of confirmed) {
+          const fields = { ...(globalMap[id] || {}), ...(globalOverlay[id] || {}) };
+          const value = fields.name ?? fields.value ?? "";
+          if (value) inherited[id] = fields;
+        }
+        if (Object.keys(inherited).length > 0) {
+          h.applyTranslationsToState(h.item, inherited);
+          h.setFallbackResourceIds((prev) => {
+            const next = new Set(prev);
+            for (const id of Object.keys(inherited)) next.add(id);
+            return next;
+          });
+        }
+      }
+
+      // The loaded item still carries the removed rows; a reload brings it in
+      // line (the staged "" keeps a global clear empty until it lands). No
+      // success message: the editor's own clear reports the clear.
+      if (confirmed.size > 0 && h.revalidator && h.revalidator.state === "idle") {
+        h.revalidator.revalidate();
+      }
+    })();
+  }, [selectedItem, isPrimaryLocale, currentLanguage, selectedMarketId, optionTranslations, metafieldTranslations, fallbackResourceIds, touchOverlay, answerHandlersRef, currentViewRef, stringsRef]);
+
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
     setOptionTranslations({});
@@ -2294,6 +2477,7 @@ export function useProductSubResources({
       translateAllSubResources,
       translateAllSubResourcesToAllLocales,
       saveSubResources,
+      clearAllForLocale,
       resetChanges,
       resetForReload,
       refreshTranslations,

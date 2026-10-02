@@ -335,6 +335,7 @@ export const guideEs: GuideCopy = {
           paragraphs: [
             "Una traducción solo cuenta como guardada cuando Shopify la devuelve. Si Shopify no acepta una traducción, lo ves en el campo afectado — en lugar de un mensaje de éxito sobre algo que nunca llegó.",
             "Lo mismo vale al vaciar: una traducción solo cuenta como eliminada cuando Shopify lo confirma; si no, sigue visible, el campo sigue marcado como modificado para que puedas guardar de nuevo, y se te avisa. En las opciones de producto y los metacampos, un idioma que Shopify rechazó se nombra en la tarea, que entonces aparece como “completada con errores”.",
+            "«Limpiar todo» en un idioma extranjero también elimina, en un producto, las traducciones de los nombres de opciones, los valores de opciones y los metacampos en ese idioma; con un mercado seleccionado, solo las de ese mercado.",
           ],
         },
       ],
