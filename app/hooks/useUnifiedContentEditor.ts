@@ -53,7 +53,7 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
-import { settleOwnSave, waitForOwnSavesToSettle, backstopOwnSaves, createSwitchIntents, OWN_SAVE_SWITCH_WAIT_MS, type OwnSaveInFlight, type OwnSaveSwitchTicket } from "../services/editor/own-save-in-flight.shared";
+import { settleOwnSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -648,46 +648,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, []);
   /**
    * The cover above hides an own save from `hasChanges`, so the switch guards
-   * (item, language, market) no longer ASK while one is on its way — and a
-   * confirmation could not ask anyway, because no save bar is showing. Instead
-   * a switch WAITS for the own saves to be answered (bounded), so the answer
-   * lands on the view it was made for; the waiters are released whenever the
-   * in-flight list empties, which every settle path (success, refusal, the
-   * idle backstop) reaches.
+   * (item, language, market) would not ask while one is on its way. They
+   * REFUSE instead (own-save-in-flight.shared.ts, `hasOwnSaveInFlight`): read
+   * through a ref so a click handler sees the list as it is NOW.
    */
   const ownSavesInFlightRef = useLatestRef(ownSavesInFlight);
-  const ownSaveWaitersRef = useRef<Array<() => void>>([]);
-  useEffect(() => {
-    if (ownSavesInFlight.length > 0 || ownSaveWaitersRef.current.length === 0) return;
-    const waiters = ownSaveWaitersRef.current;
-    ownSaveWaitersRef.current = [];
-    for (const release of waiters) release();
-  }, [ownSavesInFlight]);
-  // Latest-intent token + unmount signal for the waiting switches: a switch
-  // superseded by a newer one, or one the editor unmounted under, never
-  // continues (created per mount, so a StrictMode re-mount gets a live one).
-  const switchIntentsRef = useRef<ReturnType<typeof createSwitchIntents> | null>(null);
-  useEffect(() => {
-    const intents = createSwitchIntents();
-    switchIntentsRef.current = intents;
-    return () => {
-      intents.dispose();
-      if (switchIntentsRef.current === intents) switchIntentsRef.current = null;
-    };
-  }, []);
-  const waitForOwnSaves = useCallback(async (): Promise<OwnSaveSwitchTicket> => {
-    const intents = switchIntentsRef.current;
-    // Not mounted (yet / any more): nothing may move the view.
-    if (!intents) return { proceed: false, isCurrent: () => false };
-    const isCurrent = intents.claim();
-    await waitForOwnSavesToSettle(
-      ownSavesInFlightRef.current.length > 0,
-      ownSaveWaitersRef.current,
-      OWN_SAVE_SWITCH_WAIT_MS,
-      intents.signal,
-    );
-    return { proceed: isCurrent(), isCurrent };
-  }, []);
+  const isOwnSaveInFlight = useCallback(
+    () => hasOwnSaveInFlight(ownSavesInFlightRef.current),
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   /** Success text of a translate-and-save, STAGED by the caller right before
    *  `safeSubmit` and bound there to its own request (queue entry or in-flight
    *  slot), like `partialSaveRef`: a shared slot let an earlier unrelated save's
@@ -3036,7 +3005,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedItemIdRef,
     isSavePendingRef,
     isSavingCurrentItem,
-    waitForOwnSaves,
+    isOwnSaveInFlight,
     isSaveFromTranslateRef,
     partialSaveRef,
     currentLanguageRef,
@@ -3322,6 +3291,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isPrimaryAltUnsaved,
       hasUnsavedPrimaryAlts,
       hasUnsavedTranslateAllSource,
+      /** An AI/copy button's own save is on its way: a view switch is refused
+       *  (with a message) until it is answered. */
+      isOwnSaveInFlight,
       /**
        * Hand a save response from a fetcher this hook does NOT own to the ONE
        * background-task watcher. The product page's sub-resource save is the

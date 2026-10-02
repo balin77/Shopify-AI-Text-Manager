@@ -35,6 +35,8 @@ import { altTextSyncShieldId, marketLayerLockId } from "~/services/translations/
 
 // A Shopify Market id: the only shape a client-sent marketId may take.
 const MARKET_GID_RE = /^gid:\/\/shopify\/Market\/\d+$/;
+const MEDIA_IMAGE_GID_RE = /^gid:\/\/shopify\/MediaImage\/\d+$/;
+const PRODUCT_GID_RE = /^gid:\/\/shopify\/Product\/\d+$/;
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -936,6 +938,9 @@ export async function handleSaveImageAltText(
   if (!mediaId) {
     return json({ success: false, error: "mediaId required" }, { status: 400 });
   }
+  // The product being edited: its own ProductImage row is the mirror target.
+  const rawProductId = getFormString(formData, "productId") || ctx.itemId || "";
+  const editedProductId = PRODUCT_GID_RE.test(rawProductId) ? rawProductId : "";
 
   let shopifySaved = false;
   let notMirrored = false;
@@ -950,6 +955,11 @@ export async function handleSaveImageAltText(
     shopifySaved = result.saved;
     retranslationTaskIds = result.retranslationTaskId ? [result.retranslationTaskId] : [];
   } else {
+    // Only a MediaImage GID ever reaches the translation write and the
+    // mirror's library branch (the action takes a direct POST).
+    if (!MEDIA_IMAGE_GID_RE.test(mediaId)) {
+      return json({ success: false, error: "Invalid mediaId" }, { status: 400 });
+    }
     // Foreign locale: verified register (digest -> register -> echo). A write
     // Shopify accepted without storing is NOT a save and is not mirrored.
     const {
@@ -1008,6 +1018,7 @@ export async function handleSaveImageAltText(
         .findFirst({ where: { mediaId, product: { shop: session.shop } }, select: { productId: true } })
         .catch(() => null);
       if (owningProduct?.productId) markTranslationSaved(altTextSyncShieldId(owningProduct.productId));
+      if (editedProductId && editedProductId !== owningProduct?.productId) markTranslationSaved(altTextSyncShieldId(editedProductId));
       try {
         // Shop-scoped, resolved now (R4-DI7): an unscoped mediaId lookup could
         // resolve another tenant's ProductImage. A cleared value deletes ONLY
@@ -1017,14 +1028,27 @@ export async function handleSaveImageAltText(
         // ContentTranslation("MediaImage"), the bulk editor's store for it;
         // this used to answer "imageGone" silently while the save reported
         // success, and the next load wiped the value from the field.
-        await mirrorImageAltAnyStore(db, {
+        // THIS product's row is preferred (one GID may be cached under several
+        // products); a product medium whose row a concurrent sync is
+        // recreating is retried once and otherwise reported, never written
+        // as a stray library row.
+        const store = await mirrorImageAltAnyStore(db, {
           shop: session.shop,
           mediaId,
           locale,
           marketId,
           value: altText.trim() === "" ? "" : storedAlt,
           digest: storedDigest,
+          ...(editedProductId ? { productId: editedProductId } : {}),
         });
+        if (store === "notMirrored") {
+          notMirrored = true;
+          logger.error("[saveImageAltText] translation saved on Shopify but its product image row is gone", {
+            mediaId,
+            locale,
+            marketId,
+          });
+        }
       } catch (err: unknown) {
         // Shopify holds the value, so the save stays a success -- but the
         // local mirror every editor renders from does not, and that is said
@@ -1053,7 +1077,6 @@ export async function handleSaveImageAltText(
 // Returns { mediaId → altText } map from DB
 // ============================================================================
 
-const MEDIA_IMAGE_GID_RE = /^gid:\/\/shopify\/MediaImage\/\d+$/;
 /** A gallery shows at most a few hundred media; the cap only bounds a direct POST. */
 const MAX_GALLERY_MEDIA_IDS = 500;
 
@@ -1092,6 +1115,24 @@ export function layerImageAltRows(
     }
   }
   return { altTexts, inheritedMediaIds };
+}
+
+/**
+ * One MediaImage GID may be cached under SEVERAL products (a shared medium),
+ * each with its own ProductImageAltTranslation rows. The rows of OTHER
+ * products only stand in for a medium THIS product has no row for: where this
+ * product holds a row for the medium (any layer), every foreign-product row of
+ * it is dropped, so it can never override the editor's own value.
+ */
+export function preferOwnProductAltRows(
+  rows: ReadonlyArray<{ altText: string; marketId: string | null; image: { mediaId: string | null; productId: string } | null }>,
+  productId: string,
+): ImageAltLayerRow[] {
+  const withMedia = rows.filter((r) => !!r.image?.mediaId);
+  const ownMedia = new Set(withMedia.filter((r) => r.image!.productId === productId).map((r) => r.image!.mediaId as string));
+  return withMedia
+    .filter((r) => r.image!.productId === productId || !ownMedia.has(r.image!.mediaId as string))
+    .map((r) => ({ mediaId: r.image!.mediaId as string, marketId: r.marketId ?? "", altText: r.altText }));
 }
 
 export async function handleLoadImageAltTranslations(
@@ -1145,15 +1186,12 @@ export async function handleLoadImageAltTranslations(
           : { productId }),
       },
     },
-    select: { altText: true, marketId: true, image: { select: { mediaId: true } } },
+    select: { altText: true, marketId: true, image: { select: { mediaId: true, productId: true } } },
   });
-  const rows: ImageAltLayerRow[] = productRows
-    .filter((r: { image?: { mediaId?: string | null } | null }) => !!r.image?.mediaId)
-    .map((r: { altText: string; marketId: string; image: { mediaId: string | null } | null }) => ({
-      mediaId: r.image!.mediaId as string,
-      marketId: r.marketId ?? "",
-      altText: r.altText,
-    }));
+  const rows: ImageAltLayerRow[] = preferOwnProductAltRows(
+    productRows as Array<{ altText: string; marketId: string; image: { mediaId: string | null; productId: string } | null }>,
+    productId,
+  );
 
   // The library half: a GID with NO ProductImage row anywhere in the shop is
   // mirrored in ContentTranslation("MediaImage") -- the same split the save

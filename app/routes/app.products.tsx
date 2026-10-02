@@ -837,6 +837,21 @@ export default function ProductsPage() {
   // Wrap translate-all handlers to also translate product options and metafields.
   // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
   // with the shared fetcher used by the main editor.
+  // A view switch while an own save is on its way -- an AI/copy button's
+  // (kept out of hasChanges, so no bar shows) or an image-manager alt save
+  // (queued or in flight) -- is REFUSED with a message, never queued: the
+  // answer must land on the view it was made for. Checked BEFORE this page's
+  // own confirmation, so the merchant is never asked and then refused.
+  const refuseSwitchWhileSaving = (): boolean => {
+    const altSaveOut = showImageManager && imageManagerState.isSavingAltTexts;
+    if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut) return false;
+    showInfoBox(
+      String(t.common?.switchWhileSaving || "Still saving \u2013 please wait a moment and then switch again."),
+      "info",
+    );
+    return true;
+  };
+
   const editorWithSubResources = {
     ...editor,
     handlers: {
@@ -871,6 +886,7 @@ export default function ProductsPage() {
       // per-language media drafts are keyed by language and market. So only
       // UNSENT alt drafts ask -- the same rule for both switches.
       handleLanguageChange: async (locale: string) => {
+        if (refuseSwitchWhileSaving()) return;
         if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
           viewSwitchConfirmPendingRef.current = true;
           try {
@@ -882,6 +898,7 @@ export default function ProductsPage() {
         editor.handlers.handleLanguageChange(locale);
       },
       handleMarketChange: async (marketId: string) => {
+        if (marketId !== editor.state.selectedMarketId && refuseSwitchWhileSaving()) return;
         // Primary alt texts are global: a market change in the primary
         // language keeps them, so it has nothing to ask about.
         if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
@@ -899,11 +916,12 @@ export default function ProductsPage() {
       // but not a product switch: they count here, or the next product would
       // silently drop them.
       handleItemSelect: async (itemId: string) => {
+        if (refuseSwitchWhileSaving()) return;
         if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
           // A product switch supersedes any unanswered language/market dialog:
-    // the [SaveBar] measurement flag must not read true for this one.
-    viewSwitchConfirmPendingRef.current = false;
-    await confirmNavigation();
+          // the [SaveBar] measurement flag must not read true for this one.
+          viewSwitchConfirmPendingRef.current = false;
+          await confirmNavigation();
         }
         editor.handlers.handleItemSelect(itemId);
       },

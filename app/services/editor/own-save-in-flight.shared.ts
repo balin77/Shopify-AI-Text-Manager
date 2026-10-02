@@ -87,78 +87,17 @@ export function isAltCoveredByOwnSave(
   );
 }
 
-/** How long a view switch waits for an own save to be answered before it
- *  goes ahead anyway (the save still finishes; only its answer may then land
- *  on another view, which the response handling already tolerates). */
-export const OWN_SAVE_SWITCH_WAIT_MS = 15_000;
-
 /**
- * A view switch (item, language, market) while an own save is in flight: the
- * cover keeps such a save out of `hasChanges`, so no save bar shows and no
- * confirmation could ask. The switch waits for it instead. Resolves at once
- * when nothing is pending; otherwise registers a release in `waiters` (the
- * caller releases them all once the in-flight list is empty) and gives up
- * after `timeoutMs`. An aborted `signal` (the editor unmounted) releases at
- * once; the timer is cleared on every release, so nothing outlives the wait.
+ * A view switch (item, language, market) while an own save is in flight is
+ * REFUSED, never queued: the cover above keeps such a save out of
+ * `hasChanges`, so no save bar shows and no confirmation could ask, and a
+ * switch that waited for the answer kept producing ordering bugs (an older
+ * switch overriding a newer one, a draft typed during the wait never asked
+ * about). The editor shows a short "still saving" message instead; the
+ * merchant switches again once the answer has landed.
  */
-export function waitForOwnSavesToSettle(
-  pending: boolean,
-  waiters: Array<() => void>,
-  timeoutMs: number = OWN_SAVE_SWITCH_WAIT_MS,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (!pending || signal?.aborted) return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    let done = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const release = () => {
-      if (done) return;
-      done = true;
-      if (timer) clearTimeout(timer);
-      signal?.removeEventListener("abort", release);
-      resolve();
-    };
-    waiters.push(release);
-    signal?.addEventListener("abort", release);
-    timer = setTimeout(release, timeoutMs);
-  });
-}
-
-/**
- * What a waiting switch learns once the wait is over: `proceed` is false when a
- * NEWER switch was started meanwhile (only the latest intent may move the view
- * -- the same rule `confirmNavigation`'s token applies) or the editor unmounted.
- * `isCurrent` asks the same question again later, e.g. after a second
- * confirmation the switch had to show.
- */
-export interface OwnSaveSwitchTicket {
-  proceed: boolean;
-  isCurrent: () => boolean;
-}
-
-/**
- * The latest-intent token and the unmount signal of the editor's view
- * switches. One per mounted editor; `dispose` on unmount abandons every
- * waiting switch (its continuation, including the remembered locale/item
- * writes, never runs).
- */
-export function createSwitchIntents(): {
-  signal: AbortSignal;
-  claim: () => () => boolean;
-  dispose: () => void;
-} {
-  let latest = 0;
-  const controller = new AbortController();
-  return {
-    signal: controller.signal,
-    claim() {
-      const mine = ++latest;
-      return () => mine === latest && !controller.signal.aborted;
-    },
-    dispose() {
-      controller.abort();
-    },
-  };
+export function hasOwnSaveInFlight(entries: readonly OwnSaveInFlight[]): boolean {
+  return entries.length > 0;
 }
 
 /**

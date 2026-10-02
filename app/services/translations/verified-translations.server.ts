@@ -958,14 +958,52 @@ export async function mirrorLibraryImageAlt(
  * ProductImage cache row's ProductImageAltTranslation when one exists for the
  * GID (shop-scoped, resolved now), otherwise ContentTranslation("MediaImage")
  * -- the same split the bulk editor's write path applies. Answers which store
- * was written. Throws on a DB error; the caller reports it.
+ * was written.
+ *
+ * `productId` (the product the merchant is editing) is preferred: one
+ * MediaImage GID may be cached under SEVERAL products, and THIS product's row
+ * is the one its editor reads. Without a row of its own, any product's row of
+ * the shop is taken (a medium shared with another product).
+ *
+ * The library branch is taken ONLY for a MediaImage GID with NO ProductImage
+ * row anywhere in the shop. A product medium whose row is momentarily gone (a
+ * concurrent product sync deletes and recreates the rows -- the P2003 race)
+ * is retried ONCE; a row that exists and still took no write answers
+ * `notMirrored`, never a stray library row no editor would read.
+ * Throws on a DB error; the caller reports it.
  */
 export async function mirrorImageAltAnyStore(
   db: Pick<PrismaClient, "productImage" | "productImageAltTranslation" | "contentTranslation">,
-  params: { shop: string; mediaId: string; locale: string; value: string; marketId?: string; digest?: string | null },
-): Promise<"product" | "library"> {
-  const product = await mirrorProductMediaAlt(db, params);
-  if (product === "mirrored") return "product";
+  params: {
+    shop: string;
+    mediaId: string;
+    locale: string;
+    value: string;
+    marketId?: string;
+    digest?: string | null;
+    productId?: string;
+    /** Pause before the one retry (tests pass 0). */
+    retryDelayMs?: number;
+  },
+): Promise<"product" | "library" | "notMirrored"> {
+  const tryProductStores = async (): Promise<boolean> => {
+    if (params.productId && (await mirrorProductMediaAlt(db, params)) === "mirrored") return true;
+    return (await mirrorProductMediaAlt(db, { ...params, productId: undefined })) === "mirrored";
+  };
+  if (await tryProductStores()) return "product";
+  if (!MEDIA_IMAGE_GID_RE.test(params.mediaId)) return "notMirrored";
+  // One retry: a sync recreating this product's rows answers "imageGone" for
+  // the moment between its delete and its insert.
+  const delay = params.retryDelayMs ?? 150;
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+  if (await tryProductStores()) return "product";
+  const productBacked = await db.productImage.findFirst({
+    where: { mediaId: params.mediaId, product: { shop: params.shop } },
+    select: { id: true },
+  });
+  if (productBacked) return "notMirrored";
   await mirrorLibraryImageAlt(db, params);
   return "library";
 }
+
+const MEDIA_IMAGE_GID_RE = /^gid:\/\/shopify\/MediaImage\/\d+$/;

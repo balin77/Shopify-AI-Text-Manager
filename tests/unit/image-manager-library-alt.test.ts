@@ -187,3 +187,93 @@ describe("layerImageAltRows", () => {
     expect(layerImageAltRows([{ mediaId: "a", marketId: MARKET, altText: "m" }], "").altTexts).toEqual({});
   });
 });
+
+describe("shared media: this product's row wins (F4)", () => {
+  it("drops another product's rows for a medium this product has a row for", async () => {
+    const { preferOwnProductAltRows } = await import("~/actions/content/alt-text.action");
+    const rows = preferOwnProductAltRows(
+      [
+        { altText: "eigen global", marketId: "", image: { mediaId: "m1", productId: "p1" } },
+        { altText: "fremd markt", marketId: MARKET, image: { mediaId: "m1", productId: "p2" } },
+        { altText: "fremd global", marketId: "", image: { mediaId: "m1", productId: "p2" } },
+        { altText: "nur fremd", marketId: "", image: { mediaId: "m2", productId: "p2" } },
+        { altText: "ohne media", marketId: "", image: { mediaId: null, productId: "p1" } },
+      ],
+      "p1",
+    );
+    expect(rows).toEqual([
+      { mediaId: "m1", marketId: "", altText: "eigen global" },
+      { mediaId: "m2", marketId: "", altText: "nur fremd" },
+    ]);
+  });
+
+  it("the foreign save mirrors into THIS product's ProductImage row", async () => {
+    const db = makeDb();
+    const P1 = "gid://shopify/Product/1";
+    db.productImage.findFirst.mockImplementation(async ({ where }: any) =>
+      where.mediaId === PRODUCT_MEDIA && (!where.productId || where.productId === P1) ? { id: "row-own", productId: P1 } : null,
+    );
+    const { handleSaveImageAltText } = await import("~/actions/content/alt-text.action");
+    const fd = new FormData();
+    fd.set("mediaId", PRODUCT_MEDIA);
+    fd.set("altText", "Kiste");
+    fd.set("locale", "de");
+    fd.set("primaryLocale", "en");
+    fd.set("productId", P1);
+    const res: any = await handleSaveImageAltText({ admin: fakeAdmin(), db, session: { shop: SHOP } } as never, fd);
+    const body = res.data ?? res;
+    expect(body.success).toBe(true);
+    const scoped = db.productImage.findFirst.mock.calls.find(([a]: any) => a.where.productId === P1);
+    expect(scoped).toBeTruthy();
+    expect(db.productImageAltTranslation.upsert.mock.calls[0][0].create.imageId).toBe("row-own");
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a foreign save for an id that is not a MediaImage GID", async () => {
+    const { handleSaveImageAltText } = await import("~/actions/content/alt-text.action");
+    const fd = new FormData();
+    fd.set("mediaId", "gid://shopify/Product/5");
+    fd.set("altText", "x");
+    fd.set("locale", "de");
+    fd.set("primaryLocale", "en");
+    const res: any = await handleSaveImageAltText({ admin: fakeAdmin(), db: makeDb(), session: { shop: SHOP } } as never, fd);
+    expect((res.data ?? res).success).toBe(false);
+  });
+});
+
+describe("mirrorImageAltAnyStore never writes a stray library row for a product medium (F5)", () => {
+  const p2003 = () => Object.assign(new Error("fk"), { code: "P2003" });
+
+  it("retries once when a concurrent sync recreated the row", async () => {
+    const { mirrorImageAltAnyStore } = await import("~/services/translations/verified-translations.server");
+    const db = makeDb();
+    db.productImageAltTranslation.upsert.mockRejectedValueOnce(p2003());
+    const out = await mirrorImageAltAnyStore(db, { shop: SHOP, mediaId: PRODUCT_MEDIA, locale: "de", value: "x", retryDelayMs: 0 });
+    expect(out).toBe("product");
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still gone after the retry: notMirrored, no library row", async () => {
+    const { mirrorImageAltAnyStore } = await import("~/services/translations/verified-translations.server");
+    const db = makeDb();
+    db.productImageAltTranslation.upsert.mockRejectedValue(p2003());
+    const out = await mirrorImageAltAnyStore(db, { shop: SHOP, mediaId: PRODUCT_MEDIA, locale: "de", value: "x", retryDelayMs: 0 });
+    expect(out).toBe("notMirrored");
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a non-MediaImage id never takes the library branch", async () => {
+    const { mirrorImageAltAnyStore } = await import("~/services/translations/verified-translations.server");
+    const db = makeDb();
+    const out = await mirrorImageAltAnyStore(db, { shop: SHOP, mediaId: "gid://shopify/Video/3", locale: "de", value: "x", retryDelayMs: 0 });
+    expect(out).toBe("notMirrored");
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a MediaImage with no ProductImage row anywhere is a library file", async () => {
+    const { mirrorImageAltAnyStore } = await import("~/services/translations/verified-translations.server");
+    const db = makeDb();
+    const out = await mirrorImageAltAnyStore(db, { shop: SHOP, mediaId: LIBRARY, locale: "de", value: "x", retryDelayMs: 0 });
+    expect(out).toBe("library");
+  });
+});

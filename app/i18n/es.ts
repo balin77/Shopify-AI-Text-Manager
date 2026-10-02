@@ -2100,6 +2100,7 @@ export const es: Translation = {
     requiresSecondLanguage: "Tu tienda solo tiene un idioma. Añade otro idioma en la configuración de Shopify para poder traducir.",
     // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
     saveFirstSource: "Guarda primero: el texto del idioma principal tiene cambios sin guardar.",
+    switchWhileSaving: "Todavía se está guardando: espera un momento y vuelve a cambiar.",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
     fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons

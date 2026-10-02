@@ -547,6 +547,9 @@ export function VariantImageManager({
     // market on the primary locale, so it only rides foreign saves.
     if (next.marketId && next.locale && next.locale !== primaryLocaleRef.current) form.append("marketId", next.marketId);
     if (primaryLocaleRef.current) form.append("primaryLocale", primaryLocaleRef.current);
+    // The product the save was made on: its own image row is the mirror target
+    // (one medium may be cached under several products).
+    if (next.productId) form.append("productId", next.productId);
     saveAltTextFetcher.submit(form, { method: "post" });
     // A stuck request must not stall the queue for good.
     if (altSaveTimerRef.current) clearTimeout(altSaveTimerRef.current);
@@ -735,6 +738,7 @@ export function VariantImageManager({
   // must not drop (or re-read over) the primary drafts.
   const altLayerMarket = foreignMarketId ?? "";
   const altViewRef = useRef({ productId, currentLanguage, altLayerMarket });
+  const altLoadKeysRef = useRef<{ variantReloadKey: unknown; galleryMediaIdsKey: string }>({ variantReloadKey, galleryMediaIdsKey: "" });
   // The MediaImage GIDs the galleries show (Shopify's live media map: product
   // media AND media-library files picked into a variant gallery). A library
   // file has no ProductImage row, so its alt translations live in another
@@ -749,6 +753,14 @@ export function VariantImageManager({
     // that failed must survive it.
     const isBackgroundRefresh = lastBgRefreshRef.current !== backgroundRefreshVersion;
     lastBgRefreshRef.current = backgroundRefreshVersion;
+    // Only the gallery's MediaImage set moved (the media map arrived or a
+    // tile settled), with no reload asked for: on the PRIMARY locale there is
+    // nothing to re-read (the load below is foreign-only), so the primary
+    // values typed or shown must not be cleared for it.
+    const prevLoadKeys = altLoadKeysRef.current;
+    altLoadKeysRef.current = { variantReloadKey, galleryMediaIdsKey };
+    const onlyMediaSetChanged =
+      prevLoadKeys.variantReloadKey === variantReloadKey && prevLoadKeys.galleryMediaIdsKey !== galleryMediaIdsKey;
     const prevView = altViewRef.current;
     const viewChanged = prevView.productId !== productId || prevView.currentLanguage !== currentLanguage || prevView.altLayerMarket !== altLayerMarket;
     altViewRef.current = { productId, currentLanguage, altLayerMarket };
@@ -769,7 +781,7 @@ export function VariantImageManager({
         dirtyUrlsRef.current.clear();
         onDirtyChange?.(false);
       }
-    } else if (!isBackgroundRefresh) {
+    } else if (!isBackgroundRefresh && !(onlyMediaSetChanged && (!currentLanguage || currentLanguage === primaryLocale))) {
       // A plain reload (a gallery save, a bulk apply): the server's answer
       // replaces what is shown, except what the merchant still has as a draft.
       setLocalAltTexts((prev) => Object.fromEntries(Object.entries(prev).filter(([url]) => isAltUrlBusy(url))));

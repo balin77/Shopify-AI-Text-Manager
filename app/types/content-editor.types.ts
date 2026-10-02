@@ -689,6 +689,9 @@ export interface UseContentEditorReturn {
     /** A primary field or alt the whole-item "Translate all" would take as its
      *  source is an unsaved draft (false on a foreign locale). */
     hasUnsavedTranslateAllSource: () => boolean;
+    /** An AI/copy button's own save is on its way; a view switch is refused
+     *  until it is answered (never queued). */
+    isOwnSaveInFlight: () => boolean;
     /**
      * Hand a save response from a fetcher the editor does NOT own to the ONE
      * background-task watcher, so the detached re-translation it started is

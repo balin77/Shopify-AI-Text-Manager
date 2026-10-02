@@ -49,6 +49,7 @@ function mount(kind: "products" | "collections") {
   // test can look at, not a race against a timer.
   let answer: (body: Answer) => void = () => {};
   const editor: { current: any } = { current: null };
+  const showInfoBox = vi.fn();
 
   function Page() {
     const { items } = useLoaderData() as { items: unknown[] };
@@ -62,7 +63,7 @@ function mount(kind: "products" | "collections") {
       ],
       primaryLocale: "de",
       fetcher,
-      showInfoBox: vi.fn(),
+      showInfoBox,
       t: {},
       initialItemId: id,
     } as any);
@@ -91,7 +92,7 @@ function mount(kind: "products" | "collections") {
     },
   ]);
   render(<RouterProvider router={router} />);
-  return { id, editor, posts, respond: (body: Answer) => act(async () => { answer(body); }) };
+  return { id, editor, posts, showInfoBox, respond: (body: Answer) => act(async () => { answer(body); }) };
 }
 
 async function accept(h: ReturnType<typeof mount>, locale: string, field: string, text: string) {
@@ -177,5 +178,30 @@ describe("accepting an AI suggestion saves the field without a save bar", () => 
 
     await act(async () => { h.editor.current.handlers.handleValueChange("title", "Neu von der KI!"); });
     expect(h.editor.current.state.hasChanges).toBe(true);
+  });
+
+  it("a view switch during that save is REFUSED with a message, never queued", async () => {
+    const h = mount("products");
+    await tick(50);
+    await accept(h, "de", "title", "Neu von der KI");
+    expect(h.editor.current.state.hasChanges).toBe(false);
+
+    // Language, market and item switches are all refused while it is out.
+    await act(async () => { await h.editor.current.handlers.handleLanguageChange("fr"); });
+    await act(async () => { await h.editor.current.handlers.handleItemSelect("gid://shopify/Product/2"); });
+    await tick(20);
+    expect(h.editor.current.state.currentLanguage).toBe("de");
+    expect(h.editor.current.state.selectedItemId).toBe(h.id);
+    const refusals = () => h.showInfoBox.mock.calls.filter(([msg, tone]) => tone === "info" && String(msg).startsWith("Still saving"));
+    expect(refusals()).toHaveLength(2);
+
+    // Answered: nothing was queued, and the next click switches.
+    await h.respond({ success: true, actionType: "updateContent" });
+    await tick(50);
+    expect(h.editor.current.state.currentLanguage).toBe("de");
+    await act(async () => { await h.editor.current.handlers.handleLanguageChange("fr"); });
+    await tick(20);
+    expect(h.editor.current.state.currentLanguage).toBe("fr");
+    expect(refusals()).toHaveLength(2);
   });
 });

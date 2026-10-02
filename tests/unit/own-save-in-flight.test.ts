@@ -1,11 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   isAltCoveredByOwnSave,
   isFieldCoveredByOwnSave,
   settleOwnSave,
-  waitForOwnSavesToSettle,
   backstopOwnSaves,
-  createSwitchIntents,
+  hasOwnSaveInFlight,
   type OwnSaveInFlight,
 } from "~/services/editor/own-save-in-flight.shared";
 
@@ -47,80 +46,12 @@ describe("own save in flight", () => {
   });
 });
 
-describe("own-save switch wait and idle backstop", () => {
-  it("waitForOwnSavesToSettle resolves at once when nothing is pending", async () => {
-    const waiters: Array<() => void> = [];
-    await waitForOwnSavesToSettle(false, waiters);
-    expect(waiters).toHaveLength(0);
-  });
-
-  it("waits until released, and gives up after the bound", async () => {
-    vi.useFakeTimers();
-    try {
-      const waiters: Array<() => void> = [];
-      let done = false;
-      void waitForOwnSavesToSettle(true, waiters, 1000).then(() => { done = true; });
-      await Promise.resolve();
-      expect(done).toBe(false);
-      waiters.forEach((release) => release());
-      await Promise.resolve();
-      expect(done).toBe(true);
-
-      let timedOut = false;
-      void waitForOwnSavesToSettle(true, [], 1000).then(() => { timedOut = true; });
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(timedOut).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("an aborted signal releases the wait at once and clears its timer", async () => {
-    vi.useFakeTimers();
-    try {
-      const controller = new AbortController();
-      let done = false;
-      void waitForOwnSavesToSettle(true, [], 1000, controller.signal).then(() => { done = true; });
-      await Promise.resolve();
-      expect(done).toBe(false);
-      expect(vi.getTimerCount()).toBe(1);
-      controller.abort();
-      await Promise.resolve();
-      expect(done).toBe(true);
-      expect(vi.getTimerCount()).toBe(0);
-      // Already aborted: resolves without registering anything.
-      const waiters: Array<() => void> = [];
-      await waitForOwnSavesToSettle(true, waiters, 1000, controller.signal);
-      expect(waiters).toHaveLength(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("a normal release clears the bound's timer too", async () => {
-    vi.useFakeTimers();
-    try {
-      const waiters: Array<() => void> = [];
-      const p = waitForOwnSavesToSettle(true, waiters, 1000);
-      expect(vi.getTimerCount()).toBe(1);
-      waiters.forEach((release) => release());
-      await p;
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("createSwitchIntents: only the latest claim is current, and dispose abandons all", () => {
-    const intents = createSwitchIntents();
-    const first = intents.claim();
-    expect(first()).toBe(true);
-    const second = intents.claim();
-    expect(first()).toBe(false);
-    expect(second()).toBe(true);
-    intents.dispose();
-    expect(second()).toBe(false);
-    expect(intents.signal.aborted).toBe(true);
+describe("own-save switch refusal and idle backstop", () => {
+  it("hasOwnSaveInFlight: a switch is refused exactly while an own save is out", () => {
+    expect(hasOwnSaveInFlight([])).toBe(false);
+    expect(hasOwnSaveInFlight([entry])).toBe(true);
+    // Settled by its answer: the switch goes through again.
+    expect(hasOwnSaveInFlight(settleOwnSave([entry], token))).toBe(false);
   });
 
   it("backstopOwnSaves clears everything but the save submitted in this flush", () => {
