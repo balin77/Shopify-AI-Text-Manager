@@ -110,4 +110,53 @@ describe("Translate all: option and metafield answers land after a language swit
     expect(result.current.state.optionTranslations[OPT]?.name).toBe("Couleur");
     expect(result.current.state.metafieldTranslations[MF]).toBe("Coton");
   });
+
+  it("never overwrites what the merchant typed into the open view meanwhile", async () => {
+    const { result, rerender } = setup();
+    act(() => result.current.handlers.translateAllSubResourcesToAllLocales());
+    rerender({ lang: "en" });
+    await tick();
+    act(() => result.current.handlers.handleMetafieldChange(MF, "Organic cotton"));
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "Shade"));
+    await act(async () => release(answer));
+    await tick();
+    // The typed resources keep the typing...
+    expect(result.current.state.metafieldTranslations[MF]).toBe("Organic cotton");
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("Shade");
+    // ...an untouched one takes the answer.
+    expect(result.current.state.optionTranslations[OPT]?.values[0]).toBe("Red");
+  });
+
+  it("maps the answer onto the item showing NOW, not the one the button was pressed on", async () => {
+    const V0 = "gid://shopify/ProductOptionValue/0";
+    const reloaded = {
+      ...(item as unknown as Record<string, unknown>),
+      // A reload put a new value in front: V1 is now at index 1.
+      options: [{ id: OPT, name: "Farbe", position: 1, values: [{ id: V0, name: "Blau" }, { id: V1, name: "Rot" }] }],
+    } as never;
+    const { result, rerender } = renderHook(
+      ({ lang, it }) =>
+        useProductSubResources({
+          selectedItem: it,
+          currentLanguage: lang,
+          primaryLocale: "de",
+          selectedMarketId: "",
+          enabledLanguages: ["de", "en", "fr"],
+          revalidator: { state: "loading", revalidate: vi.fn() },
+          showInfoBox: vi.fn(),
+          strings: {},
+        } as never),
+      { initialProps: { lang: "de", it: item } },
+    );
+    act(() => result.current.handlers.translateAllSubResourcesToAllLocales());
+    rerender({ lang: "en", it: item });
+    await tick();
+    rerender({ lang: "en", it: reloaded });
+    await tick();
+    await act(async () => release(answer));
+    await tick();
+    const values = result.current.state.optionTranslations[OPT]?.values ?? [];
+    expect(values[1]).toBe("Red");
+    expect(values[0]).not.toBe("Red");
+  });
 });

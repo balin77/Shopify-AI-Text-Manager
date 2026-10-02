@@ -252,3 +252,74 @@ export function pruneExpiredOverlay(
   }
   return touched;
 }
+
+/**
+ * Forgets the stamps of entries the overlay no longer holds. A reset, a purge
+ * or a rolled-back copy removes entries without touching their stamps, and a
+ * stale stamp would later be read for a NEW entry staged under the same
+ * (layer, resource) pair -- pruning it as "old" the moment it was written.
+ */
+export function pruneOverlayStamps(stamps: OverlayStamps, overlay: SubResourceOverlay): void {
+  for (const stampKey of [...stamps.keys()]) {
+    const sep = stampKey.indexOf("\u0000");
+    const layerKey = stampKey.slice(0, sep);
+    const resourceId = stampKey.slice(sep + 1);
+    if (!overlay[layerKey] || !(resourceId in overlay[layerKey])) stamps.delete(stampKey);
+  }
+}
+
+/**
+ * A primary translate-to-all wrote NEW global translations for these
+ * resources: their staged GLOBAL entries are older and go, with their stamps.
+ * A MARKET layer is left alone (the run writes no market override, so a
+ * staged override still describes what that market serves), and so is every
+ * locale or resource the answer reports as FAILED -- nothing newer was written
+ * there. Returns whether the overlay changed.
+ */
+export function dropGlobalStagedFor(
+  overlay: SubResourceOverlay,
+  stamps: OverlayStamps,
+  resourceIds: readonly string[],
+  opts: {
+    isGlobalLayerKey: (layerKey: string) => boolean;
+    failedLocales?: readonly string[];
+    failedResources?: readonly string[];
+  },
+): boolean {
+  const failedLocales = new Set(opts.failedLocales ?? []);
+  const failedResources = new Set(opts.failedResources ?? []);
+  const ids = resourceIds.filter((id) => !failedResources.has(id));
+  let touched = false;
+  for (const layerKey of Object.keys(overlay)) {
+    if (!opts.isGlobalLayerKey(layerKey) || failedLocales.has(layerKey)) continue;
+    const byResource = overlay[layerKey];
+    for (const id of ids) {
+      stamps.delete(overlayStampKey(layerKey, id));
+      if (id in byResource) {
+        delete byResource[id];
+        touched = true;
+      }
+    }
+    if (Object.keys(byResource).length === 0) delete overlay[layerKey];
+  }
+  return touched;
+}
+
+/**
+ * A per-locale translate answer reduced to what may be put into the OPEN
+ * view: resources the merchant has typed into (dirty, unsaved) are left out,
+ * so a late answer never overwrites their typing. The staging is separate and
+ * keeps the whole answer.
+ */
+export function answerWithoutDirty(
+  answer: Record<string, Record<string, string>>,
+  dirtyIds: Iterable<ReadonlySet<string>>,
+): Record<string, Record<string, string>> {
+  const sets = [...dirtyIds];
+  const out: Record<string, Record<string, string>> = {};
+  for (const [resourceId, fields] of Object.entries(answer)) {
+    if (sets.some((s) => s.has(resourceId))) continue;
+    out[resourceId] = fields;
+  }
+  return out;
+}

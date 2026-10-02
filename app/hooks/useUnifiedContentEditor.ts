@@ -1766,7 +1766,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           translationsMap,
           effectiveFieldDefinitions,
           currentLanguage,
-          editableValues
+          editableValues,
+          // A market view shows that market's layer; the global answer is not
+          // written into its fields (see onTranslateAllComplete).
+          currentLanguage === primaryLocale ? "" : (selectedMarketIdRef.current ?? "")
         );
 
         // Apply UI updates from transition result

@@ -26,7 +26,7 @@ import {
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem, TranslationStrings } from "../types/content-editor.types";
 import { translateErrorMessage } from "../utils/editor-error-messages";
-import { buildLocaleKey } from "./useUiDataLoader";
+import { buildLocaleKey, LOCALE_MARKET_SEP } from "./useUiDataLoader";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { subResourceOutcome } from "../services/editor/sub-resource-outcome.shared";
 import { useLatestRef } from "./useLatestRef";
@@ -41,7 +41,9 @@ import {
   changedIdsOfPrimarySave,
   dropOverlayForPrimaryChange,
   overlayKeepingOnly,
-  overlayStampKey,
+  answerWithoutDirty,
+  dropGlobalStagedFor,
+  pruneOverlayStamps,
   pruneExpiredOverlay,
   recordConfirmedForeignSave,
   stampOverlay,
@@ -811,6 +813,7 @@ export function useProductSubResources({
       localSubResourceOverlayRef.current,
       overlayResetKeepIds(),
     );
+    pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
     touchOverlay();
     // Phase 2 goes through the SAME fetcher as a save; while it is busy the
     // Shopify supplement is deferred until it is idle (`submitPhase2Load`).
@@ -878,6 +881,7 @@ export function useProductSubResources({
     if (c.previous !== undefined) {
       ((overlay[c.overlayKey] ??= {})[c.resourceId] ??= {})["name"] = c.previous;
     }
+    pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
     touchOverlay();
   };
 
@@ -1127,6 +1131,7 @@ export function useProductSubResources({
         if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, partialSavedIds, keepOverlayIdsRef.current)) {
           touchOverlay();
         }
+        pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
           // The warning codes carry the only specific reason there is (the
@@ -1204,6 +1209,7 @@ export function useProductSubResources({
         if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, savedIds, keepOverlayIdsRef.current)) {
           touchOverlay();
         }
+        pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
         if (showInfoBox) {
           if (purge.unconfirmed) {
             showInfoBox(
@@ -1610,19 +1616,30 @@ export function useProductSubResources({
     setMetafieldTranslations(prev => mergeMetafieldTranslations(prev, item, translations));
   }, []);
 
-  // Drops every staged entry of these resources, in every locale and layer,
-  // with their stamps and keep marks: a primary translate-to-all just wrote
-  // newer translations for them than anything the overlay holds.
-  const dropStagedFor = (resourceIds: readonly string[]) => {
+  // Drops the staged GLOBAL entries of these resources, with their stamps and
+  // keep marks: a primary translate-to-all just wrote newer global
+  // translations for them than anything the overlay holds. A market layer is
+  // not touched (the run writes no market override), and neither is a locale
+  // or resource the answer reports as failed (nothing newer exists there).
+  const dropStagedFor = (
+    resourceIds: readonly string[],
+    failed: { failedLocales?: readonly string[]; failedResources?: readonly string[] } = {},
+  ) => {
+    const failedResources = new Set(failed.failedResources ?? []);
     for (const id of resourceIds) {
+      if (failedResources.has(id)) continue;
       recentlyStagedRef.current.delete(id);
       keepOverlayIdsRef.current.delete(id);
     }
-    const overlay = localSubResourceOverlayRef.current;
-    for (const layerKey of Object.keys(overlay)) {
-      for (const id of resourceIds) overlayStampsRef.current.delete(overlayStampKey(layerKey, id));
+    if (
+      dropGlobalStagedFor(localSubResourceOverlayRef.current, overlayStampsRef.current, resourceIds, {
+        isGlobalLayerKey: (key) => !key.includes(LOCALE_MARKET_SEP),
+        failedLocales: failed.failedLocales,
+        failedResources: failed.failedResources,
+      })
+    ) {
+      touchOverlay();
     }
-    if (dropOverlayForPrimaryChange(overlay, resourceIds, [])) touchOverlay();
   };
 
   // The caller passes `strings` as a fresh object every render; read it through
@@ -1693,7 +1710,10 @@ export function useProductSubResources({
       // translate answer, a confirmed clear's "") is older than them and would
       // shadow them after the reload. Dropped in every locale and layer.
       if (opts.dropOverlayIds && opts.dropOverlayIds.length > 0) {
-        h.dropStagedFor(opts.dropOverlayIds);
+        h.dropStagedFor(opts.dropOverlayIds, {
+          failedLocales: data.failedLocales,
+          failedResources: data.failedResources,
+        });
       }
       // A translate into EVERY language answers its confirmed values per
       // locale: each is staged under the locale it was written for, and the one
@@ -1701,12 +1721,22 @@ export function useProductSubResources({
       // for a merchant who switched language while the run worked -- the load
       // effect does not re-read an already open view, and the re-read is
       // skipped while another one is in flight.
+      // Applied against the item showing NOW (as above), and never over a
+      // resource the merchant has typed into and not saved yet: the staging
+      // keeps the whole answer, the open view skips the dirty resources.
       const byLocale = data.localeTranslations;
       if (byLocale) {
+        const current = h.item && h.item.id === opts.itemId ? h.item : opts.item;
         for (const [locale, localeAnswer] of Object.entries(byLocale)) {
           const target = { itemId: opts.itemId, locale, marketId: "" };
           if (h.stageTranslations(localeAnswer, target) === "apply") {
-            h.applyTranslationsToState(opts.item, localeAnswer);
+            const pending = pendingStateRef.current;
+            const visible = answerWithoutDirty(localeAnswer, [
+              pending?.dirtyOptionIds ?? new Set<string>(),
+              pending?.dirtyOptionValueIds ?? new Set<string>(),
+              pending?.dirtyMetafieldIds ?? new Set<string>(),
+            ]);
+            if (Object.keys(visible).length > 0) h.applyTranslationsToState(current, visible);
           }
         }
       }
@@ -2366,6 +2396,7 @@ export function useProductSubResources({
       localSubResourceOverlayRef.current,
       overlayResetKeepIds(),
     );
+    pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
     touchOverlay();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlayResetKeepIds reads refs only
   }, [touchOverlay]);
@@ -2531,6 +2562,7 @@ export function useProductSubResources({
       return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
     }).then(({ failed, gated }) => {
       rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, [{ resourceId, value: primaryValue }]);
+      pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
       touchOverlay();
       const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);
       showInfoBox?.(outcome.text, outcome.tone);
@@ -2600,6 +2632,7 @@ export function useProductSubResources({
       return postJsonSave(SUB_RESOURCE_ENDPOINT, setContentEditorPage(fd, "/app/products"));
     }).then(({ failed, gated }) => {
       rollbackSubResourceCopy(localSubResourceOverlayRef.current, failed, entries);
+      pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
       touchOverlay();
       const outcome = copyOutcomeMessage(failed, { copied: strings.copied, copyFailedLocales: strings.copyFailedLocales, upgradeRequired: strings.upgradeRequired }, gated);
       showInfoBox?.(outcome.text, outcome.tone);
