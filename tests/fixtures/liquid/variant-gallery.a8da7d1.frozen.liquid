@@ -26,7 +26,7 @@
   them, so data is unchanged). Image URLs are Shopify CDN and
   IDs/dimensions are numeric, so only variant.title needs this.
 {%- endcomment -%}
-{%- capture cp_g_json -%}
+<script type="application/json" id="cp-gallery-data-{{ block.id }}">
   {
     {%- if product != blank -%}
       {%- for variant in product.variants -%}
@@ -70,8 +70,7 @@
       {%- endfor -%}
     {%- endif -%}
   }
-{%- endcapture -%}
-<script type="application/json" id="cp-gallery-data-{{ block.id }}">{{ cp_g_json }}</script>
+</script>
 
 <cp-variant-gallery
   {{ block.shopify_attributes }}
