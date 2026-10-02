@@ -2189,14 +2189,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
           if (!partial) {
             // A full save stored every field that was no longer inherited
-            // (the ones still inherited are not sent); a stored value — even
-            // one equal to the inherited text — is the field's own now, so
-            // Discard must not re-flag it. An unconfirmed clear stays out.
+            // (the ones still inherited are not sent); a stored value is the
+            // field's own now, so Discard must not re-flag it. An unconfirmed
+            // clear stays out. A FOREIGN save sends only fields that differ
+            // from their loaded value, so a field typed back to exactly the
+            // inherited text was NOT stored and stays in the snapshot.
             const notStored = unconfirmedClearedFieldSet(fetcher.data);
+            const isPrimaryView = currentLanguageRef.current === primaryLocale;
+            const snapshot = loadedFallbackRef.current;
             loadedFallbackRef.current = dropSavedFieldsFromFallbackSnapshot(
-              loadedFallbackRef.current,
-              [...(loadedFallbackRef.current?.fields ?? [])].filter(
-                (key) => !fallbackFieldsRef.current.has(key) && !notStored.has(key),
+              snapshot,
+              [...(snapshot?.fields ?? [])].filter(
+                (key) => !fallbackFieldsRef.current.has(key)
+                  && !notStored.has(key)
+                  && (isPrimaryView || editableValuesRef.current[key] !== snapshot?.values[key]),
               ),
             );
           }

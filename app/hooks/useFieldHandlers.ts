@@ -329,11 +329,6 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
 // EVENT HANDLERS
 // ============================================================================
 
-// Wrapper for performAutoSave with default locale
-const performSaveWithValues = (valuesToSave: Record<string, string>, locale: string = currentLanguage) => {
-  performAutoSave(valuesToSave, locale);
-};
-
 /** Is this field's PRIMARY value an unsaved draft? (False on a foreign locale.) */
 const isPrimaryFieldUnsaved = (fieldKey: string): boolean =>
   isUnsavedPrimarySource({
@@ -1722,6 +1717,9 @@ const handleToggleLanguage = (locale: string) => {
 
 const handleItemSelect = async (itemId: string) => {
   if (hasChanges || isSavingCurrentItem) {
+    // A product switch supersedes any unanswered language/market dialog:
+    // the [SaveBar] measurement flag must not read true for this one.
+    viewSwitchConfirmPendingRef.current = false;
     await confirmNavigation();
   }
   setSelectedItemId(itemId);

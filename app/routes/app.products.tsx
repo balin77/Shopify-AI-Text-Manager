@@ -900,7 +900,10 @@ export default function ProductsPage() {
       // silently drop them.
       handleItemSelect: async (itemId: string) => {
         if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
-          await confirmNavigation();
+          // A product switch supersedes any unanswered language/market dialog:
+    // the [SaveBar] measurement flag must not read true for this one.
+    viewSwitchConfirmPendingRef.current = false;
+    await confirmNavigation();
         }
         editor.handlers.handleItemSelect(itemId);
       },
