@@ -64,6 +64,8 @@ import {
 } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
+import { appFetchJson, isSessionExpiredError } from "../utils/app-fetch";
+import { translateErrorMessage } from "../utils/editor-error-messages";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
@@ -1169,14 +1171,21 @@ export default function MenusPage() {
       fd.set("sourceText", sourceText);
       fd.set("targetLocale", targetLocale);
       fd.set("primaryLocale", primaryLocale);
-      const response = await fetch("/api/ai", { method: "POST", body: fd });
-      const payload = (await response.json()) as { success?: boolean; translatedValue?: string; error?: string };
+      let response: Response;
+      let payload: { success?: boolean; translatedValue?: string; error?: string };
+      try {
+        ({ response, data: payload } = await appFetchJson<typeof payload>("/api/ai", { method: "POST", body: fd }));
+      } catch (e) {
+        // The shown sentence, not the code: the callers display e.message.
+        if (isSessionExpiredError(e)) throw new Error(translateErrorMessage(e.message, t as never));
+        throw e;
+      }
       if (!payload?.success || typeof payload.translatedValue !== "string") {
         throw new Error(payload?.error || `HTTP ${response.status}`);
       }
       return payload.translatedValue;
     },
-    [primaryLocale],
+    [primaryLocale, t],
   );
 
   /**

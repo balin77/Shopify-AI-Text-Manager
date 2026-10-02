@@ -27,6 +27,13 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return taskErrorText(refusal[0], t) ?? errorMessage;
   }
 
+  // The embedded session token could not be (re)established -- app-fetch.ts's
+  // SessionExpiredError, or the server's 401 for an /api fetch that arrived
+  // without one (api-auth-bounce.server.ts). Never raw "Expected JSON" text.
+  if (errorMessage === "sessionExpired") {
+    return errors?.sessionExpired || "Your session has expired. Please reload the page.";
+  }
+
   // The image an alt-text action named no longer exists on the product.
   if (errorMessage === "Image not found on this product") {
     const im = (t as unknown as { imageManager?: Record<string, string> }).imageManager;

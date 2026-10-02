@@ -202,6 +202,7 @@ import { TranslationDriftAutoRunService } from "./services/translations/translat
 let managedSmokeTestFired = false;
 
 import { hostParamRejection } from "./utils/shopify-host-param.server";
+import { apiAuthBounceRejection } from "./utils/api-auth-bounce.server";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -218,7 +219,9 @@ const enhancedAuthenticate = {
     try {
       authenticated = await originalAuthenticateAdmin(request);
     } catch (error) {
-      throw hostParamRejection(error, request) ?? error;
+      // An /api fetch without a session token gets a 401 + retry header rather
+      // than the 200 HTML bounce page (see api-auth-bounce.server.ts).
+      throw hostParamRejection(error, request) ?? apiAuthBounceRejection(error, request) ?? error;
     }
     const { admin, session } = authenticated;
 

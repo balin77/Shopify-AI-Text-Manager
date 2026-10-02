@@ -946,6 +946,7 @@ export const es: Translation = {
       translatingAfterCreate: "Traduciendo a tus otros idiomas…",
       translateAfterwardsUnsupported: "Este tipo se traduce desde su propio editor después de crearlo.",
       aiWarnings: {
+        sessionExpired: "La sesión ha caducado: recarga la página.",
         allFailed: "La IA no pudo escribir ninguno de los campos restantes.",
       },
       createWarnings: {
@@ -4657,6 +4658,7 @@ export const es: Translation = {
     noTargetLocalesOrImages: "No se especificaron idiomas de destino o imágenes",
     translateStoreFailedAll: "Shopify no guardó la traducción para ningún idioma",
     unknownError: "Error desconocido",
+    sessionExpired: "La sesión ha caducado: recarga la página.",
 
     // Sync errors
     syncApiError: "La sincronización falló debido a un error de la API de Shopify. Sus datos locales se conservaron.",

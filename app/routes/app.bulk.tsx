@@ -139,6 +139,7 @@ import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
 import type { DataResponse } from "~/types/data-response";
 import { translationForeignLocales } from "~/services/translations/stale-translations.shared";
+import { appFetch, isSessionExpiredError } from "~/utils/app-fetch";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -1812,14 +1813,15 @@ export default function BulkEditor() {
    * on it surfaces `Unexpected token '<'` instead of a usable message. */
   const postAi = async (body: Record<string, string>): Promise<Record<string, unknown> | null> => {
     try {
-      const response = await fetch("/api/ai", {
+      // appFetch sends the session token and retries one auth bounce; a
+      // session it cannot re-establish throws SessionExpiredError (below).
+      const response = await appFetch("/api/ai", {
         method: "POST",
         body: new URLSearchParams(body),
-        headers: { Accept: "application/json" },
       });
       if (!response.headers.get("content-type")?.includes("application/json")) {
         await response.text().catch(() => "");
-        setCellActionError(response.status === 401 ? b.cellActions.sessionExpired : b.errorGeneric);
+        setCellActionError(b.errorGeneric);
         return null;
       }
       const payload = (await response.json()) as Record<string, unknown>;
@@ -1829,7 +1831,11 @@ export default function BulkEditor() {
       }
       return payload;
     } catch (err: unknown) {
-      setCellActionError(err instanceof Error ? err.message : String(err));
+      setCellActionError(
+        isSessionExpiredError(err)
+          ? b.cellActions.sessionExpired
+          : err instanceof Error ? err.message : String(err),
+      );
       return null;
     }
   };

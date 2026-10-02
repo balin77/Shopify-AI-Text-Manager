@@ -109,11 +109,19 @@ describe("postContentEditorSave", () => {
 
   it("reads the JSON answer: success, refusal and a failed request", async () => {
     const loc = { pathname: "/app/pages", search: "" };
-    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ success: true }) });
+    // Real Responses: the door now goes through appFetch, which reads the
+    // headers to tell an auth bounce from the route's answer.
+    const jsonResponse = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ success: true }));
     expect(await postContentEditorSave(new FormData(), loc)).toBe(true);
-    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ success: false, error: "x" }) });
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ success: false, error: "x" }));
     expect(await postContentEditorSave(new FormData(), loc)).toBe(false);
-    fetchSpy.mockResolvedValueOnce({ ok: false, json: async () => ({}) });
+    fetchSpy.mockResolvedValueOnce(jsonResponse({}, 500));
+    expect(await postContentEditorSave(new FormData(), loc)).toBe(false);
+    // An auth bounce that survives the retry is a failed save, not a success.
+    const bounce = () => new Response("<script></script>", { status: 200, headers: { "content-type": "text/html;charset=utf-8" } });
+    fetchSpy.mockResolvedValueOnce(bounce()).mockResolvedValueOnce(bounce());
     expect(await postContentEditorSave(new FormData(), loc)).toBe(false);
     fetchSpy.mockRejectedValueOnce(new Error("offline"));
     expect(await postContentEditorSave(new FormData(), loc)).toBe(false);

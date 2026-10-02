@@ -961,6 +961,7 @@ export const en: Translation = {
       translatingAfterCreate: "Translating into your other languages…",
       translateAfterwardsUnsupported: "This type is translated from its own editor after creating it.",
       aiWarnings: {
+        sessionExpired: "Your session has expired — please reload the page.",
         allFailed: "The AI could not write any of the remaining fields.",
       },
       createWarnings: {
@@ -4672,6 +4673,7 @@ export const en: Translation = {
     noTargetLocalesOrImages: "No target locales or images specified",
     translateStoreFailedAll: "Shopify did not store the translation for any language",
     unknownError: "Unknown error",
+    sessionExpired: "Your session has expired — please reload the page.",
 
     // Sync errors
     syncApiError: "Sync failed due to a Shopify API error. Your local data was preserved.",

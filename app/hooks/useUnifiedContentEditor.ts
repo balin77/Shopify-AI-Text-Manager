@@ -56,6 +56,7 @@ import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValue
 import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
+import { appFetchJson } from "../utils/app-fetch";
 import {
   markOperationActive,
   markOperationCompleted,
@@ -1388,22 +1389,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Use dedicated AI API route for all AI requests
       // This avoids page routes returning HTML instead of JSON and enables parallel requests
-      const response = await fetch('/api/ai', {
+      // appFetchJson sends the App Bridge session token itself and retries
+      // once on an auth bounce; a session that cannot be re-established
+      // throws `sessionExpired`, which translateErrorMessage below phrases.
+      const { data: firstResult } = await appFetchJson<Record<string, any>>('/api/ai', {
         method: 'POST',
         body: formData,
-        headers: {
-          'Accept': 'application/json',
-        },
       });
-
-      // Check if response is JSON before parsing
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        await response.text(); // consume body to avoid leaking the connection
-        throw new Error(`Server returned ${response.status}: Expected JSON but got ${contentType || 'unknown content type'}`);
-      }
-
-      let result = await response.json();
+      let result = firstResult;
 
       // Fire-and-forget actions (e.g. generateAllAltTexts) return only a taskId
       // and run the heavy work detached from this request. Poll the task table

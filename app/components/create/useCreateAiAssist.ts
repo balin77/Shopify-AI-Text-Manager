@@ -22,6 +22,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
+import { appFetch, isSessionExpiredError, SESSION_EXPIRED_CODE } from "../../utils/app-fetch";
 import type { CreatableResource } from "../../config/create-fields.config";
 import { createAiSpecFor, LONG_TEXT_KEY_BY_RESOURCE } from "../../config/create-ai.shared";
 
@@ -67,7 +68,9 @@ export class AiRefusedError extends Error {
 async function postAi(body: Record<string, string>): Promise<Record<string, unknown>> {
   const formData = new FormData();
   for (const [key, value] of Object.entries(body)) formData.set(key, value);
-  const response = await fetch("/api/ai", { method: "POST", body: formData });
+  // appFetch sends the session token and retries one auth bounce; a session
+  // it cannot re-establish throws SessionExpiredError, handled per caller.
+  const response = await appFetch("/api/ai", { method: "POST", body: formData });
   // A non-JSON body means the route errored before its own handler ran; the
   // status alone is the only honest thing left to report.
   const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -179,6 +182,8 @@ export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
             // what did not come through. A REFUSAL is the exception — it
             // refuses every following field the same way.
             if (error instanceof AiRefusedError) refusalMessage = error.message;
+            // A CODE the modal phrases (`t.aiWarnings.sessionExpired`).
+            else if (isSessionExpiredError(error)) refusalMessage = SESSION_EXPIRED_CODE;
             failed.push(field.createKey);
           }
         }
