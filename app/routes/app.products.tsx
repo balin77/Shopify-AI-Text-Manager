@@ -13,8 +13,7 @@
 
 import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
-import { confirmNavigation } from "../hooks/useSaveBar";
-import { confirmViewSwitch } from "../hooks/view-switch-discard";
+import { confirmNavigation, viewSwitchConfirmPendingRef } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
@@ -829,17 +828,6 @@ export default function ProductsPage() {
       imageManagerState.resetForProduct();
       altDraftApiRef.current?.discard();
     },
-    // The two halves of resetChanges for a discard during a language or market
-    // switch (view-switch-discard.ts): sub-resource edits and alt drafts belong
-    // to the view being left; gallery changes are the same in every language
-    // and survive the switch.
-    resetViewChanges: () => {
-      subResources.handlers.resetChanges();
-      altDraftApiRef.current?.discard();
-    },
-    resetSharedChanges: () => {
-      imageManagerState.resetForProduct();
-    },
     resetForReload: () => {
       subResources.handlers.resetForReload();
       imageManagerState.resetForProduct();
@@ -884,7 +872,12 @@ export default function ProductsPage() {
       // UNSENT alt drafts ask -- the same rule for both switches.
       handleLanguageChange: async (locale: string) => {
         if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
-          await confirmViewSwitch();
+          viewSwitchConfirmPendingRef.current = true;
+          try {
+            await confirmNavigation();
+          } finally {
+            viewSwitchConfirmPendingRef.current = false;
+          }
         }
         editor.handlers.handleLanguageChange(locale);
       },
@@ -892,7 +885,12 @@ export default function ProductsPage() {
         // Primary alt texts are global: a market change in the primary
         // language keeps them, so it has nothing to ask about.
         if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
-          await confirmViewSwitch();
+          viewSwitchConfirmPendingRef.current = true;
+          try {
+            await confirmNavigation();
+          } finally {
+            viewSwitchConfirmPendingRef.current = false;
+          }
         }
         editor.handlers.handleMarketChange(marketId);
       },

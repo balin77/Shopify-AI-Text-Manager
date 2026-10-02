@@ -22,8 +22,7 @@ import {
   clearSuggestionsForScope,
   type SuggestionScope,
 } from "./useAISuggestionStore";
-import { confirmNavigation } from "./useSaveBar";
-import { confirmViewSwitch } from "./view-switch-discard";
+import { confirmNavigation, viewSwitchConfirmPendingRef } from "./useSaveBar";
 import type {
   TranslatableContentItem,
   ContentImage,
@@ -1662,9 +1661,12 @@ const handleRejectSuggestion = useCallback((fieldKey: string) => {
 
 const handleLanguageChange = async (locale: string) => {
   if (hasChanges || isSavingCurrentItem) {
-    // A VIEW switch: a discard from its dialog drops this view's drafts only
-    // (view-switch-discard.ts), never the shared gallery / media / stock ones.
-    await confirmViewSwitch();
+    viewSwitchConfirmPendingRef.current = true;
+    try {
+      await confirmNavigation();
+    } finally {
+      viewSwitchConfirmPendingRef.current = false;
+    }
   }
   setCurrentLanguage(locale);
   // This click is the only writer of the remembered working language: the
@@ -1693,7 +1695,12 @@ const handleMarketChange = async (marketId: string) => {
   // Market switch behaves like a locale switch "light": no server round-trip, but
   // unsaved edits would be lost on re-resolve, so guard them the same way.
   if (hasChanges || isSavingCurrentItem) {
-    await confirmViewSwitch();
+    viewSwitchConfirmPendingRef.current = true;
+    try {
+      await confirmNavigation();
+    } finally {
+      viewSwitchConfirmPendingRef.current = false;
+    }
   }
   setSelectedMarketId(marketId);
 };

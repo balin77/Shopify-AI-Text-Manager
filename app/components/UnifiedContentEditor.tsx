@@ -46,7 +46,7 @@ import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
 import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
-import { routeSaveBarDiscard } from "../hooks/view-switch-discard";
+import { viewSwitchConfirmPendingRef } from "../hooks/useSaveBar";
 import { HelpTooltip } from "./HelpTooltip";
 import { ItemSidebar } from "./ItemSidebar";
 import { SidebarTabBar } from "./SidebarTabBar";
@@ -1760,26 +1760,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   void commerceSave.save?.();
                 }}
                 onDiscard={() => {
-                  // Inside a LANGUAGE/MARKET switch (its leave dialog's
-                  // "Discard"), only the drafts of the view being left go:
-                  // gallery changes, replacement-media drafts and stock edits
-                  // are the same in every view and survive the switch. A plain
-                  // Discard click discards both halves (view-switch-discard.ts).
-                  routeSaveBarDiscard({
-                    view: () => {
-                      handlers.handleDiscard();
-                      if (subResourceHandlers?.resetViewChanges) subResourceHandlers.resetViewChanges();
-                      else subResourceHandlers?.resetChanges?.();
-                    },
-                    shared: () => {
-                      subResourceHandlers?.resetSharedChanges?.();
-                      // Third writer, same button — as with Save. Without this a
-                      // discarded quantity stayed in the input AND kept the bar
-                      // visible, and the next unrelated Save fired the stock write
-                      // the merchant thought they had dropped.
-                      commerceSave.discard();
-                    },
-                  });
+                  // Measurement only (unmeasured: does the native leave
+                  // dialog's "Discard" of a language/market switch fire this
+                  // handler?). Visible in production builds on purpose.
+                  console.info(
+                    `[SaveBar] onDiscard — language/market switch confirmation awaiting: ${viewSwitchConfirmPendingRef.current}`,
+                  );
+                  handlers.handleDiscard();
+                  subResourceHandlers?.resetChanges?.();
+                  // Third writer, same button — as with Save. Without this a
+                  // discarded quantity stayed in the input AND kept the bar
+                  // visible, and the next unrelated Save fired the stock write
+                  // the merchant thought they had dropped.
+                  commerceSave.discard();
                 }}
                 saveText={t.content?.save || "Save"}
                 discardText={t.content?.discardChanges || "Discard"}

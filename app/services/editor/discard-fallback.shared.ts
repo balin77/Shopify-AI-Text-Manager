@@ -8,7 +8,11 @@
  * The load captured which fields were inherited and with what value. A field
  * is inherited after Discard exactly when it was inherited at load AND its
  * baseline still holds that loaded value — a save since then (which moved the
- * baseline to a value of its own) makes it a real value, not a fallback.
+ * baseline to a value of its own) makes it a real value, not a fallback. A save
+ * of EXACTLY the inherited value leaves the baseline equal to the snapshot, so
+ * the save response also drops the keys it stored from the snapshot
+ * (`dropSavedFieldsFromFallbackSnapshot`) — otherwise Discard would re-flag a
+ * stored value of the field's own as inherited.
  *
  * Pure and import-free.
  */
@@ -27,4 +31,18 @@ export function fallbackFieldsAfterDiscard(
     if (baseline[key] !== undefined && baseline[key] === snapshot.values[key]) out.add(key);
   }
   return out;
+}
+
+/** The snapshot without the fields a save STORED (a value of their own now). */
+export function dropSavedFieldsFromFallbackSnapshot(
+  snapshot: LoadedFallbackSnapshot | null,
+  savedKeys: Iterable<string>,
+): LoadedFallbackSnapshot | null {
+  if (!snapshot) return snapshot;
+  const saved = new Set(savedKeys);
+  if (![...snapshot.fields].some((key) => saved.has(key))) return snapshot;
+  return {
+    fields: new Set([...snapshot.fields].filter((key) => !saved.has(key))),
+    values: snapshot.values,
+  };
 }

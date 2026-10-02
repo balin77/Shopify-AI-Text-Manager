@@ -60,9 +60,6 @@ export const debugLog = {
   /** UiDataLoader transitions (resolve, save, translate) */
   transition: createLogger('TRANSITION'),
 
-  /** Native save bar (which Discard ran: plain, or inside a view switch) */
-  saveBar: createLogger('SAVE-BAR'),
-
   /** UiDataLoader resolve (field value resolution) */
   resolve: createLogger('RESOLVE'),
 

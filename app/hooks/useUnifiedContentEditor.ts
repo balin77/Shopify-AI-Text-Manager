@@ -17,7 +17,7 @@ import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
 import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, preserveUnsavedEdits } from "./useUiDataLoader";
 import type { PartialSave } from "./useUiDataLoader";
-import type { LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
+import { dropSavedFieldsFromFallbackSnapshot, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -2166,6 +2166,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 Object.entries(partial.values).filter(([key]) => !notConfirmed.has(key)),
               );
               originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...confirmedValues };
+              // Stored now: Discard must not re-flag them as inherited.
+              loadedFallbackRef.current = dropSavedFieldsFromFallbackSnapshot(
+                loadedFallbackRef.current,
+                Object.keys(confirmedValues),
+              );
               if (isThemeContentType(config.contentType)) {
                 originalTemplateValuesRef.current = { ...originalTemplateValuesRef.current, ...confirmedValues };
                 setTemplateValuesVersion(v => v + 1);
@@ -2181,6 +2186,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
+          }
+          if (!partial) {
+            // A full save stored every field that was no longer inherited
+            // (the ones still inherited are not sent); a stored value — even
+            // one equal to the inherited text — is the field's own now, so
+            // Discard must not re-flag it. An unconfirmed clear stays out.
+            const notStored = unconfirmedClearedFieldSet(fetcher.data);
+            loadedFallbackRef.current = dropSavedFieldsFromFallbackSnapshot(
+              loadedFallbackRef.current,
+              [...(loadedFallbackRef.current?.fields ?? [])].filter(
+                (key) => !fallbackFieldsRef.current.has(key) && !notStored.has(key),
+              ),
+            );
           }
           // Fields whose clear was not confirmed keep their PREVIOUS baseline,
           // so they still read as changed and the merchant can save again.
