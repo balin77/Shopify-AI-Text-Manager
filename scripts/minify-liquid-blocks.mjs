@@ -30,6 +30,11 @@
  *      trims the whitespace at the end of the directly preceding text, `-%}`
  *      the whitespace at the start of the directly following text (ASCII
  *      whitespace only, newlines included). Without a dash nothing is trimmed.
+ *      One case is not dropped but kept as an inline comment (`{%-#-%}` /
+ *      `{%-#%}`, dashes as in the source): whitespace-only text between a
+ *      tag/the file start and a `{%- comment`, where Ruby Liquid's
+ *      `bug_compatible_whitespace_trimming` mode renders differently from the
+ *      normal one and the engine, not this script, must do the trimming.
  *   2. Leading indentation is stripped per line.
  *   3. Runs of 2+ blank lines collapse to one.
  *   4. Trailing whitespace is stripped per line.
@@ -312,6 +317,9 @@ function createEmitter() {
   };
 }
 
+/** A dash-trimming inline comment tag: `{%-# ... %}` / `{%-# ... -%}`. */
+const INLINE_DASH_COMMENT = /^\{%-#/;
+
 const LIQUID_TAG_OPEN = /^\{%-?\s*liquid\b/;
 
 /**
@@ -350,24 +358,64 @@ export function minifyLiquidTag(text) {
  */
 export function minifyLiquid(source) {
   const emit = createEmitter();
+  const segments = scanRegions(source);
   let prevKind = null;
   let trimNext = false;
-  for (const segment of scanRegions(source)) {
+  // What the Liquid token boundary before the current plain text looks like:
+  // `atTagBoundary` is true at the start of the file and right after a Liquid
+  // tag/output/comment (NOT after a <script>/<pre> element, which is text);
+  // `boundaryDash` says that tag ended in `-%}`/`-}}` and therefore already
+  // stripped the text that follows.
+  let atTagBoundary = true;
+  let boundaryDash = false;
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
     if (segment.kind === 'plain') {
       let text = segment.text;
       // `-%}` on the comment before: Liquid strips this text's leading whitespace.
       if (trimNext) text = text.replace(/^[ \t\n\r\f\v]+/, '');
+      const next = segments[i + 1];
+      if (
+        next &&
+        (next.kind === 'comment' ? next.text.startsWith('{%-') : INLINE_DASH_COMMENT.test(next.text)) &&
+        atTagBoundary &&
+        !boundaryDash &&
+        /^[ \t\n\r\f\v]+$/.test(text)
+      ) {
+        // Whitespace-only text between a tag (or the file start) and a
+        // `{%- comment`: Ruby Liquid's bug_compatible_whitespace_trimming mode
+        // restores the FIRST byte of a text token that rstrip emptied, so
+        // whether this whitespace survives depends on a parser flag we cannot
+        // observe. Keep its first byte and let Shopify's own engine do the
+        // trimming through an inline comment carrying the same dashes.
+        emit.pushProtected(text[0]);
+        // A second pass meets the inline comment this branch wrote and must
+        // keep it (and the byte before it) as it is: idempotence.
+        emit.pushProtected(
+          next.kind === 'comment' ? (next.text.endsWith('-%}') ? '{%-#-%}' : '{%-#%}') : next.text,
+        );
+        trimNext = next.text.endsWith('-%}');
+        boundaryDash = trimNext;
+        atTagBoundary = true;
+        prevKind = 'comment';
+        i++;
+        continue;
+      }
       emit.mark();
       emit.pushPlain(text);
       trimNext = false;
     } else if (segment.kind === 'protected') {
       emit.pushProtected(LIQUID_TAG_OPEN.test(segment.text) ? minifyLiquidTag(segment.text) : segment.text);
       trimNext = false;
+      atTagBoundary = segment.text.startsWith('{');
+      boundaryDash = atTagBoundary && /-(?:%|\})\}$/.test(segment.text);
     } else {
       // 'comment' segments are dropped entirely (rule 1), but the dashes still
       // act: `{%-` trims the preceding text token, `-%}` the following one.
       if (prevKind === 'plain' && segment.text.startsWith('{%-')) emit.trimTrailingWhitespace();
       trimNext = segment.text.endsWith('-%}');
+      atTagBoundary = true;
+      boundaryDash = trimNext;
     }
     prevKind = segment.kind;
   }

@@ -66,12 +66,55 @@ describe('minifyLiquid — comment removal (rule 1)', () => {
 
   it('never trims into a protected region or a Liquid tag next to the comment', () => {
     expect(minifyLiquid('<script>x </script>{%- comment -%}c{%- endcomment -%} <b>')).toBe('<script>x </script><b>');
-    expect(minifyLiquid('{{ a }} {%- comment -%}c{%- endcomment -%}{{ b }}')).toBe('{{ a }}{{ b }}');
+    expect(minifyLiquid('{{ a -}} {%- comment -%}c{%- endcomment -%}{{ b }}')).toBe('{{ a -}}{{ b }}');
     expect(minifyLiquid('{{ a }}{% comment %}c{%- endcomment -%} {{ b }}')).toBe('{{ a }}{{ b }}');
   });
 
   it('keeps the line state right after trimming back to an earlier line', () => {
     expect(minifyLiquid('  a\n   {%- comment -%}c{% endcomment %}\n   b')).toBe('a\nb');
+  });
+
+  describe('whitespace-only text before a `{%- comment` (bug_compatible_whitespace_trimming)', () => {
+    // Ruby Liquid's bug-compatible mode restores the FIRST byte of a text
+    // token that rstrip emptied, so `{{ 'A' }}\n  {%- comment -%}…` renders
+    // `AB` normally but `A\nB` there. We cannot tell which mode a storefront
+    // uses, so the comment is kept as an inline comment with the same dashes
+    // and Shopify's own engine does the trimming.
+    const repro = "{{ 'A' }}\n  {%- comment -%}x{%- endcomment -%}\n{{ 'B' }}";
+
+    it('keeps an inline comment with the original dash sides in the ambiguous case', () => {
+      expect(minifyLiquid(repro)).toBe("{{ 'A' }}\n{%-#-%}{{ 'B' }}");
+      expect(minifyLiquid("{{ 'A' }}\n  {%- comment %}x{% endcomment %}\n{{ 'B' }}")).toBe(
+        "{{ 'A' }}\n{%-#%}\n{{ 'B' }}",
+      );
+    });
+
+    it('also applies at the start of the file and after {% raw %}', () => {
+      expect(minifyLiquid("\n  {%- comment -%}x{%- endcomment -%}\n{{ 'B' }}")).toBe("\n{%-#-%}{{ 'B' }}");
+      expect(minifyLiquid('{% raw %}r{% endraw %}\n {%- comment %}x{% endcomment %}')).toBe(
+        '{% raw %}r{% endraw %}\n{%-#%}',
+      );
+    });
+
+    it('keeps the first byte as written, so the bug-compatible render is the source render', () => {
+      expect(minifyLiquid("{{ 'A' }} \n {%- comment -%}x{%- endcomment -%}{{ 'B' }}")).toBe("{{ 'A' }} {%-#-%}{{ 'B' }}");
+    });
+
+    it('is idempotent, including the inline comment form and a leading-space first byte', () => {
+      for (const src of [repro, " {%- comment -%}x{%- endcomment -%}{{ 'B' }}", "{{ 'A' }}  {%- comment %}x{% endcomment %}"]) {
+        const once = minifyLiquid(src);
+        expect(minifyLiquid(once)).toBe(once);
+      }
+    });
+
+    it('does not apply when the preceding tag already trimmed, or text is not whitespace-only', () => {
+      expect(minifyLiquid("{{ 'A' -}}\n  {%- comment -%}x{%- endcomment -%}\n{{ 'B' }}")).toBe("{{ 'A' -}}{{ 'B' }}");
+      expect(minifyLiquid("{{ 'A' }}x\n  {%- comment -%}x{%- endcomment -%}\n{{ 'B' }}")).toBe("{{ 'A' }}x{{ 'B' }}");
+      expect(minifyLiquid("<script>x</script> {%- comment -%}x{%- endcomment -%}{{ 'B' }}")).toBe(
+        "<script>x</script>{{ 'B' }}",
+      );
+      expect(minifyLiquid("{{ 'A' }}\n  {% comment -%}x{%- endcomment -%}\n{{ 'B' }}")).toBe("{{ 'A' }}\n{{ 'B' }}");
+    });
   });
 
   it('is non-greedy — two comments are removed, the code between them survives', () => {
@@ -327,29 +370,33 @@ describe('the real extension bundle', () => {
   it('changes nothing but whitespace outside the protected regions', () => {
     // Whitespace may only vanish where Liquid's own dash trimming would remove
     // it, i.e. next to a removed `{%-` / `-%}` comment. The expectation is built
-    // by replaying exactly that on the ORIGINAL segments and then comparing with
-    // runs of whitespace folded to one space -- NOT by deleting all whitespace,
-    // which would hide a lost separator anywhere.
+    // by replaying exactly that on the ORIGINAL segments. Every non-plain
+    // segment becomes a NUL sentinel on both sides (a plain segment that
+    // vanished keeps an empty placeholder), so whitespace lost on ONE side of a
+    // protected region (`x {{ a }} y` -> `x{{ a }} y`) cannot hide in a join.
+    // Runs of whitespace are folded to one space, NOT deleted.
     const fold = (t: string) => t.replace(/\s+/g, ' ');
+    const trimmed = (seg: { text: string }) => seg.text.replace(/^[ \t\n\r\f\v]+/, '');
     for (const block of report.blocks) {
       const segs = scanRegions(block.original);
-      const expected = segs
-        .map((seg, i) => {
-          if (seg.kind !== 'plain') return null;
-          let t = seg.text;
-          const prev = segs[i - 1];
-          const next = segs[i + 1];
-          if (prev?.kind === 'comment' && prev.text.endsWith('-%}')) t = t.replace(/^[ \t\n\r\f\v]+/, '');
-          if (next?.kind === 'comment' && next.text.startsWith('{%-')) t = t.replace(/[ \t\n\r\f\v]+$/, '');
-          return t;
-        })
-        .filter((t): t is string => t !== null);
-      const actual = scanRegions(block.minified)
-        .filter((s) => s.kind === 'plain')
-        .map((s) => s.text);
-      // Plain segments of the two files line up only when no segment vanished
-      // entirely; compare the concatenation instead, folded and trimmed.
-      expect(fold(actual.join('')).trim(), block.name).toBe(fold(expected.join('')).trim());
+      const expected: string[] = [];
+      segs.forEach((seg, i) => {
+        if (seg.kind === 'comment') return;
+        if (seg.kind !== 'plain') {
+          expected.push('\u0000');
+          return;
+        }
+        let t = seg.text;
+        const prev = segs[i - 1];
+        const next = segs[i + 1];
+        if (prev?.kind === 'comment' && prev.text.endsWith('-%}')) t = trimmed({ text: t });
+        if (next?.kind === 'comment' && next.text.startsWith('{%-')) t = t.replace(/[ \t\n\r\f\v]+$/, '');
+        expected.push(t);
+      });
+      // Removed comments contribute nothing, so the plain segments around one
+      // simply concatenate on both sides.
+      const actual = scanRegions(block.minified).map((s) => (s.kind === 'plain' ? s.text : '\u0000'));
+      expect(fold(actual.join('')), block.name).toBe(fold(expected.join('')));
     }
   });
 
