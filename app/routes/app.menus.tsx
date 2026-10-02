@@ -64,7 +64,7 @@ import {
 } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
-import { appFetchJson, isSessionExpiredError } from "../utils/app-fetch";
+import { appFetchJson, isAuthError } from "../utils/app-fetch";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
@@ -1177,7 +1177,7 @@ export default function MenusPage() {
         ({ response, data: payload } = await appFetchJson<typeof payload>("/api/ai", { method: "POST", body: fd }));
       } catch (e) {
         // The shown sentence, not the code: the callers display e.message.
-        if (isSessionExpiredError(e)) throw new Error(translateErrorMessage(e.message, t as never));
+        if (isAuthError(e)) throw new Error(translateErrorMessage(e.message, t as never));
         throw e;
       }
       if (!payload?.success || typeof payload.translatedValue !== "string") {

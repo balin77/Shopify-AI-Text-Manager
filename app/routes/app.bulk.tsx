@@ -139,7 +139,7 @@ import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
 import type { DataResponse } from "~/types/data-response";
 import { translationForeignLocales } from "~/services/translations/stale-translations.shared";
-import { appFetch, isSessionExpiredError } from "~/utils/app-fetch";
+import { appFetch, isReauthorizeRequiredError, isSessionExpiredError } from "~/utils/app-fetch";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -1834,6 +1834,8 @@ export default function BulkEditor() {
       setCellActionError(
         isSessionExpiredError(err)
           ? b.cellActions.sessionExpired
+          : isReauthorizeRequiredError(err)
+          ? b.cellActions.reauthorizeRequired
           : err instanceof Error ? err.message : String(err),
       );
       return null;

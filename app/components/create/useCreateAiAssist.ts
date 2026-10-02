@@ -22,7 +22,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { appFetch, isSessionExpiredError, SESSION_EXPIRED_CODE } from "../../utils/app-fetch";
+import { appFetch, isAuthError } from "../../utils/app-fetch";
 import type { CreatableResource } from "../../config/create-fields.config";
 import { createAiSpecFor, LONG_TEXT_KEY_BY_RESOURCE } from "../../config/create-ai.shared";
 
@@ -182,8 +182,8 @@ export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
             // what did not come through. A REFUSAL is the exception — it
             // refuses every following field the same way.
             if (error instanceof AiRefusedError) refusalMessage = error.message;
-            // A CODE the modal phrases (`t.aiWarnings.sessionExpired`).
-            else if (isSessionExpiredError(error)) refusalMessage = SESSION_EXPIRED_CODE;
+            // A CODE the modal phrases (`t.aiWarnings.sessionExpired` / `.reauthorizeRequired`).
+            else if (isAuthError(error)) refusalMessage = error.code;
             failed.push(field.createKey);
           }
         }

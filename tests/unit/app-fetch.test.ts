@@ -8,8 +8,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   appFetch,
   appFetchJson,
+  classifyAuthResponse,
   isAuthBounce,
+  isReauthorizeRequiredError,
   isSessionExpiredError,
+  ReauthorizeRequiredError,
   SessionExpiredError,
 } from "~/utils/app-fetch";
 import { translateErrorMessage } from "~/utils/editor-error-messages";
@@ -49,11 +52,25 @@ function sentAuth(call: number): string | null {
   return new Headers(init.headers).get("Authorization");
 }
 
-describe("isAuthBounce", () => {
-  it("recognises the bounce page, the retry header and a body-less 401", () => {
+describe("isAuthBounce / classifyAuthResponse", () => {
+  it("retries only the three shapes answered before route code: retry header, 200 HTML, redirected HTML", () => {
     expect(isAuthBounce(bouncePage())).toBe(true);
     expect(isAuthBounce(retry401())).toBe(true);
-    expect(isAuthBounce(new Response(null, { status: 401 }))).toBe(true);
+    const redirected = new Response("<html></html>", { status: 403, headers: { "content-type": "text/html" } });
+    Object.defineProperty(redirected, "redirected", { value: true });
+    expect(isAuthBounce(redirected)).toBe(true);
+  });
+
+  it("a 401 without the retry header is 'expired' (not retryable), one with a reauthorize URL is 'reauthorize'", () => {
+    const bare = new Response(null, { status: 401 });
+    expect(isAuthBounce(bare)).toBe(false);
+    expect(classifyAuthResponse(bare)).toBe("expired");
+    const reauth = new Response(null, {
+      status: 401,
+      headers: { "X-Shopify-API-Request-Failure-Reauthorize-Url": "https://admin.shopify.com/charges/1" },
+    });
+    expect(isAuthBounce(reauth)).toBe(false);
+    expect(classifyAuthResponse(reauth)).toBe("reauthorize");
   });
 
   it("never mistakes a route's own JSON 401 (INVALID_AI_KEY) or an error page for a bounce", () => {
@@ -121,6 +138,51 @@ describe("appFetch", () => {
     ).rejects.toBeInstanceOf(SessionExpiredError);
     expect(sentAuth(0)).toBe("Bearer mine");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 401 WITHOUT the retry header throws sessionExpired at once — no resend, a write may have started", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    const err = await appFetch("/api/ai", { method: "POST", body: new FormData() }).catch((e) => e);
+    expect(err).toBeInstanceOf(SessionExpiredError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 401 with a reauthorize URL surfaces as reauthorizeRequired, not as an expired session", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 401,
+        headers: { "X-Shopify-API-Request-Failure-Reauthorize-Url": "https://admin.shopify.com/charges/1" },
+      }),
+    );
+    const err = await appFetchJson("/api/ai", { method: "POST" }).catch((e) => e);
+    expect(err).toBeInstanceOf(ReauthorizeRequiredError);
+    expect(isReauthorizeRequiredError(err)).toBe(true);
+    expect(isSessionExpiredError(err)).toBe(false);
+    expect(err.url).toBe("https://admin.shopify.com/charges/1");
+    expect(translateErrorMessage(err.message, de as never)).toBe(de.errors.reauthorizeRequired);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries at most once, and asks for the second token on a shorter deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const idToken = vi
+        .fn()
+        .mockResolvedValueOnce("tok-1")
+        .mockImplementationOnce(() => new Promise(() => {})); // never answers
+      (window as unknown as { shopify: unknown }).shopify = { idToken };
+      fetchMock.mockResolvedValue(bouncePage());
+      const pending = appFetch("/api/ai", { method: "POST" }).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2);
+      const err = await pending;
+      expect(err).toBeInstanceOf(SessionExpiredError);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(sentAuth(1)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a non-JSON answer that is not a bounce keeps the status, not the body", async () => {

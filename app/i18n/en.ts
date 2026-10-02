@@ -962,6 +962,7 @@ export const en: Translation = {
       translateAfterwardsUnsupported: "This type is translated from its own editor after creating it.",
       aiWarnings: {
         sessionExpired: "Your session has expired — please reload the page.",
+        reauthorizeRequired: "Shopify asks you to confirm the app's access again — please reload the page and approve the request.",
         allFailed: "The AI could not write any of the remaining fields.",
       },
       createWarnings: {
@@ -4522,6 +4523,7 @@ export const en: Translation = {
       emptySource: "There is no text in the primary language to work from.",
       someLocalesFailed: "Not translated",
       sessionExpired: "The session has expired — reload the page and sign in again.",
+      reauthorizeRequired: "Shopify asks you to confirm the app's access again — reload the page and approve the request.",
       menu: "Actions for this field",
       busy: "Working…",
     },
@@ -4674,6 +4676,7 @@ export const en: Translation = {
     translateStoreFailedAll: "Shopify did not store the translation for any language",
     unknownError: "Unknown error",
     sessionExpired: "Your session has expired — please reload the page.",
+    reauthorizeRequired: "Shopify asks you to confirm the app's access again — please reload the page and approve the request.",
 
     // Sync errors
     syncApiError: "Sync failed due to a Shopify API error. Your local data was preserved.",

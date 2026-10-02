@@ -969,6 +969,7 @@ export const de = {
       translateAfterwardsUnsupported: "Dieser Typ wird nach dem Anlegen in seinem eigenen Editor übersetzt.",
       aiWarnings: {
         sessionExpired: "Die Sitzung ist abgelaufen — bitte die Seite neu laden.",
+        reauthorizeRequired: "Shopify verlangt, dass du den Zugriff der App erneut bestätigst — bitte die Seite neu laden und die Anfrage bestätigen.",
         allFailed: "Die KI konnte keines der übrigen Felder schreiben.",
       },
       createWarnings: {
@@ -4543,6 +4544,7 @@ export const de = {
       emptySource: "In der Hauptsprache ist kein Text vorhanden, mit dem gearbeitet werden könnte.",
       someLocalesFailed: "Nicht übersetzt",
       sessionExpired: "Die Sitzung ist abgelaufen — bitte die Seite neu laden und erneut anmelden.",
+      reauthorizeRequired: "Shopify verlangt, dass du den Zugriff der App erneut bestätigst — bitte die Seite neu laden und die Anfrage bestätigen.",
       menu: "Aktionen für dieses Feld",
       busy: "Wird ausgeführt…",
     },
@@ -4696,6 +4698,7 @@ export const de = {
     translateStoreFailedAll: "Shopify hat die Übersetzung für keine Sprache gespeichert",
     unknownError: "Unbekannter Fehler",
     sessionExpired: "Die Sitzung ist abgelaufen — bitte die Seite neu laden.",
+    reauthorizeRequired: "Shopify verlangt, dass du den Zugriff der App erneut bestätigst — bitte die Seite neu laden und die Anfrage bestätigen.",
 
     // Sync errors
     syncApiError: "Synchronisation fehlgeschlagen wegen eines Shopify-API-Fehlers. Ihre lokalen Daten wurden beibehalten.",

@@ -947,6 +947,7 @@ export const es: Translation = {
       translateAfterwardsUnsupported: "Este tipo se traduce desde su propio editor después de crearlo.",
       aiWarnings: {
         sessionExpired: "La sesión ha caducado: recarga la página.",
+        reauthorizeRequired: "Shopify pide que vuelvas a confirmar el acceso de la app: recarga la página y aprueba la solicitud.",
         allFailed: "La IA no pudo escribir ninguno de los campos restantes.",
       },
       createWarnings: {
@@ -4506,6 +4507,7 @@ export const es: Translation = {
       emptySource: "No hay texto en el idioma principal con el que trabajar.",
       someLocalesFailed: "Sin traducir",
       sessionExpired: "La sesión ha caducado: recarga la página e inicia sesión de nuevo.",
+      reauthorizeRequired: "Shopify pide que vuelvas a confirmar el acceso de la app: recarga la página y aprueba la solicitud.",
       menu: "Acciones para este campo",
       busy: "Procesando…",
     },
@@ -4659,6 +4661,7 @@ export const es: Translation = {
     translateStoreFailedAll: "Shopify no guardó la traducción para ningún idioma",
     unknownError: "Error desconocido",
     sessionExpired: "La sesión ha caducado: recarga la página.",
+    reauthorizeRequired: "Shopify pide que vuelvas a confirmar el acceso de la app: recarga la página y aprueba la solicitud.",
 
     // Sync errors
     syncApiError: "La sincronización falló debido a un error de la API de Shopify. Sus datos locales se conservaron.",

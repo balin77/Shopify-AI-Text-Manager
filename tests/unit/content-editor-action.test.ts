@@ -13,6 +13,10 @@ const { productsAction } = vi.hoisted(() => ({
   productsAction: vi.fn(async (_args: { request: Request }) => ({ success: true })),
 }));
 vi.mock("~/routes/app.products", () => ({ action: productsAction }));
+const warn = vi.hoisted(() => vi.fn());
+vi.mock("~/utils/logger.server", () => ({
+  logger: { warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 
 import { action } from "~/routes/api.content-editor-action";
 import {
@@ -21,18 +25,53 @@ import {
   postContentEditorSave,
 } from "~/services/editor/content-action-endpoint.shared";
 
-function post(fields: Record<string, string>) {
+function post(fields: Record<string, string>, headers: Record<string, string> = { Authorization: "Bearer token" }) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   const request = new Request("https://app.test/api/content-editor-action", {
     method: "POST",
     body: fd,
-    headers: { Authorization: "Bearer token" },
+    headers,
   });
   return action({ request, params: {}, context: {} } as never);
 }
 
-beforeEach(() => productsAction.mockClear());
+beforeEach(() => {
+  productsAction.mockClear();
+  warn.mockClear();
+});
+
+describe("api.content-editor-action — auth bounce from the page action", () => {
+  const bouncePage = () =>
+    new Response("<script></script>", { status: 200, headers: { "content-type": "text/html;charset=utf-8" } });
+  const thrown = (p: Promise<unknown>) => p.then(() => { throw new Error("did not throw"); }, (e) => e);
+
+  it("turns the page action's bounce page into the /api 401 + retry header, judged on the ORIGINAL request", async () => {
+    productsAction.mockImplementationOnce(async () => { throw bouncePage(); });
+    const err = await thrown(post({ action: "updateContent", _page: "/app/products" }, {}));
+    expect(err).toBeInstanceOf(Response);
+    expect((err as Response).status).toBe(401);
+    expect((err as Response).headers.get("X-Shopify-Retry-Invalid-Session-Request")).toBe("1");
+    expect(await (err as Response).json()).toMatchObject({ code: "sessionExpired" });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][1]).toMatchObject({ pathname: "/api/content-editor-action" });
+  });
+
+  it("re-throws everything else unchanged: a bounce for a request WITH a token, a redirect, a plain error", async () => {
+    const page = bouncePage();
+    productsAction.mockImplementationOnce(async () => { throw page; });
+    expect(await thrown(post({ action: "updateContent", _page: "/app/products" }))).toBe(page);
+
+    const redirect = new Response(null, { status: 302, headers: { location: "/auth/login" } });
+    productsAction.mockImplementationOnce(async () => { throw redirect; });
+    expect(await thrown(post({ action: "updateContent", _page: "/app/products" }, {}))).toBe(redirect);
+
+    const boom = new Error("boom");
+    productsAction.mockImplementationOnce(async () => { throw boom; });
+    expect(await thrown(post({ action: "updateContent", _page: "/app/products" }, {}))).toBe(boom);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
 
 describe("api.content-editor-action", () => {
   it("runs the page's OWN action on the page's URL, with the session header and a clean body", async () => {
