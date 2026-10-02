@@ -7,7 +7,7 @@
  */
 
 import type { PartialSave } from "./useUiDataLoader";
-import { settleOwnSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { settleUnsentSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { sentAltsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "../services/content-attributes.shared";
@@ -214,15 +214,17 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       if (error instanceof Error && error.name === 'AbortError') {
         debugLog.submit(' AbortError caught (data likely saved):', error.message);
       } else {
-        // The request never left: no answer will ever settle what was staged
-        // for it. Settle it here, or the own-save entry (and with it the view
-        // switch refusal) and the in-flight slot would stick for good.
-        if (partial && setOwnSavesInFlight) {
-          setOwnSavesInFlight((prev) => settleOwnSave(prev, partial));
-        }
-        if (inFlightPartialRef.current === partial) inFlightPartialRef.current = null;
-        if (inFlightToastRef.current === successToast) inFlightToastRef.current = null;
-        if (inFlightScopeRef) inFlightScopeRef.current = null;
+        // The request never left: settle what was staged for it (shared
+        // with the queued-save drain in useUnifiedContentEditor).
+        settleUnsentSave({
+          partial,
+          successToast,
+          setOwnSavesInFlight,
+          inFlightPartialRef,
+          inFlightToastRef,
+          inFlightScopeRef,
+          isSavePendingRef,
+        });
         console.error('🔴 [safeSubmit] Non-AbortError - re-throwing:', error);
         throw error;
       }

@@ -116,3 +116,39 @@ export function backstopOwnSaves(
   const kept = entries.filter((entry) => entry.token === justSubmittedToken);
   return kept.length === entries.length ? entries : kept;
 }
+
+/** A ref-shaped slot (React's MutableRefObject, without importing React). */
+interface Slot<T> {
+  current: T;
+}
+
+/**
+ * A save whose `submit` THREW (anything but an AbortError) never left: no
+ * answer will ever settle what was staged for it. Settle it here, or the
+ * own-save entry (and with it the view-switch refusal), the in-flight slots
+ * and the pending flag stick for good. The ONE implementation behind both
+ * submit sites -- the direct one (`safeSubmit`, useEditorAutoSave) and the
+ * queued-save drain (useUnifiedContentEditor) -- so the two cannot come to
+ * clean up different things.
+ *
+ * A slot is cleared only while it still holds THIS request's value, so a
+ * newer request's state is never wiped by an older failure.
+ */
+export function settleUnsentSave(args: {
+  partial: unknown;
+  successToast: unknown;
+  setOwnSavesInFlight?: (update: (prev: OwnSaveInFlight[]) => OwnSaveInFlight[]) => void;
+  inFlightPartialRef: Slot<unknown>;
+  inFlightToastRef: Slot<unknown>;
+  inFlightScopeRef?: Slot<unknown>;
+  isSavePendingRef?: Slot<boolean>;
+}): void {
+  const { partial, successToast } = args;
+  if (partial != null && args.setOwnSavesInFlight) {
+    args.setOwnSavesInFlight((prev) => settleOwnSave(prev, partial));
+  }
+  if (args.inFlightPartialRef.current === partial) args.inFlightPartialRef.current = null;
+  if (args.inFlightToastRef.current === successToast) args.inFlightToastRef.current = null;
+  if (args.inFlightScopeRef) args.inFlightScopeRef.current = null;
+  if (args.isSavePendingRef) args.isSavePendingRef.current = false;
+}

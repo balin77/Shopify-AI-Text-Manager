@@ -735,9 +735,17 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
       );
     }
 
+    // A product medium: the locales held on ANY product's cache row of this
+    // MediaImage (a shared file has one row per product, and the rows of one
+    // medium can disagree -- e.g. one product's row lost to a sync race), so
+    // no locale the clear below would reach is left out of the removal.
     const existing = cacheId
       ? await db.productImageAltTranslation.findMany({
-          where: { imageId: cacheId, marketId: "", locale: { in: foreignLocales } },
+          where: {
+            image: { mediaId, product: { shop: deps.shop } },
+            marketId: "",
+            locale: { in: foreignLocales },
+          },
           select: { locale: true },
         })
       : await db.contentTranslation.findMany({
@@ -759,10 +767,9 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
     );
     if (confirmedLocales.length === 0) return;
     if (cacheId) {
-      // Every product's row of a shared medium (`mirrorProductMediaAlt`).
-      for (const locale of confirmedLocales) {
-        await mirrorProductMediaAlt(db, { shop: deps.shop, mediaId, locale, marketId: "", value: "" });
-      }
+      // Every product's row of a shared medium (`mirrorProductMediaAlt`),
+      // every confirmed locale in one lookup + one deleteMany.
+      await mirrorProductMediaAlt(db, { shop: deps.shop, mediaId, locale: confirmedLocales, marketId: "", value: "" });
     } else {
       await db.contentTranslation.deleteMany({
         where: {

@@ -3,6 +3,7 @@ import {
   isAltCoveredByOwnSave,
   isFieldCoveredByOwnSave,
   settleOwnSave,
+  settleUnsentSave,
   backstopOwnSaves,
   hasOwnSaveInFlight,
   type OwnSaveInFlight,
@@ -62,5 +63,40 @@ describe("own-save switch refusal and idle backstop", () => {
     expect(backstopOwnSaves([mine, stale], token)).toEqual([mine]);
     const same = [mine];
     expect(backstopOwnSaves(same, token)).toBe(same);
+  });
+});
+
+describe("settleUnsentSave (a submit that threw)", () => {
+  it("drops the entry and clears every slot this request holds", () => {
+    let entries: OwnSaveInFlight[] = [entry];
+    const toast = "ok";
+    const refs = {
+      inFlightPartialRef: { current: token as unknown },
+      inFlightToastRef: { current: toast as unknown },
+      inFlightScopeRef: { current: { locale: "de" } as unknown },
+      isSavePendingRef: { current: true },
+    };
+    settleUnsentSave({
+      partial: token,
+      successToast: toast,
+      setOwnSavesInFlight: (update) => {
+        entries = update(entries);
+      },
+      ...refs,
+    });
+    expect(entries).toEqual([]);
+    expect(refs.inFlightPartialRef.current).toBeNull();
+    expect(refs.inFlightToastRef.current).toBeNull();
+    expect(refs.inFlightScopeRef.current).toBeNull();
+    expect(refs.isSavePendingRef.current).toBe(false);
+  });
+
+  it("leaves a NEWER request's partial and toast alone", () => {
+    const newer = {};
+    const partialRef = { current: newer as unknown };
+    const toastRef = { current: "newer" as unknown };
+    settleUnsentSave({ partial: token, successToast: "older", inFlightPartialRef: partialRef, inFlightToastRef: toastRef });
+    expect(partialRef.current).toBe(newer);
+    expect(toastRef.current).toBe("newer");
   });
 });

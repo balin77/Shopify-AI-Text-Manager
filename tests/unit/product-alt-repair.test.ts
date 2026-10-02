@@ -173,6 +173,37 @@ describe("repairChangedProductAlts", () => {
     });
   });
 
+  it("a locale held only on ANOTHER product's row of the medium is re-read too; one deleteMany clears all", async () => {
+    const { gateway, db } = deps();
+    db.productImage.findMany.mockResolvedValue([{ id: "a" }, { id: "row-of-other-product" }]);
+    // The fold confirms only "en"; "fr" sits on the other product's row only.
+    removeAndVerifyAcrossLocales.mockResolvedValueOnce({ confirmedPairs: new Set(["en\u0000alt"]), userErrors: [] });
+    db.productImageAltTranslation.findMany.mockResolvedValue([{ locale: "en" }, { locale: "fr" }, { locale: "fr" }]);
+    removeAndVerify.mockResolvedValueOnce({ confirmedKeys: new Set(["alt"]), userErrors: [] });
+    await repairChangedProductAlts({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      productId: "p",
+      productTitle: "Box",
+      changes: [{ imageId: "a", mediaId: "gid://shopify/MediaImage/1" }],
+      policy: { ...base, purgeUnreconciledSurfaces: true } as never,
+      foreignLocales: ["en", "fr"],
+      primaryLocale: "de",
+    });
+    // The local-row lookup spans every cache row of the medium in the shop.
+    expect((db.productImageAltTranslation.findMany.mock.calls as unknown as [[{ where: unknown }]])[0][0].where).toMatchObject({
+      image: { mediaId: "gid://shopify/MediaImage/1", product: { shop: "s" } },
+    });
+    expect(removeAndVerify).toHaveBeenCalledTimes(1);
+    expect(removeAndVerify).toHaveBeenCalledWith(gateway, "gid://shopify/MediaImage/1", ["alt"], "fr", "");
+    expect(db.productImage.findMany).toHaveBeenCalledTimes(1);
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { imageId: { in: ["a", "row-of-other-product"] }, locale: { in: ["en", "fr"] }, marketId: "" },
+    });
+  });
+
   it("both switches off: nothing happens", async () => {
     const { gateway, db } = deps();
     await repairChangedProductAlts({

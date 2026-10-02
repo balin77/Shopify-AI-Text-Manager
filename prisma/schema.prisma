@@ -808,6 +808,11 @@ model ProductImage {
   //    in-transaction Prisma migration, to avoid blocking boot/deploy.
   @@unique([productId, mediaId])
   @@index([productId])
+  // Every product-alt mirror resolves the rows of a medium by
+  // (mediaId, product.shop) -- one MediaImage may be cached under several
+  // products. Built CONCURRENTLY, out of a transaction, per the FORWARD RULE
+  // above: 20261002000000_productimage_mediaid_index.
+  @@index([mediaId])
 }
 
 model ProductImageAltTranslation {

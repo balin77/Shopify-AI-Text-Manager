@@ -217,15 +217,17 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
       confirmedByMedia.set(mediaId, confirmed);
     }
 
-    const imageByMedia = new Map(changes.filter((c) => c.mediaId).map((c) => [c.mediaId as string, c.imageId]));
     for (const [mediaId, confirmed] of confirmedByMedia) {
-      const imageId = imageByMedia.get(mediaId);
-      if (!imageId) continue;
+      // The local rows of EVERY product's cache row of this MediaImage, not
+      // only the changed product's: a shared medium's rows can disagree, and
+      // the clear below reaches all of them, so a locale held only on another
+      // product's row must get its own re-read too.
       const localRows = await db.productImageAltTranslation.findMany({
-        where: { imageId, marketId: "", locale: { in: [...foreignLocales] } },
+        where: { image: { mediaId, product: { shop } }, marketId: "", locale: { in: [...foreignLocales] } },
         select: { locale: true },
       });
-      for (const { locale } of localRows) {
+      const localLocales = [...new Set(localRows.map((row: { locale: string }) => row.locale))];
+      for (const locale of localLocales) {
         if (confirmed.has(locale)) continue;
         try {
           const single = await removeAndVerify(gateway, mediaId, ["alt"], locale, "");
@@ -236,8 +238,8 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
       }
       // A confirmed removal is a fact about the ONE MediaImage, so it clears
       // every product's cache row of a shared medium, not only this one's.
-      for (const locale of confirmed) {
-        await mirrorProductMediaAlt(db, { shop, mediaId, locale, marketId: "", value: "" });
+      if (confirmed.size > 0) {
+        await mirrorProductMediaAlt(db, { shop, mediaId, locale: [...confirmed], marketId: "", value: "" });
       }
     }
 

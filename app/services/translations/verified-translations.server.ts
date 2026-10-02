@@ -892,42 +892,82 @@ export async function removeMediaAltAndVerify(
  *
  * The rows are resolved from (shop, mediaId) NOW -- never captured: a product
  * sync recreates ProductImage rows with fresh ids. `productId` is accepted for
- * the callers' context and does not narrow the write. `imageGone` = no row
- * anywhere in the shop to attach to (deleted or not cached): nothing is
- * written under a guessed id, the caller decides how to report it.
+ * the callers' context and does not narrow the write -- except under
+ * `inTransaction` (below). `imageGone` = no row anywhere in the shop to attach
+ * to (deleted or not cached): nothing is written under a guessed id, the
+ * caller decides how to report it.
+ *
+ * `locale` may be a LIST: a caller clearing several confirmed locales of one
+ * medium pays ONE row lookup and ONE deleteMany instead of one pair per
+ * locale (the rows are found through the `ProductImage(mediaId)` index).
+ *
+ * `inTransaction`: the caller hands a TRANSACTION client. A foreign-key
+ * failure inside a Postgres transaction aborts the whole transaction, so the
+ * "a concurrent sync deleted that row, skip it" catch below would turn into
+ * "every later statement of the transaction fails". In that mode the write is
+ * narrowed to `productId`'s own row (required -- the one row the caller's
+ * transaction itself holds) and every error is RE-THROWN; the caller mirrors
+ * the OTHER products' rows of a shared medium after commit, with the global
+ * client and without the flag (api.apply-alt-text-templates.tsx).
  */
 export async function mirrorProductMediaAlt(
   db: Pick<PrismaClient, "productImage" | "productImageAltTranslation">,
-  params: { shop: string; mediaId: string; locale: string; value: string; productId?: string; marketId?: string },
+  params: {
+    shop: string;
+    mediaId: string;
+    locale: string | readonly string[];
+    value: string;
+    productId?: string;
+    marketId?: string;
+    inTransaction?: boolean;
+  },
 ): Promise<"mirrored" | "imageGone"> {
-  const { shop, mediaId, locale, value } = params;
+  const { shop, mediaId, value } = params;
   const marketId = params.marketId ?? "";
+  const locales = [...new Set(typeof params.locale === "string" ? [params.locale] : params.locale)];
   if (!mediaId) return "imageGone";
+  if (params.inTransaction && !params.productId) {
+    throw new Error("mirrorProductMediaAlt: inTransaction requires productId");
+  }
   const images = await db.productImage.findMany({
-    where: { mediaId, product: { shop } },
+    where: {
+      mediaId,
+      product: { shop },
+      ...(params.inTransaction ? { productId: params.productId } : {}),
+    },
     select: { id: true },
   });
   if (!images || images.length === 0) return "imageGone";
+  if (locales.length === 0) return "mirrored";
   const imageIds = images.map((image: { id: string }) => image.id);
   if (value.trim() === "") {
-    await db.productImageAltTranslation.deleteMany({ where: { imageId: { in: imageIds }, locale, marketId } });
+    await db.productImageAltTranslation.deleteMany({
+      where: { imageId: { in: imageIds }, locale: locales.length === 1 ? locales[0] : { in: locales }, marketId },
+    });
     return "mirrored";
   }
   let written = 0;
   for (const imageId of imageIds) {
-    try {
-      await db.productImageAltTranslation.upsert({
-        where: { imageId_locale_marketId: { imageId, locale, marketId } },
-        create: { imageId, locale, marketId, altText: value },
-        update: { altText: value },
-      });
-      written += 1;
-    } catch (error: unknown) {
-      // That row was deleted between the lookup and the write (a concurrent
-      // sync recreating that product's rows) -- skip it, keep the others.
-      if ((error as { code?: string })?.code === "P2003") continue;
-      throw error;
+    let rowGone = false;
+    for (const locale of locales) {
+      try {
+        await db.productImageAltTranslation.upsert({
+          where: { imageId_locale_marketId: { imageId, locale, marketId } },
+          create: { imageId, locale, marketId, altText: value },
+          update: { altText: value },
+        });
+      } catch (error: unknown) {
+        // That row was deleted between the lookup and the write (a concurrent
+        // sync recreating that product's rows) -- skip it, keep the others.
+        // Never inside a transaction: there the failure has already aborted it.
+        if (!params.inTransaction && (error as { code?: string })?.code === "P2003") {
+          rowGone = true;
+          break;
+        }
+        throw error;
+      }
     }
+    if (!rowGone) written += 1;
   }
   return written > 0 ? "mirrored" : "imageGone";
 }

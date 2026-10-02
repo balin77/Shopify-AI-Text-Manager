@@ -578,6 +578,89 @@ describe("api.apply-alt-text-templates action (foreign locale)", () => {
     await run(fakeAdmin({ stored: { de: "Kiste (normalisiert)" } }), db);
     expect(db.productImageAltTranslation.upsert.mock.calls[0][0].create.altText).toBe("Kiste (normalisiert)");
   });
+
+  it("inside the transaction only THIS product's row is mirrored; the shared medium's other rows after commit", async () => {
+    const db = makeDb();
+    // A distinct transaction client, so the two phases can be told apart.
+    const tx: any = {
+      productImage: {
+        findMany: vi.fn(async () => [{ id: "img-row" }]),
+        upsert: vi.fn(async () => ({ id: "img-row" })),
+      },
+      productImageAltTranslation: { upsert: vi.fn(async () => ({})), deleteMany: vi.fn(async () => ({})) },
+    };
+    db.$transaction = vi.fn(async (fn: (t: unknown) => unknown) => fn(tx));
+    db.productImage.findMany = vi.fn(async () => [{ id: "img-row" }, { id: "row-of-B" }]);
+    const res = await run(fakeAdmin(), db);
+    expect(res).toMatchObject({ success: true, applied: 1 });
+    // In the transaction: narrowed to p1's own row.
+    expect(tx.productImage.findMany.mock.calls[0][0].where).toMatchObject({ mediaId: MEDIA, productId: "p1" });
+    expect(tx.productImageAltTranslation.upsert).toHaveBeenCalledTimes(1);
+    // After commit, with the global client: every product's row of the medium.
+    expect(db.productImage.findMany.mock.calls[0][0].where.productId).toBeUndefined();
+    const ids = db.productImageAltTranslation.upsert.mock.calls.map(
+      (c: any) => c[0].where.imageId_locale_marketId.imageId,
+    );
+    expect(ids).toEqual(["img-row", "row-of-B"]);
+  });
+});
+
+// -------------------------------------------------------------------------------
+describe("mirrorProductMediaAlt", () => {
+  function mirrorDb(rows: string[]) {
+    return {
+      productImage: { findMany: vi.fn(async () => rows.map((id) => ({ id }))) },
+      productImageAltTranslation: {
+        upsert: vi.fn(async () => ({})),
+        deleteMany: vi.fn(async () => ({ count: rows.length })),
+      },
+    } as any;
+  }
+
+  it("a LIST of locales costs one lookup and one deleteMany", async () => {
+    const { mirrorProductMediaAlt } = await import("../../app/services/translations/verified-translations.server");
+    const db = mirrorDb(["a", "b"]);
+    const r = await mirrorProductMediaAlt(db, { shop: SHOP, mediaId: MEDIA, locale: ["de", "fr", "de"], value: "" });
+    expect(r).toBe("mirrored");
+    expect(db.productImage.findMany).toHaveBeenCalledTimes(1);
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.productImageAltTranslation.deleteMany.mock.calls[0][0].where).toEqual({
+      imageId: { in: ["a", "b"] },
+      locale: { in: ["de", "fr"] },
+      marketId: "",
+    });
+  });
+
+  it("outside a transaction a row deleted by a concurrent sync (P2003) is skipped, the others written", async () => {
+    const { mirrorProductMediaAlt } = await import("../../app/services/translations/verified-translations.server");
+    const db = mirrorDb(["gone", "b"]);
+    db.productImageAltTranslation.upsert = vi.fn(async (args: any) => {
+      if (args.where.imageId_locale_marketId.imageId === "gone") throw Object.assign(new Error("fk"), { code: "P2003" });
+      return {};
+    });
+    const r = await mirrorProductMediaAlt(db, { shop: SHOP, mediaId: MEDIA, locale: "de", value: "Kiste" });
+    expect(r).toBe("mirrored");
+    expect(db.productImageAltTranslation.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it("inTransaction: narrowed to the caller's product and a P2003 is RE-THROWN (the tx is already aborted)", async () => {
+    const { mirrorProductMediaAlt } = await import("../../app/services/translations/verified-translations.server");
+    const db = mirrorDb(["mine"]);
+    db.productImageAltTranslation.upsert = vi.fn(async () => {
+      throw Object.assign(new Error("fk"), { code: "P2003" });
+    });
+    await expect(
+      mirrorProductMediaAlt(db, { shop: SHOP, mediaId: MEDIA, locale: "de", value: "Kiste", productId: "p1", inTransaction: true }),
+    ).rejects.toThrow("fk");
+    expect(db.productImage.findMany.mock.calls[0][0].where).toMatchObject({ productId: "p1" });
+  });
+
+  it("inTransaction without a productId refuses rather than touching other products' rows", async () => {
+    const { mirrorProductMediaAlt } = await import("../../app/services/translations/verified-translations.server");
+    await expect(
+      mirrorProductMediaAlt(mirrorDb(["a"]), { shop: SHOP, mediaId: MEDIA, locale: "de", value: "x", inTransaction: true }),
+    ).rejects.toThrow(/requires productId/);
+  });
 });
 
 // -------------------------------------------------------------------------------

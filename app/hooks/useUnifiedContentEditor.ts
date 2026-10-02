@@ -53,7 +53,7 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
-import { settleOwnSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -2910,6 +2910,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (error instanceof Error && error.name === 'AbortError') {
           debugLog.submit(' AbortError on queued save (ignored)');
         } else {
+          // The queued request never left: settle exactly what the direct
+          // submit's catch settles (useEditorAutoSave.safeSubmit), or its
+          // own-save entry, the in-flight slots and the pending flag stick.
+          settleUnsentSave({
+            partial: next.partial,
+            successToast: next.successToast,
+            setOwnSavesInFlight,
+            inFlightPartialRef,
+            inFlightToastRef,
+            inFlightScopeRef,
+            isSavePendingRef,
+          });
           throw error;
         }
       }
