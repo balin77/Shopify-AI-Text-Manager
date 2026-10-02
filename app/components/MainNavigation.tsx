@@ -517,7 +517,14 @@ export function MainNavigation() {
   // Navigate from an InfoBox link. Must go through handleNavigate so Shopify
   // session params (host/shop/embedded) are preserved — a raw client-side
   // navigate() drops them and breaks the *next* navigation (blank page).
+  // An ABSOLUTE link (the theme editor's app-embed deep link) leaves the app:
+  // read as an app path it was navigated to inside the iframe and answered 404.
+  // Same target as the Settings embed buttons (`external`): a new tab.
   const handleInfoBoxLink = (url: string) => {
+    if (/^https?:\/\//i.test(url)) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
     const [path, query] = url.split("?");
     const options = query ? { searchParams: new URLSearchParams(query) } : {};
     handleNavigate(path, options);
