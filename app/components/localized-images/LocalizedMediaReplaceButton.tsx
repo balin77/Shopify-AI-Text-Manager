@@ -210,6 +210,25 @@ export function LocalizedMediaReplaceButtons({ mediaId }: { mediaId: string }) {
 }
 
 /**
+ * The selected tile of a VARIANT gallery whose medium is not one of the
+ * product's own media (a file that lives only in the variant gallery, or a
+ * YouTube/Vimeo link stored on the variant): the storefront swap works on the
+ * product's media, so such a tile gets the button disabled with that reason,
+ * never silently nothing. Foreign locale only, like the real button.
+ */
+export function LocalizedMediaNotReplaceable() {
+  const ctx = useLocalizedMediaContext();
+  const { t } = useI18n();
+  const state = ctx?.state;
+  if (!state || !state.active || !state.canReplace || state.foreignValue) return null;
+  return (
+    <DisabledActionTooltip hint={t.localizedImages.notProductMedium}>
+      <Button size="slim" disabled>{t.localizedImages.replace}</Button>
+    </DisabledActionTooltip>
+  );
+}
+
+/**
  * In the PRIMARY locale nothing of this feature renders, but drafts made in a
  * foreign language are still waiting behind the save bar: one subdued line says
  * so, or the bar would be dirty with no visible reason.

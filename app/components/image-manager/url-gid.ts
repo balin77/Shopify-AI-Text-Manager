@@ -34,3 +34,21 @@ export function tilesByUrl<T>(
   }
   return out;
 }
+
+/**
+ * The same per-tile entries for the VARIANT galleries, whose tiles are keyed
+ * by `fileUrlMap[gid]` (gid -> url) rather than by the product gallery's urls.
+ * The lookup is the fileUrlMap inverse overlaid by the product gallery's
+ * url->gid map, so a variant tile of a product medium resolves to the very GID
+ * its "all images" tile does -- one replacement per medium, shown in both.
+ */
+export function fileTilesByUrl<T>(
+  fileUrlMap: Readonly<Record<string, string>>,
+  urlToGid: Readonly<Record<string, string>>,
+  tileOf: (gid: string) => T | null,
+): Record<string, T> {
+  const lookup: Record<string, string> = {};
+  for (const [gid, url] of Object.entries(fileUrlMap)) if (url) lookup[url] = gid;
+  Object.assign(lookup, urlToGid);
+  return tilesByUrl(Object.values(fileUrlMap), lookup, tileOf);
+}

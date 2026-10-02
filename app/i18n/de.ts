@@ -5501,6 +5501,7 @@ export const de = {
     replaceVideo: "Ersatzvideo hochladen",
     replaceLink: "Ersatzlink eingeben",
     notYetAvailable: "Dieses Medium wird noch von Shopify verarbeitet. Sobald es fertig ist, kannst du hier ein Ersatzbild oder -video festlegen.",
+    notProductMedium: "Ersatzbilder gibt es nur für Bilder und Videos, die auch in der Produktgalerie (Alle Bilder) sind. Dieses Medium ist nur in der Variantengalerie.",
     allMarkets: "Alle Märkte",
     replace: "Ersatzbild hochladen",
     remove: "Entfernen",

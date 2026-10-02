@@ -26,7 +26,7 @@ import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
 import { planAltFlush, restoreAltDrafts, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, altFlushSummary, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter } from "./alt-draft";
-import { gidForUrl, tilesByUrl } from "./url-gid";
+import { fileTilesByUrl, gidForUrl, tilesByUrl } from "./url-gid";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -2992,6 +2992,24 @@ export function VariantImageManager({
     if (!localizedMedia?.active) return {} as Record<string, LocalizedMediaTile>;
     return tilesByUrl(displayedProductUrls, urlToGid, (gid) => localizedMedia.tileOf(gid));
   }, [localizedMedia, urlToGid, displayedProductUrls]);
+  // The variant galleries show the SAME replacement on a tile of the same
+  // product medium (one entry per medium GID, so both galleries stay coupled
+  // and the symbol's flip state is shared). Variant tiles are keyed by
+  // fileUrlMap[gid]; the url->gid lookup is the fileUrlMap inverse overlaid by
+  // the product gallery's own map, with the same exact-then-without-`?v=` rule.
+  const variantReplacementsByUrl = useMemo(() => {
+    if (!localizedMedia?.active) return {} as Record<string, LocalizedMediaTile>;
+    return fileTilesByUrl(fileUrlMap, urlToGid, (gid) => localizedMedia.tileOf(gid));
+  }, [localizedMedia, urlToGid, fileUrlMap]);
+  // The product's OWN media (what a replacement can be set for): a variant tile
+  // outside this set lives only in the variant gallery and is not offered.
+  const productMediaIds = useMemo(() => {
+    const ids = new Set<string>(Object.keys(mediaMetaMap));
+    for (const img of effectiveProductImages) if (img.mediaId) ids.add(img.mediaId);
+    for (const m of unsettledMedia) ids.add(m.mediaId);
+    if (localizedMedia) for (const id of localizedMedia.mediaById.keys()) ids.add(id);
+    return ids;
+  }, [mediaMetaMap, effectiveProductImages, unsettledMedia, localizedMedia]);
   const productSingleSelectedGid = productSingleSelected
     ? (gidForUrl(urlToGid, productSingleSelected) ?? urlToGid[productSingleSelected] ?? null)
     : null;
@@ -3484,6 +3502,8 @@ export function VariantImageManager({
                 threeDModelUrls={pendingVariant3dModels[v.id] ?? v.threeDModelUrls ?? []}
                 onRemoveThreeDModelUrl={handleRemoveThreeDModelUrl}
                 onBrowseLibrary={() => setPickerTarget({ mode: "variant", variantId: v.id })}
+                replacements={variantReplacementsByUrl}
+                productMediaIds={productMediaIds}
               />
               );
             })

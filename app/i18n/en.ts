@@ -5479,6 +5479,7 @@ export const en: Translation = {
     replaceVideo: "Upload replacement video",
     replaceLink: "Enter replacement link",
     notYetAvailable: "Shopify is still processing this item. Once it is done, you can set a replacement image or video here.",
+    notProductMedium: "Replacements are only available for images and videos that are also in the product gallery (All images). This item is only in the variant gallery.",
     allMarkets: "All markets",
     replace: "Upload replacement image",
     remove: "Remove",

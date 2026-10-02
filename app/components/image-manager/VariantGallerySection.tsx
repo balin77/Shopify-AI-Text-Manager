@@ -9,6 +9,9 @@ import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { parseExternalVideoUrl } from "../../utils/mediaKind";
 import type { VariantWithGallery, ImageMeta } from "./types";
+import { gidForUrl } from "./url-gid";
+import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../localized-images/LocalizedMediaReplaceButton";
+import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 
 interface VariantGallerySectionProps {
   variant: VariantWithGallery;
@@ -51,6 +54,14 @@ interface VariantGallerySectionProps {
    *  parent owns the modal so its selection callback can update pending
    *  gallery state without re-mounting on every variant. */
   onBrowseLibrary?: () => void;
+  /**
+   * Per tile URL: the per-language replacement its medium shows (foreign
+   * language only). The SAME entries as the product gallery's: one replacement
+   * per product medium, so both galleries show and set it alike.
+   */
+  replacements?: Record<string, LocalizedMediaTile>;
+  /** GIDs of the product's own media; a tile outside it cannot get a replacement. */
+  productMediaIds?: ReadonlySet<string>;
 }
 
 export function VariantGallerySection({
@@ -92,6 +103,8 @@ export function VariantGallerySection({
   // videos. Parent inspects the URL pattern (.glb) to route to the right
   // metafield.
   onBrowseLibrary,
+  replacements,
+  productMediaIds,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   // No foreign locale → alt-text translation is greyed out instead of hidden.
@@ -221,6 +234,10 @@ export function VariantGallerySection({
   const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
 
   const singleSelectedUrl = localSelectedUrls.length === 1 ? localSelectedUrls[0] : null;
+  // The selected tile's product medium (null for a file that lives only in
+  // the variant gallery, or a YouTube/Vimeo link stored on the variant).
+  const singleSelectedGid = singleSelectedUrl ? gidForUrl(urlToGid, singleSelectedUrl) : null;
+  const singleSelectedIsProductMedium = !!singleSelectedGid && !!productMediaIds?.has(singleSelectedGid);
   // In foreign locale don't fall back to primary locale value (would show wrong content)
   const currentAltText = singleSelectedUrl
     ? (isPrimaryLocale
@@ -306,9 +323,16 @@ export function VariantGallerySection({
             hasMainImage={hasMainImage}
             localAltTexts={localAltTexts}
             isPrimaryLocale={isPrimaryLocale}
+            replacements={replacements}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {/* The replacement buttons of the ONE selected medium (foreign
+                language only; nothing renders otherwise), before "remove" like
+                in the product gallery. They write the same entry as there. */}
+            {singleSelectedUrl && (singleSelectedIsProductMedium && singleSelectedGid
+              ? <LocalizedMediaReplaceButtons mediaId={singleSelectedGid} />
+              : <LocalizedMediaNotReplaceable />)}
             {hasLocalSelection && (
               <Button
                 size="slim"

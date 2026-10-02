@@ -5464,6 +5464,7 @@ export const es: Translation = {
     replaceVideo: "Subir vídeo de reemplazo",
     replaceLink: "Introducir enlace de reemplazo",
     notYetAvailable: "Shopify aún está procesando este elemento. Cuando termine, podrás definir aquí una imagen o un vídeo de reemplazo.",
+    notProductMedium: "Los reemplazos solo están disponibles para imágenes y vídeos que también están en la galería del producto (Todas las imágenes). Este elemento solo está en la galería de la variante.",
     allMarkets: "Todos los mercados",
     replace: "Subir imagen de reemplazo",
     remove: "Eliminar",
