@@ -76,6 +76,8 @@ export function useVariantImageManager() {
   const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
+  // Alt saves already sent by a page Save and not answered yet (owned by the image manager).
+  const [isSavingAltTexts, setIsSavingAltTexts] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
   const [variantsForBulk, setVariantsForBulk] = useState<VariantWithGallery[]>([]);
   const [missingMainImageProductIds, setMissingMainImageProductIds] = useState<Set<string>>(new Set());
@@ -406,11 +408,10 @@ export function useVariantImageManager() {
           return [...kept, ...additions];
         });
       }
-      // bulkItems / hasAltTextEdits aren't tied to the gallery render in the
+      // bulkItems aren't tied to the gallery render in the
       // same way (no optimistic-tile flicker risk) so clear them now.
       setBulkItems([]);
       setSelectedBulkIds(new Set());
-      setHasAltTextEdits(false);
       // Trigger the /api/product-variants refetch. When it returns,
       // handleVariantsLoaded reads postSaveDeferredClearRef and applies the
       // pending clears — at which point the new media is already on
@@ -455,7 +456,7 @@ export function useVariantImageManager() {
     setPendingVariant3dPreviews({});
     setPendingKnownModelGids({});
     setPendingGalleryOrder({});
-    setHasAltTextEdits(false);
+    // hasAltTextEdits is owned by the image manager (its alt drafts): Discard and a product switch reset it there.
     // Clear data derived from the previous product so the bulk panels never match
     // against stale variants/selection during the load window of the new product.
     // missingMainImageProductIds is intentionally NOT reset — it is cross-product
@@ -488,6 +489,8 @@ export function useVariantImageManager() {
     resetCounter,
     hasAltTextEdits,
     setHasAltTextEdits,
+    isSavingAltTexts,
+    setIsSavingAltTexts,
     variantsForBulk,
     missingMainImageProductIds,
     selectedGalleryGids,

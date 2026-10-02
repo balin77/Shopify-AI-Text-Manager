@@ -136,6 +136,13 @@ export interface QueuedAltSave {
   /** The product the save was made on: a late answer must not touch another product's dirty state. */
   productId?: string;
   productTitle?: string;
+  /**
+   * Other tiles of the SAME medium that carried a draft when the save was
+   * planned (the product gallery and a variant gallery may show one medium
+   * under two urls). This save supersedes them: on success a tile still
+   * showing the planned text takes over the saved one.
+   */
+  aliases?: Array<{ url: string; altText: string }>;
 }
 
 export function enqueueAltSave(queue: QueuedAltSave[], entry: QueuedAltSave): QueuedAltSave[] {

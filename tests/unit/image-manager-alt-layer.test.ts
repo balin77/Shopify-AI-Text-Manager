@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { splitLoadedAltTexts, altFieldView, shouldSaveAltText } from "~/components/image-manager/alt-market-layer";
+import { splitLoadedAltTexts, altFieldView } from "~/components/image-manager/alt-market-layer";
 import { isAltTextTranslated } from "~/utils/field-validation.utils";
 import { translateErrorMessage } from "~/utils/editor-error-messages";
 
@@ -33,11 +33,6 @@ describe("alt-market-layer", () => {
     expect(altFieldView({ own: "mine", inherited: "g", primaryAlt: "p", fallbackPlaceholder: "ph" })).toMatchObject({ value: "mine", isTranslated: true, showsInherited: false });
     expect(altFieldView({ own: undefined, inherited: undefined, primaryAlt: "p", fallbackPlaceholder: "ph" }).placeholder).toBe("p");
     expect(altFieldView({ own: undefined, inherited: undefined, primaryAlt: "", fallbackPlaceholder: "ph" }).placeholder).toBe("ph");
-  });
-
-  it("a blur without an edit saves nothing", () => {
-    expect(shouldSaveAltText(false)).toBe(false);
-    expect(shouldSaveAltText(true)).toBe(true);
   });
 });
 
