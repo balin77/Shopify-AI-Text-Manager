@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   minifyLiquid,
   minifyLiquidTag,
   minifyJsonIslandBody,
+  minifyLiquidDetailed,
   buildReport,
+  printReport,
   scanRegions,
   LIQUID_LIMIT_BYTES,
   LIQUID_TARGET_BYTES,
@@ -395,12 +397,80 @@ describe('the real extension bundle', () => {
     }
   });
 
-  it('leaves no Liquid comments in the minified output', () => {
+  it('leaves no Liquid comments in the minified output, islands included', () => {
     for (const block of report.blocks) {
       expect(
         scanRegions(block.minified).some((s) => s.kind === 'comment'),
         block.name,
       ).toBe(false);
+      for (const seg of scanRegions(block.minified)) {
+        if (seg.kind !== 'island') continue;
+        expect(
+          scanRegions(seg.text, { liquidOnly: true }).some((s) => s.kind === 'comment'),
+          `${block.name} island`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('really minifies both real JSON islands (changed, comment-free, protected regions intact)', () => {
+    const named = report.blocks.filter((b) =>
+      /(^|\/)variant-gallery(-embed)?\.liquid$/.test(b.name),
+    );
+    expect(named.map((b) => b.name).sort()).toEqual([
+      'blocks/variant-gallery-embed.liquid',
+      'blocks/variant-gallery.liquid',
+    ]);
+    for (const block of named) {
+      const before = scanRegions(block.original).filter((s) => s.kind === 'island');
+      const after = scanRegions(block.minified).filter((s) => s.kind === 'island');
+      expect(before.length, block.name).toBeGreaterThan(0);
+      expect(after.length, block.name).toBe(before.length);
+      before.forEach((island, i) => {
+        expect(after[i].text, block.name).not.toBe(island.text);
+        expect(after[i].text.length, block.name).toBeLessThan(island.text.length);
+        const inner = scanRegions(after[i].text, { liquidOnly: true });
+        expect(inner.some((s) => s.kind === 'comment'), block.name).toBe(false);
+        // protected Liquid inside the island survives as written (liquid tags minified)
+        const isLiquidTag = (t: string) => /^\{%-?\s*liquid\b/.test(t);
+        const protBefore = scanRegions(island.text, { liquidOnly: true })
+          .filter((s) => s.kind === 'protected')
+          .map((s) => (isLiquidTag(s.text) ? minifyLiquidTag(s.text) : s.text));
+        const protAfter = inner.filter((s) => s.kind === 'protected').map((s) => s.text);
+        // inline barriers are the only additions allowed
+        expect(protAfter.filter((t) => !/^\{%-?#-?%\}$/.test(t)), block.name).toEqual(protBefore);
+      });
+    }
+  });
+
+  it('keeps no island verbatim: the real bundle produces no fallback warning', () => {
+    for (const block of report.blocks) expect(block.verbatimIslands, block.name).toBe(0);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      printReport(report);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it('warns, naming the file, when an island had to be kept verbatim', () => {
+    const bad = '<script type="application/json">\n  {% if a\n</script>';
+    expect(minifyLiquidDetailed(bad).verbatimIslands).toBe(1);
+    const synthetic = {
+      ...report,
+      blocks: [{ ...report.blocks[0], name: 'blocks/broken.liquid', verbatimIslands: 1 }],
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      printReport(synthetic);
+      expect(warn.mock.calls.flat().join('\n')).toContain('blocks/broken.liquid');
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
     }
   });
 
@@ -530,5 +600,67 @@ describe('minifyLiquid — <script type="application/json"> islands', () => {
   it('does not take a <style> or <pre> inside the island body for HTML', () => {
     const body = '\n   "a": "<style>",\n   "b": "<pre>"\n';
     expect(minifyJsonIslandBody(body)).toBe('\n"a": "<style>",\n"b": "<pre>"\n');
+  });
+});
+
+describe('minifyLiquid - comment removal keeps token barriers next to dash tags', () => {
+  const J = (body: string) => `<script type="application/json">${body}</script>`;
+  const idem = (s: string) => {
+    const once = minifyLiquid(s);
+    expect(minifyLiquid(once)).toBe(once);
+    return once;
+  };
+
+  it('trailing side: `-}}` / `-%}`, comment closed without a dash, text with leading whitespace', () => {
+    expect(idem("<p>{{ 'a' -}}\n{% comment %}c{% endcomment %}\n{{ 'b' }}</p>")).toBe(
+      "<p>{{ 'a' -}}\n{%#%}\n{{ 'b' }}</p>",
+    );
+    expect(idem("<p>{% if t -%}\n{% comment %}c{% endcomment %}\n  x{% endif %}</p>")).toBe(
+      '<p>{% if t -%}\n{%#%}\nx{% endif %}</p>',
+    );
+    // the comment's own left dash is carried over
+    expect(idem("<p>{{ 'a' -}}\n{%- comment %}c{% endcomment %}\n{{ 'b' }}</p>")).toBe(
+      "<p>{{ 'a' -}}{%-#%}\n{{ 'b' }}</p>",
+    );
+  });
+
+  it('leading side: text with trailing whitespace, comment opened without a dash, `{%-` / `{{-` tag', () => {
+    expect(idem("<p>a  {% comment %}c{% endcomment %}{{- 'b' }}</p>")).toBe("<p>a  {%#%}{{- 'b' }}</p>");
+    expect(idem('<p>a  {% comment %}c{% endcomment %}\n{%- if t %}b{% endif %}</p>')).toBe(
+      '<p>a  {%#%}\n{%- if t %}b{% endif %}</p>',
+    );
+    // the comment's own right dash is carried over
+    expect(idem("<p>a  {% comment -%}c{% endcomment -%}  {{- 'b' }}</p>")).toBe("<p>a  {%#-%}{{- 'b' }}</p>");
+  });
+
+  it('chains of comments keep the adjacency', () => {
+    expect(idem("<p>{{ 'a' -}}{% comment %}c{% endcomment %}{% comment %}d{% endcomment %}  x</p>")).toBe(
+      "<p>{{ 'a' -}}{%#%}  x</p>",
+    );
+    expect(idem("<p>a  {% comment %}c{% endcomment %}  {% comment %}d{% endcomment %}{{- 'b' }}</p>")).toBe(
+      "<p>a  {%#%}  {%#%}{{- 'b' }}</p>",
+    );
+  });
+
+  it('works inside application/json islands', () => {
+    expect(idem(J(`{"k": "{{ 'v' -}}{% comment %}c{% endcomment %}  x"}`))).toBe(
+      J(`{"k": "{{ 'v' -}}{%#%}  x"}`),
+    );
+    expect(idem(J(`{"k": "a  {% comment %}c{% endcomment %}{{- 'b' }}"}`))).toBe(
+      J(`{"k": "a  {%#%}{{- 'b' }}"}`),
+    );
+  });
+
+  it('does not add a barrier where nothing would be reached', () => {
+    expect(idem("<p>{{ 'a' -}}\n{%- comment -%}c{%- endcomment -%}\n{{ 'b' }}</p>")).toBe("<p>{{ 'a' -}}{{ 'b' }}</p>");
+    expect(idem("<p>{{ 'a' }}\n{% comment -%}c{% endcomment %}\n{{ 'b' }}</p>")).toBe("<p>{{ 'a' }}\n\n{{ 'b' }}</p>");
+    expect(idem("<p>{{ 'a' -}}{% comment %}c{% endcomment %}x</p>")).toBe("<p>{{ 'a' -}}x</p>");
+    expect(idem("<p>a{% comment %}c{% endcomment %}{{- 'b' }}</p>")).toBe("<p>a{{- 'b' }}</p>");
+  });
+
+  it('is strictly idempotent when a comment hides the end of a line', () => {
+    const out = idem('<p>\n  x  ] {% comment %}c{% endcomment %}\n\nz</p>');
+    expect(out).toBe('<p>\nx  ]\n\nz</p>');
+    expect(idem('<p>x  {% comment %}c{% endcomment %}  \n z</p>')).toBe('<p>x\nz</p>');
   });
 });

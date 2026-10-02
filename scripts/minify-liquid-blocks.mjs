@@ -35,6 +35,12 @@
  *      tag/the file start and a `{%- comment`, where Ruby Liquid's
  *      `bug_compatible_whitespace_trimming` mode renders differently from the
  *      normal one and the engine, not this script, must do the trimming.
+ *      The mirror image: a removed comment is also a token BARRIER. Where a dash
+ *      on a neighbouring tag (`-}}`/`-%}` before it, `{%-`/`{{-` after it)
+ *      would, with the comment gone, reach whitespace it never touched, the
+ *      comment is kept as an inline comment with its own dash sides (`{%#%}`,
+ *      `{%-#%}`, `{%#-%}`). Whitespace-only text and further removed comments
+ *      in between do not break the adjacency. Applies inside JSON islands too.
  *   2. Leading indentation is stripped per line.
  *   3. Runs of 2+ blank lines collapse to one.
  *   4. Trailing whitespace is stripped per line.
@@ -225,7 +231,7 @@ function splitJsonIsland(element) {
  * Split a source file into ordered segments.
  *
  * @param {string} src
- * @returns {Array<{kind: 'plain'|'protected'|'comment', text: string}>}
+ * @returns {Array<{kind: 'plain'|'protected'|'comment'|'island', text: string}>}
  */
 export function scanRegions(src, { liquidOnly = false } = {}) {
   /** @type {Array<{kind: 'plain'|'protected'|'comment'|'island', text: string}>} */
@@ -293,6 +299,8 @@ function createEmitter({ maxBlankRun = 1, startsMidLine = false } = {}) {
   let lineHasContent = startsMidLine;
   let blankRun = 0;
   let markIdx = 0;
+  // True while the last thing written is a fragment of plain text.
+  let plainTail = false;
 
   return {
     /** Remember where the plain segment about to be written starts. */
@@ -328,9 +336,22 @@ function createEmitter({ maxBlankRun = 1, startsMidLine = false } = {}) {
       blankRun = 0;
     },
 
+    /**
+     * Drop spaces/tabs at the end of the output when that is plain text. A
+     * removed comment between `x ` and a line break hides the end of the line
+     * from rule 4, which a second pass (seeing them joined) would then apply.
+     */
+    trimLineBlanks() {
+      if (!plainTail || out.length === 0) return;
+      const last = out[out.length - 1].replace(/[ \t]+$/, '');
+      if (last === '') out.pop();
+      else out[out.length - 1] = last;
+    },
+
     /** Emit untouched bytes and resynchronise the line state from them. */
     pushProtected(text) {
       if (text === '') return;
+      plainTail = false;
       out.push(text);
       const lastBreak = text.lastIndexOf('\n');
       lineHasContent = lastBreak === -1 ? true : /\S/.test(text.slice(lastBreak + 1));
@@ -340,6 +361,7 @@ function createEmitter({ maxBlankRun = 1, startsMidLine = false } = {}) {
     /** Emit text with rules 2–4 applied. */
     pushPlain(text) {
       if (text === '') return;
+      plainTail = true;
       const parts = text.split('\n');
       for (let i = 0; i < parts.length; i++) {
         const isComplete = i < parts.length - 1;
@@ -431,7 +453,22 @@ export function minifyLiquidTag(text) {
  * @returns {string} minified contents
  */
 export function minifyLiquid(source) {
-  return minifySegments(source, false);
+  return minifySegments(source, false, null);
+}
+
+/**
+ * Like `minifyLiquid`, but also reports how many JSON islands had to be kept
+ * verbatim because their body could not be parsed safely. That fallback is
+ * correct but silent, and a shrunk island that quietly stopped shrinking would
+ * eat the budget headroom without anyone noticing.
+ *
+ * @param {string} source
+ * @returns {{minified: string, verbatimIslands: number}}
+ */
+export function minifyLiquidDetailed(source) {
+  const stats = { verbatimIslands: 0 };
+  const minified = minifySegments(source, false, stats);
+  return { minified, verbatimIslands: stats.verbatimIslands };
 }
 
 /**
@@ -449,15 +486,16 @@ export function minifyLiquid(source) {
  * @param {string} body text between the open tag and `</script>`
  * @returns {string}
  */
-export function minifyJsonIslandBody(body) {
+export function minifyJsonIslandBody(body, stats = null) {
   try {
-    return minifySegments(body, true);
+    return minifySegments(body, true, null);
   } catch {
+    if (stats) stats.verbatimIslands++;
     return body;
   }
 }
 
-function minifySegments(source, island) {
+function minifySegments(source, island, stats) {
   const emit = island ? createEmitter({ maxBlankRun: 0, startsMidLine: true }) : createEmitter();
   const segments = scanRegions(source, { liquidOnly: island });
   let prevKind = null;
@@ -470,6 +508,11 @@ function minifySegments(source, island) {
   // An island body starts right behind the `>` of its open tag, i.e. inside a text token.
   let atTagBoundary = !island;
   let boundaryDash = false;
+  // `dashAdj`: a `-%}`/`-}}` token is still effectively adjacent, i.e. only
+  // whitespace-only text and removed comments came since. `prevEndsWs`: the
+  // previous segment is text whose (trim-adjusted) end is whitespace.
+  let dashAdj = false;
+  let prevEndsWs = false;
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     if (segment.kind === 'plain') {
@@ -477,6 +520,11 @@ function minifySegments(source, island) {
       // `-%}` on the comment before: Liquid strips this text's leading whitespace.
       if (trimNext) text = text.replace(/^[ \t\n\r\f\v]+/, '');
       const next = segments[i + 1];
+      const endsWs = /[ \t\n\r\f\v]$/.test(text);
+      if (/\S/.test(text)) dashAdj = false;
+      // A comment removed right before a line break would hide the end of the
+      // line from rule 4 (idempotence): apply it to the text before the comment.
+      if (prevKind === 'comment' && /^[ \t]*\r?\n/.test(text)) emit.trimLineBlanks();
       if (
         next &&
         (next.kind === 'comment' ? next.text.startsWith('{%-') : INLINE_DASH_COMMENT.test(next.text)) &&
@@ -499,6 +547,8 @@ function minifySegments(source, island) {
         trimNext = next.text.endsWith('-%}');
         boundaryDash = trimNext;
         atTagBoundary = true;
+        dashAdj = trimNext;
+        prevEndsWs = false;
         prevKind = 'comment';
         i++;
         continue;
@@ -506,24 +556,67 @@ function minifySegments(source, island) {
       emit.mark();
       emit.pushPlain(text);
       trimNext = false;
+      prevEndsWs = endsWs;
     } else if (segment.kind === 'island') {
-      emit.pushProtected(minifyJsonIslandBody(segment.text));
+      emit.pushProtected(minifyJsonIslandBody(segment.text, stats));
       trimNext = false;
       // The `>` of the open tag precedes it: that is text, not a Liquid boundary.
       atTagBoundary = false;
       boundaryDash = false;
+      dashAdj = false;
+      prevEndsWs = false;
     } else if (segment.kind === 'protected') {
       emit.pushProtected(LIQUID_TAG_OPEN.test(segment.text) ? minifyLiquidTag(segment.text) : segment.text);
       trimNext = false;
       atTagBoundary = segment.text.startsWith('{');
       boundaryDash = atTagBoundary && /-(?:%|\})\}$/.test(segment.text);
+      dashAdj = boundaryDash;
+      prevEndsWs = false;
     } else {
       // 'comment' segments are dropped entirely (rule 1), but the dashes still
       // act: `{%-` trims the preceding text token, `-%}` the following one.
-      if (prevKind === 'plain' && segment.text.startsWith('{%-')) emit.trimTrailingWhitespace();
-      trimNext = segment.text.endsWith('-%}');
+      const leftDash = segment.text.startsWith('{%-');
+      const rightDash = segment.text.endsWith('-%}');
+      if (prevKind === 'plain' && leftDash) emit.trimTrailingWhitespace();
+      // The comment is also a token BARRIER: a dash on a neighbouring tag stops
+      // at it. Dropping a dash-less side would let that dash reach text it never
+      // touched, so exactly then keep an inline comment with the comment's own
+      // dashes (`{%#%}`, `{%-#%}`, `{%#-%}`) and let the engine see the boundary.
+      let barrier = false;
+      const after = segments[i + 1];
+      if (dashAdj && !rightDash && after && after.kind === 'plain' && /^[ \t\n\r\f\v]/.test(after.text)) {
+        barrier = true;
+      }
+      if (prevEndsWs && !leftDash) {
+        // Text ending in whitespace before this comment, then (past whitespace
+        // and further comments) a tag or inline comment with a left dash.
+        let j = i + 1;
+        while (
+          j < segments.length &&
+          ((segments[j].kind === 'plain' && /^[ \t\n\r\f\v]*$/.test(segments[j].text)) ||
+            (segments[j].kind === 'comment' && !segments[j].text.startsWith('{%-')))
+        ) {
+          j++;
+        }
+        const target = segments[j];
+        if (
+          target &&
+          ((target.kind === 'protected' && /^\{[{%]-/.test(target.text)) ||
+            (target.kind === 'comment' && segments[j - 1].kind === 'plain'))
+        ) {
+          barrier = true;
+        }
+      }
+      if (barrier) {
+        emit.pushProtected(`{%${leftDash ? '-' : ''}#${rightDash ? '-' : ''}%}`);
+        dashAdj = rightDash;
+      } else if (rightDash) {
+        dashAdj = true;
+      }
+      trimNext = rightDash;
       atTagBoundary = true;
       boundaryDash = trimNext;
+      prevEndsWs = false;
     }
     prevKind = segment.kind;
   }
@@ -538,6 +631,7 @@ function minifySegments(source, island) {
  * @property {string} minified minified contents
  * @property {number} originalBytes
  * @property {number} minifiedBytes
+ * @property {number} verbatimIslands JSON islands kept verbatim (could not be parsed safely)
  */
 
 /** List the `*.liquid` files that count against the extension Liquid budget. */
@@ -563,9 +657,10 @@ export function buildReport(dirs = LIQUID_DIRS) {
   const blocks = listBlockFiles(dirs).map((path) => {
     const name = path.slice(EXTENSION_DIR.length + 1).split(sep).join('/');
     const original = readFileSync(path, 'utf8');
-    const minified = minifyLiquid(original);
+    const { minified, verbatimIslands } = minifyLiquidDetailed(original);
     return {
       name,
+      verbatimIslands,
       path,
       original,
       minified,
@@ -599,6 +694,13 @@ const kib = (bytes) => `${(bytes / 1024).toFixed(1)} KiB`;
 export function printReport(report) {
   for (const dir of report.missingDirs ?? []) {
     console.warn(`  ⚠️  configured Liquid directory not found, NOT counted: ${dir}`);
+  }
+  for (const b of report.blocks) {
+    if (b.verbatimIslands > 0) {
+      console.warn(
+        `  ⚠️  ${b.name}: ${b.verbatimIslands} JSON island(s) kept verbatim (body could not be parsed safely), NOT minified`,
+      );
+    }
   }
   const width = Math.max(...report.blocks.map((b) => b.name.length), 5);
   console.log('  file'.padEnd(width + 4) + '     original      minified        saved');
