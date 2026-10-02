@@ -13,6 +13,7 @@ import { variantTileReplaceState, variantTileAltEditable } from "./url-gid";
 import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../localized-images/LocalizedMediaReplaceButton";
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 import { altTranslateSourceText, foreignAltLocked } from "../../services/alt-text-feedback.shared";
+import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
 
 interface VariantGallerySectionProps {
   variant: VariantWithGallery;
@@ -438,18 +439,20 @@ export function VariantGallerySection({
                 </Text>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                <input
-                  type="text"
+                <AutoGrowTextarea
                   value={currentAltText}
                   readOnly={altLocked}
                   aria-readonly={altLocked || undefined}
                   title={altLocked ? altNeedsPrimaryHint : undefined}
-                  onChange={(e) => { if (!altLocked) onAltTextChange?.(singleSelectedUrl, e.target.value); }}
+                  onValueChange={(next) => { if (!altLocked) onAltTextChange?.(singleSelectedUrl, next); }}
                   placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: currentAltText, inherited: singleSelectedUrl ? inheritedAltTexts?.[singleSelectedUrl] : undefined, primaryAlt: primaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                   style={{
                     flex: "1 1 200px",
                     minWidth: 180,
-                    padding: "5px 8px",
+                    // Height and vertical padding: AutoGrowTextarea's class
+                    // (button height at rest, 44px on touch).
+                    paddingLeft: 8,
+                    paddingRight: 8,
                     fontSize: 13,
                     border: "1px solid var(--app-field-border-color)",
                     borderRadius: 4,

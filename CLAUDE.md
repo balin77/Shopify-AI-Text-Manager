@@ -215,6 +215,57 @@ button of its own.**
   one small control inside a field, and at 44px each they stack it to ~96px.
   Measured in Chromium: 32px on desktop, 44px on a touch tablet and a phone,
   for button, Select, TextField and the rate-limit field alike.
+- **A single-line text field WRAPS and grows; typing or pasting never adds a
+  line break.** A one-line `<input>` hid a long title, SEO title or handle past
+  its right edge. These are now
+  [SingleLineTextField.tsx](app/components/unified/SingleLineTextField.tsx), a
+  Polaris auto-sizing textarea of one line minimum: `AIEditableField` without
+  `multiline` (title, SEO title, handle, product type, single-line theme text,
+  gallery alt fields), option names/values (translation in `OptionsField`,
+  primary in `VariantOptionsEditor`), metafields that are not multi-line or
+  rich text, menu item titles, and the create dialog's text, keyword, handle
+  and image-alt fields. The image manager's hand-built alt boxes use the twin,
+  [AutoGrowTextarea.tsx](app/components/unified/AutoGrowTextarea.tsx). The
+  value rules live in [single-line-text.ts](app/utils/single-line-text.ts):
+  Enter is cancelled (never during an IME composition) and a NEWLY typed or
+  pasted break becomes ONE space before `onChange`, so a handle or a `<title>`
+  edited here never gains a `\n`; a value already STORED with a break is shown
+  and kept as it is (`normalizeSingleLineChange`) — the old input silently
+  stripped such breaks on the first keystroke, so that one case is NOT
+  byte-identical to before, deliberately. Spellcheck is OFF by default
+  (Firefox spell-checks textareas, and these hold handles and translations).
+  Sizing rules, all in the `.app-single-line-autogrow` / `.app-autogrow-textarea`
+  blocks of responsive.css: the Polaris field rests at 32px on desktop and,
+  on phones and coarse pointers, at 44px with ONE line CENTRED (the vertical
+  padding is derived from `--touch-target-min`, so the text is not stuck to the
+  top); the suffix and character count stay BESIDE the text on its last line
+  (Polaris would wrap them onto a row of their own); Polaris' measuring copy is
+  inset by their width, padded and line-spaced exactly like the textarea, and
+  re-measured on every WIDTH change of the field itself (a sidebar drag or a
+  grid reflow resizes no window, which is all Polaris listens to); `overflow`
+  stays `auto`, so a lagging measurement shows a scrollbar, never hidden text.
+  The hand-built box measures on a hidden CLONE beside it (collapsing the box
+  itself to `height: auto` per keystroke can clamp the page container's
+  scroll position) and sizes to `value || placeholder` — an inherited global
+  alt is shown as the placeholder in foreign and market views. Its rest height
+  is the button height (the variant gallery's alt box grew ~4px to line up with
+  its 32px buttons). Deliberately NOT converted: `AttributeField` (vendor,
+  author — short values), the bulk grid's cells (`CellTextArea` already
+  auto-grows, and Shift+Enter there still inserts a break), every field that
+  is multi-line on purpose and the HTML editors.
+- **The navigation's InfoBox strip keeps one height whatever the message.**
+  It rests at the old one-line strip's height (`INFO_BOX_STRIP_HEIGHT`,
+  [info-box-fit.ts](app/utils/info-box-fit.ts)); a message that does not fit
+  one line at 14px is drawn compact (12px / 15px line height, two clamped
+  lines in the same box), decided by measuring an invisible one-line copy
+  against the text box's width — re-measured when the box or the copy resizes
+  and when web fonts finish loading
+  ([InfoBoxMessageText.tsx](app/components/InfoBoxMessageText.tsx)). The deep
+  link sits BESIDE the text, capped at 40% of the strip with an ellipsis so a
+  long label cannot squeeze the message. On a coarse-pointer wide screen the
+  44px touch rule on its buttons makes the strip taller than on desktop — but
+  still the same for every message. The full text stays in the title and in
+  the bell's history.
 - **A grey frame is one of THREE tokens, and which one is a question about the
   thing being framed.** `--app-field-border-color` is a box a merchant types in
   (every input, the body editors, the probe textareas, and the formatting

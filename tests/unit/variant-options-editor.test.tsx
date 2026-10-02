@@ -881,7 +881,8 @@ describe("VariantOptionsEditor — translating and copying an option into every 
 
     // Open: the name and the one value lacking a translation, and only those.
     fireEvent.click(screen.getByText("Colour"));
-    const tinted = [...container.querySelectorAll(".bg-missing-translation input")] as HTMLInputElement[];
+    // One-line fields are auto-growing textareas (SingleLineTextField).
+    const tinted = [...container.querySelectorAll(".bg-missing-translation textarea")] as HTMLTextAreaElement[];
     expect(tinted.map((b) => b.value).sort()).toEqual(["Blue", "Colour"]);
   });
 });

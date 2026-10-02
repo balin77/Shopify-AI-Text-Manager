@@ -23,6 +23,8 @@ import { fieldTypeLabel, taskSubjectLabel, taskTypeLabel } from "../services/tas
 import { SYNC_PHASE_ORDER, overallSyncPercent } from "../services/sync-phases.shared";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
+import { InfoBoxMessageText } from "./InfoBoxMessageText";
+import { INFO_BOX_PADDING_Y, INFO_BOX_STRIP_HEIGHT } from "../utils/info-box-fit";
 
 /**
  * The message list inside the bell's popover. Held as a constant because two
@@ -999,12 +1001,21 @@ export function MainNavigation() {
               vs unread) for the same situation. */}
           {!syncProgress && infoBox && (
             <div className="nav-infobox-wrapper desktop-only" style={{ flex: 1, maxWidth: "600px" }}>
+              {/* FIXED height (the old one-line strip's), whatever the message:
+                  a strip that grew to two lines for a long message moved the
+                  whole page under the fixed navigation every time a message
+                  came and went. A message that does not fit on one line is
+                  drawn smaller so two lines fit the same box
+                  (InfoBoxMessageText / info-box-fit.ts); beyond two it is
+                  clamped, the full text in the title and in the bell. */}
               <div
                 className="info-box"
                 style={{
                   display: "flex",
-                  alignItems: "flex-start",
-                  padding: "0.5rem 1rem",
+                  alignItems: "center",
+                  boxSizing: "border-box",
+                  minHeight: `${INFO_BOX_STRIP_HEIGHT}px`,
+                  padding: `${INFO_BOX_PADDING_Y}px 1rem`,
                   borderRadius: "4px",
                   backgroundColor: toneBg(infoBox.tone),
                   border: `1px solid ${toneColor(infoBox.tone)}`,
@@ -1012,50 +1023,29 @@ export function MainNavigation() {
                   gap: "0.5rem",
                 }}
               >
+                <InfoBoxMessageText message={infoBox.message} />
                 {/* The link is a SIBLING of the clamped text, not inside it:
-                    the clamp cuts everything in its box, so a message longer
-                    than two lines used to take the link with it — and the
-                    link is the one part of a message that has to stay
-                    reachable. The full text is recoverable from the title,
-                    and in the bell. */}
-                <div
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-start",
-                    gap: "0.15rem",
-                  }}
-                >
-                  <span
-                    title={infoBox.message}
-                    style={{
-                      color: "var(--p-color-text)",
-                      // A message can carry a GID, a URL or a raw GraphQL
-                      // error. Without a break rule one long token stretched
-                      // the strip, wrapped the whole nav row and pushed the
-                      // page down.
-                      overflowWrap: "anywhere",
-                      // Two lines, then ellipsis, so the navigation keeps its
-                      // height whatever a call site passes in.
-                      display: "-webkit-box",
-                      WebkitBoxOrient: "vertical",
-                      WebkitLineClamp: 2,
-                      overflow: "hidden",
-                    }}
+                    the clamp cuts everything in its box, and the link is the
+                    one part of a message that has to stay reachable. It sits
+                    BESIDE the text (it used to sit under it, which made every
+                    message with a link two rows tall). */}
+                {/* Capped, so a long label can never squeeze the message
+                    itself to nothing; the label ellipsizes (responsive.css,
+                    `.info-box-link`) and keeps its full text as the tooltip. */}
+                {infoBox.link && (
+                  <div
+                    className="info-box-link"
+                    title={infoBox.link.label}
+                    style={{ flex: "0 1 auto", minWidth: 0, maxWidth: "40%", whiteSpace: "nowrap" }}
                   >
-                    {infoBox.message}
-                  </span>
-                  {infoBox.link && (
                     <Button
                       variant="plain"
                       onClick={() => handleInfoBoxLink(infoBox.link!.url)}
                     >
                       {infoBox.link.label}
                     </Button>
-                  )}
-                </div>
+                  </div>
+                )}
                 <Button
                   variant="plain"
                   icon={XIcon}
