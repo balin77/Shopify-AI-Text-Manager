@@ -13,7 +13,7 @@
 
 import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
-import { confirmNavigation, viewSwitchConfirmPendingRef } from "../hooks/useSaveBar";
+import { confirmNavigation } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
@@ -891,12 +891,7 @@ export default function ProductsPage() {
       handleLanguageChange: async (locale: string) => {
         if (refuseSwitchWhileSaving()) return;
         if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
-          viewSwitchConfirmPendingRef.current = true;
-          try {
-            await confirmNavigation();
-          } finally {
-            viewSwitchConfirmPendingRef.current = false;
-          }
+          await confirmNavigation();
         }
         editor.handlers.handleLanguageChange(locale);
       },
@@ -905,12 +900,7 @@ export default function ProductsPage() {
         // Primary alt texts are global: a market change in the primary
         // language keeps them, so it has nothing to ask about.
         if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
-          viewSwitchConfirmPendingRef.current = true;
-          try {
-            await confirmNavigation();
-          } finally {
-            viewSwitchConfirmPendingRef.current = false;
-          }
+          await confirmNavigation();
         }
         editor.handlers.handleMarketChange(marketId);
       },
@@ -921,9 +911,6 @@ export default function ProductsPage() {
       handleItemSelect: async (itemId: string) => {
         if (refuseSwitchWhileSaving()) return;
         if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
-          // A product switch supersedes any unanswered language/market dialog:
-          // the [SaveBar] measurement flag must not read true for this one.
-          viewSwitchConfirmPendingRef.current = false;
           await confirmNavigation();
         }
         editor.handlers.handleItemSelect(itemId);

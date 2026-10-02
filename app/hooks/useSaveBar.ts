@@ -37,16 +37,6 @@ function getSaveBar() {
  */
 let navigationToken = 0;
 
-/**
- * MEASUREMENT ONLY — nothing routes on it. True while a LANGUAGE or MARKET
- * switch waits for its leave dialog (set right before `confirmNavigation()`,
- * cleared when it resolves; a cancelled dialog never resolves, so it can stay
- * true until the next switch). The editor's save bar `onDiscard` logs it, so a
- * live admin answers whether the dialog's "Discard" also fires the bar's own
- * discard handler.
- */
-export const viewSwitchConfirmPendingRef = { current: false };
-
 export async function confirmNavigation(): Promise<void> {
   const saveBar = getSaveBar();
   if (!saveBar) return;

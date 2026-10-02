@@ -46,7 +46,6 @@ import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
 import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
-import { viewSwitchConfirmPendingRef } from "../hooks/useSaveBar";
 import { HelpTooltip } from "./HelpTooltip";
 import { ItemSidebar } from "./ItemSidebar";
 import { SidebarTabBar } from "./SidebarTabBar";
@@ -1760,12 +1759,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   void commerceSave.save?.();
                 }}
                 onDiscard={() => {
-                  // Measurement only (unmeasured: does the native leave
-                  // dialog's "Discard" of a language/market switch fire this
-                  // handler?). Visible in production builds on purpose.
-                  console.info(
-                    `[SaveBar] onDiscard — language/market switch confirmation awaiting: ${viewSwitchConfirmPendingRef.current}`,
-                  );
+                  // MEASURED (2026-10-02, live admin): the native leave
+                  // dialog's "Discard" of a language/market switch fires this
+                  // handler too, so that switch gets the same full discard.
                   handlers.handleDiscard();
                   subResourceHandlers?.resetChanges?.();
                   // Third writer, same button — as with Save. Without this a
