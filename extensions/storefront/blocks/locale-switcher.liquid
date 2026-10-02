@@ -262,20 +262,12 @@
                 endcase
 
                 # The visible <option> text — also used as the JS button label
-                # (data-endonym). For flag_only we still emit the full text so
-                # the screen-reader path remains informative.
-                if country_display == 'flag_only'
-                  if currency_part != ''
-                    assign c_label_full = c_name | append: ' (' | append: currency_part | append: ')'
-                  else
-                    assign c_label_full = c_name
-                  endif
+                # (data-endonym). It is the full text for EVERY country_display, flag_only
+                # included, so the screen-reader path remains informative.
+                if currency_part != ''
+                  assign c_label_full = c_name | append: ' (' | append: currency_part | append: ')'
                 else
-                  if currency_part != ''
-                    assign c_label_full = c_name | append: ' (' | append: currency_part | append: ')'
-                  else
-                    assign c_label_full = c_name
-                  endif
+                  assign c_label_full = c_name
                 endif
 
                 # data-iso variant used when label_format=iso. Keep currency

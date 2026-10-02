@@ -217,6 +217,10 @@ const scenarios: Record<string, Record<string, unknown>> = {
       content: '<p>y</p>',
     },
   },
+  notFound: {
+    request: { page_type: '404', path: '/nope', locale: { iso_code: 'de' } },
+    template: { name: '404' },
+  },
   index: {
     request: { page_type: 'index', path: '/', locale: { iso_code: 'de' } },
     template: { name: 'index' },
