@@ -580,7 +580,8 @@ export interface EditorHandlers {
   handleClearAllConfirm: () => void;
   handleClearAllCancel: () => void;
   handleClearAllForLocaleClick: () => void;
-  handleClearAllForLocaleConfirm: () => void;
+  /** `false` when the clear was refused (nothing was cleared). */
+  handleClearAllForLocaleConfirm: () => boolean | void;
   handleTranslateAllForLocale: () => void;
   handleAltTextChange: (imageIndex: number, value: string) => void;
   handleGenerateAltText: (imageIndex: number, userInstruction?: string) => void;

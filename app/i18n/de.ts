@@ -2124,6 +2124,7 @@ export const de = {
     // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
     saveFirstSource: "Zuerst speichern – der Text in der Hauptsprache hat ungespeicherte Änderungen.",
     switchWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut wechseln.",
+    clearWhileTranslating: "In diese Sprache wird gerade noch übersetzt – bitte warten, bis die Übersetzung fertig ist, und dann löschen.",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
     fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons

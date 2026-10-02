@@ -2123,6 +2123,7 @@ export const en: Translation = {
     // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
     saveFirstSource: "Save first — the main-language text has unsaved changes.",
     switchWhileSaving: "Still saving – please wait a moment and then switch again.",
+    clearWhileTranslating: "A translation into this language is still running – please wait until it has finished and then clear.",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
     fieldTranslatedAndSaved: "{fieldType} translated and saved successfully",
     // Tooltip for locale buttons

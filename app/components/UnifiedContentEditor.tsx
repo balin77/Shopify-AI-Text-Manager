@@ -2697,7 +2697,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onAction: state.currentLanguage === primaryLocale
             ? handlers.handleClearAllConfirm
             : () => {
-                handlers.handleClearAllForLocaleConfirm();
+                // Refused (a translation into this language is still being
+                // written): neither half clears.
+                if (handlers.handleClearAllForLocaleConfirm() === false) return;
                 // A product's options, option values and metafields translate on
                 // their OWN resources, which the item's clear never reaches.
                 subResourceHandlers?.clearAllForLocale?.();

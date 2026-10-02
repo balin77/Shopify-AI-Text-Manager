@@ -192,6 +192,35 @@ export interface SentSaveScope {
   locale: string;
   marketId: string;
   sentAlts: Record<number, string>;
+  /** Every string entry the save form carried (field values among them). Read
+   *  when the answer lands on ANOTHER view than the one the save was made
+   *  from: what was saved is what was sent, not what the screen shows now. */
+  sentFields?: Record<string, string>;
+}
+
+/** A form's string entries, for `SentSaveScope.sentFields`. */
+export function sentFieldsFromForm(entries: Iterable<[string, unknown]>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of entries) if (typeof value === "string") out[key] = value;
+  return out;
+}
+
+/**
+ * Whether a FULL save's answer lands on another view than the one it was made
+ * from (the merchant switched language or market while it was out). Then the
+ * live editor values are the NEW view's: staging them as the saved locale's
+ * values, or taking them as the new view's baseline, is wrong in both
+ * directions.
+ */
+export function saveAnswerViewMoved(
+  scope: { locale: string; marketId: string } | null | undefined,
+  view: { locale: string; marketId: string },
+  primaryLocale: string,
+): boolean {
+  if (!scope || !scope.locale) return false;
+  const viewMarket = view.locale === primaryLocale ? "" : (view.marketId ?? "");
+  const scopeMarket = scope.locale === primaryLocale ? "" : (scope.marketId ?? "");
+  return scope.locale !== view.locale || scopeMarket !== viewMarket;
 }
 
 /** Reads the alt texts a save form carried (`imageAltTexts`, a JSON object). */

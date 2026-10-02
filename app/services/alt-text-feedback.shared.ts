@@ -221,6 +221,22 @@ export function overlayIndexWrites(
 }
 
 /**
+ * A "translate every alt text into ONE language" answer (`{index: text}`) in
+ * the shape of the every-language answer (`{index: {locale: text}}`), so both
+ * are staged and shown by `applyAltTranslateAllAnswer`.
+ */
+export function forLocaleAltResults(
+  translated: Record<string, string> | undefined,
+  locale: string,
+): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const [index, text] of Object.entries(translated ?? {})) {
+    if (typeof text === "string") out[index] = { [locale]: text };
+  }
+  return out;
+}
+
+/**
  * A "translate every alt text into every language" answer
  * (`translatedResults`: image index -> locale -> saved text), applied by the
  * locale each value was WRITTEN for, never by the view the button was pressed

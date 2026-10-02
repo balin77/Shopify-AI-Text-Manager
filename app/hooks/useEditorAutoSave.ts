@@ -8,7 +8,7 @@
 
 import type { PartialSave } from "./useUiDataLoader";
 import { settleUnsentSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
-import { sentAltsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
+import { sentAltsFromForm, sentFieldsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
@@ -77,6 +77,12 @@ interface UseEditorAutoSaveProps {
   /** The locale, market and alt texts of the request IN FLIGHT, bound at
    *  submit time like `inFlightPartialRef` (see `revertAltsWithoutPrimary`). */
   inFlightScopeRef?: React.MutableRefObject<SentSaveScope | null>;
+  /** True while a "translate all" run of this item writes into `locale` (or,
+   *  for the primary locale, runs at all): such a save waits in the queue
+   *  until the run answered, so it lands AFTER the run -- a hand-written value
+   *  is not overwritten by the AI, and a primary purge is not undone by
+   *  translations of the old text. A save of another language goes at once. */
+  saveBlockedByTranslateRunRef?: React.MutableRefObject<(locale: string | null, itemId: string | null, beforeIndex?: number) => boolean>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -123,6 +129,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     preserveEditsUntilRef,
     setOwnSavesInFlight,
     inFlightScopeRef,
+    saveBlockedByTranslateRunRef,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -177,7 +184,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       }
     }
 
-    if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current) {
+    const blockedByRun = !!saveBlockedByTranslateRunRef?.current(savedLocaleRef.current, savedItemIdRef.current);
+    if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current || blockedByRun) {
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
       saveQueueRef.current.push({
         formData,
@@ -197,6 +205,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         locale: savedLocaleRef.current ?? "",
         marketId: savedMarketIdRef.current ?? "",
         sentAlts: sentAltsFromForm(data.imageAltTexts),
+        sentFields: sentFieldsFromForm(Object.entries(data)),
       };
     }
 

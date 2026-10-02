@@ -336,6 +336,7 @@ export const guideEn: GuideCopy = {
             "A translation counts as saved only once Shopify echoes it back. If Shopify does not accept a translation, you see it on the affected field — instead of a success message about something that never arrived.",
             "The same applies to clearing: a translation counts as removed only once Shopify confirms it; otherwise it stays visible, the field stays marked as changed so you can save again, and you are told. For product options and metafields, a language Shopify refused is named in the task, which then shows “completed with errors”.",
             "“Clear All” in a foreign language also removes, on a product, the translations of its option names, option values and metafields in that language — with a market selected, only that market’s.",
+            "While “Translate All” is still running for one language, you can switch to another language and keep working there or use “Clear All” — the result arrives later only in the language you started it for. “Clear All” in that same language is available again once its translation has finished; until then you see a short note.",
           ],
         },
       ],

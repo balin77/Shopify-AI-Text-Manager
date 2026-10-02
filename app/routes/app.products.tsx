@@ -855,6 +855,18 @@ export default function ProductsPage() {
     return true;
   };
 
+  // The editor's own "clear all" refusal (useFieldHandlers) knows the editor's
+  // runs; the options & metafields translate on their own requests.
+  const refuseClearWhileSubResourcesTranslate = (): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isTranslateAllRunning(itemId, editor.state.currentLanguage)) return false;
+    showInfoBox(
+      String(t.common?.clearWhileTranslating || "A translation into this language is still running \u2013 please wait until it has finished and then clear."),
+      "info",
+    );
+    return true;
+  };
+
   const editorWithSubResources = {
     ...editor,
     handlers: {
@@ -875,6 +887,22 @@ export default function ProductsPage() {
       handleTranslateAllForLocale: () => {
         editor.handlers.handleTranslateAllForLocale();
         subResources.handlers.translateAllSubResources();
+      },
+      // The options & metafields translate on their own requests: a "clear
+      // all" of the language they are being written into waits for them, like
+      // the editor's own fields do (useFieldHandlers).
+      handleClearAllForLocaleClick: () => {
+        if (refuseClearWhileSubResourcesTranslate()) return;
+        editor.handlers.handleClearAllForLocaleClick();
+      },
+      // Checked again on confirm (a run may have started while the dialog was
+      // open); a refusal clears neither half.
+      handleClearAllForLocaleConfirm: () => {
+        if (refuseClearWhileSubResourcesTranslate()) {
+          editor.handlers.handleClearAllCancel();
+          return false;
+        }
+        return editor.handlers.handleClearAllForLocaleConfirm();
       },
       // Navigation guard hooks: the editor's own handleLanguageChange /
       // handleItemSelect only gate on editor.state.hasChanges (field-level

@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { overlayWritesFromTranslations, overlayIndexWrites, applyAltTranslateAllAnswer } from "../services/alt-text-feedback.shared";
+import { overlayWritesFromTranslations, applyAltTranslateAllAnswer, forLocaleAltResults } from "../services/alt-text-feedback.shared";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
@@ -885,6 +885,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   // Translate ALL image alt-texts into ONE foreign language (foreign locale button)
   const handleTranslateAllAltTextsForLocale = () => {
     const requestedLocale = currentLanguage;
+    const requestItemId = selectedItem?.id ?? null;
     const allImages: ContentImage[] = selectedItem?.images?.length > 0
       ? selectedItem.images
       : selectedItem?.featuredImage ? [selectedItem.featuredImage] : [];
@@ -923,40 +924,38 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       (result) => {
         const failedImages: number[] = (result.failedImages as number[]) || [];
 
-        // Only accept translations that were successfully saved to Shopify
-        if (result.translatedAltTexts) {
-          const translated: Record<number, string> = {};
-          Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
-            const idx = parseInt(indexStr, 10);
-            if (!failedImages.includes(idx)) {
-              translated[idx] = String(text);
-            }
-          });
-
+        // Only accept translations that were successfully saved to Shopify.
+        // The overlay and the fields belong to the item showing NOW: another
+        // item's answer is the server's business (its failure is still said).
+        if (result.translatedAltTexts && selectedItemIdRef.current === requestItemId) {
+          // Into the overlay too (the language-switch effect rebuilds from the
+          // stale item, so state alone vanished on the next switch), under the
+          // locale they were written for; shown only while that locale is on
+          // screen in the global view, and never over a typed draft.
+          const translated = applyAltTranslateAllAnswer(
+            localAltTextOverlayRef.current,
+            forLocaleAltResults(result.translatedAltTexts as Record<string, string>, requestedLocale),
+            failedImages,
+            {
+              locale: currentLanguageRef.current,
+              marketId: selectedMarketIdRefAlt.current ?? "",
+              primaryLocale,
+              current: imageAltTextsRef.current,
+              original: originalAltTextsRef.current,
+            },
+          );
           if (Object.keys(translated).length > 0) {
-            // Into the overlay too: the language-switch effect rebuilds from the
-            // (stale) item, so state alone vanished on the next switch.
-            const written = overlayIndexWrites(
-              result.translatedAltTexts as Record<string, string>,
-              failedImages,
-            );
-            if (!localAltTextOverlayRef.current[requestedLocale]) {
-              localAltTextOverlayRef.current[requestedLocale] = {};
-            }
-            Object.assign(localAltTextOverlayRef.current[requestedLocale], written);
-            if (currentLanguageRef.current === requestedLocale && !selectedMarketIdRefAlt.current) {
-              setImageAltTexts(prev => ({ ...prev, ...translated }));
-              // Only the translated indices are saved; anything else stays a draft.
-              setOriginalAltTexts(prev => ({ ...prev, ...translated }));
-            }
-            // The server already saved to Shopify and DB; reload so the item
-            // (and the missing-translation marker) catch up.
-            if (revalidatorRef.current.state === 'idle') {
-              try {
-                revalidatorRef.current.revalidate();
-              } catch (error) {
-                debugLog.revalidate(' Error during revalidation (ignored):', error);
-              }
+            setImageAltTexts(prev => ({ ...prev, ...translated }));
+            // Only the translated indices are saved; anything else stays a draft.
+            setOriginalAltTexts(prev => ({ ...prev, ...translated }));
+          }
+          // The server already saved to Shopify and DB; reload so the item
+          // (and the missing-translation marker) catch up.
+          if (revalidatorRef.current.state === 'idle') {
+            try {
+              revalidatorRef.current.revalidate();
+            } catch (error) {
+              debugLog.revalidate(' Error during revalidation (ignored):', error);
             }
           }
         }

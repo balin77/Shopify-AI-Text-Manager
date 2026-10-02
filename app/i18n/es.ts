@@ -2103,6 +2103,7 @@ export const es: Translation = {
     // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
     saveFirstSource: "Guarda primero: el texto del idioma principal tiene cambios sin guardar.",
     switchWhileSaving: "Todavía se está guardando: espera un momento y vuelve a cambiar.",
+    clearWhileTranslating: "Todavía se está traduciendo a este idioma: espera a que termine la traducción y luego borra.",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
     fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons

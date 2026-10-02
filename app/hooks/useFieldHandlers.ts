@@ -9,13 +9,14 @@
 import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
+import { buildLocaleDeletedKey, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
 import { useCallback, useRef, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { writeLastContentLocale } from "../utils/last-content-locale";
-import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
+import { markOperationActive, markOperationFailed, isOperationActive, isTranslateIntoLocaleRunning } from "./useAIOperationsStore";
 import {
   setFieldSuggestion,
   clearFieldSuggestion,
@@ -40,7 +41,7 @@ import { postContentEditorSave } from "../services/editor/content-action-endpoin
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { fallbackFieldsAfterDiscard, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { buildOwnSaveForm, isUnsavedPrimarySource, hasUnsavedPrimaryTranslateSource } from "../services/editor/own-field-save.shared";
-import { applyAltTranslateAllAnswer } from "../services/alt-text-feedback.shared";
+import { applyAltTranslateAllAnswer, forLocaleAltResults } from "../services/alt-text-feedback.shared";
 
 // ============================================================================
 // TYPES
@@ -135,6 +136,10 @@ export interface FieldHandlerProps {
     data: Record<string, any>,
     options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }
   ) => void;
+  /** "Translate all" as its own request, never queued with the saves on the
+   *  shared fetcher (see useUnifiedContentEditor). Optional for callers that
+   *  render the handlers alone; they fall back to the fetcher. */
+  submitTranslateRun?: (data: Record<string, string>, itemId: string | null) => void;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   getChangedFields: (valuesToCheck: Record<string, string>) => string[];
   getChangedAltTextIndices: () => number[];
@@ -217,7 +222,7 @@ export interface FieldHandlers {
   handleClearAllConfirm: () => void;
   handleClearAllCancel: () => void;
   handleClearAllForLocaleClick: () => void;
-  handleClearAllForLocaleConfirm: () => void;
+  handleClearAllForLocaleConfirm: () => boolean | void;
   handleTranslateAllForLocale: () => void;
 }
 
@@ -233,6 +238,9 @@ interface CopyFieldRollback {
   translationKey: string;
   localeKey: string;
   deletedKey: string;
+  /** This locale's own "cleared" mark, which the copy drops too. */
+  localeDeletedKey: string;
+  hadLocaleDeletedMarker: boolean;
   locale: string;
   marketId: string;
   value: string;
@@ -306,6 +314,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     submitAIAction,
     performAutoSave,
     safeSubmit,
+    submitTranslateRun,
     buildFieldsForSave,
     getChangedFields,
     getChangedAltTextIndices,
@@ -583,6 +592,13 @@ const handleDiscard = () => {
   // MARKET switch produced (it lands on the new market's view); a language switch
   // happened to resolve both ways to the same values. Same for the alt texts:
   // their baseline is `originalAltTexts`.
+  // An unsaved CLEAR of this view is discarded with it: its locale marks go,
+  // or a later re-read would keep showing the field empty while Shopify still
+  // serves the translation. Not while a save of this view is out -- a sent
+  // clear's marks belong to its answer.
+  if (currentLanguage !== primaryLocale && !isSavingCurrentItem) {
+    dropLocaleMarks(deletedTranslationKeysRef.current, currentLanguage, selectedMarketId);
+  }
   const baseline = baselineValuesRef.current;
   if (Object.keys(baseline).length > 0) {
     setEditableValues({ ...baseline });
@@ -1219,7 +1235,8 @@ const handleTranslateAll = () => {
     }
   });
 
-  safeSubmit(formDataObj, { method: "POST" });
+  if (submitTranslateRun) submitTranslateRun(formDataObj, requestItemId);
+  else safeSubmit(formDataObj, { method: "POST" });
 
   // Also translate all image alt-texts to all locales in parallel (via fetch API)
   if (selectedItem?.images && selectedItem.images.length > 0) {
@@ -1827,7 +1844,8 @@ const handleClearField = useCallback((fieldKey: string) => {
         delete localTranslationsRef.current[tKey][localeKey];
       }
       // Mark as deleted so resolve() returns empty even if item.translations has old data
-      deletedTranslationKeysRef.current.add(buildDeletedKey(tKey, selectedMarketId));
+      // THIS locale's mark: another language's value of the same key is untouched.
+      deletedTranslationKeysRef.current.add(buildLocaleDeletedKey(tKey, selectedMarketId, currentLanguage));
     }
   }
 }, [fallbackFieldsRef, currentLanguage, selectedMarketId, primaryLocale, effectiveFieldDefinitions]);
@@ -1867,7 +1885,7 @@ const handleClearAllConfirm = () => {
         delete localTranslationsRef.current[tKey][currentLanguage];
       }
       // Mark as deleted so resolve() returns empty even if item.translations has old data
-      deletedTranslationKeysRef.current.add(tKey);
+      deletedTranslationKeysRef.current.add(buildLocaleDeletedKey(tKey, "", currentLanguage));
     });
   }
 
@@ -1890,12 +1908,32 @@ const handleClearAllCancel = useCallback(() => {
   setIsClearAllModalOpen(false);
 }, []);
 
-const handleClearAllForLocaleClick = useCallback(() => {
-  setIsClearAllModalOpen(true);
-}, []);
+// A translation INTO this language is still being written: Shopify would get
+// the clear's removals and the run's registrations in an order nobody controls,
+// and its answer would put the values back on screen. Refused with a message,
+// like a switch during an own save -- a run for ANOTHER language does not
+// refuse (its answer is staged under its own language).
+const refuseClearWhileTranslatingHere = (): boolean => {
+  if (!selectedItemId || currentLanguage === primaryLocale) return false;
+  if (!isTranslateIntoLocaleRunning(selectedItemId, currentLanguage)) return false;
+  showInfoBox(
+    String(t.common?.clearWhileTranslating || "A translation into this language is still running \u2013 please wait until it has finished and then clear."),
+    "info",
+  );
+  return true;
+};
 
-const handleClearAllForLocaleConfirm = () => {
-  if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
+const handleClearAllForLocaleClick = () => {
+  if (refuseClearWhileTranslatingHere()) return;
+  setIsClearAllModalOpen(true);
+};
+
+const handleClearAllForLocaleConfirm = (): boolean | void => {
+  if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return false;
+  if (refuseClearWhileTranslatingHere()) {
+    setIsClearAllModalOpen(false);
+    return false;
+  }
 
   // Force isLoadingData to false to ensure change detection works
   setIsLoadingData(false);
@@ -1904,9 +1942,13 @@ const handleClearAllForLocaleConfirm = () => {
   initialLoadSuccessfulRef.current = true;
   retryCountRef.current = 0;
 
-  // Clear all field values for the current foreign language
-  const clearedValues: Record<string, string> = {};
-  effectiveFieldDefinitions.forEach((field) => {
+  // Clear all TRANSLATED field values for the current foreign language. The
+  // merchandising attributes (status, vendor, tags, ...) and the gallery hold
+  // ONE value per item and have no translation: blanking them showed a status
+  // select without its value, and the field then read as changed for good.
+  const translatableFields = effectiveFieldDefinitions.filter(isTranslatableFieldDefinition);
+  const clearedValues: Record<string, string> = { ...editableValuesRef.current };
+  translatableFields.forEach((field) => {
     clearedValues[field.key] = "";
   });
   setEditableValues(clearedValues);
@@ -1917,13 +1959,18 @@ const handleClearAllForLocaleConfirm = () => {
   // blanks the market overrides and lets resolve() fall back to the global values
   // (mirrors the market-scoped save above and handleClearField).
   const clearLocaleKey = buildLocaleKey(currentLanguage, selectedMarketId);
-  effectiveFieldDefinitions.forEach((field) => {
+  translatableFields.forEach((field) => {
     const tKey = field.translationKey;
     if (localTranslationsRef.current[tKey]) {
       delete localTranslationsRef.current[tKey][clearLocaleKey];
     }
-    // Mark as deleted so resolve() returns empty even if item.translations has old data
-    deletedTranslationKeysRef.current.add(buildDeletedKey(tKey, selectedMarketId));
+    // Mark as deleted so resolve() returns empty even if item.translations has
+    // old data -- for THIS locale only. A layer-wide mark emptied every other
+    // language until the save answered, and another language's late
+    // "translate all" answer (which drops the marks of what it answered)
+    // brought this language's old values back while their removal was on its
+    // way.
+    deletedTranslationKeysRef.current.add(buildLocaleDeletedKey(tKey, selectedMarketId, currentLanguage));
   });
 
   // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
@@ -1935,6 +1982,10 @@ const handleClearAllForLocaleConfirm = () => {
     setImageAltTexts(clearedAltTexts);
     setOriginalAltTexts({});
   }
+  // A staged alt translation of THIS layer (a translate answer that landed
+  // earlier) must not win over the clear on the next language switch -- the
+  // alt load reads the overlay before the item. Other locales' entries stay.
+  delete localAltTextOverlayRef.current[clearLocaleKey];
   clearSuggestionsForScope(suggestionScope);
 
   // Close modal
@@ -1957,7 +2008,7 @@ const handleClearAllForLocaleConfirm = () => {
   }
 
   // Send only fields that had a non-empty translated value (those need deletion)
-  effectiveFieldDefinitions.forEach((field) => {
+  translatableFields.forEach((field) => {
     if (fallbackFieldsRef.current.has(field.key)) return; // no translation to delete
     const originalValue = originalLoadedValuesRef.current[field.key] || "";
     if (originalValue) {
@@ -2027,6 +2078,7 @@ const handleTranslateAllForLocale = () => {
   if (isOperationActive(selectedItemId, `__translateAllForLocale__${currentLanguage}`)) return;
 
   const requestItemId = selectedItemId;
+  const requestedLocale = currentLanguage;
 
   // Mark in global store so spinner persists across navigation
   markOperationActive(selectedItemId, `__translateAllForLocale__${currentLanguage}`, "translateAllForLocale", currentLanguage);
@@ -2061,7 +2113,8 @@ const handleTranslateAllForLocale = () => {
     }
   });
 
-  safeSubmit(formDataObj, { method: "POST" });
+  if (submitTranslateRun) submitTranslateRun(formDataObj, requestItemId);
+  else safeSubmit(formDataObj, { method: "POST" });
 
   // Also translate all image alt-texts for this locale in parallel (via fetch API)
   if (selectedItem?.images && selectedItem.images.length > 0) {
@@ -2091,22 +2144,38 @@ const handleTranslateAllForLocale = () => {
           if (selectedItemIdRef.current !== requestItemId) return;
           const failedImages: number[] = (result.failedImages as number[]) || [];
 
-          // Only accept translations that were successfully saved to Shopify
+          // Only accept translations that were successfully saved to Shopify.
+          // Staged under the locale they were written for, and shown only
+          // while that locale is on screen in the global view (never over a
+          // typed draft): the merchant may have switched to another language
+          // meanwhile, whose alt fields this answer has nothing to do with.
           if (result.translatedAltTexts) {
-            const translated: Record<number, string> = {};
-            Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
-              const idx = parseInt(indexStr, 10);
-              if (!failedImages.includes(idx)) {
-                translated[idx] = String(text);
-              }
-            });
-
-            if (Object.keys(translated).length > 0) {
-              setImageAltTexts(prev => ({ ...prev, ...translated }));
+            const byIndex = forLocaleAltResults(
+              result.translatedAltTexts as Record<string, string>,
+              requestedLocale,
+            );
+            const visible = applyAltTranslateAllAnswer(
+              localAltTextOverlayRef.current,
+              byIndex,
+              failedImages,
+              {
+                locale: currentLanguageRef.current,
+                marketId: selectedMarketIdRef.current,
+                primaryLocale,
+                current: imageAltTextsRef.current,
+                original: originalAltTextsRef.current,
+              },
+            );
+            if (Object.keys(visible).length > 0) {
+              setImageAltTexts(prev => ({ ...prev, ...visible }));
               // Only the translated indices are saved; another image's typed
               // alt stays a draft against its own baseline.
-              setOriginalAltTexts(prev => ({ ...prev, ...translated }));
-              // No auto-save needed - server already saved to Shopify and DB
+              setOriginalAltTexts(prev => ({ ...prev, ...visible }));
+            }
+            // The server already saved to Shopify and the DB; the item catches
+            // up (and the language markers move) with a reload.
+            if (revalidatorRef.current.state === 'idle') {
+              try { revalidatorRef.current.revalidate(); } catch {}
             }
           }
 
@@ -2136,12 +2205,15 @@ const handleCopyField = (fieldKey: string): void => {
     const copyMarketId = selectedMarketIdRef.current;
     const copyLocaleKey = buildLocaleKey(currentLanguage, copyMarketId);
     const copyDeletedKey = buildDeletedKey(field.translationKey, copyMarketId);
+    const copyLocaleDeletedKey = buildLocaleDeletedKey(field.translationKey, copyMarketId, currentLanguage);
     copyFieldRollbackRef.current = {
       itemId: selectedItemId,
       fieldKey,
       translationKey: field.translationKey,
       localeKey: copyLocaleKey,
       deletedKey: copyDeletedKey,
+      localeDeletedKey: copyLocaleDeletedKey,
+      hadLocaleDeletedMarker: deletedTranslationKeysRef.current.has(copyLocaleDeletedKey),
       locale: currentLanguage,
       marketId: copyMarketId,
       value: primaryValue,
@@ -2209,6 +2281,7 @@ const rollbackCopyField = (): void => {
     else overlay[rec.localeKey] = rec.prevOverlay;
   }
   if (rec.hadDeletedMarker) deletedTranslationKeysRef.current.add(rec.deletedKey);
+  if (rec.hadLocaleDeletedMarker) deletedTranslationKeysRef.current.add(rec.localeDeletedKey);
 
   // Everything below is what the merchant SEES: only while that is still the
   // item, locale and market the copy ran on.

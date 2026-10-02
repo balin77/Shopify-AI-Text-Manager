@@ -120,6 +120,20 @@ export function isOperationActive(resourceId: string, fieldKey: string): boolean
   return activeOps.has(makeKey(resourceId, fieldKey));
 }
 
+/**
+ * Whether a run is writing translations INTO `locale` of this resource right
+ * now: "translate all" for that language or for every language, or the
+ * alt-text translate of either. A run for another language does not count.
+ */
+export function isTranslateIntoLocaleRunning(resourceId: string, locale: string): boolean {
+  return (
+    isOperationActive(resourceId, `__translateAllForLocale__${locale}`) ||
+    isOperationActive(resourceId, "__translateAll__") ||
+    isOperationActive(resourceId, `allAltTextsTranslate_${locale}`) ||
+    isOperationActive(resourceId, "allAltTextsTranslate")
+  );
+}
+
 export function markOperationActive(
   resourceId: string,
   fieldKey: string,
