@@ -141,7 +141,7 @@ sagt nichts ueber eine Anforderung, die Shopify spaeter hinzufuegt.
 ### 6. Contact Information & App Icon ✅
 - [x] Contact Information Updated
   - Company Name: "Gubler - Multimedia und Print"
-  - Support Email: gublerra@gmail.com
+  - Support Email: info@contentpilot-ai.com
   - Last Updated: 2026-02-04
   - Updated in `privacy.tsx` and `terms.tsx`
 
