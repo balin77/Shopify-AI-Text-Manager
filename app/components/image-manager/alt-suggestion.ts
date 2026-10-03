@@ -142,9 +142,12 @@ export function planAcceptAltSuggestion(args: {
  * save was made on: a failed save translates nothing.
  */
 export function shouldTranslateAfterSave(
-  entry: Pick<QueuedAltSave, "thenTranslateAll" | "productId">,
+  entry: Pick<QueuedAltSave, "thenTranslateAll" | "productId" | "locale">,
   verdictKind: string,
   currentProductId: string,
+  primaryLocale?: string,
 ): boolean {
-  return !!entry.thenTranslateAll && verdictKind === "saved" && (!entry.productId || entry.productId === currentProductId);
+  // The save must be of the primary language and of the product on screen.
+  const primary = !entry.locale || !primaryLocale || entry.locale === primaryLocale;
+  return !!entry.thenTranslateAll && verdictKind === "saved" && primary && (!entry.productId || entry.productId === currentProductId);
 }

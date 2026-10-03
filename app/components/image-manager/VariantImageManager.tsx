@@ -490,7 +490,7 @@ export function VariantImageManager({
       }
       // "Accept & Translate": the translation starts only now that the
       // primary alt is CONFIRMED saved; a failed save never reaches here.
-      if (shouldTranslateAfterSave(entry, verdict.kind, productIdRef.current)) translateAfterAcceptRef.current(entry);
+      if (shouldTranslateAfterSave(entry, verdict.kind, productIdRef.current, primaryLocaleRef.current)) translateAfterAcceptRef.current(entry);
       return;
     }
     if (verdict.kind === "noPrimary") {
@@ -576,6 +576,8 @@ export function VariantImageManager({
       altSaveInFlightRef.current = null;
       // The request is not aborted: remember it, a late success is still settled.
       timedOutAltSaveRef.current = next;
+      // A save that timed out never starts the translate, even if it answers late.
+      next.thenTranslateAll = false;
       settleAltSave(next, { kind: "failed", message: "" });
       dispatchNextAltSave();
     }, 90000);
@@ -3470,9 +3472,9 @@ export function VariantImageManager({
   // it never carries a market. The image is named by its MEDIA id -- a position
   // in this live list is not one in the database, and the server refuses an id
   // it cannot find instead of writing to another image.
-  const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string) => {
+  const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string, mediaIdOverride?: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
-    const mediaId = urlToGid[url] ?? effectiveProductImages[imageIndex]?.mediaId;
+    const mediaId = mediaIdOverride ?? urlToGid[url] ?? gidForUrl(altGidLookup, url) ?? effectiveProductImages[imageIndex]?.mediaId;
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) return;
     // An unsaved primary alt: the translations would be written from the draft
@@ -3541,7 +3543,7 @@ export function VariantImageManager({
       if (plan.reason === "noMedia") {
         showInfoBox(altAiBlockedHint(url) ?? String(t.imageManager?.aiNeedsSavedImage ?? "Save the image first — only then can the AI write or translate its alt text."), "warning");
       } else if (plan.reason === "busy") {
-        showInfoBox(String(t.imageManager?.altSuggestionBusy ?? "An AI request for this image is still running. Accept the suggestion once it has finished."), "warning");
+        showInfoBox(String(t.imageManager?.altSuggestionBusy ?? "Another AI request is running. Try again in a moment."), "warning");
       } else if (plan.reason === "singleLanguage") {
         showInfoBox(String(t.common?.requiresSecondLanguage ?? ""), "warning");
       }
@@ -3556,13 +3558,17 @@ export function VariantImageManager({
   };
 
   translateAfterAcceptRef.current = (entry: QueuedAltSave) => {
+    // The field moved on to a newer accepted save of this medium that translates
+    // itself: that one's translate runs, this one stays silent.
+    const key = altFlushKey(entry);
+    if (pendingAltSaves().some((q) => q !== entry && q.thenTranslateAll && altFlushKey(q) === key)) return;
     // One generate / translate request at a time on this fetcher: a new one
     // started while the save was out would be cancelled by this submit.
     if (altTextFetcher.state !== "idle") {
       showInfoBox(String(t.imageManager?.altAcceptTranslateSkipped ?? "The alt text was saved, but translating it into the other languages did not start."), "warning");
       return;
     }
-    handleTranslateAltTextToAllLocales(resolveAltUrl(entry.url), entry.altText);
+    handleTranslateAltTextToAllLocales(resolveAltUrl(entry.url), entry.altText, entry.mediaId);
   };
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;

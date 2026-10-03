@@ -1890,7 +1890,7 @@ export const es: Translation = {
     altSavedNotMirrored: "El texto alternativo se guardó en Shopify, pero no se pudo guardar en la app. Volverá a aparecer tras una sincronización.",
     altDraftsSaved: "Textos alternativos guardados.",
     altAiResultDiscarded: "El texto alternativo generado no se aplicó porque cambiaste de idioma o de mercado.",
-    altSuggestionBusy: "Todavía hay una solicitud de IA en curso para esta imagen. Acepta la sugerencia cuando termine.",
+    altSuggestionBusy: "Hay otra solicitud de IA en curso. Inténtalo de nuevo en un momento.",
     altAcceptTranslateSkipped: "El texto alternativo se guardó, pero no se inició su traducción a los otros idiomas. Usa el botón de traducir cuando termine la solicitud en curso.",
     altDraftNotSavableYet: "El texto alternativo de una imagen que aún no está guardada solo se puede guardar después de la propia imagen. Guarda de nuevo cuando la imagen esté subida.",
     altDraftDroppedNoImage: "Se descartó un texto alternativo escrito para una imagen que se quitó antes de guardarla.",

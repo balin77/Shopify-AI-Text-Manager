@@ -151,6 +151,19 @@ describe("Accept & Translate", () => {
     }
   });
 
+  it("only a primary-language save of the current product translates", () => {
+    const plan = planAcceptAltSuggestion({ ...base, translate: true, locale: "en" });
+    if (plan.kind !== "save") throw new Error("expected a save");
+    expect(shouldTranslateAfterSave(plan.entry, "saved", "p1", "en")).toBe(true);
+    expect(shouldTranslateAfterSave({ ...plan.entry, locale: "de" }, "saved", "p1", "en")).toBe(false);
+  });
+
+  it("an entry that timed out (flag dropped) never translates, even if it answers saved late", () => {
+    const plan = planAcceptAltSuggestion({ ...base, translate: true });
+    if (plan.kind !== "save") throw new Error("expected a save");
+    expect(shouldTranslateAfterSave({ ...plan.entry, thenTranslateAll: false }, "saved", "p1")).toBe(false);
+  });
+
   it("a plain Accept never translates, and a product switch cancels the translate", () => {
     const plain = planAcceptAltSuggestion({ ...base });
     const marked = planAcceptAltSuggestion({ ...base, translate: true });
@@ -216,6 +229,12 @@ describe("wiring in the manager (source guard)", () => {
     expect(between).toContain("withAltSuggestion(");
     expect(between).toMatch(/return;\s*\}/);
     expect(between).not.toContain("submitAltSave(");
+  });
+
+  it("a timeout drops the flag, a newer translating accept silences the older one, and the media id is passed through", () => {
+    expect(src).toContain("next.thenTranslateAll = false;");
+    expect(src).toMatch(/q !== entry && q\.thenTranslateAll && altFlushKey\(q\) === key/);
+    expect(src).toContain("entry.altText, entry.mediaId)");
   });
 
   it("only a confirmed save starts the translate (the settle callback asks shouldTranslateAfterSave)", () => {
