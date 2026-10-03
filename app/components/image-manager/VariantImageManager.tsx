@@ -27,6 +27,8 @@ import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
 import { planAltFlush, planImmediateAltSave, hasImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
+import { altSuggestionInView, altSuggestionsOfProduct, planAcceptAltSuggestion, shouldTranslateAfterSave, withAltSuggestion, withoutAltSuggestion, type AltSuggestionMap } from "./alt-suggestion";
+import { AISuggestionBanner } from "../AISuggestionBanner";
 import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
 import {
   settlingPollDelayMs,
@@ -486,6 +488,9 @@ export function VariantImageManager({
         for (const alias of entry.aliases ?? []) settleUrl(resolveAltUrl(alias.url), alias.altText, entry.altText);
         syncAltDirty();
       }
+      // "Accept & Translate": the translation starts only now that the
+      // primary alt is CONFIRMED saved; a failed save never reaches here.
+      if (shouldTranslateAfterSave(entry, verdict.kind, productIdRef.current, primaryLocaleRef.current)) translateAfterAcceptRef.current(entry);
       return;
     }
     if (verdict.kind === "noPrimary") {
@@ -571,6 +576,8 @@ export function VariantImageManager({
       altSaveInFlightRef.current = null;
       // The request is not aborted: remember it, a late success is still settled.
       timedOutAltSaveRef.current = next;
+      // A save that timed out never starts the translate, even if it answers late.
+      next.thenTranslateAll = false;
       settleAltSave(next, { kind: "failed", message: "" });
       dispatchNextAltSave();
     }, 90000);
@@ -668,6 +675,16 @@ export function VariantImageManager({
   }, [fetcher.state, fetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const translationsFetcher = useFetcher<any>();     // load foreign locale alt texts from DB
   const prevAltFetcherData = useRef<any>(null);
+  // ✨ generate's results waiting for the merchant's decision, per (product,
+  // language, market, medium) -- never a save-bar draft, see alt-suggestion.ts.
+  const [altSuggestions, setAltSuggestions] = useState<AltSuggestionMap>({});
+  // Starts the translate-to-all of an "Accept & Translate" once its save is
+  // confirmed (assigned every render; the settle callback is not re-created).
+  const translateAfterAcceptRef = useRef<(entry: QueuedAltSave) => void>(() => undefined);
+  useEffect(() => {
+    // A product switch drops every other product's pending suggestions.
+    setAltSuggestions((m) => altSuggestionsOfProduct(m, productId));
+  }, [productId]);
   // What the single in-flight generate / translate request was made FOR (image,
   // language, product): the reply is applied to that, never to a position.
   const altAiRequestRef = useRef<{ url: string; mediaId?: string; locale?: string; marketId?: string; productId: string } | null>(null);
@@ -3005,14 +3022,23 @@ export function VariantImageManager({
       showInfoBox(failText(""), "critical");
       return;
     }
-    // The result is SAVED at once, for this image only (owner's rule,
-    // 2026-10-02: AI buttons save immediately, typing stays a draft): the text
-    // goes into the field exactly like a typed one, and that one medium's save
-    // is queued behind whatever is already out — with the language and market
-    // the request was made for. Every other image's draft stays a draft. A
-    // confirmed save clears the image's dirty state; a failed one keeps it
-    // dirty and failed, so the page Save sends it again. If the view moved on
-    // there is no field to put it in.
+    // ✨ generate is a SUGGESTION (owner, 2026-10-03: consistent with every
+    // other field): it is shown next to the image's alt field and nothing is
+    // written until the merchant accepts it. It is stored under the product,
+    // language, market and medium the request was made for, so it only shows
+    // there -- a view that moved on simply does not display it.
+    if (data.actionType === "generateAltText") {
+      setAltSuggestions((m) => withAltSuggestion(m, { productId: req.productId, locale: req.locale, marketId: req.marketId, mediaId }, generated));
+      return;
+    }
+    // 🌍 translate (single language) is saved at once, for this image only
+    // (owner's rule, 2026-10-02: AI buttons save immediately, typing stays a
+    // draft): the text goes into the field exactly like a typed one, and that
+    // one medium's save is queued behind whatever is already out -- with the
+    // language and market the request was made for. Every other image's draft
+    // stays a draft. A confirmed save clears the image's dirty state; a failed
+    // one keeps it dirty and failed, so the page Save sends it again. If the
+    // view moved on there is no field to put it in.
     if (req.locale === currentLanguageRef.current && (req.marketId ?? "") === viewMarketRef.current) {
       applyAltDraft(url, generated);
       const entry = planImmediateAltSave({
@@ -3446,9 +3472,9 @@ export function VariantImageManager({
   // it never carries a market. The image is named by its MEDIA id -- a position
   // in this live list is not one in the database, and the server refuses an id
   // it cannot find instead of writing to another image.
-  const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string) => {
+  const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string, mediaIdOverride?: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
-    const mediaId = urlToGid[url] ?? effectiveProductImages[imageIndex]?.mediaId;
+    const mediaId = mediaIdOverride ?? urlToGid[url] ?? gidForUrl(altGidLookup, url) ?? effectiveProductImages[imageIndex]?.mediaId;
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) return;
     // An unsaved primary alt: the translations would be written from the draft
@@ -3475,6 +3501,75 @@ export function VariantImageManager({
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     altTextFetcher.submit(form, { method: "post" });
   }, [productId, effectiveProductImages, urlToGid, enabledLanguages, primaryLocale, altTextFetcher, t, currentLanguage, altGidLookup, showInfoBox]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- ✨ generate's SUGGESTION: Accept / Accept & Translate / Decline ----
+  // The suggestion of the view on screen (product, language, market) for the
+  // medium behind a tile; nothing of it is written until it is accepted.
+  const altSuggestionView = { productId, locale: currentLanguage, marketId: foreignMarketId };
+  const altSuggestionFor = (url: string | null | undefined): string | undefined =>
+    url ? altSuggestionInView(altSuggestions, altSuggestionView, urlToGid[url] ?? gidForUrl(altGidLookup, url)) : undefined;
+
+  const handleRejectAltSuggestion = (url: string) => {
+    const mediaId = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    if (!mediaId) return;
+    setAltSuggestions((m) => withoutAltSuggestion(m, { ...altSuggestionView, mediaId }));
+  };
+
+  // Accept saves exactly this image's alt (the existing immediate per-image
+  // save, with the language and market of the view). Accept & Translate marks
+  // that save: only once it is CONFIRMED does the translate-to-all start (the
+  // settle callback calls translateAfterAcceptRef). Every refusal is decided
+  // before the field, the suggestion or any queue is touched.
+  const handleAcceptAltSuggestion = (url: string, translate: boolean) => {
+    const mediaId = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    const plan = planAcceptAltSuggestion({
+      url,
+      mediaId,
+      suggestion: altSuggestionFor(url),
+      translate,
+      isPrimaryLocale: !currentLanguage || currentLanguage === primaryLocale,
+      singleLocale: enabledLanguages.filter((l) => l !== primaryLocale).length === 0,
+      aiBusy: altTextFetcher.state !== "idle",
+      dirtyUrls: dirtyUrlsRef.current,
+      texts: localAltTextsRef.current,
+      gidOf: (u) => (u === url ? mediaId : gidForUrl(altGidLookup, u)),
+      locale: currentLanguage,
+      marketId: foreignMarketId,
+      productId,
+      productTitle,
+      editOrder: altEditOrderRef.current,
+    });
+    if (plan.kind === "refused") {
+      if (plan.reason === "noMedia") {
+        showInfoBox(altAiBlockedHint(url) ?? String(t.imageManager?.aiNeedsSavedImage ?? "Save the image first — only then can the AI write or translate its alt text."), "warning");
+      } else if (plan.reason === "busy") {
+        showInfoBox(String(t.imageManager?.altSuggestionBusy ?? "Another AI request is running. Try again in a moment."), "warning");
+      } else if (plan.reason === "singleLanguage") {
+        showInfoBox(String(t.common?.requiresSecondLanguage ?? ""), "warning");
+      }
+      return;
+    }
+    if (mediaId) setAltSuggestions((m) => withoutAltSuggestion(m, { ...altSuggestionView, mediaId }));
+    applyAltDraft(url, plan.text);
+    const entry = plan.entry;
+    failedAltUrlsRef.current.delete(entry.url);
+    for (const alias of entry.aliases ?? []) failedAltUrlsRef.current.delete(alias.url);
+    submitAltSave(entry);
+  };
+
+  translateAfterAcceptRef.current = (entry: QueuedAltSave) => {
+    // The field moved on to a newer accepted save of this medium that translates
+    // itself: that one's translate runs, this one stays silent.
+    const key = altFlushKey(entry);
+    if (pendingAltSaves().some((q) => q !== entry && q.thenTranslateAll && altFlushKey(q) === key)) return;
+    // One generate / translate request at a time on this fetcher: a new one
+    // started while the save was out would be cancelled by this submit.
+    if (altTextFetcher.state !== "idle") {
+      showInfoBox(String(t.imageManager?.altAcceptTranslateSkipped ?? "The alt text was saved, but translating it into the other languages did not start."), "warning");
+      return;
+    }
+    handleTranslateAltTextToAllLocales(resolveAltUrl(entry.url), entry.altText, entry.mediaId);
+  };
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
@@ -3962,6 +4057,21 @@ export function VariantImageManager({
                 )}
               </div>
             </div>
+            {altSuggestionFor(productSingleSelected) !== undefined && (
+              <AISuggestionBanner
+                fieldType="altText"
+                suggestionText={altSuggestionFor(productSingleSelected) as string}
+                onAccept={() => handleAcceptAltSuggestion(productSingleSelected, false)}
+                onDecline={() => handleRejectAltSuggestion(productSingleSelected)}
+                onAcceptAndTranslate={isPrimaryLocale ? () => handleAcceptAltSuggestion(productSingleSelected, true) : undefined}
+                acceptLabel={t.products?.accept || "Accept"}
+                declineLabel={t.products?.decline || "Decline"}
+                acceptAndTranslateLabel={t.products?.acceptTranslate || "Accept & Translate"}
+                titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
+                singleLocaleHint={singleLocaleHint}
+                disabled={altTextFetcher.state !== "idle"}
+              />
+            )}
             {productAltLocked && (
               <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
                 {altNeedsPrimaryHint}
@@ -4082,6 +4192,9 @@ export function VariantImageManager({
                 onGenerateAltText={handleGenerateAltTextForImage}
                 onTranslateAltText={handleTranslateAltTextForImage}
                 onTranslateAltToAllLocales={handleTranslateAltTextToAllLocales}
+                altSuggestionFor={altSuggestionFor}
+                onAcceptAltSuggestion={handleAcceptAltSuggestion}
+                onRejectAltSuggestion={handleRejectAltSuggestion}
                 isAltDirty={isPrimaryAltDirty}
                 isAltDraftDirty={isAltDraftDirty}
                 altAiBlockedHint={altAiBlockedHint}
