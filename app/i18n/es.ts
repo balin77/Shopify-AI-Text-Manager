@@ -490,6 +490,7 @@ export const es: Translation = {
     themeImageReadFailed: "No se pudo contactar con Shopify y no se pudo comprobar la imagen. Inténtalo de nuevo. No se guardó nada.",
     themeImageAmbiguous: "La misma imagen se usa en varios lugares del tema, así que no está claro cuál estás cambiando. Cámbiala en el editor de temas de Shopify. No se guardó nada.",
     themeImageNotLocated: "No se encontró la imagen actual en el archivo del tema (probablemente el contenido ha cambiado). Recarga el contenido e inténtalo de nuevo. No se guardó nada.",
+    themeTextAmbiguous: "El mismo texto aparece en varios lugares del tema, así que no está claro cuál estás cambiando. Cámbialo en el editor de temas de Shopify. No se guardó nada.",
     // Clear all modal
     clearAllConfirmTitle: "¿Limpiar todos los campos?",
     clearAllConfirm: "Limpiar todo",
@@ -5493,7 +5494,7 @@ export const es: Translation = {
     changeImage: "Elegir otra imagen",
     reset: "Usar imagen original",
     primaryReadOnly: "La imagen original se elige en el editor de temas de Shopify. Aquí defines otra imagen por idioma y mercado.",
-    primaryHint: "Esta es la imagen original para todos los idiomas. Las imágenes de reemplazo que hayas definido para otros idiomas o mercados se mantienen al cambiarla.",
+    primaryHint: "Esta es la imagen original para todos los idiomas. Las imágenes de reemplazo que hayas definido para otros idiomas o mercados se mantienen. Un idioma que solo tiene una copia del original anterior sigue al nuevo original.",
     primaryPickerTitle: "Elegir imagen original",
     unsavedBadge: "Sin guardar",
     resetToSaved: "Deshacer elección",

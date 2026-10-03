@@ -178,7 +178,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     const oldPrimary = new Map<string, string>();
     for (const group of themeGroups) {
       for (const item of (group.translatableContent as unknown) as TranslatableField[]) {
-        if (item.value !== undefined && !oldPrimary.has(item.key)) oldPrimary.set(item.key, item.value);
+        if (item.value !== undefined) oldPrimary.set(item.key, item.value); // last group wins, like oldValueMap
       }
     }
     const fieldKeysRaw = getFormJSON<unknown>(formData, "themeImageFieldKeys");
@@ -226,6 +226,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   /** Primary-change purge steps that did not complete: their translation rows were KEPT. */
   const purgeWarnings: string[] = [];
   let unconfirmedKeys: string[] = [];
+  /** Foreign copies of an old original image whose removal Shopify confirmed: the page drops exactly these rows. */
+  const removedImageCopies: Array<{ key: string; locale: string; marketId: string }> = [];
   const noDigestKeys: string[] = [];
   const failedDeleteKeys: string[] = [];
   const shopifyErrors: string[] = [];
@@ -897,18 +899,28 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             replacements.set(key, { oldValue, newValue, keyHint });
           }
 
-          // An IMAGE reference is often used in several places at once (the same
-          // logo in two slideshow blocks). The replacement finds the VALUE, not
-          // its path, so an image is written only when its old reference occurs
-          // EXACTLY ONCE in this file and exactly one key of the save carries
-          // it - otherwise two keys with the same property name would both hit
-          // the first slot and push the wrong image live. Refused BEFORE any
-          // write; the caller refuses the whole save.
-          const ambiguousKeys = keys.filter((key) => {
-            if (!imagePathKeys.has(key)) return false;
+          // A value is found by SEARCH, not by path (the translation key does not
+          // reliably name the JSON path - not measured for templates and section
+          // groups - so resolving it was not chosen). A search rewrites the first
+          // slot holding the old value for every key that carries it, so two keys
+          // with the same old value both hit the first slot, and a key whose old
+          // value sits in a second, unrelated slot may rewrite that one. So a
+          // searched key (text or image) is written ONLY when its old value
+          // occurs EXACTLY ONCE in this file as a parsed JSON string value AND
+          // exactly one key of this file's searched keys carries it; otherwise
+          // the whole save is refused BEFORE any write. Keys resolved by exact
+          // JSON path (locale files) are exempt. `presets` of settings_data.json
+          // are not live values: they are neither counted nor written.
+          const searchTree: unknown =
+            actualFilename === SETTINGS_DATA_FILE && fileJson && typeof fileJson === "object" && !Array.isArray(fileJson)
+              ? Object.fromEntries(Object.entries(fileJson as Record<string, unknown>).filter(([k]) => k !== "presets"))
+              : fileJson;
+          const searchedKeys = resolved ? keys.filter((k) => resolved.searchKeys?.has(k)) : keys;
+          const ambiguousKeys = searchedKeys.filter((key) => {
             const old = oldValueMap.get(key) || "";
-            const sameOldInSave = [...imagePathKeys].filter((other) => oldValueMap.get(other) === old).length;
-            return sameOldInSave !== 1 || countStringOccurrences(fileJson, old) > 1;
+            if (!old) return false;
+            const sameOldInFile = searchedKeys.filter((other) => (oldValueMap.get(other) || "") === old).length;
+            return sameOldInFile !== 1 || countStringOccurrences(searchTree, old) > 1;
           });
           if (ambiguousKeys.length > 0) {
             return { replacedKeys: [], missedKeys: [], ambiguousKeys, pushedValues: new Map() };
@@ -918,9 +930,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           if (resolved) {
             const byPath = new Map([...replacements].filter(([k]) => !resolved.searchKeys?.has(k)));
             const bySearch = new Map([...replacements].filter(([k]) => resolved.searchKeys?.has(k)));
-            replacedKeys = new Set([...replaceByPath(fileJson, byPath), ...replaceValuesInJson(fileJson, bySearch)]);
+            replacedKeys = new Set([...replaceByPath(fileJson, byPath), ...replaceValuesInJson(searchTree, bySearch)]);
           } else {
-            replacedKeys = replaceValuesInJson(fileJson, replacements);
+            replacedKeys = replaceValuesInJson(searchTree, replacements);
           }
           const missedKeys = keys.filter((k) => !replacedKeys.has(k));
 
@@ -1010,15 +1022,15 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         let imageBlock: string | null = null;
         for (const { filename, keys, resolved } of passes) {
           const result = buildFileEntry(filename, keys, richtextMode === "normalize", resolved);
-          // An image key in this file that is ambiguous, missed or in an
-          // unreadable file blocks the WHOLE save: for an image a partial push
-          // is not acceptable (nothing has been written yet).
-          if (keys.some((k) => imagePathKeys.has(k))) {
-            if (result.ambiguousKeys && result.ambiguousKeys.length > 0) {
-              imageBlock = "themeImageAmbiguous";
-            } else if (result.error || result.missedKeys.some((k) => imagePathKeys.has(k))) {
-              imageBlock = imageBlock ?? "themeImageNotLocated";
-            }
+          // An ambiguous key (text or image) blocks the WHOLE save, and so does
+          // an image key that is missed or sits in an unreadable file: for these
+          // a partial push is not acceptable (nothing has been written yet).
+          if (result.ambiguousKeys && result.ambiguousKeys.length > 0) {
+            imageBlock = result.ambiguousKeys.some((k) => imagePathKeys.has(k)) || imageBlock === "themeImageAmbiguous"
+              ? "themeImageAmbiguous"
+              : imageBlock ?? "themeTextAmbiguous";
+          } else if (keys.some((k) => imagePathKeys.has(k)) && (result.error || result.missedKeys.some((k) => imagePathKeys.has(k)))) {
+            imageBlock = imageBlock ?? "themeImageNotLocated";
           }
           if (result.error) {
             fileShopifyErrors.push(result.error);
@@ -1411,21 +1423,48 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // the local mirror (a copy written in Shopify's own editor and not synced
     // yet is not seen). The merchant's purge switch applies, like every purge.
     const pushedImageKeys = [...imagePathKeys].filter((k) => pushedPrimaryKeys.has(k));
-    if (pushedImageKeys.length > 0) {
+    const allowedCopyResources = [
+      ...new Set(
+        pushedImageKeys
+          .map((k) => keyToResourceId.get(k) || resourceId)
+          .filter((resId) => {
+            const themeOfResource = extractThemeIdFromResourceId(resId);
+            return !selectedThemeId || !themeOfResource || themeOfResource === selectedThemeId;
+          }),
+      ),
+    ];
+    if (pushedImageKeys.length > 0 && allowedCopyResources.length > 0) {
       try {
         const imagePolicy = await loadTranslationChangePolicy(session.shop, db);
         if (imagePolicy.purgeUnreconciledSurfaces) {
           const rows: Array<{ resourceId: string; key: string; locale: string; marketId: string | null; value: string | null }> =
             await db.themeTranslation.findMany({
-              where: { shop: session.shop, groupId, domain, key: { in: pushedImageKeys } },
+              where: {
+                shop: session.shop,
+                groupId,
+                domain,
+                key: { in: pushedImageKeys },
+                // Only the resources of the saved keys, and only the selected
+                // theme's rows (plus legacy ones with no theme): rows of OTHER
+                // themes share the group id and must never be touched.
+                resourceId: { in: allowedCopyResources },
+                ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
+              },
               select: { resourceId: true, key: true, locale: true, marketId: true, value: true },
             });
-          const staleCopies = rows.filter(
-            (row) =>
-              row.locale !== primaryLocale &&
-              typeof row.value === "string" &&
-              row.value.trim() === (oldImageRefByKey.get(row.key) ?? "").trim(),
-          );
+          const isOldOriginal = (row: { key: string; value: string | null }) =>
+            typeof row.value === "string" && row.value.trim() === (oldImageRefByKey.get(row.key) ?? "").trim();
+          const globalOf = (row: { resourceId: string; key: string; locale: string }) =>
+            rows.find((r) => r.resourceId === row.resourceId && r.key === row.key && r.locale === row.locale && !(r.marketId ?? ""));
+          const staleCopies = rows.filter((row) => {
+            if (row.locale === primaryLocale || !allowedCopyResources.includes(row.resourceId) || !isOldOriginal(row)) return false;
+            if (!(row.marketId ?? "")) return true;
+            // A market copy goes only where its locale's global value is absent
+            // or is a copy too: otherwise the market would fall back to a global
+            // replacement nobody chose for it.
+            const global = globalOf(row);
+            return !global || isOldOriginal(global);
+          });
           const byLayer = new Map<string, { resourceId: string; locale: string; marketId: string; keys: string[] }>();
           for (const row of staleCopies) {
             const marketId = row.marketId ?? "";
@@ -1441,6 +1480,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               });
               const confirmed = layer.keys.filter((k) => removal.confirmedPairs.has(`${layer.locale}${LOCALE_KEY_SEP}${k}`));
               if (confirmed.length > 0) {
+                for (const k of confirmed) removedImageCopies.push({ key: k, locale: layer.locale, marketId: layer.marketId });
                 await db.themeTranslation.deleteMany({
                   where: {
                     shop: session.shop,
@@ -1581,6 +1621,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           // nothing would ever wait for, on the one surface with neither a
           // webhook nor a sync to notice later.
           retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+          ...(removedImageCopies.length > 0 ? { removedImageCopies } : {}),
         },
         { status: 500 }
       );
@@ -1675,6 +1716,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     success: true,
     actionType: "updateContent",
     retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+    // Foreign copies of the old original image that were removed: the page drops
+    // exactly these layers from its cache.
+    ...(removedImageCopies.length > 0 ? { removedImageCopies } : {}),
     // A foreign save names the layer it wrote (group, locale, market; "" =
     // global) and the values, an empty one being a clear. The page updates its
     // own cache from this and from nothing else: it used to address rows by key

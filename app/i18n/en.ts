@@ -498,6 +498,7 @@ export const en: Translation = {
     themeImageReadFailed: "Shopify could not be reached just now, so the image could not be checked. Please try again. Nothing was saved.",
     themeImageAmbiguous: "The same image is used in several places of the theme, so it is not clear which one you are changing. Change it in Shopify's theme editor. Nothing was saved.",
     themeImageNotLocated: "The current image was not found in the theme file (its content has probably changed). Reload the content and try again. Nothing was saved.",
+    themeTextAmbiguous: "The same text appears in several places of the theme, so it is not clear which one you are changing. Change it in Shopify's theme editor. Nothing was saved.",
     // Clear all modal
     clearAllConfirmTitle: "Clear All Fields?",
     clearAllConfirm: "Clear All",
@@ -5508,7 +5509,7 @@ export const en: Translation = {
     changeImage: "Choose another image",
     reset: "Use original image",
     primaryReadOnly: "The original image is chosen in Shopify's theme editor. Here you set a different image per language and market.",
-    primaryHint: "This is the original image for all languages. Replacement images you set for other languages or markets stay in place when you change it.",
+    primaryHint: "This is the original image for all languages. Replacement images you set for other languages or markets stay in place. A language that only has a copy of the previous original follows the new original.",
     primaryPickerTitle: "Choose original image",
     unsavedBadge: "Not saved yet",
     resetToSaved: "Undo choice",

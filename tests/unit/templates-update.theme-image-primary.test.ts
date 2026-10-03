@@ -388,6 +388,79 @@ describe("primary theme image save", () => {
     for (const c of db.themeTranslation.deleteMany.mock.calls as any[][]) expect(c[0].where.locale).toBe("en");
   });
 
+  it("never touches rows of ANOTHER theme that share the group id", async () => {
+    const R = "gid://shopify/OnlineStoreThemeSettingsCategory/Brand?theme_id=1";
+    const OTHER = "gid://shopify/OnlineStoreThemeSettingsCategory/Brand?theme_id=2";
+    const { ctx, db } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+      translationRows: [
+        { resourceId: R, key: SETTINGS_KEY, locale: "en", marketId: "", value: OLD },
+        { resourceId: OTHER, key: SETTINGS_KEY, locale: "en", marketId: "", value: OLD },
+      ],
+    });
+    (ctx as any).keyToResourceId = new Map([[SETTINGS_KEY, R]]);
+    await handleUpdateContent(ctx);
+    const calls = ((ctx as any).admin.graphql.mock.calls as any[][]).filter((c) => String(c[0]).includes("translationsRemove"));
+    expect(calls.map((c) => c[1].variables.resourceId)).toEqual([R]);
+    const where = (db.themeTranslation.findMany.mock.calls as any[][])[0][0].where;
+    expect(where.resourceId).toEqual({ in: [R] });
+    expect(where.OR).toEqual([{ themeId: "gid://shopify/OnlineStoreTheme/1" }, { themeId: "" }]);
+  });
+
+  it("a market copy of the old original stays while that locale's global value is a real replacement", async () => {
+    const R = "gid://shopify/OnlineStoreThemeSettingsCategory/1";
+    const market = "gid://shopify/Market/1";
+    const base = {
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+    };
+    const keep = makeCtx({
+      ...base,
+      translationRows: [
+        { resourceId: R, key: SETTINGS_KEY, locale: "fr", marketId: "", value: "shopify://shop_images/w.png" },
+        { resourceId: R, key: SETTINGS_KEY, locale: "fr", marketId: market, value: OLD },
+      ],
+    });
+    await handleUpdateContent(keep.ctx);
+    expect(((keep.ctx as any).admin.graphql.mock.calls as any[][]).some((c) => String(c[0]).includes("translationsRemove"))).toBe(false);
+
+    // Global absent: the market copy goes. Global a copy too: both go.
+    const gone = makeCtx({ ...base, translationRows: [{ resourceId: R, key: SETTINGS_KEY, locale: "fr", marketId: market, value: OLD }] });
+    await handleUpdateContent(gone.ctx);
+    expect(((gone.ctx as any).admin.graphql.mock.calls as any[][]).filter((c) => String(c[0]).includes("translationsRemove")).length).toBe(1);
+  });
+
+  it("answers exactly which copies were removed, so the page can drop them", async () => {
+    const R = "gid://shopify/OnlineStoreThemeSettingsCategory/1";
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+      translationRows: [
+        { resourceId: R, key: SETTINGS_KEY, locale: "en", marketId: "", value: OLD },
+        { resourceId: R, key: SETTINGS_KEY, locale: "fr", marketId: "", value: "shopify://shop_images/fr.png" },
+      ],
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).removedImageCopies).toEqual([{ key: SETTINGS_KEY, locale: "en", marketId: "" }]);
+  });
+
+  it("a settings_data PRESET that repeats the image is neither counted nor written", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD }, presets: { Default: { logo: OLD } } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value);
+    expect(written.current.logo).toBe(NEW);
+    expect(written.presets.Default.logo).toBe(OLD);
+  });
+
   it("keeps a copy's local row when Shopify does not confirm the removal", async () => {
     const R = "gid://shopify/OnlineStoreThemeSettingsCategory/1";
     const { ctx, db } = makeCtx({
@@ -445,5 +518,44 @@ describe("primary theme image save", () => {
     expect(removal.length).toBeGreaterThan(0);
     for (const call of removal) expect(call[1].variables.translationKeys).toEqual(["general.headline"]);
     void db;
+  });
+});
+
+describe("primary theme TEXT save is written only where unambiguous", () => {
+  const TYPE = "ONLINE_STORE_THEME_JSON_TEMPLATE";
+
+  it("two headings with the same old text: changing one refuses the save, the other is never rewritten", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { a: { settings: { heading: "Hi" } }, b: { settings: { heading: "Hi" } } } })],
+      edits: { "section.index.json.a.heading": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    const body = result?.data ?? result;
+    expect(body.success).toBe(false);
+    expect(body.errorKey).toBe("themeTextAmbiguous");
+    expect(upserts).toEqual([]);
+  });
+
+  it("two keys carrying the same old text in one file are refused too", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { a: { settings: { heading: "Hi" } }, b: { settings: { heading: "Hi" } } } })],
+      edits: {
+        "section.index.json.a.heading": { old: "Hi", next: "Ho", type: TYPE },
+        "section.index.json.b.heading": { old: "Hi", next: "Hu", type: TYPE },
+      },
+    });
+    const body = ((await handleUpdateContent(ctx)) as any);
+    expect((body?.data ?? body).errorKey).toBe("themeTextAmbiguous");
+    expect(upserts).toEqual([]);
+  });
+
+  it("a text that occurs once is still written", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { a: { settings: { heading: "Hi" } }, b: { settings: { heading: "Other" } } } })],
+      edits: { "section.index.json.a.heading": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    expect(JSON.parse(upserts[0].value).sections).toEqual({ a: { settings: { heading: "Ho" } }, b: { settings: { heading: "Other" } } });
   });
 });

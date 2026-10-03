@@ -486,7 +486,7 @@ export const guideEs: GuideCopy = {
           heading: "Imágenes del tema",
           paragraphs: [
             "Las imágenes de tu tema (por ejemplo un banner en la página de inicio) están en Contenido → Tema, entre los textos de su sección. En lugar de un campo de texto ves una vista previa de la imagen.",
-            "Cambias la imagen original aquí mismo: cambia al idioma principal, haz clic en «Elegir otra imagen» junto a la imagen y elige un archivo o sube uno. Tu elección solo se aplica tras «Guardar». La imagen original se puede reemplazar, pero no quitar. Las imágenes de reemplazo que hayas definido para otros idiomas o mercados se mantienen: un nuevo original no las elimina. Una imagen que aparece en varios lugares del tema se sigue cambiando en el editor de temas de Shopify.",
+            "Cambias la imagen original aquí mismo: cambia al idioma principal, haz clic en «Elegir otra imagen» junto a la imagen y elige un archivo o sube uno. Tu elección solo se aplica tras «Guardar». La imagen original se puede reemplazar, pero no quitar. Las imágenes de reemplazo que hayas definido para otros idiomas o mercados se mantienen: un nuevo original no las elimina. Un idioma que solo tiene una copia del original anterior sigue al nuevo original. Una imagen que aparece en varios lugares del tema se sigue cambiando en el editor de temas de Shopify.",
             "Que tu tema muestre la imagen del idioma elegido depende del tema. Tras guardar, comprueba tu tienda en ese idioma; algunos temas pueden seguir mostrando la imagen original.",
           ],
           steps: [

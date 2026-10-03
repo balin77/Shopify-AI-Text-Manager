@@ -27,7 +27,7 @@ import type { FetcherData, TranslatableContentItem, ContentEditorConfig, ShopLoc
 import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
-import { upsertThemeRow, applyThemeSaveToRows, themeRowValue } from "~/services/theme-translation-cache.shared";
+import { upsertThemeRow, applyThemeSaveToRows, themeRowValue, removeThemeLayers } from "~/services/theme-translation-cache.shared";
 import { detectFieldType } from "~/utils/templates-field-factory";
 import { keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
 
@@ -784,6 +784,26 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           const saveData = fetcher.data as { warnings?: string[]; unconfirmedPurgeKeys?: string[] };
           // The purge warning itself is shown by the editor hook, in place of the plain "saved" toast.
           const invalidated = keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
+
+          // Stale copies of the old original image the server removed (confirmed):
+          // exactly those layers leave the cache, so a deleted copy is not shown
+          // as that language's own replacement. Real replacements stay.
+          const removedCopies = (fetcher.data as { removedImageCopies?: Array<{ key: string; locale: string; marketId?: string }> })
+            .removedImageCopies;
+          if (removedCopies && removedCopies.length > 0) {
+            setLoadedTranslations(prev => {
+              const groupCache = prev[selectedGroupId];
+              if (!groupCache) return prev;
+              return { ...prev, [selectedGroupId]: removeThemeLayers(groupCache, removedCopies) };
+            });
+            const refGroupCopies = loadedTranslationsRef.current[selectedGroupId];
+            if (refGroupCopies) {
+              loadedTranslationsRef.current = {
+                ...loadedTranslationsRef.current,
+                [selectedGroupId]: removeThemeLayers(refGroupCopies, removedCopies),
+              };
+            }
+          }
 
           if (invalidated.size > 0) {
             setLoadedTranslations(prev => {

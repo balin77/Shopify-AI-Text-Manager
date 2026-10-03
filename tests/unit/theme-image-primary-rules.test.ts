@@ -6,6 +6,7 @@ import {
   rememberThemeImagePick,
   fileIdForThemeImage,
 } from "~/utils/theme-image-reference.shared";
+import { removeThemeLayers } from "~/services/theme-translation-cache.shared";
 import { countStringOccurrences } from "~/utils/templates/templates.utils";
 import { survivesValuePrompt } from "~/services/translations/stale-translations.shared";
 
@@ -50,5 +51,21 @@ describe("countStringOccurrences", () => {
   it("counts whole-value matches anywhere in the tree", () => {
     expect(countStringOccurrences({ a: "x", b: { c: "x", d: ["x", "xx"] } }, "x")).toBe(3);
     expect(countStringOccurrences(null, "x")).toBe(0);
+  });
+});
+
+describe("removeThemeLayers", () => {
+  it("drops exactly the named layers and nothing else", () => {
+    const cache = {
+      en: [
+        { key: "k", value: "x", locale: "en", marketId: "" },
+        { key: "k", value: "x", locale: "en", marketId: "m1" },
+        { key: "k2", value: "y", locale: "en", marketId: "" },
+      ],
+      fr: [{ key: "k", value: "z", locale: "fr", marketId: "" }],
+    };
+    const next = removeThemeLayers(cache, [{ key: "k", locale: "en", marketId: "" }]);
+    expect(next.en.map((r) => `${r.key}|${r.marketId}`)).toEqual(["k|m1", "k2|"]);
+    expect(next.fr).toHaveLength(1);
   });
 });

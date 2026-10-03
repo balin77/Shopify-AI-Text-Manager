@@ -491,7 +491,7 @@ export const guideDe: GuideCopy = {
           heading: "Theme-Bilder",
           paragraphs: [
             "Bilder in Ihrem Theme (zum Beispiel ein Banner auf der Startseite) finden Sie unter Inhalte → Theme bei den Texten des jeweiligen Abschnitts. Statt eines Textfeldes sehen Sie dort eine Vorschau des Bildes.",
-            "Das Originalbild ändern Sie direkt hier: Wechseln Sie in die Hauptsprache, klicken Sie beim Bild auf „Anderes Bild wählen“ und wählen Sie eine Datei aus oder laden Sie eine hoch. Die Wahl gilt erst nach „Speichern“. Das Originalbild lässt sich nur ersetzen, nicht entfernen. Ersatzbilder, die Sie für andere Sprachen oder Märkte festgelegt haben, bleiben dabei bestehen — sie werden durch ein neues Original nicht gelöscht. Ein Bild, das im Theme an mehreren Stellen vorkommt, ändern Sie weiterhin im Theme-Editor von Shopify.",
+            "Das Originalbild ändern Sie direkt hier: Wechseln Sie in die Hauptsprache, klicken Sie beim Bild auf „Anderes Bild wählen“ und wählen Sie eine Datei aus oder laden Sie eine hoch. Die Wahl gilt erst nach „Speichern“. Das Originalbild lässt sich nur ersetzen, nicht entfernen. Ersatzbilder, die Sie für andere Sprachen oder Märkte festgelegt haben, bleiben dabei bestehen — sie werden durch ein neues Original nicht gelöscht. Hat eine Sprache nur eine Kopie des bisherigen Originals, folgt sie dem neuen Original. Ein Bild, das im Theme an mehreren Stellen vorkommt, ändern Sie weiterhin im Theme-Editor von Shopify.",
             "Ob Ihr Theme das Bild der gewählten Sprache anzeigt, hängt vom Theme ab. Prüfen Sie nach dem Speichern Ihren Shop in dieser Sprache; manche Themes zeigen unter Umständen weiterhin das Originalbild.",
           ],
           steps: [

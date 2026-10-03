@@ -495,6 +495,7 @@ export const de = {
     themeImageReadFailed: "Shopify war gerade nicht erreichbar, das Bild konnte nicht geprüft werden. Bitte versuchen Sie es erneut. Nichts wurde gespeichert.",
     themeImageAmbiguous: "Dasselbe Bild wird im Theme an mehreren Stellen verwendet, deshalb lässt sich nicht eindeutig sagen, welches Sie ändern. Ändern Sie es im Theme-Editor von Shopify. Nichts wurde gespeichert.",
     themeImageNotLocated: "Das aktuelle Bild wurde in der Theme-Datei nicht gefunden (der Inhalt hat sich vermutlich geändert). Laden Sie den Inhalt neu und versuchen Sie es erneut. Nichts wurde gespeichert.",
+    themeTextAmbiguous: "Derselbe Text kommt im Theme an mehreren Stellen vor, deshalb lässt sich nicht eindeutig sagen, welchen Sie ändern. Ändern Sie ihn im Theme-Editor von Shopify. Nichts wurde gespeichert.",
     // Clear all modal
     clearAllConfirmTitle: "Alle Felder löschen?",
     clearAllConfirm: "Alles löschen",
@@ -5529,8 +5530,8 @@ export const de = {
     chooseImage: "Bild für diese Sprache wählen",
     changeImage: "Anderes Bild wählen",
     reset: "Originalbild verwenden",
-    primaryReadOnly: "Das Originalbild wählst du im Theme-Editor von Shopify. Hier legst du pro Sprache und Markt ein anderes Bild fest.",
-    primaryHint: "Das ist das Originalbild für alle Sprachen. Ersatzbilder, die du für andere Sprachen oder Märkte festgelegt hast, bleiben bestehen, wenn du es änderst.",
+    primaryReadOnly: "Das Originalbild wählen Sie im Theme-Editor von Shopify. Hier legen Sie pro Sprache und Markt ein anderes Bild fest.",
+    primaryHint: "Das ist das Originalbild für alle Sprachen. Ersatzbilder, die Sie für andere Sprachen oder Märkte festgelegt haben, bleiben bestehen. Hat eine Sprache nur eine Kopie des bisherigen Originals, folgt sie dem neuen Original.",
     primaryPickerTitle: "Originalbild wählen",
     unsavedBadge: "Nicht gespeichert",
     resetToSaved: "Auswahl zurücksetzen",
