@@ -894,11 +894,14 @@ export async function handleGenerateAltTextFromSku(
   // 2. Alt-Text zu Shopify synchronisieren
   const updateResponse = await ctx.admin.graphql(`#graphql
     mutation fileUpdate($files: [FileUpdateInput!]!) {
-      fileUpdate(files: $files) { userErrors { field message } }
+      fileUpdate(files: $files) {
+        files { id ... on MediaImage { alt } }
+        userErrors { field message }
+      }
     }
   `, { variables: { files: results.map(r => ({ id: r.mediaId, alt: r.altText })) } });
   const updateData = (await updateResponse.json()) as {
-    data?: { fileUpdate?: { userErrors?: Array<{ message: string }> } };
+    data?: { fileUpdate?: { files?: Array<{ id?: string; alt?: string | null }> | null; userErrors?: Array<{ message: string }> } };
     errors?: Array<{ message: string }>;
   };
   const updateErrors = [
@@ -911,19 +914,29 @@ export async function handleGenerateAltTextFromSku(
     return json({ success: false, error: updateErrors.map((e) => e.message).join("; ") }, { status: 502 });
   }
 
+  // Only what Shopify ECHOED with the sent alt is a confirmed write: the cache
+  // mirrors, the product repair and the library purge ride on that alone.
+  const { fileUpdateEchoConfirms } = await import("~/utils/file-update-echo.server");
+  const written = results.filter((r) =>
+    fileUpdateEchoConfirms(updateData.data?.fileUpdate?.files, r.mediaId, r.altText),
+  );
+  if (written.length === 0) {
+    return json({ success: false, error: "Shopify did not confirm the alt-text write" }, { status: 502 });
+  }
+
   // 3. DB updaten
   // R4-DI7: scope by the owning product's shop. Shopify media GIDs are only
   // unique per shop, so an unscoped { mediaId } updateMany can overwrite a
   // different tenant's ProductImage on a GID collision (cross-tenant write).
   // Mirrors the deliberately-scoped persistAltText().
-  await Promise.all(results.map(r =>
+  await Promise.all(written.map(r =>
     ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId, product: { shop: ctx.session.shop } }, data: { altText: r.altText } })
   ));
 
   // The library cache too (a file with no ProductImage row): without it the
   // next snapshot keeps the old "before" and an identical later write would
   // count as a change again.
-  await Promise.all(results.map((r) =>
+  await Promise.all(written.map((r) =>
     ctx.db.mediaLibraryImage
       .updateMany({ where: { shop: ctx.session.shop, id: r.mediaId }, data: { altText: r.altText } })
       .catch((e: unknown) => logger.warn("[generateAltTextFromSku] media-library cache update failed", { error: e instanceof Error ? e.message : String(e) })),
@@ -936,7 +949,7 @@ export async function handleGenerateAltTextFromSku(
     db: ctx.db,
     shop: ctx.session.shop,
     snapshot,
-    written: results.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
+    written: written.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
   });
   // A library file's foreign translations describe the old alt: deleted
   // (library-alt-repair.server.ts); never fails the write.
@@ -945,12 +958,12 @@ export async function handleGenerateAltTextFromSku(
     db: ctx.db,
     shop: ctx.session.shop,
     snapshot: librarySnapshot,
-    written: results.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
+    written: written.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
   });
 
   return json({
     success: true,
-    updated: results.length,
+    updated: written.length,
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
     ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
   });

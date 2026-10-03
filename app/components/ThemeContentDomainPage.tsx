@@ -423,7 +423,9 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   // it captured at request time; an item is one theme group), never whichever
   // group is open when the answer lands.
   const handleTranslateToAllLocalesComplete = useCallback((fieldKey: string, translations: Record<string, string>, itemId?: string) => {
-    const groupId = (itemId ? themes.find((th: ThemeNavItem) => th.id === itemId)?.groupId : undefined) ?? selectedGroupId;
+    // Fall back to the open group only when no item was named; a named item
+    // that is no longer listed is dropped, never written into another group.
+    const groupId = itemId === undefined ? selectedGroupId : themes.find((th: ThemeNavItem) => th.id === itemId)?.groupId;
     if (!groupId) return;
 
     setLoadedTranslations(prev => {
