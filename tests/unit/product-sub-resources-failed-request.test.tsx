@@ -12,16 +12,15 @@ import { act, renderHook } from "@testing-library/react";
 type FakeFetcher = { state: string; data: unknown; submit: ReturnType<typeof vi.fn>; load: ReturnType<typeof vi.fn>; Form: () => null };
 const mk = (): FakeFetcher => ({ state: "idle", data: undefined, submit: vi.fn(), load: vi.fn(), Form: () => null });
 const main = mk();
-const translateAll = mk();
-let calls = 0;
 
 vi.mock("react-router", () => ({
-  // The hook asks for its two fetchers in a fixed order on every render.
-  useFetcher: () => (calls++ % 2 === 0 ? main : translateAll),
+  // The hook's ONE fetcher (load + save bar); translates and copies have
+  // their own plain fetch.
+  useFetcher: () => main,
 }));
 
 import { useProductSubResources } from "~/hooks/useProductSubResources";
-import { markSubResourceActive, isOperationActive } from "~/hooks/useAIOperationsStore";
+import { markSubResourceActive, markSubResourceCompleted, isOperationActive } from "~/hooks/useAIOperationsStore";
 
 const ITEM_ID = "gid://shopify/Product/42";
 const OPTION = "gid://shopify/ProductOption/1";
@@ -63,9 +62,8 @@ function fail(fetcher: FakeFetcher, rerender: () => void, body: Record<string, u
 }
 
 beforeEach(() => {
-  calls = 0;
   main.data = undefined;
-  translateAll.data = undefined;
+  vi.unstubAllGlobals();
   showInfoBox.mockClear();
   onSaveResponse.mockClear();
 });
@@ -94,26 +92,54 @@ describe("a sub-resource request that failed as a whole", () => {
     expect(showInfoBox).toHaveBeenCalledWith("Saving failed. Your edits are kept.", "critical");
   });
 
-  it("clears a translate spinner the failed answer named", () => {
-    markSubResourceActive(ITEM_ID, `${OPTION}:entire`, "translateSubResource");
-    expect(isOperationActive(ITEM_ID, `sub::${OPTION}:entire`)).toBe(true);
-    const { rerender } = setup();
-
-    fail(main, rerender, { actionType: "translateSubResources", fieldId: `${OPTION}:entire`, error: "boom" });
-
+  it("clears a failed translate's spinner and says why", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      json: async () => ({ success: false, actionType: "translateSubResources", error: "boom" }),
+    })));
+    const { result } = setup();
+    await act(async () => {
+      result.current.handlers.translateOption(OPTION);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
     expect(isOperationActive(ITEM_ID, `sub::${OPTION}:entire`)).toBe(false);
+    expect(showInfoBox).toHaveBeenCalledWith("boom", "critical");
   });
 
-  it("clears every translate spinner when the translate-all request failed", () => {
-    markSubResourceActive(ITEM_ID, "a:entire", "translateSubResource");
-    markSubResourceActive(ITEM_ID, "b:entire", "translateSubResource");
+  it("clears every spinner of a translate-all whose request failed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("network down");
+    }));
+    // A foreign view, where "translate all" exists.
+    const foreign = renderHook(() =>
+      useProductSubResources({
+        selectedItem: item,
+        currentLanguage: "fr",
+        primaryLocale: "de",
+        showInfoBox,
+        onSaveResponse,
+        strings,
+      } as never),
+    );
+    await act(async () => {
+      foreign.result.current.handlers.translateAllSubResources();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(isOperationActive(ITEM_ID, `sub::${OPTION}:name`)).toBe(false);
+    expect(isOperationActive(ITEM_ID, "sub::all:subresources")).toBe(false);
+    expect(showInfoBox).toHaveBeenCalledWith("Translation failed", "critical");
+  });
+
+  it("a failed SAVE leaves the spinner of a translate still running alone", () => {
+    markSubResourceActive(ITEM_ID, `${OPTION}:entire`, "translateSubResource");
     const { rerender } = setup();
-
-    fail(translateAll, rerender, { actionType: "translateSubResources", error: "boom" });
-
-    expect(isOperationActive(ITEM_ID, "sub::a:entire")).toBe(false);
-    expect(isOperationActive(ITEM_ID, "sub::b:entire")).toBe(false);
-    expect(showInfoBox).toHaveBeenCalledWith("boom", "critical");
+    fail(main, rerender, { error: "gated" });
+    expect(isOperationActive(ITEM_ID, `sub::${OPTION}:entire`)).toBe(true);
+    markSubResourceCompleted(ITEM_ID, `${OPTION}:entire`);
   });
 
   it("still hands the task ids of a failed save to the watcher", () => {

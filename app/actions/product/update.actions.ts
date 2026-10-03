@@ -216,9 +216,11 @@ export async function handleUpdateProduct(
 
     // Update alt-texts first (works for both primary and translated locales)
     let failedAltTextIndices: number[] = [];
+    let altTextNoPrimaryIndices: number[] = [];
     if (params.imageAltTexts && Object.keys(params.imageAltTexts).length > 0) {
       const altTextResult = await updateImageAltTexts(gateway, db, productId, params, context.session.shop);
       failedAltTextIndices = altTextResult.failedAltTextIndices;
+      altTextNoPrimaryIndices = altTextResult.altTextNoPrimaryIndices;
     }
 
     // Check if this is a translation update or primary locale update
@@ -242,6 +244,7 @@ export async function handleUpdateProduct(
       return json({
         ...responseData,
         failedAltTextIndices,
+        ...(altTextNoPrimaryIndices.length > 0 ? { altTextNoPrimaryIndices } : {}),
       }, { status: readDataStatus(response) ?? 200 });
     }
 
@@ -269,7 +272,7 @@ async function updateImageAltTexts(
   productId: string,
   params: UpdateProductParams,
   shop: string
-): Promise<{ failedAltTextIndices: number[] }> {
+): Promise<{ failedAltTextIndices: number[]; altTextNoPrimaryIndices: number[] }> {
   loggers.product("info", "Updating image alt-texts", {
     productId,
     locale: params.locale,
@@ -278,6 +281,10 @@ async function updateImageAltTexts(
   });
 
   const failedAltTextIndices: number[] = [];
+  // Foreign alts that could not be registered because the image has NO primary
+  // alt text: Shopify then offers no `alt` key (and no digest) to translate.
+  // A subset of `failedAltTextIndices`, named so the page can say what to do.
+  const altTextNoPrimaryIndices: number[] = [];
   // Market scope for foreign-locale alt-text ("" = global; primary is always global).
   const marketId = params.locale !== params.primaryLocale ? (params.marketId || "") : "";
 
@@ -432,6 +439,7 @@ async function updateImageAltTexts(
           if (shopifySaved) {
             storedForeignAlt = verified.storedValue ?? altTextValue;
           } else {
+            if (verified.noDigest) altTextNoPrimaryIndices.push(index);
             loggers.product("error", "Shopify did not confirm the alt-text translation", {
               index, mediaImageId, locale: params.locale, noDigest: verified.noDigest, errors: verified.userErrors,
             });
@@ -511,7 +519,7 @@ async function updateImageAltTexts(
     }
   }
 
-  return { failedAltTextIndices };
+  return { failedAltTextIndices, altTextNoPrimaryIndices };
 }
 
 /**

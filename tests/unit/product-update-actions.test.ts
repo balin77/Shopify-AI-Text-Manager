@@ -211,6 +211,7 @@ function makeDb(images: Array<{ id: string; mediaId: string | null }> = [{ id: "
       update: vi.fn().mockResolvedValue({}),
       findUnique: vi.fn().mockResolvedValue({ altText: null }),
       findFirst: vi.fn().mockResolvedValue(images[0] ? { id: images[0].id } : null),
+      findMany: vi.fn().mockResolvedValue(images[0] ? [{ id: images[0].id }] : []),
     },
     productImageAltTranslation: {
       upsert: vi.fn().mockResolvedValue({}),
@@ -518,7 +519,7 @@ describe("updateImageAltTexts -- foreign alt translations", () => {
     const rem = w.of("remove").find((c) => c.variables.resourceId === MEDIA)!;
     expect(rem.variables).toMatchObject({ translationKeys: ["alt"], locales: ["fr"], marketIds: null });
     expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
-      where: { imageId: "img-1", locale: "fr", marketId: "" },
+      where: { imageId: { in: ["img-1"] }, locale: "fr", marketId: "" },
     });
     expect(result.failedAltTextIndices).toBeUndefined();
   });
@@ -606,17 +607,17 @@ describe("updateImageAltTexts -- foreign alt translations", () => {
     const result = body(await saveForeign(w.admin, { imageAltTexts: JSON.stringify({ 0: "" }) }));
 
     expect(result.failedAltTextIndices).toBeUndefined();
-    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({ where: { imageId: "img-1", locale: "fr", marketId: "" } });
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({ where: { imageId: { in: ["img-1"] }, locale: "fr", marketId: "" } });
   });
 
   it("resolves the cache row from (product, media) at write time, never from the row read earlier", async () => {
     const w = installAdmin();
     const db = makeDb();
     // The product sync recreated the row between the read and the write.
-    db.productImage.findFirst.mockResolvedValue({ id: "img-recreated" });
+    db.productImage.findMany.mockResolvedValue([{ id: "img-recreated" }]);
     await saveForeign(w.admin, { imageAltTexts: JSON.stringify({ 0: "Alt fr" }) });
 
-    expect(db.productImage.findFirst.mock.calls[0][0].where).toMatchObject({ mediaId: MEDIA, product: { shop: SHOP }, productId: PRODUCT });
+    expect(db.productImage.findMany.mock.calls[0][0].where).toEqual({ mediaId: MEDIA, product: { shop: SHOP } });
     expect(db.productImageAltTranslation.upsert.mock.calls[0][0].create.imageId).toBe("img-recreated");
   });
 });

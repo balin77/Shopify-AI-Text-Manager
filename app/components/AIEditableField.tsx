@@ -3,6 +3,7 @@ import { TextField, Button } from "@shopify/polaris";
 import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { FieldClearOverlay, FieldLabel } from "./unified/FieldChrome";
+import { SingleLineTextField } from "./unified/SingleLineTextField";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ActionTooltip } from "./ActionTooltip";
 import { aiActionTooltip } from "../utils/ai-action-tooltip";
@@ -60,6 +61,13 @@ interface AIEditableFieldProps {
   onTranslateToAllLocales?: () => void;
   onCopy?: () => void;
   onCopyToAllLocales?: () => void;
+  /**
+   * Set while this field's PRIMARY value is an unsaved draft: the
+   * translate-to-all and copy-to-all buttons take the primary text as their
+   * source, and the later Save would purge what they wrote. They are disabled
+   * with this as the reason ("save first"). Ignored on a foreign locale.
+   */
+  saveFirstHint?: string;
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
@@ -98,6 +106,7 @@ export function AIEditableField({
   onTranslateToAllLocales,
   onCopy,
   onCopyToAllLocales,
+  saveFirstHint,
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
@@ -107,6 +116,9 @@ export function AIEditableField({
   // Set in a single-language shop: translating / copying to "all locales" has no
   // target, so those buttons are greyed out with this as their tooltip.
   const singleLocaleHint = useSingleLocaleHint();
+  // The reason a primary-locale "to all" button is greyed out: no second
+  // language beats an unsaved source (it is the one nothing can fix here).
+  const toAllHint = singleLocaleHint ?? (isPrimaryLocale ? saveFirstHint : undefined);
   // The generate button no longer fires straight away: it opens the instruction
   // box first, which then calls onGenerateAI (with or without an instruction).
   const [instructionPromptOpen, setInstructionPromptOpen] = useState(false);
@@ -156,22 +168,42 @@ export function AIEditableField({
           same card. */}
       <FieldClearOverlay onClear={onClear} hasValue={!!value} fieldLabel={label}>
         <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
-          <TextField
-            label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}
-            value={value}
-            onChange={onChange}
-            disabled={readOnly}
-            autoComplete="off"
-            helpText={helpText}
-            multiline={multiline}
-            maxLength={maxLength}
-            placeholder={placeholder}
-            showCharacterCount={!!maxLength}
-            error={error}
-            suffix={seoSuffix ? (
-              <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
-            ) : undefined}
-          />
+          {/* A field without `multiline` holds ONE line (title, SEO title,
+              handle, product type, …): it wraps and grows instead of scrolling
+              sideways, and its value stays free of line breaks. */}
+          {multiline ? (
+            <TextField
+              label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}
+              value={value}
+              onChange={onChange}
+              disabled={readOnly}
+              autoComplete="off"
+              helpText={helpText}
+              multiline={multiline}
+              maxLength={maxLength}
+              placeholder={placeholder}
+              showCharacterCount={!!maxLength}
+              error={error}
+              suffix={seoSuffix ? (
+                <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
+              ) : undefined}
+            />
+          ) : (
+            <SingleLineTextField
+              label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}
+              value={value}
+              onChange={onChange}
+              disabled={readOnly}
+              helpText={helpText}
+              maxLength={maxLength}
+              placeholder={placeholder}
+              showCharacterCount={!!maxLength}
+              error={error}
+              suffix={seoSuffix ? (
+                <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
+              ) : undefined}
+            />
+          )}
         </div>
       </FieldClearOverlay>
 
@@ -237,24 +269,24 @@ export function AIEditableField({
             </ActionTooltip>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
-            <DisabledActionTooltip hint={singleLocaleHint}>
+            <DisabledActionTooltip hint={toAllHint}>
               <Button
                 size="slim"
                 onClick={isPrimaryLocale ? (onTranslateToAllLocales || onTranslate) : onTranslate}
                 loading={isLoading}
-                disabled={(isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable) || isLoading || !!singleLocaleHint}
+                disabled={(isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable) || isLoading || !!toAllHint}
               >
                 🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
               </Button>
             </DisabledActionTooltip>
           )}
           {(onCopy || onCopyToAllLocales) && (
-            <DisabledActionTooltip hint={singleLocaleHint}>
+            <DisabledActionTooltip hint={toAllHint}>
               <Button
                 size="slim"
                 onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
                 loading={isLoading}
-                disabled={(isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)) || !!singleLocaleHint}
+                disabled={(isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)) || !!toAllHint}
               >
                 📋 {isPrimaryLocale
                   ? (t.products?.copyToAllLocales || "Copy to all")

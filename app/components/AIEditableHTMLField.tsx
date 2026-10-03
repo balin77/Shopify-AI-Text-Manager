@@ -58,6 +58,13 @@ interface AIEditableHTMLFieldProps {
   onTranslateToAllLocales?: () => void;
   onCopy?: () => void;
   onCopyToAllLocales?: () => void;
+  /**
+   * Set while this field's PRIMARY value is an unsaved draft: the
+   * translate-to-all and copy-to-all buttons take the primary text as their
+   * source, and the later Save would purge what they wrote. They are disabled
+   * with this as the reason ("save first"). Ignored on a foreign locale.
+   */
+  saveFirstHint?: string;
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
@@ -92,6 +99,7 @@ export function AIEditableHTMLField({
   onTranslateToAllLocales,
   onCopy,
   onCopyToAllLocales,
+  saveFirstHint,
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
@@ -115,6 +123,9 @@ export function AIEditableHTMLField({
   // Set in a single-language shop: translate / copy-to-all-locales have no
   // target, so those buttons are greyed out with this as their tooltip.
   const singleLocaleHint = useSingleLocaleHint();
+  // The reason a primary-locale "to all" button is greyed out: no second
+  // language beats an unsaved source (it is the one nothing can fix here).
+  const toAllHint = singleLocaleHint ?? (isPrimaryLocale ? saveFirstHint : undefined);
 
   // The generate button no longer fires straight away: it opens the instruction
   // box first, which then calls onGenerateAI (with or without an instruction).
@@ -401,12 +412,12 @@ export function AIEditableHTMLField({
           )}
           {(onTranslate || onTranslateToAllLocales) && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <DisabledActionTooltip hint={singleLocaleHint}>
+              <DisabledActionTooltip hint={toAllHint}>
                 <Button
                   size="slim"
                   onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
                   loading={isLoading}
-                  disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading || !!singleLocaleHint}
+                  disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading || !!toAllHint}
                 >
                   🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
                 </Button>
@@ -415,12 +426,12 @@ export function AIEditableHTMLField({
           )}
           {(onCopy || onCopyToAllLocales) && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <DisabledActionTooltip hint={singleLocaleHint}>
+              <DisabledActionTooltip hint={toAllHint}>
                 <Button
                   size="slim"
                   onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
                   loading={isLoading}
-                  disabled={(isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)) || !!singleLocaleHint}
+                  disabled={(isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)) || !!toAllHint}
                 >
                   📋 {isPrimaryLocale
                     ? (t.products?.copyToAllLocales || "Copy to all")

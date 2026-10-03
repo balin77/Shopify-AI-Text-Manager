@@ -19,6 +19,7 @@ import {
   type MetaobjectEntryLike,
 } from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
+import { buildLocaleDeletedKey, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
@@ -60,7 +61,9 @@ export function buildLocaleKey(locale: string, marketId: string): string {
  */
 export const LOCALE_MARKET_SEP = "@@";
 
-/** Same folding for deletedTranslationKeysRef entries (keyed by translationKey). */
+/** Same folding for deletedTranslationKeysRef entries (keyed by translationKey).
+ *  This is the LAYER mark (every locale); one locale's cleared value carries a
+ *  LOCALE mark (`buildLocaleDeletedKey`, deleted-translation-marks.shared.ts). */
 export function buildDeletedKey(translationKey: string, marketId: string): string {
   return marketId ? `${translationKey}${LOCALE_MARKET_SEP}${marketId}` : translationKey;
 }
@@ -74,6 +77,16 @@ export interface PartialSave {
   /** The market the save was scoped to ("" = global). */
   marketId: string;
   values: Record<string, string>;
+  /** The image indices whose alt text this save carried. Absent = none: a
+   *  partial save never stands for the alt texts it did not send, so their
+   *  baseline (and the merchant's unsaved alt drafts) stay untouched. */
+  altIndices?: number[];
+  /** The alt texts this save SENT, keyed like `altIndices`. The response
+   *  handling takes the baseline and the in-memory mirror of the carried
+   *  indices from here, never from the live field: a merchant who kept typing
+   *  while the save was in flight holds text that was not sent, and marking it
+   *  saved would keep the next Save from sending it. */
+  altValues?: Record<number, string>;
 }
 
 export interface ResolvedField {
@@ -142,7 +155,9 @@ export interface UseUiDataLoaderReturn {
     translations: Record<string, Record<string, string>>,
     fieldDefinitions: FieldDefinition[],
     currentLocale: string,
-    currentEditableValues: Record<string, string>
+    currentEditableValues: Record<string, string>,
+    /** The market open now: with one, nothing on screen is touched. */
+    marketIdArg?: string
   ) => TransitionResult;
 
   /** After translateAllForLocale response (all fields → one locale) */
@@ -151,7 +166,9 @@ export interface UseUiDataLoaderReturn {
     fieldDefinitions: FieldDefinition[],
     targetLocale: string,
     currentLocale: string,
-    currentEditableValues: Record<string, string>
+    currentEditableValues: Record<string, string>,
+    /** The market open now: with one, nothing on screen is touched. */
+    marketIdArg?: string
   ) => TransitionResult;
 
   /** After updateContent response (save completed) */
@@ -193,7 +210,8 @@ export interface UseUiDataLoaderReturn {
   /** After a BACKGROUND re-translation this save started has finished and the
    *  loader has been re-read. See the implementation for why it clears exactly
    *  these two refs and leaves the primary cache alone. */
-  onBackgroundRetranslation: () => void;
+  /** `keepMarks`: the marks a save that is out or queued still stands behind. */
+  onBackgroundRetranslation: (keepMarks?: ReadonlySet<string>) => void;
 
   /** After resolveAll() completes — sets unified baseline and keeps legacy refs in sync */
   onDataLoaded: (values: Record<string, string>) => void;
@@ -380,6 +398,8 @@ export function useUiDataLoader(
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
   // Keys whose "deleted" marker the last copy-to-all-locales cleared (see onCopyToLocalesFailed).
   const clearedDeletedByCopyRef = useRef<Set<string>>(new Set());
+  /** The LOCALE marks a copy to every locale dropped, per translation key. */
+  const clearedLocaleMarksByCopyRef = useRef<Map<string, string[]>>(new Map());
 
   /** Currently-selected market ("" = global). Held in a ref so resolve()/the
    *  transition methods can read it without bloating their useCallback deps. The
@@ -487,8 +507,8 @@ export function useUiDataLoader(
       //     global). Global deletion → empty (as before).
       const marketDeleted =
         isMarket &&
-        deletedTranslationKeysRef.current.has(buildDeletedKey(translationKey, marketId));
-      const globalDeleted = deletedTranslationKeysRef.current.has(translationKey);
+        isMarkedDeleted(deletedTranslationKeysRef.current, translationKey, marketId, locale);
+      const globalDeleted = isMarkedDeleted(deletedTranslationKeysRef.current, translationKey, "", locale);
 
       // 1b. Market layer (only when a market is selected and not market-deleted)
       if (isMarket && !marketDeleted) {
@@ -584,6 +604,10 @@ export function useUiDataLoader(
               primaryLocale,
               config
             );
+            // A PARTIAL primary save (an accepted AI suggestion) overlays only
+            // the field it wrote; the others resolve from the item anyway and
+            // say nothing about whether the server caught up.
+            if (!(field.key in savedOverride)) return true;
             const savedValue = savedOverride[field.key] ?? "";
             if (
               field.key === "seoTitle" &&
@@ -676,6 +700,7 @@ export function useUiDataLoader(
         deletedTranslationKeysRef.current.delete(delKey);
         debugLog.transition(`  cleared deletedKey: ${delKey}`);
       }
+      deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(translationKey, marketId, targetLocale));
 
       // 2. Store in localTranslationsRef (overlay — replaces item mutation)
       if (!localTranslationsRef.current[translationKey]) {
@@ -720,25 +745,41 @@ export function useUiDataLoader(
     [config.contentType, setTemplateValuesVersion]
   );
 
-  /** After translateAll response (all fields → all locales) */
+  /** After translateAll response (all fields → all locales).
+   *  The run writes the GLOBAL layer. With a MARKET open nothing on screen is
+   *  touched: the market's own layer (or its inherited placeholder) is what
+   *  shows there, and writing the global answer into the field would make it
+   *  read as a market override nobody typed -- the next load resolves it. In
+   *  the global view only fields the merchant has NOT edited (current value
+   *  equals the baseline) take the answer, and the baseline moves for those
+   *  fields alone (mirrors `onTranslateFieldComplete`). */
   const onTranslateAllComplete = useCallback(
     (
       translations: Record<string, Record<string, string>>,
       fieldDefinitions: FieldDefinition[],
       currentLocale: string,
-      currentEditableValues: Record<string, string>
+      currentEditableValues: Record<string, string>,
+      /** The market open NOW. Defaults to the live selection. */
+      marketIdArg?: string
     ): TransitionResult => {
       const localeCount = Object.keys(translations).length;
+      const marketId = marketIdArg ?? selectedMarketIdRef.current ?? "";
       debugLog.transition(
-        `onTranslateAllComplete: ${localeCount} locales, viewing=${currentLocale}`
+        `onTranslateAllComplete: ${localeCount} locales, viewing=${currentLocale} market=${marketId || "-"}`
       );
 
-      // 1. Clear all deleted keys
-      if (deletedTranslationKeysRef.current.size > 0) {
-        debugLog.transition(
-          `  cleared ${deletedTranslationKeysRef.current.size} deletedKeys`
-        );
-        deletedTranslationKeysRef.current.clear();
+      // 1. Clear the GLOBAL deleted marks of the fields the answer carries a
+      // value for -- never the rest (another field's pending clear stays
+      // pending) and never a market's (the run wrote no market override).
+      for (const [answeredLocale, fieldMap] of Object.entries(translations)) {
+        for (const fieldDef of fieldDefinitions) {
+          if (!fieldMap?.[fieldDef.key]) continue;
+          const delKey = buildDeletedKey(fieldDef.translationKey, "");
+          if (deletedTranslationKeysRef.current.delete(delKey)) {
+            debugLog.transition(`  cleared deletedKey: ${delKey}`);
+          }
+          deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(fieldDef.translationKey, "", answeredLocale));
+        }
       }
 
       // 2. Store translations in localTranslationsRef (overlay — replaces item mutation)
@@ -755,33 +796,39 @@ export function useUiDataLoader(
         }
       }
 
-      // 3. If viewing a translated locale, compute updatedValues
+      // 3. If viewing a translated locale in the GLOBAL layer, put the answer
+      // into every field that is not dirty.
       let updatedValues: Record<string, string> | null = null;
       const clearedFallbackKeys: string[] = [];
 
       const currentLocaleTranslations = translations[currentLocale];
-      if (currentLocaleTranslations) {
-        updatedValues = { ...currentEditableValues };
+      if (currentLocaleTranslations && !marketId) {
+        const next = { ...currentEditableValues };
+        const baselinePatch: Record<string, string> = {};
         for (const fieldDef of fieldDefinitions) {
           const value = currentLocaleTranslations[fieldDef.key];
-          if (value) {
-            updatedValues[fieldDef.key] = String(value);
-            clearedFallbackKeys.push(fieldDef.key);
+          if (!value) continue;
+          const current = currentEditableValues[fieldDef.key] ?? "";
+          const baseline = baselineValuesRef.current[fieldDef.key] ?? "";
+          if (current !== baseline) continue; // unsaved typing wins
+          next[fieldDef.key] = String(value);
+          baselinePatch[fieldDef.key] = String(value);
+          clearedFallbackKeys.push(fieldDef.key);
+        }
+        if (clearedFallbackKeys.length > 0) {
+          updatedValues = next;
+          originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...baselinePatch };
+          baselineValuesRef.current = { ...baselineValuesRef.current, ...baselinePatch };
+          setBaselineVersion((v) => v + 1);
+          // 4. Template change detection, per applied field as well.
+          if (isThemeContentType(config.contentType)) {
+            originalTemplateValuesRef.current = { ...originalTemplateValuesRef.current, ...baselinePatch };
+            setTemplateValuesVersion((v) => v + 1);
           }
         }
-        // Update baselines (unified + legacy)
-        originalLoadedValuesRef.current = { ...updatedValues };
-        baselineValuesRef.current = { ...updatedValues };
-        setBaselineVersion((v) => v + 1);
         debugLog.transition(
           `  updated ${clearedFallbackKeys.length} fields for viewing locale ${currentLocale}`
         );
-      }
-
-      // 4. Template change detection
-      if (isThemeContentType(config.contentType) && updatedValues) {
-        originalTemplateValuesRef.current = { ...updatedValues };
-        setTemplateValuesVersion((v) => v + 1);
       }
 
       return {
@@ -793,28 +840,46 @@ export function useUiDataLoader(
     [config.contentType, setTemplateValuesVersion]
   );
 
-  /** After translateAllForLocale response (all fields → one locale) */
+  /** After translateAllForLocale response (all fields → one locale).
+   *  Same rules as `onTranslateAllComplete`: the run writes the GLOBAL layer of
+   *  `targetLocale`, so the answer is always staged under the bare locale key,
+   *  but it is put on screen only while the merchant still looks at THAT locale
+   *  in the GLOBAL view, and only into fields they have not typed into (current
+   *  value equals the baseline); the baseline moves for those fields alone.
+   *  Another locale or a market open now leaves the screen and the baseline
+   *  untouched -- the next load resolves the layer it shows. Only the answered
+   *  fields' GLOBAL deleted marks are cleared. */
   const onTranslateAllForLocaleComplete = useCallback(
     (
-      translations: Record<string, string>,
+      translationsArg: Record<string, string>,
       fieldDefinitions: FieldDefinition[],
       targetLocale: string,
       currentLocale: string,
-      currentEditableValues: Record<string, string>
+      currentEditableValues: Record<string, string>,
+      /** The market open NOW. Defaults to the live selection. */
+      marketIdArg?: string
     ): TransitionResult => {
+      const translations = translationsArg ?? {};
+      const marketId = marketIdArg ?? selectedMarketIdRef.current ?? "";
       debugLog.transition(
-        `onTranslateAllForLocaleComplete: target=${targetLocale}, viewing=${currentLocale}`
+        `onTranslateAllForLocaleComplete: target=${targetLocale}, viewing=${currentLocale} market=${marketId || "-"}`
       );
 
-      // 1. Clear all deleted keys
-      if (deletedTranslationKeysRef.current.size > 0) {
-        debugLog.transition(
-          `  cleared ${deletedTranslationKeysRef.current.size} deletedKeys`
-        );
-        deletedTranslationKeysRef.current.clear();
+      // 1. Clear the GLOBAL deleted marks of the fields the answer carries a
+      // value for -- never another field's pending clear, never a market's.
+      // Another locale's own mark (its clear may still be on its way) is never
+      // touched: that one is a mark of THIS target locale only.
+      for (const fieldDef of fieldDefinitions) {
+        if (!translations[fieldDef.key]) continue;
+        const delKey = buildDeletedKey(fieldDef.translationKey, "");
+        if (deletedTranslationKeysRef.current.delete(delKey)) {
+          debugLog.transition(`  cleared deletedKey: ${delKey}`);
+        }
+        deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(fieldDef.translationKey, "", targetLocale));
       }
 
-      // 2. Store translations in localTranslationsRef (overlay — replaces item mutation)
+      // 2. Store translations in localTranslationsRef (overlay — replaces item
+      // mutation) under the GLOBAL key of the target locale.
       for (const fieldDef of fieldDefinitions) {
         const value = translations[fieldDef.key];
         if (value) {
@@ -826,32 +891,38 @@ export function useUiDataLoader(
         }
       }
 
-      // 3. If viewing this locale, compute updatedValues
+      // 3. Still viewing this locale in the GLOBAL layer: put the answer into
+      // every field that is not dirty.
       let updatedValues: Record<string, string> | null = null;
       const clearedFallbackKeys: string[] = [];
 
-      if (currentLocale === targetLocale) {
-        updatedValues = { ...currentEditableValues };
+      if (currentLocale === targetLocale && !marketId) {
+        const next = { ...currentEditableValues };
+        const baselinePatch: Record<string, string> = {};
         for (const fieldDef of fieldDefinitions) {
           const value = translations[fieldDef.key];
-          if (value) {
-            updatedValues[fieldDef.key] = value;
-            clearedFallbackKeys.push(fieldDef.key);
+          if (!value) continue;
+          const current = currentEditableValues[fieldDef.key] ?? "";
+          const baseline = baselineValuesRef.current[fieldDef.key] ?? "";
+          if (current !== baseline) continue; // unsaved typing wins
+          next[fieldDef.key] = String(value);
+          baselinePatch[fieldDef.key] = String(value);
+          clearedFallbackKeys.push(fieldDef.key);
+        }
+        if (clearedFallbackKeys.length > 0) {
+          updatedValues = next;
+          originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...baselinePatch };
+          baselineValuesRef.current = { ...baselineValuesRef.current, ...baselinePatch };
+          setBaselineVersion((v) => v + 1);
+          // 4. Template change detection, per applied field as well.
+          if (isThemeContentType(config.contentType)) {
+            originalTemplateValuesRef.current = { ...originalTemplateValuesRef.current, ...baselinePatch };
+            setTemplateValuesVersion((v) => v + 1);
           }
         }
-        // Update baselines (unified + legacy)
-        originalLoadedValuesRef.current = { ...updatedValues };
-        baselineValuesRef.current = { ...updatedValues };
-        setBaselineVersion((v) => v + 1);
         debugLog.transition(
           `  updated ${clearedFallbackKeys.length} fields for viewing locale`
         );
-      }
-
-      // 4. Template change detection
-      if (isThemeContentType(config.contentType) && updatedValues) {
-        originalTemplateValuesRef.current = { ...updatedValues };
-        setTemplateValuesVersion((v) => v + 1);
       }
 
       return {
@@ -898,7 +969,9 @@ export function useUiDataLoader(
             clearedCount++;
           }
         }
-        deletedTranslationKeysRef.current.clear();
+        // Every layer mark goes; a foreign clear's own locale marks stay until
+        // ITS save answers (dropMarksAfterSave).
+        dropMarksAfterSave(deletedTranslationKeysRef.current, null);
         if (clearedCount > 0) {
           debugLog.transition(
             `  cleared ${clearedCount} localTranslation entries for changed primary fields`
@@ -963,8 +1036,16 @@ export function useUiDataLoader(
         // revalidation from restoring stale data. Now that the save succeeded,
         // revalidation will fetch fresh data and the protection is no longer
         // needed. Keeping them would incorrectly show empty fields in OTHER
-        // locales because deletedTranslationKeysRef is not locale-specific.
-        deletedTranslationKeysRef.current.clear();
+        // locales because the layer marks are not locale-specific. Another
+        // locale's own marks stay: its clear may still be on its way, and a
+        // re-read would otherwise show the values it is removing.
+        dropMarksAfterSave(
+          deletedTranslationKeysRef.current,
+          { locale: savedLocale, marketId },
+          onlyKeys
+            ? new Set(fieldDefinitions.filter((f) => onlyKeys.has(f.key)).map((f) => f.translationKey))
+            : null,
+        );
 
         debugLog.transition(
           `  upserted=${upserted}, deleted=${deleted} translations`
@@ -1001,6 +1082,15 @@ export function useUiDataLoader(
       } else {
         clearedDeletedByCopyRef.current.delete(translationKey);
       }
+      // The written locales' own marks too (a clear of that locale is
+      // superseded by the value written there now).
+      const clearedLocaleMarks: string[] = [];
+      for (const locale of Object.keys(translations)) {
+        const mark = buildLocaleDeletedKey(translationKey, "", locale);
+        if (deletedTranslationKeysRef.current.delete(mark)) clearedLocaleMarks.push(mark);
+      }
+      if (clearedLocaleMarks.length > 0) clearedLocaleMarksByCopyRef.current.set(translationKey, clearedLocaleMarks);
+      else clearedLocaleMarksByCopyRef.current.delete(translationKey);
 
       // 2. Store in localTranslationsRef (overlay — replaces item mutation)
       if (!localTranslationsRef.current[translationKey]) {
@@ -1034,6 +1124,15 @@ export function useUiDataLoader(
       // the one the copy ran on AND no locale took the value (a partial copy
       // did write a translation, so the field is no longer deleted).
       const hadCleared = clearedDeletedByCopyRef.current.delete(translationKey);
+      const clearedLocaleMarks = clearedLocaleMarksByCopyRef.current.get(translationKey) ?? [];
+      clearedLocaleMarksByCopyRef.current.delete(translationKey);
+      if (opts?.itemUnchanged !== false) {
+        // A failed locale did not get the copied value: its own clear stands.
+        for (const locale of locales) {
+          const mark = buildLocaleDeletedKey(translationKey, "", locale);
+          if (clearedLocaleMarks.includes(mark)) deletedTranslationKeysRef.current.add(mark);
+        }
+      }
       if (
         hadCleared &&
         locales.length > 0 &&
@@ -1065,6 +1164,7 @@ export function useUiDataLoader(
     debugLog.transition("onItemSwitch: clearing all caches");
     deletedTranslationKeysRef.current.clear();
     clearedDeletedByCopyRef.current.clear();
+    clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 
@@ -1077,6 +1177,7 @@ export function useUiDataLoader(
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
     clearedDeletedByCopyRef.current.clear();
+    clearedLocaleMarksByCopyRef.current.clear();
   }, []);
 
   /**
@@ -1112,10 +1213,15 @@ export function useUiDataLoader(
    * merchant's unsaved input, and the refresh is only ever allowed to run when
    * there is none (see `useUnifiedContentEditor`).
    */
-  const onBackgroundRetranslation = useCallback(() => {
+  const onBackgroundRetranslation = useCallback((keepMarks?: ReadonlySet<string>) => {
     debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
-    deletedTranslationKeysRef.current.clear();
+    // A clear whose removal is still on its way keeps its marks: the server
+    // has not caught up with it, and the re-read would show what it removes.
+    for (const mark of [...deletedTranslationKeysRef.current]) {
+      if (!keepMarks?.has(mark)) deletedTranslationKeysRef.current.delete(mark);
+    }
     clearedDeletedByCopyRef.current.clear();
+    clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};
   }, []);
 

@@ -7,6 +7,8 @@
  */
 
 import type { PartialSave } from "./useUiDataLoader";
+import { settleUnsentSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { sentAltsFromForm, sentFieldsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
@@ -68,6 +70,25 @@ interface UseEditorAutoSaveProps {
   inFlightToastRef: React.MutableRefObject<string | null>;
   /** Until when the next data re-read keeps unsaved edits (see the editor). */
   preserveEditsUntilRef: React.MutableRefObject<number>;
+  /** Registers a partial save (an AI/copy button's own result) as in flight,
+   *  so the change detection does not show its value as a draft while it is
+   *  being written. A React state setter: stable, safe in the [] callback. */
+  setOwnSavesInFlight?: React.Dispatch<React.SetStateAction<OwnSaveInFlight[]>>;
+  /** The locale, market and alt texts of the request IN FLIGHT, bound at
+   *  submit time like `inFlightPartialRef` (see `revertAltsWithoutPrimary`). */
+  inFlightScopeRef?: React.MutableRefObject<SentSaveScope | null>;
+  /** True while a "translate all" run of this item writes into `locale` (or,
+   *  for the primary locale, runs at all): such a save waits in the queue
+   *  until the run answered, so it lands AFTER the run -- a hand-written value
+   *  is not overwritten by the AI, and a primary purge is not undone by
+   *  translations of the old text. A save of another language goes at once. */
+  saveBlockedByTranslateRunRef?: React.MutableRefObject<(locale: string | null, itemId: string | null, beforeIndex?: number) => boolean>;
+  /** Called when a save is held back that way (the page says why it waits). */
+  onSaveHeldByRunRef?: React.MutableRefObject<() => void>;
+  /** Called when an OWN save (an AI/copy button's) is refused because a run
+   *  writes into its language: it is not held -- a held own save would make
+   *  every switch refuse for the whole run -- and its value stays a draft. */
+  onOwnSaveRefusedRef?: React.MutableRefObject<() => void>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -81,6 +102,15 @@ interface UseEditorAutoSaveReturn {
 // ---------------------------------------------------------------------------
 // Hook implementation
 // ---------------------------------------------------------------------------
+
+/**
+ * How often `safeSubmit` had to refuse an OWN save because a "translate all"
+ * run writes into its language. It is a BACKSTOP: every own-save caller asks
+ * `refuseOwnSave` at its very start, before anything is staged, so in the
+ * covered flows this stays 0 (tests assert it). A hit means a caller staged
+ * state and then lost its save.
+ */
+export const ownSaveRunBackstop = { hits: 0 };
 
 export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoSaveReturn {
   const {
@@ -112,6 +142,11 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     pendingAltTranslateToastRef,
     inFlightToastRef,
     preserveEditsUntilRef,
+    setOwnSavesInFlight,
+    inFlightScopeRef,
+    saveBlockedByTranslateRunRef,
+    onSaveHeldByRunRef,
+    onOwnSaveRefusedRef,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -141,13 +176,51 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     partialSaveRef.current = null;
     const successToast = pendingAltTranslateToastRef.current;
     pendingAltTranslateToastRef.current = null;
+    // Only a SAVE waits for a "translate all" run of its language.
+    const blockedByRun =
+      data.action === "updateContent" &&
+      !!saveBlockedByTranslateRunRef?.current(savedLocaleRef.current, savedItemIdRef.current);
+    const nothingInFlight = fetcherRef.current.state === "idle" && !justSubmittedRef.current;
+    if (blockedByRun && partial) {
+      // An own save is REFUSED, never held: nothing was sent, so the field
+      // keeps the value as a draft for the Save button.
+      if (nothingInFlight) isSavePendingRef.current = false;
+      ownSaveRunBackstop.hits++;
+      onOwnSaveRefusedRef?.current();
+      return;
+    }
+    if (blockedByRun && nothingInFlight) {
+      // The caller marked a save pending, but nothing is in flight: the
+      // queue drain marks it again when it really goes.
+      isSavePendingRef.current = false;
+    }
     if (partial) {
       // The reload that follows this save re-reads the item; the fields it did
       // NOT carry may hold unsaved input, which that pass must keep.
       preserveEditsUntilRef.current = Date.now() + 30_000;
+      // What this save carries is being WRITTEN, not drafted: until its answer
+      // lands the save bar must not count it (own-save-in-flight.shared.ts).
+      // Keyed by the partial object itself, which travels with the request
+      // (queue entry / in-flight slot) and is how the answer settles it.
+      const itemId = savedItemIdRef.current;
+      const carriesSomething =
+        Object.keys(partial.values).length > 0 ||
+        (partial.altValues !== undefined && Object.keys(partial.altValues).length > 0);
+      if (setOwnSavesInFlight && itemId && carriesSomething) {
+        const entry: OwnSaveInFlight = {
+          itemId,
+          locale: partial.locale,
+          marketId: partial.marketId ?? "",
+          values: partial.values,
+          altValues: partial.altValues,
+          token: partial,
+        };
+        setOwnSavesInFlight((prev) => [...prev, entry]);
+      }
     }
 
-    if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current) {
+    if (blockedByRun) onSaveHeldByRunRef?.current();
+    if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current || blockedByRun) {
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
       saveQueueRef.current.push({
         formData,
@@ -162,6 +235,14 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     }
     inFlightPartialRef.current = partial;
     inFlightToastRef.current = successToast;
+    if (inFlightScopeRef) {
+      inFlightScopeRef.current = {
+        locale: savedLocaleRef.current ?? "",
+        marketId: savedMarketIdRef.current ?? "",
+        sentAlts: sentAltsFromForm(data.imageAltTexts),
+        sentFields: sentFieldsFromForm(Object.entries(data)),
+      };
+    }
 
     try {
       justSubmittedRef.current = true;
@@ -176,7 +257,20 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       justSubmittedRef.current = false;
       if (error instanceof Error && error.name === 'AbortError') {
         debugLog.submit(' AbortError caught (data likely saved):', error.message);
+        // No answer will come for it: nothing may keep reading as pending.
+        isSavePendingRef.current = false;
       } else {
+        // The request never left: settle what was staged for it (shared
+        // with the queued-save drain in useUnifiedContentEditor).
+        settleUnsentSave({
+          partial,
+          successToast,
+          setOwnSavesInFlight,
+          inFlightPartialRef,
+          inFlightToastRef,
+          inFlightScopeRef,
+          isSavePendingRef,
+        });
         console.error('🔴 [safeSubmit] Non-AbortError - re-throwing:', error);
         throw error;
       }

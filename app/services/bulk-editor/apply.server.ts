@@ -71,6 +71,8 @@ import {
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP,
+  mirrorLibraryImageAlt,
+  mirrorProductMediaAlt,
   type TranslationInput,
 } from "../translations/verified-translations.server";
 import { logger } from "../../utils/logger.server";
@@ -733,9 +735,17 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
       );
     }
 
+    // A product medium: the locales held on ANY product's cache row of this
+    // MediaImage (a shared file has one row per product, and the rows of one
+    // medium can disagree -- e.g. one product's row lost to a sync race), so
+    // no locale the clear below would reach is left out of the removal.
     const existing = cacheId
       ? await db.productImageAltTranslation.findMany({
-          where: { imageId: cacheId, marketId: "", locale: { in: foreignLocales } },
+          where: {
+            image: { mediaId, product: { shop: deps.shop } },
+            marketId: "",
+            locale: { in: foreignLocales },
+          },
           select: { locale: true },
         })
       : await db.contentTranslation.findMany({
@@ -757,9 +767,9 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
     );
     if (confirmedLocales.length === 0) return;
     if (cacheId) {
-      await db.productImageAltTranslation.deleteMany({
-        where: { imageId: cacheId, marketId: "", locale: { in: confirmedLocales } },
-      });
+      // Every product's row of a shared medium (`mirrorProductMediaAlt`),
+      // every confirmed locale in one lookup + one deleteMany.
+      await mirrorProductMediaAlt(db, { shop: deps.shop, mediaId, locale: confirmedLocales, marketId: "", value: "" });
     } else {
       await db.contentTranslation.deleteMany({
         where: {
@@ -3139,35 +3149,31 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           // bulk fix write, so all three read each other's rows. Every OTHER
           // image of the shop has no such row and uses the generic
           // ContentTranslation table under resourceType "MediaImage".
+          // A medium shared by several products is cached once per product:
+          // the value goes onto EVERY such row (`mirrorProductMediaAlt`).
           const cacheId = await imageCacheIdFor(deps, resourceId);
           if (cacheId) {
-            await db.productImageAltTranslation.upsert({
-              where: { imageId_locale_marketId: { imageId: cacheId, locale, marketId } },
-              update: { altText: storedValue },
-              create: { imageId: cacheId, locale, marketId, altText: storedValue },
+            const mirrored = await mirrorProductMediaAlt(db, {
+              shop,
+              mediaId: resourceId,
+              locale,
+              marketId,
+              value: storedValue,
             });
+            if (mirrored === "imageGone") {
+              throw new Error(
+                `The alt translation of ${resourceId} is live on Shopify but its product image row is gone — resync the product.`,
+              );
+            }
           } else {
-            await db.contentTranslation.upsert({
-              where: {
-                shop_resourceId_key_locale_marketId: {
-                  shop,
-                  resourceId,
-                  key: write.key,
-                  locale,
-                  marketId,
-                },
-              },
-              update: { value: storedValue, digest: write.digest, resourceType: "MediaImage" },
-              create: {
-                shop,
-                resourceId,
-                resourceType: "MediaImage",
-                key: write.key,
-                value: storedValue,
-                locale,
-                marketId,
-                digest: write.digest,
-              },
+            await mirrorLibraryImageAlt(db, {
+              shop,
+              mediaId: resourceId,
+              key: write.key,
+              locale,
+              marketId,
+              value: storedValue,
+              digest: write.digest,
             });
           }
         } else if (group.rowType === "metaobject") {
@@ -3270,15 +3276,12 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         if (group.rowType === "image") {
           // Cleared alt translation — the row goes only because Shopify already
           // confirmed the removal above (CLAUDE.md).
+          // Every product's row of a shared medium goes, not only one.
           const cacheId = await imageCacheIdFor(deps, resourceId);
           if (cacheId) {
-            await db.productImageAltTranslation.deleteMany({
-              where: { imageId: cacheId, locale, marketId },
-            });
+            await mirrorProductMediaAlt(db, { shop, mediaId: resourceId, locale, marketId, value: "" });
           } else {
-            await db.contentTranslation.deleteMany({
-              where: { shop, resourceId, resourceType: "MediaImage", key: clear.key, locale, marketId },
-            });
+            await mirrorLibraryImageAlt(db, { shop, mediaId: resourceId, key: clear.key, locale, marketId, value: "" });
           }
         } else if (group.rowType === "metaobject") {
           await db.metaobjectTranslation.deleteMany({

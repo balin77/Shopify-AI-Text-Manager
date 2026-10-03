@@ -835,7 +835,7 @@ export class ShopifyContentService {
     altText: string;
     shop: string;
     db: PrismaClient;
-  }): Promise<{ saved: boolean; reason?: 'no-digest' | 'shopify-error' | 'error' }> {
+  }): Promise<{ saved: boolean; reason?: 'no-digest' | 'no-image' | 'shopify-error' | 'error' }> {
     const { resourceId, resourceType, locale, altText, shop, db } = params;
     try {
       // Shopify's *Image translatable resource is keyed by the image's OWN id
@@ -846,7 +846,9 @@ export class ShopifyContentService {
 
       if (!imageResourceId) {
         loggers.translation('warn', `[saveImageAltTextTranslation] ${resourceType} has no image.id — cannot translate alt text`, { resourceId });
-        return { saved: false, reason: 'no-digest' };
+        // Its own reason: the image is GONE (or the lookup failed), which is a
+        // different problem from "no primary alt" and needs different advice.
+        return { saved: false, reason: 'no-image' };
       }
 
       const verifiedModule = await import('../../app/services/translations/verified-translations.server');
@@ -1480,6 +1482,16 @@ export class ShopifyContentService {
       // Article/Collection image alt-text translations live on a separate translatable
       // resource (ArticleImage / CollectionImage). Best-effort: failures don't fail the save.
       let featuredAltFailed = false;
+      // The featured image carries no PRIMARY alt text, so Shopify offers no
+      // `alt` key to translate (translatableContent lists only keys that have
+      // a primary value) and nothing could be registered. Said by name, so the
+      // page can tell the merchant what to do instead of "please try again",
+      // which can never succeed.
+      let featuredAltNoPrimary = false;
+      // The featured image could not be found any more (removed meanwhile, or
+      // its lookup failed): reported apart from "no primary alt", whose advice
+      // ("save a main-language alt first") would be wrong here.
+      let featuredAltNoImage = false;
       if (updates.imageAltText !== undefined && (resourceType === 'Collection' || resourceType === 'Article')) {
         const altResult = await this.saveImageAltTextTranslation({
           resourceId,
@@ -1497,6 +1509,8 @@ export class ShopifyContentService {
           // (`failedAltTextIndices`, index 0 = the featured image): the page
           // words it in the merchant's language and keeps that alt dirty.
           featuredAltFailed = true;
+          if (altResult.reason === 'no-digest') featuredAltNoPrimary = true;
+          if (altResult.reason === 'no-image') featuredAltNoImage = true;
           loggers.translation('warn', '[updateContent] Featured image alt translation not saved', { resourceId, locale, reason: altResult.reason });
         }
       }
@@ -1573,6 +1587,8 @@ export class ShopifyContentService {
           ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}),
           ...(skippedFields.length > 0 ? { skippedFields } : {}),
           ...(featuredAltFailed ? { failedAltTextIndices: [0] } : {}),
+          ...(featuredAltNoPrimary ? { altTextNoPrimaryIndices: [0] } : {}),
+          ...(featuredAltNoImage ? { altTextNoImageIndices: [0] } : {}),
         };
       }
 

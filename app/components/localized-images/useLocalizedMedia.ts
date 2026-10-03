@@ -106,13 +106,19 @@ export interface UseLocalizedMediaArgs {
   /** Theme-editor deep link that activates the storefront embed; the save confirmation links to it. */
   embedActivationUrl?: string | null;
   /**
+   * Whether that embed is already on in the live theme: true / false / null
+   * (unknown). Only `true` leaves the activation reminder out of the save
+   * confirmation; an unknown state keeps it.
+   */
+  embedActive?: boolean | null;
+  /**
    * Changes when the product's media list changed (an image added or removed
    * in the gallery). The next foreign-language view reads the media again.
    */
   reloadKey?: string;
 }
 
-export function useLocalizedMedia({ productId, shopLocales, markets, currentLanguage, selectedMarketId = "", enabled, canReplace = true, reloadKey = "", embedActivationUrl = null }: UseLocalizedMediaArgs) {
+export function useLocalizedMedia({ productId, shopLocales, markets, currentLanguage, selectedMarketId = "", enabled, canReplace = true, reloadKey = "", embedActivationUrl = null, embedActive = null }: UseLocalizedMediaArgs) {
   const { t, locale: appLocale } = useI18n();
   const tx = t.localizedImages;
 
@@ -357,8 +363,9 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
     if (failures.length === 0) {
       const text = done === 1 ? tx.savedOne : tx.savedMany.replace("{count}", String(done));
       // The storefront only swaps once the app embed is on: say it where the
-      // merchant is looking, with the link, when something was written.
-      if (wroteSet && embedActivationUrl) {
+      // merchant is looking, with the link, when something was written -
+      // unless the theme is KNOWN to have it on already (unknown keeps it).
+      if (wroteSet && embedActivationUrl && embedActive !== true) {
         showInfoBox(`${text} ${tx.embedHint}`, "success", { url: embedActivationUrl, label: tx.openEmbed });
       } else {
         showInfoBox(text, "success");
@@ -373,7 +380,7 @@ export function useLocalizedMedia({ productId, shopLocales, markets, currentLang
         "critical",
       );
     }
-  }, [productId, tx, errorText, showInfoBox, mediaName, embedActivationUrl, appLocale]);
+  }, [productId, tx, errorText, showInfoBox, mediaName, embedActivationUrl, embedActive, appLocale]);
 
   /** The deleted originals' replacements could not be removed with them: said, and the orphan list offers them. */
   const reportCleanupFailed = useCallback((code?: string) => {

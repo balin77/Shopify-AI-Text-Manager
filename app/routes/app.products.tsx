@@ -355,18 +355,7 @@ export const loader = createContentLoader({
     const settings = await ctx.db.aISettings.findUnique({ where: { shop: ctx.session.shop } });
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
-    const productCount = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
-    const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
-      where: { shopId: ctx.session.shop },
-    }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
     const newFeaturesEnabled = !isProductionLocked();
-    const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
-    const showImageProcessingTab = canAccessImageProcessingTab(plan, newFeaturesEnabled);
-    // §Phase 3.2 — the shop currency, as a suffix on the price field. Shop-wide
-    // and memoized per boot (changing it is a support-gated Shopify operation),
-    // so this costs one query per shop, not one per load.
-    const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
-    const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
     // "Images per language" (PLAN_LOCALIZED_IMAGES Phase 1b) rides on the
     // image manager's gate; its storefront half is the `localized-media` app
     // embed, activated through the theme editor's deep link (api key, never
@@ -379,7 +368,32 @@ export const loader = createContentLoader({
     // the storefront after a downgrade or when the image manager is switched
     // off, so listing and removing them is open to every plan.
     const showLocalizedImages = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages };
+    // Whether that embed is already ON (true / false / null = unknown): only
+    // `true` drops the activation reminder after a save. Read only where the
+    // reminder could be shown, cached per shop, never fatal (null), STARTED
+    // here so it runs beside the awaits below, and bounded (~1.5s → null, which
+    // keeps the reminder) so a slow theme read never holds the page.
+    const localizedImagesEmbedActivePromise: Promise<boolean | null> =
+      showLocalizedImages && localizedImagesEmbedUrl
+        ? import("../services/localized-media/embed-status.server")
+            .then(({ getLocalizedMediaEmbedActiveWithin }) =>
+              getLocalizedMediaEmbedActiveWithin(ctx.admin as never, ctx.session.shop),
+            )
+            .catch(() => null)
+        : Promise.resolve(null);
+    const productCount = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
+    const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
+      where: { shopId: ctx.session.shop },
+    }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
+    const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
+    const showImageProcessingTab = canAccessImageProcessingTab(plan, newFeaturesEnabled);
+    // §Phase 3.2 — the shop currency, as a suffix on the price field. Shop-wide
+    // and memoized per boot (changing it is a support-gated Shopify operation),
+    // so this costs one query per shop, not one per load.
+    const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
+    const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
+    const localizedImagesEmbedActive = await localizedImagesEmbedActivePromise;
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, localizedImagesEmbedActive, showLocalizedImages };
   },
 });
 
@@ -394,7 +408,7 @@ export const action = makeContentRouteAction({ config: PRODUCTS_CONFIG, planCont
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, showLocalizedImages } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, localizedImagesEmbedActive, showLocalizedImages } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -738,6 +752,14 @@ export default function ProductsPage() {
       previewBackfillProductIdRef.current = null;
     };
   }, [editor.selectedItem?.id]);
+  // A primary draft the whole-item "Translate all" would translate from its
+  // SAVED value, and that the later Save would purge again: an edited
+  // metafield, or an alt text drafted in the image manager. Edited options are
+  // already left out of that run (`optionTranslationBlockedIds`).
+  const hasPrimaryTranslateAllDrafts =
+    editor.state.currentLanguage === primaryLocale &&
+    (Object.keys(subResources.state.primaryMetafieldEdits).length > 0 ||
+      (showImageManager && imageManagerState.hasAltTextEdits));
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
@@ -751,7 +773,8 @@ export default function ProductsPage() {
     // The alt saves of a pressed Save are still out (queued / in flight /
     // waiting for a new image): the Save shows busy until they are answered.
     isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages || imageManagerState.isSavingAltTexts,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts]);
+    translateAllSaveFirst: hasPrimaryTranslateAllDrafts,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
@@ -814,17 +837,87 @@ export default function ProductsPage() {
   // Wrap translate-all handlers to also translate product options and metafields.
   // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
   // with the shared fetcher used by the main editor.
+  // A view switch while an own save is on its way -- an AI/copy button's
+  // (kept out of hasChanges, so no bar shows) or an image-manager alt save an
+  // AI button (generate / translate) sent AT ONCE (queued or in flight) -- is
+  // REFUSED with a message, never queued: the answer must land on the view it
+  // was made for. Alt saves sent by the page's own Save do NOT refuse: each
+  // queued save carries its own product, language and market, and a save
+  // already sent finishes on its own. Checked BEFORE this page's own
+  // confirmation, so the merchant is never asked and then refused.
+  const refuseSwitchWhileSaving = (): boolean => {
+    const altSaveOut = showImageManager && imageManagerState.isSavingImmediateAltTexts;
+    if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut) return false;
+    showInfoBox(
+      String(t.common?.switchWhileSaving || "Still saving \u2013 please wait a moment and then switch again."),
+      "info",
+    );
+    return true;
+  };
+
+  // The editor's own "clear all" refusal (useFieldHandlers) knows the editor's
+  // runs; the options & metafields translate on their own requests.
+  const refuseClearWhileSubResourcesTranslate = (): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isTranslateAllRunning(itemId, editor.state.currentLanguage)) return false;
+    showInfoBox(
+      String(t.common?.clearWhileTranslating || "A translation into this language is still running \u2013 please wait until it has finished and then clear."),
+      "info",
+    );
+    return true;
+  };
+
+  // A "translate all" must not race the card's own saves either (its "clear
+  // all", the options & metafields save): refused like the editor's own.
+  const refuseTranslateWhileSubResourcesSave = (locale: string): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isSaveInFlight(itemId, locale)) return false;
+    showInfoBox(
+      String(t.common?.translateWhileSaving || "Still saving \u2013 please wait a moment and then translate again."),
+      "info",
+    );
+    return true;
+  };
+
   const editorWithSubResources = {
     ...editor,
     handlers: {
       ...editor.handlers,
       handleTranslateAll: () => {
-        editor.handlers.handleTranslateAll();
+        // Its source is the SAVED primary text: with a primary draft open
+        // anywhere it covers, the later Save would purge what it writes.
+        if (hasPrimaryTranslateAllDrafts || editor.helpers.hasUnsavedTranslateAllSource()) {
+          showInfoBox(
+            String(t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes."),
+            "warning",
+          );
+          return;
+        }
+        // Refused (a save it would race is still out): neither half runs.
+        if (refuseTranslateWhileSubResourcesSave("*")) return;
+        if (editor.handlers.handleTranslateAll() === false) return;
         subResources.handlers.translateAllSubResourcesToAllLocales();
       },
       handleTranslateAllForLocale: () => {
-        editor.handlers.handleTranslateAllForLocale();
+        if (refuseTranslateWhileSubResourcesSave(editor.state.currentLanguage)) return;
+        if (editor.handlers.handleTranslateAllForLocale() === false) return;
         subResources.handlers.translateAllSubResources();
+      },
+      // The options & metafields translate on their own requests: a "clear
+      // all" of the language they are being written into waits for them, like
+      // the editor's own fields do (useFieldHandlers).
+      handleClearAllForLocaleClick: () => {
+        if (refuseClearWhileSubResourcesTranslate()) return;
+        editor.handlers.handleClearAllForLocaleClick();
+      },
+      // Checked again on confirm (a run may have started while the dialog was
+      // open); a refusal clears neither half.
+      handleClearAllForLocaleConfirm: () => {
+        if (refuseClearWhileSubResourcesTranslate()) {
+          editor.handlers.handleClearAllCancel();
+          return false;
+        }
+        return editor.handlers.handleClearAllForLocaleConfirm();
       },
       // Navigation guard hooks: the editor's own handleLanguageChange /
       // handleItemSelect only gate on editor.state.hasChanges (field-level
@@ -839,12 +932,14 @@ export default function ProductsPage() {
       // per-language media drafts are keyed by language and market. So only
       // UNSENT alt drafts ask -- the same rule for both switches.
       handleLanguageChange: async (locale: string) => {
+        if (refuseSwitchWhileSaving()) return;
         if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
           await confirmNavigation();
         }
         editor.handlers.handleLanguageChange(locale);
       },
       handleMarketChange: async (marketId: string) => {
+        if (marketId !== editor.state.selectedMarketId && refuseSwitchWhileSaving()) return;
         // Primary alt texts are global: a market change in the primary
         // language keeps them, so it has nothing to ask about.
         if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
@@ -857,6 +952,7 @@ export default function ProductsPage() {
       // but not a product switch: they count here, or the next product would
       // silently drop them.
       handleItemSelect: async (itemId: string) => {
+        if (refuseSwitchWhileSaving()) return;
         if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
           await confirmNavigation();
         }
@@ -1090,6 +1186,7 @@ export default function ProductsPage() {
       currentLanguage={editor.state.currentLanguage}
       selectedMarketId={editor.state.selectedMarketId}
       embedActivationUrl={localizedImagesEmbedUrl}
+      embedActive={localizedImagesEmbedActive ?? null}
       draftsPendingRef={localizedDraftsPendingRef}
       // The image list the manager last confirmed: an image added or removed
       // there is reflected in the next foreign-language view without a reload.
@@ -1213,6 +1310,7 @@ export default function ProductsPage() {
               onDirtyChange={imageManagerState.setHasAltTextEdits}
               altDraftApiRef={altDraftApiRef}
               onAltSavingChange={imageManagerState.setIsSavingAltTexts}
+              onImmediateAltSavingChange={imageManagerState.setIsSavingImmediateAltTexts}
               onMissingMainImageChange={handleMissingMainImageChangeForSelected}
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}

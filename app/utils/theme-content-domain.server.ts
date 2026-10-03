@@ -13,7 +13,7 @@ import { createContentLoader } from "./loader-factory.server";
 import { getFormString } from "./form-data.utils";
 import { handleLoadTranslations } from "~/actions/templates/templates-load.action";
 import { handleGenerateAIText } from "~/actions/templates/templates-generate.action";
-import { handleTranslateField, handleTranslateFieldToAllLocales } from "~/actions/templates/templates-translate-field.action";
+import { handleTranslateFieldToAllLocales } from "~/actions/templates/templates-translate-field.action";
 import { handleTranslateAll } from "~/actions/templates/templates-translate-all.action";
 import { handleUpdateContent } from "~/actions/templates/templates-update.action";
 import type { TranslatableField, ThemeContentRow, TemplatesActionContext } from "~/actions/templates/shared";
@@ -264,8 +264,13 @@ export function makeThemeContentRouteAction(domain: string, planContentType: Con
           return handleLoadTranslations(ctx);
         case "generateAIText":
           return handleGenerateAIText(ctx);
-        case "translateField":
-          return handleTranslateField(ctx);
+        // No `translateField` here any more: the editor translates ONE field
+        // through `/api/ai` (which only translates) and then saves it itself,
+        // as a partial save in the layer the merchant is viewing (global or a
+        // market). A server-side GLOBAL register on this door beside that save
+        // was a double write — and with a market selected, the client's save
+        // then created a market override of the same text. One write, one
+        // layer: the page's `updateContent`.
         case "translateFieldToAllLocales":
           return handleTranslateFieldToAllLocales(ctx);
         case "translateAll":

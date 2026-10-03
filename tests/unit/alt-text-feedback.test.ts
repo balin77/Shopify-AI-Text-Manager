@@ -8,6 +8,7 @@ import {
   overlayIndexWrites,
   enqueueAltSave,
   altSaveScope,
+  knownPrimaryAlt,
 } from "../../app/services/alt-text-feedback.shared";
 import { preserveUnsavedEdits } from "../../app/hooks/useUiDataLoader";
 
@@ -116,5 +117,30 @@ describe("unconfirmed foreign field survives the reload after the save", () => {
     );
     expect(values.b).toBe("neu");
     expect(preservedKeys).toEqual(["b"]);
+  });
+});
+
+describe("classifyAllLocalesResponse — no source", () => {
+  it("maps the noSourceAltText refusal to its own verdict (worded by the page), not a generic error", () => {
+    expect(
+      classifyAllLocalesResponse({ success: false, errorCode: "noSourceAltText", error: "No primary-language alt text to translate" }),
+    ).toEqual({ kind: "noSource" });
+  });
+});
+
+describe("knownPrimaryAlt", () => {
+  const images = [
+    { url: "https://cdn/a.jpg", mediaId: "gid://shopify/MediaImage/1", altText: "Rote Kiste" },
+    { url: "https://cdn/b.jpg", mediaId: "gid://shopify/MediaImage/2", altText: null },
+  ];
+  it("knows a product image by url, else by its media GID (a variant tile's other url)", () => {
+    expect(knownPrimaryAlt({ url: "https://cdn/a.jpg", gid: undefined, images })).toBe("Rote Kiste");
+    expect(knownPrimaryAlt({ url: "https://cdn/a.jpg?v=2", gid: "gid://shopify/MediaImage/1", images })).toBe("Rote Kiste");
+  });
+  it("an empty primary alt is KNOWN to be empty", () => {
+    expect(knownPrimaryAlt({ url: "https://cdn/b.jpg", gid: null, images })).toBe("");
+  });
+  it("a media-library file (not one of the product's images) is UNKNOWN, never empty", () => {
+    expect(knownPrimaryAlt({ url: "https://cdn/lib.jpg", gid: "gid://shopify/MediaImage/99", images })).toBeUndefined();
   });
 });

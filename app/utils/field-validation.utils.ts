@@ -1,3 +1,4 @@
+import { isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useMemo } from "react";
 import { TRANSLATION_KEY_TO_FIELD } from "~/services/translations/translation-keys.shared";
@@ -142,7 +143,7 @@ function hasTranslationForField(
   if (!item) return false;
 
   // 1. Deleted keys — user explicitly cleared this field
-  if (overlays?.deletedKeys?.has(field)) return false;
+  if (overlays?.deletedKeys && isMarkedDeleted(overlays.deletedKeys, field, "", locale)) return false;
 
   // 2. Local translation overlay (from AI translate or saved foreign locale)
   const localValue = overlays?.localTranslations?.[field]?.[locale];

@@ -25,7 +25,7 @@ import {
   type ShopifyProductAttributes,
   type ShopifyProductCollections,
 } from './attribute-sync.shared';
-import { subResourceLockId, altTextLockId, altTextSyncShieldId, marketLayerLockId } from "./translations/translation-locks.shared";
+import { subResourceLockId, subResourceSyncShieldId, altTextLockId, altTextSyncShieldId, marketLayerLockId } from "./translations/translation-locks.shared";
 import { translationForeignLocales } from "./translations/stale-translations.shared";
 
 /** GraphQL error shape */
@@ -155,6 +155,53 @@ interface ShopifyProductData extends ShopifyProductAttributes {
       endCursor: string | null;
     };
   } | null;
+}
+
+/**
+ * Whether a recent write shields this product's WHOLE translation block
+ * (product fields AND the sub-resource rewrite nested in it) from a sync's
+ * delete-and-recreate. These are the keys it has always asked for:
+ * - the bare product id (the product editor's own saves);
+ * - the two PRIVATE repair locks. A sub-resource or alt-text repair
+ *   deliberately does NOT claim the bare product id -- that id gates the FIELD
+ *   reconciliation, which must keep running -- but its inline purge does
+ *   remove rows this rewrite would otherwise re-insert from a read-back
+ *   Shopify has not caught up with yet;
+ * - a MARKET-layer sub-resource write, which carries its own key: the repair
+ *   must not see it (it would abort a global run it cannot collide with),
+ *   while the rewrite deletes every fetched layer and has to;
+ * - `altTextSyncShieldId`, marked by every alt repair and watched by no repair.
+ *
+ * `subResourceSyncShieldId` is deliberately NOT here: an interactive
+ * option/metafield write says nothing about the product's own fields, and
+ * letting it skip the whole block left a field translation that changed in the
+ * Shopify admin meanwhile stale until the next sync. It gates only the
+ * sub-resource rewrite, via `subResourceTranslationCacheShielded`.
+ */
+export function productTranslationCacheShielded(productId: string): boolean {
+  return (
+    isTranslationRecentlySaved(productId) ||
+    isTranslationRecentlySaved(subResourceLockId(productId)) ||
+    isTranslationRecentlySaved(marketLayerLockId(subResourceLockId(productId))) ||
+    isTranslationRecentlySaved(altTextLockId(productId)) ||
+    isTranslationRecentlySaved(altTextSyncShieldId(productId))
+  );
+}
+
+/**
+ * Whether a recent write shields this product's SUB-RESOURCE translation cache
+ * (options, option values, metafields) from the sync's rewrite: the repair's
+ * private lock (either layer) and the SYNC-ONLY `subResourceSyncShieldId`,
+ * marked by the options & metafields card's save, translate, translate-to-all,
+ * clear-all and a primary save's purge (either layer) and watched by no repair.
+ * See translation-locks.shared.ts.
+ */
+export function subResourceTranslationCacheShielded(productId: string): boolean {
+  return (
+    isTranslationRecentlySaved(subResourceSyncShieldId(productId)) ||
+    isTranslationRecentlySaved(subResourceLockId(productId)) ||
+    isTranslationRecentlySaved(marketLayerLockId(subResourceLockId(productId)))
+  );
 }
 
 export class ProductSyncService {
@@ -1964,17 +2011,10 @@ export class ProductSyncService {
       // read-back Shopify has not caught up with yet. Both consumers read the
       // same helper, so the repair claims a key of its own and the shield asks
       // for it by name (translation-locks.shared.ts).
-      const skipTranslationSync =
-        !forceSync &&
-        (isTranslationRecentlySaved(productData.id) ||
-          isTranslationRecentlySaved(subResourceLockId(productData.id)) ||
-          // A MARKET-layer sub-resource write carries its own key: the repair
-          // must not see it (it would abort a global run it cannot collide
-          // with), while the rewrite below deletes every fetched layer and has
-          // to. See translation-locks.shared.ts.
-          isTranslationRecentlySaved(marketLayerLockId(subResourceLockId(productData.id))) ||
-          isTranslationRecentlySaved(altTextLockId(productData.id)) ||
-          isTranslationRecentlySaved(altTextSyncShieldId(productData.id)));
+      const skipTranslationSync = !forceSync && productTranslationCacheShielded(productData.id);
+      // The sub-resource rewrite has a guard of its own: an interactive
+      // option/metafield write shields only that half.
+      const skipSubResourceSync = !forceSync && subResourceTranslationCacheShielded(productData.id);
 
       if (skipTranslationSync) {
         logger.info(`[ProductSync] Skipping translation sync - recently saved by user`, { productId: productData.id });
@@ -2048,7 +2088,9 @@ export class ProductSyncService {
         // Save sub-resource translations (options, option values, metafields).
         // Sub-resource rows are stored with digest=null, so they cannot be
         // digest-skipped and are always reconciled here as before.
-        if (subResourceTranslations.length > 0) {
+        if (skipSubResourceSync) {
+          logger.info(`[ProductSync] Skipping sub-resource translation sync - recently written`, { productId: productData.id });
+        } else if (subResourceTranslations.length > 0) {
           // Rows of markets whose sub-resource fetch failed are dropped: their
           // old rows stay untouched (excluded from the delete scope below) and
           // a partial insert would collide with them on the unique key.

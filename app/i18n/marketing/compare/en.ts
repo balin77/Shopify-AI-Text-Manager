@@ -313,7 +313,7 @@ export const compareEn: CompareCopy = {
     blogArticles: "One article from title and keyword; no blog planner",
     autoTranslate: "With your own AI key or AI included",
     aiProvider: "Six providers",
-    imagesPerLanguage: "Not yet",
+    imagesPerLanguage: "Pro and up: product images and videos, theme images, per market too; not collection or article images",
     currency: "Shopify Markets does this",
     speedOptimization: "Deliberately not — we never change theme code",
     keywordVolume: "Search Console gives real figures",
@@ -469,6 +469,7 @@ export const compareEn: CompareCopy = {
         "Updates translations automatically when you change the original text ",
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and a spreadsheet editor for the whole catalogue.",
+        "Different images and videos per language, and per market too: product images, product videos and theme images (Pro and up).",
       ],
       verdict:
         "Stay with Translate & Adapt if you sell in one or two extra languages and standard machine translation is good enough. Choose ContentPilot when you want translations in your own voice with a glossary, texts from other apps translated, or one app for texts, SEO and translations. Both write into Shopify's own translation storage, so you can switch at any time and keep what you have.",
@@ -522,6 +523,7 @@ export const compareEn: CompareCopy = {
         "Writes and improves product texts, SEO titles and alt texts.",
         "A full SEO toolkit and AI-search visibility.",
         "A spreadsheet editor for the whole catalogue, plus variant image galleries",
+        "Different images and videos per language and market from Pro, for every product your plan covers — no separate image allowance.",
       ],
       verdict:
         "Choose Transcy if you need a currency converter beyond Shopify Markets or text translated inside images. Choose ContentPilot if you want translations in your own voice and one app for texts, SEO and translations.",
@@ -576,7 +578,7 @@ export const compareEn: CompareCopy = {
         "A spreadsheet editor for the whole catalogue and variant image galleries.",
       ],
       verdict:
-        "Choose T Lab if you want a few languages translated by AI at a low price and need images, other apps' texts or currencies handled. Choose ContentPilot if you want every language your shop has in your own voice, without a one-time allowance per language, and one app for texts, SEO and translations.",
+        "Choose T Lab if you want a few languages translated by AI at a low price and need other apps' texts or currencies handled, or images replaced on collection and article pages too. Choose ContentPilot if you want every language your shop has in your own voice, without a one-time allowance per language, and one app for texts, SEO and translations.",
       notes: {
         nativeStorage: "Images and custom replacements via the app",
         brandVoice: "Store context; tone only with your own key",

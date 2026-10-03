@@ -45,7 +45,7 @@ vi.mock("~/utils/translation-save-lock.server", () => ({
   translationSavedAt: () => null,
 }));
 
-import { handleTranslateField, handleTranslateFieldToAllLocales } from "../../app/actions/templates/templates-translate-field.action";
+import { handleTranslateFieldToAllLocales } from "../../app/actions/templates/templates-translate-field.action";
 import { handleTranslateAll } from "../../app/actions/templates/templates-translate-all.action";
 import { handleUpdateContent } from "../../app/actions/templates/templates-update.action";
 
@@ -201,51 +201,6 @@ beforeEach(() => {
   shopify.rereads = 0;
   markSaved.mockClear();
   translateChunked.mockReset();
-});
-
-describe("handleTranslateField", () => {
-  const form = { fieldType: KEY, sourceText: "Hallo", targetLocale: "en", primaryLocale: "de" };
-
-  it("registers and mirrors the translation when Shopify accepts it", async () => {
-    const { ctx, db } = makeCtx({ formEntries: form });
-    const r = await handleTranslateField(ctx);
-    expect(body(r)).toMatchObject({ success: true, translatedValue: "en:Hallo" });
-    expect(db.themeTranslation.upsert).toHaveBeenCalledTimes(1);
-    const arg = db.themeTranslation.upsert.mock.calls[0][0];
-    expect(arg.where.shop_resourceId_groupId_key_locale_themeId_marketId).toMatchObject({
-      resourceId: RES, groupId: "g", key: KEY, locale: "en", themeId: "gid://shopify/OnlineStoreTheme/11", marketId: "",
-    });
-    expect(arg.create).toMatchObject({ value: "en:Hallo", domain: "theme", themeId: "gid://shopify/OnlineStoreTheme/11" });
-  });
-
-  it("fails and mirrors nothing on userErrors", async () => {
-    shopify.registerUserErrors = [{ message: "nope" }];
-    shopify.registerStores = () => [];
-    const { ctx, db, taskUpdates } = makeCtx({ formEntries: form });
-    const r = await handleTranslateField(ctx);
-    expect(status(r)).toBe(500);
-    expect(db.themeTranslation.upsert).not.toHaveBeenCalled();
-    expect(taskUpdates.at(-1).status).toBe("failed");
-  });
-
-  it("an unechoed register with no userErrors is NOT mirrored and fails the task", async () => {
-    shopify.registerStores = () => [];
-    const { ctx, db, taskUpdates } = makeCtx({ formEntries: form });
-    const r = await handleTranslateField(ctx);
-    expect(status(r)).toBe(500);
-    expect(db.themeTranslation.upsert).not.toHaveBeenCalled();
-    expect(taskUpdates.at(-1).status).toBe("failed");
-    expect(markSaved).not.toHaveBeenCalled();
-  });
-
-  it("claims the theme lock and mirrors the value Shopify stored, only after the echo", async () => {
-    shopify.registerStores = (v) => [{ key: KEY, locale: "EN", value: "stored" }];
-    const { ctx, db } = makeCtx({ formEntries: form });
-    const r = await handleTranslateField(ctx);
-    expect(body(r)).toMatchObject({ success: true, translatedValue: "stored" });
-    expect(db.themeTranslation.upsert.mock.calls[0][0].create.value).toBe("stored");
-    expect(markSaved).toHaveBeenCalledWith(RES);
-  });
 });
 
 describe("handleTranslateFieldToAllLocales", () => {

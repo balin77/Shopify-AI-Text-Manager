@@ -78,6 +78,11 @@ export function useVariantImageManager() {
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
   // Alt saves already sent by a page Save and not answered yet (owned by the image manager).
   const [isSavingAltTexts, setIsSavingAltTexts] = useState(false);
+  // The subset an AI button (generate / translate) saved IMMEDIATELY: the only
+  // alt saves a language/market/product switch waits for -- a page Save's
+  // alt saves carry their own product, language and market and finish on
+  // their own, so they never block a switch.
+  const [isSavingImmediateAltTexts, setIsSavingImmediateAltTexts] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
   const [variantsForBulk, setVariantsForBulk] = useState<VariantWithGallery[]>([]);
   const [missingMainImageProductIds, setMissingMainImageProductIds] = useState<Set<string>>(new Set());
@@ -491,6 +496,8 @@ export function useVariantImageManager() {
     setHasAltTextEdits,
     isSavingAltTexts,
     setIsSavingAltTexts,
+    isSavingImmediateAltTexts,
+    setIsSavingImmediateAltTexts,
     variantsForBulk,
     missingMainImageProductIds,
     selectedGalleryGids,

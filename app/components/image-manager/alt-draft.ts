@@ -100,6 +100,55 @@ export function planAltFlush(args: {
 }
 
 /**
+ * The ONE save an AI button's result goes out as (✨ generate, 🌍 translate):
+ * owner's rule 2026-10-02 — an AI result is saved IMMEDIATELY, for that image
+ * only, while typing stays a draft for the page Save. The medium of `url` is
+ * planned exactly like a page Save would plan it (tiles of the same medium in
+ * other galleries ride along as aliases, the latest edit wins), and nothing of
+ * any OTHER medium is touched. `null` = the image has no media id yet (an
+ * unsaved upload), so there is nothing to address — the caller refuses rather
+ * than leaving a draft.
+ */
+export function planImmediateAltSave(args: {
+  url: string;
+  dirtyUrls: Iterable<string>;
+  texts: Readonly<Record<string, string>>;
+  /** url -> media GID (null/undefined = not addressable). */
+  gidOf: (url: string) => string | null | undefined;
+  locale?: string;
+  marketId?: string;
+  productId: string;
+  productTitle?: string;
+  editOrder?: ReadonlyMap<string, number>;
+}): QueuedAltSave | null {
+  const gid = args.gidOf(args.url);
+  if (!gid || !gid.startsWith("gid://")) return null;
+  const urls = new Set<string>([args.url]);
+  for (const d of args.dirtyUrls) if (d !== args.url && args.gidOf(d) === gid) urls.add(d);
+  const lookup: Record<string, string> = {};
+  for (const u of urls) lookup[u] = gid;
+  const { entries } = planAltFlush({
+    dirtyUrls: urls,
+    texts: args.texts,
+    urlToGid: lookup,
+    locale: args.locale,
+    marketId: args.marketId,
+    productId: args.productId,
+    productTitle: args.productTitle,
+    editOrder: args.editOrder,
+  });
+  return entries[0] ? { ...entries[0], immediate: true } : null;
+}
+
+/** Is a save an AI button sent at once still queued or in flight? */
+export function hasImmediateAltSave(
+  inFlight: QueuedAltSave | null | undefined,
+  queue: readonly QueuedAltSave[],
+): boolean {
+  return !!inFlight?.immediate || queue.some((q) => !!q.immediate);
+}
+
+/**
  * Which planned saves still have to be SENT. A save that is already queued or
  * in flight for the same medium AND with the same text is reused (the new page
  * Save waits for it); one with a different text -- the merchant typed on after
@@ -246,6 +295,27 @@ export function restoreAltDrafts(
     else next[url] = base;
   }
   return next;
+}
+
+/**
+ * A foreign save Shopify could not store because the image has no PRIMARY alt
+ * (`noPrimary`): no retry can ever store it, so instead of a failed draft the
+ * tiles go back to what the language held before the edit (the Discard value).
+ * A tile typed on after the save was sent shows a NEWER draft and is left
+ * alone. Returns the new texts and the urls that were reverted.
+ */
+export function revertAltDraftsWithoutPrimary(args: {
+  texts: Readonly<Record<string, string>>;
+  baselines: ReadonlyMap<string, string | undefined>;
+  planned: ReadonlyArray<{ url: string; altText: string }>;
+}): { texts: Record<string, string>; reverted: string[] } {
+  const reverted: string[] = [];
+  for (const p of args.planned) {
+    const current = args.texts[p.url];
+    if (current !== undefined && current !== p.altText) continue;
+    if (!reverted.includes(p.url)) reverted.push(p.url);
+  }
+  return { texts: restoreAltDrafts(args.texts, args.baselines, reverted), reverted };
 }
 
 /**

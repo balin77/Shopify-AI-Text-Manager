@@ -565,7 +565,8 @@ export interface EditorHandlers {
   handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
-  handleTranslateAll: () => void;
+  /** `false` when the run was refused (nothing was started). */
+  handleTranslateAll: () => boolean | void;
   handleAcceptSuggestion: (fieldKey: string) => void;
   handleAcceptAndTranslate: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
@@ -580,8 +581,9 @@ export interface EditorHandlers {
   handleClearAllConfirm: () => void;
   handleClearAllCancel: () => void;
   handleClearAllForLocaleClick: () => void;
-  handleClearAllForLocaleConfirm: () => void;
-  handleTranslateAllForLocale: () => void;
+  /** `false` when the clear was refused (nothing was cleared). */
+  handleClearAllForLocaleConfirm: () => boolean | void;
+  handleTranslateAllForLocale: () => boolean | void;
   handleAltTextChange: (imageIndex: number, value: string) => void;
   handleGenerateAltText: (imageIndex: number, userInstruction?: string) => void;
   handleGenerateAllAltTexts: () => void;
@@ -679,6 +681,19 @@ export interface UseContentEditorReturn {
     getValidationOverlays: () => ValidationOverlays;
     /** Increments whenever overlays change — use as useMemo dependency to trigger recomputation */
     validationVersion: number;
+    /** The PRIMARY value of this field is an unsaved draft (false on a foreign
+     *  locale). A copy/translate-to-all button is disabled while it is. */
+    isPrimaryFieldUnsaved: (fieldKey: string) => boolean;
+    /** The same for one image's primary alt text. */
+    isPrimaryAltUnsaved: (imageIndex: number) => boolean;
+    /** Any primary alt text is an unsaved draft ("translate all alt texts"). */
+    hasUnsavedPrimaryAlts: () => boolean;
+    /** A primary field or alt the whole-item "Translate all" would take as its
+     *  source is an unsaved draft (false on a foreign locale). */
+    hasUnsavedTranslateAllSource: () => boolean;
+    /** An AI/copy button's own save is on its way; a view switch is refused
+     *  until it is answered (never queued). */
+    isOwnSaveInFlight: () => boolean;
     /**
      * Hand a save response from a fetcher the editor does NOT own to the ONE
      * background-task watcher, so the detached re-translation it started is

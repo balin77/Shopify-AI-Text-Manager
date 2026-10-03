@@ -16,6 +16,8 @@
  */
 
 import { PLAN_REFUSED, isPlanRefusal, saveAnswerFailed } from "./per-locale-saves.shared";
+// Import-free leaf too; sends the session token and retries one auth bounce.
+import { appFetch } from "../../utils/app-fetch";
 
 export const CONTENT_EDITOR_ACTION_ENDPOINT = "/api/content-editor-action";
 
@@ -40,9 +42,23 @@ export const CONTENT_EDITOR_EXTRA_ACTIONS: Readonly<Record<string, readonly stri
   ],
 };
 
+/**
+ * Actions every listed page's editor sends through this door. "Translate all"
+ * (every language, or one) runs for seconds to minutes; on the editor's ONE
+ * fetcher it held every save behind it, so a "clear all" pressed in another
+ * language meanwhile sat queued with the save bar up and every switch asking
+ * about it until the AI had finished. As its own request it waits for nothing
+ * and nothing waits for it.
+ */
+export const CONTENT_EDITOR_EVERY_PAGE_ACTIONS: readonly string[] = ["translateAll", "translateAllForLocale"];
+
 /** Whether `action` may be posted for `page` through this door. */
 export function contentEditorActionAllowed(page: string, action: string): boolean {
-  return action === CONTENT_EDITOR_FETCH_ACTION || (CONTENT_EDITOR_EXTRA_ACTIONS[page] ?? []).includes(action);
+  return (
+    action === CONTENT_EDITOR_FETCH_ACTION ||
+    CONTENT_EDITOR_EVERY_PAGE_ACTIONS.includes(action) ||
+    (CONTENT_EDITOR_EXTRA_ACTIONS[page] ?? []).includes(action)
+  );
 }
 
 /** Every page whose editor saves with a plain fetch. */
@@ -115,7 +131,7 @@ export async function postContentEditorSave(
   }
   formData.set("_page", `${page}${location.search}`);
   try {
-    const response = await fetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: formData });
+    const response = await appFetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: formData });
     if (!response.ok) return (await isPlanRefusal(response)) ? PLAN_REFUSED : false;
     // A save can answer `success: true` and still name what it refused
     // (`failedAltTextIndices`): that is a failure for the caller too.

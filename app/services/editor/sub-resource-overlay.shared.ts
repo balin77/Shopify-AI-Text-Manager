@@ -192,3 +192,134 @@ export function savedIdsAfterPartialSave(
   for (const [id, change] of Object.entries(metafieldChanges)) if (!failedMetafields.has(id)) okMetafields[id] = change;
   return changedIdsOfPrimarySave(okOptions, okMetafields);
 }
+
+// ============================================================================
+// Expiry of staged entries
+// ============================================================================
+//
+// An overlay entry exists to bridge the window between a confirmed write and
+// the loaded item catching up with it. Nothing used to END that window: a
+// staged value (a translate answer, a confirmed clear's "") outlived every
+// locale switch and revalidation and kept shadowing newer server values --
+// e.g. the translations a primary translate-to-all had just written. Each
+// staged pair is therefore STAMPED (per layer key and resource) when it is
+// written, and a reader prunes an entry once it is older than the keep window
+// AND the item was loaded after it was staged -- by then the item carries the
+// write, so the entry has nothing left to bridge.
+
+/** `${layerKey}\u0000${resourceId}` -> when that entry was staged. */
+export type OverlayStamps = Map<string, number>;
+
+export function overlayStampKey(layerKey: string, resourceId: string): string {
+  return `${layerKey}\u0000${resourceId}`;
+}
+
+/** Stamps the given resources of one layer key as staged at `at`. */
+export function stampOverlay(
+  stamps: OverlayStamps,
+  layerKey: string,
+  resourceIds: Iterable<string>,
+  at: number,
+): void {
+  for (const id of resourceIds) stamps.set(overlayStampKey(layerKey, id), at);
+}
+
+/**
+ * Removes every stamped entry older than `maxAgeMs` that the item, loaded at
+ * `itemLoadedAt`, post-dates. Unstamped entries and `keepIds` (translations a
+ * primary save could not remove -- still live) are left alone. Returns whether
+ * anything was removed.
+ */
+export function pruneExpiredOverlay(
+  overlay: SubResourceOverlay,
+  stamps: OverlayStamps,
+  opts: { now: number; itemLoadedAt: number; maxAgeMs: number; keepIds?: ReadonlySet<string> },
+): boolean {
+  let touched = false;
+  for (const layerKey of Object.keys(overlay)) {
+    const byResource = overlay[layerKey];
+    for (const resourceId of Object.keys(byResource)) {
+      if (opts.keepIds?.has(resourceId)) continue;
+      const stampKey = overlayStampKey(layerKey, resourceId);
+      const at = stamps.get(stampKey);
+      if (at === undefined) continue;
+      if (opts.now - at <= opts.maxAgeMs || opts.itemLoadedAt <= at) continue;
+      delete byResource[resourceId];
+      stamps.delete(stampKey);
+      touched = true;
+    }
+    if (Object.keys(byResource).length === 0) delete overlay[layerKey];
+  }
+  return touched;
+}
+
+/**
+ * Forgets the stamps of entries the overlay no longer holds. A reset, a purge
+ * or a rolled-back copy removes entries without touching their stamps, and a
+ * stale stamp would later be read for a NEW entry staged under the same
+ * (layer, resource) pair -- pruning it as "old" the moment it was written.
+ */
+export function pruneOverlayStamps(stamps: OverlayStamps, overlay: SubResourceOverlay): void {
+  for (const stampKey of [...stamps.keys()]) {
+    const sep = stampKey.indexOf("\u0000");
+    const layerKey = stampKey.slice(0, sep);
+    const resourceId = stampKey.slice(sep + 1);
+    if (!overlay[layerKey] || !(resourceId in overlay[layerKey])) stamps.delete(stampKey);
+  }
+}
+
+/**
+ * A primary translate-to-all wrote NEW global translations for these
+ * resources: their staged GLOBAL entries are older and go, with their stamps.
+ * A MARKET layer is left alone (the run writes no market override, so a
+ * staged override still describes what that market serves), and so is every
+ * locale or resource the answer reports as FAILED -- nothing newer was written
+ * there. Returns whether the overlay changed.
+ */
+export function dropGlobalStagedFor(
+  overlay: SubResourceOverlay,
+  stamps: OverlayStamps,
+  resourceIds: readonly string[],
+  opts: {
+    isGlobalLayerKey: (layerKey: string) => boolean;
+    failedLocales?: readonly string[];
+    failedResources?: readonly string[];
+  },
+): boolean {
+  const failedLocales = new Set(opts.failedLocales ?? []);
+  const failedResources = new Set(opts.failedResources ?? []);
+  const ids = resourceIds.filter((id) => !failedResources.has(id));
+  let touched = false;
+  for (const layerKey of Object.keys(overlay)) {
+    if (!opts.isGlobalLayerKey(layerKey) || failedLocales.has(layerKey)) continue;
+    const byResource = overlay[layerKey];
+    for (const id of ids) {
+      stamps.delete(overlayStampKey(layerKey, id));
+      if (id in byResource) {
+        delete byResource[id];
+        touched = true;
+      }
+    }
+    if (Object.keys(byResource).length === 0) delete overlay[layerKey];
+  }
+  return touched;
+}
+
+/**
+ * A per-locale translate answer reduced to what may be put into the OPEN
+ * view: resources the merchant has typed into (dirty, unsaved) are left out,
+ * so a late answer never overwrites their typing. The staging is separate and
+ * keeps the whole answer.
+ */
+export function answerWithoutDirty(
+  answer: Record<string, Record<string, string>>,
+  dirtyIds: Iterable<ReadonlySet<string>>,
+): Record<string, Record<string, string>> {
+  const sets = [...dirtyIds];
+  const out: Record<string, Record<string, string>> = {};
+  for (const [resourceId, fields] of Object.entries(answer)) {
+    if (sets.some((s) => s.has(resourceId))) continue;
+    out[resourceId] = fields;
+  }
+  return out;
+}

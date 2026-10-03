@@ -766,6 +766,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isSavingCurrentItem]);
 
+  // A copy/translate-to-all button whose PRIMARY source is an unsaved draft
+  // waits for the Save: that Save would purge what the button wrote.
+  const saveFirstSourceHint = String(
+    t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes.",
+  );
+
+  // The whole-item "Translate all" on the primary locale translates the SAVED
+  // values into every language; a primary draft would be saved later and that
+  // Save purges what the button wrote. So it waits, like the per-field one.
+  const translateAllSaveFirstHint =
+    state.currentLanguage === primaryLocale &&
+    (helpers.hasUnsavedTranslateAllSource() || !!subResourceState?.translateAllSaveFirst)
+      ? saveFirstSourceHint
+      : undefined;
+
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
           key={field.key}
@@ -791,6 +806,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
           onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
           onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
+          saveFirstHint={helpers.isPrimaryFieldUnsaved(field.key) ? saveFirstSourceHint : undefined}
+          altSaveFirstHint={(imageIndex: number) => (helpers.isPrimaryAltUnsaved(imageIndex) ? saveFirstSourceHint : undefined)}
+          translateAllAltsSaveFirstHint={helpers.hasUnsavedPrimaryAlts() ? saveFirstSourceHint : undefined}
           onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
           onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
           onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
@@ -1741,6 +1759,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   void commerceSave.save?.();
                 }}
                 onDiscard={() => {
+                  // MEASURED (2026-10-02, live admin): the native leave
+                  // dialog's "Discard" of a language/market switch fires this
+                  // handler too, so that switch gets the same full discard.
                   handlers.handleDiscard();
                   subResourceHandlers?.resetChanges?.();
                   // Third writer, same button — as with Save. Without this a
@@ -1772,6 +1793,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
+                  translateAllDisabledHint={state.currentLanguage === primaryLocale ? translateAllSaveFirstHint : undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -1933,11 +1955,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               Hidden for app-embed technical groups — translating
                               CSS selectors / config would break the embed. */}
                           {!isEmbedTechnical && (
-                          <DisabledActionTooltip hint={singleLocaleHint}>
+                          <DisabledActionTooltip hint={singleLocaleHint ?? translateAllSaveFirstHint}>
                             <Button
                               onClick={handlers.handleTranslateAll}
                               loading={isAllLocalesActionRunning}
-                              disabled={isAllLocalesActionRunning || !!singleLocaleHint}
+                              disabled={isAllLocalesActionRunning || !!singleLocaleHint || !!translateAllSaveFirstHint}
                               size="slim"
                             >
                               {isAllLocalesActionRunning
@@ -2668,7 +2690,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         title={t.content?.clearAllConfirmTitle || "Clear All Fields?"}
         primaryAction={{
           content: t.content?.clearAllConfirm || "Clear All",
-          onAction: state.currentLanguage === primaryLocale ? handlers.handleClearAllConfirm : handlers.handleClearAllForLocaleConfirm,
+          onAction: state.currentLanguage === primaryLocale
+            ? handlers.handleClearAllConfirm
+            : () => {
+                // Refused (a translation into this language is still being
+                // written): neither half clears.
+                if (handlers.handleClearAllForLocaleConfirm() === false) return;
+                // A product's options, option values and metafields translate on
+                // their OWN resources, which the item's clear never reaches.
+                subResourceHandlers?.clearAllForLocale?.();
+              },
           destructive: true,
         }}
         secondaryActions={[

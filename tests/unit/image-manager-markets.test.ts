@@ -76,7 +76,10 @@ function makeDb(images = [{ id: "row-a", mediaId: MEDIA_A, productId: "p1", posi
   const db: any = {
     task: { create: vi.fn(async () => ({ id: "t1" })), update: vi.fn(async () => ({})) },
     product: { findUnique: vi.fn(async () => ({ id: "p1", title: "Box", images })) },
-    productImage: { findFirst: vi.fn(async ({ where }: any) => images.find((i) => i.mediaId === where.mediaId) ?? null) },
+    productImage: {
+      findFirst: vi.fn(async ({ where }: any) => images.find((i) => i.mediaId === where.mediaId) ?? null),
+      findMany: vi.fn(async ({ where }: any) => images.filter((i) => i.mediaId === where.mediaId).map((i) => ({ id: i.id }))),
+    },
     productImageAltTranslation: {
       findMany: vi.fn(async () => []),
       upsert: vi.fn(async () => ({})),

@@ -628,6 +628,20 @@ describe('saveImageAltTextTranslation', () => {
     expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
   });
 
+  it('register: an image that no longer exists is its OWN reason, never "no primary alt"', async () => {
+    const admin = makeAltAdmin({});
+    const inner = admin.graphql.getMockImplementation()!;
+    admin.graphql.mockImplementation(async (query: string, options?: any) =>
+      query.includes('getFeaturedImageId')
+        ? ({ ok: true, json: async () => ({ data: { collection: { image: null } } }) } as any)
+        : inner(query, options),
+    );
+    const db = makeDb();
+    expect(await run(admin, db, 'Rot')).toEqual({ saved: false, reason: 'no-image' });
+    expect(admin.calls.some((c) => c.kind === 'register')).toBe(false);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+  });
+
   it('register: an echoed write is mirrored with its digest', async () => {
     const admin = makeAltAdmin({
       register: { data: { translationsRegister: { userErrors: [], translations: [{ key: 'alt', locale: 'fr', value: 'Rot' }] } } },

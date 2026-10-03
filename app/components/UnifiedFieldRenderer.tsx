@@ -64,6 +64,13 @@ export interface FieldRendererProps {
   onTranslateToAllLocales?: () => void;
   onCopy?: () => void;
   onCopyToAllLocales?: () => void;
+  /** "Save first": this field's primary value is an unsaved draft, so the
+   *  translate/copy-to-all buttons are disabled with this reason. */
+  saveFirstHint?: string;
+  /** The same per image for the alt-text field ("" / undefined = enabled). */
+  altSaveFirstHint?: (imageIndex: number) => string | undefined;
+  /** …and for "translate all alt texts" (any primary alt unsaved). */
+  translateAllAltsSaveFirstHint?: string;
   onAcceptSuggestion: () => void;
   onAcceptAndTranslate: () => void;
   onRejectSuggestion: () => void;
@@ -123,6 +130,9 @@ export function UnifiedFieldRenderer(
     onTranslateToAllLocales,
     onCopy,
     onCopyToAllLocales,
+    saveFirstHint,
+    altSaveFirstHint,
+    translateAllAltsSaveFirstHint,
     onAcceptSuggestion,
     onAcceptAndTranslate,
     onRejectSuggestion,
@@ -330,6 +340,8 @@ export function UnifiedFieldRenderer(
         onTranslateAltTextToAllLocales={handlers.handleTranslateAltTextToAllLocales}
         onTranslateAllAltTexts={handlers.handleTranslateAllAltTexts}
         onTranslateAllAltTextsForLocale={handlers.handleTranslateAllAltTextsForLocale}
+        altSaveFirstHint={altSaveFirstHint}
+        translateAllAltsSaveFirstHint={translateAllAltsSaveFirstHint}
         altTextSuggestions={state.altTextSuggestions}
         onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
@@ -353,6 +365,7 @@ export function UnifiedFieldRenderer(
           featuredImage: t.products?.featuredImage || "Featured Image",
           altTextForImage: t.products?.altTextForImage || "Alt-text for image",
           altTextPlaceholder: t.products?.altTextPlaceholder || "Describe the image...",
+          altNeedsPrimaryHint: t.products?.altTextNeedsPrimaryHint,
           generateAllAltTexts: t.products?.generateAllAltTexts || "Generate all alt-texts",
           translateAllAltTexts: t.products?.translateAllAltTexts || "Translate all alt-texts",
           onlyFeaturedImageAvailable:
@@ -650,6 +663,7 @@ export function UnifiedFieldRenderer(
         onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
         onCopy={field.supportsTranslation !== false ? onCopy : undefined}
         onCopyToAllLocales={field.supportsTranslation !== false ? onCopyToAllLocales : undefined}
+        saveFirstHint={saveFirstHint}
         onAcceptSuggestion={onAcceptSuggestion}
         onAcceptAndTranslate={onAcceptAndTranslate}
         onRejectSuggestion={onRejectSuggestion}
@@ -689,6 +703,7 @@ export function UnifiedFieldRenderer(
       onTranslateToAllLocales={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onTranslateToAllLocales : undefined)}
       onCopy={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onCopy : undefined)}
       onCopyToAllLocales={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onCopyToAllLocales : undefined)}
+      saveFirstHint={saveFirstHint}
       onAcceptSuggestion={onAcceptSuggestion}
       onAcceptAndTranslate={onAcceptAndTranslate}
       onRejectSuggestion={onRejectSuggestion}

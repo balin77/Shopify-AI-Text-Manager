@@ -1,0 +1,18 @@
+-- Every product-alt mirror (mirrorProductMediaAlt) and the alt-repair paths
+-- resolve the ProductImage cache rows of ONE medium by
+--   WHERE "mediaId" = ? (AND the owning product's shop)
+-- because a MediaImage shown by several products has one cache row per
+-- product. Only (productId, mediaId) was indexed, whose leading column is
+-- productId, so that lookup was a sequential scan of every shop's images.
+--
+-- Additive and safe: an index only, no column, no data change; an older
+-- container simply does not benefit from it.
+--
+-- FORWARD RULE (schema.prisma, ProductImage): ProductImage is a large hot
+-- table, so the index is built CONCURRENTLY and does not block writes.
+-- CONCURRENTLY cannot run inside a transaction block; Prisma sends a
+-- migration file as one script, and a script of exactly ONE statement is not
+-- wrapped in an implicit transaction -- so this file must stay a single
+-- statement (verified with `prisma migrate deploy` against Postgres 16).
+-- IF NOT EXISTS keeps a re-run idempotent.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "ProductImage_mediaId_idx" ON "ProductImage"("mediaId");

@@ -125,7 +125,8 @@ export const guideEs: GuideCopy = {
         {
           heading: "Guardar",
           paragraphs: [
-            "No se escribe nada antes de guardar. En cuanto cambias algo, aparece arriba la barra de guardado de Shopify con Guardar y Descartar. También vale para los interruptores de los ajustes: un cambio es un borrador hasta que lo guardas.",
+            "Lo que escribes solo se guarda cuando pulsas Guardar. En cuanto cambias algo, aparece arriba la barra de guardado de Shopify con Guardar y Descartar. También vale para los interruptores de los ajustes: un cambio es un borrador hasta que lo guardas.",
+            "Los botones de IA y de copiar de los editores, en cambio, guardan al instante — pero solo el campo sobre el que actúan: una sugerencia de IA aceptada, una traducción al idioma abierto, un texto copiado. Lo que hayas escrito en otros campos sin guardar sigue siendo un borrador. Mientras ese guardado sigue en curso, la app no cambia de idioma, de mercado ni de producto, sino que te pide esperar un momento y volver a cambiar. Los botones que copian o traducen el texto del idioma principal a todos los idiomas están bloqueados mientras ese texto tenga cambios sin guardar: guárdalo primero. En el editor masivo todo sigue siendo un borrador hasta que guardas allí.",
           ],
         },
         {
@@ -249,7 +250,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Aceptar una sugerencia",
           paragraphs: [
-            "El resultado llega al campo como sugerencia. Puedes aceptarla, descartarla o seguir editándola — nada se guarda a tus espaldas. «Aceptar y traducir» lleva el texto aceptado directamente a todos los idiomas.",
+            "El resultado aparece primero como sugerencia encima del campo. «Aceptar» lo pone en el campo y guarda al instante exactamente ese campo — los demás campos con cambios sin guardar no se tocan. «Rechazar» lo deja todo como estaba. «Aceptar y traducir» guarda el texto aceptado y lo lleva directamente a todos los idiomas.",
           ],
         },
       ],
@@ -319,6 +320,7 @@ export const guideEs: GuideCopy = {
           heading: "Un campo o todo",
           paragraphs: [
             "Elige un idioma extranjero arriba. Cada campo tiene ahora un botón de traducir que trae el texto del idioma principal. En el idioma principal, el botón del globo traduce un campo a todos los idiomas a la vez; «Traducir todo» en la barra de acciones traduce la entrada entera.",
+            "Ambos traducen el texto guardado. Si cambiaste algo en el idioma principal y aún no lo has guardado — un campo, un texto alternativo o un metacampo —, quedan bloqueados hasta que guardes; el aviso en el botón lo indica. De lo contrario, el guardado posterior eliminaría las traducciones que acaban de escribir.",
             "Con Ctrl+clic (Mac: Cmd+clic) sobre un botón de idioma lo excluyes de esas ejecuciones — por ejemplo, si lo traduces a mano.",
           ],
         },
@@ -333,6 +335,8 @@ export const guideEs: GuideCopy = {
           paragraphs: [
             "Una traducción solo cuenta como guardada cuando Shopify la devuelve. Si Shopify no acepta una traducción, lo ves en el campo afectado — en lugar de un mensaje de éxito sobre algo que nunca llegó.",
             "Lo mismo vale al vaciar: una traducción solo cuenta como eliminada cuando Shopify lo confirma; si no, sigue visible, el campo sigue marcado como modificado para que puedas guardar de nuevo, y se te avisa. En las opciones de producto y los metacampos, un idioma que Shopify rechazó se nombra en la tarea, que entonces aparece como “completada con errores”.",
+            "«Limpiar todo» en un idioma extranjero también elimina, en un producto, las traducciones de los nombres de opciones, los valores de opciones y los metacampos en ese idioma; con un mercado seleccionado, solo las de ese mercado.",
+            "Mientras «Traducir todo» sigue en curso para un idioma, puedes cambiar a otro idioma y seguir trabajando allí o usar «Limpiar todo»; el resultado aparece después solo en el idioma para el que lo iniciaste. «Limpiar todo» en ese mismo idioma vuelve a estar disponible cuando termina su traducción; hasta entonces verás un aviso. Mientras «Traducir todo» se ejecuta para todos los idiomas, esto vale para cada idioma. A la inversa, «Traducir todo» no se puede iniciar mientras siga en curso un guardado o borrado que acabas de enviar en el mismo idioma (o en el idioma principal): verás un aviso y podrás iniciarlo de nuevo un momento después; para «Traducir todo» a todos los idiomas, esto vale para cualquier idioma. Si pulsas Guardar en un idioma que se está traduciendo, el guardado espera a que termine la traducción. Los botones de IA y de copia que guardan al instante quedan bloqueados durante ese tiempo: en un idioma extranjero solo mientras se traduce justo a ese idioma; en el idioma principal, durante cualquier traducción de este elemento. Verás un aviso, y traducir o copiar ni siquiera se inicia. Una sugerencia de IA que aceptes, o un resultado de IA que llegue en ese momento, queda en el campo como un cambio sin guardar: lo guardas con el botón Guardar después de la traducción.",
           ],
         },
       ],
@@ -494,7 +498,7 @@ export const guideEs: GuideCopy = {
           heading: "Imágenes de producto",
           paragraphs: [
             "Defines un reemplazo directamente en la galería de imágenes del producto, también si el gestor de imágenes está desactivado. En el idioma principal no hay nada especial. Cambia a un idioma extranjero (y, si quieres, a un mercado) y selecciona una imagen de la galería: en la fila de botones de la selección aparece, entre «Mover» y «Eliminar», el botón «Subir imagen de reemplazo». Al hacer clic se abren tus archivos, donde eliges una imagen o subes una nueva; solo se ofrece lo que puede reemplazar al original. La imagen elegida aparece enseguida en la galería, en lugar del original, marcada con un pequeño símbolo redondo en la esquina superior izquierda. Solo se guarda cuando pulsas «Guardar» arriba; el cuadro de información comunica el resultado. «Descartar» deshace tu elección. Un clic en el símbolo te muestra el original (el símbolo se vuelve gris) y otro clic vuelve a mostrar el reemplazo. «Quitar imagen de reemplazo» hace que vuelva a valer el original, y eso también se aplica solo con «Guardar». Usa una imagen con las mismas proporciones que la original: la tienda mantiene el marco de la original, así que otro formato se recorta o deja huecos.",
-            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Media per language» (el mensaje tras guardar enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto y la imagen que aparece al compartir el enlace y en los buscadores.",
+            "Para que tu tienda muestre los reemplazos, activa una vez la inserción de app «Media per language» (mientras siga desactivada, el mensaje tras guardar enlaza directamente). Se reemplazan las imágenes de la galería de la página de producto (incluidas sus miniaturas y la vista a pantalla completa). Si además usas las inserciones de app «Open Graph / Twitter» y «JSON-LD Structured Data», también se reemplazan la imagen principal que aparece al compartir el enlace y las imágenes que leen los buscadores.",
           ],
           list: [
             "Un reemplazo para un mercado concreto tiene prioridad sobre el reemplazo para «Todos los mercados».",
@@ -508,7 +512,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Vídeos",
           paragraphs: [
-            "Del mismo modo también reemplazas los vídeos de un producto por idioma y mercado, por ejemplo por una versión doblada. Un vídeo subido a Shopify se reemplaza por otro vídeo subido (de tus archivos o subido nuevo), un vídeo de YouTube o Vimeo por otro enlace de YouTube o Vimeo. Una imagen no se puede reemplazar por un vídeo ni al revés; los modelos 3D no se reemplazan.",
+            "Del mismo modo también reemplazas los vídeos de un producto por idioma y mercado, por ejemplo por una versión doblada. Un vídeo subido a Shopify se reemplaza por otro vídeo subido (de tus archivos o subido nuevo), un vídeo de YouTube o Vimeo por otro enlace de YouTube o Vimeo. Con un vídeo seleccionado, el botón se llama «Subir vídeo de reemplazo» o «Introducir enlace de reemplazo», según el caso. Una imagen no se puede reemplazar por un vídeo ni al revés; los modelos 3D no se reemplazan.",
             "Shopify procesa un vídeo recién subido durante unos minutos. Si aparece un aviso, elige el vídeo de tus archivos un poco más tarde.",
             "Los vídeos de los ajustes del tema (por ejemplo una sección de vídeo en la página de inicio) se introducen por idioma como otro enlace; la IA no los modifica.",
           ],
@@ -523,6 +527,7 @@ export const guideEs: GuideCopy = {
       tips: [
         "La IA no traduce ni modifica imágenes. Por eso los botones de traducir no ofrecen nada para las imágenes del tema: una imagen se mantiene hasta que eliges otra.",
         "Una imagen que se mantiene igual en un idioma no cuenta como traducción pendiente.",
+        "Las imágenes y vídeos distintos por idioma están incluidos en los planes Pro y Max.",
       ],
     },
 
@@ -737,13 +742,13 @@ export const guideEs: GuideCopy = {
           heading: "Dónde están",
           paragraphs: [
             "Editas los textos alternativos en la imagen dentro del Image Variant Manager, en el editor para las imágenes de colecciones y artículos, y en bloque en el editor masivo, donde cada fila del tipo Imágenes es una imagen — tanto de productos como de tu biblioteca de archivos.",
-            "Un texto alternativo del Image Variant Manager no se guarda al salir del campo: sigue siendo un borrador hasta que pulsas «Guardar» arriba, como cualquier otro cambio de la página. «Descartar» lo deshace. Si el guardado de una imagen falla, el cuadro de información indica el motivo, tu texto se queda en el campo y se vuelve a enviar con el siguiente «Guardar». Si ya escribiste un texto alternativo para una imagen que acabas de añadir, el mismo «Guardar» lo guarda también en cuanto Shopify haya creado la imagen. Si cambias de idioma, de mercado o de producto con textos alternativos sin guardar, la app pregunta antes; lo que ya guardaste termina de guardarse también después del cambio. En el idioma principal los textos alternativos valen para todos los mercados, por eso cambiar de mercado allí no pregunta. Si eliminas una imagen, su texto alternativo sin guardar se va con ella. Un enlace de YouTube/Vimeo o un modelo 3D añadido a una variante no tiene texto alternativo: su campo lo indica en su lugar.",
+            "Un texto alternativo que escribes en el Image Variant Manager no se guarda al salir del campo: sigue siendo un borrador hasta que pulsas «Guardar» arriba, como cualquier otro cambio de la página. «Descartar» lo deshace. Si el guardado de una imagen falla, el cuadro de información indica el motivo, tu texto se queda en el campo y se vuelve a enviar con el siguiente «Guardar». Si ya escribiste un texto alternativo para una imagen que acabas de añadir, el mismo «Guardar» lo guarda también en cuanto Shopify haya creado la imagen. Si cambias de idioma, de mercado o de producto con textos alternativos sin guardar, la app pregunta antes; mientras un texto alternativo que generaste o tradujiste con un botón de IA aún se está guardando, la app no cambia, sino que te pide esperar un momento y volver a cambiar. Los textos alternativos que enviaste con «Guardar» no detienen el cambio: terminan de guardarse para el producto, el idioma y el mercado para los que los enviaste. En el idioma principal los textos alternativos valen para todos los mercados, por eso cambiar de mercado allí no pregunta. Si eliminas una imagen, su texto alternativo sin guardar se va con ella. Un enlace de YouTube/Vimeo o un modelo 3D añadido a una variante no tiene texto alternativo: su campo lo indica en su lugar.",
           ],
         },
         {
           heading: "Con IA",
           paragraphs: [
-            "La IA escribe un texto alternativo por imagen. El resultado queda como borrador en el campo y solo se aplica con «Guardar»; «Traducir a todos los idiomas», en cambio, escribe de inmediato en los otros idiomas — por eso ese botón solo vuelve a estar disponible cuando has guardado un texto alternativo modificado. Con el envío de imágenes activado ve exactamente esa imagen — y no describe otra que simplemente esté al lado.",
+            "La IA escribe un texto alternativo por imagen. El resultado — igual que una traducción al idioma abierto — queda en el campo y se guarda al instante para esa imagen; los textos alternativos que escribiste para otras imágenes siguen siendo borradores. En una imagen que aún no se ha guardado, estos botones están bloqueados hasta que la guardes. «Traducir» en otro idioma parte siempre del texto alternativo guardado en el idioma principal, no de lo que haya en el campo; por eso, en una imagen sin texto alternativo en el idioma principal, el botón está bloqueado con un aviso. En un archivo de la biblioteca que solo está en una galería de variante, la página no conoce su texto alternativo: allí el botón sigue disponible y, si falta el texto alternativo en el idioma principal, lo indica el cuadro de información. «Traducir a todos los idiomas» escribe de inmediato en los otros idiomas — por eso ese botón solo está disponible mientras el texto alternativo del idioma principal no tenga cambios sin guardar. Con el envío de imágenes activado ve exactamente esa imagen — y no describe otra que simplemente esté al lado.",
           ],
         },
         {
@@ -756,6 +761,7 @@ export const guideEs: GuideCopy = {
           heading: "Traducir",
           paragraphs: [
             "Los textos alternativos se traducen a todos los idiomas como cualquier otro campo y se actualizan con las mismas reglas cuando cambia el original. Con un mercado seleccionado en el editor, el gestor de imágenes muestra los textos alternativos de ese mercado (el del idioma si el mercado no tiene uno propio) y guarda los cambios solo para ese mercado. «Traducir a todos los idiomas» escribe siempre el texto del propio idioma, que también usan los mercados sin texto propio.",
+            "Solo se puede traducir un texto alternativo que exista en el idioma principal. Si una imagen aún no tiene uno allí, su campo de texto alternativo está bloqueado en los demás idiomas y lo indica: introdúcelo primero en el idioma principal y guarda.",
           ],
         },
       ],

@@ -878,37 +878,188 @@ export async function removeMediaAltAndVerify(
 
 /**
  * Mirror a CONFIRMED product-media alt translation into
- * ProductImageAltTranslation. The cache row is resolved from
- * (productId?, mediaId) NOW -- never captured: a product sync recreates
- * ProductImage rows with fresh ids. `imageGone` = no row to attach to (deleted
- * or not cached): nothing is written under a guessed id, the caller decides
- * how to report it. `value: ""` deletes the global-layer row.
+ * ProductImageAltTranslation -- on EVERY ProductImage cache row of the shop
+ * that carries this MediaImage GID.
+ *
+ * The translation lives on ONE Shopify resource (the MediaImage GID), while
+ * the cache holds one ProductImage row per product that shows the medium (a
+ * file shared by several products). Writing only one of those rows left the
+ * other products' editors reading a stale value, and a confirmed CLEAR that
+ * deleted only one row left the translation "present" in the other products'
+ * mirrors although Shopify no longer serves it. So every row is written (or,
+ * for `value: ""`, every row of that layer deleted) -- the ONE implementation
+ * every product-alt writer goes through.
+ *
+ * The rows are resolved from (shop, mediaId) NOW -- never captured: a product
+ * sync recreates ProductImage rows with fresh ids. `productId` is accepted for
+ * the callers' context and does not narrow the write -- except under
+ * `inTransaction` (below). `imageGone` = no row anywhere in the shop to attach
+ * to (deleted or not cached): nothing is written under a guessed id, the
+ * caller decides how to report it.
+ *
+ * `locale` may be a LIST: a caller clearing several confirmed locales of one
+ * medium pays ONE row lookup and ONE deleteMany instead of one pair per
+ * locale (the rows are found through the `ProductImage(mediaId)` index).
+ *
+ * `inTransaction`: the caller hands a TRANSACTION client. A foreign-key
+ * failure inside a Postgres transaction aborts the whole transaction, so the
+ * "a concurrent sync deleted that row, skip it" catch below would turn into
+ * "every later statement of the transaction fails". In that mode the write is
+ * narrowed to `productId`'s own row (required -- the one row the caller's
+ * transaction itself holds) and every error is RE-THROWN; the caller mirrors
+ * the OTHER products' rows of a shared medium after commit, with the global
+ * client and without the flag (api.apply-alt-text-templates.tsx).
  */
 export async function mirrorProductMediaAlt(
   db: Pick<PrismaClient, "productImage" | "productImageAltTranslation">,
-  params: { shop: string; mediaId: string; locale: string; value: string; productId?: string; marketId?: string },
+  params: {
+    shop: string;
+    mediaId: string;
+    locale: string | readonly string[];
+    value: string;
+    productId?: string;
+    marketId?: string;
+    inTransaction?: boolean;
+  },
 ): Promise<"mirrored" | "imageGone"> {
-  const { shop, mediaId, locale, value } = params;
+  const { shop, mediaId, value } = params;
   const marketId = params.marketId ?? "";
-  const image = await db.productImage.findFirst({
-    where: { mediaId, product: { shop }, ...(params.productId ? { productId: params.productId } : {}) },
+  const locales = [...new Set(typeof params.locale === "string" ? [params.locale] : params.locale)];
+  if (!mediaId) return "imageGone";
+  if (params.inTransaction && !params.productId) {
+    throw new Error("mirrorProductMediaAlt: inTransaction requires productId");
+  }
+  const images = await db.productImage.findMany({
+    where: {
+      mediaId,
+      product: { shop },
+      ...(params.inTransaction ? { productId: params.productId } : {}),
+    },
     select: { id: true },
   });
-  if (!image) return "imageGone";
-  try {
-    if (value.trim() === "") {
-      await db.productImageAltTranslation.deleteMany({ where: { imageId: image.id, locale, marketId } });
-    } else {
-      await db.productImageAltTranslation.upsert({
-        where: { imageId_locale_marketId: { imageId: image.id, locale, marketId } },
-        create: { imageId: image.id, locale, marketId, altText: value },
-        update: { altText: value },
-      });
-    }
-  } catch (error: unknown) {
-    // The image was deleted between the lookup and the write (concurrent sync).
-    if ((error as { code?: string })?.code === "P2003") return "imageGone";
-    throw error;
+  if (!images || images.length === 0) return "imageGone";
+  if (locales.length === 0) return "mirrored";
+  const imageIds = images.map((image: { id: string }) => image.id);
+  if (value.trim() === "") {
+    await db.productImageAltTranslation.deleteMany({
+      where: { imageId: { in: imageIds }, locale: locales.length === 1 ? locales[0] : { in: locales }, marketId },
+    });
+    return "mirrored";
   }
-  return "mirrored";
+  let written = 0;
+  for (const imageId of imageIds) {
+    let rowGone = false;
+    for (const locale of locales) {
+      try {
+        await db.productImageAltTranslation.upsert({
+          where: { imageId_locale_marketId: { imageId, locale, marketId } },
+          create: { imageId, locale, marketId, altText: value },
+          update: { altText: value },
+        });
+      } catch (error: unknown) {
+        // That row was deleted between the lookup and the write (a concurrent
+        // sync recreating that product's rows) -- skip it, keep the others.
+        // Never inside a transaction: there the failure has already aborted it.
+        if (!params.inTransaction && (error as { code?: string })?.code === "P2003") {
+          rowGone = true;
+          break;
+        }
+        throw error;
+      }
+    }
+    if (!rowGone) written += 1;
+  }
+  return written > 0 ? "mirrored" : "imageGone";
 }
+
+/**
+ * Mirror a CONFIRMED alt translation of an image that has NO ProductImage row
+ * (a media-library file -- e.g. a library pick in a variant gallery) into the
+ * generic ContentTranslation table under resourceType "MediaImage", the store
+ * the bulk editor's image rows read and write for such an image. `value: ""`
+ * deletes ONLY the row of the layer written (global, or this market's) -- the
+ * caller sends it only after Shopify CONFIRMED the removal. The ONE
+ * implementation: the bulk editor's image-row write and the image manager's
+ * per-image save both call it.
+ */
+export async function mirrorLibraryImageAlt(
+  db: Pick<PrismaClient, "contentTranslation">,
+  params: {
+    shop: string;
+    mediaId: string;
+    locale: string;
+    value: string;
+    marketId?: string;
+    /** The digest the register used (null/absent when unknown). */
+    digest?: string | null;
+    key?: string;
+  },
+): Promise<void> {
+  const { shop, mediaId, locale, value } = params;
+  const marketId = params.marketId ?? "";
+  const key = params.key ?? MEDIA_ALT_KEY;
+  if (value.trim() === "") {
+    await db.contentTranslation.deleteMany({
+      where: { shop, resourceId: mediaId, resourceType: "MediaImage", key, locale, marketId },
+    });
+    return;
+  }
+  const digest = params.digest ?? null;
+  await db.contentTranslation.upsert({
+    where: { shop_resourceId_key_locale_marketId: { shop, resourceId: mediaId, key, locale, marketId } },
+    update: { value, digest, resourceType: "MediaImage" },
+    create: { shop, resourceId: mediaId, resourceType: "MediaImage", key, value, locale, marketId, digest },
+  });
+}
+
+/**
+ * Mirror a CONFIRMED alt translation into whichever store owns the image: the
+ * ProductImage cache row's ProductImageAltTranslation when one exists for the
+ * GID (shop-scoped, resolved now), otherwise ContentTranslation("MediaImage")
+ * -- the same split the bulk editor's write path applies. Answers which store
+ * was written.
+ *
+ * One MediaImage GID may be cached under SEVERAL products; the product store
+ * is written on EVERY one of those rows (`mirrorProductMediaAlt`), because the
+ * translation lives on the one Shopify resource they all show.
+ *
+ * The library branch is taken ONLY for a MediaImage GID with NO ProductImage
+ * row anywhere in the shop. A product medium whose row is momentarily gone (a
+ * concurrent product sync deletes and recreates the rows -- the P2003 race)
+ * is retried ONCE; a row that exists and still took no write answers
+ * `notMirrored`, never a stray library row no editor would read.
+ * Throws on a DB error; the caller reports it.
+ */
+export async function mirrorImageAltAnyStore(
+  db: Pick<PrismaClient, "productImage" | "productImageAltTranslation" | "contentTranslation">,
+  params: {
+    shop: string;
+    mediaId: string;
+    locale: string;
+    value: string;
+    marketId?: string;
+    digest?: string | null;
+    productId?: string;
+    /** Pause before the one retry (tests pass 0). */
+    retryDelayMs?: number;
+  },
+): Promise<"product" | "library" | "notMirrored"> {
+  const tryProductStores = async (): Promise<boolean> =>
+    (await mirrorProductMediaAlt(db, params)) === "mirrored";
+  if (await tryProductStores()) return "product";
+  if (!MEDIA_IMAGE_GID_RE.test(params.mediaId)) return "notMirrored";
+  // One retry: a sync recreating this product's rows answers "imageGone" for
+  // the moment between its delete and its insert.
+  const delay = params.retryDelayMs ?? 150;
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+  if (await tryProductStores()) return "product";
+  const productBacked = await db.productImage.findFirst({
+    where: { mediaId: params.mediaId, product: { shop: params.shop } },
+    select: { id: true },
+  });
+  if (productBacked) return "notMirrored";
+  await mirrorLibraryImageAlt(db, params);
+  return "library";
+}
+
+const MEDIA_IMAGE_GID_RE = /^gid:\/\/shopify\/MediaImage\/\d+$/;
