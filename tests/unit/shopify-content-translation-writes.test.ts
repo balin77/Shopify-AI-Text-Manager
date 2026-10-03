@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ShopifyContentService } from '../../src/services/shopify-content.service';
+import { reconcileAfterPrimarySave } from '../../app/services/translations/stale-translation-sync.server';
 
 vi.mock('~/utils/logger.server', () => ({
   loggers: { translation: vi.fn(), seo: vi.fn() },
@@ -463,6 +464,27 @@ describe('updateContent — primary-change purge (Page, merchant purge switch on
     const failed = await savePage(makePurgeAdmin(), makeDb());
     marketFailed.length = 0;
     expect((failed as any).marketPurgedFields).toBeUndefined();
+  });
+
+  describe('auto-translate on: the repair purges the market layer and reports its keys', () => {
+    beforeEach(() => {
+      policy.autoTranslateExternalChanges = true;
+      // The two switches are alternatives: auto-translate forces the purge off.
+      policy.purgeOnPrimaryChange = false;
+      policy.purgeUnreconciledSurfaces = false;
+    });
+
+    it('names the editor fields of the keys the repair confirmed purged', async () => {
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 2, marketPurgedKeys: ['title'] } as any);
+      const result = await savePage(makePurgeAdmin(), makeDb());
+      expect((result as any).marketPurgedFields).toEqual(['title']);
+    });
+
+    it('names nothing when the repair reports no purged key (unconfirmed, off or not run)', async () => {
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 2 } as any);
+      const result = await savePage(makePurgeAdmin(), makeDb());
+      expect((result as any).marketPurgedFields).toBeUndefined();
+    });
   });
 
   it('with the purge off the answer names no purged market field', async () => {

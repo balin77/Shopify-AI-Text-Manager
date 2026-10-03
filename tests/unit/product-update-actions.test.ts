@@ -13,7 +13,7 @@
  * closes them.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("~/utils/logger.server", () => ({
   loggers: { product: vi.fn(), translation: vi.fn(), seo: vi.fn() },
@@ -82,6 +82,8 @@ vi.mock("~/services/sync-utils", () => ({
 }));
 
 import { handleUpdateProduct } from "../../app/actions/product/update.actions";
+import { reconcileAfterPrimarySave } from "~/services/translations/stale-translation-sync.server";
+import { fetchShopLocales } from "~/services/sync-utils";
 
 const SHOP = "test.myshopify.com";
 const PRODUCT = "gid://shopify/Product/10";
@@ -657,6 +659,37 @@ describe("updatePrimaryProduct -- primary-change purge", () => {
     makeDb();
     const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
     expect(result.marketPurgedFields).toBeUndefined();
+  });
+
+  describe("auto-translate on: the repair purges the market layer itself and reports its keys", () => {
+    beforeEach(() => {
+      policy.autoTranslateExternalChanges = true;
+      policy.purgeOnPrimaryChange = false;
+      policy.purgeUnreconciledSurfaces = false;
+      vi.mocked(fetchShopLocales).mockResolvedValue([
+        { locale: "de", primary: true, published: true },
+        { locale: "fr", primary: false, published: true },
+      ] as any);
+    });
+    afterEach(() => {
+      vi.mocked(fetchShopLocales).mockResolvedValue([] as any);
+    });
+
+    it("names the editor fields of the keys the repair confirmed purged", async () => {
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 1, marketPurgedKeys: ["title"] } as any);
+      const w = installAdmin();
+      makeDb();
+      const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title", "vendor"]) }));
+      expect(result.marketPurgedFields).toEqual(["title"]);
+    });
+
+    it("names nothing when the repair reports no purged key", async () => {
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 1 } as any);
+      const w = installAdmin();
+      makeDb();
+      const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+      expect(result.marketPurgedFields).toBeUndefined();
+    });
   });
 
   it("with the purge off nothing is reported as purged", async () => {

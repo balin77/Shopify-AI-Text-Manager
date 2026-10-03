@@ -1070,6 +1070,45 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     ).toBe(true);
   });
 
+  describe("reports the keys whose MARKET layer its purge confirmed cleared (marketPurgedKeys)", () => {
+    const MARKET = "gid://shopify/Market/5";
+    const withOverride = () =>
+      db.contentTranslation.findMany.mockImplementation(async (args: any) => {
+        if (args?.where?.marketId === "") {
+          return [
+            { resourceId: PAGE, key: "title", locale: "de" },
+            { resourceId: PAGE, key: "body_html", locale: "de" },
+          ];
+        }
+        return [{ resourceId: PAGE, key: "title", locale: "de", marketId: MARKET }];
+      });
+
+    it("names every purged key when the removal was confirmed", async () => {
+      withOverride();
+      const result = await reconcileAfterPrimarySave(saveParams());
+      await awaitDetachedRetranslations();
+      expect([...(result.marketPurgedKeys ?? [])].sort()).toEqual(["body_html", "title"]);
+    });
+
+    it("leaves out a key whose market removal Shopify did not confirm", async () => {
+      withOverride();
+      shopify.removeConfirms = { de: [] };
+      const result = await reconcileAfterPrimarySave(saveParams());
+      await awaitDetachedRetranslations();
+      shopify.removeConfirms = null;
+      // `title` holds the unconfirmed override; `body_html` has none at all.
+      expect(result.marketPurgedKeys).toEqual(["body_html"]);
+    });
+
+    it("names nothing when auto-translate is off (the repair does not run)", async () => {
+      withOverride();
+      policy.autoTranslateExternalChanges = false;
+      const result = await reconcileAfterPrimarySave(saveParams());
+      expect(result.marketPurgedKeys).toBeUndefined();
+      expect(shopify.removeMarkets).toEqual([]);
+    });
+  });
+
   it("leaves the market overrides alone when the merchant switched BOTH answers off", async () => {
     // Reached through the PURGE path, not the auto-translate one: with
     // auto-translate off `reconcileAfterPrimarySave` returns before anything

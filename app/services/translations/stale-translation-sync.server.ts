@@ -956,6 +956,14 @@ export interface ReconcileResult {
    * pairs were never even attempted.
    */
   managedStandDown?: AiRefusalCode;
+  /**
+   * The translation KEYS whose MARKET overrides this repair's purge confirmed
+   * removed (`purgeMarketOverrides`'s `outcome.failedKeys`). Absent when the
+   * purge was off, did not run, or threw; a key it could not clear for sure is
+   * not in it. The in-app save paths map them back to editor fields and answer
+   * `marketPurgedFields`, so the page hides the stale override at once.
+   */
+  marketPurgedKeys?: string[];
 }
 
 const NOTHING: ReconcileResult = { removed: 0, retranslating: 0 };
@@ -3061,6 +3069,7 @@ async function repairStaleTranslations(
     return true;
   });
 
+  let marketPurgedKeys: string[] | undefined;
   if (mayPurge && marketKeys.length > 0 && (retranslate.length > 0 || toPurge.length > 0)) {
     try {
       const { purgeMarketOverrides } = await import("./market-layer-purge.server");
@@ -3069,6 +3078,7 @@ async function repairStaleTranslations(
         const ref = refOf(target, entry);
         refsById.set(ref.resourceId, ref);
       }
+      const marketOutcome = { failedKeys: new Set<string>() };
       await purgeMarketOverrides({
         gateway,
         mirror,
@@ -3077,7 +3087,9 @@ async function repairStaleTranslations(
         keys: marketKeys,
         ...(scope.currentOverrides ? { currentOverrides: scope.currentOverrides } : {}),
         context: resourceType,
+        outcome: marketOutcome,
       });
+      marketPurgedKeys = marketKeys.filter((key) => !marketOutcome.failedKeys.has(key));
     } catch (error: unknown) {
       logger.warn("[StaleTranslations] Market-override purge could not run", {
         context: "StaleTranslations",
@@ -3251,6 +3263,7 @@ async function repairStaleTranslations(
     removed,
     retranslating: startRetranslation ? retranslate.length : 0,
     ...(taskId ? { taskId } : {}),
+    ...(marketPurgedKeys && marketPurgedKeys.length > 0 ? { marketPurgedKeys } : {}),
   };
 }
 

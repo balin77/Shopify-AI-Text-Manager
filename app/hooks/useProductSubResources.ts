@@ -64,6 +64,7 @@ import {
   stageClearAll,
   subResourceSaveRacesRun,
 } from "../services/editor/sub-resource-clear.shared";
+import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -99,6 +100,8 @@ interface SubResourceFetcherData {
   error?: string;
   /** Ids of detached repairs a save started, offered even when the save failed. */
   retranslationTaskIds?: string[];
+  /** Sub-resources whose MARKET overrides the primary save's purge CONFIRMED removed. */
+  marketPurgedResourceIds?: string[];
 }
 
 // ============================================================================
@@ -462,10 +465,13 @@ function buildFromTranslationsMap(
  * value exists, that global value is the inherited fallback and its resourceId is
  * added to `fallbackResourceIds` so the UI can grey it out.
  */
-function dbPreloadToMap(
+export function dbPreloadToMap(
   subResourceTranslations: Record<string, Array<{ key: string; value: string; locale: string; marketId?: string }>> | undefined,
   locale: string,
   selectedMarketId: string,
+  /** Resources whose market rows a confirmed purge removed on Shopify (the item
+   *  still carries them until it is re-read): their market layer reads as empty. */
+  hiddenMarketResourceIds?: ReadonlySet<string>,
 ): { map: Record<string, Record<string, string>>; fallbackResourceIds: Set<string> } {
   const map: Record<string, Record<string, string>> = {};
   const fallbackResourceIds = new Set<string>();
@@ -478,7 +484,9 @@ function dbPreloadToMap(
       if (r.locale !== locale) continue;
       const rMarket = r.marketId ?? "";
       if (rMarket === "") globalByKey[r.key] = r.value;
-      else if (selectedMarketId && rMarket === selectedMarketId) marketByKey[r.key] = r.value;
+      else if (selectedMarketId && rMarket === selectedMarketId && !hiddenMarketResourceIds?.has(resourceId)) {
+        marketByKey[r.key] = r.value;
+      }
     }
     const keys = new Set([...Object.keys(globalByKey), ...Object.keys(marketByKey)]);
     for (const key of keys) {
@@ -578,6 +586,9 @@ export function useProductSubResources({
   // Resources whose stale foreign translations a primary save could not remove:
   // they are still live, so the refresh must not wipe their staged values.
   const keepOverlayIdsRef = useRef<Set<string>>(new Set());
+  // Sub-resources whose market rows a confirmed primary purge removed; hidden
+  // until the re-read item stops carrying them (sub-resource-market-purge.shared).
+  const marketPurgedIdsRef = useRef<Set<string>>(new Set());
   // What a reload's overlay reset must keep: the unconfirmed-purge ids above,
   // plus every resource a translate answer was staged for in the last two
   // minutes (see `recentlyStagedRef`). The merged set is used for the reset
@@ -676,7 +687,7 @@ export function useProductSubResources({
     // Phase 1: DB pre-load — read from item.subResourceTranslations (instant,
     // synchronous), resolving market → global and flagging inherited resources.
     const { map: dbMap, fallbackResourceIds: dbFallback } =
-      dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage, selectedMarketId);
+      dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage, selectedMarketId, marketPurgedIdsRef.current);
 
     // Merge overlay (from copy operations) on top of DB data. Overlay is
     // market-folded so a market override doesn't leak into the global view.
@@ -739,6 +750,7 @@ export function useProductSubResources({
   // before the load effect below, so a re-read sees the new stamp.
   useEffect(() => {
     itemLoadedAtRef.current = Date.now();
+    retirePurgedMarketResources(marketPurgedIdsRef.current, selectedItem?.subResourceTranslations);
   }, [selectedItem]);
 
   // ============================================================================
@@ -780,6 +792,7 @@ export function useProductSubResources({
     if (lastOverlayItemIdRef.current !== itemId) {
       lastOverlayItemIdRef.current = itemId || null;
       localSubResourceOverlayRef.current = {};
+      marketPurgedIdsRef.current = new Set();
       // The kept ids belong to the previous item's live translations.
       keepOverlayIdsRef.current = new Set();
       recentlyStagedRef.current = new Map();
@@ -897,7 +910,7 @@ export function useProductSubResources({
   // view that is showing (empty where no translation existed).
   const restoreFailedResources = (failedResources: readonly string[]) => {
     if (!selectedItem || failedResources.length === 0) return;
-    const { map: dbMap } = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage, selectedMarketId);
+    const { map: dbMap } = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage, selectedMarketId, marketPurgedIdsRef.current);
     setOptionTranslations(prev => {
       const restored = { ...prev };
       for (const resourceId of failedResources) {
@@ -1118,6 +1131,11 @@ export function useProductSubResources({
       // Offered whatever the outcome: a save can fail for one option and still
       // have started the repair for the others.
       onSaveResponse?.(data);
+      // The save's purge removed these resources' MARKET overrides on Shopify;
+      // the loaded item carries the old rows until it is re-read.
+      if (Array.isArray(data.marketPurgedResourceIds)) {
+        for (const id of data.marketPurgedResourceIds) marketPurgedIdsRef.current.add(String(id));
+      }
       const failedOptions = data.failedOptions || [];
       const failedMetafields = data.failedMetafields || [];
       // Create, delete and reorder failures have no id to report under, so

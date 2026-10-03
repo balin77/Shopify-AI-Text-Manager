@@ -54,6 +54,7 @@ import {
   parseMetaobjectTaxonomyValues,
   taxonomyValueBounds,
   parseMetaobjectFieldKey,
+  metaobjectFieldKey,
 } from "~/services/metaobject-fields.shared";
 import { writeMetaobjectFields, type MetaobjectFieldWrite } from "~/services/metaobject-write.server";
 import type { MetaobjectFieldDefinition } from "~/config/create-fields.config";
@@ -213,6 +214,9 @@ export async function handleMetaobjectUpdate(
    *  reload once the AI is through: a metaobject field is outside every sync
    *  and every webhook here, so nothing else would ever tell it. */
   const retranslationTaskIds: string[] = [];
+  /** Editor field keys (`<GID>#<field key>`) whose MARKET overrides the primary
+   *  purge CONFIRMED removed; the page hides market values only for these. */
+  const marketPurgedFields = new Set<string>();
 
   const written = locale === primaryLocale
     ? await savePrimary()
@@ -244,6 +248,7 @@ export async function handleMetaobjectUpdate(
     success: true,
     actionType: "updateContent",
     retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+    ...(marketPurgedFields.size > 0 ? { marketPurgedFields: [...marketPurgedFields] } : {}),
   });
 
   // ── 3a. Primary locale: the entry's own field values ────────────────────
@@ -466,6 +471,13 @@ export async function handleMetaobjectUpdate(
           },
         });
         if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
+        // The repair purged the market layer itself (auto-translate path).
+        const purgedByRepair = new Set(outcome.marketPurgedKeys ?? []);
+        for (const item of stale) {
+          if (purgedByRepair.has(item.key)) {
+            marketPurgedFields.add(metaobjectFieldKey(item.metaobjectId, item.key));
+          }
+        }
         return;
       }
 
@@ -495,6 +507,7 @@ export async function handleMetaobjectUpdate(
         const { metaobjectTranslationMirror } = await import(
           "~/services/translations/stale-translation-sync.server"
         );
+        const marketOutcome = { failedKeys: new Set<string>() };
         await purgeMarketOverrides({
           gateway,
           mirror: metaobjectTranslationMirror(session.shop, new Map()),
@@ -505,7 +518,13 @@ export async function handleMetaobjectUpdate(
           locales: foreignLocales,
           keys: [...new Set(stale.map((item) => item.key))],
           context: "metaobject",
+          outcome: marketOutcome,
         });
+        for (const [metaobjectId, keys] of keysByEntry) {
+          for (const key of keys) {
+            if (!marketOutcome.failedKeys.has(key)) marketPurgedFields.add(metaobjectFieldKey(metaobjectId, key));
+          }
+        }
       } catch {
         // Logged inside; a stale override never fails a save that succeeded.
       }

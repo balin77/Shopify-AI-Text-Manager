@@ -2152,6 +2152,10 @@ export class ShopifyContentService {
             policy: changePolicy!,
           });
           if (contentOutcome.taskId) retranslationTaskIds.push(contentOutcome.taskId);
+          // The repair purged the market layer itself (auto-translate path).
+          if (contentOutcome.marketPurgedKeys?.length) {
+            marketPurgedKeys = [...new Set([...marketPurgedKeys, ...contentOutcome.marketPurgedKeys])];
+          }
         } catch (retranslateError: unknown) {
           loggers.translation('warn', '[updateContent] Re-translation after primary save failed — translations kept', {
             resourceId,

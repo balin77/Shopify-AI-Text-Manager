@@ -1223,6 +1223,9 @@ export async function handleSavePrimarySubResources(
     // Sub-resources whose stale foreign translation Shopify did not confirm
     // removing (kept locally); surfaced as a warning on a save that worked.
     const purgeUnconfirmed: string[] = [];
+    // Sub-resources whose MARKET overrides a purge CONFIRMED removed (reported
+    // so the page stops showing them; only confirmed ones are listed).
+    const marketPurgedResourceIds = new Set<string>();
     if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
       // The purge deletes translation rows a sync reading Shopify a moment
       // earlier would put straight back; marked again once it is done.
@@ -1268,6 +1271,7 @@ export async function handleSavePrimarySubResources(
         // query over the whole set and a row only matches its own resource
         // type's key — a ProductOption has no `value` row to find.
         if (nameRefs.length + valueRefs.length + metafieldRefs.length > 0) {
+          const marketOutcome = { failedKeys: new Set<string>() };
           await purgeMarketOverrides({
             gateway,
             mirror,
@@ -1275,7 +1279,17 @@ export async function handleSavePrimarySubResources(
             locales: foreignLocales,
             keys: ["name", "value"],
             context: "subResource",
+            outcome: marketOutcome,
           });
+          // The outcome is per KEY, so one unconfirmed `name` holds back every
+          // option and option value (and `value` every metafield): coarse, and
+          // on the safe side - an override that may still be live stays shown.
+          if (!marketOutcome.failedKeys.has("name")) {
+            for (const ref of [...nameRefs, ...valueRefs]) marketPurgedResourceIds.add(ref.resourceId);
+          }
+          if (!marketOutcome.failedKeys.has("value")) {
+            for (const ref of metafieldRefs) marketPurgedResourceIds.add(ref.resourceId);
+          }
         }
       } catch {
         // Logged inside; a stale override never fails a save that succeeded.
@@ -1473,6 +1487,11 @@ export async function handleSavePrimarySubResources(
           // on it. Without it a merchant watched an option name's translations
           // stay empty for the minute the AI was working.
           if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
+          // The repair purged the market layer itself (auto-translate path).
+          const purgedByRepair = new Set(outcome.marketPurgedKeys ?? []);
+          for (const entry of changed) {
+            if (purgedByRepair.has(entry.key)) marketPurgedResourceIds.add(entry.resourceId);
+          }
         }
       }
       } catch (err) {
@@ -1532,6 +1551,7 @@ export async function handleSavePrimarySubResources(
       savedMetafields,
       failedMetafields,
       retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+      ...(marketPurgedResourceIds.size > 0 ? { marketPurgedResourceIds: [...marketPurgedResourceIds] } : {}),
       ...(purgeUnconfirmed.length > 0
         ? { warnings: ["translationPurgeUnconfirmed"], unconfirmedPurge: purgeUnconfirmed }
         : {}),
