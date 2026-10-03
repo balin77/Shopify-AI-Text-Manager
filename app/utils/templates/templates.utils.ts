@@ -128,3 +128,101 @@ export function hasPrimaryThemeFile(key: string, resourceType: string | null | u
   const type = resourceType ?? "";
   return LOCALE_CONTENT_RESOURCE_TYPES.has(type) || SETTINGS_DATA_RESOURCE_TYPES.has(type);
 }
+
+// ─── Writing a primary value by its exact JSON PATH ──────────────────────────
+//
+// A translation key names the section (and block) a setting lives in, so the
+// JSON path can be derived from it and VERIFIED against the file: a path is only
+// used when it EXISTS and holds the value the save expects. Everything here is
+// guesswork made safe by that check - a wrongly derived path simply holds
+// another value (or nothing) and the caller falls back to the value search.
+//
+// Verified formats (repo tests and sync): `section.<template>.json.<section>.<setting>`
+// and `section.sections/<group>.json.<section>.<setting>` for templates and
+// section groups; `<category>.<setting>` for settings_data.json top-level
+// settings; `section.<section>[.<block>].<setting>` for settings_data sections.
+// NOT verified against a live shop: the spelling of BLOCK segments (a bare
+// block id, a literal `block`/`blocks` before it, or `<setting>:<blockId>`) -
+// all of these are tried, nested blocks included, and the file decides.
+
+type Json = Record<string, unknown>;
+const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** The value at a path, or undefined. */
+export function getAtPath(root: unknown, path: readonly string[]): unknown {
+  let cursor: unknown = root;
+  for (const part of path) {
+    if (!isObj(cursor)) return undefined;
+    cursor = cursor[part];
+  }
+  return cursor;
+}
+
+/** Sets the value at an EXISTING path (the parent must exist). */
+export function setAtPath(root: unknown, path: readonly string[], value: string): boolean {
+  const parent = getAtPath(root, path.slice(0, -1));
+  if (!isObj(parent)) return false;
+  parent[path[path.length - 1]] = value;
+  return true;
+}
+
+/**
+ * Where settings_data.json keeps its LIVE values: `current` (an object), or
+ * `presets[current]` when `current` is the NAME of a preset (a string).
+ */
+export function settingsDataLiveBase(fileJson: unknown): string[] {
+  if (isObj(fileJson) && typeof fileJson.current === "string") {
+    const presets = fileJson.presets;
+    if (isObj(presets) && isObj(presets[fileJson.current])) return ["presets", fileJson.current];
+  }
+  return ["current"];
+}
+
+function walkSection(root: unknown, sectionsPath: string[], segs: string[]): string[][] {
+  const sections = getAtPath(root, sectionsPath);
+  if (!isObj(sections) || segs.length < 2) return [];
+  const sectionId = segs[0];
+  const rest = segs.slice(1);
+  const last = rest[rest.length - 1];
+  const middle = rest.slice(0, -1).filter((x) => x !== "block" && x !== "blocks");
+  const variants: Array<{ setting: string; extra: string[] }> = [{ setting: last, extra: [] }];
+  if (last.includes(":")) {
+    const [setting, id] = last.split(":");
+    if (setting && id) variants.push({ setting, extra: [id] });
+  }
+  const out: string[][] = [];
+  for (const v of variants) {
+    let path = [...sectionsPath, sectionId];
+    let ok = isObj(sections[sectionId]);
+    for (const id of [...middle, ...v.extra]) {
+      if (!ok) break;
+      const blocks = getAtPath(root, [...path, "blocks"]);
+      if (!isObj(blocks) || !isObj(blocks[id])) { ok = false; break; }
+      path = [...path, "blocks", id];
+    }
+    if (!ok) continue;
+    const candidate = [...path, "settings", v.setting];
+    if (typeof getAtPath(root, candidate) === "string") out.push(candidate);
+  }
+  return out;
+}
+
+/**
+ * The JSON paths (holding a string) a translation key may address in `filename`.
+ * Empty for locale files (they have their own exact-path logic) and for keys it
+ * cannot read. The caller still checks the VALUE at the path.
+ */
+export function resolveKeyJsonPaths(key: string, filename: string, fileJson: unknown): string[][] {
+  if (/^(templates|sections)\/.+\.json$/.test(filename)) {
+    const m = key.match(/^section\.(.+?)\.json\.(.+)$/);
+    return m ? walkSection(fileJson, ["sections"], m[2].split(".")) : [];
+  }
+  if (filename === "config/settings_data.json") {
+    const base = settingsDataLiveBase(fileJson);
+    if (key.startsWith("section.")) return walkSection(fileJson, [...base, "sections"], key.slice("section.".length).split("."));
+    const setting = key.split(".").pop() ?? "";
+    const path = [...base, setting];
+    return setting && typeof getAtPath(fileJson, path) === "string" ? [path] : [];
+  }
+  return [];
+}

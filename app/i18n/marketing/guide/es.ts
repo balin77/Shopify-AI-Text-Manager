@@ -467,6 +467,7 @@ export const guideEs: GuideCopy = {
       ],
       tips: [
         "Las imágenes del tema aparecen como vista previa. Puedes elegir otra imagen por idioma y mercado; consulta «Imágenes y vídeos distintos por idioma».",
+        "Si el mismo texto aparece en varios lugares del tema y la app no puede saber cuál quieres decir, te pide que cambies ese en el editor de temas de Shopify.",
         "Si cambias un texto del tema en el idioma principal, sus traducciones se borran o se retraducen según tu ajuste — igual que en los productos.",
       ],
     },

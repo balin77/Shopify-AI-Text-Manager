@@ -259,9 +259,10 @@ describe("primary theme image save", () => {
     expect(upserts).toEqual([]);
   });
 
-  it("refuses to guess when the old image is used in more places than the save names", async () => {
+  it("refuses to guess when the key names no path and the old image is used in several places", async () => {
+    // current.logo does not exist, so no path resolves; the value search finds two.
     const { ctx } = makeCtx({
-      files: [themeFile("config/settings_data.json", { current: { logo: OLD, footer_logo: OLD } })],
+      files: [themeFile("config/settings_data.json", { current: { sections: { a: { settings: { logo: OLD } }, b: { settings: { logo: OLD } } } } })],
       edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
       fileIds: { [SETTINGS_KEY]: FILE_ID },
     });
@@ -272,30 +273,56 @@ describe("primary theme image save", () => {
     expect(upserts).toEqual([]);
   });
 
-  it("two blocks holding the SAME old image, both changed in one save: refused, never s2 = s1's image", async () => {
-    // Reproduction of the review finding: occurrences == keys let the save through,
-    // and both keys (same property name) then hit the first slot.
+  it("two slides sharing an image: each key is written at ITS OWN slot by path, s2 never gets s1's image", async () => {
     const k1 = "section.index.json.s1.image";
     const k2 = "section.index.json.s2.image";
-    const files = [themeFile("templates/index.json", { sections: { s1: { settings: { image: OLD } }, s2: { settings: { image: OLD } } } })];
     const { ctx } = makeCtx({
-      files,
+      files: [themeFile("templates/index.json", { sections: { s1: { settings: { image: OLD } }, s2: { settings: { image: OLD } } } })],
       edits: {
         [k1]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_JSON_TEMPLATE" },
         [k2]: { old: OLD, next: "shopify://shop_images/two.png", type: "ONLINE_STORE_THEME_JSON_TEMPLATE" },
       },
       fileIds: { [k1]: FILE_ID, [k2]: FILE_ID },
     });
+    // the second key names its own file id too; reuse the same ready file for both
+    fileAnswer = readyFile();
     const result = (await handleUpdateContent(ctx)) as any;
-    const body = result?.data ?? result;
-    expect(body.success).toBe(false);
-    expect(body.errorKey).toBe("themeImageAmbiguous");
+    // Both keys derive the SAME reference from the same file id (server authority), so both are NEW.
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value).sections;
+    expect(written.s1.settings.image).toBe(NEW);
+    expect(written.s2.settings.image).toBe(NEW);
+  });
+
+  it("changing ONE of two slides that share an image changes only that slot", async () => {
+    const k1 = "section.index.json.s1.image";
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { s1: { settings: { image: OLD } }, s2: { settings: { image: OLD } } } })],
+      edits: { [k1]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_JSON_TEMPLATE" } },
+      fileIds: { [k1]: FILE_ID },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value).sections;
+    expect(written.s1.settings.image).toBe(NEW);
+    expect(written.s2.settings.image).toBe(OLD);
+  });
+
+  it("a path that exists but holds a DIFFERENT value falls back to the search, and is refused if that is ambiguous", async () => {
+    const k1 = "section.index.json.s1.image";
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { s1: { settings: { image: "shopify://shop_images/other.png" } }, x: { settings: { a: OLD } }, y: { settings: { a: OLD } } } })],
+      edits: { [k1]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_JSON_TEMPLATE" } },
+      fileIds: { [k1]: FILE_ID },
+    });
+    const body = ((await handleUpdateContent(ctx)) as any);
+    expect((body?.data ?? body).errorKey).toBe("themeImageAmbiguous");
     expect(upserts).toEqual([]);
   });
 
   it("an ambiguous image blocks the WHOLE save, text keys included", async () => {
     const { ctx } = makeCtx({
-      files: [themeFile("config/settings_data.json", { current: { logo: OLD, footer_logo: OLD, headline: "Alt" } })],
+      files: [themeFile("config/settings_data.json", { current: { headline: "Alt", sections: { a: { settings: { logo: OLD } }, b: { settings: { logo: OLD } } } } })],
       edits: {
         [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" },
         "general.headline": { old: "Alt", next: "Neu", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" },
@@ -521,13 +548,74 @@ describe("primary theme image save", () => {
   });
 });
 
-describe("primary theme TEXT save is written only where unambiguous", () => {
+describe("primary theme TEXT save: by path first, value search only as the fallback", () => {
   const TYPE = "ONLINE_STORE_THEME_JSON_TEMPLATE";
+  const cols = (a: string, b: string) => ({
+    sections: { mc: { settings: {}, blocks: { c1: { settings: { title: a } }, c2: { settings: { title: b } } }, block_order: ["c1", "c2"] } },
+  });
 
-  it("two headings with the same old text: changing one refuses the save, the other is never rewritten", async () => {
+  it("Dawn-like: two blocks both titled 'Column', change one - only that slot changes, the save is not refused", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", cols("Column", "Column"))],
+      edits: { "section.index.json.mc.c2.title": { old: "Column", next: "Zwei", type: TYPE } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value);
+    expect(written.sections.mc.blocks.c1.settings.title).toBe("Column");
+    expect(written.sections.mc.blocks.c2.settings.title).toBe("Zwei");
+  });
+
+  it("both identical blocks changed in one save: each at its own slot", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", cols("Column", "Column"))],
+      edits: {
+        "section.index.json.mc.c1.title": { old: "Column", next: "Eins", type: TYPE },
+        "section.index.json.mc.c2.title": { old: "Column", next: "Zwei", type: TYPE },
+      },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value);
+    expect([written.sections.mc.blocks.c1.settings.title, written.sections.mc.blocks.c2.settings.title]).toEqual(["Eins", "Zwei"]);
+  });
+
+  it("a NESTED block is resolved through its parent block", async () => {
+    const tree = { sections: { s: { settings: {}, blocks: { outer: { settings: {}, blocks: { inner: { settings: { t: "Hi" } }, inner2: { settings: { t: "Hi" } } } } } } } };
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", tree)],
+      edits: { "section.index.json.s.outer.inner.t": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value).sections.s.blocks.outer.blocks;
+    expect([written.inner.settings.t, written.inner2.settings.t]).toEqual(["Ho", "Hi"]);
+  });
+
+  it("the block may be spelled with a literal 'block' segment or as <setting>:<blockId>", async () => {
+    for (const key of ["section.index.json.mc.block.c2.title", "section.index.json.mc.title:c2"]) {
+      upserts = [];
+      const { ctx } = makeCtx({ files: [themeFile("templates/index.json", cols("Column", "Column"))], edits: { [key]: { old: "Column", next: "Zwei", type: TYPE } } });
+      const result = (await handleUpdateContent(ctx)) as any;
+      expect((result?.data ?? result).success).toBe(true);
+      expect(JSON.parse(upserts[0].value).sections.mc.blocks.c2.settings.title).toBe("Zwei");
+    }
+  });
+
+  it("the two-headings reproduction now succeeds BY PATH when the key names its path", async () => {
     const { ctx } = makeCtx({
       files: [themeFile("templates/index.json", { sections: { a: { settings: { heading: "Hi" } }, b: { settings: { heading: "Hi" } } } })],
       edits: { "section.index.json.a.heading": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    expect(JSON.parse(upserts[0].value).sections).toEqual({ a: { settings: { heading: "Ho" } }, b: { settings: { heading: "Hi" } } });
+  });
+
+  it("...and stays REFUSED when the key cannot be resolved to a path", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { a: { settings: { heading: "Hi" } }, b: { settings: { heading: "Hi" } } } })],
+      edits: { "section.index.json.q.heading": { old: "Hi", next: "Ho", type: TYPE } },
     });
     const result = (await handleUpdateContent(ctx)) as any;
     const body = result?.data ?? result;
@@ -536,17 +624,17 @@ describe("primary theme TEXT save is written only where unambiguous", () => {
     expect(upserts).toEqual([]);
   });
 
-  it("two keys carrying the same old text in one file are refused too", async () => {
+  it("a path that holds a DIFFERENT value than expected is not written; the search decides", async () => {
     const { ctx } = makeCtx({
-      files: [themeFile("templates/index.json", { sections: { a: { settings: { heading: "Hi" } }, b: { settings: { heading: "Hi" } } } })],
-      edits: {
-        "section.index.json.a.heading": { old: "Hi", next: "Ho", type: TYPE },
-        "section.index.json.b.heading": { old: "Hi", next: "Hu", type: TYPE },
-      },
+      files: [themeFile("templates/index.json", { sections: { a: { settings: { heading: "Changed meanwhile" } }, z: { settings: { other: "Hi" } } } })],
+      edits: { "section.index.json.a.heading": { old: "Hi", next: "Ho", type: TYPE } },
     });
-    const body = ((await handleUpdateContent(ctx)) as any);
-    expect((body?.data ?? body).errorKey).toBe("themeTextAmbiguous");
-    expect(upserts).toEqual([]);
+    const result = (await handleUpdateContent(ctx)) as any;
+    // the value search finds the single "Hi" elsewhere (legacy behaviour), never the mismatching slot
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value).sections;
+    expect(written.a.settings.heading).toBe("Changed meanwhile");
+    expect(written.z.settings.other).toBe("Ho");
   });
 
   it("a text that occurs once is still written", async () => {
@@ -557,5 +645,40 @@ describe("primary theme TEXT save is written only where unambiguous", () => {
     const result = (await handleUpdateContent(ctx)) as any;
     expect((result?.data ?? result).success).toBe(true);
     expect(JSON.parse(upserts[0].value).sections).toEqual({ a: { settings: { heading: "Ho" } }, b: { settings: { heading: "Other" } } });
+  });
+
+  it("settings_data: top-level settings are written by path, a repeated value elsewhere is left alone", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { headline: "Hi", other: "Hi" } })],
+      edits: { "general.headline": { old: "Hi", next: "Ho", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    expect(JSON.parse(upserts[0].value).current).toEqual({ headline: "Ho", other: "Hi" });
+  });
+
+  it("settings_data with current = a PRESET NAME: the live values are under presets[current]; other presets stay untouched", async () => {
+    const file = { current: "Default", presets: { Default: { logo: OLD, headline: "Hi" }, Other: { logo: OLD, headline: "Hi" } } };
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", file)],
+      edits: { "general.headline": { old: "Hi", next: "Ho", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+    });
+    const a = (await handleUpdateContent(ctx)) as any;
+    expect((a?.data ?? a).success).toBe(true);
+    let written = JSON.parse(upserts[0].value);
+    expect(written.presets.Default.headline).toBe("Ho");
+    expect(written.presets.Other.headline).toBe("Hi");
+
+    // by VALUE (no resolvable path): searched inside the live preset only, the other preset is not counted
+    upserts = [];
+    const b = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: "Default", presets: { Default: { sections: { x: { settings: { t: "Hi" } } } }, Other: { sections: { x: { settings: { t: "Hi" } } } } } })],
+      edits: { "general.nope": { old: "Hi", next: "Ho", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+    });
+    const r = (await handleUpdateContent(b.ctx)) as any;
+    expect((r?.data ?? r).success).toBe(true);
+    written = JSON.parse(upserts[0].value);
+    expect(written.presets.Default.sections.x.settings.t).toBe("Ho");
+    expect(written.presets.Other.sections.x.settings.t).toBe("Hi");
   });
 });

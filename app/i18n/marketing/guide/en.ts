@@ -468,6 +468,7 @@ export const guideEn: GuideCopy = {
       tips: [
         "If you change a theme text in the primary language, its translations are deleted or re-translated according to your setting — just like products.",
         "Images in the theme appear as an image preview. You can choose a different image per language and market — see “Different images and videos per language”.",
+        "If the same text appears in several places of the theme and the app cannot tell which one you mean, it asks you to change that one in Shopify's theme editor.",
       ],
     },
 

@@ -698,7 +698,25 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   // Update caches after successful save
   useEffect(() => {
     if (!fetcher.data || typeof fetcher.data !== 'object') return;
-    if (!('success' in fetcher.data) || !fetcher.data.success) return;
+    // A save that failed only in part can still have removed stale copies of an
+    // old original image (the server reports them on the failure answer too):
+    // those layers leave the cache whatever else the answer says.
+    if ('success' in fetcher.data && !fetcher.data.success) {
+      const removedOnFailure = (fetcher.data as { removedImageCopies?: Array<{ key: string; locale: string; marketId?: string }> }).removedImageCopies;
+      if (removedOnFailure && removedOnFailure.length > 0 && selectedGroupId && processedSaveRef.current !== fetcher.data) {
+        processedSaveRef.current = fetcher.data;
+        setLoadedTranslations(prev => {
+          const groupCache = prev[selectedGroupId];
+          return groupCache ? { ...prev, [selectedGroupId]: removeThemeLayers(groupCache, removedOnFailure) } : prev;
+        });
+        const refGroup = loadedTranslationsRef.current[selectedGroupId];
+        if (refGroup) {
+          loadedTranslationsRef.current = { ...loadedTranslationsRef.current, [selectedGroupId]: removeThemeLayers(refGroup, removedOnFailure) };
+        }
+      }
+      return;
+    }
+    if (!('success' in fetcher.data)) return;
 
     // Only process content update saves, not translations or AI responses
     if ('translatedValue' in fetcher.data || 'generatedContent' in fetcher.data || 'translations' in fetcher.data) return;

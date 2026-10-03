@@ -7,7 +7,7 @@ import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { TRANSLATE_CONTENT, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
 import { GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
-import { keyToFilename, replaceValuesInJson, countStringOccurrences, LOCALE_CONTENT_RESOURCE_TYPES, SETTINGS_DATA_RESOURCE_TYPES } from "~/utils/templates/templates.utils";
+import { keyToFilename, replaceValuesInJson, countStringOccurrences, LOCALE_CONTENT_RESOURCE_TYPES, SETTINGS_DATA_RESOURCE_TYPES, resolveKeyJsonPaths, getAtPath, setAtPath, settingsDataLiveBase } from "~/utils/templates/templates.utils";
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
@@ -905,23 +905,42 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             replacements.set(key, { oldValue, newValue, keyHint });
           }
 
-          // A value is found by SEARCH, not by path (the translation key does not
-          // reliably name the JSON path - not measured for templates and section
-          // groups - so resolving it was not chosen). A search rewrites the first
-          // slot holding the old value for every key that carries it, so two keys
-          // with the same old value both hit the first slot, and a key whose old
-          // value sits in a second, unrelated slot may rewrite that one. So a
-          // searched key (text or image) is written ONLY when its old value
-          // occurs EXACTLY ONCE in this file as a parsed JSON string value AND
-          // exactly one key of this file's searched keys carries it; otherwise
+          // PATH first. A key names its section (and block), so the JSON path is
+          // derived from it (`resolveKeyJsonPaths`) and used ONLY if it exists and
+          // currently holds the old value this save expects - the file decides,
+          // so a wrong guess costs nothing. Such a key is written at exactly that
+          // slot and is never counted for ambiguity (two blocks both holding
+          // "Column" are told apart by their block ids).
+          const pathAssignments = new Map<string, string[]>();
+          const searchEligible = resolved ? keys.filter((k) => resolved.searchKeys?.has(k)) : keys;
+          for (const key of searchEligible) {
+            const old = oldValueMap.get(key) || "";
+            if (!old) continue;
+            const hits = resolveKeyJsonPaths(key, actualFilename, fileJson).filter((path) => getAtPath(fileJson, path) === old);
+            if (hits.length === 1) pathAssignments.set(key, hits[0]);
+          }
+          // Two keys addressing the same slot cannot both be written there.
+          const slotUse = new Map<string, number>();
+          for (const path of pathAssignments.values()) slotUse.set(path.join("\u0000"), (slotUse.get(path.join("\u0000")) ?? 0) + 1);
+          for (const [key, path] of [...pathAssignments]) if ((slotUse.get(path.join("\u0000")) ?? 0) > 1) pathAssignments.delete(key);
+
+          // FALLBACK: a key whose path could not be resolved is found by VALUE.
+          // A search rewrites the first slot holding the old value for every key
+          // that carries it, so such a key (text or image) is written ONLY when
+          // its old value occurs EXACTLY ONCE in this file as a parsed JSON string
+          // value AND exactly one searched key of this file carries it; otherwise
           // the whole save is refused BEFORE any write. Keys resolved by exact
-          // JSON path (locale files) are exempt. `presets` of settings_data.json
-          // are not live values: they are neither counted nor written.
-          const searchTree: unknown =
-            actualFilename === SETTINGS_DATA_FILE && fileJson && typeof fileJson === "object" && !Array.isArray(fileJson)
-              ? Object.fromEntries(Object.entries(fileJson as Record<string, unknown>).filter(([k]) => k !== "presets"))
-              : fileJson;
-          const searchedKeys = resolved ? keys.filter((k) => resolved.searchKeys?.has(k)) : keys;
+          // path (locale files, the path above) are exempt. Other presets of
+          // settings_data.json are not live values: neither counted nor written
+          // (the live preset is, when `current` names one).
+          const searchTree: unknown = (() => {
+            if (actualFilename !== SETTINGS_DATA_FILE || !fileJson || typeof fileJson !== "object" || Array.isArray(fileJson)) return fileJson;
+            const file = fileJson as Record<string, unknown>;
+            const rest = Object.fromEntries(Object.entries(file).filter(([k]) => k !== "presets"));
+            const base = settingsDataLiveBase(file);
+            return base[0] === "presets" ? { ...rest, presets: { [base[1]]: getAtPath(file, base) } } : rest;
+          })();
+          const searchedKeys = searchEligible.filter((k) => !pathAssignments.has(k));
           const ambiguousKeys = searchedKeys.filter((key) => {
             const old = oldValueMap.get(key) || "";
             if (!old) return false;
@@ -935,10 +954,16 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           let replacedKeys: Set<string>;
           if (resolved) {
             const byPath = new Map([...replacements].filter(([k]) => !resolved.searchKeys?.has(k)));
-            const bySearch = new Map([...replacements].filter(([k]) => resolved.searchKeys?.has(k)));
+            const bySearch = new Map([...replacements].filter(([k]) => resolved.searchKeys?.has(k) && !pathAssignments.has(k)));
             replacedKeys = new Set([...replaceByPath(fileJson, byPath), ...replaceValuesInJson(searchTree, bySearch)]);
           } else {
-            replacedKeys = replaceValuesInJson(searchTree, replacements);
+            replacedKeys = replaceValuesInJson(
+              searchTree,
+              new Map([...replacements].filter(([k]) => !pathAssignments.has(k))),
+            );
+          }
+          for (const [key, path] of pathAssignments) {
+            if (setAtPath(fileJson, path, replacements.get(key)!.newValue)) replacedKeys.add(key);
           }
           const missedKeys = keys.filter((k) => !replacedKeys.has(k));
 
@@ -1068,11 +1093,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         }
 
         if (imageBlock) {
-          logger.warn("[TEMPLATES] Primary theme image save refused before any write", {
-            context: "Templates",
-            errorKey: imageBlock,
-            imageKeys: [...imagePathKeys],
-          });
+          logger.warn(
+            imageBlock === "themeTextAmbiguous"
+              ? "[TEMPLATES] Primary theme text save refused before any write (the same text appears in several places)"
+              : "[TEMPLATES] Primary theme image save refused before any write",
+            { context: "Templates", errorKey: imageBlock, imageKeys: [...imagePathKeys] },
+          );
           return json({ success: false, errorKey: imageBlock, actionType: "updateContent" }, { status: 400 });
         }
 
@@ -1509,6 +1535,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                     locale: layer.locale,
                     marketId: layer.marketId,
                     key: { in: confirmed },
+                    // Same theme scope as the findMany above.
+                    ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
                   },
                 });
               }

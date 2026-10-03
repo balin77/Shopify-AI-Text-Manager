@@ -473,6 +473,7 @@ export const guideDe: GuideCopy = {
       tips: [
         "Ändern Sie einen Theme-Text in der Hauptsprache, werden seine Übersetzungen nach Ihrer Einstellung gelöscht oder neu übersetzt — genau wie bei Produkten.",
         "Bilder im Theme erscheinen als Bildvorschau. Pro Sprache und Markt können Sie ein anderes Bild wählen — siehe „Andere Bilder und Videos je Sprache“.",
+        "Kommt derselbe Text im Theme an mehreren Stellen vor und kann die App nicht erkennen, welcher gemeint ist, bittet sie Sie, genau diesen im Theme-Editor von Shopify zu ändern.",
       ],
     },
 
