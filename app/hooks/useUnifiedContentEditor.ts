@@ -7,7 +7,7 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { strongestTone, type InfoTone } from "../services/editor/info-tone.shared";
+import { carryNotes, strongestTone, type InfoTone } from "../services/editor/info-tone.shared";
 import { useBackgroundTaskRefresh } from "./useBackgroundTaskRefresh";
 import { readRetranslationTaskIds } from "../services/translations/retranslation-tasks.shared";
 import { useRevalidator } from "react-router";
@@ -2552,6 +2552,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const index = parseInt(indexStr, 10);
             if (mirrorFailed.includes(index)) continue;
             if (!altCarried(index)) continue;
+            // A confirmed save of this layer SUPERSEDES a staged overlay entry
+            // of the same index (a "clear all" leaves `{0: ""}` for the
+            // read-only featured alt, which the alt load reads before the
+            // item): the value that was SENT replaces it, or a language round
+            // trip showed "" for a translation Shopify now holds.
+            const stagedLayer = localAltTextOverlayRef.current[buildLocaleKey(savedLocale, savedMarketId ?? "")];
+            // Only the clear-all `""`: a newer staged value is not ours to take back.
+            if (stagedLayer && stagedLayer[index] === "") stagedLayer[index] = altText;
             if (item.images[index]) {
               if (!item.images[index].altTextTranslations) {
                 item.images[index].altTextTranslations = [];
@@ -2836,6 +2844,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         debugLog.acceptAndTranslate(' Save completed, now starting translation');
 
+        // Step 1's save answer (a redirect created or failed, fields Shopify
+        // did not echo) was shown a moment ago; the one box is overwritten by
+        // every message of step 2, so each of them carries those notes along.
+        // The purge warning is already part of step 2's own messages.
+        const step1Notes = [
+          { text: pendingRedirectMessage?.text ?? "", tone: (pendingRedirectMessage?.tone ?? "info") as InfoTone },
+          { text: localizedUnconfirmedFields(fetcher.data), tone: "warning" as InfoTone },
+        ];
+        const sayStep2 = (text: string, tone: InfoBoxTone) => {
+          const merged = carryNotes({ text, tone }, step1Notes);
+          showInfoBox(merged.text, merged.tone);
+        };
+
         // For templates: Update originalTemplateValuesRef and unified baseline IMMEDIATELY
         // after save completes, before the translation starts. Otherwise isLoadingData flips
         // back to false (10ms timer) while the translation is still in-flight, and the stale
@@ -2865,7 +2886,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           (result) => {
             // Guard: discard stale callback if user navigated to a different item
             if (selectedItemRef.current?.id !== itemId) {
-              if (purgeWarningText) showInfoBox(purgeWarningText, "warning");
+              if (purgeWarningText) sayStep2(purgeWarningText, "warning");
               return;
             }
 
@@ -2963,7 +2984,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               }
 
               if (purgeWarningText) messages.push(purgeWarningText);
-              showInfoBox(
+              sayStep2(
                 messages.join(" "),
                 "warning"
               );
@@ -2978,7 +2999,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               // the stale translations the purge could not remove: only a
               // warning about other fields/keys is still true.
               const stillWarn = purgeWarningText && purgeWarningConcernsOtherFields(purgeSourceData, fieldKey);
-              showInfoBox(
+              sayStep2(
                 stillWarn ? `${translatedText} ${purgeWarningText}` : translatedText,
                 stillWarn ? "warning" : "success"
               );
@@ -3026,7 +3047,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // The translation failed, the save did not: the purge warning is
             // still true and must not vanish behind the error.
             setIsAcceptAndTranslateFlow(false);
-            showInfoBox(
+            sayStep2(
               [translateErrorMessage(errorMessage, t), purgeWarningText].filter(Boolean).join(" "),
               "critical",
             );

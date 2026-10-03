@@ -63,6 +63,10 @@ function deps() {
         deleteMany: vi.fn(async () => ({ count: 1 })),
         findMany: vi.fn(async () => [{ locale: "en" }]),
       },
+      contentTranslation: {
+        findMany: vi.fn(async () => [] as any[]),
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
     },
   };
 }
@@ -238,6 +242,25 @@ describe("repairChangedProductAlts", () => {
     });
     expect(removeAndVerify).toHaveBeenCalledTimes(1);
     expect(db.productImageAltTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("a locale held only by a leftover LIBRARY row is re-read, and its row goes on confirmation", async () => {
+    const { gateway, db } = deps();
+    db.productImageAltTranslation.findMany.mockResolvedValue([]);
+    db.contentTranslation.findMany.mockResolvedValue([{ locale: "fr" }]);
+    removeAndVerifyAcrossLocales.mockResolvedValueOnce({ confirmedPairs: new Set(), userErrors: [] });
+    await repairChangedProductAlts({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      productId: "p",
+      productTitle: "Box",
+      changes: [{ imageId: "a", mediaId: "gid://shopify/MediaImage/1" }],
+      policy: { ...base, purgeUnreconciledSurfaces: true } as never,
+      foreignLocales: ["fr"],
+      primaryLocale: "de",
+    });
+    expect(removeAndVerify).toHaveBeenCalledTimes(1);
   });
 
   it("without a primary locale nothing can be translated FROM", () => {

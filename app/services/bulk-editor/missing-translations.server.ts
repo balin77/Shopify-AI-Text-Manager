@@ -17,6 +17,7 @@
  * client-safe ones from translate-missing.shared.ts.
  */
 
+import { mergeAltLayerFallback } from "~/services/translations/image-alt-fallback.shared";
 import type { PrismaClient } from "@prisma/client";
 import { loadBulkRows, type BulkAdminClient } from "./load.server";
 import {
@@ -414,7 +415,7 @@ function subtitleOf(row: BulkRow): string {
  * everything else reads ContentTranslation — the same split the grid loader
  * uses.
  */
-async function loadTranslatedLocales(
+export async function loadTranslatedLocales(
   db: PrismaClient,
   shop: string,
   opts: MissingScanOptions,
@@ -429,7 +430,9 @@ async function loadTranslatedLocales(
     for (const row of rows) if (row.imageCacheId) cacheIdByRow.set(row.imageCacheId, row.id);
     // Library images (no ProductImage row) use the generic ContentTranslation
     // table under resourceType "MediaImage".
-    const libraryIds = rows.filter((r) => !r.imageCacheId).map((r) => r.id);
+    // All rows: for a product-backed image the library store is a fallback
+    // (leftover rows), so a covered alt is not reported as missing.
+    const libraryIds = rows.map((r) => r.id);
     const byRow = new Map<string, Map<string, Set<string>>>();
     const mark = (rowId: string, locale: string) => {
       let byKey = byRow.get(rowId);
@@ -442,6 +445,13 @@ async function loadTranslatedLocales(
       byKey.set("alt", locales);
     };
 
+    const productByRow = new Map<string, Map<string, string>>();
+    const libraryByRow = new Map<string, Map<string, string>>();
+    const put = (into: Map<string, Map<string, string>>, rowId: string, locale: string, value: string) => {
+      const m = into.get(rowId) ?? new Map<string, string>();
+      m.set(locale, value);
+      into.set(rowId, m);
+    };
     if (cacheIdByRow.size > 0) {
       const records = await db.productImageAltTranslation.findMany({
         where: {
@@ -452,9 +462,8 @@ async function loadTranslatedLocales(
         select: { imageId: true, locale: true, altText: true },
       });
       for (const record of records) {
-        if (!record.altText || record.altText.trim() === "") continue;
         const rowId = cacheIdByRow.get(record.imageId);
-        if (rowId) mark(rowId, record.locale);
+        if (rowId) put(productByRow, rowId, record.locale, record.altText ?? "");
       }
     }
     if (libraryIds.length > 0) {
@@ -468,10 +477,16 @@ async function loadTranslatedLocales(
         },
         select: { resourceId: true, locale: true, value: true },
       });
-      for (const record of records) {
-        if (!record.value || record.value.trim() === "") continue;
-        mark(record.resourceId, record.locale);
-      }
+      for (const record of records) put(libraryByRow, record.resourceId, record.locale, record.value ?? "");
+    }
+    // The same per-(media, layer) rule as the displayed value.
+    for (const row of rows) {
+      const merged = mergeAltLayerFallback(
+        productByRow.get(row.id) ?? new Map(),
+        libraryByRow.get(row.id) ?? new Map(),
+        !!row.imageCacheId,
+      );
+      for (const [locale, value] of merged) if (value.trim() !== "") mark(row.id, locale);
     }
     return byRow;
   }

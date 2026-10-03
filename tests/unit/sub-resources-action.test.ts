@@ -71,8 +71,16 @@ vi.mock('~/services/translations/translation-change-policy.server', () => ({
   loadTranslationChangePolicy: vi.fn(async () => policy),
 }));
 
+const { marketFailed } = vi.hoisted(() => ({ marketFailed: [] as string[] }));
 vi.mock('~/services/translations/market-layer-purge.server', () => ({
-  purgeMarketOverrides: vi.fn(async () => undefined),
+  purgeMarketOverrides: vi.fn(async (args: any) => {
+    for (const key of marketFailed) {
+      args.outcome?.failedKeys.add(key);
+      for (const ref of args.refs) args.outcome?.failedPairs?.add(`${ref.resourceId}\u0000${key}`);
+    }
+    return 0;
+  }),
+  purgePairKey: (resourceId: string, key: string) => `${resourceId}\u0000${key}`,
 }));
 
 vi.mock('~/services/translations/stale-translation-sync.server', () => ({
@@ -87,6 +95,7 @@ vi.mock('~/services/product-options.server', () => ({
   reorderOptions: vi.fn(async () => null),
 }));
 
+import { reconcileAfterPrimarySave } from '~/services/translations/stale-translation-sync.server';
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -722,6 +731,48 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
 
     expect(w.of('reread')).toHaveLength(0);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  describe('reports the resources whose MARKET overrides the purge confirmed removed', () => {
+    beforeEach(() => { marketFailed.length = 0; });
+
+    it('names every changed option, option value and metafield when the purge confirmed', async () => {
+      const w = installAdmin({ remove: (v) => echoRemoved(v.translationKeys, v.locales) });
+      const result = body(await save(makeDb(), w.admin, { [OPTION]: { name: 'Farbe', valueUpdates: [{ id: VALUE, name: 'Rot' }] } }, { [METAFIELD]: 'new' }));
+      expect([...result.marketPurgedResourceIds].sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
+    });
+
+    it('holds back the resources of a key whose market removal was not confirmed', async () => {
+      marketFailed.push('name');
+      const w = installAdmin({ remove: (v) => echoRemoved(v.translationKeys, v.locales) });
+      const result = body(await save(makeDb(), w.admin, { [OPTION]: { name: 'Farbe' } }, { [METAFIELD]: 'new' }));
+      expect(result.marketPurgedResourceIds).toEqual([METAFIELD]);
+      marketFailed.length = 0;
+    });
+
+    it('reports nothing when every key failed', async () => {
+      marketFailed.push('name', 'value');
+      const w = installAdmin({ remove: (v) => echoRemoved(v.translationKeys, v.locales) });
+      const result = body(await save(makeDb(), w.admin, { [OPTION]: { name: 'Farbe' } }, { [METAFIELD]: 'new' }));
+      expect(result.marketPurgedResourceIds).toBeUndefined();
+      marketFailed.length = 0;
+    });
+
+    it('reports nothing with the deletion switched off', async () => {
+      policy.purgeUnreconciledSurfaces = false;
+      const w = installAdmin();
+      const result = body(await save(makeDb(), w.admin, { [OPTION]: { name: 'Farbe' } }));
+      expect(result.marketPurgedResourceIds).toBeUndefined();
+    });
+
+    it('auto-translate on: takes the keys the repair reports as purged', async () => {
+      policy.autoTranslateExternalChanges = true;
+      policy.purgeOnPrimaryChange = false;
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 2, marketPurgedKeys: ['name'], marketPurgedPairs: [{ resourceId: OPTION, key: 'name' }] } as any);
+      const w = installAdmin();
+      const result = body(await save(makeDb(), w.admin, { [OPTION]: { name: 'Farbe' } }, { [METAFIELD]: 'new' }));
+      expect(result.marketPurgedResourceIds).toEqual([OPTION]);
+    });
   });
 
   it('does nothing when the merchant switched the deletion off', async () => {

@@ -26,7 +26,7 @@
  * P2025/P2003 is only safe on an IDEMPOTENT, upsert-by-natural-key unit of
  * work, where those codes mean "a concurrent sync deleted the row I race to
  * (re)create" and a retry genuinely re-converges. The sole intended caller is
- * persistAltText() in api.apply-alt-text-templates.tsx (upsert on
+ * persistAltText() in image-alt-template-persist.server.ts (upsert on
  * (productId,mediaId) / (imageId,locale)). On a by-id update/delete path
  * P2025/P2003 are usually DETERMINISTIC (the row really is gone / FK really
  * is missing) — wrapping such code here would mask a real bug behind 4×

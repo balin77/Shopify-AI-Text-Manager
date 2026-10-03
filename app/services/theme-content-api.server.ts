@@ -12,7 +12,8 @@
 import { data as json } from "react-router";
 import { AIService } from "../../src/services/ai.service";
 import { getFormString } from "~/utils/form-data.utils";
-import { isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
+import { hasPrimaryThemeFile } from "~/utils/templates/templates.utils";
+import { isThemeImageReference, isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
 import { logger } from "~/utils/logger.server";
 import type { DataResponse } from "~/types/data-response";
 import { aiServiceFor } from "./ai/ai-credentials.server";
@@ -136,7 +137,20 @@ export async function loadThemeGroupResponse(opts: {
   for (const item of allContent) {
     if (!uniqueContent.has(item.key)) uniqueContent.set(item.key, item);
   }
-  let deduplicatedContent = Array.from(uniqueContent.values());
+  // An IMAGE setting whose primary value has no theme file the app can write
+  // (an app-embed setting) is flagged, so the editor shows its picker read-only
+  // instead of offering a pick that can never be saved.
+  const keyType = new Map<string, string | null>();
+  for (const group of themeGroups as Array<{ resourceType?: string | null; translatableContent: unknown }>) {
+    for (const item of (group.translatableContent as TranslatableField[]) ?? []) {
+      if (!keyType.has(item.key)) keyType.set(item.key, group.resourceType ?? null);
+    }
+  }
+  let deduplicatedContent: Array<TranslatableField & { primaryUnmapped?: boolean }> = Array.from(uniqueContent.values()).map((item) =>
+    isThemeImageReference(item.value) && !hasPrimaryThemeFile(item.key, keyType.get(item.key))
+      ? { ...item, primaryUnmapped: true }
+      : item,
+  );
 
   if (search) {
     const searchLower = search.toLowerCase();

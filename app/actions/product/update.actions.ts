@@ -1616,6 +1616,10 @@ async function updatePrimaryProduct(
           policy: changePolicy!,
         });
         if (contentOutcome.taskId) retranslationTaskIds.push(contentOutcome.taskId);
+        // The repair purged the market layer itself (auto-translate path).
+        if (contentOutcome.marketPurgedKeys?.length) {
+          marketPurgedKeys = [...new Set([...marketPurgedKeys, ...contentOutcome.marketPurgedKeys])];
+        }
       }
     } catch (repairError: unknown) {
       loggers.product("warn", "Auto-translation of the changed fields could not start", {

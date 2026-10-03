@@ -41,6 +41,25 @@ export function removeThemeRow(rows: ThemeCacheRow[], key: string, marketId: str
 }
 
 /**
+ * Drop exactly the named LAYERS (key, locale, market) from one group's cache
+ * (a locale -> rows map); every other layer, key and locale is untouched.
+ * Used for what the server confirmed removed (stale copies of an old original
+ * image), where a lookup by key alone would take a real replacement with it.
+ */
+export function removeThemeLayers<T extends ThemeCacheRow>(
+  groupCache: Record<string, T[]>,
+  removed: ReadonlyArray<{ key: string; locale: string; marketId?: string }>,
+): Record<string, T[]> {
+  const next: Record<string, T[]> = {};
+  for (const [locale, rows] of Object.entries(groupCache)) {
+    next[locale] = rows.filter(
+      (row) => !removed.some((r) => r.locale === locale && r.key === row.key && (r.marketId ?? "") === layerOf(row)),
+    );
+  }
+  return next;
+}
+
+/**
  * What a foreign save wrote: non-empty values are upserted, empty ones are
  * REMOVED (a kept "" row would count as a translation), all in the layer the
  * save was made for. Returns a new list.
@@ -75,4 +94,23 @@ export function themeRowValue(
     if (own?.value) return own.value;
   }
   return rows.find((tr) => tr.key === key && layerOf(tr) === "")?.value || "";
+}
+
+/**
+ * What a PRIMARY save leaves of a locale's cached rows. A changed key's GLOBAL
+ * row goes (the server purged or is re-translating it); its MARKET rows go only
+ * where the server CONFIRMED the market purge (`marketPurgedKeys`) - an override
+ * that is still live on Shopify must keep showing, so an unconfirmed, failed or
+ * switched-off purge hides nothing. Rows of keys not in `invalidated` stay.
+ */
+export function rowsAfterPrimarySave<T extends ThemeCacheRow>(
+  rows: readonly T[],
+  invalidated: ReadonlySet<string>,
+  marketPurgedKeys: readonly string[] | undefined,
+): T[] {
+  const purged = new Set(marketPurgedKeys ?? []);
+  return rows.filter((row) => {
+    if (!invalidated.has(row.key)) return true;
+    return layerOf(row) !== "" && !purged.has(row.key);
+  });
 }

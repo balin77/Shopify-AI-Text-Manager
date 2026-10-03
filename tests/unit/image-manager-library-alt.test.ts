@@ -144,7 +144,7 @@ describe("handleLoadImageAltTranslations reads library files too", () => {
     return res.data ?? res;
   }
 
-  it("layers the library rows like the product ones, and only for MediaImage GIDs without a ProductImage row", async () => {
+  it("layers the library rows like the product ones (a product-backed medium only as a per-layer fallback)", async () => {
     const db = makeDb();
     db.productImageAltTranslation.findMany.mockResolvedValue([
       { altText: "Produkt", marketId: "", image: { mediaId: PRODUCT_MEDIA } },
@@ -160,7 +160,7 @@ describe("handleLoadImageAltTranslations reads library files too", () => {
     });
     const where = db.contentTranslation.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({ shop: SHOP, resourceType: "MediaImage", key: "alt", locale: "de", marketId: { in: ["", MARKET] } });
-    expect(where.resourceId).toEqual({ in: [LIBRARY] });
+    expect(where.resourceId).toEqual({ in: [PRODUCT_MEDIA, LIBRARY] });
     expect(body.altTexts).toEqual({ [PRODUCT_MEDIA]: "Produkt", [LIBRARY]: "Bibliothek global" });
     expect(body.inheritedMediaIds.sort()).toEqual([PRODUCT_MEDIA, LIBRARY].sort());
   });

@@ -983,6 +983,23 @@ export class ProductSyncService {
                       where: { imageId: { in: dbImageIds }, marketId: { in: succeededAltLayers } },
                     });
                   }
+                  // The medium's library rows (leftovers from when it was a
+                  // library file) are the same Shopify translation seen
+                  // through the old store: gone for exactly the layers this
+                  // run read CLEANLY, so a translation removed outside the app
+                  // cannot come back through the read fallback. A failed layer
+                  // keeps everything (a failed read is not a removal).
+                  if (succeededAltLayers.length > 0 && mediaIdToDbId.size > 0) {
+                    await tx.contentTranslation.deleteMany({
+                      where: {
+                        shop: this.shop,
+                        resourceType: "MediaImage",
+                        key: "alt",
+                        resourceId: { in: [...mediaIdToDbId.keys()] },
+                        marketId: { in: succeededAltLayers },
+                      },
+                    });
+                  }
                   if (freshAltRows.length > 0) {
                     await tx.productImageAltTranslation.createMany({
                       data: freshAltRows.map(t => ({

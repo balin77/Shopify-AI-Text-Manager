@@ -36,6 +36,41 @@ export interface LibraryAltSnapshotEntry {
 }
 
 /**
+ * Usage kinds that PROVE a file is outside the catalogue. `product` is a
+ * product medium; `unknown` and any stale or future value could be a product
+ * medium the usage resolver has not caught up with (a sync window), so they
+ * are NOT library kinds and keep the product path.
+ */
+const LIBRARY_USAGE_KINDS = new Set(["collection", "article", "page", "metaobject", "theme", "unused"]);
+export function isLibraryUsageKind(kind: string | null | undefined): boolean {
+  return !!kind && LIBRARY_USAGE_KINDS.has(kind);
+}
+
+/**
+ * Is this MediaImage a media-LIBRARY file: no `ProductImage` row anywhere in
+ * the shop AND a library cache row whose usageKind is explicitly a library kind
+ * (`isLibraryUsageKind`; "product", "unknown" and stale values are not). Unknown
+ * to both caches is NOT library -- the caller keeps the product behaviour.
+ * The ONE answer for "which store owns this image's alt"; throws on a DB error.
+ */
+export async function isLibraryOnlyMedia(
+  db: Pick<PrismaClient, "productImage" | "mediaLibraryImage">,
+  shop: string,
+  mediaId: string,
+): Promise<boolean> {
+  const productRow = await db.productImage.findFirst({
+    where: { mediaId, product: { shop } },
+    select: { id: true },
+  });
+  if (productRow) return false;
+  const lib = await db.mediaLibraryImage.findFirst({
+    where: { shop, id: mediaId },
+    select: { usageKind: true },
+  });
+  return !!lib && isLibraryUsageKind((lib as { usageKind?: string | null }).usageKind);
+}
+
+/**
  * The alts of the LIBRARY images among `mediaIds` as the cache holds them,
  * read BEFORE the write (every alt path updates the cache itself). An image
  * with a `ProductImage` row anywhere in the shop is a product medium and is
