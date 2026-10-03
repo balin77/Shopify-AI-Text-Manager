@@ -228,6 +228,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   let unconfirmedKeys: string[] = [];
   /** Foreign copies of an old original image whose removal Shopify confirmed: the page drops exactly these rows. */
   const removedImageCopies: Array<{ key: string; locale: string; marketId: string }> = [];
+  /** False when this save neither purges nor re-translates the foreign rows
+   *  (both switches off): the page must then keep them in its cache. */
+  let foreignRowsInvalidated = true;
+  /** Theme keys whose MARKET overrides a purge CONFIRMED removed (reported so
+   *  the page drops exactly those market rows from its own cache). */
+  const marketPurgedKeys = new Set<string>();
   const noDigestKeys: string[] = [];
   const failedDeleteKeys: string[] = [];
   const shopifyErrors: string[] = [];
@@ -1238,6 +1244,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       (retranslateTheme
         ? changePolicy.purgeOnPrimaryChange
         : changePolicy.purgeUnreconciledSurfaces);
+    if (savedChangedFields.length > 0) foreignRowsInvalidated = purgeTheme || retranslateTheme;
     if (savedChangedFields.length > 0 && purgeTheme) {
       logger.debug("[TEMPLATES] Deleting translations for changed fields", {
         context: "Templates",
@@ -1291,14 +1298,26 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
           const marketGateway = new ShopifyApiGateway(admin, session.shop);
           for (const [resId, keys] of changedKeysByResource) {
-            await purgeMarketOverrides({
-              gateway: marketGateway,
-              mirror: themeTranslationMirror(session.shop, groupId, domain),
-              refs: [{ resourceId: resId, resourceType: "OnlineStoreTheme" }],
-              locales: foreignLocales,
-              keys,
-              context: "theme",
-            });
+            const marketOutcome = { failedKeys: new Set<string>() };
+            try {
+              await purgeMarketOverrides({
+                gateway: marketGateway,
+                mirror: themeTranslationMirror(session.shop, groupId, domain),
+                refs: [{ resourceId: resId, resourceType: "OnlineStoreTheme" }],
+                locales: foreignLocales,
+                keys,
+                context: "theme",
+                outcome: marketOutcome,
+              });
+              for (const key of keys) if (!marketOutcome.failedKeys.has(key)) marketPurgedKeys.add(key);
+            } catch (resourceMarketError) {
+              // One resource failing must not hide the others' report.
+              logger.warn("[TEMPLATES] Market-override purge failed for a resource - those rows stay", {
+                context: "Templates",
+                resourceId: resId,
+                error: resourceMarketError instanceof Error ? resourceMarketError.message : String(resourceMarketError),
+              });
+            }
           }
         } catch (marketError) {
           logger.warn("[TEMPLATES] Market-override purge failed - those rows stay", {
@@ -1588,6 +1607,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           // content has no webhook and no sync-side detection, so without this
           // nothing at all would tell the editor the new texts had landed.
           if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
+          // The repair purged the market layer itself (auto-translate path).
+          for (const key of outcome.marketPurgedKeys ?? []) marketPurgedKeys.add(key);
         }
       } catch (retranslateError) {
         logger.warn("[TEMPLATES] Theme re-translation failed — translations kept", {
@@ -1719,6 +1740,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // Foreign copies of the old original image that were removed: the page drops
     // exactly these layers from its cache.
     ...(removedImageCopies.length > 0 ? { removedImageCopies } : {}),
+    ...(marketPurgedKeys.size > 0 ? { marketPurgedKeys: [...marketPurgedKeys] } : {}),
+    ...(foreignRowsInvalidated ? {} : { foreignRowsInvalidated: false }),
     // A foreign save names the layer it wrote (group, locale, market; "" =
     // global) and the values, an empty one being a clear. The page updates its
     // own cache from this and from nothing else: it used to address rows by key

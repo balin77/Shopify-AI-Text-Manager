@@ -238,4 +238,45 @@ describe("clear all in a foreign language reaches the featured image alt", () =>
     const clearSave = h.saves().find((p) => p.locale === "fr" && p.imageAltTexts && JSON.parse(p.imageAltTexts)[0] === "" && !p.title);
     expect(clearSave).toBeTruthy();
   });
+
+  it("D: a confirmed foreign save of a NEW featured alt supersedes the cleared overlay (round trip shows it)", async () => {
+    const h = mount("collection");
+    await tick(50);
+    await switchTo(h, "fr");
+    await clearAll(h);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    expect(h.editor.current.state.imageAltTexts[0]).toBe("");
+    // Type a new featured alt and save it (the save bar's full foreign save).
+    await act(async () => { h.editor.current.handlers.handleAltTextChange(0, "Neue Katze"); });
+    await tick(20);
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    const save = h.saves().filter((p) => p.locale === "fr").pop()!;
+    expect(JSON.parse(save.imageAltTexts)).toEqual({ 0: "Neue Katze" });
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    await switchTo(h, "de");
+    await switchTo(h, "fr");
+    expect(h.editor.current.state.imageAltTexts[0]).toBe("Neue Katze");
+  });
+
+  it("D: an UNCONFIRMED save of a new featured alt keeps the cleared overlay behaviour", async () => {
+    const h = mount("collection");
+    await tick(50);
+    await switchTo(h, "fr");
+    await clearAll(h);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    await act(async () => { h.editor.current.handlers.handleAltTextChange(0, "Neue Katze"); });
+    await tick(20);
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent", failedAltTextIndices: [0] });
+    await tick(100);
+    expect(h.editor.current.state.hasChanges).toBe(true);
+    await switchTo(h, "de");
+    await switchTo(h, "fr");
+    expect(h.editor.current.state.imageAltTexts[0]).not.toBe("Neue Katze");
+  });
 });

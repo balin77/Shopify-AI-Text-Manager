@@ -1918,6 +1918,8 @@ export const en: Translation = {
     altSavedNotMirrored: "The alt text is saved in Shopify but could not be stored in the app. It will reappear after a sync.",
     altDraftsSaved: "Alt texts saved.",
     altAiResultDiscarded: "The generated alt text was not applied because you switched language or market.",
+    altSuggestionBusy: "Another AI request is running. Try again in a moment.",
+    altAcceptTranslateSkipped: "The alt text was saved, but translating it into the other languages did not start. Use the translate button when the running request has finished.",
     altDraftNotSavableYet: "The alt text of an image that is not saved yet can only be saved after the image itself. Save again once the image is uploaded.",
     altDraftDroppedNoImage: "An alt text typed for an image that was removed before it was saved was dropped.",
     altDraftDroppedImageGone: "An alt text draft was dropped because its image no longer exists (it was deleted or replaced, for example by the WebP conversion).",

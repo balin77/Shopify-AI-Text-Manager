@@ -16,6 +16,13 @@ interface AISuggestionBannerProps {
   declineLabel: string;
   acceptAndTranslateLabel?: string;
   titleLabel: string;
+  /**
+   * For callers outside the editor's `LocaleAvailabilityProvider` (the image
+   * manager derives the same hint from its own props): overrides the context's.
+   */
+  singleLocaleHint?: string;
+  /** Greys every button out (a request that would collide with the answer is running). */
+  disabled?: boolean;
 }
 
 export function AISuggestionBanner({
@@ -28,12 +35,15 @@ export function AISuggestionBanner({
   acceptLabel,
   declineLabel,
   acceptAndTranslateLabel,
-  titleLabel
+  titleLabel,
+  singleLocaleHint: singleLocaleHintProp,
+  disabled = false,
 }: AISuggestionBannerProps) {
   const { t } = useI18n();
   // "Accept & Translate" degrades to a plain "Accept" in a single-language shop,
   // so it is greyed out rather than silently doing half of what it promises.
-  const singleLocaleHint = useSingleLocaleHint();
+  const contextSingleLocaleHint = useSingleLocaleHint();
+  const singleLocaleHint = singleLocaleHintProp ?? contextSingleLocaleHint;
 
   // Sanitize HTML content to prevent XSS attacks
   const sanitizedHTML = useMemo(() =>
@@ -72,12 +82,12 @@ export function AISuggestionBanner({
         )}
         <InlineStack gap="200" align="space-between" blockAlign="center">
           <InlineStack gap="200">
-            <Button size="slim" variant="primary" onClick={onAccept}>
+            <Button size="slim" variant="primary" onClick={onAccept} disabled={disabled}>
               {acceptLabel}
             </Button>
             {onAcceptAndTranslate && acceptAndTranslateLabel && (
               <DisabledActionTooltip hint={singleLocaleHint}>
-                <Button size="slim" onClick={onAcceptAndTranslate} disabled={!!singleLocaleHint}>
+                <Button size="slim" onClick={onAcceptAndTranslate} disabled={!!singleLocaleHint || disabled}>
                   {acceptAndTranslateLabel}
                 </Button>
               </DisabledActionTooltip>
