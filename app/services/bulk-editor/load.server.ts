@@ -567,7 +567,7 @@ async function attachSubResourceForeignValues(
  * Metaobject rows would read MetaobjectTranslation; every other type reads
  * ContentTranslation.
  */
-async function attachMissingTranslationFlags(
+export async function attachMissingTranslationFlags(
   db: PrismaClient,
   shop: string,
   opts: LoadBulkRowsOptions,
@@ -587,7 +587,9 @@ async function attachMissingTranslationFlags(
   if (opts.type === "image") {
     const cacheIdByRow = new Map<string, string>();
     for (const row of rows) if (row.imageCacheId) cacheIdByRow.set(row.imageCacheId, row.id);
-    const libraryIds = rows.filter((r) => !r.imageCacheId).map((r) => r.id);
+    // Every row is also looked up in the library store: for a product-backed
+    // image it is a fallback (leftover rows of the time it was a library file).
+    const libraryIds = rows.map((r) => r.id);
     if (cacheIdByRow.size === 0 && libraryIds.length === 0) return;
 
     const localesByRow = new Map<string, Set<string>>();
@@ -1721,7 +1723,7 @@ async function loadMetaobjectRows(
  * format `${locale}|${marketId}|${columnId}`, same global-layer inclusion under
  * a market override as the other types).
  */
-async function attachImageAltForeignValues(
+export async function attachImageAltForeignValues(
   db: PrismaClient,
   shop: string,
   opts: LoadBulkRowsOptions,
@@ -1729,8 +1731,14 @@ async function attachImageAltForeignValues(
 ): Promise<void> {
   const marketIds = opts.marketId !== "" ? ["", opts.marketId] : [""];
   // Library images (no ProductImage row) keep their alt translations in the
-  // generic ContentTranslation table under resourceType "MediaImage".
-  const libraryIds = rows.filter((r) => !r.imageCacheId).map((r) => r.id);
+  // generic ContentTranslation table under resourceType "MediaImage". A
+  // product-backed image is read from there too, as a FALLBACK per
+  // (locale, layer): a file that became product-backed while its alts still
+  // sat in the library store (the old template apply) would otherwise read
+  // empty. Product rows win, empty library values are ignored for it, and
+  // every product-store write retires the library rows (`mirrorProductMediaAlt`).
+  const libraryIds = rows.map((r) => r.id);
+  const libraryByRow = new Map<string, Record<string, string>>();
   if (libraryIds.length > 0) {
     const libraryTranslations = await db.contentTranslation.findMany({
       where: {
@@ -1742,15 +1750,14 @@ async function attachImageAltForeignValues(
       },
       select: { resourceId: true, value: true, marketId: true },
     });
-    const byRowId = new Map<string, Record<string, string>>();
     for (const t of libraryTranslations) {
-      const record = byRowId.get(t.resourceId) ?? {};
+      const record = libraryByRow.get(t.resourceId) ?? {};
       record[`${opts.locale}|${t.marketId}|${IMAGE_ROW_ALT_COLUMN_ID}`] = t.value;
-      byRowId.set(t.resourceId, record);
+      libraryByRow.set(t.resourceId, record);
     }
     for (const row of rows) {
-      const record = byRowId.get(row.id);
-      if (record) row.foreignValues = record;
+      const record = libraryByRow.get(row.id);
+      if (record && !row.imageCacheId) row.foreignValues = record;
     }
   }
 
@@ -1766,7 +1773,6 @@ async function attachImageAltForeignValues(
     },
     select: { imageId: true, altText: true, marketId: true },
   });
-  if (translations.length === 0) return;
 
   const byCacheId = new Map<string, { marketId: string; altText: string }[]>();
   for (const t of translations) {
@@ -1775,13 +1781,15 @@ async function attachImageAltForeignValues(
     byCacheId.set(t.imageId, list);
   }
   for (const row of rows) {
-    const entries = row.imageCacheId ? byCacheId.get(row.imageCacheId) : undefined;
-    if (!entries) continue;
+    if (!row.imageCacheId) continue;
     const record: Record<string, string> = {};
-    for (const entry of entries) {
+    for (const entry of byCacheId.get(row.imageCacheId) ?? []) {
       record[`${opts.locale}|${entry.marketId}|${IMAGE_ROW_ALT_COLUMN_ID}`] = entry.altText;
     }
-    row.foreignValues = record;
+    for (const [key, value] of Object.entries(libraryByRow.get(row.id) ?? {})) {
+      if (!(key in record) && value.trim() !== "") record[key] = value;
+    }
+    if (Object.keys(record).length > 0) row.foreignValues = record;
   }
 }
 

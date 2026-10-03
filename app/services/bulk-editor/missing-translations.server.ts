@@ -414,7 +414,7 @@ function subtitleOf(row: BulkRow): string {
  * everything else reads ContentTranslation — the same split the grid loader
  * uses.
  */
-async function loadTranslatedLocales(
+export async function loadTranslatedLocales(
   db: PrismaClient,
   shop: string,
   opts: MissingScanOptions,
@@ -429,7 +429,9 @@ async function loadTranslatedLocales(
     for (const row of rows) if (row.imageCacheId) cacheIdByRow.set(row.imageCacheId, row.id);
     // Library images (no ProductImage row) use the generic ContentTranslation
     // table under resourceType "MediaImage".
-    const libraryIds = rows.filter((r) => !r.imageCacheId).map((r) => r.id);
+    // All rows: for a product-backed image the library store is a fallback
+    // (leftover rows), so a covered alt is not reported as missing.
+    const libraryIds = rows.map((r) => r.id);
     const byRow = new Map<string, Map<string, Set<string>>>();
     const mark = (rowId: string, locale: string) => {
       let byKey = byRow.get(rowId);
