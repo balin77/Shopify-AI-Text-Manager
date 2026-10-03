@@ -957,6 +957,14 @@ export async function mirrorProductMediaAlt(
       });
     } catch (error: unknown) {
       if (params.inTransaction) throw error;
+      logger.warn("[mirrorProductMediaAlt] Could not retire the library alt rows of a product-backed medium", {
+        context: "mirrorProductMediaAlt",
+        shop,
+        mediaId,
+        locales,
+        marketId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
   if (value.trim() === "") {

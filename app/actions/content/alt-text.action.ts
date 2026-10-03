@@ -5,6 +5,7 @@
  * Handles: generateAltText, generateAllAltTexts, translateAltText, translateAltTextToAllLocales
  */
 
+import { mergeAltLayerFallback } from "~/services/translations/image-alt-fallback.shared";
 import { data as json } from "react-router";
 import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
 import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
@@ -1254,9 +1255,6 @@ export async function handleLoadImageAltTranslations(
     productRows as Array<{ altText: string; marketId: string; image: { mediaId: string | null; productId: string } | null }>,
     productId,
   );
-  // The product rows' own (media, layer) keys: a library row for the same key
-  // never replaces them.
-  const productKeys = new Set(rows.map((r) => `${r.mediaId}|${r.marketId}`));
 
   // The library half: a GID with NO ProductImage row anywhere in the shop is
   // mirrored in ContentTranslation("MediaImage") -- the same split the save
@@ -1285,12 +1283,21 @@ export async function handleLoadImageAltTranslations(
         },
         select: { resourceId: true, marketId: true, value: true },
       });
+      // The shared per-(media, layer) rule (image-alt-fallback.shared.ts).
+      const libraryByMedia = new Map<string, Map<string, string>>();
       for (const r of libraryRows) {
-        const marketOfRow = r.marketId ?? "";
-        if (backed.has(r.resourceId) && productKeys.has(`${r.resourceId}|${marketOfRow}`)) continue;
-        // An empty value is no translation (null rows exist per key).
-        if (backed.has(r.resourceId) && !(r.value ?? "").trim()) continue;
-        rows.push({ mediaId: r.resourceId, marketId: marketOfRow, altText: r.value ?? "" });
+        const m = libraryByMedia.get(r.resourceId) ?? new Map<string, string>();
+        m.set(r.marketId ?? "", r.value ?? "");
+        libraryByMedia.set(r.resourceId, m);
+      }
+      for (const [mediaId, library] of libraryByMedia) {
+        const isBacked = backed.has(mediaId);
+        const product = new Map<string, string>();
+        for (const r of rows) if (r.mediaId === mediaId) product.set(r.marketId, r.altText);
+        for (const [marketOfRow, altText] of mergeAltLayerFallback(product, library, isBacked)) {
+          if (isBacked && product.has(marketOfRow)) continue;
+          rows.push({ mediaId, marketId: marketOfRow, altText });
+        }
       }
     }
   }

@@ -36,9 +36,20 @@ export interface LibraryAltSnapshotEntry {
 }
 
 /**
+ * Usage kinds that PROVE a file is outside the catalogue. `product` is a
+ * product medium; `unknown` and any stale or future value could be a product
+ * medium the usage resolver has not caught up with (a sync window), so they
+ * are NOT library kinds and keep the product path.
+ */
+const LIBRARY_USAGE_KINDS = new Set(["collection", "article", "page", "metaobject", "theme", "unused"]);
+export function isLibraryUsageKind(kind: string | null | undefined): boolean {
+  return !!kind && LIBRARY_USAGE_KINDS.has(kind);
+}
+
+/**
  * Is this MediaImage a media-LIBRARY file: no `ProductImage` row anywhere in
- * the shop AND a library cache row that does not say "product" (a "product"
- * row is a product medium whose ProductImage row is merely missing). Unknown
+ * the shop AND a library cache row whose usageKind is explicitly a library kind
+ * (`isLibraryUsageKind`; "product", "unknown" and stale values are not). Unknown
  * to both caches is NOT library -- the caller keeps the product behaviour.
  * The ONE answer for "which store owns this image's alt"; throws on a DB error.
  */
@@ -56,7 +67,7 @@ export async function isLibraryOnlyMedia(
     where: { shop, id: mediaId },
     select: { usageKind: true },
   });
-  return !!lib && (lib as { usageKind?: string | null }).usageKind !== "product";
+  return !!lib && isLibraryUsageKind((lib as { usageKind?: string | null }).usageKind);
 }
 
 /**

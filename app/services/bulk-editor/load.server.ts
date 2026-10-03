@@ -9,6 +9,7 @@
  * apply.server.ts.
  */
 
+import { mergeAltLayerFallback } from "~/services/translations/image-alt-fallback.shared";
 import { lookupLocalizedNames, scheduleTaxonomyImport } from "../taxonomy-localization.server";
 import type { PrismaClient, Prisma } from "@prisma/client";
 import { canonicalCollectionIds } from "../collection-picker.shared";
@@ -599,6 +600,13 @@ export async function attachMissingTranslationFlags(
       localesByRow.set(rowId, set);
     };
 
+    const productByRow = new Map<string, Map<string, string>>();
+    const libraryByRow = new Map<string, Map<string, string>>();
+    const put = (into: Map<string, Map<string, string>>, rowId: string, locale: string, value: string) => {
+      const m = into.get(rowId) ?? new Map<string, string>();
+      m.set(locale, value);
+      into.set(rowId, m);
+    };
     if (cacheIdByRow.size > 0) {
       const altRows = await db.productImageAltTranslation.findMany({
         where: {
@@ -609,9 +617,8 @@ export async function attachMissingTranslationFlags(
         select: { imageId: true, locale: true, altText: true },
       });
       for (const alt of altRows) {
-        if (!alt.altText || alt.altText.trim() === "") continue;
         const rowId = cacheIdByRow.get(alt.imageId);
-        if (rowId) mark(rowId, alt.locale);
+        if (rowId) put(productByRow, rowId, alt.locale, alt.altText ?? "");
       }
     }
     if (libraryIds.length > 0) {
@@ -625,10 +632,16 @@ export async function attachMissingTranslationFlags(
         },
         select: { resourceId: true, locale: true, value: true },
       });
-      for (const t of libraryRows) {
-        if (!t.value || t.value.trim() === "") continue;
-        mark(t.resourceId, t.locale);
-      }
+      for (const t of libraryRows) put(libraryByRow, t.resourceId, t.locale, t.value ?? "");
+    }
+    // The same per-(media, layer) rule as the displayed value.
+    for (const row of rows) {
+      const merged = mergeAltLayerFallback(
+        productByRow.get(row.id) ?? new Map(),
+        libraryByRow.get(row.id) ?? new Map(),
+        !!row.imageCacheId,
+      );
+      for (const [locale, value] of merged) if (value.trim() !== "") mark(row.id, locale);
     }
     for (const row of rows) {
       const have = localesByRow.get(row.id);
@@ -1786,10 +1799,12 @@ export async function attachImageAltForeignValues(
     for (const entry of byCacheId.get(row.imageCacheId) ?? []) {
       record[`${opts.locale}|${entry.marketId}|${IMAGE_ROW_ALT_COLUMN_ID}`] = entry.altText;
     }
-    for (const [key, value] of Object.entries(libraryByRow.get(row.id) ?? {})) {
-      if (!(key in record) && value.trim() !== "") record[key] = value;
-    }
-    if (Object.keys(record).length > 0) row.foreignValues = record;
+    const merged = mergeAltLayerFallback(
+      new Map(Object.entries(record)),
+      new Map(Object.entries(libraryByRow.get(row.id) ?? {})),
+      true,
+    );
+    if (merged.size > 0) row.foreignValues = Object.fromEntries(merged);
   }
 }
 

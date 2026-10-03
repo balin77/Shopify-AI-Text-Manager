@@ -57,7 +57,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("persistAltText (alt-text template apply)", () => {
   it("a library file gets NO ProductImage row; foreign alt goes to the library mirror", async () => {
     const { persistAltText } = await import("~/services/image-alt-template-persist.server");
-    const db = makeDb({ libUsage: "unknown" });
+    const db = makeDb({ libUsage: "unused" });
     await persistAltText(db, "p1", LIB, SHOP, "de", false, "Kiste", { graphql: vi.fn() } as any);
     expect(db.productImage.upsert).not.toHaveBeenCalled();
     expect(db.$transaction).not.toHaveBeenCalled();
@@ -68,7 +68,7 @@ describe("persistAltText (alt-text template apply)", () => {
 
   it("a library file's primary alt only updates the library cache", async () => {
     const { persistAltText } = await import("~/services/image-alt-template-persist.server");
-    const db = makeDb({ libUsage: "unknown" });
+    const db = makeDb({ libUsage: "unused" });
     await persistAltText(db, "p1", LIB, SHOP, "en", true, "Box", { graphql: vi.fn() } as any);
     expect(db.productImage.upsert).not.toHaveBeenCalled();
     expect(db.mediaLibraryImage.updateMany).toHaveBeenCalledWith({ where: { shop: SHOP, id: LIB }, data: { altText: "Box" } });
@@ -144,5 +144,42 @@ describe("loadImageAltTranslations read fallback", () => {
     const db = makeDb({ productRows: [{ id: "row-a", mediaId: PROD }] });
     db.contentTranslation.findMany.mockResolvedValue([{ resourceId: PROD, marketId: "", value: null }]);
     expect((await load(db))[PROD]).toBeUndefined();
+  });
+});
+
+describe("mergeAltLayerFallback (the one rule behind all four readers)", () => {
+  it("a product entry wins per key, even an empty one; library fills the rest with non-empty values", async () => {
+    const { mergeAltLayerFallback } = await import("~/services/translations/image-alt-fallback.shared");
+    const merged = mergeAltLayerFallback(
+      new Map([["de", ""], ["fr", "Produit"]]),
+      new Map([["de", "Alt"], ["fr", "Ancien"], ["es", "Caja"], ["it", " "]]),
+      true,
+    );
+    expect([...merged.entries()].sort()).toEqual([["de", ""], ["es", "Caja"], ["fr", "Produit"]]);
+  });
+  it("a library-only medium takes its library entries as they are", async () => {
+    const { mergeAltLayerFallback } = await import("~/services/translations/image-alt-fallback.shared");
+    expect(mergeAltLayerFallback(new Map(), new Map([["de", "x"]]), false).get("de")).toBe("x");
+  });
+});
+
+describe("isLibraryOnlyMedia needs an explicit library kind", () => {
+  it.each([["unknown", false], ["product", false], ["stale-value", false], ["theme", true], ["unused", true]])(
+    "usageKind %s",
+    async (kind, expected) => {
+      const { isLibraryOnlyMedia } = await import("~/services/translations/library-alt-repair.server");
+      expect(await isLibraryOnlyMedia(makeDb({ libUsage: kind as string }), SHOP, LIB)).toBe(expected);
+    },
+  );
+});
+
+describe("a failed library-row retirement is logged and swallowed", () => {
+  it("warns with the ids, still reports mirrored", async () => {
+    const { mirrorProductMediaAlt } = await import("~/services/translations/verified-translations.server");
+    const { logger } = await import("~/utils/logger.server");
+    const db = makeDb({ productRows: [{ id: "row-a", mediaId: PROD }] });
+    db.contentTranslation.deleteMany.mockRejectedValue(new Error("boom"));
+    expect(await mirrorProductMediaAlt(db, { shop: SHOP, mediaId: PROD, locale: "de", value: "x" })).toBe("mirrored");
+    expect(logger.warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ mediaId: PROD, shop: SHOP }));
   });
 });

@@ -74,6 +74,17 @@ describe("missing-translation checks", () => {
     expect(r[0].untranslatedLocalesByColumnId["field.altText"]).toEqual(["fr"]);
   });
 
+  it("a product row wins per (media, layer) even when empty: the library row does not count", async () => {
+    const { attachMissingTranslationFlags } = await import("~/services/bulk-editor/load.server");
+    const db = makeDb({
+      product: [{ imageId: "cache-1", locale: "de", altText: "" }],
+      library: [{ resourceId: BACKED, locale: "de", value: "Alt" }],
+    });
+    const r = [{ id: BACKED, imageCacheId: "cache-1" }] as any[];
+    await attachMissingTranslationFlags(db, SHOP, { type: "image", foreignLocales: ["de"], locale: "", marketId: "" } as any, r);
+    expect(r[0].untranslatedLocalesByColumnId["field.altText"]).toEqual(["de"]);
+  });
+
   it("the candidate scan reads the library store for backed rows too", async () => {
     const { loadTranslatedLocales } = await import("~/services/bulk-editor/missing-translations.server");
     const db = makeDb({ library: [{ resourceId: BACKED, locale: "de", value: "Kiste" }, { resourceId: BACKED, locale: "fr", value: "" }] });
