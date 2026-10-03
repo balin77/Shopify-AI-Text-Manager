@@ -1494,6 +1494,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     success: true,
     actionType: "updateContent",
     retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+    // A foreign save names the layer it wrote (group, locale, market; "" =
+    // global) and the values, an empty one being a clear. The page updates its
+    // own cache from this and from nothing else: it used to address rows by key
+    // alone, so a market save overwrote the global row and the reverse.
+    ...(locale !== primaryLocale
+      ? { savedLayer: { groupId, locale, marketId, values: { ...updatedFields } } }
+      : {}),
     // The primary write succeeded; these translations could not be confirmed
     // removed on Shopify and were kept.
     ...(purgeWarnings.length > 0 ? { warnings: ["translationPurgeUnconfirmed"], unconfirmedPurge: purgeWarnings, unconfirmedPurgeKeys: unconfirmedKeys } : {}),

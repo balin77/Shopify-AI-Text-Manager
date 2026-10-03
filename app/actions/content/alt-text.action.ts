@@ -117,7 +117,7 @@ export async function saveImageAltTextPrimary(opts: {
   shop: string;
   mediaId: string;
   altText: string;
-}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string; retranslationTaskId?: string }> {
+}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string; retranslationTaskId?: string; libraryAltsPurged?: string[] }> {
   const { admin, db, shop, mediaId, altText } = opts;
   // The alt as it stood BEFORE this write — read first, because the cache write
   // below replaces it (product-alt-repair.server.ts).
@@ -125,6 +125,12 @@ export async function saveImageAltTextPrimary(opts: {
     "../../services/translations/product-alt-repair.server"
   );
   const snapshot = await snapshotProductAlts(db, shop, [mediaId]);
+  // A media-LIBRARY file (no ProductImage row) has no product repair; its
+  // foreign translations are deleted below (library-alt-repair.server.ts).
+  const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await import(
+    "../../services/translations/library-alt-repair.server"
+  );
+  const librarySnapshot = await snapshotLibraryAlts(db, shop, [mediaId]);
   let stored = altText;
   try {
     const r = await admin.graphql(
@@ -182,8 +188,20 @@ export async function saveImageAltTextPrimary(opts: {
     snapshot,
     written: [{ mediaId, alt: stored }],
   });
+  const libraryAltsPurged = await purgeLibraryAltTranslationsAfterWrite({
+    gateway: new ShopifyApiGateway(admin as never, shop),
+    db,
+    shop,
+    snapshot: librarySnapshot,
+    written: [{ mediaId, alt: stored }],
+  });
 
-  return { saved: true, userErrors: [], ...(retranslationTaskId ? { retranslationTaskId } : {}) };
+  return {
+    saved: true,
+    userErrors: [],
+    ...(retranslationTaskId ? { retranslationTaskId } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
+  };
 }
 
 // ============================================================================
@@ -868,6 +886,10 @@ export async function handleGenerateAltTextFromSku(
     "../../services/translations/product-alt-repair.server"
   );
   const snapshot = await snapshotProductAlts(ctx.db, ctx.session.shop, results.map((r) => r.mediaId));
+  const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await import(
+    "../../services/translations/library-alt-repair.server"
+  );
+  const librarySnapshot = await snapshotLibraryAlts(ctx.db, ctx.session.shop, results.map((r) => r.mediaId));
 
   // 2. Alt-Text zu Shopify synchronisieren
   const updateResponse = await ctx.admin.graphql(`#graphql
@@ -907,11 +929,21 @@ export async function handleGenerateAltTextFromSku(
     snapshot,
     written: results.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
   });
+  // A library file's foreign translations describe the old alt: deleted
+  // (library-alt-repair.server.ts); never fails the write.
+  const libraryAltsPurged = await purgeLibraryAltTranslationsAfterWrite({
+    gateway: new ShopifyApiGateway(ctx.admin as never, ctx.session.shop),
+    db: ctx.db,
+    shop: ctx.session.shop,
+    snapshot: librarySnapshot,
+    written: results.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
+  });
 
   return json({
     success: true,
     updated: results.length,
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
   });
 }
 
@@ -946,6 +978,7 @@ export async function handleSaveImageAltText(
   let shopifySaved = false;
   let notMirrored = false;
   let retranslationTaskIds: string[] = [];
+  let libraryAltsPurged: string[] = [];
 
   if (!locale || locale === primaryLocale) {
     // Primary locale: fileUpdate + shop-scoped cache write (shared helper).
@@ -955,6 +988,7 @@ export async function handleSaveImageAltText(
     }
     shopifySaved = result.saved;
     retranslationTaskIds = result.retranslationTaskId ? [result.retranslationTaskId] : [];
+    libraryAltsPurged = result.libraryAltsPurged ?? [];
   } else {
     // Only a MediaImage GID ever reaches the translation write and the
     // mirror's library branch (the action takes a direct POST).
@@ -1072,6 +1106,7 @@ export async function handleSaveImageAltText(
     success: shopifySaved,
     ...(notMirrored ? { notMirrored: true } : {}),
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
   });
 }
 

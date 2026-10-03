@@ -762,6 +762,7 @@ export const guideEs: GuideCopy = {
           paragraphs: [
             "Los textos alternativos se traducen a todos los idiomas como cualquier otro campo y se actualizan con las mismas reglas cuando cambia el original. Con un mercado seleccionado en el editor, el gestor de imágenes muestra los textos alternativos de ese mercado (el del idioma si el mercado no tiene uno propio) y guarda los cambios solo para ese mercado. «Traducir a todos los idiomas» escribe siempre el texto del propio idioma, que también usan los mercados sin texto propio.",
             "Solo se puede traducir un texto alternativo que exista en el idioma principal. Si una imagen aún no tiene uno allí, su campo de texto alternativo está bloqueado en los demás idiomas y lo indica: introdúcelo primero en el idioma principal y guarda.",
+            "En una imagen de tu biblioteca de archivos que no pertenece a ningún producto (por ejemplo, una que has elegido en una galería de variante), cambiar el texto alternativo del idioma principal elimina sus traducciones en todos los demás idiomas, porque describirían un texto que ya no existe. Después puedes volver a introducir las traducciones. Si has desactivado la eliminación de traducciones cuando cambia el original (Ajustes → Traducciones), se conservan.",
           ],
         },
       ],

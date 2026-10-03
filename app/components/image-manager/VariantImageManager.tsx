@@ -441,6 +441,7 @@ export function VariantImageManager({
   // When each image's own alt was last CONFIRMED saved, and when the open
   // load request was made: an answer requested before a save must not undo it.
   const altConfirmedAtRef = useRef(new Map<string, number>());
+  const reloadForeignAltsRef = useRef<() => void>(() => undefined);
   const altLoadRequestedAtRef = useRef(0);
   // Re-render on a dirty change too (the translate-to-all button reads it).
   const [, setAltDirtyVersion] = useState(0);
@@ -617,6 +618,12 @@ export function VariantImageManager({
       timedOutAltSaveRef.current = null;
       onSaveResponse?.(data);
       finishAltSave(classifyAltSaveResponse(data));
+      // A changed primary alt of a library file deleted its foreign alt
+      // translations on the server: the open foreign view re-reads, or it keeps
+      // showing text that no longer exists (a no-op in the primary view).
+      if (data.success && Array.isArray(data.libraryAltsPurged) && data.libraryAltsPurged.length > 0) {
+        reloadForeignAltsRef.current();
+      }
       // Saved on Shopify, but the local mirror the editors render from could
       // not be written: said, not swallowed (the next load would show nothing).
       if (data.success && data.notMirrored) {
@@ -654,6 +661,10 @@ export function VariantImageManager({
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
     onSaveResponse?.(fetcher.data);
+    // The SKU generator's primary write may have deleted a library file's
+    // foreign alt translations: re-read the open foreign view.
+    const purged = (fetcher.data as { libraryAltsPurged?: unknown }).libraryAltsPurged;
+    if (Array.isArray(purged) && purged.length > 0) reloadForeignAltsRef.current();
   }, [fetcher.state, fetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const translationsFetcher = useFetcher<any>();     // load foreign locale alt texts from DB
   const prevAltFetcherData = useRef<any>(null);
@@ -825,6 +836,10 @@ export function VariantImageManager({
     altLoadRequestedAtRef.current = monotonicNow();
     translationsFetcher.submit(form, { method: "post" });
   }, [productId, currentLanguage, primaryLocale, translationsFetcher, selectedMarketId, galleryMediaIdsKey]);
+
+  // The save handlers above run before this callback is defined; they reach it
+  // through a ref.
+  reloadForeignAltsRef.current = reloadForeignAlts;
 
   // Apply loaded translations to localAltTexts (mediaId → url → altText)
   useEffect(() => {

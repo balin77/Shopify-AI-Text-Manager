@@ -772,6 +772,7 @@ export const guideDe: GuideCopy = {
           paragraphs: [
             "Alt-Texte werden wie jedes andere Feld in alle Sprachen übersetzt und nach denselben Regeln aufgefrischt, wenn sich das Original ändert. Ist im Editor ein Markt gewählt, zeigt der Bildmanager die Alt-Texte dieses Marktes (hat der Markt keinen eigenen, den der Sprache) und speichert Änderungen nur für diesen Markt. „In alle Sprachen übersetzen“ schreibt immer den Text der Sprache selbst, den auch Märkte ohne eigenen Text verwenden.",
             "Übersetzen lässt sich nur ein Alt-Text, den es in der Hauptsprache gibt. Hat ein Bild dort noch keinen, ist sein Alt-Text-Feld in den anderen Sprachen gesperrt und sagt das — tragen Sie ihn zuerst in der Hauptsprache ein und speichern Sie.",
+            "Bei einem Bild aus Ihrer Dateibibliothek, das zu keinem Produkt gehört — etwa eines, das Sie in eine Varianten-Galerie gewählt haben —, entfernt ein geänderter Alt-Text der Hauptsprache dessen Übersetzungen in allen anderen Sprachen, weil sie einen Text beschreiben würden, den es nicht mehr gibt. Tragen Sie die Übersetzungen danach neu ein. Haben Sie das Löschen von Übersetzungen bei Änderung des Originals ausgeschaltet (Einstellungen → Übersetzungen), bleiben sie erhalten.",
           ],
         },
       ],

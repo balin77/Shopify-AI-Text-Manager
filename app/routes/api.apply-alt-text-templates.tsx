@@ -316,6 +316,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         [...new Set(variants.flatMap((v) => [v.mainImageGid, ...v.galleryFileGids].filter((g): g is string => !!g)))],
       )
     : new Map();
+  // A media-LIBRARY file picked into a variant gallery has no product repair:
+  // its foreign translations are deleted when its primary alt changes
+  // (library-alt-repair.server.ts). Read BEFORE the loop, like the snapshot above.
+  const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await import(
+    "../services/translations/library-alt-repair.server"
+  );
+  const libraryAltSnapshot = isPrimary
+    ? await snapshotLibraryAlts(
+        db,
+        session.shop,
+        [...new Set(variants.flatMap((v) => [v.mainImageGid, ...v.galleryFileGids].filter((g): g is string => !!g)))],
+      )
+    : new Map();
   const primaryWritten = new Map<string, string>();
 
   try {
@@ -442,6 +455,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           written: [...primaryWritten].map(([mediaId, alt]) => ({ mediaId, alt })),
         })
       : [];
+  const libraryAltsPurged =
+    primaryWritten.size > 0
+      ? await purgeLibraryAltTranslationsAfterWrite({
+          gateway: new ShopifyApiGateway(admin as never, session.shop),
+          db,
+          shop: session.shop,
+          snapshot: libraryAltSnapshot,
+          written: [...primaryWritten].map(([mediaId, alt]) => ({ mediaId, alt })),
+        })
+      : [];
 
   // Finalize the running task with the real outcome. status: "failed" when
   // nothing was applied, "completed" otherwise — the navigation logic
@@ -473,6 +496,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     applied,
     attempted,
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
     errors: errors.length > 0 ? errors : undefined,
     error: errorSummary,
   });

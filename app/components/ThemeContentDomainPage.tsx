@@ -27,6 +27,7 @@ import type { FetcherData, TranslatableContentItem, ContentEditorConfig, ShopLoc
 import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
+import { upsertThemeRow, applyThemeSaveToRows, themeRowValue } from "~/services/theme-translation-cache.shared";
 
 /**
  * Put a GLOBAL translation into one locale's cached rows (in place). Only a row
@@ -41,12 +42,7 @@ export function upsertGlobalThemeRow(
   value: string,
   locale: string,
 ): void {
-  const index = localeCache.findIndex((tr) => tr.key === key && (tr.marketId ?? "") === "");
-  if (index >= 0) {
-    localeCache[index] = { ...localeCache[index], value };
-  } else {
-    localeCache.push({ key, value, locale, marketId: "" });
-  }
+  upsertThemeRow(localeCache, key, value, locale, "");
 }
 
 interface ThemeContentDomainPageProps {
@@ -434,13 +430,8 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
       for (const [locale, translatedValue] of Object.entries(translations)) {
         const localeCache = [...(groupCache[locale] || [])];
 
-        // Find and update or add the translation
-        const existingIndex = localeCache.findIndex((tr) => tr.key === fieldKey);
-        if (existingIndex >= 0) {
-          localeCache[existingIndex] = { ...localeCache[existingIndex], value: translatedValue };
-        } else {
-          localeCache.push({ key: fieldKey, value: translatedValue, locale });
-        }
+        // The copy / translate-to-all writes the GLOBAL row only.
+        upsertGlobalThemeRow(localeCache, fieldKey, translatedValue, locale);
 
         groupCache[locale] = localeCache;
       }
@@ -493,6 +484,8 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   fieldPaginationRef.current = fieldPagination;
   const editorLanguageRef = useRef(editor.state.currentLanguage);
   editorLanguageRef.current = editor.state.currentLanguage;
+  const editorMarketRef = useRef(editor.state.selectedMarketId ?? "");
+  editorMarketRef.current = editor.state.selectedMarketId ?? "";
 
   // Store original handler reference before overriding
   const originalHandleItemSelectRef = useRef(editor.handlers.handleItemSelect);
@@ -600,8 +593,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
       // Foreign locale: values come from cached translations
       const cachedTranslations = loadedTranslations[selectedGroupId]?.[currentLanguage];
       themeData.translatableContent.forEach((item: TranslatableField) => {
-        const translation = cachedTranslations?.find((tr) => tr.key === item.key);
-        newValues[item.key] = translation?.value || "";
+        newValues[item.key] = themeRowValue(cachedTranslations, item.key, editorMarketRef.current);
       });
     }
 
@@ -636,8 +628,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
       if (themeData?.translatableContent) {
         const newValues: Record<string, string> = {};
         themeData.translatableContent.forEach((item: TranslatableField) => {
-          const translation = cachedTranslations.find((tr) => tr.key === item.key);
-          const value = translation?.value || "";
+          const value = themeRowValue(cachedTranslations, item.key, editorMarketRef.current);
           newValues[item.key] = value;
           editorHelpersRef.current.setEditableValue(item.key, value);
         });
@@ -678,8 +669,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           // Build new values object with translations
           const newValues: Record<string, string> = {};
           themeData.translatableContent.forEach((item: TranslatableField) => {
-            const translation = translations.find((tr) => tr.key === item.key);
-            newValues[item.key] = translation?.value || "";
+            newValues[item.key] = themeRowValue(translations, item.key, editorMarketRef.current);
           });
 
           // Update all values at once
@@ -708,6 +698,31 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     // Skip if already processed
     if (processedSaveRef.current === fetcher.data) return;
     processedSaveRef.current = fetcher.data;
+
+    // FOREIGN LOCALE SAVE. The server names what it wrote: group, locale, the
+    // market layer ("" = global) and the saved values (an empty value is a
+    // clear). Only THAT layer of THAT group/locale is updated -- addressing a
+    // row by key alone overwrote the global row with a market's value, or a
+    // market override with the global one, and the editor showed the wrong
+    // layer until a reload. Unsaved typing elsewhere in the editor is never
+    // written into the cache (only what the answer says was saved).
+    const savedLayer = (fetcher.data as {
+      savedLayer?: { groupId: string; locale: string; marketId: string; values: Record<string, string> };
+    }).savedLayer;
+    if (savedLayer) {
+      const { groupId: savedGroupId, locale: savedLocale, marketId: savedMarketId, values } = savedLayer;
+      setLoadedTranslations(prev => {
+        const groupCache = prev[savedGroupId] || {};
+        return {
+          ...prev,
+          [savedGroupId]: {
+            ...groupCache,
+            [savedLocale]: applyThemeSaveToRows(groupCache[savedLocale] || [], values, savedLocale, savedMarketId ?? "") as ThemeTranslationRecord[],
+          },
+        };
+      });
+      return;
+    }
 
 
     const currentLanguage = editor.state.currentLanguage;
@@ -786,38 +801,6 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             }
           }
         }
-      } else {
-        // FOREIGN LOCALE SAVE: Update loadedTranslations cache with new values
-        setLoadedTranslations(prev => {
-          const groupCache = prev[selectedGroupId] || {};
-          const localeCache = groupCache[currentLanguage] || [];
-
-          // Update, add, or REMOVE translations for changed keys.
-          // IMPORTANT: Empty values must be removed (splice), not kept with
-          // value "". Otherwise the items memo includes them in allTranslations,
-          // which can cause stale translations to reappear in the UI.
-          const updatedCache = [...localeCache];
-          Object.entries(currentValues).forEach(([key, value]) => {
-            const existingIndex = updatedCache.findIndex((tr) => tr.key === key);
-            if (value) {
-              if (existingIndex >= 0) {
-                updatedCache[existingIndex] = { ...updatedCache[existingIndex], value };
-              } else {
-                updatedCache.push({ key, value, locale: currentLanguage });
-              }
-            } else if (existingIndex >= 0) {
-              updatedCache.splice(existingIndex, 1);
-            }
-          });
-
-          return {
-            ...prev,
-            [selectedGroupId]: {
-              ...groupCache,
-              [currentLanguage]: updatedCache
-            }
-          };
-        });
       }
     }
   }, [fetcher.data, selectedGroupId, loadedThemes, editor.state.editableValues, editor.state.currentLanguage, primaryLocale, showInfoBox, t]);
@@ -981,7 +964,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
       if (!themeData?.translatableContent) return;
       const newValues: Record<string, string> = {};
       themeData.translatableContent.forEach((item: TranslatableField) => {
-        newValues[item.key] = onScreen.find((tr) => tr.key === item.key)?.value || "";
+        newValues[item.key] = themeRowValue(onScreen, item.key, editorMarketRef.current);
       });
       Object.entries(newValues).forEach(([key, value]) => {
         editorHelpersRef.current.setEditableValue(key, value);
@@ -1115,8 +1098,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           }));
 
           translatableContent.forEach((item) => {
-            const translation = translations.find((tr) => tr.key === item.key);
-            newValues[item.key] = translation?.value || "";
+            newValues[item.key] = themeRowValue(translations, item.key, editorMarketRef.current);
           });
         } else {
           // If translation fetch fails, keep fields empty rather than showing stale data

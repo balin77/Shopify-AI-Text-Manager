@@ -762,6 +762,7 @@ export const guideEn: GuideCopy = {
           paragraphs: [
             "Alt texts are translated into every language like any other field, and refreshed by the same rules when the original changes. With a market selected in the editor, the Image Manager shows that market's alt texts (the language's own text where the market has none) and saves changes for that market only. “Translate to all languages” always writes the language's own text, which markets without their own text also use.",
             "Only an alt text that exists in the main language can be translated. Where an image has none there yet, its alt text field is locked in the other languages and says so — enter it in the main language first and save.",
+            "For an image from your file library that belongs to no product — for example one you picked into a variant gallery — a changed main-language alt text removes its translations in all other languages, because they would describe text that no longer exists. Enter the translations again afterwards. If you have switched off deleting translations when the original changes (Settings → Translations), they are kept.",
           ],
         },
       ],
