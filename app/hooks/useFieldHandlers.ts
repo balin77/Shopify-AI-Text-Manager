@@ -2097,9 +2097,17 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
   // An alt that exists ONLY as a staged overlay value of this layer (a translate
   // answer that landed, no loaded row yet) is a translation too: it is sent for
   // removal with the loaded ones.
-  const stagedAltIndices = Object.entries(localAltTextOverlayRef.current[clearLocaleKey] ?? {})
-    .filter(([, value]) => !!value)
-    .map(([index]) => Number(index));
+  // A collection/article has no market layer for its featured alt (see
+  // `usingFeaturedAlt`): inside a market a staged value must not be sent,
+  // because the server would remove the GLOBAL translation.
+  const featuredAltOnly =
+    !(selectedItem.images && selectedItem.images.length > 0) &&
+    (config.resourceType === "Collection" || config.resourceType === "Article");
+  const stagedAltIndices = featuredAltOnly && !usingFeaturedAlt
+    ? []
+    : Object.entries(localAltTextOverlayRef.current[clearLocaleKey] ?? {})
+      .filter(([, value]) => !!value)
+      .map(([index]) => Number(index));
   // A staged alt translation of THIS layer (a translate answer that landed
   // earlier) must not win over the clear on the next language switch -- the
   // alt load reads the overlay before the item. Other locales' entries stay.
