@@ -2433,7 +2433,64 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         staleReadBack: declinedByReadBack,
       });
     }
-    if (stale.length === 0) return NOTHING;
+    if (stale.length === 0) {
+      // Nothing GLOBAL is stale (a field cleared that no locale ever translated,
+      // say), but the caller has already stood its own purge down for this
+      // repair, and a MARKET override can sit on a (locale, key) with no global
+      // row at all. The market layer goes exactly when the change happened, so
+      // it is purged here for the changed keys, per resource, before the exit.
+      // What we DECLINE (remove-only entries, a read-back that lags the write)
+      // keeps the merchant's stored answer on this layer too.
+      try {
+        const { purgeMarketOverrides, purgePairKey } = await import("./market-layer-purge.server");
+        const keysByResource = new Map<string, Set<string>>();
+        for (const [id, keys] of wantedKeys) {
+          const primary = primaryByResource.get(id);
+          if (!primary) continue;
+          const eligible = new Set<string>();
+          for (const key of keys) {
+            if (removeOnly.has(`${id}${PAIR_SEP}${key}`)) continue;
+            const want = expected.get(`${id}${PAIR_SEP}${key}`);
+            if (want !== undefined && !sameWrittenValue(primary[key]?.value ?? "", want)) continue;
+            eligible.add(key);
+          }
+          if (eligible.size > 0) keysByResource.set(id, eligible);
+        }
+        if (keysByResource.size === 0) return NOTHING;
+        const outcome = { failedKeys: new Set<string>(), failedPairs: new Set<string>() };
+        await purgeMarketOverrides({
+          gateway,
+          mirror: mirrorOf(params),
+          refs: [...keysByResource.keys()].map((id) => refs.get(id)!),
+          locales: [...foreignLocales],
+          keys: [...new Set([...keysByResource.values()].flatMap((keys) => [...keys]))],
+          keysByResource,
+          context: resourceType,
+          outcome,
+        });
+        const pairs: Array<{ resourceId: string; key: string }> = [];
+        for (const [id, keys] of keysByResource) {
+          for (const key of keys) {
+            if (!outcome.failedPairs.has(purgePairKey(id, key))) pairs.push({ resourceId: id, key });
+          }
+        }
+        if (pairs.length === 0) return NOTHING;
+        return {
+          removed: 0,
+          retranslating: 0,
+          marketPurgedPairs: pairs,
+          marketPurgedKeys: [...new Set(pairs.map((pair) => pair.key))].filter((key) => !outcome.failedKeys.has(key)),
+        };
+      } catch (error: unknown) {
+        logger.warn("[StaleTranslations] Market-override purge (nothing global stale) could not run", {
+          context: "StaleTranslations",
+          shop,
+          resourceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return NOTHING;
+    }
 
     logger.info("[StaleTranslations] Primary text changed in the editor — re-translating", {
       context: "StaleTranslations",

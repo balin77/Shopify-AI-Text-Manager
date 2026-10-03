@@ -1109,6 +1109,24 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     });
   });
 
+  it("a CLEARED field no locale ever translated still loses its market override, and is reported", async () => {
+    // Nothing global is stale, so the repair never starts - but the caller has
+    // stood its own purge down, and the override would otherwise survive.
+    const MARKET = "gid://shopify/Market/5";
+    shopifyHas = {};
+    primaryContent = { [PAGE]: {} };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [] : [{ resourceId: PAGE, key: "title", locale: "de", marketId: MARKET }],
+    );
+    shopify.removeMarkets.length = 0;
+    const result = await reconcileAfterPrimarySave(saveParams({ changed: [{ key: "title" }] }));
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(0);
+    expect(shopify.removeMarkets).toEqual([MARKET]);
+    expect(result.marketPurgedPairs).toEqual([{ resourceId: PAGE, key: "title" }]);
+  });
+
   it("leaves the market overrides alone when the merchant switched BOTH answers off", async () => {
     // Reached through the PURGE path, not the auto-translate one: with
     // auto-translate off `reconcileAfterPrimarySave` returns before anything
@@ -1562,6 +1580,38 @@ describe("a group spanning several resources (sub-resources)", () => {
     };
     db.contentTranslation.findMany.mockClear();
     db.contentTranslation.findMany.mockResolvedValue([]);
+  });
+
+  it("narrows the purge per resource through reconcileAfterPrimarySave: an option name and a metafield value each remove and report ONLY their own key", async () => {
+    const MARKET = "gid://shopify/Market/5";
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === ""
+        ? []
+        : [
+            { resourceId: OPTION, key: "name", locale: "fr", marketId: MARKET },
+            { resourceId: OPTION, key: "value", locale: "fr", marketId: MARKET },
+            { resourceId: METAFIELD, key: "name", locale: "fr", marketId: MARKET },
+            { resourceId: METAFIELD, key: "value", locale: "fr", marketId: MARKET },
+          ],
+    );
+    shopify.removeTargets.length = 0;
+    shopify.removeCalls.length = 0;
+    const result = await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+          { resourceId: METAFIELD, resourceType: "Metafield", key: "value" },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    const byTarget = shopify.removeTargets.map((id, i) => [id, shopify.removeCalls[i].keys]);
+    expect(byTarget).toEqual([[OPTION, ["name"]], [METAFIELD, ["value"]]]);
+    expect(result.marketPurgedPairs).toEqual([
+      { resourceId: OPTION, key: "name" },
+      { resourceId: METAFIELD, key: "value" },
+    ]);
   });
 
   it("reports the market purge PER RESOURCE: a declined sibling of the same key is neither purged nor reported", async () => {
