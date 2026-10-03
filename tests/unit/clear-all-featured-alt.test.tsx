@@ -26,9 +26,9 @@ const COLLECTION_ID = "gid://shopify/Collection/1";
 const PRODUCT_ID = "gid://shopify/Product/1";
 const tick = (ms = 0) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 
-function mount(kind: "collection" | "product") {
+function mount(kind: "collection" | "product", opts: { noLoadedAlt?: boolean } = {}) {
   const id = kind === "collection" ? COLLECTION_ID : PRODUCT_ID;
-  const alt = () => ({ url: "https://cdn.shopify.com/a.jpg", altText: "Katze", altTextTranslations: [{ locale: "fr", altText: "Chat", marketId: "" }] });
+  const alt = () => ({ url: "https://cdn.shopify.com/a.jpg", altText: "Katze", altTextTranslations: opts.noLoadedAlt ? [] : [{ locale: "fr", altText: "Chat", marketId: "" }] });
   const item: any = {
     id, title: "Titel", descriptionHtml: "<p>Text</p>", handle: "titel",
     seo: { title: "SEO", description: "Meta" },
@@ -119,7 +119,7 @@ describe("clear all in a foreign language reaches the featured image alt", () =>
     window.history.replaceState({}, "", "/");
   });
 
-  it("collection, global layer: the save removes the alt translation and the cache drops it", async () => {
+  it("collection, global layer: the save removes the alt translation and the field reads cleared", async () => {
     const h = mount("collection");
     await tick(50);
     await switchTo(h, "fr");
@@ -127,7 +127,7 @@ describe("clear all in a foreign language reaches the featured image alt", () =>
     expect(h.saves().length).toBe(1);
     expect(JSON.parse(h.saves()[0].imageAltTexts)).toEqual({ 0: "" });
     expect(h.saves()[0].marketId).toBeUndefined();
-    expect(h.editor.current.selectedItem.featuredImage.altTextTranslations).toEqual([]);
+    // The read-only item keeps its row; the field is cleared through the overlay.
     expect(h.editor.current.state.imageAltTexts[0]).toBe("");
     // Confirmed: the featured alt stays cleared and nothing is left dirty.
     await h.respond("updateContent", { success: true, actionType: "updateContent" });
@@ -194,5 +194,48 @@ describe("clear all in a foreign language reaches the featured image alt", () =>
     await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
     await tick(10);
     expect(h.posted.filter((p) => p.action === "translateAllForLocale")).toEqual([]);
+  });
+  it("L3: the loaded featured image is never mutated by the clear (the overlay carries it)", async () => {
+    const h = mount("collection");
+    await tick(50);
+    await switchTo(h, "fr");
+    const before = JSON.stringify(h.editor.current.selectedItem.featuredImage.altTextTranslations);
+    await clearAll(h);
+    expect(JSON.stringify(h.editor.current.selectedItem.featuredImage.altTextTranslations)).toBe(before);
+    // ... and the field still reads cleared after a language round trip.
+    await switchTo(h, "de");
+    await switchTo(h, "fr");
+    expect(h.editor.current.state.imageAltTexts[0]).toBe("");
+  });
+
+  it("L4: an unconfirmed removal keeps the PREVIOUS baseline (still dirty against it) and the stored alt reads again", async () => {
+    const h = mount("collection");
+    await tick(50);
+    await switchTo(h, "fr");
+    await clearAll(h);
+    await h.respond("updateContent", { success: true, actionType: "updateContent", failedAltTextIndices: [0] });
+    await tick(100);
+    expect(h.editor.current.state.hasChanges).toBe(true);
+    // Typing the stored text back is "no change" only against the PREVIOUS baseline.
+    await act(async () => { h.editor.current.handlers.handleAltTextChange(0, "Chat"); });
+    await tick(20);
+    expect(h.editor.current.state.hasChanges).toBe(false);
+    // The still-stored translation is what a reload of the view shows.
+    await switchTo(h, "de");
+    await switchTo(h, "fr");
+    expect(h.editor.current.state.imageAltTexts[0]).toBe("Chat");
+  });
+
+  it("L4: an alt that exists only as a staged overlay value is sent for removal too", async () => {
+    const h = mount("collection", { noLoadedAlt: true });
+    await tick(50);
+    // "Copy to all languages" stages the primary alt in every foreign layer at once.
+    await act(async () => { h.editor.current.handlers.handleCopyAltTextToAllLocales(0); });
+    await tick(20);
+    await switchTo(h, "fr");
+    expect(h.editor.current.state.imageAltTexts[0]).toBe("Katze");
+    await clearAll(h);
+    const clearSave = h.saves().find((p) => p.locale === "fr" && p.imageAltTexts && JSON.parse(p.imageAltTexts)[0] === "" && !p.title);
+    expect(clearSave).toBeTruthy();
   });
 });

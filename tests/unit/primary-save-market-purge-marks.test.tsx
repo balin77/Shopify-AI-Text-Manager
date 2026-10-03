@@ -27,7 +27,7 @@ const tick = (ms = 0) => act(async () => { await new Promise((r) => setTimeout(r
 
 function mount() {
   // What the loader serves; the test moves it to model "server caught up".
-  const server: any = { title: "Titel", marketRows: true };
+  const server: any = { title: "Titel", marketRows: true, marketValue: "Titre CH ancien", keepStale: false };
   const pending: Array<{ form: Record<string, string>; resolve: (b: any) => void }> = [];
   const editor: { current: any } = { current: null };
   const showInfoBox = vi.fn();
@@ -56,7 +56,7 @@ function mount() {
           id: ID, title: server.title, descriptionHtml: "<p>Text</p>", handle: "titel",
           seo: { title: "SEO", description: "Meta" },
           translations: server.marketRows ? [{ key: "title", locale: "fr", value: "Titre global" }] : [],
-          marketTranslations: server.marketRows ? { [M]: { title: { fr: "Titre CH ancien" } } } : {},
+          marketTranslations: server.marketRows ? { [M]: { title: { fr: server.marketValue } } } : {},
           images: [], status: "ACTIVE",
         }],
       }),
@@ -79,13 +79,14 @@ const openFrMarket = async (h: ReturnType<typeof mount>) => {
   await act(async () => { await h.editor.current.handlers.handleMarketChange(M); });
   await tick(30);
 };
-const saveNewPrimaryTitle = async (h: ReturnType<typeof mount>) => {
+const saveNewPrimaryTitle = async (h: ReturnType<typeof mount>, answer: Record<string, unknown> = { marketPurgedFields: ["title"] }) => {
   await act(async () => { h.editor.current.handlers.handleValueChange("title", "Neuer Titel"); });
   await act(async () => { h.editor.current.handlers.handleSave(); });
   await tick(20);
-  await h.respond("updateContent", { success: true, actionType: "updateContent" });
+  await h.respond("updateContent", { success: true, actionType: "updateContent", ...answer });
   await tick(100);
 };
+const title = (h: ReturnType<typeof mount>) => h.editor.current.state.editableValues.title;
 
 describe("a primary save's purge also hides the market overrides it removed", () => {
   beforeEach(() => {
@@ -98,43 +99,80 @@ describe("a primary save's purge also hides the market overrides it removed", ()
     window.history.replaceState({}, "", "/");
   });
 
-  it("before the item is re-read, the old market override does not show (global is purged too)", async () => {
+  it("M1: the server reports the purge -> the old market override does not show before the re-read", async () => {
     const h = mount();
     await tick(50);
-    // Sanity: the override is what a market view shows before any save.
     await openFrMarket(h);
-    expect(h.editor.current.state.editableValues.title).toBe("Titre CH ancien");
+    expect(title(h)).toBe("Titre CH ancien");
     await act(async () => { await h.editor.current.handlers.handleLanguageChange("de"); });
     await tick(30);
+    h.server.keepStale = true;
     await saveNewPrimaryTitle(h);
     await openFrMarket(h);
-    // The loader still serves the pre-save item (server not caught up yet).
-    expect(h.editor.current.state.editableValues.title).not.toBe("Titre CH ancien");
+    expect(title(h)).not.toBe("Titre CH ancien");
+  });
+
+  it("M1: no `marketPurgedFields` (purge off, or an unconfirmed removal) -> the live override stays visible", async () => {
+    const h = mount();
+    await tick(50);
+    h.server.keepStale = true;
+    await saveNewPrimaryTitle(h, {});
+    await openFrMarket(h);
+    expect(title(h)).toBe("Titre CH ancien");
+  });
+
+  it("M3: a language or market switch does not bring the hidden override back", async () => {
+    const h = mount();
+    await tick(50);
+    h.server.keepStale = true;
+    await saveNewPrimaryTitle(h);
+    await openFrMarket(h);
+    expect(title(h)).not.toBe("Titre CH ancien");
+    await act(async () => { await h.editor.current.handlers.handleMarketChange(""); });
+    await tick(20);
+    await act(async () => { await h.editor.current.handlers.handleLanguageChange("de"); });
+    await tick(30);
+    await openFrMarket(h);
+    expect(title(h)).not.toBe("Titre CH ancien");
+  });
+
+  it("M2: a revalidation that still carries the row keeps the mark; the first re-read without it retires it", async () => {
+    const h = mount();
+    await tick(50);
+    h.server.keepStale = true;
+    await saveNewPrimaryTitle(h);
+    // A (stale) loader read that began before the answer lands: row still there.
+    await act(async () => { await h.router.revalidate(); });
+    await tick(50);
+    await openFrMarket(h);
+    expect(title(h)).not.toBe("Titre CH ancien");
+    // The server catches up: the re-read no longer carries the override ...
+    h.server.marketRows = false;
+    await act(async () => { await h.router.revalidate(); });
+    await tick(50);
+    // ... and a market value that appears later is shown (the mark is gone).
+    h.server.marketRows = true;
+    h.server.marketValue = "Titre CH neu";
+    await act(async () => { await h.router.revalidate(); });
+    await tick(50);
+    await act(async () => { await h.editor.current.handlers.handleLanguageChange("de"); });
+    await tick(30);
+    await openFrMarket(h);
+    expect(title(h)).toBe("Titre CH neu");
   });
 
   it("a market value typed and saved afterwards shows", async () => {
     const h = mount();
     await tick(50);
+    h.server.keepStale = true;
     await saveNewPrimaryTitle(h);
     await openFrMarket(h);
-    expect(h.editor.current.state.editableValues.title).not.toBe("Titre CH ancien");
+    expect(title(h)).not.toBe("Titre CH ancien");
     await act(async () => { h.editor.current.handlers.handleValueChange("title", "Titre CH neu"); });
     await act(async () => { h.editor.current.handlers.handleSave(); });
     await tick(20);
     await h.respond("updateContent", { success: true, actionType: "updateContent" });
     await tick(100);
-    expect(h.editor.current.state.editableValues.title).toBe("Titre CH neu");
-  });
-
-  it("purge off: once the re-read item carries the saved title (market row kept), the override shows", async () => {
-    const h = mount();
-    await tick(50);
-    // The server did NOT purge: after the save it serves the new title and
-    // still holds the market row.
-    h.server.title = "Neuer Titel";
-    await saveNewPrimaryTitle(h);
-    await tick(100);
-    await openFrMarket(h);
-    expect(h.editor.current.state.editableValues.title).toBe("Titre CH ancien");
+    expect(title(h)).toBe("Titre CH neu");
   });
 });

@@ -365,4 +365,17 @@ describe("own saves during a translate-all run are refused before anything is st
     expect(String(call![0])).toContain("could not be removed on Shopify");
     expect(call![1]).toBe("warning");
   });
+  it("(F4b) the product-type notice is appended to the message shown just before it, never replacing it", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleTranslateAll(); });
+    await tick(10);
+    h.showInfoBox.mockClear();
+    // A message of the save/answer, then the skipped automatic step.
+    await act(async () => { h.editor.current.handlers.handleTranslateField("title"); });
+    await act(async () => { h.editor.current.handlers.handleTranslateFieldToAllLocales("productType", { auto: true }); });
+    const last = h.showInfoBox.mock.calls[h.showInfoBox.mock.calls.length - 1];
+    expect(String(last[0])).toContain("translation of this item is still running");
+    expect(String(last[0])).toContain("product type was not translated");
+  });
 });

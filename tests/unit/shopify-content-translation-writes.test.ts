@@ -42,8 +42,12 @@ vi.mock('../../app/services/shopify-api-gateway.service', () => ({
 }));
 
 // The market-override purge is its own, already-verified module: out of scope.
+const { marketFailed } = vi.hoisted(() => ({ marketFailed: [] as string[] }));
 vi.mock('../../app/services/translations/market-layer-purge.server', () => ({
-  purgeMarketOverrides: vi.fn(async () => undefined),
+  purgeMarketOverrides: vi.fn(async (args: any) => {
+    for (const key of marketFailed) args.outcome?.failedKeys.add(key);
+    return 0;
+  }),
 }));
 
 vi.mock('../../app/services/translations/stale-translation-sync.server', () => ({
@@ -449,6 +453,23 @@ describe('updateContent — primary-change purge (Page, merchant purge switch on
         key: { in: ['title'] }, locale: { in: ['fr', 'it'] },
       },
     });
+  });
+
+  it('names the fields whose MARKET layer was purged (editor keys), and leaves out an unconfirmed one', async () => {
+    marketFailed.length = 0;
+    const ok = await savePage(makePurgeAdmin(), makeDb());
+    expect((ok as any).marketPurgedFields).toEqual(['title']);
+    marketFailed.push('title');
+    const failed = await savePage(makePurgeAdmin(), makeDb());
+    marketFailed.length = 0;
+    expect((failed as any).marketPurgedFields).toBeUndefined();
+  });
+
+  it('with the purge off the answer names no purged market field', async () => {
+    policy.purgeOnPrimaryChange = false;
+    policy.purgeUnreconciledSurfaces = false;
+    const result = await savePage(makePurgeAdmin(), makeDb());
+    expect((result as any).marketPurgedFields).toBeUndefined();
   });
 
   it('deletes NOTHING locally when Shopify confirmed nothing and still holds the translation', async () => {

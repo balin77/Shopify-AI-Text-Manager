@@ -19,7 +19,7 @@ import {
   type MetaobjectEntryLike,
 } from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
-import { buildLocaleDeletedKey, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
+import { buildLocaleDeletedKey, buildPurgeMarketKey, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
@@ -202,14 +202,14 @@ export interface UseUiDataLoaderReturn {
   ) => void;
 
   /** When switching to a different item */
-  /** A primary save purged these fields' translations: their MARKET overrides
-   *  of the loaded item stop resolving (see the implementation). */
+  /** A primary save's purge CLEARED these fields' market overrides on Shopify
+   *  (the answer's `marketPurgedFields`): the loaded item's old market rows stop
+   *  resolving (see the implementation). */
   onPrimaryPurgeMarkets: (
     item: TranslatableContentItem,
-    entries: Array<{ fieldKey: string; translationKey: string; sentValue: string }>,
+    entries: Array<{ fieldKey: string; translationKey: string }>,
   ) => void;
-  /** The loaded item changed: drop the market purge marks the item already
-   *  reflects (it carries the saved value, so it is post-purge). */
+  /** The loaded item was replaced: purge marks whose row it no longer carries retire. */
   onItemFresh: (item: TranslatableContentItem) => void;
   onItemSwitch: () => void;
 
@@ -405,9 +405,9 @@ export function useUiDataLoader(
    *  Entries are market-folded via buildDeletedKey() so a market-specific clear
    *  does not blank the global value (and vice-versa). */
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
-  /** The locale marks `onPrimaryPurgeMarkets` set (mark -> the primary value
-   *  that save sent), so `onItemFresh` can retire exactly those. */
-  const marketPurgeMarksRef = useRef<Map<string, { fieldKey: string; sentValue: string }>>(new Map());
+  /** The purge marks `onPrimaryPurgeMarkets` set, so `onItemFresh` can retire
+   *  exactly those. */
+  const marketPurgeRecordsRef = useRef<Map<string, { translationKey: string; marketId: string; locale: string }>>(new Map());
   // Keys whose "deleted" marker the last copy-to-all-locales cleared (see onCopyToLocalesFailed).
   const clearedDeletedByCopyRef = useRef<Set<string>>(new Set());
   /** The LOCALE marks a copy to every locale dropped, per translation key. */
@@ -1022,6 +1022,13 @@ export function useUiDataLoader(
             continue;
           }
 
+          // A save of THIS (locale, market) writes the field: whatever the
+          // purge hid there is the merchant's value now.
+          if (value !== undefined && value !== null) {
+            const purgeMark = buildPurgeMarketKey(fieldDef.translationKey, marketId, savedLocale);
+            if (marketPurgeRecordsRef.current.delete(purgeMark)) deletedTranslationKeysRef.current.delete(purgeMark);
+          }
+
           if (value) {
             // Store in localTranslationsRef to persist after revalidation
             if (!localTranslationsRef.current[fieldDef.translationKey]) {
@@ -1172,61 +1179,64 @@ export function useUiDataLoader(
   );
 
   /**
-   * A PRIMARY save whose purge applies removed the changed fields' translations
-   * on Shopify in BOTH layers, but the editor marks only the global layer
-   * (`tKey`), and the loaded item (read-only) still carries the old MARKET
-   * overrides (`marketTranslations`) until it is re-read: opening a foreign
-   * language with a market selected showed a value Shopify no longer serves,
-   * and a save from there wrote it back. So every (key, market, locale) the
-   * item holds gets a LOCALE mark of its own layer -- `resolve()` then skips the
-   * market layer and falls through to the global one, exactly as for a market
-   * clear. The same condition as the global marks (the save's `changedFields`).
+   * A PRIMARY save whose purge CLEARED the market overrides of the changed
+   * fields (the server says which: `marketPurgedFields`) removed them on
+   * Shopify, but the loaded item (read-only) still carries the old rows
+   * (`marketTranslations`) until it is re-read: opening a foreign language with
+   * a market selected showed a value Shopify no longer serves, and a save from
+   * there wrote it back. Every (key, market, locale) the item holds gets a
+   * PURGE mark, which `resolve()` reads as a market deletion (falls through to
+   * the global layer). Purge marks are not the clear marks: no switch, discard
+   * or other save drops them (deleted-translation-marks.shared.ts).
    *
-   * Dropped by (a) a later save of that layer (`dropMarksAfterSave` -- a market
-   * value typed and saved afterwards shows), and (b) `onItemFresh` once the
-   * loaded item reflects the save; a mark that a foreign clear already set is
-   * not taken over, so (b) never removes the clear's.
+   * They retire when (a) the re-read item no longer carries the row they hide
+   * -- the server confirmed the purge, so a fresh item cannot have it, while a
+   * revalidation that began before the save answer still does and keeps the
+   * mark --, (b) a later save of that very (locale, market) writes the field
+   * (a market value typed afterwards shows), or (c) the item is switched or
+   * refreshed.
    */
   const onPrimaryPurgeMarkets = useCallback(
     (
       item: TranslatableContentItem,
-      entries: Array<{ fieldKey: string; translationKey: string; sentValue: string }>,
+      entries: Array<{ fieldKey: string; translationKey: string }>,
     ) => {
       const byMarket = item?.marketTranslations;
       if (!byMarket) return;
       for (const entry of entries) {
-        // An item that already carries the saved value was re-read after the
-        // save: its market rows are the purged state.
-        if (getItemFieldValue(item, entry.fieldKey, primaryLocale, config) === entry.sentValue) continue;
         for (const [marketId, byKey] of Object.entries(byMarket)) {
           for (const locale of Object.keys(byKey?.[entry.translationKey] ?? {})) {
-            const mark = buildLocaleDeletedKey(entry.translationKey, marketId, locale);
-            if (deletedTranslationKeysRef.current.has(mark)) continue;
+            const mark = buildPurgeMarketKey(entry.translationKey, marketId, locale);
             deletedTranslationKeysRef.current.add(mark);
-            marketPurgeMarksRef.current.set(mark, { fieldKey: entry.fieldKey, sentValue: entry.sentValue });
+            marketPurgeRecordsRef.current.set(mark, { translationKey: entry.translationKey, marketId, locale });
           }
         }
       }
     },
-    [primaryLocale, config]
+    []
   );
 
   const onItemFresh = useCallback(
     (item: TranslatableContentItem) => {
-      if (marketPurgeMarksRef.current.size === 0) return;
-      for (const [mark, rec] of [...marketPurgeMarksRef.current]) {
-        if (getItemFieldValue(item, rec.fieldKey, primaryLocale, config) !== rec.sentValue) continue;
+      if (marketPurgeRecordsRef.current.size === 0) return;
+      for (const [mark, rec] of [...marketPurgeRecordsRef.current]) {
+        if (item.marketTranslations?.[rec.marketId]?.[rec.translationKey]?.[rec.locale]) continue;
         deletedTranslationKeysRef.current.delete(mark);
-        marketPurgeMarksRef.current.delete(mark);
+        marketPurgeRecordsRef.current.delete(mark);
       }
     },
-    [primaryLocale, config]
+    []
   );
+
+  const dropPurgeMarks = useCallback(() => {
+    for (const mark of [...marketPurgeRecordsRef.current.keys()]) deletedTranslationKeysRef.current.delete(mark);
+    marketPurgeRecordsRef.current.clear();
+  }, []);
 
   /** When switching to a different item */
   const onItemSwitch = useCallback(() => {
     debugLog.transition("onItemSwitch: clearing all caches");
-    marketPurgeMarksRef.current.clear();
+    dropPurgeMarks();
     deletedTranslationKeysRef.current.clear();
     clearedDeletedByCopyRef.current.clear();
     clearedLocaleMarksByCopyRef.current.clear();
@@ -1236,7 +1246,7 @@ export function useUiDataLoader(
   /** When user clicks ReloadButton */
   const onRefresh = useCallback((itemId: string | null) => {
     debugLog.transition(`onRefresh: itemId=${itemId}`);
-    marketPurgeMarksRef.current.clear();
+    dropPurgeMarks();
     if (itemId && savedPrimaryValuesRef.current[itemId]) {
       delete savedPrimaryValuesRef.current[itemId];
     }
@@ -1281,7 +1291,7 @@ export function useUiDataLoader(
    */
   const onBackgroundRetranslation = useCallback((keepMarks?: ReadonlySet<string>) => {
     debugLog.transition("onBackgroundRetranslation: dropping foreign overlays, server wins");
-    marketPurgeMarksRef.current.clear();
+    dropPurgeMarks();
     // A clear whose removal is still on its way keeps its marks: the server
     // has not caught up with it, and the re-read would show what it removes.
     for (const mark of [...deletedTranslationKeysRef.current]) {

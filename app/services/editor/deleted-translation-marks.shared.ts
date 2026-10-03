@@ -27,6 +27,25 @@ function layerMark(translationKey: string, marketId: string): string {
   return marketId ? `${translationKey}${MARKET_SEP}${marketId}` : translationKey;
 }
 
+/**
+ * A PURGE mark says a primary save's purge removed the MARKET override of
+ * (key, market, locale) on Shopify while the loaded item still carries it. It
+ * is a third kind and none of the clearing rules touch it: a language, market
+ * or discard switch (`dropLocaleMarks`) and any save's `dropMarksAfterSave`
+ * leave it alone -- only its own lifecycle retires it (the re-read item no
+ * longer carries the row, or a later save of that very layer writes the
+ * field). It reads as deleted in exactly its (market, locale).
+ */
+const PURGE_PREFIX = "~purge~";
+
+export function buildPurgeMarketKey(translationKey: string, marketId: string, locale: string): string {
+  return `${PURGE_PREFIX}${buildLocaleDeletedKey(translationKey, marketId, locale)}`;
+}
+
+export function isPurgeMark(mark: string): boolean {
+  return mark.startsWith(PURGE_PREFIX);
+}
+
 /** The mark of ONE locale's cleared value of `translationKey` in a layer. */
 export function buildLocaleDeletedKey(translationKey: string, marketId: string, locale: string): string {
   return `${layerMark(translationKey, marketId)}${LOCALE_MARK_SEP}${locale}`;
@@ -40,11 +59,15 @@ export function isMarkedDeleted(
   marketId: string,
   locale: string,
 ): boolean {
-  return marks.has(layerMark(translationKey, marketId)) || marks.has(buildLocaleDeletedKey(translationKey, marketId, locale));
+  return (
+    marks.has(layerMark(translationKey, marketId)) ||
+    marks.has(buildLocaleDeletedKey(translationKey, marketId, locale)) ||
+    (!!marketId && marks.has(buildPurgeMarketKey(translationKey, marketId, locale)))
+  );
 }
 
 export function isLocaleMark(mark: string): boolean {
-  return mark.includes(LOCALE_MARK_SEP);
+  return !isPurgeMark(mark) && mark.includes(LOCALE_MARK_SEP);
 }
 
 /** Whether `mark` is a locale mark of exactly (locale, market). */
@@ -72,6 +95,7 @@ export function dropMarksAfterSave(
   onlyTranslationKeys?: ReadonlySet<string> | null,
 ): void {
   for (const mark of [...marks]) {
+    if (isPurgeMark(mark)) continue;
     if (!isLocaleMark(mark)) {
       marks.delete(mark);
       continue;
@@ -93,7 +117,7 @@ export function dropLocaleMarks(
 ): void {
   if (!marks) return;
   for (const mark of [...marks]) {
-    if (keep?.has(mark)) continue;
+    if (keep?.has(mark) || isPurgeMark(mark)) continue;
     if (isLocaleMarkOf(mark, locale, marketId)) marks.delete(mark);
   }
 }
