@@ -5,6 +5,7 @@ import { fillAltTextTemplate, resolveVariableValues, createTranslationCache } fr
 import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
+import { fileUpdateEchoConfirms } from "~/utils/file-update-echo.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { mirrorProductMediaAlt, registerMediaAltAndVerify } from "~/services/translations/verified-translations.server";
@@ -316,6 +317,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         [...new Set(variants.flatMap((v) => [v.mainImageGid, ...v.galleryFileGids].filter((g): g is string => !!g)))],
       )
     : new Map();
+  // A media-LIBRARY file picked into a variant gallery has no product repair:
+  // its foreign translations are deleted when its primary alt changes
+  // (library-alt-repair.server.ts). Read BEFORE the loop, like the snapshot above.
+  const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await import(
+    "../services/translations/library-alt-repair.server"
+  );
+  const libraryAltSnapshot = isPrimary
+    ? await snapshotLibraryAlts(
+        db,
+        session.shop,
+        [...new Set(variants.flatMap((v) => [v.mainImageGid, ...v.galleryFileGids].filter((g): g is string => !!g)))],
+      )
+    : new Map();
   const primaryWritten = new Map<string, string>();
 
   try {
@@ -357,15 +371,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               mutation fileUpdate($files: [FileUpdateInput!]!) {
                 fileUpdate(files: $files) {
                   userErrors { field message }
-                  files { id }
+                  files { id ... on MediaImage { alt } }
                 }
               }`,
             { files: [{ id: gid, alt: altText }] }
           );
           const errs = d.data?.fileUpdate?.userErrors ?? [];
-          if (errs.length === 0) {
+          // Confirmed only by the ECHO of this file with the alt that was sent: a
+          // null payload carries no userErrors either.
+          const confirmed = errs.length === 0 && fileUpdateEchoConfirms(d.data?.fileUpdate?.files, gid, altText);
+          if (confirmed) {
             applied++;
             primaryWritten.set(gid, altText);
+            // Keep the library cache in step (a library file has no ProductImage
+            // row until persistAltText creates one): the next "before" must be this alt.
+            await db.mediaLibraryImage
+              .updateMany({ where: { shop: session.shop, id: gid }, data: { altText: altText || null } })
+              .catch(() => undefined);
             try {
               await persistAltText(productId, gid, session.shop, locale, true, altText, admin);
             } catch (dbErr: unknown) {
@@ -374,7 +396,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               errors.push(`${variant.title} (Position ${tmpl.position}, DB save): ${String(dbErr)}`);
             }
           } else {
-            errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
+            errors.push(
+              `${variant.title} (Position ${tmpl.position}, GID ${gid}): ${
+                errs.length > 0 ? errs.map((e: any) => e.message).join(", ") : "Shopify did not confirm the alt-text write"
+              }`,
+            );
           }
         } else {
           // Foreign locale: verified register (digest -> register -> echo).
@@ -442,6 +468,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           written: [...primaryWritten].map(([mediaId, alt]) => ({ mediaId, alt })),
         })
       : [];
+  const libraryAltsPurged =
+    primaryWritten.size > 0
+      ? await purgeLibraryAltTranslationsAfterWrite({
+          gateway: new ShopifyApiGateway(admin as never, session.shop),
+          db,
+          shop: session.shop,
+          snapshot: libraryAltSnapshot,
+          written: [...primaryWritten].map(([mediaId, alt]) => ({ mediaId, alt })),
+        })
+      : [];
 
   // Finalize the running task with the real outcome. status: "failed" when
   // nothing was applied, "completed" otherwise — the navigation logic
@@ -473,6 +509,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     applied,
     attempted,
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
     errors: errors.length > 0 ? errors : undefined,
     error: errorSummary,
   });
