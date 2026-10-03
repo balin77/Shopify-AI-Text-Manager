@@ -491,6 +491,11 @@ export const en: Translation = {
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Fields in the primary language must not be empty. If a field is saved empty, Shopify removes it permanently and it can never be restored. Please fill in all fields before saving.",
+    themeImageNoClear: "An image cannot be removed in the primary language – choose a different image instead. Nothing was saved.",
+    themeImageNoFile: "This image cannot be saved here because it does not belong to a theme file the app can change. Change it in Shopify's theme editor. Nothing was saved.",
+    themeImageInvalid: "The chosen image could not be used. Choose a different image file. Nothing was saved.",
+    themeImageNotReady: "Shopify is still processing the chosen image. Try again in a moment. Nothing was saved.",
+    themeImageReadFailed: "Shopify could not be reached just now, so the image could not be checked. Please try again. Nothing was saved.",
     // Clear all modal
     clearAllConfirmTitle: "Clear All Fields?",
     clearAllConfirm: "Clear All",
@@ -5501,6 +5506,8 @@ export const en: Translation = {
     changeImage: "Choose another image",
     reset: "Use original image",
     primaryReadOnly: "The original image is chosen in Shopify's theme editor. Here you set a different image per language and market.",
+    primaryHint: "This is the original image for all languages. Replacement images you set for other languages or markets stay in place when you change it.",
+    primaryPickerTitle: "Choose original image",
     usingOriginal: "Original image",
     replaced: "Own image",
     previewUnavailable: "No preview",

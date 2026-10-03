@@ -12,8 +12,14 @@
  *
  * It never offers the AI anything: an image reference is a file choice, and
  * every AI path refuses it server-side as well (theme-image-reference.shared).
- * In the PRIMARY locale it is a preview: the original is chosen in Shopify's
- * theme editor, which is where every theme setting's primary value lives.
+ * In the PRIMARY locale the same picker chooses the ORIGINAL image for every
+ * language. The pick is a draft like any other field (the editor's save bar
+ * writes it, never the click); what the picker hands the draft is the
+ * reference AND, remembered beside it, the id of the picked file — the save
+ * names the id and the server derives the reference it writes into the theme
+ * from a fresh read of that file. There is no "reset" there: an original
+ * saved empty would make Shopify remove the setting for good, so an image is
+ * replaced, never cleared. Foreign replacements stay when the original moves.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Banner, BlockStack, Button, InlineStack, Text } from "@shopify/polaris";
@@ -26,6 +32,7 @@ import {
   filenameFromCdnUrl,
   themeImageFilename,
   themeImageReferenceFor,
+  rememberThemeImagePick,
 } from "../../utils/theme-image-reference.shared";
 
 // One lookup per filename per page session: a theme group can carry dozens of
@@ -95,7 +102,10 @@ export function ThemeImageField({
   // A value equal to the primary reference is the original shining through
   // (whether the editor resolved a fallback or a translation repeats it).
   const own = !isPrimaryLocale && themeImageFilename(value) !== null && value.trim() !== primaryValue.trim();
-  const shownFilename = themeImageFilename(own ? value : primaryValue);
+  // In the primary language the field's own value IS the original (a draft
+  // until saved); in a foreign one the original shines through.
+  const shownFilename = themeImageFilename(isPrimaryLocale ? value || primaryValue : own ? value : primaryValue);
+  const changedFromSaved = isPrimaryLocale && themeImageFilename(value) !== null && value.trim() !== primaryValue.trim();
   const url = useImageUrl(shownFilename);
 
   const handleAdd = useCallback(async (items: AddedItem[]) => {
@@ -120,7 +130,9 @@ export function ThemeImageField({
     let name = raw;
     try { name = decodeURIComponent(raw); } catch { /* keep raw */ }
     urlCache.set(name, Promise.resolve(picked.url));
-    onChange(themeImageReferenceFor(name));
+    const reference = themeImageReferenceFor(name);
+    rememberThemeImagePick(reference, picked.fileId);
+    onChange(reference);
   }, [onChange, tx]);
 
   return (
@@ -158,8 +170,15 @@ export function ThemeImageField({
           <Text as="span" variant="bodySm" tone="subdued" breakWord>
             {shownFilename ?? ""}
           </Text>
-          {isPrimaryLocale ? (
+          {isPrimaryLocale && readOnly ? (
             <Text as="p" variant="bodySm" tone="subdued">{tx.primaryReadOnly}</Text>
+          ) : isPrimaryLocale ? (
+            <InlineStack gap="200">
+              <Button size="slim" onClick={() => setPickerOpen(true)} disabled={busy} loading={busy}>
+                {tx.changeImage}
+              </Button>
+              {changedFromSaved && <Badge tone="attention">{tx.unsavedSuffix.replace(/[()]/g, "")}</Badge>}
+            </InlineStack>
           ) : (
             <InlineStack gap="200">
               <Button size="slim" onClick={() => setPickerOpen(true)} disabled={readOnly || busy} loading={busy}>
@@ -173,6 +192,7 @@ export function ThemeImageField({
             </InlineStack>
           )}
           {!isPrimaryLocale && <Text as="p" variant="bodySm" tone="subdued">{tx.themeFieldHint}</Text>}
+          {isPrimaryLocale && !readOnly && <Text as="p" variant="bodySm" tone="subdued">{tx.primaryHint}</Text>}
         </BlockStack>
       </InlineStack>
       {error && <Banner tone="critical" onDismiss={() => setError(null)}><Text as="p">{error}</Text></Banner>}
@@ -184,7 +204,9 @@ export function ThemeImageField({
           uploadCommitMode="queue"
           initialKind="image"
           imagesOnly
-          title={tx.pickerTitle.replace("{locale}", currentLanguage ? getLocalizedLanguageName(currentLanguage, appLocale) : "")}
+          title={isPrimaryLocale
+            ? tx.primaryPickerTitle
+            : tx.pickerTitle.replace("{locale}", currentLanguage ? getLocalizedLanguageName(currentLanguage, appLocale) : "")}
         />
       )}
     </BlockStack>

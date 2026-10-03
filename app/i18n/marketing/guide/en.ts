@@ -486,6 +486,7 @@ export const guideEn: GuideCopy = {
           heading: "Theme images",
           paragraphs: [
             "Images in your theme (for example a banner on the home page) are under Content → Theme, among the texts of their section. Instead of a text field you see a preview of the image.",
+            "You change the original image right here: switch to the main language, click “Choose another image” at the image and pick a file or upload one. Your choice only applies after “Save”. The original image can be replaced but not removed. Replacement images you set for other languages or markets stay in place — a new original does not delete them. An image that appears in several places of the theme is still changed in Shopify's theme editor.",
             "Whether your theme shows the image of the chosen language depends on the theme. After saving, check your store in that language; some themes may keep showing the original image.",
           ],
           steps: [

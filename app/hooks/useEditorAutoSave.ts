@@ -10,6 +10,7 @@ import type { PartialSave } from "./useUiDataLoader";
 import { settleUnsentSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { sentAltsFromForm, sentFieldsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
+import { fileIdForThemeImage, keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
 import { getItemFieldValue } from "./useUiDataLoader";
@@ -318,6 +319,13 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       }
 
       if (currentValue !== originalValue) {
+        // An image (or video) setting is a per-language choice, not text whose
+        // translations go stale: a new original leaves the foreign replacements
+        // standing, so it is never announced as a change that purges them. The
+        // server applies the same rule (keepsForeignMediaOnPrimaryChange).
+        if (isThemeContentType(config.contentType) && keepsForeignMediaOnPrimaryChange(originalValue, currentValue)) {
+          return;
+        }
         debugLog.fields(`Field "${field.key}" changed: "${originalValue}" -> "${currentValue}"`);
         changedFields.push(field.key);
       }
@@ -335,6 +343,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     locale: string
   ): Record<string, string> => {
     const result: Record<string, string> = {};
+    const fileIds: Record<string, string> = {};
     effectiveFieldDefinitions.forEach((field) => {
       if (locale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
         return;
@@ -347,7 +356,14 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         }
       }
       result[field.key] = value;
+      // The original image is named to the server by the id of the file that
+      // was picked; the reference written into the theme is derived there.
+      if (locale === primaryLocale && field.type === "themeImage") {
+        const fileId = fileIdForThemeImage(value);
+        if (fileId) fileIds[field.key] = fileId;
+      }
     });
+    if (Object.keys(fileIds).length > 0) result.themeImageFileIds = JSON.stringify(fileIds);
     return result;
   }, [effectiveFieldDefinitions, primaryLocale]);
 

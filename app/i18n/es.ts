@@ -483,6 +483,11 @@ export const es: Translation = {
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Los campos en el idioma principal no deben estar vacíos. Si un campo se guarda vacío, Shopify lo elimina permanentemente y nunca se puede restaurar. Por favor, complete todos los campos antes de guardar.",
+    themeImageNoClear: "Una imagen no se puede quitar en el idioma principal; elige otra imagen en su lugar. No se guardó nada.",
+    themeImageNoFile: "Esta imagen no se puede guardar aquí porque no pertenece a un archivo del tema que la app pueda modificar. Cámbiala en el editor de temas de Shopify. No se guardó nada.",
+    themeImageInvalid: "No se pudo usar la imagen elegida. Elige otro archivo de imagen. No se guardó nada.",
+    themeImageNotReady: "Shopify todavía está procesando la imagen elegida. Inténtalo de nuevo en un momento. No se guardó nada.",
+    themeImageReadFailed: "No se pudo contactar con Shopify y no se pudo comprobar la imagen. Inténtalo de nuevo. No se guardó nada.",
     // Clear all modal
     clearAllConfirmTitle: "¿Limpiar todos los campos?",
     clearAllConfirm: "Limpiar todo",
@@ -5486,6 +5491,8 @@ export const es: Translation = {
     changeImage: "Elegir otra imagen",
     reset: "Usar imagen original",
     primaryReadOnly: "La imagen original se elige en el editor de temas de Shopify. Aquí defines otra imagen por idioma y mercado.",
+    primaryHint: "Esta es la imagen original para todos los idiomas. Las imágenes de reemplazo que hayas definido para otros idiomas o mercados se mantienen al cambiarla.",
+    primaryPickerTitle: "Elegir imagen original",
     usingOriginal: "Imagen original",
     replaced: "Imagen propia",
     previewUnavailable: "Sin vista previa",

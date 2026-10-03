@@ -7,11 +7,16 @@ import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { TRANSLATE_CONTENT, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
 import { GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
-import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.utils";
+import { keyToFilename, replaceValuesInJson, countStringOccurrences } from "~/utils/templates/templates.utils";
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import {
+  isThemeImageReference,
+  keepsForeignMediaOnPrimaryChange,
+} from "~/utils/theme-image-reference.shared";
+import { resolveThemeImageReference } from "~/services/localized-media/theme-image-file.server";
 import { findEchoFor } from "~/services/translations/translation-echo.shared";
 import { unconfirmedPurgeKeys } from "~/services/translations/purge-warning.shared";
 import {
@@ -100,7 +105,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
   const metadataKeys = new Set([
     "action", "itemId", "locale", "primaryLocale", "changedFields",
-    "imageAltTexts", "changedAltTextIndices", "contentType", "marketId",
+    "imageAltTexts", "changedAltTextIndices", "contentType", "marketId", "themeImageFileIds",
   ]);
   let formFieldCount = 0;
   formData.forEach((_value, key) => { if (!metadataKeys.has(key)) formFieldCount++; });
@@ -147,6 +152,59 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         emptyKeys,
       });
       return json({ success: false, errorKey: "emptyPrimaryFieldsError" }, { status: 400 });
+    }
+  }
+
+  // ─── Theme IMAGE settings in the PRIMARY language ─────────────────────────
+  // The original image of an `image_picker` setting is chosen in the app too.
+  // Three rules, each a false success if dropped:
+  //  1. The reference written into the theme file is derived HERE from a fresh
+  //     read of the picked file (READY, a MediaImage, on Shopify's CDN) — the
+  //     client names only the file id, never the text that lands in the theme.
+  //  2. A key no theme file is known for (an app-embed setting, a resource
+  //     type resolveFilename does not map) is refused up front with its own
+  //     message instead of dropping out of the push.
+  //  3. An image is never CLEARED here: a primary value saved empty makes
+  //     Shopify remove the setting for good (the check above), and an image
+  //     slot never takes anything but a reference.
+  // `keepForeignKeys` is every key whose foreign values are per-language
+  // choices rather than translations: a new original must not purge them.
+  const keepForeignKeys = new Set<string>();
+  if (locale === primaryLocale) {
+    const oldPrimary = new Map<string, string>();
+    for (const group of themeGroups) {
+      for (const item of (group.translatableContent as unknown) as TranslatableField[]) {
+        if (item.value !== undefined && !oldPrimary.has(item.key)) oldPrimary.set(item.key, item.value);
+      }
+    }
+    const fileIds = getFormJSON<Record<string, unknown>>(formData, "themeImageFileIds") ?? {};
+    for (const [key, next] of Object.entries(updatedFields)) {
+      const old = oldPrimary.get(key);
+      if (!keepsForeignMediaOnPrimaryChange(old, next)) continue;
+      keepForeignKeys.add(key);
+      if (old === next) continue;
+      // A video setting edited as text keeps its foreign choices but is an
+      // ordinary text save otherwise.
+      if (!isThemeImageReference(old) && !isThemeImageReference(next)) continue;
+      if (domain !== "theme" || !ENABLE_THEME_PRIMARY_EDIT) continue; // answered by the checks below
+      const refuse = (errorKey: string, detail?: unknown) => {
+        logger.warn("[TEMPLATES] Primary theme image save refused", { context: "Templates", key, errorKey, detail });
+        return json({ success: false, errorKey, actionType: "updateContent" }, { status: 400 });
+      };
+      if (!isThemeImageReference(next)) return refuse("themeImageNoClear");
+      if (!resolveFilename(key)) return refuse("themeImageNoFile", keyToResourceType.get(key));
+      const resolved = await resolveThemeImageReference(admin, fileIds[key]);
+      if (!resolved.ok) {
+        return refuse(
+          resolved.code === "fileNotReady"
+            ? "themeImageNotReady"
+            : resolved.code === "readFailed"
+              ? "themeImageReadFailed"
+              : "themeImageInvalid",
+          resolved.code,
+        );
+      }
+      updatedFields[key] = resolved.reference;
     }
   }
 
@@ -768,6 +826,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           entry?: { filename: string; body: { type: string; value: string } };
           replacedKeys: string[];
           missedKeys: string[];
+          /** Image keys whose old reference sits in more places than this save names. */
+          ambiguousKeys?: string[];
           // Final value written per replaced key (post-normalization). Used to keep
           // the DB mirror consistent with what actually landed in the theme file.
           pushedValues: Map<string, string>;
@@ -828,6 +888,26 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             replacements.set(key, { oldValue, newValue, keyHint });
           }
 
+          // An IMAGE reference is often used in several places at once (the same
+          // logo in two sections). The replacement finds the value, not its path,
+          // so where the old reference occurs in more places than this save names
+          // keys for it, the right one cannot be told: refuse rather than rewrite
+          // another setting's image.
+          const ambiguousKeys: string[] = [];
+          {
+            const keysPerValue = new Map<string, number>();
+            for (const { oldValue } of replacements.values()) {
+              if (isThemeImageReference(oldValue)) keysPerValue.set(oldValue, (keysPerValue.get(oldValue) ?? 0) + 1);
+            }
+            for (const [key, { oldValue }] of [...replacements]) {
+              if (!isThemeImageReference(oldValue)) continue;
+              if (countStringOccurrences(fileJson, oldValue) > (keysPerValue.get(oldValue) ?? 0)) {
+                ambiguousKeys.push(key);
+                replacements.delete(key);
+              }
+            }
+          }
+
           let replacedKeys: Set<string>;
           if (resolved) {
             const byPath = new Map([...replacements].filter(([k]) => !resolved.searchKeys?.has(k)));
@@ -836,7 +916,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           } else {
             replacedKeys = replaceValuesInJson(fileJson, replacements);
           }
-          const missedKeys = keys.filter((k) => !replacedKeys.has(k));
+          const missedKeys = keys.filter((k) => !replacedKeys.has(k) && !ambiguousKeys.includes(k));
 
           // Record the value that actually went into the file (post-normalization)
           // for every replaced key, so STEP 2b can mirror the exact same value.
@@ -869,7 +949,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                 }
               : undefined;
 
-          return { entry, replacedKeys: Array.from(replacedKeys), missedKeys, pushedValues };
+          return { entry, replacedKeys: Array.from(replacedKeys), missedKeys, ambiguousKeys, pushedValues };
         };
 
         const runUpsert = async (
@@ -943,6 +1023,17 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             failedPrimaryKeys.push(...result.missedKeys);
             primarySaveErrors.push(
               `Could not locate the current value in the theme file for: ${result.missedKeys.slice(0, 5).join(", ")} (reload the content and try again)`
+            );
+          }
+          if (result.ambiguousKeys && result.ambiguousKeys.length > 0) {
+            logger.warn("[TEMPLATES] Image reference occurs in more places than named - not rewritten", {
+              context: "Templates",
+              filename,
+              ambiguousKeys: result.ambiguousKeys,
+            });
+            failedPrimaryKeys.push(...result.ambiguousKeys);
+            primarySaveErrors.push(
+              `The same image is used in several places of the theme, so this one could not be told apart: ${result.ambiguousKeys.slice(0, 5).join(", ")}. Change it in the Shopify theme editor.`
             );
           }
           if (result.entry) {
@@ -1078,7 +1169,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     const { loadTranslationChangePolicy } = await import(
       "~/services/translations/translation-change-policy.server"
     );
-    const savedChangedFields = changedFields.filter((k) => pushedPrimaryKeys.has(k));
+    // Image / video settings never purge or re-translate their foreign values:
+    // those are deliberate per-language choices, not translations of the original.
+    const savedChangedFields = changedFields.filter((k) => pushedPrimaryKeys.has(k) && !keepForeignKeys.has(k));
     const changePolicy =
       savedChangedFields.length > 0 ? await loadTranslationChangePolicy(session.shop, db) : null;
     // Theme content is repaired by THIS save or by nothing: no sync and no

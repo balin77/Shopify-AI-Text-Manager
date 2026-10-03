@@ -91,3 +91,36 @@ export function themeMediaRefusalBody(actionType: string, fieldType?: string) {
 export function themeImageReferenceFor(filename: string): string {
   return `${PREFIX}${filename}`;
 }
+
+/**
+ * Whether a PRIMARY change of a theme value leaves the foreign values of that
+ * key alone. A foreign value of an image (or video) setting is not a
+ * translation of the original: it is a per-language (and per-market) choice
+ * the merchant made deliberately, so a new original never makes it stale
+ * (owner, 2026-10-03: the replacement images of the other languages stay when
+ * the original changes). True when the value the key held was a media choice,
+ * or the value now written is an image reference. THE one rule for the
+ * server's purge / market purge / re-translation and for the client's
+ * invalidation, so the two cannot disagree.
+ */
+export function keepsForeignMediaOnPrimaryChange(oldValue: unknown, newValue: unknown): boolean {
+  return isThemeMediaValue(oldValue) || isThemeImageReference(newValue);
+}
+
+/** The id of a Files image, the only thing a theme image pick may name. */
+export const THEME_IMAGE_FILE_ID = /^gid:\/\/shopify\/MediaImage\/\d+$/;
+
+// A pick made in this page session: reference -> the MediaImage id it came
+// from. A reference names a file as Files knows it, so the pair is a fact
+// about the shop, not edit state, which is why a module-level map is safe. The
+// save sends the id and the SERVER derives the reference from a fresh read of
+// that file; nothing the server writes is taken from the client's text.
+const picks = new Map<string, string>();
+
+export function rememberThemeImagePick(reference: string, fileId: string): void {
+  if (isThemeImageReference(reference) && THEME_IMAGE_FILE_ID.test(fileId)) picks.set(reference.trim(), fileId);
+}
+
+export function fileIdForThemeImage(reference: unknown): string | null {
+  return typeof reference === "string" ? picks.get(reference.trim()) ?? null : null;
+}

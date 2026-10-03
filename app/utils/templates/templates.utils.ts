@@ -91,3 +91,17 @@ export function replaceValuesInJson(
 
   return replaced;
 }
+
+/** How many times `value` occurs as a whole string value anywhere in a parsed JSON tree. */
+export function countStringOccurrences(obj: unknown, value: string): number {
+  if (obj === null || typeof obj !== "object") return 0;
+  let count = 0;
+  for (const child of Object.values(obj as Record<string, unknown>)) {
+    if (typeof child === "string") {
+      if (child === value) count++;
+    } else if (child && typeof child === "object") {
+      count += countStringOccurrences(child, value);
+    }
+  }
+  return count;
+}

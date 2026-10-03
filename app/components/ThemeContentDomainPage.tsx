@@ -28,6 +28,7 @@ import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
 import { upsertThemeRow, applyThemeSaveToRows, themeRowValue } from "~/services/theme-translation-cache.shared";
+import { keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
 
 /**
  * Put a GLOBAL translation into one locale's cached rows (in place). Only a row
@@ -770,6 +771,9 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           const changedKeys = new Set<string>();
           themeData.translatableContent.forEach((item: TranslatableField) => {
             if (currentValues[item.key] !== undefined && currentValues[item.key] !== item.value) {
+              // The server leaves the foreign values of an image/video setting
+              // alone (per-language choices, not translations): so does the cache.
+              if (keepsForeignMediaOnPrimaryChange(item.value, currentValues[item.key])) return;
               changedKeys.add(item.key);
             }
           });
