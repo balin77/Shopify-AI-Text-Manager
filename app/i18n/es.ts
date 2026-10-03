@@ -2116,6 +2116,7 @@ export const es: Translation = {
     ownSaveRefusedWhilePrimarySaveWaits: "Un guardado del idioma principal de este elemento aún no ha terminado: el cambio queda sin guardar. Guárdalo cuando termine.",
     primaryTextSkippedWhileBusy: "Las traducciones de los demás idiomas están guardadas. Solo el texto del idioma principal no se guardó, porque todavía hay una traducción o un guardado en curso para este elemento; vuelve a aceptarlo cuando termine.",
     translateToOthersSkippedWhileTranslating: "Guardado. Se omitió la traducción a los demás idiomas porque todavía hay una traducción o un guardado en curso para este elemento; vuelve a iniciarla cuando termine.",
+    productTypeTranslateSkippedWhileBusy: "El tipo de producto no se tradujo a los demás idiomas porque todavía había una traducción o un guardado en curso para este elemento. Puedes iniciarlo más tarde con el botón de traducir a todos los idiomas del campo.",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
     fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons

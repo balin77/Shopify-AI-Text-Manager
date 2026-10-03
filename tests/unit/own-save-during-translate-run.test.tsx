@@ -289,4 +289,80 @@ describe("own saves during a translate-all run are refused before anything is st
     expect(h.posted.filter((p) => p.action === "translateAll")).toEqual([]);
     expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("translate again"), "info");
   });
+  it("(F3) primary alt accept-and-translate: step 2 is a request a run must not race, from queued to answered", async () => {
+    const h = mount();
+    await tick(50);
+    setAltTextSuggestion(scope("de"), 0, "Hund");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslateAltText(0); });
+    await tick(20);
+    // Step 1 (the primary alt save) is out and step 2 waits behind it in the queue.
+    expect(h.savesPosted().length).toBe(1);
+    expect(h.posted.filter((p) => p.action === "translateAltTextToAllLocales")).toEqual([]);
+    h.showInfoBox.mockClear();
+    await act(async () => { expect(h.editor.current.handlers.handleTranslateAll()).toBe(false); });
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("translate again"), "info");
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    // Step 2 is now the request in flight: still refused.
+    expect(h.posted.filter((p) => p.action === "translateAltTextToAllLocales").length).toBe(1);
+    h.showInfoBox.mockClear();
+    await act(async () => { expect(h.editor.current.handlers.handleTranslateAll()).toBe(false); });
+    await act(async () => { h.editor.current.handlers.handleTranslateAllForLocale(); });
+    expect(h.posted.filter((p) => p.action === "translateAll" || p.action === "translateAllForLocale")).toEqual([]);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("translate again"), "info");
+    // Answered (a FAILED answer ends it the same way: nothing is flagged).
+    await h.respond("translateAltTextToAllLocales", { success: false, error: "boom" });
+    await tick(100);
+    await act(async () => { h.editor.current.handlers.handleTranslateAll(); });
+    await tick(20);
+    expect(h.posted.filter((p) => p.action === "translateAll").length).toBe(1);
+    expect(ownSaveRunBackstop.hits).toBe(0);
+  });
+
+  it("(F3b) step 2 of the primary alt accept-and-translate is not started while a run is out", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleTranslateAll(); });
+    await tick(10);
+    setAltTextSuggestion(scope("de"), 0, "Hund");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslateAltText(0); });
+    await tick(20);
+    expect(h.posted.filter((p) => p.action === "translateAltTextToAllLocales" || p.action === "updateContent")).toEqual([]);
+  });
+  it("(F4) the automatic product-type translation says so when the busy rule blocks it", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleTranslateAll(); });
+    await tick(10);
+    h.showInfoBox.mockClear();
+    await act(async () => { h.editor.current.handlers.handleTranslateFieldToAllLocales("productType", { auto: true }); });
+    await tick(10);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    expect(h.showInfoBox).toHaveBeenCalledTimes(1);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("product type was not translated"), "info");
+  });
+  it("(F5) primary accept-and-translate with step 2 skipped still tells the merchant what the save's answer said", async () => {
+    const h = mount();
+    await tick(50);
+    setFieldSuggestion(scope("de"), "title", "KI Titel");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    expect(h.savesPosted().length).toBe(1);
+    // A primary save of the item queued behind it blocks step 2 (its purge
+    // must not land after the translations).
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: true, actionType: "updateContent", warnings: ["translationPurgeUnconfirmed"] });
+    await tick(100);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    const call = h.showInfoBox.mock.calls.find(([text]) => String(text).includes("was skipped"));
+    expect(call).toBeTruthy();
+    expect(String(call![0])).toContain("could not be removed on Shopify");
+    expect(call![1]).toBe("warning");
+  });
 });

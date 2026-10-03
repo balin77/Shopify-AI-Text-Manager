@@ -1041,7 +1041,17 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
   const auto = options?.auto === true;
   // It writes EVERY language: refused (an app-started run silently) while
   // any run of the item is out, before anything is staged or requested.
-  if (auto ? isOwnSaveBlocked?.(selectedItemId, primaryLocale) : refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
+  if (auto) {
+    if (isOwnSaveBlocked?.(selectedItemId, primaryLocale)) {
+      // Not silent: the merchant never pressed anything, so without a word
+      // the product type just stays untranslated and nobody learns why.
+      showInfoBox(
+        String(t.common?.productTypeTranslateSkippedWhileBusy || "The product type was not translated into the other languages because a translation or save of this item was still running. You can start it later with the field\u2019s translate-to-all-languages button."),
+        "info",
+      );
+      return;
+    }
+  } else if (refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
   const requestItemId = selectedItemId;
 
   // Filter out primary locale and disabled languages
@@ -2054,10 +2064,26 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
     deletedTranslationKeysRef.current.add(buildLocaleDeletedKey(tKey, selectedMarketId, currentLanguage));
   });
 
+  // The images whose foreign alt this clear reaches. A collection and an
+  // article load with `images: []` and their ONE image in `featuredImage`
+  // (translation key `image_alt_text` on the parent), so walking `images`
+  // alone left that alt standing. Only in the GLOBAL layer: the featured
+  // alt's translation is stored and removed globally (there is no market
+  // layer for it), so a clear inside a market must not reach it -- it would
+  // delete the global translation the market inherits. Products unchanged.
+  const altImages: ContentImage[] =
+    selectedItem.images && selectedItem.images.length > 0
+      ? selectedItem.images
+      : (config.resourceType === "Collection" || config.resourceType === "Article") &&
+          !selectedMarketId &&
+          selectedItem.featuredImage
+        ? [selectedItem.featuredImage]
+        : [];
+
   // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
   const clearedAltTexts: Record<number, string> = {};
-  if (selectedItem?.images && selectedItem.images.length > 0) {
-    selectedItem.images.forEach((_: ContentImage, index: number) => {
+  if (altImages.length > 0) {
+    altImages.forEach((_: ContentImage, index: number) => {
       clearedAltTexts[index] = "";
     });
     setImageAltTexts(clearedAltTexts);
@@ -2100,8 +2126,8 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
   // Send alt-texts that had translations
   const altTextsToDelete: Record<number, string> = {};
   let hasAltTextsToDelete = false;
-  if (selectedItem?.images) {
-    selectedItem.images.forEach((img: ContentImage, index: number) => {
+  if (altImages.length > 0) {
+    altImages.forEach((img: ContentImage, index: number) => {
       // Only the layer being cleared (the selected market's, else global).
       const hasTranslation = img.altTextTranslations?.some(
         (t: { locale: string; marketId?: string }) =>
@@ -2120,16 +2146,14 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
   // No item.translations mutation needed — deletedTranslationKeysRef (set above)
   // ensures resolve() returns empty even if item.translations has stale data.
 
-  if (selectedItem.images) {
-    selectedItem.images.forEach((img: ContentImage) => {
-      if (img.altTextTranslations) {
-        img.altTextTranslations = img.altTextTranslations.filter(
-          (t: { locale: string; marketId?: string }) =>
-            !(t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || ""))
-        );
-      }
-    });
-  }
+  altImages.forEach((img: ContentImage) => {
+    if (img.altTextTranslations) {
+      img.altTextTranslations = img.altTextTranslations.filter(
+        (t: { locale: string; marketId?: string }) =>
+          !(t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || ""))
+      );
+    }
+  });
 
   // Update originalLoadedValues so change detection reflects the cleared state
   originalLoadedValuesRef.current = { ...clearedValues };

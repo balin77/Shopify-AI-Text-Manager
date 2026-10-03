@@ -2136,6 +2136,7 @@ export const en: Translation = {
     ownSaveRefusedWhilePrimarySaveWaits: "A save of the main language of this item has not finished yet – the change stays unsaved. Save it when that is done.",
     primaryTextSkippedWhileBusy: "The translations in the other languages are saved. Only the main-language text was not saved, because a translation or save of this item is still running – accept it again when that has finished.",
     translateToOthersSkippedWhileTranslating: "Saved. The translation into the other languages was skipped because a translation or save of this item is still running – start it again when that has finished.",
+    productTypeTranslateSkippedWhileBusy: "The product type was not translated into the other languages because a translation or save of this item was still running. You can start it later with the field’s translate-to-all-languages button.",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
     fieldTranslatedAndSaved: "{fieldType} translated and saved successfully",
     // Tooltip for locale buttons

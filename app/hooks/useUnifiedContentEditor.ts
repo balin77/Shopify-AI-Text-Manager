@@ -98,6 +98,8 @@ export function ownSaveBlockedByRuns(
  *  (copy / translate a field or an alt to all languages). */
 const TO_ALL_LOCALES_ACTIONS = ["copyToAllLocales", "translateFieldToAllLocales", "translateAltTextToAllLocales"] as const;
 
+const ALT_TO_ALL_ACTION = "translateAltTextToAllLocales";
+
 /** Whether a sent-request scope is a SAVE of `itemId`. */
 function isSaveScopeOf(scope: SentSaveScope | null | undefined, itemId: string | null): boolean {
   const fields = scope?.sentFields;
@@ -117,6 +119,18 @@ function changedTranslationKeysOf(
   return fieldDefinitions
     .filter((f) => changed.includes(f.key) && !!f.translationKey)
     .map((f) => f.translationKey as string);
+}
+
+/** The field keys a primary save's form named as changed. */
+function changedFieldKeysOf(sentFields: Record<string, string> | undefined): string[] {
+  const raw = sentFields?.changedFields;
+  if (!raw) return [];
+  try {
+    const changed = JSON.parse(raw);
+    return Array.isArray(changed) ? changed.map(String) : [];
+  } catch {
+    return [];
+  }
 }
 
 interface TaskData {
@@ -215,11 +229,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
   /** Said where a flow SAVED its own text but skipped translating it into the
    *  other languages because a translation of the item is running. */
-  const sayTranslateToOthersSkipped = () => {
-    showInfoBoxRef.current(
-      String(tRef.current?.common?.translateToOthersSkippedWhileTranslating || "Saved. The translation into the other languages was skipped because a translation or save of this item is still running \u2013 start it again when that has finished."),
-      "info",
-    );
+  /** `alsoSay`: what the SAVE's own answer has to tell the merchant (a purge
+   *  that was not confirmed, a redirect note, fields Shopify did not echo) --
+   *  the translation that would have carried it never runs, and one box
+   *  holds one message, so it rides along instead of being replaced. */
+  const sayTranslateToOthersSkipped = (alsoSay?: string[]) => {
+    const skipped = String(tRef.current?.common?.translateToOthersSkippedWhileTranslating || "Saved. The translation into the other languages was skipped because a translation or save of this item is still running \u2013 start it again when that has finished.");
+    const more = (alsoSay ?? []).filter(Boolean);
+    showInfoBoxRef.current([skipped, ...more].join(" "), more.length > 0 ? "warning" : "info");
   };
   /** Said where the OTHER languages were already stored (foreign
    *  accept-and-translate) and only the main-language save was skipped. */
@@ -820,6 +837,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return out;
   };
 
+  /**
+   * The primary alt "accept & translate" posts its step 2
+   * (`translateAltTextToAllLocales`) on the route fetcher, queued behind step
+   * 1's save: it is in neither the operations store nor `savesOfItemOut`
+   * (updateContent only). Derived from what is TRUE now -- queued, or the
+   * request the fetcher carries -- so every outcome (answer, failure, abort,
+   * dropped entry) ends it without a flag that could stick.
+   */
+  const altToAllRequestOut = (itemId: string | null): boolean => {
+    if (!itemId) return false;
+    const isIt = (action: unknown) => action === ALT_TO_ALL_ACTION;
+    const scope = inFlightScopeRef.current;
+    const fetcherBusy = fetcherRef.current.state === "submitting" || justSubmittedRef.current;
+    if (fetcherBusy && scope && isIt(scope.sentFields?.action) && scope.sentFields?.itemId === itemId) return true;
+    return saveQueueRef.current.some((entry) => entry.savedItemId === itemId && isIt(entry.formData.get("action")));
+  };
+
   /** The "deleted" marks a save that is out or queued stands behind (its
    *  answer settles them): a discard, a switch or a background refresh must
    *  not take them. A primary save stands behind the LAYER marks of the
@@ -848,7 +882,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       locale === "*" || savedLocale === locale || savedLocale === primaryLocaleRef.current;
     // ...and the four translate/copy-to-every-language requests (their own
     // fetches, tracked by the operation store): they write every language.
-    const toAllOut = hasActiveOperationWithAction(itemId, TO_ALL_LOCALES_ACTIONS);
+    const toAllOut = hasActiveOperationWithAction(itemId, TO_ALL_LOCALES_ACTIONS) || altToAllRequestOut(itemId);
     if (!toAllOut && !savesOfItemOut(itemId).some((save) => touches(save.locale))) return false;
     showInfoBoxRef.current(
       String(tRef.current?.common?.translateWhileSaving || "Still saving \u2013 please wait a moment and then translate again."),
@@ -2354,6 +2388,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     for (const entry of takeTranslateRunAnswers(ANSWER_ACTION)) handleAnswer(entry.data, entry.itemId, true);
   }, [fetcher.data, translateRunVersion, currentLanguage, effectiveFieldDefinitions, showInfoBox, t, config.contentType]); // Use selectedItemRef instead of selectedItem
 
+  // The loaded item was replaced (a revalidation landed): the market purge
+  // marks of a primary save retire once it reflects that save.
+  useEffect(() => {
+    if (selectedItem) dataLoader.onItemFresh(selectedItem);
+  }, [selectedItem]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Update item object after saving (both primary locale and translations)
   // IMPORTANT: We track which fetcher.data we've processed to prevent re-running on language change
   useEffect(() => {
@@ -2423,6 +2463,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         for (const tKey of changedTranslationKeysOf(sentScope?.sentFields, effectiveFieldDefinitions)) {
           deletedTranslationKeysRef.current.add(tKey);
         }
+        // The same purge removed the MARKET overrides of those fields; the
+        // loaded item still carries them until it is re-read.
+        const sentChanged = changedFieldKeysOf(sentScope?.sentFields);
+        dataLoader.onPrimaryPurgeMarkets(
+          item,
+          effectiveFieldDefinitions
+            .filter((f) => !!f.translationKey && sentChanged.includes(f.key))
+            .map((f) => ({
+              fieldKey: f.key,
+              translationKey: f.translationKey as string,
+              sentValue: sentScope?.sentFields?.[f.key] ?? "",
+            })),
+        );
       }
       const result = dataLoader.onSaveComplete(
         savedLocale,
@@ -2746,7 +2799,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (isOwnSaveBlocked(itemId, primaryLocale)) {
           setIsAcceptAndTranslateFlow(false);
           acceptedPrimaryValueRef.current = null;
-          sayTranslateToOthersSkipped();
+          // The step-2 callback would have shown the save's answer; it never
+          // runs, so the skip message carries it (redirect note, fields
+          // Shopify did not echo, the unconfirmed purge).
+          sayTranslateToOthersSkipped([
+            pendingRedirectMessage?.text ?? "",
+            localizedUnconfirmedFields(fetcher.data),
+            purgeWarningText,
+          ]);
           return;
         }
 
