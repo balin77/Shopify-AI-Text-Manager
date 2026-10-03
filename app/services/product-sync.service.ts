@@ -2249,6 +2249,38 @@ export class ProductSyncService {
             logger.debug(`[ProductSync] ✓ Restored ${restoreData.length} preserved market alt-text translations`);
           }
         }
+
+        // The media's LIBRARY rows (leftovers from when a file was a library
+        // file) are the same Shopify translation seen through the old store:
+        // retired for exactly the layers this run read CLEANLY, finer than the
+        // bulk path because a failed GLOBAL read is tracked per locale here. A
+        // failed read deletes nothing (a failed read is not a removal), so the
+        // read fallback cannot bring back a translation removed outside the
+        // app.
+        const libraryMediaIds = createdImages.map((img) => img.mediaId).filter((id): id is string => !!id);
+        if (libraryMediaIds.length > 0) {
+          const layerScopes: Array<Record<string, unknown>> = [];
+          if (altFetchedLayers.includes("")) {
+            layerScopes.push(
+              altFailedGlobal.size > 0
+                ? { marketId: "", locale: { notIn: [...altFailedGlobal] } }
+                : { marketId: "" },
+            );
+          }
+          const marketLayers = altFetchedLayers.filter((layer) => layer !== "");
+          if (marketLayers.length > 0) layerScopes.push({ marketId: { in: marketLayers } });
+          if (layerScopes.length > 0) {
+            await tx.contentTranslation.deleteMany({
+              where: {
+                shop: this.shop,
+                resourceType: "MediaImage",
+                key: "alt",
+                resourceId: { in: libraryMediaIds },
+                OR: layerScopes,
+              },
+            });
+          }
+        }
       }
 
       // Insert options
