@@ -5,6 +5,7 @@
  * Handles: generateAltText, generateAllAltTexts, translateAltText, translateAltTextToAllLocales
  */
 
+import { mergeAltLayerFallback } from "~/services/translations/image-alt-fallback.shared";
 import { data as json } from "react-router";
 import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
 import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
@@ -1264,7 +1265,12 @@ export async function handleLoadImageAltTranslations(
       select: { mediaId: true },
     });
     const backed = new Set(productBacked.map((r: { mediaId: string | null }) => r.mediaId));
-    const libraryIds = galleryMediaIds.filter((id) => !backed.has(id));
+    // Product-backed media are read too, as a FALLBACK per (media, layer):
+    // a file that became product-backed while its foreign alts still sit in
+    // the library store (the old template apply created the row) would
+    // otherwise show them empty. Product rows win; every writer retires the
+    // library rows of a product-backed medium (`mirrorProductMediaAlt`).
+    const libraryIds = galleryMediaIds;
     if (libraryIds.length > 0) {
       const libraryRows = await db.contentTranslation.findMany({
         where: {
@@ -1277,8 +1283,21 @@ export async function handleLoadImageAltTranslations(
         },
         select: { resourceId: true, marketId: true, value: true },
       });
+      // The shared per-(media, layer) rule (image-alt-fallback.shared.ts).
+      const libraryByMedia = new Map<string, Map<string, string>>();
       for (const r of libraryRows) {
-        rows.push({ mediaId: r.resourceId, marketId: r.marketId ?? "", altText: r.value ?? "" });
+        const m = libraryByMedia.get(r.resourceId) ?? new Map<string, string>();
+        m.set(r.marketId ?? "", r.value ?? "");
+        libraryByMedia.set(r.resourceId, m);
+      }
+      for (const [mediaId, library] of libraryByMedia) {
+        const isBacked = backed.has(mediaId);
+        const product = new Map<string, string>();
+        for (const r of rows) if (r.mediaId === mediaId) product.set(r.marketId, r.altText);
+        for (const [marketOfRow, altText] of mergeAltLayerFallback(product, library, isBacked)) {
+          if (isBacked && product.has(marketOfRow)) continue;
+          rows.push({ mediaId, marketId: marketOfRow, altText });
+        }
       }
     }
   }
