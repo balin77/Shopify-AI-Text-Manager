@@ -54,7 +54,7 @@ export async function snapshotLibraryAlts(
     const [library, productBacked] = await Promise.all([
       db.mediaLibraryImage.findMany({
         where: { shop, id: { in: wanted } },
-        select: { id: true, altText: true },
+        select: { id: true, altText: true, usageKind: true },
       }),
       db.productImage.findMany({
         where: { mediaId: { in: wanted }, product: { shop } },
@@ -64,7 +64,11 @@ export async function snapshotLibraryAlts(
     const product = new Set(
       (productBacked as Array<{ mediaId: string | null }>).map((r) => r.mediaId).filter((id): id is string => !!id),
     );
-    for (const row of library as Array<{ id: string; altText: string | null }>) {
+    // Only a file PROVABLY outside the catalogue counts: a cache row that says
+    // "product" (product not cached yet, failed sync) is a product medium whose
+    // ProductImage row is merely missing, and is left alone.
+    for (const row of library as Array<{ id: string; altText: string | null; usageKind?: string | null }>) {
+      if (row.usageKind === "product") continue;
       if (!product.has(row.id)) out.set(row.id, { altText: row.altText });
     }
   } catch (error: unknown) {
@@ -134,7 +138,7 @@ export async function purgeLibraryAltTranslationsAfterWrite(params: {
     for (const mediaId of changed.keys()) {
       try {
         // The MARKET overrides: nothing re-translates one.
-        await purgeMarketOverrides({
+        const marketRemoved = await purgeMarketOverrides({
           gateway,
           mirror: contentTranslationMirror(shop),
           refs: [{ resourceId: mediaId, resourceType: "MediaImage" }],
@@ -183,7 +187,8 @@ export async function purgeLibraryAltTranslationsAfterWrite(params: {
             },
           });
         }
-        if (confirmed.size > 0) purgedMedia.push(mediaId);
+        // The client re-reads where either layer lost rows.
+        if (confirmed.size > 0 || (marketRemoved ?? 0) > 0) purgedMedia.push(mediaId);
       } catch (error: unknown) {
         logger.warn("[LibraryAltRepair] Removing the alt translations of a library image failed - they stay", {
           context: "LibraryAltRepair",

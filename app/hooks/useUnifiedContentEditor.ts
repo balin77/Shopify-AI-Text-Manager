@@ -2808,7 +2808,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               // after switching to them (the values are on Shopify but never reach the UI).
               onTranslateToAllLocalesComplete?.(
                 fieldKey,
-                translations as Record<string, string>
+                translations as Record<string, string>,
+                itemId
               );
 
               // If the current language is one of the translated languages, update editableValues

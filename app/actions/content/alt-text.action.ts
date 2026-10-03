@@ -920,6 +920,15 @@ export async function handleGenerateAltTextFromSku(
     ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId, product: { shop: ctx.session.shop } }, data: { altText: r.altText } })
   ));
 
+  // The library cache too (a file with no ProductImage row): without it the
+  // next snapshot keeps the old "before" and an identical later write would
+  // count as a change again.
+  await Promise.all(results.map((r) =>
+    ctx.db.mediaLibraryImage
+      .updateMany({ where: { shop: ctx.session.shop, id: r.mediaId }, data: { altText: r.altText } })
+      .catch((e: unknown) => logger.warn("[generateAltTextFromSku] media-library cache update failed", { error: e instanceof Error ? e.message : String(e) })),
+  ));
+
   // The foreign alts of what changed — one run per product
   // (product-alt-repair.server.ts); never fails the write.
   const retranslationTaskIds = await repairAltsAfterWrite({

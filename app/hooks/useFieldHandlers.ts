@@ -54,7 +54,7 @@ export interface FieldHandlerProps {
   effectiveFieldDefinitions: FieldDefinition[];
   shopLocales: ShopLocale[];
   t: TranslationStrings;
-  onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
+  onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>, itemId?: string) => void;
   onCopyToAllLocalesFailed?: (fieldKey: string, locales: string[]) => void;
 
   // State values
@@ -1191,7 +1191,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
 
       // Call callback to update cache if provided
       if (onTranslateToAllLocalesComplete) {
-        onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>);
+        onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>, requestItemId);
       }
 
       // Revalidate to fetch fresh data with the new translations
@@ -2481,7 +2481,7 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   };
   void runSaves();
 
-  onTranslateToAllLocalesComplete?.(fieldKey, translations);
+  onTranslateToAllLocalesComplete?.(fieldKey, translations, capturedItemId);
 };
 
   return {

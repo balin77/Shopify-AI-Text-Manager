@@ -379,6 +379,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (errs.length === 0) {
             applied++;
             primaryWritten.set(gid, altText);
+            // Keep the library cache in step (a library file has no ProductImage
+            // row until persistAltText creates one): the next "before" must be this alt.
+            await db.mediaLibraryImage
+              .updateMany({ where: { shop: session.shop, id: gid }, data: { altText: altText || null } })
+              .catch(() => undefined);
             try {
               await persistAltText(productId, gid, session.shop, locale, true, altText, admin);
             } catch (dbErr: unknown) {

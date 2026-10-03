@@ -40,7 +40,7 @@ const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await imp
 
 const MEDIA = "gid://shopify/MediaImage/9";
 
-function makeDb(opts: { libraryRows?: Array<{ id: string; altText: string | null }>; productRows?: Array<{ mediaId: string }>; local?: string[] } = {}) {
+function makeDb(opts: { libraryRows?: Array<{ id: string; altText: string | null; usageKind?: string }>; productRows?: Array<{ mediaId: string }>; local?: string[] } = {}) {
   return {
     mediaLibraryImage: { findMany: vi.fn(async () => opts.libraryRows ?? [{ id: MEDIA, altText: "old alt" }]) },
     productImage: { findMany: vi.fn(async () => opts.productRows ?? []) },
@@ -72,6 +72,11 @@ describe("snapshotLibraryAlts", () => {
     expect(snap.get(MEDIA)?.altText).toBe("old alt");
   });
 
+  it("a cache row that says usageKind product is not provably a library file: left alone", async () => {
+    const db = makeDb({ libraryRows: [{ id: MEDIA, altText: "old alt", usageKind: "product" } as never] });
+    expect((await snapshotLibraryAlts(db as never, "s", [MEDIA])).size).toBe(0);
+  });
+
   it("a failed read is an empty snapshot", async () => {
     const db = makeDb();
     db.mediaLibraryImage.findMany.mockRejectedValueOnce(new Error("db"));
@@ -101,6 +106,16 @@ describe("purgeLibraryAltTranslationsAfterWrite", () => {
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledWith({
       where: { shop: "s", resourceType: "MediaImage", resourceId: MEDIA, key: "alt", marketId: "", locale: { in: ["en", "fr"] } },
     });
+  });
+
+  it("only market overrides removed: the media is still reported so the client re-reads", async () => {
+    purgeMarketOverrides.mockResolvedValueOnce(2);
+    removeAndVerifyAcrossLocales.mockResolvedValueOnce({ confirmedPairs: new Set(), userErrors: [] });
+    const db = makeDb({ local: [] });
+    const purged = await purgeLibraryAltTranslationsAfterWrite({
+      gateway: gateway as never, db: db as never, shop: "s", snapshot, written: [{ mediaId: MEDIA, alt: "new alt" }],
+    });
+    expect(purged).toEqual([MEDIA]);
   });
 
   it("an unchanged alt (trimmed) deletes nothing and asks nothing", async () => {

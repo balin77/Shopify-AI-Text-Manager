@@ -419,12 +419,16 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   }, [themes, selectedGroupId, loadThemeData]);
 
   // Callback to update translations cache when translateFieldToAllLocales completes
-  const handleTranslateToAllLocalesComplete = useCallback((fieldKey: string, translations: Record<string, string>) => {
-    if (!selectedGroupId) return;
+  // The group is the one the request was STARTED on (the editor passes the item
+  // it captured at request time; an item is one theme group), never whichever
+  // group is open when the answer lands.
+  const handleTranslateToAllLocalesComplete = useCallback((fieldKey: string, translations: Record<string, string>, itemId?: string) => {
+    const groupId = (itemId ? themes.find((th: ThemeNavItem) => th.id === itemId)?.groupId : undefined) ?? selectedGroupId;
+    if (!groupId) return;
 
     setLoadedTranslations(prev => {
       const newCache = { ...prev };
-      const groupCache = { ...(newCache[selectedGroupId] || {}) };
+      const groupCache = { ...(newCache[groupId] || {}) };
 
       // Update each locale's cache with the new translation
       for (const [locale, translatedValue] of Object.entries(translations)) {
@@ -436,10 +440,10 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         groupCache[locale] = localeCache;
       }
 
-      newCache[selectedGroupId] = groupCache;
+      newCache[groupId] = groupCache;
       return newCache;
     });
-  }, [selectedGroupId]);
+  }, [selectedGroupId, themes]);
 
   // A copy that did not save for some locales: forget those locales' cached
   // translations so the next visit re-reads them from Shopify instead of
