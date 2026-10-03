@@ -54,7 +54,7 @@ export interface FieldHandlerProps {
   effectiveFieldDefinitions: FieldDefinition[];
   shopLocales: ShopLocale[];
   t: TranslationStrings;
-  onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
+  onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>, itemId?: string) => void;
   onCopyToAllLocalesFailed?: (fieldKey: string, locales: string[]) => void;
 
   // State values
@@ -147,7 +147,8 @@ export interface FieldHandlerProps {
   /** The same rule, silent. */
   isOwnSaveBlocked?: (itemId: string | null, locale: string) => boolean;
   /** "Saved; the translation into the other languages was skipped". */
-  sayTranslateToOthersSkipped?: () => void;
+  sayTranslateToOthersSkipped?: (alsoSay?: Array<{ text: string; tone: InfoBoxTone }>) => void;
+  sayProductTypeSkipped?: () => void;
   sayPrimaryTextSkipped?: () => void;
   /** Refuses (with a message, returning true) a "translate all" run while a
    *  save of the item it would race is out or queued. `locale` "*" = every
@@ -339,6 +340,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     refuseOwnSave,
     isOwnSaveBlocked,
     sayTranslateToOthersSkipped,
+    sayProductTypeSkipped,
     sayPrimaryTextSkipped,
     buildFieldsForSave,
     getChangedFields,
@@ -1041,7 +1043,15 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
   const auto = options?.auto === true;
   // It writes EVERY language: refused (an app-started run silently) while
   // any run of the item is out, before anything is staged or requested.
-  if (auto ? isOwnSaveBlocked?.(selectedItemId, primaryLocale) : refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
+  if (auto) {
+    if (isOwnSaveBlocked?.(selectedItemId, primaryLocale)) {
+      // Not silent: the merchant never pressed anything, so without a word
+      // the product type just stays untranslated and nobody learns why. It
+      // follows the save's own message in the one box, so it is appended to it.
+      sayProductTypeSkipped?.();
+      return;
+    }
+  } else if (refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
   const requestItemId = selectedItemId;
 
   // Filter out primary locale and disabled languages
@@ -1191,7 +1201,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
 
       // Call callback to update cache if provided
       if (onTranslateToAllLocalesComplete) {
-        onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>);
+        onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>, requestItemId);
       }
 
       // Revalidate to fetch fresh data with the new translations
@@ -2054,19 +2064,58 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
     deletedTranslationKeysRef.current.add(buildLocaleDeletedKey(tKey, selectedMarketId, currentLanguage));
   });
 
+  // The images whose foreign alt this clear reaches. A collection and an
+  // article load with `images: []` and their ONE image in `featuredImage`
+  // (translation key `image_alt_text` on the parent), so walking `images`
+  // alone left that alt standing. Only in the GLOBAL layer: the featured
+  // alt's translation is stored and removed globally (there is no market
+  // layer for it), so a clear inside a market must not reach it -- it would
+  // delete the global translation the market inherits. Products unchanged.
+  const usingFeaturedAlt =
+    !(selectedItem.images && selectedItem.images.length > 0) &&
+    (config.resourceType === "Collection" || config.resourceType === "Article") &&
+    !selectedMarketId &&
+    !!selectedItem.featuredImage;
+  const altImages: ContentImage[] =
+    selectedItem.images && selectedItem.images.length > 0
+      ? selectedItem.images
+      : usingFeaturedAlt
+        ? [selectedItem.featuredImage as ContentImage]
+        : [];
+
   // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
   const clearedAltTexts: Record<number, string> = {};
-  if (selectedItem?.images && selectedItem.images.length > 0) {
-    selectedItem.images.forEach((_: ContentImage, index: number) => {
+  if (altImages.length > 0) {
+    altImages.forEach((_: ContentImage, index: number) => {
       clearedAltTexts[index] = "";
     });
     setImageAltTexts(clearedAltTexts);
-    setOriginalAltTexts({});
+    // The baseline stays what it was (the loaded translations): a removal
+    // Shopify does not confirm then keeps the previous baseline and the field
+    // reads as changed against it, instead of against an emptied one.
   }
+  // An alt that exists ONLY as a staged overlay value of this layer (a translate
+  // answer that landed, no loaded row yet) is a translation too: it is sent for
+  // removal with the loaded ones.
+  // A collection/article has no market layer for its featured alt (see
+  // `usingFeaturedAlt`): inside a market a staged value must not be sent,
+  // because the server would remove the GLOBAL translation.
+  const featuredAltOnly =
+    !(selectedItem.images && selectedItem.images.length > 0) &&
+    (config.resourceType === "Collection" || config.resourceType === "Article");
+  const stagedAltIndices = featuredAltOnly && !usingFeaturedAlt
+    ? []
+    : Object.entries(localAltTextOverlayRef.current[clearLocaleKey] ?? {})
+      .filter(([, value]) => !!value)
+      .map(([index]) => Number(index));
   // A staged alt translation of THIS layer (a translate answer that landed
   // earlier) must not win over the clear on the next language switch -- the
   // alt load reads the overlay before the item. Other locales' entries stay.
   delete localAltTextOverlayRef.current[clearLocaleKey];
+  // The featured image's loaded item is read-only: its cleared state is an
+  // EMPTY overlay value, which the alt load reads before the item (an
+  // unconfirmed removal drops it again, see the save answer).
+  if (usingFeaturedAlt) localAltTextOverlayRef.current[clearLocaleKey] = { 0: "" };
   clearSuggestionsForScope(suggestionScope);
 
   // Close modal
@@ -2100,8 +2149,8 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
   // Send alt-texts that had translations
   const altTextsToDelete: Record<number, string> = {};
   let hasAltTextsToDelete = false;
-  if (selectedItem?.images) {
-    selectedItem.images.forEach((img: ContentImage, index: number) => {
+  if (altImages.length > 0) {
+    altImages.forEach((img: ContentImage, index: number) => {
       // Only the layer being cleared (the selected market's, else global).
       const hasTranslation = img.altTextTranslations?.some(
         (t: { locale: string; marketId?: string }) =>
@@ -2113,6 +2162,12 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
       }
     });
   }
+  for (const index of stagedAltIndices) {
+    if (altTextsToDelete[index] === undefined) {
+      altTextsToDelete[index] = "";
+      hasAltTextsToDelete = true;
+    }
+  }
   if (hasAltTextsToDelete) {
     formDataObj.imageAltTexts = JSON.stringify(altTextsToDelete);
   }
@@ -2120,16 +2175,15 @@ const handleClearAllForLocaleConfirm = (): boolean | void => {
   // No item.translations mutation needed — deletedTranslationKeysRef (set above)
   // ensures resolve() returns empty even if item.translations has stale data.
 
-  if (selectedItem.images) {
-    selectedItem.images.forEach((img: ContentImage) => {
-      if (img.altTextTranslations) {
-        img.altTextTranslations = img.altTextTranslations.filter(
-          (t: { locale: string; marketId?: string }) =>
-            !(t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || ""))
-        );
-      }
-    });
-  }
+  // (Not the featured image: its item is read-only, the overlay above carries the clear.)
+  if (!usingFeaturedAlt) altImages.forEach((img: ContentImage) => {
+    if (img.altTextTranslations) {
+      img.altTextTranslations = img.altTextTranslations.filter(
+        (t: { locale: string; marketId?: string }) =>
+          !(t.locale === currentLanguage && (t.marketId ?? "") === (selectedMarketId || ""))
+      );
+    }
+  });
 
   // Update originalLoadedValues so change detection reflects the cleared state
   originalLoadedValuesRef.current = { ...clearedValues };
@@ -2481,7 +2535,7 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   };
   void runSaves();
 
-  onTranslateToAllLocalesComplete?.(fieldKey, translations);
+  onTranslateToAllLocalesComplete?.(fieldKey, translations, capturedItemId);
 };
 
   return {

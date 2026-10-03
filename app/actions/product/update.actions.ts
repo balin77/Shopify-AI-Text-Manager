@@ -1398,6 +1398,10 @@ async function updatePrimaryProduct(
   // Warnings the purge below raises. The primary write has already succeeded,
   // so they travel as `warning` on a successful answer, never as a failure.
   const purgeWarnings: string[] = [];
+  // Translation keys whose MARKET overrides the purge below really cleared; the
+  // answer names the matching editor fields so the page hides market values
+  // only where Shopify no longer serves them.
+  let marketPurgedKeys: string[] = [];
 
   // Delete translations for changed fields in all foreign languages
   if (changedFields.length > 0 && purgeStaleTranslations) {
@@ -1449,6 +1453,7 @@ async function updatePrimaryProduct(
             const { contentTranslationMirror } = await import(
               "~/services/translations/stale-translation-sync.server"
             );
+            const marketOutcome = { failedKeys: new Set<string>() };
             await purgeMarketOverrides({
               gateway,
               mirror: contentTranslationMirror(shop),
@@ -1456,7 +1461,9 @@ async function updatePrimaryProduct(
               locales: foreignLocales,
               keys: translationKeysToDelete,
               context: "Product",
+              outcome: marketOutcome,
             });
+            marketPurgedKeys = translationKeysToDelete.filter((key) => !marketOutcome.failedKeys.has(key));
           } catch {
             // Logged inside; never fails a primary write that already succeeded.
           }
@@ -1609,6 +1616,10 @@ async function updatePrimaryProduct(
           policy: changePolicy!,
         });
         if (contentOutcome.taskId) retranslationTaskIds.push(contentOutcome.taskId);
+        // The repair purged the market layer itself (auto-translate path).
+        if (contentOutcome.marketPurgedKeys?.length) {
+          marketPurgedKeys = [...new Set([...marketPurgedKeys, ...contentOutcome.marketPurgedKeys])];
+        }
       }
     } catch (repairError: unknown) {
       loggers.product("warn", "Auto-translation of the changed fields could not start", {
@@ -1662,6 +1673,9 @@ async function updatePrimaryProduct(
     success: true,
     product: data.data.productUpdate.product,
     retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+    ...(marketPurgedKeys.length > 0
+      ? { marketPurgedFields: changedFields.filter((field) => marketPurgedKeys.includes(FIELD_TO_TRANSLATION_KEY[field] ?? "")) }
+      : {}),
     ...(purgeWarnings.length > 0 ? { warning: purgeWarnings.join(" ") } : {}),
     // §Phase 3.1 — a rule-based membership the picker asked to remove was
     // kept. Reported rather than silent: the merchant unticked a box and the

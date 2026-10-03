@@ -627,7 +627,7 @@ export interface UseContentEditorProps {
   t: TranslationStrings;
 
   /** Optional callback when translateFieldToAllLocales completes successfully */
-  onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
+  onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>, itemId?: string) => void;
 
   /** A "copy to all languages" that `onTranslateToAllLocalesComplete` was told
    *  about up front did NOT save for these locales: a page that cached the

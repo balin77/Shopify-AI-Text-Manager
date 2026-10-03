@@ -13,7 +13,7 @@
  * closes them.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("~/utils/logger.server", () => ({
   loggers: { product: vi.fn(), translation: vi.fn(), seo: vi.fn() },
@@ -36,7 +36,7 @@ const { world, policy, repairs } = vi.hoisted(() => ({
     autoTranslateExternalChanges: false,
     plan: "max",
   },
-  repairs: { market: [] as any[] },
+  repairs: { market: [] as any[], marketFailedKeys: [] as string[] },
 }));
 
 vi.mock("~/db.server", () => ({
@@ -63,6 +63,7 @@ vi.mock("~/services/translations/translation-change-policy.server", () => ({
 vi.mock("~/services/translations/market-layer-purge.server", () => ({
   purgeMarketOverrides: vi.fn(async (args: any) => {
     repairs.market.push(args);
+    for (const key of repairs.marketFailedKeys) args.outcome?.failedKeys.add(key);
   }),
 }));
 
@@ -81,6 +82,8 @@ vi.mock("~/services/sync-utils", () => ({
 }));
 
 import { handleUpdateProduct } from "../../app/actions/product/update.actions";
+import { reconcileAfterPrimarySave } from "~/services/translations/stale-translation-sync.server";
+import { fetchShopLocales } from "~/services/sync-utils";
 
 const SHOP = "test.myshopify.com";
 const PRODUCT = "gid://shopify/Product/10";
@@ -252,6 +255,7 @@ const savePrimary = (admin: any, fields: Record<string, string>) =>
 beforeEach(() => {
   marked.length = 0;
   repairs.market.length = 0;
+  repairs.marketFailedKeys.length = 0;
   policy.purgeOnPrimaryChange = true;
   policy.purgeUnreconciledSurfaces = true;
   policy.autoTranslateExternalChanges = false;
@@ -640,6 +644,62 @@ describe("updatePrimaryProduct -- primary-change purge", () => {
     // The market layer is purged beside it, through its own module.
     expect(repairs.market).toHaveLength(1);
     expect(repairs.market[0]).toMatchObject({ locales: ["fr", "it"], keys: ["title"] });
+  });
+
+  it("reports the fields whose MARKET overrides the purge cleared (the page hides market values only for these)", async () => {
+    const w = installAdmin();
+    makeDb();
+    const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title", "vendor"]) }));
+    expect(result.marketPurgedFields).toEqual(["title"]);
+  });
+
+  it("a key whose market removal was not confirmed is NOT reported as purged", async () => {
+    repairs.marketFailedKeys.push("title");
+    const w = installAdmin();
+    makeDb();
+    const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+    expect(result.marketPurgedFields).toBeUndefined();
+  });
+
+  describe("auto-translate on: the repair purges the market layer itself and reports its keys", () => {
+    beforeEach(() => {
+      policy.autoTranslateExternalChanges = true;
+      policy.purgeOnPrimaryChange = false;
+      policy.purgeUnreconciledSurfaces = false;
+      vi.mocked(fetchShopLocales).mockResolvedValue([
+        { locale: "de", primary: true, published: true },
+        { locale: "fr", primary: false, published: true },
+      ] as any);
+    });
+    afterEach(() => {
+      vi.mocked(fetchShopLocales).mockResolvedValue([] as any);
+    });
+
+    it("names the editor fields of the keys the repair confirmed purged", async () => {
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 1, marketPurgedKeys: ["title"] } as any);
+      const w = installAdmin();
+      makeDb();
+      const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title", "vendor"]) }));
+      expect(result.marketPurgedFields).toEqual(["title"]);
+    });
+
+    it("names nothing when the repair reports no purged key", async () => {
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 1 } as any);
+      const w = installAdmin();
+      makeDb();
+      const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+      expect(result.marketPurgedFields).toBeUndefined();
+    });
+  });
+
+  it("with the purge off nothing is reported as purged", async () => {
+    policy.purgeOnPrimaryChange = false;
+    policy.purgeUnreconciledSurfaces = false;
+    const w = installAdmin();
+    makeDb();
+    const result = body(await savePrimary(w.admin, { title: "Shirt", changedFields: JSON.stringify(["title"]) }));
+    expect(result.marketPurgedFields).toBeUndefined();
+    expect(repairs.market).toHaveLength(0);
   });
 
   it("does nothing to translations when the merchant switched the purge off", async () => {

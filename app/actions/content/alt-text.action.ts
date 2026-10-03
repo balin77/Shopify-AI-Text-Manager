@@ -5,6 +5,7 @@
  * Handles: generateAltText, generateAllAltTexts, translateAltText, translateAltTextToAllLocales
  */
 
+import { mergeAltLayerFallback } from "~/services/translations/image-alt-fallback.shared";
 import { data as json } from "react-router";
 import { AIService, toValidProvider, isManagedRefusal } from "../../../src/services/ai.service";
 import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
@@ -117,7 +118,7 @@ export async function saveImageAltTextPrimary(opts: {
   shop: string;
   mediaId: string;
   altText: string;
-}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string; retranslationTaskId?: string }> {
+}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string; retranslationTaskId?: string; libraryAltsPurged?: string[] }> {
   const { admin, db, shop, mediaId, altText } = opts;
   // The alt as it stood BEFORE this write — read first, because the cache write
   // below replaces it (product-alt-repair.server.ts).
@@ -125,6 +126,12 @@ export async function saveImageAltTextPrimary(opts: {
     "../../services/translations/product-alt-repair.server"
   );
   const snapshot = await snapshotProductAlts(db, shop, [mediaId]);
+  // A media-LIBRARY file (no ProductImage row) has no product repair; its
+  // foreign translations are deleted below (library-alt-repair.server.ts).
+  const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await import(
+    "../../services/translations/library-alt-repair.server"
+  );
+  const librarySnapshot = await snapshotLibraryAlts(db, shop, [mediaId]);
   let stored = altText;
   try {
     const r = await admin.graphql(
@@ -182,8 +189,20 @@ export async function saveImageAltTextPrimary(opts: {
     snapshot,
     written: [{ mediaId, alt: stored }],
   });
+  const libraryAltsPurged = await purgeLibraryAltTranslationsAfterWrite({
+    gateway: new ShopifyApiGateway(admin as never, shop),
+    db,
+    shop,
+    snapshot: librarySnapshot,
+    written: [{ mediaId, alt: stored }],
+  });
 
-  return { saved: true, userErrors: [], ...(retranslationTaskId ? { retranslationTaskId } : {}) };
+  return {
+    saved: true,
+    userErrors: [],
+    ...(retranslationTaskId ? { retranslationTaskId } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
+  };
 }
 
 // ============================================================================
@@ -868,15 +887,22 @@ export async function handleGenerateAltTextFromSku(
     "../../services/translations/product-alt-repair.server"
   );
   const snapshot = await snapshotProductAlts(ctx.db, ctx.session.shop, results.map((r) => r.mediaId));
+  const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await import(
+    "../../services/translations/library-alt-repair.server"
+  );
+  const librarySnapshot = await snapshotLibraryAlts(ctx.db, ctx.session.shop, results.map((r) => r.mediaId));
 
   // 2. Alt-Text zu Shopify synchronisieren
   const updateResponse = await ctx.admin.graphql(`#graphql
     mutation fileUpdate($files: [FileUpdateInput!]!) {
-      fileUpdate(files: $files) { userErrors { field message } }
+      fileUpdate(files: $files) {
+        files { id ... on MediaImage { alt } }
+        userErrors { field message }
+      }
     }
   `, { variables: { files: results.map(r => ({ id: r.mediaId, alt: r.altText })) } });
   const updateData = (await updateResponse.json()) as {
-    data?: { fileUpdate?: { userErrors?: Array<{ message: string }> } };
+    data?: { fileUpdate?: { files?: Array<{ id?: string; alt?: string | null }> | null; userErrors?: Array<{ message: string }> } };
     errors?: Array<{ message: string }>;
   };
   const updateErrors = [
@@ -889,13 +915,32 @@ export async function handleGenerateAltTextFromSku(
     return json({ success: false, error: updateErrors.map((e) => e.message).join("; ") }, { status: 502 });
   }
 
+  // Only what Shopify ECHOED with the sent alt is a confirmed write: the cache
+  // mirrors, the product repair and the library purge ride on that alone.
+  const { fileUpdateEchoConfirms } = await import("~/utils/file-update-echo.server");
+  const written = results.filter((r) =>
+    fileUpdateEchoConfirms(updateData.data?.fileUpdate?.files, r.mediaId, r.altText),
+  );
+  if (written.length === 0) {
+    return json({ success: false, error: "Shopify did not confirm the alt-text write" }, { status: 502 });
+  }
+
   // 3. DB updaten
   // R4-DI7: scope by the owning product's shop. Shopify media GIDs are only
   // unique per shop, so an unscoped { mediaId } updateMany can overwrite a
   // different tenant's ProductImage on a GID collision (cross-tenant write).
   // Mirrors the deliberately-scoped persistAltText().
-  await Promise.all(results.map(r =>
+  await Promise.all(written.map(r =>
     ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId, product: { shop: ctx.session.shop } }, data: { altText: r.altText } })
+  ));
+
+  // The library cache too (a file with no ProductImage row): without it the
+  // next snapshot keeps the old "before" and an identical later write would
+  // count as a change again.
+  await Promise.all(written.map((r) =>
+    ctx.db.mediaLibraryImage
+      .updateMany({ where: { shop: ctx.session.shop, id: r.mediaId }, data: { altText: r.altText } })
+      .catch((e: unknown) => logger.warn("[generateAltTextFromSku] media-library cache update failed", { error: e instanceof Error ? e.message : String(e) })),
   ));
 
   // The foreign alts of what changed — one run per product
@@ -905,13 +950,23 @@ export async function handleGenerateAltTextFromSku(
     db: ctx.db,
     shop: ctx.session.shop,
     snapshot,
-    written: results.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
+    written: written.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
+  });
+  // A library file's foreign translations describe the old alt: deleted
+  // (library-alt-repair.server.ts); never fails the write.
+  const libraryAltsPurged = await purgeLibraryAltTranslationsAfterWrite({
+    gateway: new ShopifyApiGateway(ctx.admin as never, ctx.session.shop),
+    db: ctx.db,
+    shop: ctx.session.shop,
+    snapshot: librarySnapshot,
+    written: written.map((r) => ({ mediaId: r.mediaId, alt: r.altText })),
   });
 
   return json({
     success: true,
-    updated: results.length,
+    updated: written.length,
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
   });
 }
 
@@ -946,6 +1001,7 @@ export async function handleSaveImageAltText(
   let shopifySaved = false;
   let notMirrored = false;
   let retranslationTaskIds: string[] = [];
+  let libraryAltsPurged: string[] = [];
 
   if (!locale || locale === primaryLocale) {
     // Primary locale: fileUpdate + shop-scoped cache write (shared helper).
@@ -955,6 +1011,7 @@ export async function handleSaveImageAltText(
     }
     shopifySaved = result.saved;
     retranslationTaskIds = result.retranslationTaskId ? [result.retranslationTaskId] : [];
+    libraryAltsPurged = result.libraryAltsPurged ?? [];
   } else {
     // Only a MediaImage GID ever reaches the translation write and the
     // mirror's library branch (the action takes a direct POST).
@@ -1072,6 +1129,7 @@ export async function handleSaveImageAltText(
     success: shopifySaved,
     ...(notMirrored ? { notMirrored: true } : {}),
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
   });
 }
 
@@ -1207,7 +1265,12 @@ export async function handleLoadImageAltTranslations(
       select: { mediaId: true },
     });
     const backed = new Set(productBacked.map((r: { mediaId: string | null }) => r.mediaId));
-    const libraryIds = galleryMediaIds.filter((id) => !backed.has(id));
+    // Product-backed media are read too, as a FALLBACK per (media, layer):
+    // a file that became product-backed while its foreign alts still sit in
+    // the library store (the old template apply created the row) would
+    // otherwise show them empty. Product rows win; every writer retires the
+    // library rows of a product-backed medium (`mirrorProductMediaAlt`).
+    const libraryIds = galleryMediaIds;
     if (libraryIds.length > 0) {
       const libraryRows = await db.contentTranslation.findMany({
         where: {
@@ -1220,8 +1283,21 @@ export async function handleLoadImageAltTranslations(
         },
         select: { resourceId: true, marketId: true, value: true },
       });
+      // The shared per-(media, layer) rule (image-alt-fallback.shared.ts).
+      const libraryByMedia = new Map<string, Map<string, string>>();
       for (const r of libraryRows) {
-        rows.push({ mediaId: r.resourceId, marketId: r.marketId ?? "", altText: r.value ?? "" });
+        const m = libraryByMedia.get(r.resourceId) ?? new Map<string, string>();
+        m.set(r.marketId ?? "", r.value ?? "");
+        libraryByMedia.set(r.resourceId, m);
+      }
+      for (const [mediaId, library] of libraryByMedia) {
+        const isBacked = backed.has(mediaId);
+        const product = new Map<string, string>();
+        for (const r of rows) if (r.mediaId === mediaId) product.set(r.marketId, r.altText);
+        for (const [marketOfRow, altText] of mergeAltLayerFallback(product, library, isBacked)) {
+          if (isBacked && product.has(marketOfRow)) continue;
+          rows.push({ mediaId, marketId: marketOfRow, altText });
+        }
       }
     }
   }

@@ -1070,6 +1070,79 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     ).toBe(true);
   });
 
+  describe("reports the keys whose MARKET layer its purge confirmed cleared (marketPurgedKeys)", () => {
+    const MARKET = "gid://shopify/Market/5";
+    const withOverride = () =>
+      db.contentTranslation.findMany.mockImplementation(async (args: any) => {
+        if (args?.where?.marketId === "") {
+          return [
+            { resourceId: PAGE, key: "title", locale: "de" },
+            { resourceId: PAGE, key: "body_html", locale: "de" },
+          ];
+        }
+        return [{ resourceId: PAGE, key: "title", locale: "de", marketId: MARKET }];
+      });
+
+    it("names every purged key when the removal was confirmed", async () => {
+      withOverride();
+      const result = await reconcileAfterPrimarySave(saveParams());
+      await awaitDetachedRetranslations();
+      expect([...(result.marketPurgedKeys ?? [])].sort()).toEqual(["body_html", "title"]);
+    });
+
+    it("leaves out a key whose market removal Shopify did not confirm", async () => {
+      withOverride();
+      shopify.removeConfirms = { de: [] };
+      const result = await reconcileAfterPrimarySave(saveParams());
+      await awaitDetachedRetranslations();
+      shopify.removeConfirms = null;
+      // `title` holds the unconfirmed override; `body_html` has none at all.
+      expect(result.marketPurgedKeys).toEqual(["body_html"]);
+    });
+
+    it("names nothing when auto-translate is off (the repair does not run)", async () => {
+      withOverride();
+      policy.autoTranslateExternalChanges = false;
+      const result = await reconcileAfterPrimarySave(saveParams());
+      expect(result.marketPurgedKeys).toBeUndefined();
+      expect(shopify.removeMarkets).toEqual([]);
+    });
+  });
+
+  it("a market HANDLE override is never purged when no global handle row is (handle opt-in off)", async () => {
+    const MARKET = "gid://shopify/Market/5";
+    policy.autoTranslateHandles = false;
+    shopifyHas = {};
+    primaryContent = { [PAGE]: { handle: { value: "neu", digest: NEW } } };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [] : [{ resourceId: PAGE, key: "handle", locale: "de", marketId: MARKET }],
+    );
+    shopify.removeMarkets.length = 0;
+    const result = await reconcileAfterPrimarySave(saveParams({ changed: [{ key: "handle" }] }));
+    await awaitDetachedRetranslations();
+    expect(shopify.removeMarkets).toEqual([]);
+    expect(result.marketPurgedPairs).toBeUndefined();
+    expect(result.marketPurgedKeys).toBeUndefined();
+  });
+
+  it("a CLEARED field no locale ever translated still loses its market override, and is reported", async () => {
+    // Nothing global is stale, so the repair never starts - but the caller has
+    // stood its own purge down, and the override would otherwise survive.
+    const MARKET = "gid://shopify/Market/5";
+    shopifyHas = {};
+    primaryContent = { [PAGE]: {} };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [] : [{ resourceId: PAGE, key: "title", locale: "de", marketId: MARKET }],
+    );
+    shopify.removeMarkets.length = 0;
+    const result = await reconcileAfterPrimarySave(saveParams({ changed: [{ key: "title" }] }));
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(0);
+    expect(shopify.removeMarkets).toEqual([MARKET]);
+    expect(result.marketPurgedPairs).toEqual([{ resourceId: PAGE, key: "title" }]);
+  });
+
   it("leaves the market overrides alone when the merchant switched BOTH answers off", async () => {
     // Reached through the PURGE path, not the auto-translate one: with
     // auto-translate off `reconcileAfterPrimarySave` returns before anything
@@ -1523,6 +1596,97 @@ describe("a group spanning several resources (sub-resources)", () => {
     };
     db.contentTranslation.findMany.mockClear();
     db.contentTranslation.findMany.mockResolvedValue([]);
+  });
+
+  it("narrows the purge per resource through reconcileAfterPrimarySave: an option name and a metafield value each remove and report ONLY their own key", async () => {
+    const MARKET = "gid://shopify/Market/5";
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === ""
+        ? []
+        : [
+            { resourceId: OPTION, key: "name", locale: "fr", marketId: MARKET },
+            { resourceId: OPTION, key: "value", locale: "fr", marketId: MARKET },
+            { resourceId: METAFIELD, key: "name", locale: "fr", marketId: MARKET },
+            { resourceId: METAFIELD, key: "value", locale: "fr", marketId: MARKET },
+          ],
+    );
+    shopify.removeTargets.length = 0;
+    shopify.removeCalls.length = 0;
+    const result = await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+          { resourceId: METAFIELD, resourceType: "Metafield", key: "value" },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    const byTarget = shopify.removeTargets.map((id, i) => [id, shopify.removeCalls[i].keys]);
+    expect(byTarget).toEqual([[OPTION, ["name"]], [METAFIELD, ["value"]]]);
+    expect(result.marketPurgedPairs).toEqual([
+      { resourceId: OPTION, key: "name" },
+      { resourceId: METAFIELD, key: "value" },
+    ]);
+  });
+
+  it("a DECLINED value (multi-line) with no global row keeps its market override unless the merchant's purge switch is on", async () => {
+    const M1 = "gid://shopify/Metafield/41";
+    const MARKET = "gid://shopify/Market/5";
+    translated = {};
+    primary = { [M1]: { value: { value: "Zeile 1\nZeile 2", digest: NEW } } };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [] : [{ resourceId: M1, key: "value", locale: "fr", marketId: MARKET }],
+    );
+    const run = () =>
+      reconcileAfterPrimarySave(groupParams({ changed: [{ resourceId: M1, resourceType: "Metafield", key: "value" }] }));
+
+    policy.purgeUnreconciledSurfaces = false;
+    shopify.removeMarkets.length = 0;
+    const off = await run();
+    await awaitDetachedRetranslations();
+    expect(shopify.removeMarkets).toEqual([]);
+    expect(off.marketPurgedPairs).toBeUndefined();
+
+    policy.purgeUnreconciledSurfaces = true;
+    const on = await run();
+    await awaitDetachedRetranslations();
+    expect(shopify.removeMarkets).toEqual([MARKET]);
+    expect(on.marketPurgedPairs).toEqual([{ resourceId: M1, key: "value" }]);
+  });
+
+  it("reports the market purge PER RESOURCE: a declined sibling of the same key is neither purged nor reported", async () => {
+    const M1 = "gid://shopify/Metafield/31";
+    const M2 = "gid://shopify/Metafield/32";
+    const MARKET = "gid://shopify/Market/5";
+    // The merchant's stored answer is "don't delete": what we DECLINE stays.
+    policy.purgeUnreconciledSurfaces = false;
+    translated = { fr: [M1, M2] };
+    primary = {
+      [M1]: { value: { value: "Massivholz", digest: NEW } },
+      [M2]: { value: { value: "Zeile 1\nZeile 2", digest: NEW } },
+    };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === ""
+        ? []
+        : [
+            { resourceId: M1, key: "value", locale: "fr", marketId: MARKET },
+            { resourceId: M2, key: "value", locale: "fr", marketId: MARKET },
+          ],
+    );
+    shopify.removeTargets.length = 0;
+    const result = await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: M1, resourceType: "Metafield", key: "value" },
+          { resourceId: M2, resourceType: "Metafield", key: "value", retranslatable: false },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.marketPurgedPairs).toEqual([{ resourceId: M1, key: "value" }]);
+    expect(shopify.removeTargets).toEqual([M1]);
   });
 
   it("registers on each entry's OWN resource, not on the group's", async () => {

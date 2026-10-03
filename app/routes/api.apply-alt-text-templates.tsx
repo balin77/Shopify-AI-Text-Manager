@@ -2,35 +2,12 @@ import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { fillAltTextTemplate, resolveVariableValues, createTranslationCache } from "../utils/alt-text-template";
-import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
-import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { fileUpdateEchoConfirms } from "~/utils/file-update-echo.server";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
-import { mirrorProductMediaAlt, registerMediaAltAndVerify } from "~/services/translations/verified-translations.server";
-
-// Resolve a fresh image URL from Shopify for stub-row creation. Returns the gid
-// itself as a last-resort placeholder so we never lose a translation due to a
-// missing local DB row — the next product sync will overwrite the URL.
-async function resolveImageUrl(admin: { graphql: (q: string, opts?: any) => Promise<Response> }, gid: string): Promise<string> {
-  try {
-    const r = await admin.graphql(
-      `#graphql
-        query mediaImageUrl($id: ID!) {
-          node(id: $id) {
-            ... on MediaImage { image { url } }
-          }
-        }`,
-      { variables: { id: gid } }
-    );
-    const d = await r.json() as any;
-    const url = d?.data?.node?.image?.url;
-    if (typeof url === "string" && url.length > 0) return url;
-  } catch {
-    // fall through
-  }
-  return gid;
-}
+import { persistAltText } from "~/services/image-alt-template-persist.server";
+import { registerMediaAltAndVerify } from "~/services/translations/verified-translations.server";
 
 // Shopify's Admin GraphQL API is cost-throttled per shop. Applying every
 // locale in parallel (and the webhook syncs each apply triggers) can exhaust
@@ -69,76 +46,6 @@ function throttledClient(admin: { graphql: (q: string, opts?: any) => Promise<Re
       return { json: async () => body };
     },
   };
-}
-
-// Persist the alt-text (primary) or translation (foreign locale) for one media
-// GID, atomically and idempotently. The ProductImage row is upserted on the
-// (productId, mediaId) unique key so concurrent applies collapse instead of
-// creating duplicates; both writes share one transaction so a racing sync
-// either sees both or neither, and the retry above heals an interleaved wipe.
-async function persistAltText(
-  productId: string,
-  gid: string,
-  shop: string,
-  locale: string,
-  isPrimary: boolean,
-  altText: string,
-  admin: { graphql: (q: string, opts?: any) => Promise<Response> }
-): Promise<void> {
-  await withDbRaceRetry(async () => {
-    // Resolve a URL only when the row is missing — avoids a Shopify call per
-    // image on the common update path. Scoped by shop: media GIDs are unique
-    // per shop, so an unscoped match could touch another tenant's row.
-    const existing = await db.productImage.findFirst({
-      where: { mediaId: gid, product: { shop } },
-      select: { id: true },
-    });
-    const createUrl = existing ? gid : await resolveImageUrl(admin, gid);
-
-    await db.$transaction(async (tx) => {
-      await tx.productImage.upsert({
-        where: { productId_mediaId: { productId, mediaId: gid } },
-        create: {
-          productId,
-          mediaId: gid,
-          url: createUrl,
-          ...(isPrimary ? { altText: altText || null, altTextModifiedAt: new Date() } : {}),
-        },
-        update: isPrimary ? { altText: altText || null, altTextModifiedAt: new Date() } : {},
-        select: { id: true },
-      });
-      if (!isPrimary) {
-        // The detached alt repair watches the MEDIA resource it is about to
-        // write (translation-locks.shared.ts); without this claim it never sees
-        // the merchant write and overwrites it minutes later.
-        markTranslationSaved(gid);
-        // The ONE product-alt mirror, narrowed to THIS product's row (just
-        // upserted, so the lookup inside the transaction sees it): a
-        // foreign-key failure on ANOTHER product's row inside a Postgres
-        // transaction would abort the whole transaction, so those rows are
-        // mirrored after commit, below.
-        const mirrored = await mirrorProductMediaAlt(tx, {
-          shop,
-          productId,
-          mediaId: gid,
-          locale,
-          value: altText,
-          inTransaction: true,
-        });
-        if (mirrored === "imageGone") {
-          throw new Error(`No cached ProductImage row for ${gid} -- the alt translation could not be mirrored`);
-        }
-      }
-    });
-    if (!isPrimary) {
-      // Every OTHER product's row of a shared medium -- the translation lives
-      // on the one MediaImage they all show. Outside the transaction, so a
-      // row a concurrent sync just deleted is skipped instead of aborting
-      // anything; this product's row is re-upserted with the same value
-      // (idempotent), and a retry of this whole block repeats it harmlessly.
-      await mirrorProductMediaAlt(db, { shop, productId, mediaId: gid, locale, value: altText });
-    }
-  });
 }
 
 interface ApplyBody {
@@ -316,6 +223,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         [...new Set(variants.flatMap((v) => [v.mainImageGid, ...v.galleryFileGids].filter((g): g is string => !!g)))],
       )
     : new Map();
+  // A media-LIBRARY file picked into a variant gallery has no product repair:
+  // its foreign translations are deleted when its primary alt changes
+  // (library-alt-repair.server.ts). Read BEFORE the loop, like the snapshot above.
+  const { snapshotLibraryAlts, purgeLibraryAltTranslationsAfterWrite } = await import(
+    "../services/translations/library-alt-repair.server"
+  );
+  const libraryAltSnapshot = isPrimary
+    ? await snapshotLibraryAlts(
+        db,
+        session.shop,
+        [...new Set(variants.flatMap((v) => [v.mainImageGid, ...v.galleryFileGids].filter((g): g is string => !!g)))],
+      )
+    : new Map();
   const primaryWritten = new Map<string, string>();
 
   try {
@@ -357,24 +277,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               mutation fileUpdate($files: [FileUpdateInput!]!) {
                 fileUpdate(files: $files) {
                   userErrors { field message }
-                  files { id }
+                  files { id ... on MediaImage { alt } }
                 }
               }`,
             { files: [{ id: gid, alt: altText }] }
           );
           const errs = d.data?.fileUpdate?.userErrors ?? [];
-          if (errs.length === 0) {
+          // Confirmed only by the ECHO of this file with the alt that was sent: a
+          // null payload carries no userErrors either.
+          const confirmed = errs.length === 0 && fileUpdateEchoConfirms(d.data?.fileUpdate?.files, gid, altText);
+          if (confirmed) {
             applied++;
             primaryWritten.set(gid, altText);
+            // Keep the library cache in step (a library file has no ProductImage
+            // row until persistAltText creates one): the next "before" must be this alt.
+            await db.mediaLibraryImage
+              .updateMany({ where: { shop: session.shop, id: gid }, data: { altText: altText || null } })
+              .catch(() => undefined);
             try {
-              await persistAltText(productId, gid, session.shop, locale, true, altText, admin);
+              await persistAltText(db, productId, gid, session.shop, locale, true, altText, admin);
             } catch (dbErr: unknown) {
               // Don't roll back the Shopify save; surface the DB failure so the user
               // knows the local cache is out of sync and can retry / re-sync.
               errors.push(`${variant.title} (Position ${tmpl.position}, DB save): ${String(dbErr)}`);
             }
           } else {
-            errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
+            errors.push(
+              `${variant.title} (Position ${tmpl.position}, GID ${gid}): ${
+                errs.length > 0 ? errs.map((e: any) => e.message).join(", ") : "Shopify did not confirm the alt-text write"
+              }`,
+            );
           }
         } else {
           // Foreign locale: verified register (digest -> register -> echo).
@@ -388,7 +320,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (verified.confirmed) {
             applied++;
             try {
-              await persistAltText(productId, gid, session.shop, locale, false, verified.storedValue ?? altText, admin);
+              await persistAltText(db, productId, gid, session.shop, locale, false, verified.storedValue ?? altText, admin);
             } catch (dbErr: unknown) {
               errors.push(`${variant.title} (Position ${tmpl.position}, ${locale} DB save): ${String(dbErr)}`);
             }
@@ -442,6 +374,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           written: [...primaryWritten].map(([mediaId, alt]) => ({ mediaId, alt })),
         })
       : [];
+  const libraryAltsPurged =
+    primaryWritten.size > 0
+      ? await purgeLibraryAltTranslationsAfterWrite({
+          gateway: new ShopifyApiGateway(admin as never, session.shop),
+          db,
+          shop: session.shop,
+          snapshot: libraryAltSnapshot,
+          written: [...primaryWritten].map(([mediaId, alt]) => ({ mediaId, alt })),
+        })
+      : [];
 
   // Finalize the running task with the real outcome. status: "failed" when
   // nothing was applied, "completed" otherwise — the navigation logic
@@ -473,6 +415,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     applied,
     attempted,
     ...(retranslationTaskIds.length > 0 ? { retranslationTaskIds } : {}),
+    ...(libraryAltsPurged.length > 0 ? { libraryAltsPurged } : {}),
     errors: errors.length > 0 ? errors : undefined,
     error: errorSummary,
   });

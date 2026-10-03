@@ -56,6 +56,11 @@ import { logger } from "../../utils/logger.server";
  *  already state where they spell it. */
 const GROUP_SEP = "\u0000";
 
+/** The (resource, key) pair `outcome.failedPairs` is spelled in. */
+export function purgePairKey(resourceId: string, key: string): string {
+  return `${resourceId}${GROUP_SEP}${key}`;
+}
+
 /** The one shape both producers of `currentOverrides` build. */
 export function marketOverrideKey(
   resourceId: string,
@@ -85,6 +90,13 @@ export async function purgeMarketOverrides(params: {
   locales: readonly string[];
   keys: readonly string[];
   /**
+   * Narrows `keys` per RESOURCE when the refs changed different keys: a row is
+   * only purged if its resource lists its key here. Without it every ref is
+   * asked for every key, which for a group of resources is the UNION of their
+   * changes - an override of a key a resource did not change would go too.
+   */
+  keysByResource?: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
    * Overrides this purge must WALK PAST, as
    * `resourceId\u0000marketId\u0000locale\u0000key` (`marketOverrideKey`).
    *
@@ -99,8 +111,25 @@ export async function purgeMarketOverrides(params: {
   currentOverrides?: ReadonlySet<string>;
   /** For the log line, so a shop's overrides can be traced to a surface. */
   context?: string;
+  /**
+   * Filled with the KEYS whose market layer this call did NOT clear for sure:
+   * an override it could not read, walked past (current) or whose removal was
+   * not confirmed. A key that is in neither this set nor un-asked-for is gone
+   * from every market. The caller reports the rest to the editor, which hides
+   * market values only for keys proven purged.
+   */
+  outcome?: {
+    failedKeys: Set<string>;
+    /**
+     * The same verdict PER RESOURCE (`purgePairKey(resourceId, key)`): a key is
+     * in `failedKeys` if ANY resource failed it, so a caller that purged several
+     * resources in one call reads this to learn which one failed. A pair in
+     * neither set was cleared (or held no override).
+     */
+    failedPairs?: Set<string>;
+  };
 }): Promise<number> {
-  const { gateway, mirror, refs, locales, keys, currentOverrides, context } = params;
+  const { gateway, mirror, refs, locales, keys, keysByResource, currentOverrides, context, outcome } = params;
   if (refs.length === 0 || locales.length === 0 || keys.length === 0) return 0;
 
   let rows: Array<{ resourceId: string; locale: string; key: string; marketId: string }>;
@@ -112,6 +141,10 @@ export async function purgeMarketOverrides(params: {
       surface: context,
       error: error instanceof Error ? error.message : String(error),
     });
+    for (const key of keys) {
+      outcome?.failedKeys.add(key);
+      for (const ref of refs) outcome?.failedPairs?.add(purgePairKey(ref.resourceId, key));
+    }
     return 0;
   }
   if (rows.length === 0) return 0;
@@ -130,9 +163,14 @@ export async function purgeMarketOverrides(params: {
     string,
     { marketId: string; ref: TranslationRef; locales: Set<string>; keys: Set<string> }
   >();
+  // (market, locale, key) pairs this call is asked to remove; the confirmed
+  // ones are ticked off below and whatever is left is reported as failed.
+  const wanted = new Set<string>();
   for (const row of rows) {
     const ref = refById.get(row.resourceId);
     if (!ref) continue;
+    // This resource did not change this key: its override is not stale.
+    if (keysByResource && !keysByResource.get(row.resourceId)?.has(row.key)) continue;
     // An empty market id is the GLOBAL layer, and `removeAndVerifyAcrossLocales`
     // reads it as one: a row that slips through here without a real market
     // would send a global removal — deleting the very translation the repair is
@@ -144,8 +182,11 @@ export async function purgeMarketOverrides(params: {
     // hand-written value — the one outcome the `outdated` evidence exists to
     // prevent, and the reason it is threaded down here at all.
     if (currentOverrides?.has(marketOverrideKey(row.resourceId, row.marketId, row.locale, row.key))) {
+      outcome?.failedKeys.add(row.key);
+      outcome?.failedPairs?.add(purgePairKey(row.resourceId, row.key));
       continue;
     }
+    wanted.add(`${row.marketId}${GROUP_SEP}${row.locale}${GROUP_SEP}${row.resourceId}${GROUP_SEP}${row.key}`);
     const id = `${row.marketId}${GROUP_SEP}${row.resourceId}`;
     const group = byMarketResource.get(id) ?? {
       marketId: row.marketId,
@@ -181,6 +222,9 @@ export async function purgeMarketOverrides(params: {
         }
         await mirror.removeMarket(group.ref, locale, confirmed, group.marketId);
         removed += confirmed.length;
+        for (const key of confirmed) {
+          wanted.delete(`${group.marketId}${GROUP_SEP}${locale}${GROUP_SEP}${group.ref.resourceId}${GROUP_SEP}${key}`);
+        }
       }
     } catch (error: unknown) {
       unconfirmed++;
@@ -194,6 +238,14 @@ export async function purgeMarketOverrides(params: {
     }
   }
 
+  if (outcome) {
+    for (const entry of wanted) {
+      const parts = entry.split(GROUP_SEP);
+      const key = parts[parts.length - 1];
+      outcome.failedKeys.add(key);
+      outcome.failedPairs?.add(purgePairKey(parts[2], key));
+    }
+  }
   if (removed > 0 || unconfirmed > 0) {
     logger.info("[MarketPurge] Market overrides of a changed primary text", {
       context: "MarketPurge",

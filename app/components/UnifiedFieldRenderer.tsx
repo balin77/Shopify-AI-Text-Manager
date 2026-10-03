@@ -295,9 +295,10 @@ export function UnifiedFieldRenderer(
   // translatableContent — the value this field holds in a foreign locale is
   // "" until an image was chosen for it.
   if (field.type === "themeImage") {
-    const primaryValue = Array.isArray(selectedItem?.translatableContent)
-      ? String((selectedItem.translatableContent as Array<{ key: string; value?: string }>).find((c) => c?.key === field.key)?.value ?? "")
-      : "";
+    const themeEntry = Array.isArray(selectedItem?.translatableContent)
+      ? (selectedItem.translatableContent as Array<{ key: string; value?: string; primaryUnmapped?: boolean }>).find((c) => c?.key === field.key)
+      : undefined;
+    const primaryValue = String(themeEntry?.value ?? "");
     return (
       <ThemeImageField
         label={field.label}
@@ -306,6 +307,7 @@ export function UnifiedFieldRenderer(
         onChange={onChange}
         isPrimaryLocale={isPrimaryLocale}
         readOnly={readOnly}
+        primaryUnsavable={!!themeEntry?.primaryUnmapped}
         currentLanguage={currentLanguage}
       />
     );

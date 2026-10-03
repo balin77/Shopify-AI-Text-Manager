@@ -318,6 +318,12 @@ export interface QueuedAltSave {
    * or product switch; a page Save's alt saves finish on their own.
    */
   immediate?: boolean;
+  /**
+   * "Accept & Translate" of a generated suggestion: once THIS save is
+   * confirmed, the image's alt is translated into every other language (global
+   * layer). A failed save translates nothing.
+   */
+  thenTranslateAll?: boolean;
 }
 
 export function enqueueAltSave(queue: QueuedAltSave[], entry: QueuedAltSave): QueuedAltSave[] {
