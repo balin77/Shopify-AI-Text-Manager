@@ -14,6 +14,7 @@ import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../l
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 import { altTranslateSourceText, foreignAltLocked } from "../../services/alt-text-feedback.shared";
 import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
+import { AISuggestionBanner } from "../AISuggestionBanner";
 
 interface VariantGallerySectionProps {
   variant: VariantWithGallery;
@@ -40,6 +41,11 @@ interface VariantGallerySectionProps {
   /** Translates the tile's SAVED primary alt into the language on screen (the handler reads the source itself). */
   onTranslateAltText?: (url: string) => void;
   onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
+  /** The pending ✨ suggestion of the tile's medium in the view on screen (undefined = none). */
+  altSuggestionFor?: (url: string) => string | undefined;
+  /** Accept (`translate: false`) or Accept & Translate (`true`) the tile's suggestion. */
+  onAcceptAltSuggestion?: (url: string, translate: boolean) => void;
+  onRejectAltSuggestion?: (url: string) => void;
   /** True while this tile's medium has an unsaved PRIMARY alt: translating it to every language waits for its Save. */
   isAltDirty?: (url: string) => boolean;
   /** True while this tile carries an unsaved alt draft of the view on screen (keeps a foreign box open while it is being cleared). */
@@ -99,6 +105,9 @@ export function VariantGallerySection({
   onGenerateAltText,
   onTranslateAltText,
   onTranslateAltToAllLocales,
+  altSuggestionFor,
+  onAcceptAltSuggestion,
+  onRejectAltSuggestion,
   altAiBlockedHint,
   primaryAltForUrl,
   isAltDirty,
@@ -507,6 +516,21 @@ export function VariantGallerySection({
                   )}
                 </div>
               </div>
+              {singleSelectedUrl && onAcceptAltSuggestion && onRejectAltSuggestion && altSuggestionFor?.(singleSelectedUrl) !== undefined && (
+                <AISuggestionBanner
+                  fieldType="altText"
+                  suggestionText={altSuggestionFor!(singleSelectedUrl) as string}
+                  onAccept={() => onAcceptAltSuggestion(singleSelectedUrl, false)}
+                  onDecline={() => onRejectAltSuggestion(singleSelectedUrl)}
+                  onAcceptAndTranslate={isPrimaryLocale ? () => onAcceptAltSuggestion(singleSelectedUrl, true) : undefined}
+                  acceptLabel={t.products?.accept || "Accept"}
+                  declineLabel={t.products?.decline || "Decline"}
+                  acceptAndTranslateLabel={t.products?.acceptTranslate || "Accept & Translate"}
+                  titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
+                  singleLocaleHint={singleLocaleHint}
+                  disabled={isAltTextLoading}
+                />
+              )}
               {altLocked && (
                 <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
                   {altNeedsPrimaryHint}
