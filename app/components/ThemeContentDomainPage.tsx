@@ -27,7 +27,7 @@ import type { FetcherData, TranslatableContentItem, ContentEditorConfig, ShopLoc
 import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
-import { upsertThemeRow, applyThemeSaveToRows, themeRowValue } from "~/services/theme-translation-cache.shared";
+import { upsertThemeRow, applyThemeSaveToRows, themeRowValue, rowsAfterPrimarySave } from "~/services/theme-translation-cache.shared";
 
 /**
  * Put a GLOBAL translation into one locale's cached rows (in place). Only a row
@@ -776,9 +776,12 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
 
           // Keys whose removal Shopify did not confirm are still live there (and
           // kept locally): dropping them from the cache would show them missing.
-          const saveData = fetcher.data as { warnings?: string[]; unconfirmedPurgeKeys?: string[] };
+          const saveData = fetcher.data as { warnings?: string[]; unconfirmedPurgeKeys?: string[]; marketPurgedKeys?: string[]; foreignRowsInvalidated?: boolean };
           // The purge warning itself is shown by the editor hook, in place of the plain "saved" toast.
-          const invalidated = keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
+          // With both switches off the save touched no foreign row: the cache keeps them.
+          const invalidated = saveData.foreignRowsInvalidated === false
+            ? new Set<string>()
+            : keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
 
           if (invalidated.size > 0) {
             setLoadedTranslations(prev => {
@@ -787,7 +790,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
 
               const newGroupCache: Record<string, ThemeTranslationRecord[]> = {};
               for (const [locale, translations] of Object.entries(groupCache)) {
-                newGroupCache[locale] = translations.filter(t => !invalidated.has(t.key));
+                newGroupCache[locale] = rowsAfterPrimarySave(translations, invalidated, saveData.marketPurgedKeys);
               }
 
               return { ...prev, [selectedGroupId]: newGroupCache };
@@ -798,7 +801,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             if (refGroup) {
               const newRefGroup: Record<string, ThemeTranslationRecord[]> = {};
               for (const [locale, translations] of Object.entries(refGroup)) {
-                newRefGroup[locale] = translations.filter(t => !invalidated.has(t.key));
+                newRefGroup[locale] = rowsAfterPrimarySave(translations, invalidated, saveData.marketPurgedKeys);
               }
               loadedTranslationsRef.current = {
                 ...loadedTranslationsRef.current,

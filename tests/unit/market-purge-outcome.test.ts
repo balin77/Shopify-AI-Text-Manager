@@ -12,7 +12,7 @@ vi.mock("~/services/translations/verified-translations.server", () => ({
 }));
 vi.mock("~/utils/logger.server", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
-import { purgeMarketOverrides, marketOverrideKey } from "~/services/translations/market-layer-purge.server";
+import { purgeMarketOverrides, marketOverrideKey, purgePairKey } from "~/services/translations/market-layer-purge.server";
 
 const REF = { resourceId: "gid://shopify/Product/1", resourceType: "Product" };
 const row = (key: string, locale = "fr", marketId = "gid://shopify/Market/1") => ({ resourceId: REF.resourceId, locale, key, marketId });
@@ -26,6 +26,70 @@ const run = async (m: any, extra: Record<string, unknown> = {}) => {
   await purgeMarketOverrides({ gateway: {} as any, mirror: m, refs: [REF], locales: ["fr"], keys: ["title", "body_html"], outcome, ...extra } as any);
   return outcome.failedKeys;
 };
+
+const REF_B = { resourceId: "gid://shopify/Product/2", resourceType: "Product" };
+
+describe("purgeMarketOverrides outcome per resource", () => {
+  const rowOf = (r: { resourceId: string }, key: string) => ({ resourceId: r.resourceId, locale: "fr", key, marketId: "gid://shopify/Market/1" });
+  const runPairs = async (m: any, extra: Record<string, unknown> = {}) => {
+    const outcome = { failedKeys: new Set<string>(), failedPairs: new Set<string>() };
+    await purgeMarketOverrides({ gateway: {} as any, mirror: m, refs: [REF, REF_B], locales: ["fr"], keys: ["title"], outcome, ...extra } as any);
+    return outcome;
+  };
+
+  it("two resources share a key: A confirmed, B not -> only B is failed (A is not masked)", async () => {
+    remove.mockImplementation(async (_g: unknown, resourceId: string) => ({
+      confirmedPairs: new Set(resourceId === REF.resourceId ? ["fr\u0001title"] : []),
+    }));
+    const outcome = await runPairs(mirror([rowOf(REF, "title"), rowOf(REF_B, "title")]));
+    expect([...outcome.failedKeys]).toEqual(["title"]);
+    expect([...outcome.failedPairs]).toEqual([purgePairKey(REF_B.resourceId, "title")]);
+  });
+
+  it("keysByResource: a resource is purged only for the keys it changed", async () => {
+    remove.mockReset();
+    remove.mockResolvedValue({ confirmedPairs: new Set(["fr\u0001title", "fr\u0001label"]) });
+    const m = mirror([rowOf(REF, "title"), rowOf(REF, "label")]);
+    await runPairs(m, { keys: ["title", "label"], keysByResource: new Map([[REF.resourceId, new Set(["label"])]]) });
+    // Only `label` was asked for A; its `title` override was never touched.
+    expect(remove.mock.calls.every((c: any[]) => c[2].length === 1 && c[2][0] === "label")).toBe(true);
+    expect(m.removeMarket.mock.calls.map((c: any[]) => c[2])).toEqual([["label"]]);
+  });
+});
+
+describe("purgeMarketOverrides failedPairs on the failure paths", () => {
+  const ids = (o: { failedPairs: Set<string> }) => [...o.failedPairs].sort();
+  const runIt = async (m: any) => {
+    const outcome = { failedKeys: new Set<string>(), failedPairs: new Set<string>() };
+    await purgeMarketOverrides({ gateway: {} as any, mirror: m, refs: [REF, REF_B], locales: ["fr"], keys: ["title"], outcome } as any);
+    return outcome;
+  };
+  const r = (res: { resourceId: string }) => ({ resourceId: res.resourceId, locale: "fr", key: "title", marketId: "gid://shopify/Market/1" });
+
+  it("a group whose removal THREW fails its resource only", async () => {
+    remove.mockReset();
+    remove.mockImplementation(async (_g: unknown, resourceId: string) => {
+      if (resourceId === REF_B.resourceId) throw new Error("transport");
+      return { confirmedPairs: new Set(["fr\u0001title"]) };
+    });
+    const o = await runIt(mirror([r(REF), r(REF_B)]));
+    expect(ids(o)).toEqual([purgePairKey(REF_B.resourceId, "title")]);
+  });
+
+  it("a local-delete failure after a confirmed echo leaves the pair failed", async () => {
+    remove.mockReset();
+    remove.mockResolvedValue({ confirmedPairs: new Set(["fr\u0001title"]) });
+    const m = mirror([r(REF)]);
+    m.removeMarket = vi.fn(async () => { throw new Error("db"); });
+    const o = await runIt(m);
+    expect(ids(o)).toEqual([purgePairKey(REF.resourceId, "title")]);
+  });
+
+  it("an unreadable mirror fails every (resource, key) pair asked", async () => {
+    const o = await runIt(mirror([], false));
+    expect(ids(o)).toEqual([purgePairKey(REF.resourceId, "title"), purgePairKey(REF_B.resourceId, "title")].sort());
+  });
+});
 
 describe("purgeMarketOverrides outcome", () => {
   it("a confirmed removal is not a failed key", async () => {

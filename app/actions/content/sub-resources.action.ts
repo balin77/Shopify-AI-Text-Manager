@@ -1223,6 +1223,9 @@ export async function handleSavePrimarySubResources(
     // Sub-resources whose stale foreign translation Shopify did not confirm
     // removing (kept locally); surfaced as a warning on a save that worked.
     const purgeUnconfirmed: string[] = [];
+    // Sub-resources whose MARKET overrides a purge CONFIRMED removed (reported
+    // so the page stops showing them; only confirmed ones are listed).
+    const marketPurgedResourceIds = new Set<string>();
     if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
       // The purge deletes translation rows a sync reading Shopify a moment
       // earlier would put straight back; marked again once it is done.
@@ -1235,7 +1238,7 @@ export async function handleSavePrimarySubResources(
       // again. Option VALUES are covered by the option's own entry below only
       // where their ids are known; the removal loop addresses each id itself.
       try {
-        const { purgeMarketOverrides } = await import(
+        const { purgeMarketOverrides, purgePairKey } = await import(
           "~/services/translations/market-layer-purge.server"
         );
         const { contentTranslationMirror } = await import(
@@ -1268,14 +1271,29 @@ export async function handleSavePrimarySubResources(
         // query over the whole set and a row only matches its own resource
         // type's key — a ProductOption has no `value` row to find.
         if (nameRefs.length + valueRefs.length + metafieldRefs.length > 0) {
+          const marketOutcome = { failedKeys: new Set<string>(), failedPairs: new Set<string>() };
+          // Each resource is asked for its OWN key only (an option or an
+          // option value holds `name`, a metafield `value`).
+          const keysByResource = new Map<string, Set<string>>([
+            ...[...nameRefs, ...valueRefs].map((ref) => [ref.resourceId, new Set(["name"])] as const),
+            ...metafieldRefs.map((ref) => [ref.resourceId, new Set(["value"])] as const),
+          ]);
           await purgeMarketOverrides({
             gateway,
             mirror,
             refs: [...nameRefs, ...valueRefs, ...metafieldRefs],
             locales: foreignLocales,
             keys: ["name", "value"],
+            keysByResource,
             context: "subResource",
+            outcome: marketOutcome,
           });
+          // Reported PER RESOURCE: one that failed does not hold back (or get
+          // hidden by) its siblings.
+          for (const [resourceId, keys] of keysByResource) {
+            const [key] = [...keys];
+            if (!marketOutcome.failedPairs.has(purgePairKey(resourceId, key))) marketPurgedResourceIds.add(resourceId);
+          }
         }
       } catch {
         // Logged inside; a stale override never fails a save that succeeded.
@@ -1473,6 +1491,8 @@ export async function handleSavePrimarySubResources(
           // on it. Without it a merchant watched an option name's translations
           // stay empty for the minute the AI was working.
           if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
+          // The repair purged the market layer itself (auto-translate path).
+          for (const pair of outcome.marketPurgedPairs ?? []) marketPurgedResourceIds.add(pair.resourceId);
         }
       }
       } catch (err) {
@@ -1532,6 +1552,7 @@ export async function handleSavePrimarySubResources(
       savedMetafields,
       failedMetafields,
       retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+      ...(marketPurgedResourceIds.size > 0 ? { marketPurgedResourceIds: [...marketPurgedResourceIds] } : {}),
       ...(purgeUnconfirmed.length > 0
         ? { warnings: ["translationPurgeUnconfirmed"], unconfirmedPurge: purgeUnconfirmed }
         : {}),

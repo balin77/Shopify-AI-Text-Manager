@@ -2552,6 +2552,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const index = parseInt(indexStr, 10);
             if (mirrorFailed.includes(index)) continue;
             if (!altCarried(index)) continue;
+            // A confirmed save of this layer SUPERSEDES a staged overlay entry
+            // of the same index (a "clear all" leaves `{0: ""}` for the
+            // read-only featured alt, which the alt load reads before the
+            // item): the value that was SENT replaces it, or a language round
+            // trip showed "" for a translation Shopify now holds.
+            const stagedLayer = localAltTextOverlayRef.current[buildLocaleKey(savedLocale, savedMarketId ?? "")];
+            // Only the clear-all `""`: a newer staged value is not ours to take back.
+            if (stagedLayer && stagedLayer[index] === "") stagedLayer[index] = altText;
             if (item.images[index]) {
               if (!item.images[index].altTextTranslations) {
                 item.images[index].altTextTranslations = [];
