@@ -76,3 +76,22 @@ export function themeRowValue(
   }
   return rows.find((tr) => tr.key === key && layerOf(tr) === "")?.value || "";
 }
+
+/**
+ * What a PRIMARY save leaves of a locale's cached rows. A changed key's GLOBAL
+ * row goes (the server purged or is re-translating it); its MARKET rows go only
+ * where the server CONFIRMED the market purge (`marketPurgedKeys`) - an override
+ * that is still live on Shopify must keep showing, so an unconfirmed, failed or
+ * switched-off purge hides nothing. Rows of keys not in `invalidated` stay.
+ */
+export function rowsAfterPrimarySave<T extends ThemeCacheRow>(
+  rows: readonly T[],
+  invalidated: ReadonlySet<string>,
+  marketPurgedKeys: readonly string[] | undefined,
+): T[] {
+  const purged = new Set(marketPurgedKeys ?? []);
+  return rows.filter((row) => {
+    if (!invalidated.has(row.key)) return true;
+    return layerOf(row) !== "" && !purged.has(row.key);
+  });
+}
