@@ -264,6 +264,7 @@ export function maskStructuralStrings(fileJson: unknown, filename: string): () =
     if (!isObj(node)) return;
     maskKey(node, "type");
     maskKey(node, "block_order");
+    maskKey(node, "custom_css");
     if (isObj(node.blocks)) for (const block of Object.values(node.blocks)) visitNode(block);
   };
   const visitSections = (sections: unknown) => {
@@ -276,10 +277,14 @@ export function maskStructuralStrings(fileJson: unknown, filename: string): () =
     const live = getAtPath(fileJson, base);
     if (isObj(live)) {
       visitSections(live.sections);
+      visitSections(live.blocks); // app embeds: current.blocks.<id> carry a `type` too
       maskKey(live, "content_for_index");
     }
   } else {
     maskKey(fileJson, "order");
+    // Top-level structure of a template / section group: never a setting value.
+    for (const key of ["layout", "wrapper"]) maskKey(fileJson, key);
+    if (filename.startsWith("sections/")) for (const key of ["type", "name"]) maskKey(fileJson, key);
     visitSections(fileJson.sections);
   }
   return () => { for (const fn of undo.reverse()) fn(); };

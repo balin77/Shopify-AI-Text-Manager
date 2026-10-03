@@ -5,6 +5,7 @@
  * Provides a complete state management and handler system for content editing.
  */
 
+import { themeSaveIssuesMessage } from "~/services/editor/theme-save-errors.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { carryNotes, strongestTone, type InfoTone } from "../services/editor/info-tone.shared";
@@ -721,6 +722,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // A save that stored only part of what was typed names the fields by their
   // LABELS in the merchant's language (never by translation keys). Plain
   // function over the latest render's `t` and field definitions.
+  // The primary theme save's structured failures, rendered in the merchant's
+  // language with field LABELS; "" when the answer carries none (or a code this
+  // bundle lacks), so the caller falls through to the English `error`.
+  const localizedThemeSaveIssues = (data: unknown): string => {
+    const labels = (t.content?.fieldLabels ?? {}) as Record<string, string>;
+    return (
+      themeSaveIssuesMessage(
+        data,
+        (key) =>
+          labels[key] ||
+          effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.label ||
+          (key.includes(".") || key.includes(":") ? extractReadableName(key) : key),
+        t.content as unknown as Record<string, string | undefined>,
+      ) ?? ""
+    );
+  };
+
   const localizedUnconfirmedFields = (data: unknown): string => {
     const labels = (t.content?.fieldLabels ?? {}) as Record<string, string>;
     return unconfirmedFieldsMessage(
@@ -3318,6 +3336,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (isSavedItemCurrent) {
         const translatedError =
           localizedUnconfirmedFields(fetcher.data) ||
+          localizedThemeSaveIssues(fetcher.data) ||
           translateErrorMessage(String(fetcher.data.error || ""), t);
         showInfoBox(translatedError, "critical");
       }

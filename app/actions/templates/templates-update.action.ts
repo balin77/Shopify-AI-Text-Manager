@@ -11,6 +11,7 @@ import { keyToFilename, replaceValuesInJson, countStringOccurrences, LOCALE_CONT
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
+import { MAX_ISSUE_FIELDS, type ThemeSaveIssue } from "~/services/editor/theme-save-errors.shared";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import {
   isThemeImageReference,
@@ -539,6 +540,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           success: false,
           error:
             "Primary-language editing is not available for this content type — edit the original in your Shopify admin. You can still translate it into other languages.",
+          errors: [{ errorKey: "themeSaveNotAvailable" }],
         },
         { status: 400 }
       );
@@ -554,6 +556,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         {
           success: false,
           error: "Primary locale editing for templates requires write_themes scope (not yet enabled)",
+          errors: [{ errorKey: "themeSaveScopeDisabled" }],
         },
         { status: 403 }
       );
@@ -565,6 +568,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     const pushedPrimaryKeys = new Set<string>();
     const failedPrimaryKeys: string[] = [];
     const primarySaveErrors: string[] = [];
+    // The same failures as STRUCTURED issues: the client renders them in the
+    // merchant's language; `primarySaveErrors` stays the English fallback.
+    const primarySaveIssues: ThemeSaveIssue[] = [];
+    const issueFields = (keys: string[]) => ({ fields: keys.slice(0, MAX_ISSUE_FIELDS), count: keys.length });
+    // Shopify's own userErrors / thrown messages, shown in its words.
+    const rawShopifyErrors: string[] = [];
     // The value ACTUALLY written into the theme file per key. May differ from
     // updatedFields[key] when autofix/normalize rewrote it (e.g. richtext
     // normalization). STEP 2b mirrors THIS into the DB so the DB and the theme
@@ -626,6 +635,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         primarySaveErrors.push(
           `These fields are not editable in the primary language (no matching theme file): ${unmappedKeys.slice(0, 5).join(", ")}`
         );
+        primarySaveIssues.push({ errorKey: "themeSaveNotEditable", ...issueFields(unmappedKeys) });
       }
 
       if (keysByFilename.size > 0) {
@@ -648,6 +658,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             {
               success: false,
               error: "No theme found. Cannot save primary locale changes to Shopify.",
+              errors: [{ errorKey: "themeSaveNoTheme" }],
             },
             { status: 500 }
           );
@@ -942,6 +953,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           const isStructuredFile = /^(templates|sections)\/.+\.json$/.test(actualFilename) || actualFilename === SETTINGS_DATA_FILE;
           const liveBase = settingsDataLiveBase(fileJson); // read before the pointer is masked
           const restoreStructure = isStructuredFile ? maskStructuralStrings(fileJson, actualFilename) : () => {};
+          let replacedKeys: Set<string>;
+          try {
           for (const path of pathAssignments.values()) setAtPath(fileJson, path, CLAIMED);
           const searchTree: unknown = (() => {
             if (actualFilename !== SETTINGS_DATA_FILE || !fileJson || typeof fileJson !== "object" || Array.isArray(fileJson)) return fileJson;
@@ -960,11 +973,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             return sameOldInFile !== 1 || countStringOccurrences(searchTree, old) > 1;
           });
           if (ambiguousKeys.length > 0) {
-            restoreStructure();
             return { replacedKeys: [], missedKeys: [], ambiguousKeys, pushedValues: new Map() };
           }
 
-          let replacedKeys: Set<string>;
           if (resolved) {
             const byPath = new Map([...replacements].filter(([k]) => !resolved.searchKeys?.has(k)));
             const bySearch = new Map([...replacements].filter(([k]) => resolved.searchKeys?.has(k) && !pathAssignments.has(k)));
@@ -975,7 +986,10 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               new Map([...replacements].filter(([k]) => !pathAssignments.has(k))),
             );
           }
-          restoreStructure();
+          } finally {
+            // The masks never outlive the search, whatever happened in it.
+            restoreStructure();
+          }
           for (const [key, path] of pathAssignments) {
             if (setAtPath(fileJson, path, replacements.get(key)!.newValue)) replacedKeys.add(key);
           }
@@ -1079,6 +1093,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           }
           if (result.error) {
             fileShopifyErrors.push(result.error);
+            primarySaveIssues.push({ errorKey: "themeSaveFileUnreadable", detail: filename });
             failedPrimaryKeys.push(...keys);
             continue;
           }
@@ -1098,6 +1113,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             primarySaveErrors.push(
               `Could not locate the current value in the theme file for: ${result.missedKeys.slice(0, 5).join(", ")} (reload the content and try again)`
             );
+            primarySaveIssues.push({ errorKey: "themeSaveNotLocated", ...issueFields(result.missedKeys) });
           }
           if (result.entry) {
             stagedKeys.push(...result.replacedKeys);
@@ -1156,6 +1172,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             if (errors.length > 0) {
               logger.error("[TEMPLATES] themeFilesUpsert returned errors", { context: "Templates", errors });
               fileShopifyErrors.push(...errors);
+              rawShopifyErrors.push(...errors);
               // Shopify rejected the batch — none of the staged keys persisted.
               failedPrimaryKeys.push(...stagedKeys);
               // Give richtext rejections a human-actionable hint (esp. in "error"
@@ -1165,6 +1182,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                   "This is a rich-text setting: every paragraph must be wrapped in a block (e.g. <p>…</p>). " +
                     "Enable automatic formatting under Settings → Rich-text formatting to fix this on save."
                 );
+                primarySaveIssues.push({ errorKey: "themeSaveRichtext" });
               }
             } else {
               logger.info("[TEMPLATES] themeFilesUpsert succeeded", {
@@ -1182,11 +1200,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                 {
                   success: false,
                   error: `Shopify rejected the theme update. You may need the Protected Scope Exemption for write_themes. Error: ${msg}`,
+                  errors: [{ errorKey: "themeSaveScopeRejected", detail: msg }],
                 },
                 { status: 403 }
               );
             }
             fileShopifyErrors.push(msg);
+            rawShopifyErrors.push(msg);
             failedPrimaryKeys.push(...stagedKeys);
           }
         }
@@ -1197,6 +1217,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             errors: fileShopifyErrors,
           });
           primarySaveErrors.push(...fileShopifyErrors);
+          if (rawShopifyErrors.length > 0) {
+            primarySaveIssues.push({ errorKey: "themeSaveShopifyRejected", detail: rawShopifyErrors.join("; ") });
+          }
         }
       }
     }
@@ -1678,6 +1701,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         {
           success: false,
           error: message,
+          // Structured issues for the client to render in the merchant's
+          // language; `error` stays as the English fallback.
+          errors: primarySaveIssues.length > 0 ? primarySaveIssues : [{ errorKey: "themeSaveSomeFailed", ...issueFields(failedPrimaryKeys) }],
           actionType: "updateContent",
           // The repair above has already started for the keys that DID land, so
           // its ids travel even on this branch. Dropping them left a run
