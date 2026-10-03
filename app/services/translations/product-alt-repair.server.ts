@@ -226,7 +226,18 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
         where: { image: { mediaId, product: { shop } }, marketId: "", locale: { in: [...foreignLocales] } },
         select: { locale: true },
       });
-      const localLocales = [...new Set(localRows.map((row: { locale: string }) => row.locale))];
+      // A locale held only by a leftover LIBRARY row (the read fallback shows
+      // it) is re-read too, so that row is removed or kept on evidence.
+      const libraryRows = await db.contentTranslation.findMany({
+        where: { shop, resourceType: "MediaImage", resourceId: mediaId, key: "alt", marketId: "", locale: { in: [...foreignLocales] } },
+        select: { locale: true },
+      });
+      const localLocales = [
+        ...new Set([
+          ...localRows.map((row: { locale: string }) => row.locale),
+          ...libraryRows.map((row: { locale: string }) => row.locale),
+        ]),
+      ];
       for (const locale of localLocales) {
         if (confirmed.has(locale)) continue;
         try {
