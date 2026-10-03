@@ -962,8 +962,15 @@ export interface ReconcileResult {
    * purge was off, did not run, or threw; a key it could not clear for sure is
    * not in it. The in-app save paths map them back to editor fields and answer
    * `marketPurgedFields`, so the page hides the stale override at once.
+   *
+   * A key is listed when it was purged for EVERY resource of the run that was
+   * asked about it; callers that address several resources read
+   * `marketPurgedPairs` instead.
    */
   marketPurgedKeys?: string[];
+  /** The same, per (resource, key): exactly the pairs the purge asked about and
+   *  confirmed cleared. A resource that was declined for a key is not in it. */
+  marketPurgedPairs?: Array<{ resourceId: string; key: string }>;
 }
 
 const NOTHING: ReconcileResult = { removed: 0, retranslating: 0 };
@@ -2453,6 +2460,9 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
       // sit on a (locale, key) that has no global translation at all.
       keys: [...new Set(changed.map((item) => item.key))],
       locales: [...foreignLocales],
+      // Each resource's OWN keys: a union over the group would purge an
+      // override of a key this resource did not change.
+      keysByResource: new Map([...wantedKeys].map(([id, keys]) => [id, keys] as const)),
     });
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Post-save re-translation failed — translations kept", {
@@ -2931,6 +2941,9 @@ async function repairStaleTranslations(
     /** Overrides the purge must walk past (`marketOverrideKey`) — see
      *  `purgeMarketOverrides`. */
     currentOverrides?: ReadonlySet<string>;
+    /** What each RESOURCE of a multi-resource group changed: the purge asks
+     *  exactly these pairs, never the union of every resource's keys. */
+    keysByResource?: ReadonlyMap<string, ReadonlySet<string>>;
   },
 ): Promise<ReconcileResult> {
   const { client, shop, resourceId, resourceType } = target;
@@ -3070,26 +3083,58 @@ async function repairStaleTranslations(
   });
 
   let marketPurgedKeys: string[] | undefined;
+  let marketPurgedPairs: Array<{ resourceId: string; key: string }> | undefined;
   if (mayPurge && marketKeys.length > 0 && (retranslate.length > 0 || toPurge.length > 0)) {
     try {
-      const { purgeMarketOverrides } = await import("./market-layer-purge.server");
+      const { purgeMarketOverrides, purgePairKey } = await import("./market-layer-purge.server");
       const refsById = new Map<string, TranslationRef>();
+      const actualPairs = new Set<string>();
       for (const entry of [...retranslate, ...toPurge]) {
         const ref = refOf(target, entry);
         refsById.set(ref.resourceId, ref);
+        actualPairs.add(purgePairKey(ref.resourceId, entry.key));
       }
-      const marketOutcome = { failedKeys: new Set<string>() };
+      // A key this RESOURCE declined (and did not purge) keeps its override,
+      // even when a sibling resource of the group translates the same key.
+      const declinedPairs = new Set(
+        [...declined.filter((entry) => !toPurge.includes(entry)), ...keptHandles].map((entry) =>
+          purgePairKey(refOf(target, entry).resourceId, entry.key),
+        ),
+      );
+      const marketKeySet = new Set(marketKeys);
+      const keysByResource = new Map<string, Set<string>>();
+      for (const id of refsById.keys()) {
+        const own = scope.keysByResource?.get(id) ?? marketKeySet;
+        const keys = new Set<string>();
+        for (const key of own) {
+          if (!marketKeySet.has(key)) continue;
+          const pair = purgePairKey(id, key);
+          if (declinedPairs.has(pair) && !actualPairs.has(pair)) continue;
+          keys.add(key);
+        }
+        if (keys.size > 0) keysByResource.set(id, keys);
+      }
+      const marketOutcome = { failedKeys: new Set<string>(), failedPairs: new Set<string>() };
       await purgeMarketOverrides({
         gateway,
         mirror,
-        refs: [...refsById.values()],
+        refs: [...refsById.values()].filter((ref) => keysByResource.has(ref.resourceId)),
         locales: scope.locales,
-        keys: marketKeys,
+        keys: [...new Set([...keysByResource.values()].flatMap((keys) => [...keys]))],
+        keysByResource,
         ...(scope.currentOverrides ? { currentOverrides: scope.currentOverrides } : {}),
         context: resourceType,
         outcome: marketOutcome,
       });
-      marketPurgedKeys = marketKeys.filter((key) => !marketOutcome.failedKeys.has(key));
+      marketPurgedPairs = [];
+      for (const [id, keys] of keysByResource) {
+        for (const key of keys) {
+          if (!marketOutcome.failedPairs.has(purgePairKey(id, key))) marketPurgedPairs.push({ resourceId: id, key });
+        }
+      }
+      const askedKeys = new Set(marketPurgedPairs.map((pair) => pair.key));
+      for (const keys of keysByResource.values()) for (const key of keys) askedKeys.add(key);
+      marketPurgedKeys = [...askedKeys].filter((key) => !marketOutcome.failedKeys.has(key));
     } catch (error: unknown) {
       logger.warn("[StaleTranslations] Market-override purge could not run", {
         context: "StaleTranslations",
@@ -3264,6 +3309,7 @@ async function repairStaleTranslations(
     retranslating: startRetranslation ? retranslate.length : 0,
     ...(taskId ? { taskId } : {}),
     ...(marketPurgedKeys && marketPurgedKeys.length > 0 ? { marketPurgedKeys } : {}),
+    ...(marketPurgedPairs && marketPurgedPairs.length > 0 ? { marketPurgedPairs } : {}),
   };
 }
 

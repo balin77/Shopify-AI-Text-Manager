@@ -1564,6 +1564,40 @@ describe("a group spanning several resources (sub-resources)", () => {
     db.contentTranslation.findMany.mockResolvedValue([]);
   });
 
+  it("reports the market purge PER RESOURCE: a declined sibling of the same key is neither purged nor reported", async () => {
+    const M1 = "gid://shopify/Metafield/31";
+    const M2 = "gid://shopify/Metafield/32";
+    const MARKET = "gid://shopify/Market/5";
+    // The merchant's stored answer is "don't delete": what we DECLINE stays.
+    policy.purgeUnreconciledSurfaces = false;
+    translated = { fr: [M1, M2] };
+    primary = {
+      [M1]: { value: { value: "Massivholz", digest: NEW } },
+      [M2]: { value: { value: "Zeile 1\nZeile 2", digest: NEW } },
+    };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === ""
+        ? []
+        : [
+            { resourceId: M1, key: "value", locale: "fr", marketId: MARKET },
+            { resourceId: M2, key: "value", locale: "fr", marketId: MARKET },
+          ],
+    );
+    shopify.removeTargets.length = 0;
+    const result = await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: M1, resourceType: "Metafield", key: "value" },
+          { resourceId: M2, resourceType: "Metafield", key: "value", retranslatable: false },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.marketPurgedPairs).toEqual([{ resourceId: M1, key: "value" }]);
+    expect(shopify.removeTargets).toEqual([M1]);
+  });
+
   it("registers on each entry's OWN resource, not on the group's", async () => {
     await reconcileAfterPrimarySave(groupParams());
     await awaitDetachedRetranslations();

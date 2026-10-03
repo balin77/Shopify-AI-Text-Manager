@@ -74,9 +74,13 @@ vi.mock('~/services/translations/translation-change-policy.server', () => ({
 const { marketFailed } = vi.hoisted(() => ({ marketFailed: [] as string[] }));
 vi.mock('~/services/translations/market-layer-purge.server', () => ({
   purgeMarketOverrides: vi.fn(async (args: any) => {
-    for (const key of marketFailed) args.outcome?.failedKeys.add(key);
+    for (const key of marketFailed) {
+      args.outcome?.failedKeys.add(key);
+      for (const ref of args.refs) args.outcome?.failedPairs?.add(`${ref.resourceId}\u0000${key}`);
+    }
     return 0;
   }),
+  purgePairKey: (resourceId: string, key: string) => `${resourceId}\u0000${key}`,
 }));
 
 vi.mock('~/services/translations/stale-translation-sync.server', () => ({
@@ -764,7 +768,7 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
     it('auto-translate on: takes the keys the repair reports as purged', async () => {
       policy.autoTranslateExternalChanges = true;
       policy.purgeOnPrimaryChange = false;
-      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 2, marketPurgedKeys: ['name'] } as any);
+      vi.mocked(reconcileAfterPrimarySave).mockResolvedValueOnce({ removed: 0, retranslating: 2, marketPurgedKeys: ['name'], marketPurgedPairs: [{ resourceId: OPTION, key: 'name' }] } as any);
       const w = installAdmin();
       const result = body(await save(makeDb(), w.admin, { [OPTION]: { name: 'Farbe' } }, { [METAFIELD]: 'new' }));
       expect(result.marketPurgedResourceIds).toEqual([OPTION]);

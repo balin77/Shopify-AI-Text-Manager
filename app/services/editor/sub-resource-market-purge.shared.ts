@@ -3,23 +3,20 @@
  * that a PRIMARY save's purge confirmed removed on Shopify, while the loaded
  * item still carries their rows until it is re-read. The server names the
  * resource ids (`marketPurgedResourceIds`, confirmed ones only); the page keeps
- * them in a set that hides those resources' MARKET rows (the global row then
- * shows through, as it does on the storefront) until the re-read item no longer
- * holds them. Import-free: the hook and the tests share it.
+ * them in a map id -> the item that was loaded WHEN the answer arrived, which
+ * hides those resources' MARKET rows (the global row then shows through, as on
+ * the storefront). The hide lasts until the item is re-read - a different item
+ * object - and never longer: retiring on "no market row left" could keep a
+ * resource hidden for good and then hide an override the merchant writes later.
+ * Import-free: the hook and the tests share it.
  */
-export type SubResourceTranslationRows = Record<
-  string,
-  Array<{ key: string; value: string; locale: string; marketId?: string }>
->;
 
-/** Drop the ids the (re-read) item no longer carries a market row for. */
+/** Drop every hide that was made against an item other than `currentItem`. */
 export function retirePurgedMarketResources(
-  hidden: Set<string>,
-  rows: SubResourceTranslationRows | undefined,
+  hidden: Map<string, unknown>,
+  currentItem: unknown,
 ): void {
-  if (hidden.size === 0) return;
-  for (const id of [...hidden]) {
-    const stillThere = (rows?.[id] ?? []).some((row) => (row.marketId ?? "") !== "");
-    if (!stillThere) hidden.delete(id);
+  for (const [id, itemAtHide] of [...hidden]) {
+    if (itemAtHide !== currentItem) hidden.delete(id);
   }
 }

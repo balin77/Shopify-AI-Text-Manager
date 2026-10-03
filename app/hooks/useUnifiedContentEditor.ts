@@ -2558,7 +2558,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // item): the value that was SENT replaces it, or a language round
             // trip showed "" for a translation Shopify now holds.
             const stagedLayer = localAltTextOverlayRef.current[buildLocaleKey(savedLocale, savedMarketId ?? "")];
-            if (stagedLayer && stagedLayer[index] !== undefined) stagedLayer[index] = altText;
+            // Only the clear-all `""`: a newer staged value is not ours to take back.
+            if (stagedLayer && stagedLayer[index] === "") stagedLayer[index] = altText;
             if (item.images[index]) {
               if (!item.images[index].altTextTranslations) {
                 item.images[index].altTextTranslations = [];

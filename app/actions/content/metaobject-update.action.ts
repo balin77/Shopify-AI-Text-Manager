@@ -472,11 +472,8 @@ export async function handleMetaobjectUpdate(
         });
         if (outcome.taskId) retranslationTaskIds.push(outcome.taskId);
         // The repair purged the market layer itself (auto-translate path).
-        const purgedByRepair = new Set(outcome.marketPurgedKeys ?? []);
-        for (const item of stale) {
-          if (purgedByRepair.has(item.key)) {
-            marketPurgedFields.add(metaobjectFieldKey(item.metaobjectId, item.key));
-          }
+        for (const pair of outcome.marketPurgedPairs ?? []) {
+          marketPurgedFields.add(metaobjectFieldKey(pair.resourceId, pair.key));
         }
         return;
       }
@@ -501,13 +498,13 @@ export async function handleMetaobjectUpdate(
       // translation at all, and nothing ever re-translates one, so once the
       // field's text moves it is stale with nobody left to notice.
       try {
-        const { purgeMarketOverrides } = await import(
+        const { purgeMarketOverrides, purgePairKey } = await import(
           "~/services/translations/market-layer-purge.server"
         );
         const { metaobjectTranslationMirror } = await import(
           "~/services/translations/stale-translation-sync.server"
         );
-        const marketOutcome = { failedKeys: new Set<string>() };
+        const marketOutcome = { failedKeys: new Set<string>(), failedPairs: new Set<string>() };
         await purgeMarketOverrides({
           gateway,
           mirror: metaobjectTranslationMirror(session.shop, new Map()),
@@ -517,12 +514,17 @@ export async function handleMetaobjectUpdate(
           })),
           locales: foreignLocales,
           keys: [...new Set(stale.map((item) => item.key))],
+          // Each entry is purged for the fields IT changed: the union of every
+          // entry's keys would delete the override of an unchanged field.
+          keysByResource: new Map([...keysByEntry].map(([id, keys]) => [id, new Set(keys)] as const)),
           context: "metaobject",
           outcome: marketOutcome,
         });
         for (const [metaobjectId, keys] of keysByEntry) {
           for (const key of keys) {
-            if (!marketOutcome.failedKeys.has(key)) marketPurgedFields.add(metaobjectFieldKey(metaobjectId, key));
+            if (!marketOutcome.failedPairs.has(purgePairKey(metaobjectId, key))) {
+              marketPurgedFields.add(metaobjectFieldKey(metaobjectId, key));
+            }
           }
         }
       } catch {

@@ -13,7 +13,7 @@ const { policy, market, reconcile } = vi.hoisted(() => ({
     autoTranslateExternalChanges: false,
     autoTranslateHandles: false,
   },
-  market: { failedKeys: [] as string[], throws: false, calls: [] as any[] },
+  market: { failedKeys: [] as string[], failedPairs: [] as string[], throws: false, calls: [] as any[] },
   reconcile: { result: { removed: 0, retranslating: 0 } as any },
 }));
 
@@ -40,9 +40,19 @@ vi.mock("~/services/translations/market-layer-purge.server", () => ({
   purgeMarketOverrides: vi.fn(async (args: any) => {
     market.calls.push(args);
     if (market.throws) throw new Error("boom");
-    for (const key of market.failedKeys) args.outcome?.failedKeys.add(key);
+    for (const key of market.failedKeys) {
+      args.outcome?.failedKeys.add(key);
+      for (const ref of args.refs) args.outcome?.failedPairs?.add(`${ref.resourceId}\u0000${key}`);
+    }
+    // A pair given as `resourceId#key` fails for THAT resource only.
+    for (const pair of market.failedPairs) {
+      const [id, key] = pair.split("|");
+      args.outcome?.failedKeys.add(key);
+      args.outcome?.failedPairs?.add(`${id}\u0000${key}`);
+    }
     return 0;
   }),
+  purgePairKey: (resourceId: string, key: string) => `${resourceId}\u0000${key}`,
 }));
 vi.mock("~/services/translations/stale-translation-sync.server", () => ({
   metaobjectTranslationMirror: vi.fn(() => ({})),
@@ -122,6 +132,7 @@ beforeEach(() => {
   policy.purgeUnreconciledSurfaces = true;
   policy.autoTranslateExternalChanges = false;
   market.failedKeys = [];
+  market.failedPairs = [];
   market.throws = false;
   market.calls = [];
   reconcile.result = { removed: 0, retranslating: 0 };
@@ -138,6 +149,20 @@ describe("metaobject primary save reports its confirmed market purge", () => {
     market.failedKeys = ["title"];
     const body = await save([`${A}#title`, `${A}#label`]);
     expect(body.marketPurgedFields).toEqual([`${A}#label`]);
+  });
+
+  it("a failure of ONE entry does not hide (or get masked by) the sibling's report", async () => {
+    market.failedPairs = [`${A}|title`];
+    const body = await save([`${A}#title`, `${B}#title`]);
+    expect(body.marketPurgedFields).toEqual([`${B}#title`]);
+  });
+
+  it("purges each entry for ITS OWN changed fields only (no union of keys across entries)", async () => {
+    await save([`${A}#label`, `${B}#title`]);
+    expect(market.calls).toHaveLength(1);
+    const map: Map<string, Set<string>> = market.calls[0].keysByResource;
+    expect([...map.get(A)!]).toEqual(["label"]);
+    expect([...map.get(B)!]).toEqual(["title"]);
   });
 
   it("names nothing when the market purge threw", async () => {
@@ -157,8 +182,8 @@ describe("metaobject primary save reports its confirmed market purge", () => {
   it("auto-translate on: names the entries whose key the repair reports purged", async () => {
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
-    reconcile.result = { removed: 0, retranslating: 2, marketPurgedKeys: ["title"] };
-    const body = await save([`${A}#title`, `${A}#label`]);
+    reconcile.result = { removed: 0, retranslating: 2, marketPurgedKeys: ["title"], marketPurgedPairs: [{ resourceId: A, key: "title" }] };
+    const body = await save([`${A}#title`, `${A}#label`, `${B}#title`]);
     expect(market.calls).toHaveLength(0);
     expect(body.marketPurgedFields).toEqual([`${A}#title`]);
   });

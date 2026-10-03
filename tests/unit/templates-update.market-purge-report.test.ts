@@ -182,6 +182,16 @@ describe("theme primary save reports its confirmed market purge", () => {
     expect(body.marketPurgedKeys).toBeUndefined();
   });
 
+  it("tells the page to KEEP its foreign rows when neither the purge nor the repair touched them", async () => {
+    policy.purgeUnreconciledSurfaces = false;
+    policy.purgeOnPrimaryChange = false;
+    const off = await save();
+    expect(off.foreignRowsInvalidated).toBe(false);
+    policy.purgeUnreconciledSurfaces = true;
+    const on = await save();
+    expect(on.foreignRowsInvalidated).toBeUndefined();
+  });
+
   it("auto-translate on: takes the keys the repair reports as purged", async () => {
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;

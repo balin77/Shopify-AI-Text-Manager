@@ -65,15 +65,25 @@ describe("sub-resource market purge hiding", () => {
     expect(dbPreloadToMap(rows(), "fr", M).map[RES].value).toBe("Market");
   });
 
-  it("the hide retires once the re-read item no longer carries a market row for it", () => {
-    const hidden = new Set([RES, OTHER]);
-    retirePurgedMarketResources(hidden, rows());
-    // The item still carries both market rows: the marks stay.
-    expect([...hidden].sort()).toEqual([OTHER, RES].sort());
-    retirePurgedMarketResources(hidden, {
-      [RES]: [{ key: "value", value: "Global", locale: "fr", marketId: "" }],
-      [OTHER]: [{ key: "value", value: "Other market", locale: "fr", marketId: M }],
-    });
-    expect([...hidden]).toEqual([OTHER]);
+  it("the hide lasts exactly until the item is re-read (a different item object)", () => {
+    const itemAtSave = { id: "p" };
+    const hidden = new Map<string, unknown>([[RES, itemAtSave], [OTHER, itemAtSave]]);
+    // Same item object: nothing retires, however many renders happen.
+    retirePurgedMarketResources(hidden, itemAtSave);
+    expect([...hidden.keys()].sort()).toEqual([OTHER, RES].sort());
+    // The first re-read retires every hide - even if the re-read item still
+    // carries a market row, which is then a NEW override, never hidden again.
+    retirePurgedMarketResources(hidden, { id: "p" });
+    expect(hidden.size).toBe(0);
+  });
+
+  it("a hide made after a re-read survives older items and retires on the next", () => {
+    const first = { id: "p" };
+    const second = { id: "p" };
+    const hidden = new Map<string, unknown>([[RES, second]]);
+    retirePurgedMarketResources(hidden, second);
+    expect(hidden.has(RES)).toBe(true);
+    retirePurgedMarketResources(hidden, first);
+    expect(hidden.size).toBe(0);
   });
 });

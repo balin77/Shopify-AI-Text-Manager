@@ -776,9 +776,12 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
 
           // Keys whose removal Shopify did not confirm are still live there (and
           // kept locally): dropping them from the cache would show them missing.
-          const saveData = fetcher.data as { warnings?: string[]; unconfirmedPurgeKeys?: string[]; marketPurgedKeys?: string[] };
+          const saveData = fetcher.data as { warnings?: string[]; unconfirmedPurgeKeys?: string[]; marketPurgedKeys?: string[]; foreignRowsInvalidated?: boolean };
           // The purge warning itself is shown by the editor hook, in place of the plain "saved" toast.
-          const invalidated = keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
+          // With both switches off the save touched no foreign row: the cache keeps them.
+          const invalidated = saveData.foreignRowsInvalidated === false
+            ? new Set<string>()
+            : keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
 
           if (invalidated.size > 0) {
             setLoadedTranslations(prev => {

@@ -159,6 +159,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   /** Primary-change purge steps that did not complete: their translation rows were KEPT. */
   const purgeWarnings: string[] = [];
   let unconfirmedKeys: string[] = [];
+  /** False when this save neither purges nor re-translates the foreign rows
+   *  (both switches off): the page must then keep them in its cache. */
+  let foreignRowsInvalidated = true;
   /** Theme keys whose MARKET overrides a purge CONFIRMED removed (reported so
    *  the page drops exactly those market rows from its own cache). */
   const marketPurgedKeys = new Set<string>();
@@ -1121,6 +1124,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       (retranslateTheme
         ? changePolicy.purgeOnPrimaryChange
         : changePolicy.purgeUnreconciledSurfaces);
+    if (savedChangedFields.length > 0) foreignRowsInvalidated = purgeTheme || retranslateTheme;
     if (savedChangedFields.length > 0 && purgeTheme) {
       logger.debug("[TEMPLATES] Deleting translations for changed fields", {
         context: "Templates",
@@ -1512,6 +1516,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     actionType: "updateContent",
     retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
     ...(marketPurgedKeys.size > 0 ? { marketPurgedKeys: [...marketPurgedKeys] } : {}),
+    ...(foreignRowsInvalidated ? {} : { foreignRowsInvalidated: false }),
     // A foreign save names the layer it wrote (group, locale, market; "" =
     // global) and the values, an empty one being a clear. The page updates its
     // own cache from this and from nothing else: it used to address rows by key

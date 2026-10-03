@@ -471,7 +471,7 @@ export function dbPreloadToMap(
   selectedMarketId: string,
   /** Resources whose market rows a confirmed purge removed on Shopify (the item
    *  still carries them until it is re-read): their market layer reads as empty. */
-  hiddenMarketResourceIds?: ReadonlySet<string>,
+  hiddenMarketResourceIds?: { has(resourceId: string): boolean },
 ): { map: Record<string, Record<string, string>>; fallbackResourceIds: Set<string> } {
   const map: Record<string, Record<string, string>> = {};
   const fallbackResourceIds = new Set<string>();
@@ -588,7 +588,7 @@ export function useProductSubResources({
   const keepOverlayIdsRef = useRef<Set<string>>(new Set());
   // Sub-resources whose market rows a confirmed primary purge removed; hidden
   // until the re-read item stops carrying them (sub-resource-market-purge.shared).
-  const marketPurgedIdsRef = useRef<Set<string>>(new Set());
+  const marketPurgedIdsRef = useRef<Map<string, unknown>>(new Map());
   // What a reload's overlay reset must keep: the unconfirmed-purge ids above,
   // plus every resource a translate answer was staged for in the last two
   // minutes (see `recentlyStagedRef`). The merged set is used for the reset
@@ -750,7 +750,7 @@ export function useProductSubResources({
   // before the load effect below, so a re-read sees the new stamp.
   useEffect(() => {
     itemLoadedAtRef.current = Date.now();
-    retirePurgedMarketResources(marketPurgedIdsRef.current, selectedItem?.subResourceTranslations);
+    retirePurgedMarketResources(marketPurgedIdsRef.current, selectedItem);
   }, [selectedItem]);
 
   // ============================================================================
@@ -792,7 +792,7 @@ export function useProductSubResources({
     if (lastOverlayItemIdRef.current !== itemId) {
       lastOverlayItemIdRef.current = itemId || null;
       localSubResourceOverlayRef.current = {};
-      marketPurgedIdsRef.current = new Set();
+      marketPurgedIdsRef.current = new Map();
       // The kept ids belong to the previous item's live translations.
       keepOverlayIdsRef.current = new Set();
       recentlyStagedRef.current = new Map();
@@ -1134,7 +1134,7 @@ export function useProductSubResources({
       // The save's purge removed these resources' MARKET overrides on Shopify;
       // the loaded item carries the old rows until it is re-read.
       if (Array.isArray(data.marketPurgedResourceIds)) {
-        for (const id of data.marketPurgedResourceIds) marketPurgedIdsRef.current.add(String(id));
+        for (const id of data.marketPurgedResourceIds) marketPurgedIdsRef.current.set(String(id), selectedItem);
       }
       const failedOptions = data.failedOptions || [];
       const failedMetafields = data.failedMetafields || [];
@@ -1158,6 +1158,9 @@ export function useProductSubResources({
           touchOverlay();
         }
         pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
+        // The part that WAS saved moved its text and purged its overrides too:
+        // re-read, so the item stops carrying them.
+        if (partialSavedIds.length > 0 || (data.marketPurgedResourceIds ?? []).length > 0) requestRevalidate();
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
           // The warning codes carry the only specific reason there is (the
@@ -1265,13 +1268,15 @@ export function useProductSubResources({
 
         // Trigger revalidation to reload fresh data from DB/Shopify
         // This ensures new option value GIDs and updated values are loaded
-        if (revalidator && revalidator.state === "idle") {
+        if (revalidator) {
           // Until it lands, the item still carries the text from BEFORE the
           // save, and that is what a translate would send as its source. Only
           // a PRIMARY save moves that text; a foreign one changes nothing a
           // translate reads.
           if (isPrimaryLocale) setAwaitingOptionReload(true);
-          revalidator.revalidate();
+          // Queued behind a running reload (which may have read before this
+          // write) instead of skipped.
+          requestRevalidate();
         }
       }
     }
