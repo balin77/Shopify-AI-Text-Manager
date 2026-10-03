@@ -10,6 +10,11 @@
 import { useMemo } from "react";
 import { useChangeTracking } from "../utils/contentEditor.utils";
 import type { ContentEditorConfig, TranslatableContentItem } from "../types/content-editor.types";
+import {
+  isAltCoveredByOwnSave,
+  isFieldCoveredByOwnSave,
+  type OwnSaveInFlight,
+} from "../services/editor/own-save-in-flight.shared";
 
 interface UseEditorChangeDetectionProps {
   config: ContentEditorConfig;
@@ -25,6 +30,13 @@ interface UseEditorChangeDetectionProps {
   baselineValuesRef: React.MutableRefObject<Record<string, string>>;
   /** Incremented whenever baselineValuesRef updates, to force useMemo recalculation */
   baselineVersion: number;
+  /** AI/copy buttons' own saves still on their way to Shopify. A field (or
+   *  alt text) holding exactly the value such a save sent is not a draft and
+   *  must not light the save bar — see own-save-in-flight.shared.ts. */
+  ownSavesInFlight?: readonly OwnSaveInFlight[];
+  /** The view those saves are matched against. */
+  selectedItemId?: string | null;
+  selectedMarketId?: string;
 }
 
 interface UseEditorChangeDetectionReturn {
@@ -32,6 +44,8 @@ interface UseEditorChangeDetectionReturn {
   hasFieldChanges: boolean;
   hasAltTextChanges: boolean;
 }
+
+const NO_OWN_SAVES: readonly OwnSaveInFlight[] = [];
 
 export function useEditorChangeDetection({
   config,
@@ -45,6 +59,9 @@ export function useEditorChangeDetection({
   originalAltTexts,
   baselineValuesRef,
   baselineVersion,
+  ownSavesInFlight = NO_OWN_SAVES,
+  selectedItemId,
+  selectedMarketId = "",
 }: UseEditorChangeDetectionProps): UseEditorChangeDetectionReturn {
   // useChangeTracking is called with null to satisfy React hook rules while being disabled.
   // All change detection now goes through the unified baselineValuesRef below.
@@ -57,12 +74,17 @@ export function useEditorChangeDetection({
     if (isLoadingData || !selectedItem) return false;
     const baseline = baselineValuesRef.current;
     if (Object.keys(baseline).length === 0) return false;
+    const view = { itemId: selectedItemId, locale: currentLanguage, marketId: selectedMarketId };
     for (const [key, baselineValue] of Object.entries(baseline)) {
-      if ((editableValues[key] ?? "") !== baselineValue) return true;
+      const value = editableValues[key] ?? "";
+      if (value === baselineValue) continue;
+      // Being written right now by an AI/copy button's own save: not a draft.
+      if (isFieldCoveredByOwnSave(ownSavesInFlight, view, key, value)) continue;
+      return true;
     }
     return false;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- baselineVersion forces recalc when ref updates
-  }, [editableValues, baselineVersion, isLoadingData, selectedItem]);
+  }, [editableValues, baselineVersion, isLoadingData, selectedItem, ownSavesInFlight, selectedItemId, currentLanguage, selectedMarketId]);
 
   const hasAltTextChanges = useMemo(() => {
     const originalKeys = Object.keys(originalAltTexts);
@@ -70,13 +92,16 @@ export function useEditorChangeDetection({
 
     if (originalKeys.length === 0 && currentKeys.length === 0) return false;
 
+    const view = { itemId: selectedItemId, locale: currentLanguage, marketId: selectedMarketId };
     const allKeys = new Set([...originalKeys, ...currentKeys]);
     for (const key of allKeys) {
       const numKey = Number(key);
-      if (originalAltTexts[numKey] !== imageAltTexts[numKey]) return true;
+      if (originalAltTexts[numKey] === imageAltTexts[numKey]) continue;
+      if (isAltCoveredByOwnSave(ownSavesInFlight, view, numKey, imageAltTexts[numKey])) continue;
+      return true;
     }
     return false;
-  }, [imageAltTexts, originalAltTexts]);
+  }, [imageAltTexts, originalAltTexts, ownSavesInFlight, selectedItemId, currentLanguage, selectedMarketId]);
 
   return {
     hasChanges: hasFieldChanges || hasAltTextChanges,

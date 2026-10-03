@@ -53,6 +53,8 @@ const { policy, removeAcrossLocales } = vi.hoisted(() => ({
     /** locale\u0000key pairs Shopify confirms. null = confirm everything asked for. */
     confirms: null as null | string[],
     calls: [] as Array<{ resourceId: string; keys: string[]; locales: string[] }>,
+    /** true = run the real helper (the field purge tests drive it through admin.graphql). */
+    useReal: false,
   },
 }));
 
@@ -63,18 +65,27 @@ vi.mock('../../app/services/translations/translation-change-policy.server', () =
   ),
 }));
 
-vi.mock('../../app/services/bulk-editor/translations.server', () => ({
-  LOCALE_KEY_SEP: '\u0000',
-  removeAndVerifyAcrossLocales: vi.fn(
-    async (_gw: unknown, resourceId: string, keys: string[], locales: string[]) => {
-      removeAcrossLocales.calls.push({ resourceId, keys, locales });
-      const pairs =
-        removeAcrossLocales.confirms ??
-        locales.flatMap((l) => keys.map((k) => `${l}\u0000${k}`));
-      return { confirmedPairs: new Set(pairs), userErrors: [] };
-    },
-  ),
-}));
+// The service imports the verified helpers from verified-translations.server
+// (the moved module); only the multi-locale sweep is faked, everything else
+// (removeAndVerify, the gap re-read helper, ...) stays real over `admin.graphql`.
+vi.mock('../../app/services/translations/verified-translations.server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../app/services/translations/verified-translations.server')>();
+  return {
+    ...actual,
+    removeAndVerifyAcrossLocales: vi.fn(
+      async (gw: unknown, resourceId: string, keys: string[], locales: string[], marketId: string) => {
+        if (removeAcrossLocales.useReal) {
+          return actual.removeAndVerifyAcrossLocales(gw as never, resourceId, keys, locales, marketId);
+        }
+        removeAcrossLocales.calls.push({ resourceId, keys, locales });
+        const pairs =
+          removeAcrossLocales.confirms ??
+          locales.flatMap((l) => keys.map((k) => `${l}\u0000${k}`));
+        return { confirmedPairs: new Set(pairs), userErrors: [] };
+      },
+    ),
+  };
+});
 
 vi.mock('../../app/services/shopify-api-gateway.service', () => ({
   ShopifyApiGateway: class {
@@ -240,6 +251,8 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
   let admin: { graphql: ReturnType<typeof vi.fn> };
   let service: ShopifyContentService;
   let db: any;
+  /** What Shopify's `collectionUpdate` echoes as `image.altText` (the echo rule). */
+  let echoedAlt: string | null = 'Neuer Alt-Text';
 
   function makeCollectionAdmin() {
     const graphql = vi.fn(async (query: string) => ({
@@ -261,7 +274,12 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
           };
         }
         return {
-          data: { collectionUpdate: { collection: { id: collectionId, title: 'C' }, userErrors: [] } },
+          data: {
+            collectionUpdate: {
+              collection: { id: collectionId, title: 'C', image: { altText: echoedAlt } },
+              userErrors: [],
+            },
+          },
         };
       },
     }));
@@ -274,6 +292,7 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     policy.autoTranslateExternalChanges = false;
     removeAcrossLocales.calls = [];
     removeAcrossLocales.confirms = null;
+    echoedAlt = 'Neuer Alt-Text';
     admin = makeCollectionAdmin();
     service = new ShopifyContentService(admin as never);
     db = {
@@ -415,6 +434,42 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
 
     expect(result.success).toBe(true);
   });
+
+  it('an alt Shopify did not ECHO fails ONLY the alt: the other fields stay saved, the alt is not mirrored or repaired', async () => {
+    // userErrors: [] describes a call Shopify accepted, not one it acted on. The
+    // same mutation carried the title, which Shopify already wrote - throwing
+    // here failed a save that mostly succeeded and skipped the title's mirror.
+    echoedAlt = 'Alter Alt-Text';
+    policy.autoTranslateExternalChanges = true;
+    retranslate.calls = [];
+    const result = (await save()) as any;
+
+    expect(result.success).toBe(true);
+    expect(result.failedAltTextIndices).toEqual([0]);
+    expect(String(result.warning)).toMatch(/did not confirm the image alt text/);
+    // The title IS mirrored; the alt is left out of the mirror.
+    expect(db.collection.update).toHaveBeenCalledTimes(1);
+    const data = db.collection.update.mock.calls[0][0].data;
+    expect(data.title).toBe('C');
+    expect('imageAltText' in data).toBe(false);
+    // No featured-alt invalidation or repair for a primary that did not change.
+    expect(removeAcrossLocales.calls).toEqual([]);
+    expect(retranslate.calls.some((c: any) => c.changed?.[0]?.key === 'alt')).toBe(false);
+  });
+
+  it('a repair budget that is spent starts NO featured-alt run and keeps the stored deletion answer', async () => {
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    policy.purgeUnreconciledSurfaces = true;
+    retranslate.calls = [];
+    const take = vi.fn().mockReturnValue(false);
+    await save({ repairBudget: { take } });
+
+    expect(take).toHaveBeenCalledWith('featuredAlt', collectionId);
+    expect(retranslate.calls).toEqual([]);
+    // The stored deletion answer applies, exactly like a refused bulk-editor group.
+    expect(removeAcrossLocales.calls).toHaveLength(1);
+  });
 });
 
 
@@ -470,7 +525,17 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
               keys: opts?.variables?.translationKeys,
               locales: opts?.variables?.locales,
             });
-            return { data: { translationsRemove: { userErrors: [] } } };
+            // Echoes what it deleted -- the local rows go only for confirmed pairs.
+            return {
+              data: {
+                translationsRemove: {
+                  userErrors: [],
+                  translations: (opts?.variables?.locales ?? []).flatMap((l: string) =>
+                    (opts?.variables?.translationKeys ?? []).map((k: string) => ({ key: k, locale: l })),
+                  ),
+                },
+              },
+            };
           }
           return { data: { pageUpdate: { page: { id: pageId, title: 'Neuer Titel' }, userErrors: [] } } };
         },
@@ -540,7 +605,76 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
     expect(removedFromShopify).toHaveLength(1);
     expect(removedFromShopify[0].keys.sort()).toEqual(['body_html', 'title']);
     expect(removedFromShopify[0].locales).toEqual(['fr']);
-    expect(db.contentTranslation.deleteMany).toHaveBeenCalled();
+    // The confirmed (locale, key) pairs are deleted locally, scoped to the shop.
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.deleteMany.mock.calls[0][0].where).toMatchObject({
+      shop, resourceId: pageId, marketId: '', locale: { in: ['fr'] },
+    });
+  });
+
+  it('a spent repair budget starts no run and falls back to the stored deletion answer (Page)', async () => {
+    const take = vi.fn().mockReturnValue(false);
+    await savePage({ repairBudget: { take } });
+
+    expect(take).toHaveBeenCalledWith('content', pageId);
+    expect(retranslate.calls).toEqual([]);
+    // purgeUnreconciledSurfaces is true in this describe: the page's old
+    // translations are removed, as the same save did before auto-translate.
+    expect(removedFromShopify).toHaveLength(1);
+  });
+
+  it('a budget with room changes nothing: the run starts', async () => {
+    const take = vi.fn().mockReturnValue(true);
+    await savePage({ repairBudget: { take } });
+
+    expect(retranslate.calls).toHaveLength(1);
+    expect(removedFromShopify).toEqual([]);
+  });
+
+  it('a single-language shop spends no budget slot: no run could start', async () => {
+    const inner = admin.graphql as unknown as (q: string, o?: unknown) => Promise<unknown>;
+    const singleAdmin = {
+      graphql: vi.fn(async (query: string, opts?: any) =>
+        query.includes('getShopLocales')
+          ? {
+              ok: true,
+              json: async () => ({ data: { shopLocales: [{ locale: 'de', primary: true, published: true }] } }),
+            }
+          : inner(query, opts),
+      ),
+    };
+    service = new ShopifyContentService(singleAdmin as never);
+    const take = vi.fn().mockReturnValue(true);
+    await savePage({ repairBudget: { take } });
+    await savePage({ resourceId: 'gid://shopify/Page/2', repairBudget: { take } });
+
+    expect(take).not.toHaveBeenCalled();
+    expect(retranslate.calls).toEqual([]);
+  });
+
+  it('a multi-locale shop still counts every run against the budget', async () => {
+    const take = vi.fn().mockReturnValue(true);
+    await savePage({ repairBudget: { take } });
+    await savePage({ resourceId: 'gid://shopify/Page/2', repairBudget: { take } });
+    expect(take).toHaveBeenCalledTimes(2);
+  });
+
+  it('a Collection past the budget keeps its translations (the purge answer auto-translate forces off)', async () => {
+    const take = vi.fn().mockReturnValue(false);
+    await service.updateContent({
+      resourceId: 'gid://shopify/Collection/3',
+      resourceType: 'Collection',
+      locale: 'de',
+      primaryLocale: 'de',
+      updates: { title: 'C' },
+      changedFields: ['title'],
+      db: { ...db, collection: { update: vi.fn().mockResolvedValue({}) } },
+      shop,
+      repairBudget: { take },
+    });
+
+    expect(retranslate.calls).toEqual([]);
+    expect(removedFromShopify).toEqual([]);
   });
 
   it('repairs a Collection here too — its webhook cannot prove a change on a row with no translations', async () => {
@@ -719,7 +853,40 @@ describe('ShopifyContentService.updateContent() — the foreign-locale save is j
     const result = await save(admin, db, { title: 'Caja Kumiko', handle: 'caja-kumiko' });
 
     expect(result.success).toBe(true);
-    expect(String((result as any).warning)).toContain('handle');
+    // The save names the FIELD (not the Shopify key) so the page can keep it
+    // dirty and word the message in the merchant's language.
+    expect((result as any).unconfirmedFields).toEqual(['handle']);
+    expect((result as any).warning).toBeUndefined();
+    expect(mirrored(db)).toEqual({ title: 'Caja Kumiko' });
+  });
+
+  it('a save where NOTHING was echoed names the unconfirmed fields on the failure too', async () => {
+    const admin = makeAdmin({ data: { translationsRegister: { userErrors: [], translations: [] } } });
+    const db = makeDb();
+
+    const result: any = await save(admin, db, { title: 'Caja Kumiko' });
+
+    expect(result.success).toBe(false);
+    expect(result.unconfirmedFields).toEqual(['title']);
+  });
+
+  it('reports a foreign handle equal to the primary one instead of skipping it silently', async () => {
+    // The primary handle of the sample resource is `kumiko-box`.
+    const admin = makeAdmin((variables: any) => ({
+      data: {
+        translationsRegister: {
+          userErrors: [],
+          translations: (variables.translations ?? []).map((t: any) => ({ locale: t.locale, key: t.key, value: t.value })),
+        },
+      },
+    }));
+    const db = makeDb();
+
+    const result: any = await save(admin, db, { title: 'Caja Kumiko', handle: 'kumiko-box' });
+
+    expect(result.success).toBe(true);
+    expect(result.skippedFields).toEqual(['handle']);
+    // The rest of the save is real and was mirrored; the handle was not.
     expect(mirrored(db)).toEqual({ title: 'Caja Kumiko' });
   });
 

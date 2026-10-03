@@ -140,7 +140,11 @@ vi.mock("../../app/services/ai/ai-credentials.server", async (importOriginal) =>
   };
 });
 
-vi.mock("../../app/services/bulk-editor/translations.server", () => ({
+vi.mock("../../app/services/translations/verified-translations.server", async (importOriginal) => ({
+  // The REAL local mirror helper: it only touches the db it is handed.
+  mirrorProductMediaAlt: (
+    (await importOriginal()) as typeof import("../../app/services/translations/verified-translations.server")
+  ).mirrorProductMediaAlt,
   LOCALE_KEY_SEP: "\u0000",
   // The gap path: keys the folded multi-locale call did not echo go through
   // `removeAndVerify`, which RE-READS before giving up.
@@ -321,6 +325,7 @@ beforeEach(() => {
   db.productImageAltTranslation.upsert.mockImplementation(async () => ({}));
   db.productImageAltTranslation.findMany.mockClear();
   db.productImageAltTranslation.findMany.mockResolvedValue([]);
+  db.productImageAltTranslation.deleteMany.mockClear();
   db.task.create.mockClear();
   db.task.create.mockImplementation(async (args?: { data?: { id?: string } }) => ({
     id: args?.data?.id ?? "task-1",
@@ -1731,10 +1736,12 @@ describe("per-surface mirrors", () => {
     expect(upsertArgs.where).toEqual({
       imageId_locale_marketId: { imageId: "cache-row-7", locale: "fr", marketId: "" },
     });
-    // Resolved by the STABLE pair, which is the table's own unique key — never
-    // by a cuid somebody captured earlier.
+    // Resolved NOW by the MediaImage GID across the whole SHOP — never by a
+    // cuid somebody captured earlier, and never narrowed to this product: the
+    // translation lives on the one MediaImage every product's row shows.
     const lookup = (db.productImage.findMany.mock.calls.at(-1) as unknown as [any])[0];
-    expect(lookup.where).toMatchObject({ productId: product, mediaId: { in: [media] } });
+    expect(lookup.where).toMatchObject({ mediaId: media });
+    expect(lookup.where.productId).toBeUndefined();
     // …and the TENANCY check rides on it. A `toMatchObject` that only names the
     // pair passes with the shop filter deleted, which is how a multi-tenant
     // lookup comes to read another shop's rows with every test still green.
@@ -1765,6 +1772,25 @@ describe("per-surface mirrors", () => {
       (call: unknown[]) => (call[0] as any).where.imageId_locale_marketId.imageId,
     );
     expect(ids).toEqual(["cache-row-before", "cache-row-after"]);
+  });
+
+  it("a medium SHARED by two products is written and removed on BOTH cache rows", async () => {
+    const media = "gid://shopify/MediaImage/56";
+    const mirror = productImageAltMirror(SHOP, "gid://shopify/Product/A");
+    db.productImage.findMany.mockResolvedValue([
+      { id: "row-of-A", mediaId: media },
+      { id: "row-of-B", mediaId: media },
+    ]);
+
+    await mirror.write({ resourceId: media, resourceType: "MediaImage" }, "fr", "alt", "Chaise", "d");
+    const ids = db.productImageAltTranslation.upsert.mock.calls.map(
+      (call: unknown[]) => (call[0] as any).where.imageId_locale_marketId.imageId,
+    );
+    expect(ids).toEqual(["row-of-A", "row-of-B"]);
+
+    await mirror.remove({ resourceId: media, resourceType: "MediaImage" }, "fr", ["alt"]);
+    const del = (db.productImageAltTranslation.deleteMany.mock.calls.at(-1) as unknown as [any])[0];
+    expect(del.where).toEqual({ imageId: { in: ["row-of-A", "row-of-B"] }, locale: "fr", marketId: "" });
   });
 
   it("REPORTS an image with no cached row instead of skipping it silently", async () => {

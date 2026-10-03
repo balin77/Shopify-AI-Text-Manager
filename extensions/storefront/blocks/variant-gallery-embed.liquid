@@ -47,11 +47,26 @@
   R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
   variant.title containing `</script><script>…` would break out of this
   JSON island and inject script regardless of the JS-side _esc(). Every
-  free-text value interpolated below MUST additionally neutralise `<`/`>`
-  by replacing them with their \uXXXX JSON escapes (JSON.parse restores
-  them, so data is unchanged). Image URLs are Shopify CDN and
-  IDs/dimensions are numeric, so only variant.title needs this.
+  free-text value interpolated into the island MUST additionally neutralise
+  `<`/`>` by replacing them with their \uXXXX JSON escapes (JSON.parse
+  restores them, so data is unchanged). That now happens in ONE place:
+  snippets/cp-vg-item prints each object with both characters escaped, so
+  every string in it (alt text, URLs, ids) is covered.
 {%- endcomment -%}
+{%- comment -%}
+  Fallback memo (variants without any gallery metafield). The fallback emits
+  every product.media for EACH such variant, and a `render` per entry per
+  variant would be thousands of renders on a product with many variants. So
+  every product.media is rendered once, and only when the first variant needs
+  it (cp_fb_built): the item's media id, `<`, its JSON object, `>`. `<` and
+  `>` are safe separators because cp-vg-item's output never contains either
+  (it escapes both inside strings). It is ONE capture over product.media (a per-media
+  append would copy the growing memo every time), split once into cp_fb_items;
+  cp_fb_items stays nil for a product whose
+  variants all have metafields.
+{%- endcomment -%}
+{%- assign cp_fb_items = nil -%}
+{%- assign cp_fb_built = false -%}
 <script type="application/json" id="cp-embed-data-{{ block.id }}">
   {
     {%- for variant in product.variants -%}
@@ -75,6 +90,17 @@
         {%- if vg != blank and vg.value != blank -%}{%- assign cp_has_vg = true -%}{%- endif -%}
         {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}{%- assign cp_has_models = true -%}{%- endif -%}
         {%- comment -%}
+          Every entry below is ONE render of snippets/cp-vg-item, always in
+          these two lines. The snippet prints a JSON object or nothing.
+          Shopify wraps a snippet's output in "<!-- BEGIN app snippet -->"
+          comments that `capture` keeps, so the second line cuts them off
+          while printing (cp-external-video documents why) and tests for an
+          object with `contains '"type"'` (every object has that key, the
+          annotation never does) instead of assigning the cut value first:
+          every assign counts against Shopify's memory limit. The comma and
+          cp_has_any stay HERE because `render` is scope-isolated.
+        {%- endcomment -%}
+        {%- comment -%}
           Voll-mix path: variant_gallery_order (json) is a unified array of
           { kind: 'file' | 'url' | 'model', value } entries that mirrors how
           the merchant drag-arranged files + external URLs + 3D models in
@@ -87,109 +113,46 @@
             {%- assign vfi = variant.featured_image -%}
             {%- assign vfi_id_str = vfi.id | append: '' -%}
             {%- assign cp_seen_file_ids = cp_seen_file_ids | append: vfi_id_str | append: ',' -%}
-            {
-              "type":     "image",
-              "src_400":  {{ vfi | image_url: width: 400  | json }},
-              "src_800":  {{ vfi | image_url: width: 800  | json }},
-              "src_1200": {{ vfi | image_url: width: 1200 | json }},
-              "thumb":    {{ vfi | image_url: width: 160  | json }},
-              "w":        {{ vfi.width  | json }},
-              "h":        {{ vfi.height | json }},
-              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-            }
-            {%- assign cp_has_any = true -%}
+            {%- capture cp_o -%}{%- render 'cp-vg-item', m: vfi, kind: 'image', fb: variant.title -%}{%- endcapture -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
           {%- endif -%}
           {%- for entry in cp_order_mf.value -%}
+            {%- comment -%}
+              The branches below only PICK what to emit: cp_rm (a vg.value
+              item), cp_ru (an external URL) or cp_rmod + cp_rpv (a model URL
+              and its preview); `continue` skips the entry (dedup). One render
+              at the end of the iteration. Reset first, before any continue.
+            {%- endcomment -%}
+            {%- assign cp_rm = nil -%}
+            {%- assign cp_ru = nil -%}
+            {%- assign cp_rmod = nil -%}
+            {%- assign cp_rpv = nil -%}
+            {%- assign entry_val = entry.value | append: '' -%}
             {%- if entry.kind == 'file' -%}
-              {%- assign entry_val = entry.value | append: '' -%}
               {%- assign needle = ',' | append: entry_val | append: ',' -%}
               {%- if cp_seen_file_ids contains needle -%}{%- continue -%}{%- endif -%}
               {%- for item in vg.value -%}
                 {%- assign item_id_str = item.id | append: '' -%}
                 {%- if item_id_str == entry_val -%}
                   {%- assign cp_seen_file_ids = cp_seen_file_ids | append: entry_val | append: ',' -%}
-                  {%- if item.media_type == 'image' -%}
-                    {%- assign cp_src = item | image_url: width: 800 -%}
-                    {%- if cp_src != blank -%}
-                      {%- if cp_has_any %},{% endif -%}
-                      {%- assign cp_w = item.preview_image.width  | default: item.width -%}
-                      {%- assign cp_h = item.preview_image.height | default: item.height -%}
-                      {
-                        "type":     "image",
-                        "src_400":  {{ item | image_url: width: 400  | json }},
-                        "src_800":  {{ cp_src | json }},
-                        "src_1200": {{ item | image_url: width: 1200 | json }},
-                        "thumb":    {{ item | image_url: width: 160  | json }},
-                        "w":        {{ cp_w | json }},
-                        "h":        {{ cp_h | json }},
-                        "alt":      {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-                      }
-                      {%- assign cp_has_any = true -%}
-                    {%- endif -%}
-                  {%- elsif item.media_type == 'video' -%}
-                    {%- if item.preview_image != blank and item.sources.size > 0 -%}
-                      {%- if cp_has_any %},{% endif -%}
-                      {%- assign cp_pi = item.preview_image -%}
-                      {
-                        "type":   "video",
-                        "thumb":  {{ cp_pi | image_url: width: 160  | json }},
-                        "poster": {{ cp_pi | image_url: width: 1200 | json }},
-                        "w":      {{ cp_pi.width  | json }},
-                        "h":      {{ cp_pi.height | json }},
-                        "alt":    {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                        "sources": [
-                          {%- for src in item.sources -%}
-                            {%- unless forloop.first %},{% endunless -%}
-                            {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
-                          {%- endfor -%}
-                        ]
-                      }
-                      {%- assign cp_has_any = true -%}
-                    {%- endif -%}
-                  {%- endif -%}
+                  {%- if item.media_type == 'image' or item.media_type == 'video' -%}{%- assign cp_rm = item -%}{%- endif -%}
                   {%- break -%}
                 {%- endif -%}
               {%- endfor -%}
             {%- elsif entry.kind == 'url' -%}
-              {%- assign entry_val = entry.value | append: '' -%}
               {%- comment -%} url_encode removes the comma (and other special chars), so the comma-joined cp_seen_urls set's `,VALUE,` substring check stays safe for URLs that legitimately contain commas (e.g. Vimeo privacy hash, ?list=a,b,c). {%- endcomment -%}
               {%- assign url_token = entry_val | url_encode -%}
               {%- assign url_needle = ',' | append: url_token | append: ',' -%}
               {%- if cp_seen_urls contains url_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_urls = cp_seen_urls | append: url_token | append: ',' -%}
-              {%- assign cp_url = entry_val | strip -%}
-              {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
-              {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
-{%- assign cp_ev_pair = cp_ev_pair | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
-              {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
-              {%- if cp_ev_host != blank and cp_ev_id != blank -%}
-                {%- if cp_ev_host == 'youtube' -%}
-                  {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
-                {%- else -%}
-                  {%- assign cp_ev_thumb = '' -%}
-                {%- endif -%}
-                {%- if cp_has_any %},{% endif -%}
-                {
-                  "type":        "external_video",
-                  "thumb":       {{ cp_ev_thumb | json }},
-                  "poster":      {{ cp_ev_thumb | json }},
-                  "w":           {{ 0 | json }},
-                  "h":           {{ 0 | json }},
-                  "alt":         {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                  "host":        {{ cp_ev_host | json }},
-                  "external_id": {{ cp_ev_id | json }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
+              {%- assign cp_ru = entry_val | strip -%}
             {%- elsif entry.kind == 'model' -%}
-              {%- assign entry_val = entry.value | append: '' -%}
               {%- comment -%} Same comma-safe membership pattern as the url branch. {%- endcomment -%}
               {%- assign model_token = entry_val | url_encode -%}
               {%- assign model_needle = ',' | append: model_token | append: ',' -%}
               {%- if cp_seen_models contains model_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_models = cp_seen_models | append: model_token | append: ',' -%}
-              {%- assign cp_model_url = entry_val | strip -%}
+              {%- assign cp_rmod = entry_val | strip -%}
               {%- comment -%}
                 Look up the parallel JPEG preview (custom.variant_3d_previews
                 is a list.url metafield aligned 1:1 with variant_3d_models by
@@ -199,29 +162,17 @@
                 Empty string when the metafield is missing or the slot has
                 no preview yet (legacy models from before this metafield).
               {%- endcomment -%}
-              {%- assign cp_model_preview = '' -%}
               {%- if cp_previews_mf != blank and cp_previews_mf.value != blank and cp_models_mf != blank and cp_models_mf.value != blank -%}
                 {%- for cp_m_url in cp_models_mf.value -%}
-                  {%- if cp_m_url == cp_model_url -%}
-                    {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
+                  {%- if cp_m_url == cp_rmod -%}
+                    {%- assign cp_rpv = cp_previews_mf.value[forloop.index0] | default: '' -%}
                     {%- break -%}
                   {%- endif -%}
                 {%- endfor -%}
               {%- endif -%}
-              {%- if cp_model_url != blank -%}
-                {%- if cp_has_any %},{% endif -%}
-                {
-                  "type":      "model",
-                  "thumb":     {{ cp_model_preview | json }},
-                  "poster":    {{ cp_model_preview | json }},
-                  "w":         800,
-                  "h":         800,
-                  "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                  "model_src": {{ cp_model_url | json }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
             {%- endif -%}
+            {%- capture cp_o -%}{%- render 'cp-vg-item', m: cp_rm, url: cp_ru, model: cp_rmod, preview: cp_rpv, alt: cp_rm.alt, fb: variant.title -%}{%- endcapture -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
           {%- endfor -%}
           {%- comment -%}
             Tail-emit: any vg.value items whose id is missing from the order
@@ -235,44 +186,9 @@
               {%- assign tail_needle = ',' | append: item_id_str | append: ',' -%}
               {%- if cp_seen_file_ids contains tail_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_file_ids = cp_seen_file_ids | append: item_id_str | append: ',' -%}
-              {%- if item.media_type == 'image' -%}
-                {%- assign cp_src = item | image_url: width: 800 -%}
-                {%- if cp_src != blank -%}
-                  {%- if cp_has_any %},{% endif -%}
-                  {%- assign cp_w = item.preview_image.width  | default: item.width -%}
-                  {%- assign cp_h = item.preview_image.height | default: item.height -%}
-                  {
-                    "type":     "image",
-                    "src_400":  {{ item | image_url: width: 400  | json }},
-                    "src_800":  {{ cp_src | json }},
-                    "src_1200": {{ item | image_url: width: 1200 | json }},
-                    "thumb":    {{ item | image_url: width: 160  | json }},
-                    "w":        {{ cp_w | json }},
-                    "h":        {{ cp_h | json }},
-                    "alt":      {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-                  }
-                  {%- assign cp_has_any = true -%}
-                {%- endif -%}
-              {%- elsif item.media_type == 'video' -%}
-                {%- if item.preview_image != blank and item.sources.size > 0 -%}
-                  {%- if cp_has_any %},{% endif -%}
-                  {%- assign cp_pi = item.preview_image -%}
-                  {
-                    "type":   "video",
-                    "thumb":  {{ cp_pi | image_url: width: 160  | json }},
-                    "poster": {{ cp_pi | image_url: width: 1200 | json }},
-                    "w":      {{ cp_pi.width  | json }},
-                    "h":      {{ cp_pi.height | json }},
-                    "alt":    {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                    "sources": [
-                      {%- for src in item.sources -%}
-                        {%- unless forloop.first %},{% endunless -%}
-                        {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
-                      {%- endfor -%}
-                    ]
-                  }
-                  {%- assign cp_has_any = true -%}
-                {%- endif -%}
+              {%- if item.media_type == 'image' or item.media_type == 'video' -%}
+                {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
+                {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
               {%- endif -%}
             {%- endfor -%}
           {%- endif -%}
@@ -284,30 +200,8 @@
               {%- assign url_tail_needle = ',' | append: url_tail_token | append: ',' -%}
               {%- if cp_seen_urls contains url_tail_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_urls = cp_seen_urls | append: url_tail_token | append: ',' -%}
-              {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
-              {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
-{%- assign cp_ev_pair = cp_ev_pair | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
-              {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
-              {%- if cp_ev_host != blank and cp_ev_id != blank -%}
-                {%- if cp_ev_host == 'youtube' -%}
-                  {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
-                {%- else -%}
-                  {%- assign cp_ev_thumb = '' -%}
-                {%- endif -%}
-                {%- if cp_has_any %},{% endif -%}
-                {
-                  "type":        "external_video",
-                  "thumb":       {{ cp_ev_thumb | json }},
-                  "poster":      {{ cp_ev_thumb | json }},
-                  "w":           {{ 0 | json }},
-                  "h":           {{ 0 | json }},
-                  "alt":         {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                  "host":        {{ cp_ev_host | json }},
-                  "external_id": {{ cp_ev_id | json }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
+              {%- capture cp_o -%}{%- render 'cp-vg-item', url: cp_url, fb: variant.title -%}{%- endcapture -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
           {%- comment -%}
@@ -333,19 +227,8 @@
               {%- if cp_previews_mf != blank and cp_previews_mf.value != blank -%}
                 {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
               {%- endif -%}
-              {%- if cp_model_url != blank -%}
-                {%- if cp_has_any %},{% endif -%}
-                {
-                  "type":      "model",
-                  "thumb":     {{ cp_model_preview | json }},
-                  "poster":    {{ cp_model_preview | json }},
-                  "w":         800,
-                  "h":         800,
-                  "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                  "model_src": {{ cp_model_url | json }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
+              {%- capture cp_o -%}{%- render 'cp-vg-item', model: cp_model_url, preview: cp_model_preview, fb: variant.title -%}{%- endcapture -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
         {%- comment -%}
@@ -357,18 +240,8 @@
         {%- endcomment -%}
         {%- elsif cp_has_vg or cp_has_models -%}
           {%- if variant.featured_image != blank -%}
-            {%- assign vfi = variant.featured_image -%}
-            {
-              "type":     "image",
-              "src_400":  {{ vfi | image_url: width: 400  | json }},
-              "src_800":  {{ vfi | image_url: width: 800  | json }},
-              "src_1200": {{ vfi | image_url: width: 1200 | json }},
-              "thumb":    {{ vfi | image_url: width: 160  | json }},
-              "w":        {{ vfi.width  | json }},
-              "h":        {{ vfi.height | json }},
-              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-            }
-            {%- assign cp_has_any = true -%}
+            {%- capture cp_o -%}{%- render 'cp-vg-item', m: variant.featured_image, kind: 'image', fb: variant.title -%}{%- endcapture -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
           {%- endif -%}
           {%- comment -%}
             Default order (when variant_gallery_order is not set):
@@ -386,84 +259,30 @@
           {%- endcomment -%}
           {%- for item in vg.value -%}
             {%- if item.media_type == 'image' -%}
-              {%- assign cp_src = item | image_url: width: 800 -%}
-              {%- if cp_src != blank -%}
-                {%- if cp_has_any %},{% endif -%}
-                {%- assign cp_w = item.preview_image.width  | default: item.width -%}
-                {%- assign cp_h = item.preview_image.height | default: item.height -%}
-                {
-                  "type":     "image",
-                  "src_400":  {{ item | image_url: width: 400  | json }},
-                  "src_800":  {{ cp_src | json }},
-                  "src_1200": {{ item | image_url: width: 1200 | json }},
-                  "thumb":    {{ item | image_url: width: 160  | json }},
-                  "w":        {{ cp_w | json }},
-                  "h":        {{ cp_h | json }},
-                  "alt":      {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
+              {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endif -%}
           {%- endfor -%}
           {%- for item in vg.value -%}
             {%- if item.media_type == 'video' -%}
-              {%- if item.preview_image != blank and item.sources.size > 0 -%}
-                {%- if cp_has_any %},{% endif -%}
-                {%- assign cp_pi = item.preview_image -%}
-                {
-                  "type":   "video",
-                  "thumb":  {{ cp_pi | image_url: width: 160  | json }},
-                  "poster": {{ cp_pi | image_url: width: 1200 | json }},
-                  "w":      {{ cp_pi.width  | json }},
-                  "h":      {{ cp_pi.height | json }},
-                  "alt":    {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                  "sources": [
-                    {%- for src in item.sources -%}
-                      {%- unless forloop.first %},{% endunless -%}
-                      {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
-                    {%- endfor -%}
-                  ]
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
+              {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endif -%}
           {%- endfor -%}
           {%- comment -%}
             YouTube/Vimeo URLs from custom.variant_external_videos (list.url).
             `list.file_reference` can't hold URLs, so they live on a parallel
             metafield and are appended after the file-backed items. URL parsing
-            uses split-pipes (no regex in Liquid). The controller's existing
-            `external_video` dispatch handles these unchanged — only host +
-            external_id are required at runtime.
+            happens in snippets/cp-external-video (called by cp-vg-item). The
+            controller's existing `external_video` dispatch handles these
+            unchanged — only host + external_id are required at runtime.
           {%- endcomment -%}
           {%- assign cp_extvids = variant.metafields.custom.variant_external_videos -%}
           {%- if cp_extvids != blank and cp_extvids.value != blank -%}
             {%- for cp_url_raw in cp_extvids.value -%}
               {%- assign cp_url = cp_url_raw | strip -%}
-              {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
-              {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
-{%- assign cp_ev_pair = cp_ev_pair | split: '-->' | last | split: '<!--' | first | strip -%}
-              {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
-              {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
-              {%- if cp_ev_host != blank and cp_ev_id != blank -%}
-                {%- if cp_ev_host == 'youtube' -%}
-                  {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
-                {%- else -%}
-                  {%- assign cp_ev_thumb = '' -%}
-                {%- endif -%}
-                {%- if cp_has_any %},{% endif -%}
-                {
-                  "type":        "external_video",
-                  "thumb":       {{ cp_ev_thumb | json }},
-                  "poster":      {{ cp_ev_thumb | json }},
-                  "w":           {{ 0 | json }},
-                  "h":           {{ 0 | json }},
-                  "alt":         {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                  "host":        {{ cp_ev_host | json }},
-                  "external_id": {{ cp_ev_id | json }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
+              {%- capture cp_o -%}{%- render 'cp-vg-item', url: cp_url, fb: variant.title -%}{%- endcapture -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
           {%- comment -%}
@@ -481,120 +300,35 @@
               {%- if cp_previews_mf != blank and cp_previews_mf.value != blank -%}
                 {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
               {%- endif -%}
-              {%- if cp_model_url != blank -%}
-                {%- if cp_has_any %},{% endif -%}
-                {
-                  "type":      "model",
-                  "thumb":     {{ cp_model_preview | json }},
-                  "poster":    {{ cp_model_preview | json }},
-                  "w":         800,
-                  "h":         800,
-                  "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                  "model_src": {{ cp_model_url | json }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
+              {%- capture cp_o -%}{%- render 'cp-vg-item', model: cp_model_url, preview: cp_model_preview, fb: variant.title -%}{%- endcapture -%}
+              {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
             {%- endfor -%}
           {%- endif -%}
         {%- endif -%}
         {%- comment -%} Step 2: if no images from metafield, fall back to product.media. Handles ALL media types so a merchant-uploaded video / 3D model is no longer silently dropped (Bilder + Video-Player). featured_image emitted first as primary (RISK-4) and deduped from the loop. {%- endcomment -%}
         {%- unless cp_has_any -%}
-          {%- assign cp_vfi_id = blank -%}
+          {%- assign cp_vfi_id = '' -%}
           {%- if variant.featured_image != blank -%}
-            {%- assign vfi = variant.featured_image -%}
-            {
-              "type":     "image",
-              "src_400":  {{ vfi | image_url: width: 400  | json }},
-              "src_800":  {{ vfi | image_url: width: 800  | json }},
-              "src_1200": {{ vfi | image_url: width: 1200 | json }},
-              "thumb":    {{ vfi | image_url: width: 160  | json }},
-              "w":        {{ vfi.width  | json }},
-              "h":        {{ vfi.height | json }},
-              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-            }
-            {%- assign cp_has_any = true -%}
-            {%- assign cp_vfi_id = vfi.id -%}
+            {%- capture cp_o -%}{%- render 'cp-vg-item', m: variant.featured_image, kind: 'image', fb: variant.title -%}{%- endcapture -%}
+            {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
+            {%- assign cp_vfi_id = variant.featured_image.id -%}
           {%- endif -%}
-          {%- for media in product.media -%}
-            {%- if media.id != cp_vfi_id -%}
-              {%- if media.media_type == 'image' -%}
-                {%- assign cp_src = media | image_url: width: 800 -%}
-                {%- if cp_src != blank -%}
-                  {%- if cp_has_any %},{% endif -%}
-                  {%- assign cp_w = media.preview_image.width  | default: media.width -%}
-                  {%- assign cp_h = media.preview_image.height | default: media.height -%}
-                  {
-                    "type":     "image",
-                    "src_400":  {{ media | image_url: width: 400  | json }},
-                    "src_800":  {{ cp_src | json }},
-                    "src_1200": {{ media | image_url: width: 1200 | json }},
-                    "thumb":    {{ media | image_url: width: 160  | json }},
-                    "w":        {{ cp_w | json }},
-                    "h":        {{ cp_h | json }},
-                    "alt":      {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-                  }
-                  {%- assign cp_has_any = true -%}
-                {%- endif -%}
-              {%- elsif media.media_type == 'video' -%}
-                {%- if media.preview_image != blank and media.sources.size > 0 -%}
-                  {%- if cp_has_any %},{% endif -%}
-                  {%- assign cp_pi = media.preview_image -%}
-                  {
-                    "type":   "video",
-                    "thumb":  {{ cp_pi | image_url: width: 160  | json }},
-                    "poster": {{ cp_pi | image_url: width: 1200 | json }},
-                    "w":      {{ cp_pi.width  | json }},
-                    "h":      {{ cp_pi.height | json }},
-                    "alt":    {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                    "sources": [
-                      {%- for src in media.sources -%}
-                        {%- unless forloop.first %},{% endunless -%}
-                        {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
-                      {%- endfor -%}
-                    ]
-                  }
-                  {%- assign cp_has_any = true -%}
-                {%- endif -%}
-              {%- elsif media.media_type == 'external_video' -%}
-                {%- if media.preview_image != blank -%}
-                  {%- if cp_has_any %},{% endif -%}
-                  {%- assign cp_pi = media.preview_image -%}
-                  {
-                    "type":        "external_video",
-                    "thumb":       {{ cp_pi | image_url: width: 160  | json }},
-                    "poster":      {{ cp_pi | image_url: width: 1200 | json }},
-                    "w":           {{ cp_pi.width  | json }},
-                    "h":           {{ cp_pi.height | json }},
-                    "alt":         {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                    "host":        {{ media.host | json }},
-                    "external_id": {{ media.external_id | json }}
-                  }
-                  {%- assign cp_has_any = true -%}
-                {%- endif -%}
-              {%- elsif media.media_type == 'model' -%}
-                {%- if media.preview_image != blank -%}
-                  {%- assign cp_glb = blank -%}
-                  {%- for src in media.sources -%}
-                    {%- assign cp_fmt = src.format | downcase -%}
-                    {%- if cp_fmt == 'glb' and cp_glb == blank -%}{%- assign cp_glb = src.url -%}{%- endif -%}
-                  {%- endfor -%}
-                  {%- if cp_glb != blank -%}
-                    {%- if cp_has_any %},{% endif -%}
-                    {%- assign cp_pi = media.preview_image -%}
-                    {
-                      "type":      "model",
-                      "thumb":     {{ cp_pi | image_url: width: 160  | json }},
-                      "poster":    {{ cp_pi | image_url: width: 1200 | json }},
-                      "w":         {{ cp_pi.width  | json }},
-                      "h":         {{ cp_pi.height | json }},
-                      "alt":       {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                      "model_src": {{ cp_glb | json }}
-                    }
-                    {%- assign cp_has_any = true -%}
-                  {%- endif -%}
-                {%- endif -%}
-              {%- endif -%}
-            {%- endif -%}
+          {%- comment -%} Built lazily, once per product (see the memo comment above the capture). {%- endcomment -%}
+          {%- unless cp_fb_built -%}
+            {%- assign cp_fb_built = true -%}
+            {%- capture cp_fb -%}
+              {%- for media in product.media -%}
+                {%- capture cp_o -%}{%- render 'cp-vg-item', m: media, alt: media.alt, fb: product.title -%}{%- endcapture -%}
+                {%- if cp_o contains '"type"' -%}{{ media.id }}<{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}>{%- endif -%}
+              {%- endfor -%}
+            {%- endcapture -%}
+            {%- assign cp_fb_items = cp_fb | split: '>' -%}
+          {%- endunless -%}
+          {%- comment -%} Ids compare as strings; no featured image is '', which matches no media id (as blank did). {%- endcomment -%}
+          {%- assign cp_vfi_key = cp_vfi_id | append: '' -%}
+          {%- for cp_fb_item in cp_fb_items -%}
+            {%- assign cp_fb_id = cp_fb_item | split: '<' | first -%}
+            {%- if cp_fb_id != cp_vfi_key -%}{%- if cp_has_any %},{% endif -%}{{ cp_fb_item | split: '<' | last }}{%- assign cp_has_any = true -%}{%- endif -%}
           {%- endfor -%}
         {%- endunless -%}
       ]{% unless forloop.last %},{% endunless %}

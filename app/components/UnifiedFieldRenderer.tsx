@@ -26,6 +26,7 @@ import { hasFieldMissingTranslations } from "../utils/field-validation.utils";
 import type { ValidationOverlays } from "../utils/field-validation.utils";
 import type { FieldDefinition, ContentType } from "../types/content-editor.types";
 import { IMAGE_ALL_LOCALES_AI_ACTIONS, IMAGE_PER_LOCALE_AI_ACTIONS } from "../constants/ai-actions";
+import { ThemeImageField } from "./localized-images/ThemeImageField";
 
 export interface FieldRendererProps {
   field: FieldDefinition;
@@ -63,6 +64,13 @@ export interface FieldRendererProps {
   onTranslateToAllLocales?: () => void;
   onCopy?: () => void;
   onCopyToAllLocales?: () => void;
+  /** "Save first": this field's primary value is an unsaved draft, so the
+   *  translate/copy-to-all buttons are disabled with this reason. */
+  saveFirstHint?: string;
+  /** The same per image for the alt-text field ("" / undefined = enabled). */
+  altSaveFirstHint?: (imageIndex: number) => string | undefined;
+  /** …and for "translate all alt texts" (any primary alt unsaved). */
+  translateAllAltsSaveFirstHint?: string;
   onAcceptSuggestion: () => void;
   onAcceptAndTranslate: () => void;
   onRejectSuggestion: () => void;
@@ -122,6 +130,9 @@ export function UnifiedFieldRenderer(
     onTranslateToAllLocales,
     onCopy,
     onCopyToAllLocales,
+    saveFirstHint,
+    altSaveFirstHint,
+    translateAllAltsSaveFirstHint,
     onAcceptSuggestion,
     onAcceptAndTranslate,
     onRejectSuggestion,
@@ -279,6 +290,27 @@ export function UnifiedFieldRenderer(
     });
   }
 
+  // Theme image setting (shopify://shop_images/…): a picker per language and
+  // market, never the AI. The primary reference comes from the item's own
+  // translatableContent — the value this field holds in a foreign locale is
+  // "" until an image was chosen for it.
+  if (field.type === "themeImage") {
+    const primaryValue = Array.isArray(selectedItem?.translatableContent)
+      ? String((selectedItem.translatableContent as Array<{ key: string; value?: string }>).find((c) => c?.key === field.key)?.value ?? "")
+      : "";
+    return (
+      <ThemeImageField
+        label={field.label}
+        value={value}
+        primaryValue={primaryValue}
+        onChange={onChange}
+        isPrimaryLocale={isPrimaryLocale}
+        readOnly={readOnly}
+        currentLanguage={currentLanguage}
+      />
+    );
+  }
+
   // Image Gallery Field
   if (field.type === "image-gallery") {
     const hasImages = selectedItem?.images && selectedItem.images.length > 0;
@@ -308,6 +340,8 @@ export function UnifiedFieldRenderer(
         onTranslateAltTextToAllLocales={handlers.handleTranslateAltTextToAllLocales}
         onTranslateAllAltTexts={handlers.handleTranslateAllAltTexts}
         onTranslateAllAltTextsForLocale={handlers.handleTranslateAllAltTextsForLocale}
+        altSaveFirstHint={altSaveFirstHint}
+        translateAllAltsSaveFirstHint={translateAllAltsSaveFirstHint}
         altTextSuggestions={state.altTextSuggestions}
         onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
@@ -331,6 +365,7 @@ export function UnifiedFieldRenderer(
           featuredImage: t.products?.featuredImage || "Featured Image",
           altTextForImage: t.products?.altTextForImage || "Alt-text for image",
           altTextPlaceholder: t.products?.altTextPlaceholder || "Describe the image...",
+          altNeedsPrimaryHint: t.products?.altTextNeedsPrimaryHint,
           generateAllAltTexts: t.products?.generateAllAltTexts || "Generate all alt-texts",
           translateAllAltTexts: t.products?.translateAllAltTexts || "Translate all alt-texts",
           onlyFeaturedImageAvailable:
@@ -628,6 +663,7 @@ export function UnifiedFieldRenderer(
         onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
         onCopy={field.supportsTranslation !== false ? onCopy : undefined}
         onCopyToAllLocales={field.supportsTranslation !== false ? onCopyToAllLocales : undefined}
+        saveFirstHint={saveFirstHint}
         onAcceptSuggestion={onAcceptSuggestion}
         onAcceptAndTranslate={onAcceptAndTranslate}
         onRejectSuggestion={onRejectSuggestion}
@@ -667,6 +703,7 @@ export function UnifiedFieldRenderer(
       onTranslateToAllLocales={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onTranslateToAllLocales : undefined)}
       onCopy={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onCopy : undefined)}
       onCopyToAllLocales={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onCopyToAllLocales : undefined)}
+      saveFirstHint={saveFirstHint}
       onAcceptSuggestion={onAcceptSuggestion}
       onAcceptAndTranslate={onAcceptAndTranslate}
       onRejectSuggestion={onRejectSuggestion}

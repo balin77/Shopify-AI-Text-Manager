@@ -7,9 +7,12 @@ import {
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP,
+} from "~/services/translations/verified-translations.server";
+import {
   translationKeyForColumn,
   translationKeysByColumnId,
 } from "~/services/bulk-editor/translations.server";
+import { DIGEST_BATCH_CHUNK } from "~/services/translations/translation-digest.shared";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import { translationSavedAt } from "~/utils/translation-save-lock.server";
 import {
@@ -24,7 +27,6 @@ import {
   optionColumnId,
   buildColumnsForType,
   IMG_ALT_COLUMN_ID,
-  DIGEST_BATCH_CHUNK,
   BULK_COLUMNS_BY_TYPE,
   type BulkDiffEntry,
   type BulkRowType,

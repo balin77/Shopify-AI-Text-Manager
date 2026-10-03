@@ -1,3 +1,4 @@
+import { isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
 import { data as json } from "react-router";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
@@ -6,8 +7,7 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import type { TemplatesActionContext } from "./shared";
 import type { DataResponse } from "~/types/data-response";
 import { aiServiceFor } from "~/services/ai/ai-credentials.server";
-import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
-import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
+import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 
 export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { db, session, formData, groupId, firstGroup, domain } = ctx;
@@ -15,11 +15,14 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
   const currentValue = getFormString(formData, "currentValue");
   const mainLanguage = getFormString(formData, "mainLanguage");
   const fieldLabel = extractReadableName(fieldType);
+  if (isThemeMediaValue(currentValue)) {
+    return json(themeMediaRefusalBody("generateAIText", fieldType), { status: 400 });
+  }
 
   // Compliance gate: whose key, consent, kill switch and budget — before a
   // Task row exists (same as templates-translate-field).
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const refusal = await aiRefusalResponse(settings, session.shop);
+  const refusal = await aiRefusalFor(settings, session.shop, { actionType: "generateAIText", fieldType });
   if (refusal) {
     return refusal;
   }
@@ -85,8 +88,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         error: msg.substring(0, 1000),
       },
     });
-    const refused = managedRefusalResponseFromError(error, settings);
+    const refused = managedRefusalResponseFromError(error, settings, { actionType: "generateAIText", fieldType });
     if (refused) return refused;
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, error: msg, actionType: "generateAIText", fieldType }, { status: 500 });
   }
 }

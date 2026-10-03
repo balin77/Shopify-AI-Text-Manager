@@ -36,6 +36,8 @@
  * callbacks / fetchers it is handed.
  */
 
+import { useI18n } from "../../../contexts/I18nContext";
+import { gatedAwareError } from "../../../utils/gated-error.shared";
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Card,
@@ -260,6 +262,7 @@ export function LibraryTab({
   openImportModal,
   closeImportModal,
 }: LibraryTabProps) {
+  const { t } = useI18n();
   const isPseudo = !!groupDetail?.pseudo;
   // No room for another keyword: either the cap is reached or a downgrade left
   // the shop above it. Both block CREATION only — nothing is ever deleted.
@@ -913,7 +916,7 @@ export function LibraryTab({
         <Banner tone="critical">
           {distFetcher.data.code === "ALREADY_RUNNING"
             ? k.distAlreadyRunning
-            : distFetcher.data.error || k.errorGeneric}
+            : gatedAwareError(distFetcher.data.error, t.content.upgradeRequired, k.errorGeneric)}
         </Banner>
       )}
 

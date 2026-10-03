@@ -603,7 +603,7 @@ export function groupCrawlerStatuses(statuses: RobotsCrawlerStatus[]): RobotsCra
   const out: RobotsCrawlerGroup[] = [];
   const bySignature = new Map<string, RobotsCrawlerGroup>();
   for (const s of statuses) {
-    // NUL separator (house idiom, see bulk-editor/translations.server.ts) so a
+    // NUL separator (house idiom, see translations/verified-translations.server.ts) so a
     // path can never collide with the joiner. Written as an escape, not a
     // literal byte, or git classifies this file as binary.
     const signature = `${s.verdict}\u0000${s.matchedBy}\u0000${s.rules.map((r) => r.path).join("\u0000")}`;

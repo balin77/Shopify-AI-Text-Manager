@@ -44,7 +44,8 @@ export interface CommerceSaveApi {
 }
 
 interface CommerceSaveContextValue {
-  register: (api: CommerceSaveApi | null) => void;
+  /** `key` names the registrant: several writers (the stock panel, the per-language media drafts) share the one save bar. */
+  register: (api: CommerceSaveApi | null, key: string) => void;
   /**
    * Bumped by the editor's own reload buttons.
    *
@@ -59,12 +60,16 @@ interface CommerceSaveContextValue {
 
 const CommerceSaveContext = createContext<CommerceSaveContextValue | null>(null);
 
-/** Used by the panel. A no-op outside the provider, so the component still
- *  renders standalone (the create modal, tests). */
-export function useRegisterCommerceSave(): (api: CommerceSaveApi | null) => void {
-  const ctx = useContext(CommerceSaveContext);
-  return ctx?.register ?? NOOP;
+/** Used by a writer behind the save bar. A no-op outside the provider, so the
+ *  component still renders standalone (the create modal, tests). The returned
+ *  function is stable for a given key (effects depend on it). `key` defaults to
+ *  the stock panel's slot; a second writer passes its own, or it would replace
+ *  the first one's registration. */
+export function useRegisterCommerceSave(key: string = DEFAULT_KEY): (api: CommerceSaveApi | null) => void {
+  const register = useContext(CommerceSaveContext)?.register;
+  return useMemo(() => (register ? (api: CommerceSaveApi | null) => register(api, key) : NOOP), [register, key]);
 }
+const DEFAULT_KEY = "commerce";
 
 /** Changes whenever the editor's reload ran. `0` outside the provider. */
 export function useCommerceReloadNonce(): number {
@@ -94,18 +99,23 @@ const NOOP = () => undefined;
  * called from an event handler (the save bar's buttons), never during render.
  */
 export function useCommerceSaveRegistry() {
-  const apiRef = useRef<CommerceSaveApi | null>(null);
+  // One slot per registrant: the stock panel and the media drafts both drive
+  // the ONE save bar, and a single slot would let the second one replace the
+  // first (its unsaved stock edits silently dropped from Save and Discard).
+  const apisRef = useRef<Map<string, CommerceSaveApi>>(new Map());
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
 
-  const register = useCallback((next: CommerceSaveApi | null) => {
-    apiRef.current = next;
+  const register = useCallback((next: CommerceSaveApi | null, key: string) => {
+    if (next) apisRef.current.set(key, next);
+    else apisRef.current.delete(key);
     // Booleans for the same reason `hasChanges` is one: setting a flag to the
     // value it already holds renders nothing, so a re-registration that
     // changes nothing observable cannot start the loop this file documents.
-    setHasChanges(next?.hasChanges === true);
-    setSaving(next?.saving === true);
+    const all = [...apisRef.current.values()];
+    setHasChanges(all.some((a) => a.hasChanges === true));
+    setSaving(all.some((a) => a.saving === true));
   }, []);
 
   const value = useMemo(() => ({ register, reloadNonce }), [register, reloadNonce]);
@@ -117,10 +127,11 @@ export function useCommerceSaveRegistry() {
   // either, and reading through the ref keeps these two functions constant for
   // the lifetime of the editor.
   const save = useCallback(async () => {
-    await apiRef.current?.save();
+    // Every registrant's own save; each never throws and reports in its own place.
+    await Promise.all([...apisRef.current.values()].map((a) => a.save()));
   }, []);
   const discard = useCallback(() => {
-    apiRef.current?.discard();
+    for (const a of apisRef.current.values()) a.discard();
   }, []);
 
   return {

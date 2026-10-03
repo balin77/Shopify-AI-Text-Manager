@@ -13,7 +13,7 @@ import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";
 
 export const loader = makeThemeDomainLoader("online_store_extras", "SHOP_METADATA", ["SHOP"]);
-export const action = makeThemeContentRouteAction("online_store_extras");
+export const action = makeThemeContentRouteAction("online_store_extras", "onlineStoreExtras");
 
 export default function ShopMetadataPage() {
   const data = useLoaderData<typeof loader>();

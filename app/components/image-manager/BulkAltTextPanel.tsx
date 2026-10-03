@@ -41,6 +41,9 @@ interface Props {
   shopLocales: string[];
   primaryLocale: string;
   onApplySuccess?: () => void;
+  /** Every apply / SKU answer, so the editor's one watcher can follow the
+   *  background re-translation it started (it carries the task ids). */
+  onSaveResponse?: (response: unknown) => void;
   selectedGids?: string[];
 }
 
@@ -72,7 +75,7 @@ function buildVariableChips(variants: VariantWithGallery[]): string[] {
   return Array.from(seen);
 }
 
-export function BulkAltTextPanel({ productId, productTitle, variants, shopLocales, primaryLocale, onApplySuccess, selectedGids = [] }: Props) {
+export function BulkAltTextPanel({ productId, productTitle, variants, shopLocales, primaryLocale, onApplySuccess, onSaveResponse, selectedGids = [] }: Props) {
   const { t } = useI18n();
   const im = t.imageManager;
   const { showInfoBox } = useInfoBox();
@@ -151,6 +154,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     const data = skuFetcher.data;
     if (!data || data === prevSkuFetcherData.current) return;
     prevSkuFetcherData.current = data;
+    onSaveResponse?.(data);
     if (data.success) {
       showInfoBox(im?.altTextFromSkuSuccess ?? "Alt texts from SKU applied", "success");
     } else {
@@ -237,8 +241,9 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
   const saveTemplate = useCallback(
     async (pos: TemplatePosition, locale: string, value: string) => {
+      let saved = false;
       try {
-        await fetch("/api/alt-text-templates", {
+        const res = await fetch("/api/alt-text-templates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -249,9 +254,14 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
             template: value,
           }),
         });
+        const body = (await res.json().catch(() => null)) as { success?: boolean } | null;
+        saved = res.ok && body?.success !== false;
       } catch {}
+      if (!saved) {
+        showInfoBox(im?.altTemplateSaveFailed ?? "The alt text template could not be saved. Please try again.", "critical");
+      }
     },
-    [productId]
+    [productId, im, showInfoBox]
   );
 
   const handleTemplateChange = useCallback(
@@ -307,15 +317,24 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const handleRemovePosition = useCallback(
     async (positionIndex: number) => {
       const pos = positions[positionIndex];
+      let deleted = false;
       try {
-        await fetch(
+        const res = await fetch(
           `/api/alt-text-templates?productId=${encodeURIComponent(productId)}&position=${pos.position}`,
           { method: "DELETE" }
         );
+        const body = (await res.json().catch(() => null)) as { success?: boolean } | null;
+        deleted = res.ok && body?.success !== false;
       } catch {}
+      if (!deleted) {
+        // The row stays: removing it here would show a template as gone that
+        // is still stored and would come back on the next load.
+        showInfoBox(im?.altTemplateDeleteFailed ?? "The alt text template could not be deleted. Please try again.", "critical");
+        return;
+      }
       setPositions((prev) => prev.filter((_, i) => i !== positionIndex));
     },
-    [positions, productId]
+    [positions, productId, im, showInfoBox]
   );
 
   const insertVariable = useCallback(
@@ -430,6 +449,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
         }),
       });
       const data = await res.json();
+      onSaveResponse?.(data);
       if (data.success) {
         showInfoBox(
           scopedMsg(
@@ -446,6 +466,8 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
           ? data.errors.join("\n")
           : (data.error ?? "Unknown error");
         showInfoBox(scopedMsg(detail, productId, productTitle), "critical");
+        // A partial apply still wrote some images: reload, or they stay stale.
+        if (typeof data.applied === "number" && data.applied > 0 && isStillActive(productId)) onApplySuccess?.();
       }
     } catch (e: any) {
       const detail = e.message ?? "Unknown error";
@@ -453,7 +475,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     } finally {
       setApplyingLocale(loc, false);
     }
-  }, [ops.applyingLocales, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, setApplyingLocale, scopedMsg, isStillActive]);
+  }, [ops.applyingLocales, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, onSaveResponse, setApplyingLocale, scopedMsg, isStillActive]);
 
   // Locales that "Apply to all languages" will write to. Primary is always included;
   // foreign locales can be Ctrl-clicked off via excludedLocales.
@@ -489,6 +511,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
             body: JSON.stringify({ productId, locale: loc, primaryLocale, scope: "all", variants }),
           });
           const data = await res.json();
+          onSaveResponse?.(data);
           if (typeof data.applied === "number") totalApplied += data.applied;
           if (Array.isArray(data.errors)) {
             allErrors.push(...data.errors.map((e: string) => `[${loc.toUpperCase()}] ${e}`));
@@ -524,7 +547,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     } finally {
       patchOps({ applyingAll: false, applyAllProgress: null });
     }
-  }, [ops.applyingAll, targetLocales, productId, productTitle, primaryLocale, variants, im, showInfoBox, onApplySuccess, patchOps, scopedMsg, isStillActive]);
+  }, [ops.applyingAll, targetLocales, productId, productTitle, primaryLocale, variants, im, showInfoBox, onApplySuccess, onSaveResponse, patchOps, scopedMsg, isStillActive]);
 
   const previewVariants = variants.slice(0, 3);
 

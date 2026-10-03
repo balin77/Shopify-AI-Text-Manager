@@ -16,7 +16,7 @@ import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/the
 const RESOURCE_TYPES = ["ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS"];
 
 export const loader = makeThemeDomainLoader("theme", "THEME_STATIC_SECTIONS", RESOURCE_TYPES);
-export const action = makeThemeContentRouteAction("theme", RESOURCE_TYPES);
+export const action = makeThemeContentRouteAction("theme", "templates", RESOURCE_TYPES);
 
 export default function ThemeStaticSectionsPage() {
   const data = useLoaderData<typeof loader>();

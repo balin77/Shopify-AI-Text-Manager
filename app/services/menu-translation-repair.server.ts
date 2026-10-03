@@ -40,6 +40,7 @@ import { MENU_LINK_KEY, MENU_LINK_RESOURCE_TYPE } from "./menu-translations.serv
 // moment ONE locale came back.
 import { TRANSLATE_CONTENT_VERIFIED } from "../graphql/content.mutations";
 import { logger } from "../utils/logger.server";
+import { findEchoFor } from "./translations/translation-echo.shared";
 
 /**
  * How many items one repair may cover.
@@ -253,15 +254,15 @@ export async function restoreLinkTranslations(
       }
 
       const echoed = payload.data?.translationsRegister?.translations ?? [];
-      const confirmed = new Set(
-        echoed
-          .filter((t) => t.key === MENU_LINK_KEY)
-          .map((t) => `${t.locale} ${t.market?.id ?? ""}`),
-      );
-
+      // Per (locale, market) against the shared matcher. The MARKET is compared
+      // exactly (the shared matcher is lenient about it, and a global value must
+      // not be confirmed by a market echo or the other way round); the locale
+      // case-insensitively, like every other echo check.
+      const linkEchoes = echoed.filter((t) => t.key === MENU_LINK_KEY);
       const missed: string[] = [];
       for (const value of entry.values) {
-        if (!confirmed.has(`${value.locale} ${value.marketId}`)) {
+        const sameScope = linkEchoes.filter((t) => (t.market?.id ?? "") === (value.marketId ?? ""));
+        if (!findEchoFor(sameScope, { key: MENU_LINK_KEY, locale: value.locale })) {
           missed.push(`${value.locale}${value.marketId ? ` / ${value.marketId}` : ""}`);
           continue;
         }

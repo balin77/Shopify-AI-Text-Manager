@@ -13,7 +13,7 @@ import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";
 
 export const loader = makeThemeDomainLoader("selling_plans", "SELLING_PLANS");
-export const action = makeThemeContentRouteAction("selling_plans");
+export const action = makeThemeContentRouteAction("selling_plans", "sellingPlans");
 
 export default function SellingPlansPage() {
   const data = useLoaderData<typeof loader>();

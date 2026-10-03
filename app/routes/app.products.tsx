@@ -11,14 +11,12 @@
  * - Minimal code (~150 lines vs 779 lines)
  */
 
-import { type ActionFunctionArgs } from "react-router";
+import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
-import { authenticate } from "../shopify.server";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
-import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { PRODUCTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -27,6 +25,7 @@ import { getPlanDisplayName } from "../utils/planUtils";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useVariantImageManager } from "../hooks/useVariantImageManager";
 import { VariantImageManager } from "../components/image-manager/VariantImageManager";
+import type { AltDraftApi } from "../components/image-manager/alt-draft";
 import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
@@ -36,6 +35,7 @@ import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
+import { LocalizedMediaProvider } from "~/components/localized-images/LocalizedMediaContext";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -355,11 +355,36 @@ export const loader = createContentLoader({
     const settings = await ctx.db.aISettings.findUnique({ where: { shop: ctx.session.shop } });
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
+    const newFeaturesEnabled = !isProductionLocked();
+    // "Images per language" (PLAN_LOCALIZED_IMAGES Phase 1b) rides on the
+    // image manager's gate; its storefront half is the `localized-media` app
+    // embed, activated through the theme editor's deep link (api key, never
+    // the extension uid — see SettingsSetupTab).
+    const apiKey = (process.env.SHOPIFY_API_KEY || "").trim();
+    const localizedImagesEmbedUrl = apiKey
+      ? `https://${ctx.session.shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/localized-media`
+      : null;
+    // The PLAN gate for NEW replacements only. Existing ones keep showing on
+    // the storefront after a downgrade or when the image manager is switched
+    // off, so listing and removing them is open to every plan.
+    const showLocalizedImages = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled);
+    // Whether that embed is already ON (true / false / null = unknown): only
+    // `true` drops the activation reminder after a save. Read only where the
+    // reminder could be shown, cached per shop, never fatal (null), STARTED
+    // here so it runs beside the awaits below, and bounded (~1.5s → null, which
+    // keeps the reminder) so a slow theme read never holds the page.
+    const localizedImagesEmbedActivePromise: Promise<boolean | null> =
+      showLocalizedImages && localizedImagesEmbedUrl
+        ? import("../services/localized-media/embed-status.server")
+            .then(({ getLocalizedMediaEmbedActiveWithin }) =>
+              getLocalizedMediaEmbedActiveWithin(ctx.admin as never, ctx.session.shop),
+            )
+            .catch(() => null)
+        : Promise.resolve(null);
     const productCount = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
     const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
       where: { shopId: ctx.session.shop },
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
-    const newFeaturesEnabled = !isProductionLocked();
     const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
     const showImageProcessingTab = canAccessImageProcessingTab(plan, newFeaturesEnabled);
     // §Phase 3.2 — the shop currency, as a suffix on the price field. Shop-wide
@@ -367,7 +392,8 @@ export const loader = createContentLoader({
     // so this costs one query per shop, not one per load.
     const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
     const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode };
+    const localizedImagesEmbedActive = await localizedImagesEmbedActivePromise;
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, localizedImagesEmbedActive, showLocalizedImages };
   },
 });
 
@@ -375,35 +401,14 @@ export const loader = createContentLoader({
 // ACTION - Handle all actions via unified handler
 // ============================================================================
 
-export const action = async (args: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(args.request);
-  const formData = await args.request.formData();
-
-  // Load AI settings
-  const { db } = await import("../db.server");
-  const [aiSettings, aiInstructions] = await Promise.all([
-    db.aISettings.findUnique({ where: { shop: session.shop } }),
-    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
-  ]);
-
-  // Use unified action handler (handles text fields + images)
-  return handleUnifiedContentActions({
-    admin,
-    session,
-    formData,
-    contentConfig: PRODUCTS_CONFIG,
-    db,
-    aiSettings,
-    aiInstructions,
-  });
-};
+export const action = makeContentRouteAction({ config: PRODUCTS_CONFIG, planContentType: "products" });
 
 // ============================================================================
 // COMPONENT - Simple, unified approach (like Collections)
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode, localizedImagesEmbedUrl, localizedImagesEmbedActive, showLocalizedImages } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -419,6 +424,8 @@ export default function ProductsPage() {
   // Track which products we've already synced translations for (to avoid duplicate syncs)
   // IMPORTANT: All hooks must be called before any conditional returns
   const syncedProductsRef = useRef<Set<string>>(new Set());
+  // Set by LocalizedMediaProvider: unsaved per-language media choices exist.
+  const localizedDraftsPendingRef = useRef(false);
   const isMountedRef = useRef(true); // Track mount status to prevent state updates after unmount
   // Track that revalidation was triggered by on-demand translation sync
   // so we can refresh the editor when fresh data arrives
@@ -466,6 +473,9 @@ export default function ProductsPage() {
 
   // Image Manager state (Pro/Max only - always call hook, gated in UI)
   const imageManagerState = useVariantImageManager();
+  // The image manager's alt-text DRAFTS: the save bar's Save sends them (flush)
+  // and its Discard takes them back; the manager fills this ref.
+  const altDraftApiRef = useRef<AltDraftApi | null>(null);
 
   // Reset image manager state when product selection changes
   const prevSelectedItemId = useRef<string | null>(null);
@@ -522,9 +532,18 @@ export default function ProductsPage() {
     enabledLanguages: editor.state.enabledLanguages,
     strings: {
       optionsSavedSuccess: t.products.optionsSavedSuccess,
+      optionTranslatedAll: t.products.optionTranslatedAll,
+      translationPurgeUnconfirmed: t.content.translationPurgeUnconfirmed,
       translateFailed: t.errors.translationFailed,
+      copied: t.common.copied,
+      copyFailedLocales: t.common.copyFailedLocales,
+      upgradeRequired: t.content.upgradeRequired,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
+      subResourcesRequestFailed: t.products.subResourcesRequestFailed,
+      translateSubResourcesFailed: t.products.translateSubResourcesFailed,
+      subResourceNotTranslatable: t.products.subResourceNotTranslatable,
+      translatePartialLocales: t.content.translatePartialLocales,
       optionNameEmpty: t.products.optionNameEmpty,
       optionValuesEmpty: t.products.optionValuesEmpty,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
@@ -556,18 +575,20 @@ export default function ProductsPage() {
   //   • pendingKnownModelGids     — carry-over from a prior "processing" save
   //                                 so a second click on Save retries the GID
   //                                 polling even when nothing else changed
-  const hasPendingImageChanges = showImageManager && (
+  // The gallery half (what handleApply writes); the alt-text drafts are the
+  // other half and are sent by the manager itself (flush), never by handleApply.
+  const hasPendingGalleryChanges = showImageManager && (
     imageManagerState.pendingVariantGalleries.length > 0 ||
     imageManagerState.pendingMediaOrder.length > 0 ||
     imageManagerState.pendingProductNewMedia.length > 0 ||
     imageManagerState.pendingClearVariantMainImages.length > 0 ||
     imageManagerState.bulkItems.some(i => i.status === "ready") ||
-    imageManagerState.hasAltTextEdits ||
     Object.keys(imageManagerState.pendingExternalVideos).length > 0 ||
     Object.keys(imageManagerState.pendingVariant3dModels).length > 0 ||
     Object.keys(imageManagerState.pendingGalleryOrder).length > 0 ||
     Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
+  const hasPendingImageChanges = hasPendingGalleryChanges || (showImageManager && imageManagerState.hasAltTextEdits);
 
   // Background 3D asset backfill. Sync save only waits ~1.5s for
   // Model3d.sources[0].url + preview, anything slower lands here.
@@ -731,6 +752,14 @@ export default function ProductsPage() {
       previewBackfillProductIdRef.current = null;
     };
   }, [editor.selectedItem?.id]);
+  // A primary draft the whole-item "Translate all" would translate from its
+  // SAVED value, and that the later Save would purge again: an edited
+  // metafield, or an alt text drafted in the image manager. Edited options are
+  // already left out of that run (`optionTranslationBlockedIds`).
+  const hasPrimaryTranslateAllDrafts =
+    editor.state.currentLanguage === primaryLocale &&
+    (Object.keys(subResources.state.primaryMetafieldEdits).length > 0 ||
+      (showImageManager && imageManagerState.hasAltTextEdits));
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
@@ -741,59 +770,154 @@ export default function ProductsPage() {
     // active during the wait, the merchant double-clicked, and the second
     // POST hit /api/update-variant-galleries with the same staging URL
     // (duplicate productCreateMedia → Shopify 422).
-    isSaving: subResources.state.isSaving || imageManagerState.isApplying,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying]);
+    // The alt saves of a pressed Save are still out (queued / in flight /
+    // waiting for a new image): the Save shows busy until they are answered.
+    isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages || imageManagerState.isSavingAltTexts,
+    translateAllSaveFirst: hasPrimaryTranslateAllDrafts,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
     saveSubResources: () => {
+      // A product-image delete is in flight: saving now could clear variant
+      // main images for media that survives a failed delete.
+      if (imageManagerStateRef.current.isDeletingImages) return;
       subResources.handlers.saveSubResources();
-      if (hasPendingImageChanges && editor.selectedItem) {
+      // The gallery half starts FIRST: the alt text of an image this Save is
+      // only uploading has no media id yet, so the manager carries it over and
+      // sends it once the gallery save has created the image (or reports it as
+      // not sent when that save failed).
+      let galleryApply: Promise<boolean> | undefined;
+      if (hasPendingGalleryChanges && editor.selectedItem) {
         const productId = editor.selectedItem.id;
-        imageManagerState.handleApply(productId).then(err => {
+        galleryApply = imageManagerState.handleApply(productId).then(err => {
           if (err) {
             showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
-          } else {
-            showInfoBox(t.products.gallerySaveSuccess, "success");
-            // Kick off background polling for 3D model previews. Shopify
-            // takes minutes to generate the .glb thumbnail server-side —
-            // the save route only waits ~25s (enough for source URL), the
-            // preview lands later. This loop calls /api/refresh-3d-previews
-            // with exponential backoff until every Model3d has a preview
-            // or we hit the ~5min budget. Each successful update triggers
-            // a variant data refresh so the merchant sees the thumbnail
-            // appear automatically.
-            schedulePreviewBackfill(productId);
+            return false;
           }
+          showInfoBox(t.products.gallerySaveSuccess, "success");
+          // Kick off background polling for 3D model previews. Shopify
+          // takes minutes to generate the .glb thumbnail server-side —
+          // the save route only waits ~25s (enough for source URL), the
+          // preview lands later. This loop calls /api/refresh-3d-previews
+          // with exponential backoff until every Model3d has a preview
+          // or we hit the ~5min budget. Each successful update triggers
+          // a variant data refresh so the merchant sees the thumbnail
+          // appear automatically.
+          schedulePreviewBackfill(productId);
+          return true;
         }).catch(() => {
           showInfoBox(t.products.gallerySaveError, "critical");
+          return false;
+        });
+      }
+      // The alt-text drafts go out through the manager's own save queue; only an
+      // answered-and-confirmed one is reported as saved.
+      if (showImageManager && imageManagerState.hasAltTextEdits) {
+        altDraftApiRef.current?.flush({ galleryApply }).then(summary => {
+          if (summary.ok > 0 && summary.failed === 0 && summary.unsent === 0) {
+            showInfoBox(t.imageManager.altDraftsSaved, "success");
+          }
+        }).catch(() => {
+          showInfoBox(t.imageManager.altSaveFailed, "critical");
         });
       }
     },
     resetChanges: () => {
       subResources.handlers.resetChanges();
       imageManagerState.resetForProduct();
+      altDraftApiRef.current?.discard();
     },
     resetForReload: () => {
       subResources.handlers.resetForReload();
       imageManagerState.resetForProduct();
     },
-  }), [subResources.handlers, hasPendingImageChanges, editor.selectedItem, imageManagerState, showInfoBox]);
+  }), [subResources.handlers, hasPendingGalleryChanges, showImageManager, editor.selectedItem, imageManagerState, showInfoBox, t]);
 
   // Wrap translate-all handlers to also translate product options and metafields.
   // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
   // with the shared fetcher used by the main editor.
+  // A view switch while an own save is on its way -- an AI/copy button's
+  // (kept out of hasChanges, so no bar shows) or an image-manager alt save an
+  // AI button (generate / translate) sent AT ONCE (queued or in flight) -- is
+  // REFUSED with a message, never queued: the answer must land on the view it
+  // was made for. Alt saves sent by the page's own Save do NOT refuse: each
+  // queued save carries its own product, language and market, and a save
+  // already sent finishes on its own. Checked BEFORE this page's own
+  // confirmation, so the merchant is never asked and then refused.
+  const refuseSwitchWhileSaving = (): boolean => {
+    const altSaveOut = showImageManager && imageManagerState.isSavingImmediateAltTexts;
+    if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut) return false;
+    showInfoBox(
+      String(t.common?.switchWhileSaving || "Still saving \u2013 please wait a moment and then switch again."),
+      "info",
+    );
+    return true;
+  };
+
+  // The editor's own "clear all" refusal (useFieldHandlers) knows the editor's
+  // runs; the options & metafields translate on their own requests.
+  const refuseClearWhileSubResourcesTranslate = (): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isTranslateAllRunning(itemId, editor.state.currentLanguage)) return false;
+    showInfoBox(
+      String(t.common?.clearWhileTranslating || "A translation into this language is still running \u2013 please wait until it has finished and then clear."),
+      "info",
+    );
+    return true;
+  };
+
+  // A "translate all" must not race the card's own saves either (its "clear
+  // all", the options & metafields save): refused like the editor's own.
+  const refuseTranslateWhileSubResourcesSave = (locale: string): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isSaveInFlight(itemId, locale)) return false;
+    showInfoBox(
+      String(t.common?.translateWhileSaving || "Still saving \u2013 please wait a moment and then translate again."),
+      "info",
+    );
+    return true;
+  };
+
   const editorWithSubResources = {
     ...editor,
     handlers: {
       ...editor.handlers,
       handleTranslateAll: () => {
-        editor.handlers.handleTranslateAll();
+        // Its source is the SAVED primary text: with a primary draft open
+        // anywhere it covers, the later Save would purge what it writes.
+        if (hasPrimaryTranslateAllDrafts || editor.helpers.hasUnsavedTranslateAllSource()) {
+          showInfoBox(
+            String(t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes."),
+            "warning",
+          );
+          return;
+        }
+        // Refused (a save it would race is still out): neither half runs.
+        if (refuseTranslateWhileSubResourcesSave("*")) return;
+        if (editor.handlers.handleTranslateAll() === false) return;
         subResources.handlers.translateAllSubResourcesToAllLocales();
       },
       handleTranslateAllForLocale: () => {
-        editor.handlers.handleTranslateAllForLocale();
+        if (refuseTranslateWhileSubResourcesSave(editor.state.currentLanguage)) return;
+        if (editor.handlers.handleTranslateAllForLocale() === false) return;
         subResources.handlers.translateAllSubResources();
+      },
+      // The options & metafields translate on their own requests: a "clear
+      // all" of the language they are being written into waits for them, like
+      // the editor's own fields do (useFieldHandlers).
+      handleClearAllForLocaleClick: () => {
+        if (refuseClearWhileSubResourcesTranslate()) return;
+        editor.handlers.handleClearAllForLocaleClick();
+      },
+      // Checked again on confirm (a run may have started while the dialog was
+      // open); a refusal clears neither half.
+      handleClearAllForLocaleConfirm: () => {
+        if (refuseClearWhileSubResourcesTranslate()) {
+          editor.handlers.handleClearAllCancel();
+          return false;
+        }
+        return editor.handlers.handleClearAllForLocaleConfirm();
       },
       // Navigation guard hooks: the editor's own handleLanguageChange /
       // handleItemSelect only gate on editor.state.hasChanges (field-level
@@ -802,14 +926,34 @@ export default function ProductsPage() {
       // external videos). When image changes are pending, the native save
       // bar is visible and confirmNavigation() shows the native confirm
       // dialog before letting the action proceed.
+      // A language or market switch costs only the alt-text drafts nobody has
+      // pressed Save for yet: gallery changes are the same in every language
+      // and stay pending, saves already sent finish on their own, and the
+      // per-language media drafts are keyed by language and market. So only
+      // UNSENT alt drafts ask -- the same rule for both switches.
       handleLanguageChange: async (locale: string) => {
-        if (hasPendingImageChanges && !editor.state.hasChanges) {
+        if (refuseSwitchWhileSaving()) return;
+        if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
           await confirmNavigation();
         }
         editor.handlers.handleLanguageChange(locale);
       },
+      handleMarketChange: async (marketId: string) => {
+        if (marketId !== editor.state.selectedMarketId && refuseSwitchWhileSaving()) return;
+        // Primary alt texts are global: a market change in the primary
+        // language keeps them, so it has nothing to ask about.
+        if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
+          await confirmNavigation();
+        }
+        editor.handlers.handleMarketChange(marketId);
+      },
+      // Unsaved per-language media choices live in the localized-media provider
+      // and survive a language switch (they are keyed by language and market),
+      // but not a product switch: they count here, or the next product would
+      // silently drop them.
       handleItemSelect: async (itemId: string) => {
-        if (hasPendingImageChanges && !editor.state.hasChanges) {
+        if (refuseSwitchWhileSaving()) return;
+        if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
           await confirmNavigation();
         }
         editor.handlers.handleItemSelect(itemId);
@@ -1029,6 +1173,25 @@ export default function ProductsPage() {
   }
 
   return (
+    // Per-language replacement of the product's images and videos: state for
+    // both galleries. The plan only decides whether NEW replacements can be
+    // picked (remove-only below it); never the image manager's on/off.
+    // Keyed by data, not by element: the editor below must never remount.
+    <LocalizedMediaProvider
+      productId={editor.selectedItem?.id ?? ""}
+      enabled={!!editor.selectedItem}
+      canReplace={showLocalizedImages}
+      shopLocales={shopLocales}
+      markets={markets ?? []}
+      currentLanguage={editor.state.currentLanguage}
+      selectedMarketId={editor.state.selectedMarketId}
+      embedActivationUrl={localizedImagesEmbedUrl}
+      embedActive={localizedImagesEmbedActive ?? null}
+      draftsPendingRef={localizedDraftsPendingRef}
+      // The image list the manager last confirmed: an image added or removed
+      // there is reflected in the next foreign-language view without a reload.
+      reloadKey={editor.selectedItem ? `${imageManagerState.resetCounter}:${(imageManagerState.settlingMedia ?? []).length}:${(productImagesOverride.get(editor.selectedItem.id) ?? editor.selectedItem.images ?? []).length}` : ""}
+    >
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
@@ -1096,11 +1259,13 @@ export default function ProductsPage() {
               imageManagerState.reloadVariants();
               revalidator.revalidate();
             },
+            onSaveResponse: editor.helpers.trackRetranslationTasks,
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
               onSaveResponse={editor.helpers.trackRetranslationTasks}
+              backgroundRefreshVersion={editor.helpers.backgroundRefreshVersion}
               productImages={
                 productImagesOverride.get(editor.selectedItem.id) ??
                 (editor.selectedItem.images ?? []).map((img: any) => ({
@@ -1117,6 +1282,7 @@ export default function ProductsPage() {
               onSetAction={imageManagerState.setActiveAction}
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
+              onDeletingChange={imageManagerState.setIsDeletingImages}
               onExternalVideosChange={imageManagerState.setPendingExternalVideos}
               onThreeDModelsChange={imageManagerState.setPendingVariant3dModels}
               onThreeDPreviewsChange={imageManagerState.setPendingVariant3dPreviews}
@@ -1136,11 +1302,15 @@ export default function ProductsPage() {
               onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
+              selectedMarketId={editor.state.selectedMarketId}
               primaryLocale={primaryLocale}
               productTitle={editor.selectedItem.title}
               enabledLanguages={shopLocales.map((l: any) => l.locale)}
               variantReloadKey={imageManagerState.variantReloadCounter}
               onDirtyChange={imageManagerState.setHasAltTextEdits}
+              altDraftApiRef={altDraftApiRef}
+              onAltSavingChange={imageManagerState.setIsSavingAltTexts}
+              onImmediateAltSavingChange={imageManagerState.setIsSavingImmediateAltTexts}
               onMissingMainImageChange={handleMissingMainImageChangeForSelected}
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
@@ -1149,5 +1319,6 @@ export default function ProductsPage() {
         />
       </div>
     </div>
+    </LocalizedMediaProvider>
   );
 }

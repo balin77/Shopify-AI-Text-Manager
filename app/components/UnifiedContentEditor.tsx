@@ -40,6 +40,7 @@ import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLa
 import { MarketPublicationNotice } from "./unified/MarketPublicationNotice";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
+import { LocalizedMediaPlainExtras, LocalizedMediaSaveBridge } from "./localized-images/LocalizedMediaReplaceButton";
 import { OptionsField } from "./unified/OptionsField";
 import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
@@ -286,6 +287,8 @@ interface UnifiedContentEditorProps {
     productTitle?: string;
     productId?: string;
     onApplySuccess?: () => void;
+    /** Apply / SKU answers, forwarded to the editor's re-translation watcher. */
+    onSaveResponse?: (response: unknown) => void;
   };
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
@@ -763,6 +766,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isSavingCurrentItem]);
 
+  // A copy/translate-to-all button whose PRIMARY source is an unsaved draft
+  // waits for the Save: that Save would purge what the button wrote.
+  const saveFirstSourceHint = String(
+    t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes.",
+  );
+
+  // The whole-item "Translate all" on the primary locale translates the SAVED
+  // values into every language; a primary draft would be saved later and that
+  // Save purges what the button wrote. So it waits, like the per-field one.
+  const translateAllSaveFirstHint =
+    state.currentLanguage === primaryLocale &&
+    (helpers.hasUnsavedTranslateAllSource() || !!subResourceState?.translateAllSaveFirst)
+      ? saveFirstSourceHint
+      : undefined;
+
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
           key={field.key}
@@ -788,6 +806,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
           onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
           onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
+          saveFirstHint={helpers.isPrimaryFieldUnsaved(field.key) ? saveFirstSourceHint : undefined}
+          altSaveFirstHint={(imageIndex: number) => (helpers.isPrimaryAltUnsaved(imageIndex) ? saveFirstSourceHint : undefined)}
+          translateAllAltsSaveFirstHint={helpers.hasUnsavedPrimaryAlts() ? saveFirstSourceHint : undefined}
           onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
           onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
           onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
@@ -901,7 +922,22 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   /** One dynamic field, with the product image gallery's replacement slot. */
   const renderContentField = (field: FieldDefinition): ReactNode => {
     if (field.type === "image-gallery" && imageGalleryReplacement) {
-      return <div key={field.key}>{imageGalleryReplacement}</div>;
+      return (
+        <BlockStack key={field.key} gap="400">
+          {imageGalleryReplacement}
+        </BlockStack>
+      );
+    }
+    // Plain gallery (image manager off): it lists images only, so the videos'
+    // replacement rows and the orphan list ride beside it, whether or not the
+    // product has images. Renders nothing outside a product / in the primary locale.
+    if (field.type === "image-gallery") {
+      return (
+        <BlockStack key={field.key} gap="400">
+          {renderEditorField(field)}
+          <LocalizedMediaPlainExtras />
+        </BlockStack>
+      );
     }
     return renderEditorField(field);
   };
@@ -1527,9 +1563,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     const foreignLocales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale as string);
     const subRT: Record<string, Array<{ key: string; value: string; locale: string }>> =
       (selectedItem as any).subResourceTranslations || {};
+    // A translate / copy writes into the hook's overlay first; the loaded item
+    // only catches up on the next reload (skipped while the revalidator is
+    // busy), so the marker must read the overlay too or it stays blue for a
+    // translation that exists. Global layer only: the key is the bare locale.
+    const overlay = subResourceState?.localOverlay || {};
+    const overlayHas = (locale: string, resourceId: string) => !!overlay[locale]?.[resourceId]?.["name"];
     for (const option of selectedItem.options) {
       if (!option.name) continue;
       const nameMissing = foreignLocales.some((locale) => {
+        if (overlayHas(locale, option.id)) return false;
         const t = (subRT[option.id] || []).find((x) => x.key === "name" && x.locale === locale);
         return !t || !t.value;
       });
@@ -1538,6 +1581,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         for (const value of option.values) {
           if (!value.name || !value.id) continue;
           const valueMissing = foreignLocales.some((locale) => {
+            if (overlayHas(locale, value.id)) return false;
             const t = (subRT[value.id] || []).find((x) => x.key === "name" && x.locale === locale);
             return !t || !t.value;
           });
@@ -1554,6 +1598,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
     {/* The stock panel registers its save through this — see the save bar. */}
     <commerceSave.Provider value={commerceSave.value}>
+    {/* The per-language media drafts (product page) ride the same save bar. */}
+    <LocalizedMediaSaveBridge />
     {/* One live load, one set of pending edits, one registration — consumed by
         the channels field in the attributes card AND by the variants section
         inside the variants card. Two loads would mean two `compareQuantity`
@@ -1713,6 +1759,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   void commerceSave.save?.();
                 }}
                 onDiscard={() => {
+                  // MEASURED (2026-10-02, live admin): the native leave
+                  // dialog's "Discard" of a language/market switch fires this
+                  // handler too, so that switch gets the same full discard.
                   handlers.handleDiscard();
                   subResourceHandlers?.resetChanges?.();
                   // Third writer, same button — as with Save. Without this a
@@ -1744,6 +1793,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
+                  translateAllDisabledHint={state.currentLanguage === primaryLocale ? translateAllSaveFirstHint : undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -1905,11 +1955,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               Hidden for app-embed technical groups — translating
                               CSS selectors / config would break the embed. */}
                           {!isEmbedTechnical && (
-                          <DisabledActionTooltip hint={singleLocaleHint}>
+                          <DisabledActionTooltip hint={singleLocaleHint ?? translateAllSaveFirstHint}>
                             <Button
                               onClick={handlers.handleTranslateAll}
                               loading={isAllLocalesActionRunning}
-                              disabled={isAllLocalesActionRunning || !!singleLocaleHint}
+                              disabled={isAllLocalesActionRunning || !!singleLocaleHint || !!translateAllSaveFirstHint}
                               size="slim"
                             >
                               {isAllLocalesActionRunning
@@ -2624,6 +2674,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   shopLocales={shopLocales.map((l) => l.locale)}
                   primaryLocale={primaryLocale}
                   onApplySuccess={imageManager.onApplySuccess}
+                  onSaveResponse={imageManager.onSaveResponse}
                   selectedGids={imageManager.selectedGalleryGids}
                 />
               )}
@@ -2639,7 +2690,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         title={t.content?.clearAllConfirmTitle || "Clear All Fields?"}
         primaryAction={{
           content: t.content?.clearAllConfirm || "Clear All",
-          onAction: state.currentLanguage === primaryLocale ? handlers.handleClearAllConfirm : handlers.handleClearAllForLocaleConfirm,
+          onAction: state.currentLanguage === primaryLocale
+            ? handlers.handleClearAllConfirm
+            : () => {
+                // Refused (a translation into this language is still being
+                // written): neither half clears.
+                if (handlers.handleClearAllForLocaleConfirm() === false) return;
+                // A product's options, option values and metafields translate on
+                // their OWN resources, which the item's clear never reaches.
+                subResourceHandlers?.clearAllForLocale?.();
+              },
           destructive: true,
         }}
         secondaryActions={[

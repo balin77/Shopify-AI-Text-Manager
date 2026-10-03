@@ -15,7 +15,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";
 
 export const loader = makeThemeDomainLoader("delivery", "DELIVERY");
-export const action = makeThemeContentRouteAction("delivery");
+export const action = makeThemeContentRouteAction("delivery", "delivery");
 
 export default function DeliveryPage() {
   const data = useLoaderData<typeof loader>();

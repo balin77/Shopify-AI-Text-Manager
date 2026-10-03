@@ -1,5 +1,8 @@
 import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { db } from "../db.server";
+import { type Plan } from "../config/plans";
+import { getMonthlyImageOperationsLimit } from "../utils/planUtils";
 
 /**
  * Materializes a staging-area asset (returned by /api/staged-upload + a
@@ -18,16 +21,37 @@ import { authenticate } from "../shopify.server";
  * it in the generic Files section, out of sight.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const body = (await request.json()) as {
     resourceUrl?: string;
     alt?: string;
+    /** "VIDEO" materialises a staged VIDEO upload (videos per language);
+     *  anything else keeps the historic IMAGE behaviour. */
+    contentType?: string;
   };
+  const contentType = body.contentType === "VIDEO" ? "VIDEO" : "IMAGE";
   const resourceUrl = String(body.resourceUrl ?? "").trim();
   const alt = String(body.alt ?? "").slice(0, 255);
 
   if (!resourceUrl || !resourceUrl.startsWith("https://")) {
     return json({ error: "resourceUrl required" }, { status: 400 });
+  }
+
+  // Directly POST-reachable, so it asks the plan -- but it does NOT consume
+  // an image operation. Every caller (the file picker, the metaobject file
+  // field, localized images, the 3D preview) materialises a file it has just
+  // uploaded through /api/staged-upload, which already charged that one
+  // operation; charging again here counted every upload twice. What is left
+  // to refuse is a plan with no image operations at all: it cannot have staged
+  // the file, so a request here can only be someone feeding the shop's Files
+  // library from outside.
+  const settings = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  if (getMonthlyImageOperationsLimit(plan) === 0) {
+    return json({ error: "gated", code: "IMAGE_QUOTA_EXCEEDED", limit: 0 }, { status: 403 });
   }
 
   const createRes = await admin.graphql(
@@ -47,7 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   `,
     {
       variables: {
-        files: [{ originalSource: resourceUrl, contentType: "IMAGE", alt }],
+        files: [{ originalSource: resourceUrl, contentType, alt }],
       },
     },
   );
@@ -68,7 +92,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // JPEGs are tiny (<100KB), so processing is usually done within a few
   // seconds — but a busy ingestion queue can take longer. Bail with a
   // 504 after ~9s; the client retries on next save.
-  const waits = [0, 600, 1200, 2000, 3000, 4000];
+  // A VIDEO is transcoded before it has a playable source and routinely takes
+  // longer than an image; waiting ~55s instead of ~11s turns most small clips
+  // into a direct success instead of a "pick it from the library later".
+  const waits = contentType === "VIDEO"
+    ? [0, 1000, 2000, 3000, 4000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000]
+    : [0, 600, 1200, 2000, 3000, 4000];
   let cdnUrl: string | null = null;
   for (const ms of waits) {
     if (ms > 0) await new Promise((r) => setTimeout(r, ms));
@@ -81,6 +110,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             fileStatus
             image { url }
           }
+          ... on Video {
+            id
+            fileStatus
+            sources { url }
+          }
         }
       }
     `,
@@ -88,8 +122,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
     const pollData = await pollRes.json();
     const node = pollData.data?.node;
-    if (node?.fileStatus === "READY" && node?.image?.url) {
-      cdnUrl = node.image.url;
+    // A video counts as ready once Shopify has produced a playable source.
+    const readyUrl = node?.image?.url ?? node?.sources?.[0]?.url;
+    if (node?.fileStatus === "READY" && readyUrl) {
+      cdnUrl = readyUrl;
       break;
     }
     if (node?.fileStatus === "FAILED") {

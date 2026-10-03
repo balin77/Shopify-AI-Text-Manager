@@ -5,13 +5,20 @@ import { logger } from "~/utils/logger.server";
 import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
-import { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
+import { TRANSLATE_CONTENT, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
 import { GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
 import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.utils";
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { findEchoFor } from "~/services/translations/translation-echo.shared";
+import { unconfirmedPurgeKeys } from "~/services/translations/purge-warning.shared";
+import {
+  removeAndVerify,
+  removeVerifiedWithGapReread,
+  LOCALE_KEY_SEP,
+} from "~/services/translations/verified-translations.server";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType, selectedThemeId } = ctx;
@@ -149,6 +156,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
    *  and no sync-side detection, so this response is the page's only chance to
    *  learn that a run is under way. */
   const retranslationTaskIds: string[] = [];
+  /** Primary-change purge steps that did not complete: their translation rows were KEPT. */
+  const purgeWarnings: string[] = [];
+  let unconfirmedKeys: string[] = [];
   const noDigestKeys: string[] = [];
   const failedDeleteKeys: string[] = [];
   const shopifyErrors: string[] = [];
@@ -299,12 +309,18 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           // NOT be mirrored into the local DB (skippedKeys → excluded from the DB
           // upsert below) — otherwise the DB shows a value the storefront never
           // received and the save is reported as success (the silent-save bug).
-          const registeredKeys = new Set(
-            (data.data?.translationsRegister?.translations ?? []).map(
-              (t: { key: string }) => t.key
-            )
+          const echoedTranslations: Array<{ key: string; locale: string }> =
+            data.data?.translationsRegister?.translations ?? [];
+          const registeredKeys = new Set(echoedTranslations.map((t) => t.key));
+          // The shared matcher (locale compared case-insensitively). Older echo
+          // shapes without a locale keep matching on the key alone.
+          const notPersisted = translationInputs.filter(
+            (t) =>
+              !findEchoFor(
+                echoedTranslations.map((e) => ({ ...e, locale: e.locale ?? t.locale })),
+                { key: t.key, locale: t.locale },
+              ),
           );
-          const notPersisted = translationInputs.filter((t) => !registeredKeys.has(t.key));
           if (notPersisted.length > 0) {
             logger.error("[TEMPLATES] Shopify returned no error but registered no translation for some keys", {
               context: "Templates",
@@ -358,68 +374,42 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       });
 
       try {
-        const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
-          variables: { resourceId: resId, translationKeys: keysToDelete, locales: [locale], marketIds: marketId ? [marketId] : null },
-        });
-        const removeData = await removeResponse.json();
+        // Echo first, then a RE-READ on a gap: a key Shopify never held (a
+        // DB-only ThemeTranslation row, written on purpose when the register
+        // found no digest) is echoed as nothing, and without the re-read the
+        // merchant could never clear it. Foreign saves only send CHANGED fields.
+        const removal = await removeAndVerify(admin, resId, keysToDelete, locale, marketId);
+        // Claimed only once a removal really happened on Shopify (echo, not
+        // re-read): aborting a run over a no-op would cost it for nothing.
+        // Global layer only.
+        const removedByEcho = [...removal.confirmedKeys].filter((k) => !removal.confirmedByRead?.has(k));
+        if (!marketId && removedByEcho.length > 0) markTranslationSaved(resId);
 
-        if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
-          logger.error("[TEMPLATES] Shopify translationsRemove errors for cleared fields", {
+        const notRemoved = keysToDelete.filter((k) => !removal.confirmedKeys.has(k));
+        if (notRemoved.length > 0) {
+          logger.error("[TEMPLATES] Shopify did not confirm the removal of cleared translations", {
             context: "Templates",
-            errors: removeData.data.translationsRemove.userErrors,
             resourceId: resId,
+            locale,
+            notRemovedKeys: notRemoved,
+            errors: removal.userErrors,
           });
-          failedDeleteKeys.push(...keysToDelete);
-          shopifyErrors.push(removeData.data.translationsRemove.userErrors[0].message);
-        } else {
-          // Shopify can return NO userErrors yet remove NOTHING — some resources
-          // (EMAIL_TEMPLATE et al.) silently no-op translationsRemove exactly like
-          // COOKIE_BANNER does. The mutation echoes back the translations it
-          // actually deleted, so confirm every cleared key is present. A key that
-          // is not echoed never left Shopify and must NOT be deleted from the
-          // local DB (failedDeleteKeys → excluded from the DB deleteMany below) —
-          // otherwise the field looks gone locally while it survives on the
-          // storefront and the save is reported as success (the silent-delete bug).
-          // Foreign saves only send CHANGED fields (buildFieldsForSave filters out
-          // unchanged/empty ones), so every key here genuinely had a value to
-          // remove — an empty echo is a real failure, not a "nothing to do".
-          const removedKeys = new Set(
-            (removeData.data?.translationsRemove?.translations ?? []).map(
-              (t: { key: string }) => t.key
-            )
+          failedDeleteKeys.push(...notRemoved);
+          shopifyErrors.push(
+            removal.userErrors.length > 0
+              ? removal.userErrors[0].message
+              : `Shopify did not remove ${notRemoved.length} cleared translation(s) although it reported no error: ${notRemoved
+                  .slice(0, 5)
+                  .join(", ")}`
           );
-          // Clearing a translation is a merchant write like any other, so an
-          // in-flight theme repair must abandon the rest rather than re-create
-          // what was just deleted. Claimed only once Shopify CONFIRMS it
-          // removed something — every other claim in this app waits for Shopify
-          // to hold the value, and aborting a run over a removal that silently
-          // no-opped would cost that run for nothing. Global layer only.
-          if (!marketId && removedKeys.size > 0) markTranslationSaved(resId);
-
-          const notRemoved = keysToDelete.filter((k) => !removedKeys.has(k));
-          if (notRemoved.length > 0) {
-            logger.error("[TEMPLATES] Shopify returned no error but removed no translation for cleared keys", {
-              context: "Templates",
-              resourceId: resId,
-              locale,
-              notRemovedKeys: notRemoved,
-              removedCount: removedKeys.size,
-            });
-            failedDeleteKeys.push(...notRemoved);
-            shopifyErrors.push(
-              `Shopify did not remove ${notRemoved.length} cleared translation(s) although it reported no error: ${notRemoved
-                .slice(0, 5)
-                .join(", ")}`
-            );
-          }
-          if (notRemoved.length < keysToDelete.length) {
-            logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
-              context: "Templates",
-              resourceId: resId,
-              keyCount: keysToDelete.length - notRemoved.length,
-              locale,
-            });
-          }
+        }
+        if (notRemoved.length < keysToDelete.length) {
+          logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
+            context: "Templates",
+            resourceId: resId,
+            keyCount: keysToDelete.length - notRemoved.length,
+            locale,
+          });
         }
       } catch (removeError) {
         const errorMsg = removeError instanceof Error ? removeError.message : String(removeError);
@@ -1144,15 +1134,31 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         changedKeysByResource.set(resId, existing);
       }
 
-      const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
-      const localesData = await localesResponse.json();
-      const foreignLocales = (localesData.data?.shopLocales || [])
-        .filter((l: { primary: boolean; published: boolean }) => !l.primary)
-        .map((l: { locale: string }) => l.locale);
+      // The locale lookup is non-fatal: the primary push has already succeeded,
+      // and a throw here must not turn it into a failed save. Without a known
+      // locale list nothing is removed on Shopify, so nothing is deleted locally.
+      let foreignLocales: string[] | null = null;
+      try {
+        const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
+        const localesData = await localesResponse.json();
+        foreignLocales = (localesData.data?.shopLocales || [])
+          .filter((l: { primary: boolean; published: boolean }) => !l.primary)
+          .map((l: { locale: string }) => l.locale);
+      } catch (localeError) {
+        purgeWarnings.push("locales");
+        logger.warn("[TEMPLATES] Could not load shop locales for the purge - translations kept", {
+          context: "Templates",
+          error: localeError instanceof Error ? localeError.message : String(localeError),
+        });
+      }
 
-      if (foreignLocales.length > 0) {
-        // The MARKET overrides of these keys. Nothing re-translates one — every
-        // repair in this app writes global rows only — so once the theme text
+      // (resourceId, key, locale) triples whose Shopify removal is CONFIRMED -
+      // the only rows that may be deleted locally.
+      const confirmedRemovals: Array<{ resourceId: string; key: string; locale: string }> = [];
+
+      if (foreignLocales && foreignLocales.length > 0) {
+        // The MARKET overrides of these keys. Nothing re-translates one - every
+        // repair in this app writes global rows only - so once the theme text
         // moves the override is as stale as the global row beside it, and a
         // theme string has nothing else that ever revisits it.
         try {
@@ -1175,25 +1181,59 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             });
           }
         } catch (marketError) {
-          logger.warn("[TEMPLATES] Market-override purge failed — those rows stay", {
+          logger.warn("[TEMPLATES] Market-override purge failed - those rows stay", {
             context: "Templates",
             error: marketError instanceof Error ? marketError.message : String(marketError),
           });
         }
 
+        // Local rows per resource: a gap is only re-read where a local row
+        // exists (a pair with no row has nothing to delete locally).
+        let localRows: Array<{ resourceId: string; key: string; locale: string }> = [];
+        let localRowsKnown = true;
+        try {
+          localRows = await db.themeTranslation.findMany({
+            where: { shop: session.shop, groupId: groupId, key: { in: savedChangedFields }, domain: domain, marketId: "" },
+            select: { resourceId: true, key: true, locale: true },
+          });
+        } catch (rowsError) {
+          logger.warn("[TEMPLATES] Could not read local theme translations - every gap is re-read", {
+            context: "Templates",
+            error: rowsError instanceof Error ? rowsError.message : String(rowsError),
+          });
+          localRows = [];
+          localRowsKnown = false;
+        }
+
         for (const [resId, keys] of changedKeysByResource) {
           try {
-            const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
-              variables: { resourceId: resId, translationKeys: keys, locales: foreignLocales },
-            });
-            const removeData = await removeResponse.json();
-
-            if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
-              logger.warn("[TEMPLATES] Shopify translationsRemove errors (non-fatal)", {
+            // Unknown local rows => undefined: every gap is re-read (an empty
+            // Set would mean "no local row anywhere" and skip every re-read).
+            const localPairs = localRowsKnown
+              ? new Set(
+                  localRows
+                    .filter((row) => row.resourceId === resId)
+                    .map((row) => `${row.locale}${LOCALE_KEY_SEP}${row.key}`),
+                )
+              : undefined;
+            // One call for all locales, then the re-read ONLY for a locale with a
+            // gap: Shopify echoes what it DELETED, so a DB-only row comes back
+            // empty and would otherwise never be removable.
+            const removal = await removeVerifiedWithGapReread(admin, resId, keys, foreignLocales, "", { localPairs });
+            for (const locale of foreignLocales) {
+              for (const key of keys) {
+                if (removal.confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}${key}`)) {
+                  confirmedRemovals.push({ resourceId: resId, key, locale });
+                }
+              }
+            }
+            if (removal.unconfirmedPairs.length > 0) {
+              purgeWarnings.push(resId);
+              logger.warn("[TEMPLATES] Shopify did not confirm every removal - local rows kept", {
                 context: "Templates",
-                errors: removeData.data.translationsRemove.userErrors,
                 resourceId: resId,
-                keys,
+                unconfirmed: removal.unconfirmedPairs.length,
+                errors: removal.userErrors,
               });
             } else {
               logger.info("[TEMPLATES] Shopify translations removed", {
@@ -1204,7 +1244,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               });
             }
           } catch (removeError) {
-            logger.warn("[TEMPLATES] translationsRemove failed (non-fatal)", {
+            purgeWarnings.push(resId);
+            logger.warn("[TEMPLATES] translationsRemove failed - local rows kept", {
               context: "Templates",
               error: removeError instanceof Error ? removeError.message : String(removeError),
               resourceId: resId,
@@ -1213,12 +1254,43 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         }
       }
 
-      // STEP B: Delete from local DB. Global-scoped (marketId "") to mirror the
-      // global-only Shopify removal — market overrides survive on both sides.
-      const deleteResult = await db.themeTranslation.deleteMany({
-        where: { shop: session.shop, groupId: groupId, key: { in: savedChangedFields }, domain: domain, marketId: "" },
-      });
-      logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
+      // STEP B: Delete from local DB - ONLY the rows whose removal Shopify
+      // confirmed. Global-scoped (marketId "") to mirror the global-only
+      // removal: market overrides survive on both sides. With no foreign locale
+      // at all there is nothing on Shopify to remove, so the rows go as before.
+      try {
+        if (foreignLocales && foreignLocales.length === 0) {
+          const deleteResult = await db.themeTranslation.deleteMany({
+            where: {
+              shop: session.shop,
+              groupId: groupId,
+              key: { in: savedChangedFields },
+              domain: domain,
+              marketId: "",
+              resourceId: { in: [...changedKeysByResource.keys()] },
+            },
+          });
+          logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
+        } else if (confirmedRemovals.length > 0) {
+          const deleteResult = await db.themeTranslation.deleteMany({
+            where: {
+              shop: session.shop,
+              groupId: groupId,
+              domain: domain,
+              marketId: "",
+              OR: confirmedRemovals.map((c) => ({ resourceId: c.resourceId, key: c.key, locale: c.locale })),
+            },
+          });
+          logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
+        }
+      } catch (deleteError) {
+        purgeWarnings.push("local");
+        logger.warn("[TEMPLATES] Local theme translation delete failed - rows stay", {
+          context: "Templates",
+          error: deleteError instanceof Error ? deleteError.message : String(deleteError),
+        });
+      }
+      unconfirmedKeys = unconfirmedPurgeKeys(purgeWarnings, changedKeysByResource, savedChangedFields);
     } else {
       logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
     }
@@ -1388,7 +1460,16 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     if (keysToDelete.length > 0) {
       dbOps.push(
         db.themeTranslation.deleteMany({
-          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale, domain: domain, marketId },
+          where: {
+            shop: session.shop,
+            groupId: groupId,
+            locale: locale,
+            domain: domain,
+            marketId,
+            // Scoped by the resource each key lives on: the same key on
+            // another theme's resource is not this save's to delete.
+            OR: keysToDelete.map((key) => ({ resourceId: keyToResourceId.get(key) || resourceId, key })),
+          },
         })
       );
     }
@@ -1413,5 +1494,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     success: true,
     actionType: "updateContent",
     retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
+    // The primary write succeeded; these translations could not be confirmed
+    // removed on Shopify and were kept.
+    ...(purgeWarnings.length > 0 ? { warnings: ["translationPurgeUnconfirmed"], unconfirmedPurge: purgeWarnings, unconfirmedPurgeKeys: unconfirmedKeys } : {}),
   });
 }

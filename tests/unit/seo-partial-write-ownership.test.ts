@@ -37,13 +37,15 @@ describe('partial SEO writes go through the one merge', () => {
     expect(src).not.toMatch(/\{\s*seo:\s*\{\s*(title|description):[^}]*\}\s*\}/);
   });
 
-  it('...and asks buildPreservedSeo for both of its SEO branches', () => {
+  it('...and builds none at all: both partial writes ride the editor\'s own save paths', () => {
     const src = read('app/routes/api-ai-handlers/seo-bulk-fix.handler.ts');
-    const calls = src.match(/contentService\.buildPreservedSeo\(/g) ?? [];
-    // One for the product branch, one for the collection branch. Pages,
-    // articles and blogs carry their SEO in metafields, which are written
-    // per key and are not a unit.
-    expect(calls).toHaveLength(2);
+    // Products go through the product editor's update (partial `seo` merge,
+    // echo check, cache mirror, translation repair) and collections / pages /
+    // articles through the content service's `updateContent`, which owns the
+    // same merge for collections. A direct merge here would be a second copy.
+    expect(src).not.toMatch(/contentService\.buildPreservedSeo\(/);
+    expect(src).toMatch(/handleUpdateProduct\(/);
+    expect(src).toMatch(/editorService\.updateContent\(/);
   });
 
   it('the merge itself is reachable — a private helper cannot be the shared one', () => {

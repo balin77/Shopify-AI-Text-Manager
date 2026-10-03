@@ -503,6 +503,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData().catch(() => null);
+  // `kind=themeImage`: the theme-image probe (PLAN_LOCALIZED_IMAGES Phase 0),
+  // its own gate (dev only, `confirm=true` to write) lives with it.
+  if (formData?.get("kind") === "themeImage") {
+    const { runThemeImageProbe } = await import("../services/localized-media/theme-image-probe.server");
+    return runThemeImageProbe({ admin, session, formData });
+  }
+  // `kind=imageStamp`: does an alt-only edit change a MediaImage's url query?
+  if (formData?.get("kind") === "imageStamp") {
+    const { runImageStampProbeRoute } = await import("../services/localized-media/image-stamp-probe.server");
+    return runImageStampProbeRoute({ admin, formData, shop: session.shop });
+  }
   const wantsWriteTest = formData?.get("writeTest") === "true";
 
   logger.info("[TRANSLATION-PROBE] Starting", { context: "TranslationProbe", shop: session.shop, writeTest: wantsWriteTest });

@@ -125,7 +125,8 @@ export const guideEn: GuideCopy = {
         {
           heading: "Saving",
           paragraphs: [
-            "Nothing is written before you save. As soon as you change something, Shopify's save bar appears at the top with Save and Discard. That applies to switches in the settings too: a change is a draft until you save it.",
+            "What you type is only written when you save. As soon as you change something, Shopify's save bar appears at the top with Save and Discard. That applies to switches in the settings too: a change is a draft until you save it.",
+            "The AI and copy buttons in the editors, on the other hand, save straight away — but only the one field they act on: an accepted AI suggestion, a translation into the language that is open, a copied text. Whatever you typed in other fields and have not saved stays a draft. While such a save is still running, the app does not switch the language, market or product but asks you to wait a moment and then switch again. Buttons that copy or translate the main-language text into every language are locked while that text has unsaved changes — save it first. In the bulk editor everything stays a draft until you save there.",
           ],
         },
         {
@@ -153,6 +154,7 @@ export const guideEn: GuideCopy = {
             "Variant gallery — shows the matching images for each variant.",
             "Language and country selector — a switcher built on Shopify's own localization.",
             "Direct translations — translates text from other apps.",
+            "Media per language — shows the product images and videos you replaced per language or market.",
             "Web Vitals — measures page speed for real visitors.",
           ],
         },
@@ -248,7 +250,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "Accepting a suggestion",
           paragraphs: [
-            "The result lands in the field as a suggestion. You can accept it, discard it or keep editing — nothing is saved behind your back. “Accept & translate” carries the accepted text straight into every language.",
+            "The result first appears as a suggestion above the field. “Accept” puts it into the field and saves exactly that one field straight away — other fields where you still have unsaved changes are left alone. “Decline” leaves everything as it was. “Accept & translate” saves the accepted text and carries it straight into every language.",
           ],
         },
       ],
@@ -318,6 +320,7 @@ export const guideEn: GuideCopy = {
           heading: "One field or everything",
           paragraphs: [
             "Choose a foreign language at the top. Every field now has a translate button that carries the text over from the primary language. In the primary language, the globe button translates a field into every language at once; “Translate all” in the action bar translates the whole entry.",
+            "Both translate the saved text. If you changed something in the primary language and have not saved it yet — a field, an alt text or a metafield — they stay locked until you save; the hint on the button says so. Otherwise the later save would remove the translations they had just written.",
             "Ctrl+click (Mac: Cmd+click) on a language button takes that language out of such runs — for example when you have it translated by hand.",
           ],
         },
@@ -331,6 +334,9 @@ export const guideEn: GuideCopy = {
           heading: "Saved means confirmed",
           paragraphs: [
             "A translation counts as saved only once Shopify echoes it back. If Shopify does not accept a translation, you see it on the affected field — instead of a success message about something that never arrived.",
+            "The same applies to clearing: a translation counts as removed only once Shopify confirms it; otherwise it stays visible, the field stays marked as changed so you can save again, and you are told. For product options and metafields, a language Shopify refused is named in the task, which then shows “completed with errors”.",
+            "“Clear All” in a foreign language also removes, on a product, the translations of its option names, option values and metafields in that language — with a market selected, only that market’s.",
+            "While “Translate All” is still running for one language, you can switch to another language and keep working there or use “Clear All” — the result arrives later only in the language you started it for. “Clear All” in that same language is available again once its translation has finished; until then you see a short note. While “Translate All” runs for every language, this applies to every language. In the other direction, “Translate All” cannot be started while a save or clear you just sent for the same language (or the main language) is still on its way — you see a note and start it again a moment later; for “Translate All” into every language, this applies to any language. If you press Save in a language that is being translated, the save waits until the translation is done. AI and copy buttons that save at once are blocked during that time — in a foreign language only while a translation into exactly that language runs, in the main language during any translation of this item. You see a note; translating and copying then do not start at all. An AI suggestion you accept, or an AI result that arrives just then, lands in the field as an unsaved change — you save it with the Save button after the translation.",
           ],
         },
       ],
@@ -461,6 +467,67 @@ export const guideEn: GuideCopy = {
       ],
       tips: [
         "If you change a theme text in the primary language, its translations are deleted or re-translated according to your setting — just like products.",
+        "Images in the theme appear as an image preview. You can choose a different image per language and market — see “Different images and videos per language”.",
+      ],
+    },
+
+    "images-per-language": {
+      title: "Different images and videos per language",
+      summary:
+        "Show customers in a language or market a different image — for example a banner or product photo with translated text on it.",
+      sections: [
+        {
+          heading: "What it is for",
+          paragraphs: [
+            "Text can be translated, text inside an image cannot. A banner saying “Sale” or a product photo with German labels looks the same in every language. With “Images and videos per language” you choose a different image for a language — and, if you like, only for one market. It replaces the original one to one; every other language keeps seeing the original.",
+          ],
+        },
+        {
+          heading: "Theme images",
+          paragraphs: [
+            "Images in your theme (for example a banner on the home page) are under Content → Theme, among the texts of their section. Instead of a text field you see a preview of the image.",
+            "Whether your theme shows the image of the chosen language depends on the theme. After saving, check your store in that language; some themes may keep showing the original image.",
+          ],
+          steps: [
+            "Choose the language at the top — and, if the image should only differ in one market, the market.",
+            "Click “Choose image for this language” at the image and pick an image from your files or upload one.",
+            "Save. “Use original image” takes the choice back.",
+          ],
+        },
+        {
+          heading: "Product images",
+          paragraphs: [
+            "You set a replacement image right in the product's image gallery — also when the image manager is switched off. In the main language there is nothing special. Switch to a foreign language (and, if you like, to a market) and select an image in the gallery: in the selection's button row the button “Upload replacement image” appears between “Move” and “Delete”. Clicking it opens your files, where you pick an image or upload a new one; only what can replace the original is offered. The chosen image shows in the gallery right away, in place of the original, marked with a small round symbol in its top-left corner. It is only saved when you press “Save” at the top; the info box reports the result. “Discard” takes your choice back. Clicking the symbol shows you the original (the symbol turns grey), another click shows the replacement again. “Remove replacement image” makes the original apply again — that too is only applied with “Save”. Use an image with the same proportions as the original — the store keeps the original's frame, so a different shape gets cropped or leaves gaps.",
+            "For your store to show the replacements, turn on the “Media per language” app embed once (while it is still off, the message after saving links straight to it). The images are replaced in the product page gallery (including its thumbnails and the full-screen view). If you also use the app’s “Open Graph / Twitter” and “JSON-LD Structured Data” embeds, the main image shown when the link is shared, and the images search engines read, are replaced too.",
+          ],
+          list: [
+            "A replacement for a specific market takes precedence over the replacement for “All markets”.",
+            "Your choices apply per language and market: you can choose something in one language, switch to another, and apply everything at the end with one click on “Save”.",
+            "If you delete an image in the app, all of its replacement images (in every language and market) are deleted with it.",
+            "In the image manager, the variant galleries show the replacement image too, and you can set it there as well: select the image in a variant gallery and the same button appears. It is the same replacement as under “All images” — what you choose in one place shows in both. Images that are only in a variant gallery (not under “All images”) and YouTube or Vimeo links in a variant gallery cannot be replaced yet, and 3D models not at all; the button is greyed out there and says why.",
+            "If your plan does not (or no longer) include replacement images and videos, for example after a plan change, your store keeps showing the replacements that already exist. You see them in the gallery and can remove them there; new replacements can no longer be set. An uploaded video can take Shopify a few minutes to process; the file is already in your files by then and can be picked from there.",
+            "If there are replacement images that no longer belong to anything (for example to a market or language that no longer exists in your store), a warning appears below the gallery where you can remove them. If you convert an image to WebP, the old image's replacement images are carried over to the new file automatically; only if that fails do they appear in this warning and have to be set again. Unsaved replacement images from a foreign language stay when you switch to the main language; a line below the gallery names the languages in which something is still waiting for “Save”.",
+          ],
+        },
+        {
+          heading: "Videos",
+          paragraphs: [
+            "The same way you also replace a product's videos per language and market — for example with a dubbed version. A video uploaded to Shopify is replaced by another uploaded video (from your files or uploaded new), a YouTube or Vimeo video by another YouTube or Vimeo link. With a video selected, the button reads “Upload replacement video” or “Enter replacement link” accordingly. An image cannot be replaced by a video or the other way round; 3D models are not replaced.",
+            "Shopify processes a newly uploaded video for a few minutes. If a note says so, pick the video from your files a little later.",
+            "Videos in the theme settings (for example a video section on the home page) are entered per language as a different link; the AI does not change them.",
+          ],
+        },
+        {
+          heading: "What is not replaced",
+          paragraphs: [
+            "Product cards in collections, the cart, and feeds for Google Shopping, the Shop app and other sales channels keep showing the original. For videos, the description of the video for search engines stays with the original. Collection and blog images are not covered yet.",
+          ],
+        },
+      ],
+      tips: [
+        "The AI does not translate or change images. That is why the translate buttons offer nothing for theme images — an image stays until you choose another one.",
+        "An image that stays the same in a language does not count as a missing translation.",
+        "Different images and videos per language are included in the Pro and Max plans.",
       ],
     },
 
@@ -664,7 +731,7 @@ export const guideEn: GuideCopy = {
           ],
         },
       ],
-      tips: ["The assignment happens at upload. Renaming the files later changes nothing about it."],
+      tips: ["If a file cannot be uploaded, it is named in a message and is not added — upload it again afterwards.", "The assignment happens at upload. Renaming the files later changes nothing about it."],
     },
 
     "alt-texts": {
@@ -675,12 +742,13 @@ export const guideEn: GuideCopy = {
           heading: "Where alt texts live",
           paragraphs: [
             "You edit alt texts on the image in the Image Variant Manager, in the editor for collection and article images, and collectively in the bulk editor, where every row of the Images row type is one image — product images as well as images from your file library.",
+            "An alt text you type in the Image Variant Manager is not saved when you leave the field: it stays a draft until you press “Save” at the top, like every other change on the page. “Discard” takes it back. If saving fails for an image, the info box tells you why, your text stays in the field and is sent again with the next “Save”. If you already gave an alt text to an image you have only just added, the same “Save” saves it too, as soon as Shopify has created the image. If you switch language, market or product while alt texts are unsaved, the app asks first; while an alt text you generated or translated with an AI button is still being saved, the app does not switch but asks you to wait a moment and then switch again. Alt texts you sent with “Save” do not hold up a switch — they finish saving for the product, language and market you sent them for. In the main language the alt texts apply to every market, so switching the market there does not ask. If you delete an image, its unsaved alt text goes with it. A YouTube/Vimeo link or a 3D model added to a variant has no alt text — its box says so instead.",
           ],
         },
         {
           heading: "With AI",
           paragraphs: [
-            "The AI writes one alt text per image. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
+            "The AI writes one alt text per image. The result — and likewise a translation into the language that is open — then sits in the field and is saved for that one image straight away; alt texts you typed for other images stay drafts. For an image that has not been saved itself yet, these buttons are locked until you save it. “Translate” in another language always starts from the saved main-language alt text, not from what is in the field — so it stays locked, with a hint, for an image that has no main-language alt text yet. For a library file that only sits in a variant gallery the page does not know its alt text: there the button stays usable, and if the main-language alt text is missing, the info box says so. “Translate to all languages” writes to the other languages straight away — which is why that button is only available while the main-language alt text has no unsaved changes. With image sharing on, it sees exactly that one image — and does not describe one that merely happens to sit next to it.",
           ],
         },
         {
@@ -692,7 +760,8 @@ export const guideEn: GuideCopy = {
         {
           heading: "Translating",
           paragraphs: [
-            "Alt texts are translated into every language like any other field, and refreshed by the same rules when the original changes.",
+            "Alt texts are translated into every language like any other field, and refreshed by the same rules when the original changes. With a market selected in the editor, the Image Manager shows that market's alt texts (the language's own text where the market has none) and saves changes for that market only. “Translate to all languages” always writes the language's own text, which markets without their own text also use.",
+            "Only an alt text that exists in the main language can be translated. Where an image has none there yet, its alt text field is locked in the other languages and says so — enter it in the main language first and save.",
           ],
         },
       ],
@@ -763,6 +832,7 @@ export const guideEn: GuideCopy = {
           heading: "Overview",
           paragraphs: [
             "SEO → Overview shows the distribution of scores across the whole shop and the most common problems — with a jump straight into the affected entry and the option to fix problems with AI.",
+            "When the AI fixes a text in the main language, the app handles its translations exactly as it does when you save in the editor: depending on your setting under Settings → Translations, the old translations are removed or, with automatic translation on, translated again. The app also checks that Shopify really stored the text — otherwise the entry counts as failed.",
           ],
         },
       ],

@@ -1,5 +1,7 @@
+import { isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useMemo } from "react";
+import { TRANSLATION_KEY_TO_FIELD } from "~/services/translations/translation-keys.shared";
 import type { TranslatableItem, Translation, ContentType, ShopLocale, ContentImage } from "~/types/content-editor.types";
 import {
   FIELD_CONFIGS,
@@ -16,6 +18,7 @@ import {
 import { TIMING } from "~/constants/timing";
 import { PULSE_SYNC_EPOCH } from "~/utils/contentEditor.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 
 // ============================================================================
 // Overlay Types
@@ -37,17 +40,8 @@ export interface ValidationOverlays {
   deletedKeys?: Set<string>;
 }
 
-/** Maps Shopify translation keys to editor UI field keys stored in savedPrimaryValuesRef */
-const TRANSLATION_KEY_TO_FIELD_KEY: Record<string, string> = {
-  title: 'title',
-  body_html: 'description',
-  body: 'description',
-  handle: 'handle',
-  meta_title: 'seoTitle',
-  meta_description: 'metaDescription',
-  product_type: 'productType',
-  summary_html: 'summary',
-};
+/** Shopify translation key -> editor UI field key (the shared inverse map). */
+const TRANSLATION_KEY_TO_FIELD_KEY = TRANSLATION_KEY_TO_FIELD;
 
 // ============================================================================
 // Private Helpers
@@ -149,7 +143,7 @@ function hasTranslationForField(
   if (!item) return false;
 
   // 1. Deleted keys — user explicitly cleared this field
-  if (overlays?.deletedKeys?.has(field)) return false;
+  if (overlays?.deletedKeys && isMarkedDeleted(overlays.deletedKeys, field, "", locale)) return false;
 
   // 2. Local translation overlay (from AI translate or saved foreign locale)
   const localValue = overlays?.localTranslations?.[field]?.[locale];
@@ -381,6 +375,9 @@ export function hasLocaleMissingTranslations(
       // Primary content: check overlay first
       const primaryValue = overlays?.savedPrimaryValues?.[item.key] ?? item.value;
       if (isFieldEmpty(primaryValue)) return false;
+      // An image setting shows the original in every language unless the merchant
+      // CHOSE another one: keeping it is not a missing translation.
+      if (isThemeMediaValue(primaryValue)) return false;
       return !hasTranslationForField(selectedItem, item.key, locale, overlays);
     });
   }
@@ -559,6 +556,9 @@ export function getMissingLocaleTranslationFields(
       .filter((item: { key: string; value: string }) => {
         const primaryValue = overlays?.savedPrimaryValues?.[item.key] ?? item.value;
         if (isFieldEmpty(primaryValue)) return false;
+        // An image setting shows the original in every language unless the merchant
+        // CHOSE another one: keeping it is not a missing translation.
+        if (isThemeMediaValue(primaryValue)) return false;
         return !hasTranslationForField(selectedItem, item.key, locale, overlays);
       })
       .map((item: { key: string; value: string }) => item.key);
@@ -724,7 +724,10 @@ export function isAltTextTranslated(
   if (locale === primaryLocale) return true;
   if (!image) return false;
   if (liveValue !== undefined) return !isFieldEmpty(liveValue);
-  const t = image.altTextTranslations?.find(t => t.locale === locale);
+  // GLOBAL layer: a market override is not what completeness asks about (the
+  // other completeness checks read the global rows too), and a market row of
+  // the same locale must not be the one `find` happens to hit.
+  const t = image.altTextTranslations?.find(t => t.locale === locale && (t.marketId ?? "") === "");
   return !!t && !isFieldEmpty(t.altText);
 }
 
@@ -838,6 +841,9 @@ export function hasFieldMissingTranslations(
     );
     const primaryValue = overlays?.savedPrimaryValues?.[translationKey] ?? tcEntry?.value;
     if (!primaryValue || isFieldEmpty(primaryValue)) return false;
+    // An image setting shows the original in every language unless the merchant
+    // CHOSE another one: keeping it is not a missing translation.
+    if (isThemeMediaValue(primaryValue)) return false;
     return foreignLocales.some(locale =>
       !hasTranslationForField(selectedItem, translationKey, locale.locale, overlays)
     );

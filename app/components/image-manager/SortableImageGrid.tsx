@@ -5,6 +5,8 @@ import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, us
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
+import { ReplacedMediaBadge } from "../localized-images/ReplacedMediaBadge";
+import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 // MediaKind is referenced indirectly via ImageMeta.kind — no direct import
 // needed here, but kept as a comment for grep-discoverability of the dispatch.
 
@@ -140,6 +142,8 @@ interface SortableThumbnailProps {
   isMain?: boolean;
   localAltTexts?: Record<string, string>;
   isPrimaryLocale?: boolean;
+  /** This tile's medium has a replacement in the language the editor shows (see useLocalizedMedia `tileOf`). */
+  replacement?: LocalizedMediaTile;
 }
 
 function extractFilename(url: string): string {
@@ -150,7 +154,7 @@ function extractFilename(url: string): string {
   }
 }
 
-function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onSelect, thumbSize, isMain = false, localAltTexts, isPrimaryLocale = true }: SortableThumbnailProps) {
+function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onSelect, thumbSize, isMain = false, localAltTexts, isPrimaryLocale = true, replacement }: SortableThumbnailProps) {
   const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
@@ -184,7 +188,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
   return (
     <div
       ref={setNodeRef}
-      title={filename}
+      title={replacement?.title ?? filename}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -206,7 +210,8 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
         aria-pressed={isSelected}
         aria-label={
           (currentLocaleAltText || t.imageManager.imageThumbLabel) +
-          (isMain ? `, ${t.imageManager.mainImage}` : "")
+          (isMain ? `, ${t.imageManager.mainImage}` : "") +
+          (replacement ? `, ${replacement.label}` : "")
         }
       >
         {kind === "model" && (!url || !/\.(jpe?g|png|webp|gif|avif)(\?|$)/i.test(url)) ? (
@@ -262,7 +267,10 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           // host name. The play overlay sits on top either way.
           meta?.externalHost === "YouTube" || meta?.externalHost === "youtube" ? (
             <img
-              src={(() => {
+              // Keyed by src: the onError below hides the element, and a src
+              // that changes (the symbol's toggle) must show again.
+              key={replacement?.src ?? "original"}
+              src={replacement?.src ?? (() => {
                 const m = url.match(/[?&]v=([A-Za-z0-9_-]{11})/) || url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) || url.match(/youtube\.com\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})/);
                 return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : "";
               })()}
@@ -304,7 +312,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           )
         ) : (
           <img
-            src={url}
+            src={replacement?.src ?? url}
             alt={currentLocaleAltText || t.imageManager.imageThumbLabel}
             draggable={false}
             style={{
@@ -377,6 +385,19 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           >
             {meta.externalHost}
           </div>
+        )}
+
+        {/* Replacement in the current foreign language: a corner symbol (the
+            outline is already spoken for by "selected" and "main image").
+            Top-left, below the host badge of an external video. */}
+        {replacement && (
+          <ReplacedMediaBadge
+            label={replacement.label}
+            draft={replacement.draft}
+            showingOriginal={replacement.showingOriginal}
+            onToggle={replacement.onToggle}
+            top={(kind === "external_video" && meta?.externalHost) || isProcessing || isPending ? 22 : 4}
+          />
         )}
 
         {/* Selection checkmark */}
@@ -529,6 +550,8 @@ interface SortableImageGridProps {
   hasMainImage?: boolean;
   localAltTexts?: Record<string, string>;
   isPrimaryLocale?: boolean;
+  /** Per tile URL: the replacement its medium shows in the language the editor shows (product gallery only). */
+  replacements?: Record<string, LocalizedMediaTile>;
 }
 
 export function SortableImageGrid({
@@ -548,6 +571,7 @@ export function SortableImageGrid({
   hasMainImage = true,
   localAltTexts,
   isPrimaryLocale = true,
+  replacements,
 }: SortableImageGridProps) {
   const { t } = useI18n();
   const sensors = useSensors(
@@ -661,6 +685,7 @@ export function SortableImageGrid({
             isMain={showPlaceholder && hasMainImage && idx === 0}
             localAltTexts={localAltTexts}
             isPrimaryLocale={isPrimaryLocale}
+            replacement={replacements?.[url]}
           />
         ))}
       </SortableContext>

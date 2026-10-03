@@ -25,7 +25,7 @@ export interface TemplatesActionContext {
   /** Shopify Admin API client */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   admin: any;
-  session: { shop: string };
+  session: { shop: string; accessToken?: string };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any;
   formData: FormData;

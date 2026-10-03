@@ -246,24 +246,40 @@ app.use('/api/sync-products', bulkOperationRateLimit);
 app.use('/api/sync-content', bulkOperationRateLimit);
 
 // The editors' JSON doors for their plain-fetch saves (copy to all languages,
-// option translate/copy). They used to post to the content PAGE routes, so they
+// option translate/copy, both through the one route). They used to post to the content PAGE routes, so they
 // belong to the content limit below, not to the general /api one: a copy on a
 // shop with many languages fires one request per locale, and sharing the 100/min
 // /api budget with every other API call turned routine clicks into 429s.
-const CONTENT_EDITOR_API_PATHS = ['/api/content-editor-action', '/api/product-sub-resources'];
+const CONTENT_EDITOR_API_PATHS = ['/api/content-editor-action'];
+
+// Content editor PAGE paths for the content rate limiter (list + matching live
+// in a CJS module so a unit test can exercise them).
+let isContentPagePath;
+try {
+  ({ isContentPagePath } = require("./app/middleware/content-page-paths.cjs"));
+} catch (e) {
+  // Without the list the content limit simply does not apply to page paths;
+  // the server still starts (the general /api limits stay in force).
+  isContentPagePath = () => false;
+  serverLogger.error("[server.js] Failed to load content-page-paths.cjs: " + e.message);
+}
 
 // Content page rate limiting — applied to form submissions (save, copy, translate).
 // Uses a permissive 200/min limit because these pages mix AI and non-AI operations
 // and routine copy/save clicks must not be throttled. The /api/ai route has its
 // own strict 30/min AI limit for direct AI API calls.
 app.use((req, res, next) => {
-  const contentType = req.headers['content-type'] || '';
+  // The editors' JSON door is excluded from the general /api limiter below,
+  // so it is limited HERE whatever its Content-Type says (a request with an
+  // odd or missing one would otherwise hit no limiter at all).
+  if (CONTENT_EDITOR_API_PATHS.includes(req.path)) {
+    return contentActionRateLimit(req, res, next);
+  }
+  // Media types are case-insensitive ("Multipart/Form-Data" is valid).
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
   if (contentType.includes('application/x-www-form-urlencoded') ||
       contentType.includes('multipart/form-data')) {
-    if (req.path.includes('/app/products') ||
-        req.path.includes('/app/content') ||
-        req.path.includes('/app/collections') ||
-        CONTENT_EDITOR_API_PATHS.includes(req.path)) {
+    if (isContentPagePath(req.path)) {
       return contentActionRateLimit(req, res, next);
     }
   }

@@ -27,6 +27,43 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return taskErrorText(refusal[0], t) ?? errorMessage;
   }
 
+  // The embedded session token could not be (re)established -- app-fetch.ts's
+  // SessionExpiredError, or the server's 401 for an /api fetch that arrived
+  // without one (api-auth-bounce.server.ts). Never raw "Expected JSON" text.
+  if (errorMessage === "sessionExpired") {
+    return errors?.sessionExpired || "Your session has expired. Please reload the page.";
+  }
+  // Shopify asked for the app's access to be confirmed again (a 401 carrying
+  // X-Shopify-API-Request-Failure-Reauthorize-Url) -- app-fetch.ts's
+  // ReauthorizeRequiredError. Not an expired session: reloading alone does
+  // not end it, the merchant has to approve the request.
+  if (errorMessage === "reauthorizeRequired") {
+    return errors?.reauthorizeRequired || "Shopify asks you to confirm the app's access again. Please reload the page and approve the request.";
+  }
+
+  // The image an alt-text action named no longer exists on the product.
+  if (errorMessage === "Image not found on this product") {
+    const im = (t as unknown as { imageManager?: Record<string, string> }).imageManager;
+    return im?.altImageNotFound || errorMessage;
+  }
+
+  // A plan refusal travels as the code "gated" (planGateRefusal, 403).
+  if (errorMessage === "gated") {
+    const content = t.content as Record<string, string> | undefined;
+    return content?.upgradeRequired || "Upgrade required";
+  }
+
+  // An AI path refused a theme image/video value (themeMediaRefusalBody).
+  if (errorMessage === "themeMediaValue") {
+    const li = (t as unknown as { localizedImages?: { errors?: Record<string, string> } }).localizedImages;
+    return li?.errors?.themeMediaValue || errorMessage;
+  }
+
+  // Every locale was translated but Shopify confirmed none of the writes.
+  if (errorMessage === "translateStoreFailedAll") {
+    return errors?.translateStoreFailedAll || "Shopify did not store the translation for any language";
+  }
+
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys

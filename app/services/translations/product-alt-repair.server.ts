@@ -59,6 +59,13 @@ export interface ProductAltRepairParams {
    * `mediaAltLockId`, or each save's claim aborts the previous image's run.
    */
   lockId?: string;
+  /**
+   * `false` = start NO re-translation even where the policy would: the caller's
+   * budget of detached runs is spent (repair-budget.server.ts), so the save
+   * follows the merchant's stored deletion answer, as it did before
+   * auto-translate reached it.
+   */
+  allowRetranslate?: boolean;
 }
 
 /** Whether this policy + locale state re-translates rather than purges. */
@@ -75,7 +82,8 @@ export async function repairChangedProductAlts(params: ProductAltRepairParams): 
   const changes = params.changes;
   if (changes.length === 0) return {};
 
-  const retranslate = altRepairRetranslates(policy, foreignLocales, primaryLocale);
+  const retranslate =
+    params.allowRetranslate !== false && altRepairRetranslates(policy, foreignLocales, primaryLocale);
   const purge = retranslate ? policy.purgeOnPrimaryChange : policy.purgeUnreconciledSurfaces;
   if (!retranslate && !purge) return {};
   // The product sync's shield — watched by no repair, so marking it never
@@ -187,8 +195,8 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
     // the removal — by its echo, or, for a locale with a local row the echo
     // skipped, by the single-locale re-read (a row Shopify never held is
     // "gone" there and confirms).
-    const { removeAndVerify, removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
-      "../bulk-editor/translations.server"
+    const { removeAndVerify, removeAndVerifyAcrossLocales, LOCALE_KEY_SEP, mirrorProductMediaAlt } = await import(
+      "./verified-translations.server"
     );
     const confirmedByMedia = new Map<string, Set<string>>();
     for (const mediaId of mediaIds) {
@@ -209,15 +217,17 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
       confirmedByMedia.set(mediaId, confirmed);
     }
 
-    const imageByMedia = new Map(changes.filter((c) => c.mediaId).map((c) => [c.mediaId as string, c.imageId]));
     for (const [mediaId, confirmed] of confirmedByMedia) {
-      const imageId = imageByMedia.get(mediaId);
-      if (!imageId) continue;
+      // The local rows of EVERY product's cache row of this MediaImage, not
+      // only the changed product's: a shared medium's rows can disagree, and
+      // the clear below reaches all of them, so a locale held only on another
+      // product's row must get its own re-read too.
       const localRows = await db.productImageAltTranslation.findMany({
-        where: { imageId, marketId: "", locale: { in: [...foreignLocales] } },
+        where: { image: { mediaId, product: { shop } }, marketId: "", locale: { in: [...foreignLocales] } },
         select: { locale: true },
       });
-      for (const { locale } of localRows) {
+      const localLocales = [...new Set(localRows.map((row: { locale: string }) => row.locale))];
+      for (const locale of localLocales) {
         if (confirmed.has(locale)) continue;
         try {
           const single = await removeAndVerify(gateway, mediaId, ["alt"], locale, "");
@@ -226,10 +236,10 @@ async function purgeAltTranslations(params: ProductAltRepairParams): Promise<voi
           // Unconfirmed: the local row stays; the next look corrects it.
         }
       }
+      // A confirmed removal is a fact about the ONE MediaImage, so it clears
+      // every product's cache row of a shared medium, not only this one's.
       if (confirmed.size > 0) {
-        await db.productImageAltTranslation.deleteMany({
-          where: { imageId, marketId: "", locale: { in: [...confirmed] } },
-        });
+        await mirrorProductMediaAlt(db, { shop, mediaId, locale: [...confirmed], marketId: "", value: "" });
       }
     }
 
@@ -312,6 +322,8 @@ export async function repairAltsAfterWrite(params: {
   snapshot: ReadonlyMap<string, ProductAltSnapshotEntry>;
   /** What was WRITTEN (Shopify's echo where the mutation returns one). */
   written: ReadonlyArray<{ mediaId: string; alt: string }>;
+  /** A bulk caller's budget of detached runs (one group per product / medium). */
+  repairBudget?: { take(kind: string, ownerId: string, variant?: string): boolean };
 }): Promise<string[]> {
   const { gateway, db, shop, snapshot } = params;
   try {
@@ -340,6 +352,12 @@ export async function repairAltsAfterWrite(params: {
     const taskIds: string[] = [];
     for (const [productId, group] of groups) {
       const only = group.changes.length === 1 ? group.changes[0].mediaId : null;
+      // One run per (product, medium-or-whole-product) - the budget counts the
+      // runs this call would really start, and only where one would start.
+      const allowRetranslate =
+        !params.repairBudget ||
+        !altRepairRetranslates(policy, foreignLocales, primaryLocale) ||
+        params.repairBudget.take("productAlt", productId, only ?? "");
       const outcome = await repairChangedProductAlts({
         gateway,
         db,
@@ -350,6 +368,7 @@ export async function repairAltsAfterWrite(params: {
         policy,
         foreignLocales,
         primaryLocale,
+        ...(allowRetranslate ? {} : { allowRetranslate: false }),
         ...(only ? { lockId: mediaAltLockId(productId, only) } : {}),
       });
       if (outcome.taskId) taskIds.push(outcome.taskId);

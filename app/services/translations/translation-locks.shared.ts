@@ -51,6 +51,24 @@ export function subResourceLockId(productId: string): string {
   return `${productId}#subResources`;
 }
 
+/**
+ * The key the PRODUCT SYNC's shield asks for beside `subResourceLockId` —
+ * marked by every INTERACTIVE sub-resource write or clear (the card's save,
+ * its translate buttons, translate-to-all, "clear all", a primary save's
+ * purge), watched by NO repair. Same shape as `altTextSyncShieldId`, for the
+ * same reason seen from the merchant's side: those writes mark each
+ * sub-resource GID (which the repairs watch, so a hand-written value wins) but
+ * nothing the sync asks for, so a `products/update` sync landing seconds later
+ * rewrote the option/metafield translation cache from a Shopify read taken
+ * before the write — a just-translated option vanished from the card, a
+ * just-cleared one came back. Marking `subResourceLockId` instead would ABORT
+ * a running detached re-translation of the whole group over one translate
+ * button, which is why this is a key of its own.
+ */
+export function subResourceSyncShieldId(productId: string): string {
+  return `${productId}#subResourcesShield`;
+}
+
 /** A collection's / article's featured-image alt. */
 export function featuredAltLockId(parentId: string): string {
   return `${parentId}#featuredAlt`;

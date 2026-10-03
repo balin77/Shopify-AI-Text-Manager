@@ -1,20 +1,33 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, unsentUrls, urlNeedsRestore, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
+import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
+import { answerPredatesSave, altConfirmKey, monotonicNow } from "./alt-load-guard";
+import { useInfoBox } from "../../contexts/InfoBoxContext";
+import { altTranslateSourceText, foreignAltLocked, knownPrimaryAlt, classifyAltSaveResponse, type AltSaveVerdict, classifyAltAiResponse, classifyAllLocalesResponse, enqueueAltSave, altSaveScope, type QueuedAltSave } from "../../services/alt-text-feedback.shared";
 import { usePlan } from "../../contexts/PlanContext";
 import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
+import { useLocalizedMediaContext } from "../localized-images/LocalizedMediaContext";
+import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable, LocalizedMediaOrphanNotice } from "../localized-images/LocalizedMediaReplaceButton";
+import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
+import { uploadToStagedTarget } from "../../utils/staged-upload.client";
+import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
+import { planAltFlush, planImmediateAltSave, hasImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
+import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
+import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -135,19 +148,43 @@ interface VariantImageManagerProps {
   /** Reports the settling media that has since shown up (or belongs to another
    *  product) so the hook can drop it from its list. */
   onSettlingMediaResolved?: (mediaIds: string[]) => void;
+  /** Reports whether a product-image delete is in flight. The parent blocks
+   *  the editor's Save meanwhile: the optimistic exclusion is already emitted,
+   *  so a save during a delete that then fails would clear variant main images
+   *  on Shopify for media that still exists. */
+  onDeletingChange?: (deleting: boolean) => void;
   resetKey?: number;
   variantReloadKey?: number;
   currentLanguage?: string;
   primaryLocale?: string;
+  /**
+   * The market whose translation layer the open foreign language shows ("" or
+   * absent = the global layer). Foreign alt texts are read from and saved to
+   * THAT layer; "translate to all languages" stays global, like the editor's.
+   */
+  selectedMarketId?: string;
   productTitle?: string;
   enabledLanguages?: string[];
   onDirtyChange?: (isDirty: boolean) => void;
   /** Every alt-text save response, so the editor can watch the background
    *  re-translation a primary alt change starts (it carries its task ids). */
   onSaveResponse?: (response: unknown) => void;
+  /** Filled by the manager with the two calls the editor's save bar needs for
+   *  the alt-text DRAFTS: `flush` (send every dirty alt) and `discard`. */
+  altDraftApiRef?: React.MutableRefObject<AltDraftApi | null>;
+  /** True while alt saves the merchant already pressed Save for are still out
+   *  (queued or in flight; a draft carried over until a new image exists is
+   *  not counted -- it would hold the save bar for the whole processing). */
+  onAltSavingChange?: (saving: boolean) => void;
+  /** True while an alt save an AI button sent AT ONCE (generate / translate)
+   *  is queued or in flight -- the only alt save a view switch waits for. */
+  onImmediateAltSavingChange?: (saving: boolean) => void;
   onMissingMainImageChange?: (hasMissing: boolean) => void;
   onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
   onGallerySelectionGidsChange?: (gids: string[]) => void;
+  /** Bumped by the editor when a background re-translation finished and the
+   *  loader was reloaded: the foreign alt texts are re-read from the database. */
+  backgroundRefreshVersion?: number;
 }
 
 function mapApiImagesToRefs(images: any[]): ProductImageRef[] {
@@ -195,13 +232,18 @@ export function VariantImageManager({
   settlingMedia,
   onSettlingMediaResolved,
   resetKey,
+  onDeletingChange,
   variantReloadKey,
   currentLanguage,
   primaryLocale,
+  selectedMarketId = "",
   productTitle,
   enabledLanguages = [],
   onDirtyChange,
   onSaveResponse,
+  altDraftApiRef,
+  onAltSavingChange,
+  onImmediateAltSavingChange,
   onMissingMainImageChange,
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
@@ -211,8 +253,9 @@ export function VariantImageManager({
   seedThreeDModelUrls,
   seedThreeDPreviewUrls,
   onGalleryOrderChange,
+  backgroundRefreshVersion = 0,
 }: VariantImageManagerProps) {
-  const { t } = useI18n();
+  const { t, locale: appLocale } = useI18n();
   const { plan } = usePlan();
   // Alt-text translation needs at least one foreign locale. Without one the
   // buttons stay visible but greyed out, with this as their tooltip.
@@ -269,6 +312,8 @@ export function VariantImageManager({
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
+  // A media write (delete, upload) the server refused; shown above the gallery.
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   // GIDs (mediaId) of images currently being converted; cleared when done.
   // Tracked by GID rather than URL because Shopify CDN URLs can change query params between
@@ -281,6 +326,11 @@ export function VariantImageManager({
   const prevUnsettledKeyRef = useRef("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ urls: string[]; affectedVariantCount: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  useEffect(() => {
+    onDeletingChange?.(isDeleting);
+  }, [isDeleting]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Never leave the parent's save blocked if this component goes away mid-delete.
+  useEffect(() => () => onDeletingChange?.(false), []); // eslint-disable-line react-hooks/exhaustive-deps
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentImagesRef = useRef<ProductImageRef[]>([]);
   const isConvertingWebPRef = useRef(false);
@@ -299,14 +349,306 @@ export function VariantImageManager({
   const fetcher = useFetcher();
   // Alt text editing state
   const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
+  // Values the open market inherits from the global layer: shown as a
+  // placeholder, never as the field's value (see alt-market-layer.ts).
+  const [inheritedAltTexts, setInheritedAltTexts] = useState<Record<string, string>>({});
   const altTextFetcher = useFetcher<any>();          // generate / translate (returns text)
   const saveAltTextFetcher = useFetcher<any>();      // save (writes to Shopify)
+  const { showInfoBox } = useInfoBox();
+  const localAltTextsRef = useRef<Record<string, string>>({});
+  localAltTextsRef.current = localAltTexts;
+  const primaryLocaleRef = useRef(primaryLocale);
+  primaryLocaleRef.current = primaryLocale;
+  const currentLanguageRef = useRef(currentLanguage);
+  currentLanguageRef.current = currentLanguage;
+  // The market layer the open view writes to ("" = global / primary language).
+  const viewMarketRef = useRef("");
+  const timedOutAltSaveRef = useRef<QueuedAltSave | null>(null);
+  // Alt saves are SERIALISED over the one fetcher: a second save fired before
+  // the first answer landed used to drop that answer, and with it the task ids
+  // of the re-translation the first one started. One in flight, the rest queued.
+  const altSaveInFlightRef = useRef<QueuedAltSave | null>(null);
+  const altSaveQueueRef = useRef<QueuedAltSave[]>([]);
+  const altSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const altSaveSawBusyRef = useRef(false);
+  const lastHandledSaveDataRef = useRef<unknown>(null);
+  // Images whose last save FAILED: their text stays in the field as a DRAFT
+  // (still dirty, so the save bar stays up and the next Save retries it) and is
+  // not overwritten by a reload.
+  const failedAltUrlsRef = useRef(new Set<string>());
+  // What each edited image's own alt was BEFORE its first edit (undefined = it
+  // had no own value): Discard puts exactly that back.
+  const altBaselinesRef = useRef(new Map<string, string | undefined>());
+  // When each draft was last edited: one medium shown under two urls (product
+  // gallery and a variant gallery) is saved ONCE, with the latest edit.
+  const altEditOrderRef = useRef(new Map<string, number>());
+  const altEditSeqRef = useRef(0);
+  // Tile urls that changed under a save (an upload's preview url -> its real
+  // url once Shopify has the image): a late answer finds its draft again.
+  const altUrlRenamesRef = useRef(new Map<string, string>());
+  const resolveAltUrl = (url: string) => {
+    let cur = url;
+    for (let i = 0; i < 5 && altUrlRenamesRef.current.has(cur); i++) cur = altUrlRenamesRef.current.get(cur)!;
+    return cur;
+  };
+  // Drafts of images the same page Save is only UPLOADING: no media id yet, so
+  // they are carried over and sent once the image exists (see the effect that
+  // resolves them). `token` is what the page Save waits for meanwhile.
+  const deferredAltRef = useRef(new Map<string, { draft: Omit<QueuedAltSave, "mediaId">; token: object; applied: "running" | "done" }>());
+  const [deferredAltTick, setDeferredAltTick] = useState(0);
+  // Set further down: the settling poll calls it when it gives up.
+  const releaseStuckDeferredAltsRef = useRef<(() => void) | null>(null);
+  // Page Saves waiting for their alt saves to be answered.
+  const altFlushWaitersRef = useRef<Array<{ waiter: AltFlushWaiter; resolve: (s: AltFlushSummary) => void }>>([]);
+  /** Records an answer (or a release) for every waiter and wakes the ones that are complete. */
+  const settleAltTokens = (apply: (w: AltFlushWaiter) => boolean) => {
+    if (altFlushWaitersRef.current.length === 0) return;
+    const still: typeof altFlushWaitersRef.current = [];
+    for (const w of altFlushWaitersRef.current) {
+      if (apply(w.waiter)) w.resolve(altFlushSummary(w.waiter));
+      else still.push(w);
+    }
+    altFlushWaitersRef.current = still;
+  };
+  /** Saves that will never be answered (Discard, a gallery save that failed): they count as unsent. */
+  const releaseAltTokens = (tokens: readonly object[]) => {
+    if (tokens.length === 0) return;
+    settleAltTokens((w) => {
+      for (const token of tokens) releaseAltFlushToken(w, token);
+      return w.pending.size === 0;
+    });
+  };
+  // Saves the merchant pressed Save for that are being SENT: the page shows
+  // its Save as busy meanwhile. A draft carried over until its new image
+  // exists does not count: Shopify may process the image for most of a
+  // minute, and holding the whole save bar busy for that would block every
+  // unrelated save. It is still sent once the image settles, and a switch
+  // still counts it as pressed-Save (not as an unsent draft).
+  const altSavingRef = useRef(false);
+  const immediateAltSavingRef = useRef(false);
+  const syncAltSaving = () => {
+    // The AI buttons' own saves, separately: only those refuse a view switch.
+    const immediate = hasImmediateAltSave(altSaveInFlightRef.current, altSaveQueueRef.current);
+    if (immediate !== immediateAltSavingRef.current) {
+      immediateAltSavingRef.current = immediate;
+      onImmediateAltSavingChange?.(immediate);
+    }
+    const busy = !!altSaveInFlightRef.current || altSaveQueueRef.current.length > 0;
+    if (busy === altSavingRef.current) return;
+    altSavingRef.current = busy;
+    onAltSavingChange?.(busy);
+  };
+  // When each image's own alt was last CONFIRMED saved, and when the open
+  // load request was made: an answer requested before a save must not undo it.
+  const altConfirmedAtRef = useRef(new Map<string, number>());
+  const altLoadRequestedAtRef = useRef(0);
+  // Re-render on a dirty change too (the translate-to-all button reads it).
+  const [, setAltDirtyVersion] = useState(0);
+  const syncAltDirty = useCallback(() => {
+    setAltDirtyVersion((v) => v + 1);
+    onDirtyChange?.(dirtyUrlsRef.current.size > 0);
+  }, [onDirtyChange]);
+  const settleAltSave = useCallback((entry: QueuedAltSave, verdict: AltSaveVerdict) => {
+    // Wake the page Save that sent this one (it reports only what was confirmed).
+    settleAltTokens((w) => settleAltFlushWaiter(w, entry, verdict.kind === "saved"));
+    const scope = altSaveScope(entry, { productId: productIdRef.current, locale: currentLanguageRef.current, marketId: viewMarketRef.current });
+    const { sameProduct } = scope;
+    // The text only stays in the field where the view still shows exactly the
+    // language AND market it was typed for.
+    const sameLocale = scope.sameLocale && scope.sameMarket;
+    const url = resolveAltUrl(entry.url);
+    if (verdict.kind === "saved") {
+      if (sameProduct) {
+        altConfirmedAtRef.current.set(altConfirmKey(url, entry.locale, entry.marketId), monotonicNow());
+      }
+      // Only the view the save was made for has its draft state touched: a
+      // save of another language or market must not clear (or re-baseline) a
+      // draft of the same image the merchant is editing now.
+      if (sameProduct && sameLocale) {
+        const settleUrl = (tileUrl: string, plannedText: string, savedText: string) => {
+          failedAltUrlsRef.current.delete(tileUrl);
+          const current = localAltTextsRef.current[tileUrl];
+          if (current === undefined || current === plannedText) {
+            dirtyUrlsRef.current.delete(tileUrl);
+            altBaselinesRef.current.delete(tileUrl);
+            if (current !== undefined && current !== savedText) {
+              // A second tile of the same medium: it shows what was saved.
+              localAltTextsRef.current = { ...localAltTextsRef.current, [tileUrl]: savedText };
+              setLocalAltTexts((p) => ({ ...p, [tileUrl]: savedText }));
+            }
+          } else {
+            // Typed on after the save was sent: still a draft, but its way back is now the saved text.
+            altBaselinesRef.current.set(tileUrl, savedText);
+          }
+        };
+        settleUrl(url, entry.altText, entry.altText);
+        for (const alias of entry.aliases ?? []) settleUrl(resolveAltUrl(alias.url), alias.altText, entry.altText);
+        syncAltDirty();
+      }
+      return;
+    }
+    if (verdict.kind === "noPrimary") {
+      // The image has no alt text in the PRIMARY language, so Shopify offers
+      // nothing to translate and no retry could ever store this text. Kept as
+      // a failed draft it would hold the save bar open for good, so the field
+      // goes back to what this language (and market) holds and the message
+      // says what to do instead -- the editor's own rule for the same case.
+      if (sameProduct && sameLocale) {
+        const plan = revertAltDraftsWithoutPrimary({
+          texts: localAltTextsRef.current,
+          baselines: altBaselinesRef.current,
+          planned: [
+            { url, altText: entry.altText },
+            ...(entry.aliases ?? []).map((a) => ({ url: resolveAltUrl(a.url), altText: a.altText })),
+          ],
+        });
+        for (const u of plan.reverted) {
+          failedAltUrlsRef.current.delete(u);
+          dirtyUrlsRef.current.delete(u);
+          altBaselinesRef.current.delete(u);
+        }
+        if (plan.reverted.length > 0) {
+          localAltTextsRef.current = plan.texts;
+          setLocalAltTexts(plan.texts);
+        }
+        syncAltDirty();
+      }
+      const needsPrimary = String(
+        t.imageManager?.altSaveNeedsPrimary
+          ?? "This alt text was not saved: the image has no alt text in the main language yet. Enter and save one there first, then it can be translated.",
+      );
+      showInfoBox(!sameProduct && entry.productTitle ? `${entry.productTitle}: ${needsPrimary}` : needsPrimary, "warning");
+      return;
+    }
+    if (sameProduct && sameLocale) {
+      // A failed save is a draft that was not written: it stays dirty (the save
+      // bar stays up, the next Save sends it again) and is kept over a reload.
+      failedAltUrlsRef.current.add(url);
+      for (const alias of entry.aliases ?? []) failedAltUrlsRef.current.add(resolveAltUrl(alias.url));
+      syncAltDirty();
+    }
+    const im = t.imageManager;
+    let text: string;
+    if (!sameLocale) {
+      text = String(
+        (scope.sameLocale ? im?.altSaveFailedOtherMarket : im?.altSaveFailedOtherLanguage) ?? "The alt text for {locale} could not be saved.",
+      ).replace("{locale}", entry.locale ? getLocalizedLanguageName(String(entry.locale), appLocale) : "");
+    } else if (verdict.message) {
+      text = String(im?.altSaveFailedWithReason ?? "The alt text could not be saved: {error}").replace("{error}", verdict.message);
+    } else {
+      text = String(im?.altSaveFailed ?? "The alt text could not be saved. Your text is kept, please try again.");
+    }
+    showInfoBox(!sameProduct && entry.productTitle ? `${entry.productTitle}: ${text}` : text, "critical");
+  }, [t, appLocale, showInfoBox, syncAltDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dispatchNextAltSave = useCallback(() => {
+    if (altSaveInFlightRef.current) return;
+    const next = altSaveQueueRef.current.shift();
+    if (!next) {
+      syncAltSaving();
+      return;
+    }
+    altSaveInFlightRef.current = next;
+    syncAltSaving();
+    altSaveSawBusyRef.current = false;
+    const form = new FormData();
+    form.append("action", "saveImageAltText");
+    form.append("mediaId", next.mediaId);
+    form.append("altText", next.altText);
+    if (next.locale) form.append("locale", next.locale);
+    // A market save belongs to that market's layer; the server refuses a
+    // market on the primary locale, so it only rides foreign saves.
+    if (next.marketId && next.locale && next.locale !== primaryLocaleRef.current) form.append("marketId", next.marketId);
+    if (primaryLocaleRef.current) form.append("primaryLocale", primaryLocaleRef.current);
+    // The product the save was made on: its own image row is the mirror target
+    // (one medium may be cached under several products).
+    if (next.productId) form.append("productId", next.productId);
+    saveAltTextFetcher.submit(form, { method: "post" });
+    // A stuck request must not stall the queue for good.
+    if (altSaveTimerRef.current) clearTimeout(altSaveTimerRef.current);
+    altSaveTimerRef.current = setTimeout(() => {
+      if (altSaveInFlightRef.current !== next) return;
+      altSaveInFlightRef.current = null;
+      // The request is not aborted: remember it, a late success is still settled.
+      timedOutAltSaveRef.current = next;
+      settleAltSave(next, { kind: "failed", message: "" });
+      dispatchNextAltSave();
+    }, 90000);
+  }, [saveAltTextFetcher, settleAltSave]); // eslint-disable-line react-hooks/exhaustive-deps
+  const finishAltSave = useCallback((verdict: AltSaveVerdict) => {
+    const entry = altSaveInFlightRef.current;
+    altSaveInFlightRef.current = null;
+    if (altSaveTimerRef.current) { clearTimeout(altSaveTimerRef.current); altSaveTimerRef.current = null; }
+    if (entry) settleAltSave(entry, verdict);
+    dispatchNextAltSave();
+  }, [settleAltSave, dispatchNextAltSave]);
+  useEffect(() => () => { if (altSaveTimerRef.current) clearTimeout(altSaveTimerRef.current); }, []);
   // A primary alt save may start a detached re-translation; hand its task ids
-  // to the editor's one watcher, or the foreign views never refresh.
+  // to the editor's one watcher, or the foreign views never refresh. The
+  // verdict decides the dirty flag: it clears ONLY on a confirmed save, and a
+  // fetcher that ends without any new answer (network error, rate limit,
+  // re-auth) counts as a failure instead of stalling the queue.
   useEffect(() => {
-    if (saveAltTextFetcher.state !== "idle" || !saveAltTextFetcher.data) return;
-    onSaveResponse?.(saveAltTextFetcher.data);
+    if (saveAltTextFetcher.state !== "idle") {
+      altSaveSawBusyRef.current = true;
+      return;
+    }
+    const data = saveAltTextFetcher.data;
+    if (!altSaveInFlightRef.current) {
+      const late = timedOutAltSaveRef.current;
+      if (late && data && data !== lastHandledSaveDataRef.current) {
+        lastHandledSaveDataRef.current = data;
+        timedOutAltSaveRef.current = null;
+        // Its task ids must reach the watcher; a confirmed save clears the failure.
+        onSaveResponse?.(data);
+        const verdict = classifyAltSaveResponse(data);
+        if (verdict.kind === "saved") {
+          settleAltSave(late, verdict);
+          // The timeout already told the merchant it failed: correct that.
+          showInfoBox(
+            String(t.imageManager?.altSaveLateSuccess ?? "The alt text was saved after all."),
+            "success",
+          );
+        }
+      }
+      return;
+    }
+    if (data && data !== lastHandledSaveDataRef.current) {
+      lastHandledSaveDataRef.current = data;
+      timedOutAltSaveRef.current = null;
+      onSaveResponse?.(data);
+      finishAltSave(classifyAltSaveResponse(data));
+      // Saved on Shopify, but the local mirror the editors render from could
+      // not be written: said, not swallowed (the next load would show nothing).
+      if (data.success && data.notMirrored) {
+        showInfoBox(
+          String(t.imageManager?.altSavedNotMirrored ?? "The alt text is saved in Shopify but could not be stored in the app. It will reappear after a sync."),
+          "warning",
+        );
+      }
+      return;
+    }
+    if (altSaveSawBusyRef.current) finishAltSave({ kind: "failed", message: "" });
   }, [saveAltTextFetcher.state, saveAltTextFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const submitAltSave = useCallback((entry: QueuedAltSave) => {
+    // A queued save of the same medium is REPLACED by this newer one: whoever
+    // waited for it now waits for the newer one (which writes the latest text).
+    const key = altFlushKey(entry);
+    const replaced = altSaveQueueRef.current.filter((q) => altFlushKey(q) === key);
+    if (replaced.length > 0) {
+      for (const w of altFlushWaitersRef.current) for (const r of replaced) transferAltFlushWaiter(w.waiter, r, entry);
+    }
+    altSaveQueueRef.current = enqueueAltSave(altSaveQueueRef.current, entry);
+    dispatchNextAltSave();
+    // Queued behind one already in flight: dispatch returned early, so the
+    // busy signals (an AI button's immediate save among them) are synced here.
+    syncAltSaving();
+  }, [dispatchNextAltSave]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** True while a text of this image must not be overwritten by a reload. */
+  const isAltUrlBusy = (url: string) =>
+    (altSaveInFlightRef.current ? resolveAltUrl(altSaveInFlightRef.current.url) === url : false) ||
+    altSaveQueueRef.current.some((q) => resolveAltUrl(q.url) === url) ||
+    failedAltUrlsRef.current.has(url) ||
+    (dirtyUrlsRef.current.has(url) && localAltTextsRef.current[url] !== undefined);
   // …and the SKU-generated alts, which ride the general fetcher. A response
   // without task ids is ignored by the watcher, so forwarding every one is safe.
   useEffect(() => {
@@ -315,10 +657,22 @@ export function VariantImageManager({
   }, [fetcher.state, fetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const translationsFetcher = useFetcher<any>();     // load foreign locale alt texts from DB
   const prevAltFetcherData = useRef<any>(null);
-  const productGalleryBlurSkipRef = useRef(false);
+  // What the single in-flight generate / translate request was made FOR (image,
+  // language, product): the reply is applied to that, never to a position.
+  const altAiRequestRef = useRef<{ url: string; mediaId?: string; locale?: string; marketId?: string; productId: string } | null>(null);
+  // The market layer a foreign-language edit is written to ("" = global).
+  const foreignMarketId = currentLanguage && currentLanguage !== primaryLocale ? selectedMarketId || undefined : undefined;
+  viewMarketRef.current = foreignMarketId ?? "";
+  // Images whose alt text is an unsaved DRAFT (typed, generated or translated):
+  // the editor's one save bar sends them (see flushAltDrafts).
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
+  // True once the sync effect has emitted a non-empty pending state to the parent.
+  const emittedPendingRef = useRef(false);
+  // Always the CURRENT product, so an in-flight delete can tell the merchant switched away.
+  const productIdRef = useRef(productId);
+  productIdRef.current = productId;
   // Monotonic token guarding against out-of-order /api/product-variants responses:
   // a fast product switch can leave an earlier request in flight that resolves AFTER
   // the newer one, overwriting the current product's variants with stale data.
@@ -378,8 +732,11 @@ export function VariantImageManager({
     setPendingGalleryOrder({});
     pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
-    dirtyUrlsRef.current.clear();
-    onDirtyChange?.(false);
+    setMediaError(null);
+    setWebpError(null);
+    // The alt-text drafts are NOT touched here: this key also bumps after every
+    // gallery save, and a failed alt must stay a draft. A product / language /
+    // market switch drops them in the effect below, Discard through the api ref.
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reload variant data (e.g. after alt text templates are applied) without clearing pending state
@@ -390,29 +747,113 @@ export function VariantImageManager({
 
   // Load foreign-locale alt text translations from DB when language changes
   // or after a bulk apply (variantReloadKey bump) so freshly saved translations show up.
+  const lastBgRefreshRef = useRef(backgroundRefreshVersion);
+  // The market only matters for the layer it selects: a FOREIGN language's.
+  // Primary alts are global, so a market change there is no view change and
+  // must not drop (or re-read over) the primary drafts.
+  const altLayerMarket = foreignMarketId ?? "";
+  const altViewRef = useRef({ productId, currentLanguage, altLayerMarket });
+  const altLoadKeysRef = useRef<{ variantReloadKey: unknown; galleryMediaIdsKey: string }>({ variantReloadKey, galleryMediaIdsKey: "" });
+  // The MediaImage GIDs the galleries show (Shopify's live media map: product
+  // media AND media-library files picked into a variant gallery). A library
+  // file has no ProductImage row, so its alt translations live in another
+  // store the server only reads for GIDs it is named -- sent with every load,
+  // and a changed SET re-reads (the map arrives after the first load).
+  const galleryMediaIdsKey = useMemo(
+    () => Object.keys(shopifyMediaMap).filter((gid) => gid.startsWith("gid://shopify/MediaImage/")).sort().join(","),
+    [shopifyMediaMap],
+  );
   useEffect(() => {
-    setLocalAltTexts({});
+    // A background refresh only RE-READS: text the merchant is typing or a save
+    // that failed must survive it.
+    const isBackgroundRefresh = lastBgRefreshRef.current !== backgroundRefreshVersion;
+    lastBgRefreshRef.current = backgroundRefreshVersion;
+    // Only the gallery's MediaImage set moved (the media map arrived or a
+    // tile settled), with no reload asked for: on the PRIMARY locale there is
+    // nothing to re-read (the load below is foreign-only), so the primary
+    // values typed or shown must not be cleared for it.
+    const prevLoadKeys = altLoadKeysRef.current;
+    altLoadKeysRef.current = { variantReloadKey, galleryMediaIdsKey };
+    const onlyMediaSetChanged =
+      prevLoadKeys.variantReloadKey === variantReloadKey && prevLoadKeys.galleryMediaIdsKey !== galleryMediaIdsKey;
+    const prevView = altViewRef.current;
+    const viewChanged = prevView.productId !== productId || prevView.currentLanguage !== currentLanguage || prevView.altLayerMarket !== altLayerMarket;
+    altViewRef.current = { productId, currentLanguage, altLayerMarket };
+    if (viewChanged) {
+      // Another product, language or market: the drafts belonged to the view
+      // that is gone (the editor confirms the switch while any are unsent).
+      // The save QUEUE is not touched: each queued save carries its own
+      // product, language and market, and the merchant already pressed Save
+      // for it -- a switch must not silently take it back. The same holds for
+      // a draft carried over until its new image exists.
+      setLocalAltTexts({});
+      localAltTextsRef.current = {};
+      setInheritedAltTexts({});
+      failedAltUrlsRef.current.clear();
+      altBaselinesRef.current.clear();
+      altEditOrderRef.current.clear();
+      if (dirtyUrlsRef.current.size > 0) {
+        dirtyUrlsRef.current.clear();
+        onDirtyChange?.(false);
+      }
+    } else if (!isBackgroundRefresh && !(onlyMediaSetChanged && (!currentLanguage || currentLanguage === primaryLocale))) {
+      // A plain reload (a gallery save, a bulk apply): the server's answer
+      // replaces what is shown, except what the merchant still has as a draft.
+      setLocalAltTexts((prev) => Object.fromEntries(Object.entries(prev).filter(([url]) => isAltUrlBusy(url))));
+      setInheritedAltTexts({});
+    }
     if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
     const form = new FormData();
     form.append("action", "loadImageAltTranslations");
     form.append("productId", productId);
     form.append("locale", currentLanguage);
+    if (selectedMarketId) form.append("marketId", selectedMarketId);
+    if (galleryMediaIdsKey) form.append("mediaIds", JSON.stringify(galleryMediaIdsKey.split(",")));
+    altLoadRequestedAtRef.current = monotonicNow();
     translationsFetcher.submit(form, { method: "post" });
-  }, [currentLanguage, productId, variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, productId, variantReloadKey, backgroundRefreshVersion, altLayerMarket, galleryMediaIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-read the open language's alt texts after the server wrote foreign values.
+  const reloadForeignAlts = useCallback(() => {
+    if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
+    const form = new FormData();
+    form.append("action", "loadImageAltTranslations");
+    form.append("productId", productId);
+    form.append("locale", currentLanguage);
+    if (selectedMarketId) form.append("marketId", selectedMarketId);
+    if (galleryMediaIdsKey) form.append("mediaIds", JSON.stringify(galleryMediaIdsKey.split(",")));
+    altLoadRequestedAtRef.current = monotonicNow();
+    translationsFetcher.submit(form, { method: "post" });
+  }, [productId, currentLanguage, primaryLocale, translationsFetcher, selectedMarketId, galleryMediaIdsKey]);
 
   // Apply loaded translations to localAltTexts (mediaId → url → altText)
   useEffect(() => {
     const data = translationsFetcher.data;
     if (!data || data.actionType !== "loadImageAltTranslations") return;
+    // An answer for another market (a stale response after a switch) is not
+    // this view's layer.
+    if ((data.marketId ?? "") !== selectedMarketId) return;
+    // Same for another language (an answer that outlived a language switch).
+    if (data.locale && data.locale !== currentLanguage) return;
+    // An image saved since this answer was requested keeps its fresh value.
+    const requestedAt = altLoadRequestedAtRef.current;
+    const skipUrl = (url: string) =>
+      isAltUrlBusy(url) || answerPredatesSave(altConfirmedAtRef.current.get(altConfirmKey(url, data.locale ?? currentLanguage, data.marketId ?? selectedMarketId)), requestedAt);
     const altTexts: Record<string, string> = data.altTexts ?? {};
+    const layer = splitLoadedAltTexts(altTexts, data.inheritedMediaIds, (mediaId) => fileUrlMap[mediaId]);
     setLocalAltTexts(prev => {
       const next = { ...prev };
-      for (const [mediaId, altText] of Object.entries(altTexts)) {
-        const url = fileUrlMap[mediaId];
-        if (url) next[url] = altText as string;
+      // The answer is the whole layer: an own value it no longer carries (an
+      // override removed on the server) goes, unless the merchant is busy there.
+      for (const url of Object.keys(next)) {
+        if (!(url in layer.own) && !skipUrl(url)) delete next[url];
+      }
+      for (const [url, altText] of Object.entries(layer.own)) {
+        if (!skipUrl(url)) next[url] = altText;
       }
       return next;
     });
+    setInheritedAltTexts(layer.inherited);
   }, [translationsFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Extracted so it can be called both on product selection (full reset) and on image reload
@@ -598,7 +1039,18 @@ export function VariantImageManager({
     // change but immediately returns early, so onPendingChange is never
     // called → the hook never sees the new media → hasPendingImageChanges
     // stays false → Save button stays disabled.
-    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) return;
+    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) {
+      // Everything went back to "no change" (e.g. a refused delete rolled the
+      // optimistic exclusion back). The parent still holds what we emitted
+      // last, so re-sync it explicitly or the next Save replays stale pending
+      // state (clearing a variant main image that was never deleted).
+      if (emittedPendingRef.current) {
+        emittedPendingRef.current = false;
+        onPendingChange?.([], pendingMediaOrderRef.current, [], []);
+      }
+      return;
+    }
+    emittedPendingRef.current = true;
 
     // Track variants with no featured image so backend keeps all GIDs in the metafield
     // and never promotes fileGids[0] to become mediaId on Shopify.
@@ -989,7 +1441,12 @@ export function VariantImageManager({
     }
     const attempt = settlingPollAttemptRef.current;
     const delay = settlingPollDelayMs(attempt);
-    if (delay === null) return;
+    if (delay === null) {
+      // We stopped asking: a Save waiting to send the alt text of an image
+      // that is still processing stops waiting (the text stays a draft).
+      releaseStuckDeferredAltsRef.current?.();
+      return;
+    }
     const timer = setTimeout(() => {
       settlingPollAttemptRef.current = attempt + 1;
       setSettlingPollTick(tick => tick + 1);
@@ -2073,28 +2530,85 @@ export function VariantImageManager({
     return urls;
   }, [selectedGalleryItems]);
 
+  // Per-language media state (product page only): the delete path reports a
+  // failed clean-up of the deleted originals' replacements through it.
+  const localizedMediaState = useLocalizedMediaContext()?.state ?? null;
+  const localizedMediaRef = useRef(localizedMediaState);
+  localizedMediaRef.current = localizedMediaState;
+
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteConfirm) return;
     const { urls } = deleteConfirm;
     const gids = urls.map(url => urlToGid[url]).filter(Boolean) as string[];
     const urlSet = new Set(urls);
     const gidSet = new Set(gids);
+    const startedProductId = productId;
+    const switchedAway = () => productIdRef.current !== startedProductId;
 
     setIsDeleting(true);
     setDeleteConfirm(null);
+    // What the optimistic removal takes out, with its positions, so a refused
+    // delete can put exactly those entries back into whatever the state has
+    // become meanwhile (a whole-state snapshot would discard edits made while
+    // the request was in flight).
+    // Staged resourceUrls of removed queued tiles: a tile dragged into a variant
+    // gallery sits there under its staging URL, which no GID lookup resolves.
+    const removedQueuedRefs = queuedResourceUrls(pendingProductNewMedia, urls);
+    // Positions are taken from the list AFTER those refs are stripped: that is
+    // the list a refused delete reinserts into, and positions counted with the
+    // staging refs still in it would put a restored image one slot late.
+    const strippedGalleries = stripRefsFromGalleries(pendingVariantGalleries, removedQueuedRefs);
+    const removedFromGalleries: Record<string, RemovedEntry<string>[]> = {};
+    for (const v of variants) {
+      const removed = captureRemoved(strippedGalleries[v.id] ?? v.galleryFileGids, gid => gidSet.has(gid));
+      if (removed.length > 0) removedFromGalleries[v.id] = removed;
+    }
+    const originalOrder = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
+    const orderWasUnset = pendingProductImageOrder === null;
+    const originalGalleries: Record<string, string[] | undefined> = {};
+    for (const v of variants) originalGalleries[v.id] = pendingVariantGalleries[v.id];
+    const removedSelection: Array<[string, string | null]> = [];
+    for (const url of urls) {
+      const key = `product::${url}`;
+      if (selectedGalleryItems.has(key)) removedSelection.push([key, selectedGalleryItems.get(key) ?? null]);
+    }
+    // Queued tiles are removed for good (never restored by a failed Shopify delete).
+    const queuedUrls = new Set(pendingProductNewMedia.map(m => m.previewUrl).filter((u): u is string => !!u));
+    const removedFromOrder = captureRemoved(originalOrder, url => urlSet.has(url) && !queuedUrls.has(url));
+    const removedFromRefreshed = captureRemoved(effectiveProductImages, img => urlSet.has(img.url) && !queuedUrls.has(img.url));
+    const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
+    const addedExcludedIds = variantsWithDeletedMainImage.map(v => v.id).filter(id => !locallyExcludedMainGids.has(id));
 
     // Optimistically remove from local state
     setPendingVariantGalleries(p => {
-      const next = { ...p };
+      // A copy: with nothing to strip the helper hands back `p` itself, and the
+      // loop below must never write into the previous state object.
+      const next = { ...stripRefsFromGalleries(p, removedQueuedRefs) };
+      const queuedRefSet = new Set(removedQueuedRefs);
       for (const v of variants) {
-        const current = p[v.id] ?? v.galleryFileGids;
+        // Read the STRIPPED list: starting from `p` here wrote a removed
+        // queued tile's staging URL back whenever the same delete also took a
+        // saved image out of this variant.
+        const current = next[v.id] ?? v.galleryFileGids;
         const filtered = current.filter(gid => !gidSet.has(gid));
         if (filtered.length !== current.length) next[v.id] = filtered;
+        // A list the strip returned to exactly the stored gallery is no change
+        // at all; keeping the key would light Save up for a no-op write.
+        const stored = v.galleryFileGids;
+        const now = next[v.id];
+        if (
+          now &&
+          now.length === stored.length &&
+          now.every((g, i) => g === stored[i]) &&
+          (p[v.id] ?? []).some(ref => queuedRefSet.has(ref))
+        ) {
+          delete next[v.id];
+        }
       }
       return next;
     });
-    // Variants whose featured image was deleted — exclude from gallery and unset on Shopify
-    const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
+    // Variants whose featured image was deleted: exclude from gallery now,
+    // unset on Shopify only after the delete is confirmed.
     setLocallyExcludedMainGids(s => {
       const next = new Set(s);
       variantsWithDeletedMainImage.forEach(v => next.add(v.id));
@@ -2105,38 +2619,161 @@ export function VariantImageManager({
       return base.filter(url => !urlSet.has(url));
     });
     setRefreshedProductImages(effectiveProductImages.filter(img => !urlSet.has(img.url)));
-    // A deleted node can never turn up in shopifyMediaMap, so a settling
-    // entry for it would keep its tile on screen forever — draggable into a
-    // variant gallery with a GID that no longer exists. Retire it here.
-    if (gids.length > 0) onSettlingMediaResolved?.(gids);
     setSelectedGalleryItems(m => {
       const next = new Map(m);
       urls.forEach(url => next.delete(`product::${url}`));
       return next;
     });
+    // Queued (not yet uploaded) tiles: deleting one removes it from the upload queue.
+    const removedQueued = pendingProductNewMedia.filter(m => m.previewUrl && urlSet.has(m.previewUrl));
+    if (removedQueued.length > 0) setPendingProductNewMedia(list => removePendingNewMedia(list, urls));
 
+    let deleteOk = false;
+    let clearOk: boolean | null = null;
+    // Per-id verdict: a partial answer deletes some and keeps others.
+    let deletedGids: string[] = [];
+    let failedGids: string[] = [...gids];
     try {
-      const deleteFetch = fetch("/api/delete-product-images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, mediaIds: gids }),
-      });
+      if (gids.length === 0) {
+        // Only queued (not yet uploaded) ghost tiles: nothing exists on Shopify
+        // to delete, and the route answers 400 for an empty list.
+        deleteOk = true;
+        failedGids = [];
+      } else {
+        const deleteRes = await fetch("/api/delete-product-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productId: startedProductId, mediaIds: gids }),
+        });
+        const deleteBody = await deleteRes.json().catch(() => null) as { success?: boolean; deletedMediaIds?: string[]; localizedMedia?: { removed?: number; failed?: string } } | null;
+        // Only what Shopify ECHOED as deleted counts: every requested id must
+        // be in the answer before the variants' main images are cleared.
+        const split = splitDeleteAnswer(gids, { ok: deleteRes.ok, body: deleteBody });
+        deleteOk = split.allDeleted;
+        deletedGids = split.deleted;
+        failedGids = split.failed;
+        // The route also removes the originals' per-language replacements; the
+        // delete stands even if that part failed, and the merchant is told.
+        if (deletedGids.length > 0 && deleteBody?.localizedMedia?.failed) localizedMediaRef.current?.reportCleanupFailed(deleteBody.localizedMedia.failed);
+        // The server removed the deleted originals' replacements: read the list again.
+        if (deletedGids.length > 0) localizedMediaRef.current?.refresh();
+      }
       // Shopify does not automatically clear a variant's image when the referenced media is
-      // deleted. Explicitly unset mediaId for all affected variants in the same round-trip.
-      const clearMainImageIds = variantsWithDeletedMainImage.map(v => v.id);
-      const clearFetch = clearMainImageIds.length > 0
-        ? fetch("/api/update-variant-galleries", {
+      // deleted. Unset mediaId for the affected variants, but only AFTER a confirmed delete,
+      // so a refused delete changes nothing on Shopify.
+      const deletedSet = new Set(deletedGids);
+      const clearMainImageIds = variantsWithDeletedMainImage
+        .filter(v => v.defaultImageUrl && deletedSet.has(urlToGid[v.defaultImageUrl]))
+        .map(v => v.id);
+      if (clearMainImageIds.length > 0) {
+        try {
+          const clearRes = await fetch("/api/update-variant-galleries", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ productId, clearVariantMainImages: clearMainImageIds }),
-          })
-        : Promise.resolve();
-      await Promise.all([deleteFetch, clearFetch]);
+            body: JSON.stringify({ productId: startedProductId, clearVariantMainImages: clearMainImageIds }),
+          });
+          const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
+          clearOk = clearRes.ok && !!clearBody && clearBody.success !== false;
+        } catch {
+          clearOk = false;
+        }
+      }
     } catch {
-      // non-critical: local state already reflects deletion
+      deleteOk = false;
     }
+    if (switchedAway()) {
+      // The drafts went with the switch; a queued save of a deleted medium
+      // would only come back as "image not found".
+      const deletedForQueue = new Set(deletedGids);
+      if (deletedForQueue.size > 0) dropQueuedAltSaves(q => deletedForQueue.has(q.mediaId));
+      setIsDeleting(false);
+      return;
+    }
+    const failedSet = new Set(failedGids);
+    // URLs with no GID were never sent, so they are not deleted either.
+    const unsentSet = new Set(unsentUrls(urls, urlToGid, queuedUrls));
+    const failedCount = failedGids.length + unsentSet.size;
+    const partial = failedCount > 0 && deletedGids.length > 0;
+    if (failedCount > 0) {
+      // Everything Shopify did NOT confirm deleted comes back.
+      const failedUrl = (url: string) => urlNeedsRestore(url, urlToGid, failedSet, unsentSet);
+      const restoredOrder = removedFromOrder.filter(e => failedUrl(e.value));
+      const restoredRefreshed = removedFromRefreshed.filter(e => (!!e.value.mediaId && failedSet.has(e.value.mediaId)) || failedUrl(e.value.url));
+      const failedMainIds = new Set(
+        variantsWithDeletedMainImage.filter(v => v.defaultImageUrl && failedUrl(v.defaultImageUrl)).map(v => v.id),
+      );
+      setPendingVariantGalleries(p => {
+        const next = { ...p };
+        for (const v of variants) {
+          const removed = removedFromGalleries[v.id]?.filter(e => failedSet.has(e.value));
+          if (!removed || removed.length === 0) continue;
+          const restored = reinsertRemoved(p[v.id] ?? v.galleryFileGids, removed);
+          const base = originalGalleries[v.id] ?? v.galleryFileGids;
+          const sameAs = (list: readonly string[]) =>
+            restored.length === list.length && restored.every((g, i) => g === list[i]);
+          // Back to the pre-delete list: restore the prior presence/absence so
+          // a no-op does not light up the Save button. Equal to the STORED
+          // gallery is a no-op too -- the pre-delete list may have differed only
+          // by a queued tile's staging ref, which this delete removed for good.
+          if ((sameAs(base) && originalGalleries[v.id] === undefined) || sameAs(v.galleryFileGids)) delete next[v.id];
+          else next[v.id] = restored;
+        }
+        return next;
+      });
+      setLocallyExcludedMainGids(s => {
+        const next = new Set(s);
+        addedExcludedIds.filter(id => failedMainIds.has(id)).forEach(id => next.delete(id));
+        return next;
+      });
+      setPendingProductImageOrder(curr => {
+        if (!curr) return curr;
+        const restored = reinsertRemoved(curr, restoredOrder);
+        if (orderWasUnset && restored.length === originalOrder.length && restored.every((u, i) => u === originalOrder[i])) return null;
+        return restored;
+      });
+      setSelectedGalleryItems(m => {
+        const next = new Map(m);
+        for (const [k, v] of removedSelection) {
+          if (failedUrl(k.slice("product::".length)) && !next.has(k)) next.set(k, v);
+        }
+        return next;
+      });
+      setRefreshedProductImages(curr => (curr ? reinsertRemoved(curr, restoredRefreshed, (a, b) => a.url === b.url) : curr));
+      // A queued tile is removed for good even when the Shopify delete failed.
+      setMediaError(
+        partial
+          ? t.imageManager.mediaDeletePartial.replace("{failed}", String(failedCount)).replace("{deleted}", String(deletedGids.length))
+          : t.imageManager.mediaDeleteFailed,
+      );
+    }
+    if (deletedGids.length > 0) {
+      // A deleted node can never turn up in shopifyMediaMap, so a settling
+      // entry for it would keep its tile on screen forever. Retire it only now
+      // that the delete is confirmed (per id: a partial answer retires its half).
+      const deletedIdSet = new Set(deletedGids);
+      onSettlingMediaResolved?.(deletedGids);
+      pendingMediaOrderRef.current = pendingMediaOrderRef.current.filter(o => !deletedIdSet.has(o.mediaId));
+      if (clearOk === false) {
+        setMediaError(
+          partial
+            ? `${t.imageManager.mediaDeletePartial.replace("{failed}", String(failedCount)).replace("{deleted}", String(deletedGids.length))} ${t.imageManager.mediaClearMainFailed}`
+            : t.imageManager.mediaClearMainFailed,
+        );
+      }
+    }
+    // The alt drafts of what is really gone go with it: media Shopify CONFIRMED
+    // deleted (looked up in the maps as they were BEFORE the delete -- both
+    // galleries, `?v=`-tolerant) and the unsaved uploads removed from the queue.
+    const deletedAltLookup: Record<string, string> = {};
+    for (const [gid, url] of Object.entries(fileUrlMap)) if (url) deletedAltLookup[url] = gid;
+    Object.assign(deletedAltLookup, urlToGid);
+    dropAltDraftsOfDeletedMedia(
+      new Set(deletedGids),
+      new Set(removedQueued.map(m => m.previewUrl).filter((u): u is string => !!u)),
+      deletedAltLookup,
+    );
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved]);
+  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -2202,6 +2839,8 @@ export function VariantImageManager({
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         const res = await fetch("/api/staged-upload", {
@@ -2214,27 +2853,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // See FilePickerModal — PUT (image) vs multipart POST (video/3D).
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           setPendingVariantGalleries(p => {
@@ -2251,13 +2875,19 @@ export function VariantImageManager({
           });
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, [variants, urlToGid, locallyExcludedMainGids]);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [variants, urlToGid, locallyExcludedMainGids, t]);
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
+    setMediaError(null);
+    const failedFiles: string[] = [];
     for (const file of files) {
       try {
         // Classify so we (a) know what to push into pendingProductNewMedia
@@ -2274,30 +2904,12 @@ export function VariantImageManager({
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
         }
-        if (error || !url) continue;
+        if (error || !url) {
+          failedFiles.push(file.name);
+          continue;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.onload = () => resolve();
-          xhr.onerror = () => reject();
-          // PUT (image) vs multipart POST (video/3D). The previous always-PUT
-          // path produced a 405 against video / model staged targets, so a
-          // drag-drop .glb to the product-gallery placeholder silently
-          // failed and the merchant saw the modal close with nothing saved.
-          if (httpMethod === "POST") {
-            const form = new FormData();
-            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
-              form.append(p.name, p.value);
-            }
-            form.append("file", file);
-            xhr.open("POST", url);
-            xhr.send(form);
-          } else {
-            xhr.open("PUT", url);
-            xhr.setRequestHeader("Content-Type", file.type);
-            xhr.send(file);
-          }
-        });
+        await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
         if (resourceUrl) {
           // Push the typed shape — bare resourceUrl strings would survive the
@@ -2309,113 +2921,545 @@ export function VariantImageManager({
           setPendingProductNewMedia(p => [...p, { resourceUrl, kind, previewUrl }]);
         }
       } catch {
-        // silent — user can retry
+        // The file is skipped, not added; the merchant is told which one.
+        failedFiles.push(file.name);
       }
     }
-  }, []);
+    if (failedFiles.length > 0) {
+      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+  }, [t]);
 
   // Watch altTextFetcher for AI generate / translate results → auto-save result
   useEffect(() => {
     const data = altTextFetcher.data;
     if (!data || data === prevAltFetcherData.current) return;
     prevAltFetcherData.current = data;
-    const idx = data.imageIndex as number | undefined;
-    const url = idx !== undefined ? effectiveProductImages[idx]?.url : undefined;
-    if (url) {
-      if (data.actionType === "generateAltText" && data.altText !== undefined) {
-        setLocalAltTexts(p => ({ ...p, [url]: data.altText }));
-        // Auto-save the generated result immediately
-        const mediaId = urlToGid[url];
-        if (mediaId) {
-          const form = new FormData();
-          form.append("action", "saveImageAltText");
-          form.append("mediaId", mediaId);
-          form.append("altText", data.altText);
-          if (currentLanguage) form.append("locale", currentLanguage);
-          if (primaryLocale) form.append("primaryLocale", primaryLocale);
-          saveAltTextFetcher.submit(form, { method: "post" });
-        }
+    if (data.errorCode === "imageNotFound") {
+      setMediaError(t.imageManager.altImageNotFound);
+      return;
+    }
+    const im = t.imageManager;
+    const failText = (message: string) =>
+      message
+        ? String(im?.altAiFailed ?? "The alt text could not be created: {error}").replace("{error}", message)
+        : String(im?.altSaveFailed ?? "The alt text could not be saved. Your text is kept, please try again.");
+    if (data.actionType === "translateAltTextToAllLocales") {
+      const verdict = classifyAllLocalesResponse(data, enabledLanguages.filter(l => l !== primaryLocale));
+      if (verdict.kind === "success") {
+        showInfoBox(String(im?.altTranslateAllLocalesSuccess ?? "Alt text translated to {count} language(s).").replace("{count}", String(verdict.savedCount)), "success");
+        reloadForeignAlts();
+      } else if (verdict.kind === "partial") {
+        showInfoBox(String(im?.altTranslateAllLocalesPartial ?? "Alt text partially translated. Language(s) {failedLocales} could not be saved.").replace("{failedLocales}", verdict.failedLocales.join(", ")), "warning");
+        reloadForeignAlts();
+      } else if (verdict.kind === "refused") {
+        showInfoBox(verdict.message || failText(""), "critical");
+      } else if (verdict.kind === "noSource") {
+        showInfoBox(String(im?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet."), "warning");
+      } else {
+        showInfoBox(failText(verdict.message), "critical");
       }
-      if (data.actionType === "translateAltText" && data.translatedAltText !== undefined) {
-        setLocalAltTexts(p => ({ ...p, [url]: data.translatedAltText }));
-        // Auto-save the translated result immediately
-        const mediaId = urlToGid[url];
-        if (mediaId) {
-          const form = new FormData();
-          form.append("action", "saveImageAltText");
-          form.append("mediaId", mediaId);
-          form.append("altText", data.translatedAltText);
-          if (currentLanguage) form.append("locale", currentLanguage);
-          if (primaryLocale) form.append("primaryLocale", primaryLocale);
-          saveAltTextFetcher.submit(form, { method: "post" });
-        }
+      return;
+    }
+    const aiVerdict = classifyAltAiResponse(data);
+    if (aiVerdict.kind === "noSource") {
+      showInfoBox(String(im?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet."), "warning");
+      return;
+    }
+    if (aiVerdict.kind !== "ok") {
+      showInfoBox(aiVerdict.kind === "refused" && aiVerdict.message ? aiVerdict.message : failText(aiVerdict.message), "critical");
+      return;
+    }
+    // The reply belongs to the image and language the request was made for,
+    // not to whatever sits at that position now.
+    const req = altAiRequestRef.current;
+    if (!req || req.productId !== productIdRef.current) return;
+    const url = req.url;
+    // The tile must still show the medium the request was made for -- a
+    // product image or a library file in a variant gallery alike.
+    const mediaId = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    if (!mediaId || (req.mediaId && req.mediaId !== mediaId)) return;
+    const generated =
+      data.actionType === "generateAltText" && data.altText !== undefined ? (data.altText as string)
+      : data.actionType === "translateAltText" && data.translatedAltText !== undefined ? (data.translatedAltText as string)
+      : undefined;
+    if (generated === undefined) return;
+    // An empty translation is not one: applied and saved, it would CLEAR the
+    // alt the merchant asked to fill.
+    if (data.actionType === "translateAltText" && generated.trim() === "") {
+      showInfoBox(failText(""), "critical");
+      return;
+    }
+    // The result is SAVED at once, for this image only (owner's rule,
+    // 2026-10-02: AI buttons save immediately, typing stays a draft): the text
+    // goes into the field exactly like a typed one, and that one medium's save
+    // is queued behind whatever is already out — with the language and market
+    // the request was made for. Every other image's draft stays a draft. A
+    // confirmed save clears the image's dirty state; a failed one keeps it
+    // dirty and failed, so the page Save sends it again. If the view moved on
+    // there is no field to put it in.
+    if (req.locale === currentLanguageRef.current && (req.marketId ?? "") === viewMarketRef.current) {
+      applyAltDraft(url, generated);
+      const entry = planImmediateAltSave({
+        url,
+        dirtyUrls: dirtyUrlsRef.current,
+        texts: localAltTextsRef.current,
+        gidOf: (u) => (u === url ? mediaId : gidForUrl(altGidLookup, u)),
+        locale: req.locale,
+        marketId: req.marketId || undefined,
+        productId: req.productId,
+        productTitle,
+        editOrder: altEditOrderRef.current,
+      });
+      if (entry) {
+        failedAltUrlsRef.current.delete(entry.url);
+        for (const alias of entry.aliases ?? []) failedAltUrlsRef.current.delete(alias.url);
+        submitAltSave(entry);
       }
+    } else {
+      showInfoBox(String(im?.altAiResultDiscarded ?? "The generated alt text was not applied because you switched language or market."), "warning");
     }
   }, [altTextFetcher.data, effectiveProductImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAltTextChange = useCallback((url: string, value: string) => {
-    setLocalAltTexts(p => ({ ...p, [url]: value }));
-    if (!dirtyUrlsRef.current.has(url)) {
-      dirtyUrlsRef.current.add(url);
-      if (dirtyUrlsRef.current.size === 1) onDirtyChange?.(true);
+  // Typing, AI generate and AI translate all end here: the text goes into the
+  // field and the image counts as dirty (the page's save bar lights up). Nothing
+  // is written until the merchant presses Save.
+  const applyAltDraft = useCallback((url: string, value: string) => {
+    if (!dirtyUrlsRef.current.has(url) && !altBaselinesRef.current.has(url)) {
+      altBaselinesRef.current.set(url, localAltTextsRef.current[url]);
     }
-  }, [onDirtyChange]);
+    localAltTextsRef.current = { ...localAltTextsRef.current, [url]: value };
+    setLocalAltTexts(p => ({ ...p, [url]: value }));
+    dirtyUrlsRef.current.add(url);
+    altEditOrderRef.current.set(url, ++altEditSeqRef.current);
+    syncAltDirty();
+  }, [syncAltDirty]);
 
-  const handleSaveAltText = useCallback((url: string, altText: string) => {
-    const mediaId = urlToGid[url];
-    if (!mediaId) return;
-    const form = new FormData();
-    form.append("action", "saveImageAltText");
-    form.append("mediaId", mediaId);
-    form.append("altText", altText);
-    if (currentLanguage) form.append("locale", currentLanguage);
-    if (primaryLocale) form.append("primaryLocale", primaryLocale);
-    saveAltTextFetcher.submit(form, { method: "post" });
-    dirtyUrlsRef.current.delete(url);
-    if (dirtyUrlsRef.current.size === 0) onDirtyChange?.(false);
-  }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher, onDirtyChange]);
+  const handleAltTextChange = applyAltDraft;
+
+  /** Every save that is still out: in flight and queued (with the tile url it now has). */
+  const pendingAltSaves = (): QueuedAltSave[] => {
+    const out: QueuedAltSave[] = [];
+    if (altSaveInFlightRef.current) out.push(altSaveInFlightRef.current);
+    out.push(...altSaveQueueRef.current);
+    return out;
+  };
+
+  /**
+   * Releases every carried-over draft matching `pick` (it will not be sent)
+   * and says so once: `true` = the image is not there yet, a string = that
+   * sentence instead (the reason differs), false = silently (Discard, a delete).
+   */
+  const releaseDeferredAlts = (pick: (url: string, d: { draft: Omit<QueuedAltSave, "mediaId">; applied: string }) => boolean, warn: boolean | string) => {
+    const tokens: object[] = [];
+    for (const [url, d] of [...deferredAltRef.current]) {
+      if (!pick(url, d)) continue;
+      deferredAltRef.current.delete(url);
+      tokens.push(d.token);
+    }
+    if (tokens.length === 0) return;
+    releaseAltTokens(tokens);
+    syncAltSaving();
+    if (typeof warn === "string") showInfoBox(warn, "warning");
+    else if (warn) {
+      showInfoBox(String(t.imageManager?.altDraftNotSavableYet ?? "The alt text of an image that is not saved yet can only be saved after the image itself. Save again once the image is uploaded."), "warning");
+    }
+  };
+
+  /** Takes the drafts of these urls out entirely (text, dirty and failed flags, baseline, edit order). */
+  const dropAltDraftUrls = (urls: readonly string[]) => {
+    if (urls.length === 0) return;
+    const next = dropAltDrafts({
+      texts: localAltTextsRef.current,
+      dirty: dirtyUrlsRef.current,
+      baselines: altBaselinesRef.current,
+      failed: failedAltUrlsRef.current,
+      editOrder: altEditOrderRef.current,
+    }, urls);
+    localAltTextsRef.current = next.texts;
+    setLocalAltTexts(next.texts);
+    dirtyUrlsRef.current = next.dirty;
+    altBaselinesRef.current = next.baselines;
+    failedAltUrlsRef.current = next.failed;
+    altEditOrderRef.current = next.editOrder;
+    syncAltDirty();
+  };
+
+  /** Drops the QUEUED saves (never the one in flight) matching `drop`; whoever waited for them counts them as unsent. */
+  const dropQueuedAltSaves = (drop: (q: QueuedAltSave) => boolean) => {
+    const { kept, dropped } = partitionAltQueue(altSaveQueueRef.current, drop);
+    if (dropped.length === 0) return;
+    altSaveQueueRef.current = kept;
+    releaseAltTokens(dropped);
+    syncAltSaving();
+  };
+
+  /**
+   * After a CONFIRMED delete: the deleted media's drafts, failed flags and
+   * queued saves go with them (every language and market -- the medium is
+   * gone in all of them), and so do the drafts of removed unsaved uploads.
+   * Left behind they kept the save bar up, failed every Save with
+   * "image not found" and locked translate-to-all for good.
+   */
+  const dropAltDraftsOfDeletedMedia = (deletedGids: ReadonlySet<string>, removedPreviewUrls: ReadonlySet<string>, lookup: Readonly<Record<string, string>>) => {
+    const urls = altDraftUrlsOfDeletedMedia(
+      new Set([...dirtyUrlsRef.current, ...failedAltUrlsRef.current, ...altBaselinesRef.current.keys(), ...Object.keys(localAltTextsRef.current)]),
+      lookup,
+      deletedGids,
+      removedPreviewUrls,
+      gidForUrl,
+    );
+    dropAltDraftUrls(urls);
+    const urlSet = new Set(urls);
+    dropQueuedAltSaves((q) => deletedGids.has(q.mediaId) || urlSet.has(resolveAltUrl(q.url)));
+    releaseDeferredAlts((url) => removedPreviewUrls.has(url) || urlSet.has(url), false);
+  };
+
+  /** The page Save: every alt draft through the serial save queue. Resolves when each was answered. */
+  const flushAltDrafts = useCallback((opts?: { galleryApply?: Promise<unknown> }): Promise<AltFlushSummary> => {
+    const plan = planAltFlush({
+      dirtyUrls: [...dirtyUrlsRef.current],
+      texts: localAltTextsRef.current,
+      urlToGid,
+      locale: currentLanguage,
+      marketId: foreignMarketId,
+      productId,
+      productTitle,
+      editOrder: altEditOrderRef.current,
+    });
+    // A second Save while the first one's saves are still out does not send
+    // the SAME text again -- it waits for it. A changed text is sent anew.
+    const { send, reuse } = selectAltSends(plan.entries, pendingAltSaves());
+    const tokens: object[] = [...reuse, ...send];
+    // The alt of an image this very Save is only uploading: carried over and
+    // sent once the image exists. Without a gallery save there is nothing to
+    // wait for, so it is not sendable now and says so.
+    let unsent = 0;
+    const carried: string[] = [];
+    // An earlier Save already carried a draft over and its image is still
+    // being processed: this Save waits for that one (with the current text)
+    // instead of reporting it as not sendable. That holds when THIS Save also
+    // applies the gallery (another upload): the carried draft belongs to the
+    // earlier, finished gallery save, and tying it to the new one would release
+    // it as "not saved yet" if the new one failed.
+    const stillCarried = plan.unaddressable.filter((url) => deferredAltRef.current.has(url));
+    for (const url of stillCarried) {
+      const d = deferredAltRef.current.get(url)!;
+      d.draft = { ...d.draft, altText: localAltTextsRef.current[url] };
+      tokens.push(d.token);
+    }
+    const notCarried = plan.unaddressable.filter((url) => !stillCarried.includes(url));
+    if (notCarried.length > 0) {
+      const apply = opts?.galleryApply;
+      if (!apply) {
+        unsent = notCarried.length;
+        showInfoBox(String(t.imageManager?.altDraftNotSavableYet ?? "The alt text of an image that is not saved yet can only be saved after the image itself. Save again once the image is uploaded."), "warning");
+      } else {
+        for (const url of notCarried) {
+          const token = {};
+          const prev = deferredAltRef.current.get(url);
+          // A newer Save of the same draft: whoever waited for the older one waits for this one.
+          if (prev) for (const w of altFlushWaitersRef.current) transferAltFlushWaiter(w.waiter, prev.token, token);
+          deferredAltRef.current.set(url, {
+            draft: { url, altText: localAltTextsRef.current[url], locale: currentLanguage, marketId: foreignMarketId || undefined, productId, productTitle },
+            token,
+            applied: "running",
+          });
+          tokens.push(token);
+          carried.push(url);
+        }
+        apply.then(
+          (ok) => {
+            if (ok === false) {
+              // The gallery save failed: the image does not exist, its alt cannot go anywhere.
+              releaseDeferredAlts((url, d) => carried.includes(url) && d.applied === "running", true);
+            } else {
+              for (const url of carried) {
+                const d = deferredAltRef.current.get(url);
+                if (d) d.applied = "done";
+              }
+              setDeferredAltTick((n) => n + 1);
+            }
+          },
+          () => releaseDeferredAlts((url, d) => carried.includes(url) && d.applied === "running", true),
+        );
+      }
+    }
+    syncAltSaving();
+    if (tokens.length === 0) return Promise.resolve({ ok: 0, failed: 0, unsent });
+    return new Promise<AltFlushSummary>((resolve) => {
+      altFlushWaitersRef.current = [
+        ...altFlushWaitersRef.current,
+        { waiter: createAltFlushWaiter(tokens, unsent), resolve },
+      ];
+      for (const entry of send) {
+        failedAltUrlsRef.current.delete(entry.url);
+        for (const alias of entry.aliases ?? []) failedAltUrlsRef.current.delete(alias.url);
+        submitAltSave(entry);
+      }
+    });
+  }, [urlToGid, currentLanguage, foreignMarketId, productId, productTitle, showInfoBox, t, submitAltSave]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Carried-over drafts of uploaded images, and every draft that still sits
+  // under an upload's PREVIEW url: once Shopify reports the image, the draft
+  // moves to the tile's real url (never stranded under a url no tile shows,
+  // which would keep the save bar up for good) and a carried-over one is sent.
+  const knownSettledAltRef = useRef(new Map<string, SettlingAltSource>());
+  useEffect(() => {
+    for (const s of settlingMedia ?? []) {
+      if (s.previewUrl) knownSettledAltRef.current.set(s.previewUrl, { productId: s.productId, mediaId: s.mediaId, previewUrl: s.previewUrl });
+    }
+    const known = [...knownSettledAltRef.current.values()];
+    // 1. Re-key the drafts of settled uploads.
+    const renames = settledAltRenames(known, productId, shopifyMediaMap);
+    const touched = Object.keys(renames).filter((from) =>
+      from in localAltTextsRef.current || dirtyUrlsRef.current.has(from) || failedAltUrlsRef.current.has(from) || altBaselinesRef.current.has(from));
+    for (const [from, to] of Object.entries(renames)) altUrlRenamesRef.current.set(from, to);
+    if (touched.length > 0) {
+      const next = rekeyAltDrafts({
+        texts: localAltTextsRef.current,
+        dirty: dirtyUrlsRef.current,
+        baselines: altBaselinesRef.current,
+        failed: failedAltUrlsRef.current,
+        editOrder: altEditOrderRef.current,
+      }, Object.fromEntries(touched.map((from) => [from, renames[from]])));
+      localAltTextsRef.current = next.texts;
+      setLocalAltTexts(next.texts);
+      dirtyUrlsRef.current = next.dirty;
+      altBaselinesRef.current = next.baselines;
+      failedAltUrlsRef.current = next.failed;
+      altEditOrderRef.current = next.editOrder;
+      syncAltDirty();
+    }
+    // 2. Send what was carried over, once its image exists.
+    const toSend: Array<{ token: object; entry: QueuedAltSave }> = [];
+    for (const [url, d] of [...deferredAltRef.current]) {
+      if (d.draft.productId !== productId) continue;
+      const hit = knownSettledAltRef.current.get(url);
+      if (!hit || hit.productId !== productId) continue;
+      const realUrl = shopifyMediaMap[hit.mediaId];
+      if (!realUrl) continue; // Shopify still processes it.
+      deferredAltRef.current.delete(url);
+      toSend.push({ token: d.token, entry: { ...d.draft, url: realUrl, mediaId: hit.mediaId } });
+    }
+    for (const { token, entry } of toSend) {
+      for (const w of altFlushWaitersRef.current) transferAltFlushWaiter(w.waiter, token, entry);
+      submitAltSave(entry);
+    }
+    // 3. What can never be sent: another product's (its uploads are no longer
+    //    tracked once the merchant switched away -- the image itself WAS
+    //    created, so the note says what really happened), or an image the
+    //    finished gallery save did not create.
+    releaseDeferredAlts((_url, d) => d.draft.productId !== productId,
+      String(t.imageManager?.altDraftProductSwitched ?? "The alt text of a newly uploaded image was not saved because you switched to another product while Shopify was still processing the image. Open the product again and enter it once the image shows in the gallery."));
+    releaseDeferredAlts((url, d) => d.applied === "done" && !knownSettledAltRef.current.has(url), true);
+    // 4. A draft under a url that no tile shows any more, that no medium
+    //    resolves and that nothing will move (an upload removed before it was
+    //    saved, a medium deleted or swapped for a WebP copy): dropped with a
+    //    note rather than holding the bar up and failing every Save. Not while
+    //    a delete is in flight: its tiles are already removed optimistically,
+    //    and a refused delete brings them back -- with their drafts.
+    if (isDeleting) return;
+    const shown = new Set<string>([...displayedProductUrls, ...Object.values(fileUrlMap)]);
+    const altLookup: Record<string, string> = {};
+    for (const [gid, url] of Object.entries(fileUrlMap)) if (url) altLookup[url] = gid;
+    Object.assign(altLookup, urlToGid);
+    const stranded = strandedAltDraftUrls({
+      dirtyUrls: dirtyUrlsRef.current,
+      lookup: altLookup,
+      shown,
+      carried: new Set(deferredAltRef.current.keys()),
+      settlingPreviews: new Set(knownSettledAltRef.current.keys()),
+      gidOf: gidForUrl,
+    });
+    if (stranded.length > 0) {
+      const anyPreview = stranded.some((url) => url.startsWith("blob:") || url.startsWith("data:"));
+      dropAltDraftUrls(stranded);
+      showInfoBox(String(anyPreview
+        ? (t.imageManager?.altDraftDroppedNoImage ?? "An alt text typed for an image that was removed before it was saved was dropped.")
+        : (t.imageManager?.altDraftDroppedImageGone ?? "An alt text draft was dropped because its image no longer exists.")), "warning");
+    }
+  }, [settlingMedia, shopifyMediaMap, productId, deferredAltTick, displayedProductUrls, fileUrlMap, urlToGid, isDeleting]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The settling poll gave up while a carried-over draft's image was still
+  // processing: the Save stops waiting for it (it stays a draft for a later Save).
+  releaseStuckDeferredAltsRef.current = () =>
+    releaseDeferredAlts((url, d) => d.applied === "done" && knownSettledAltRef.current.has(url), true);
+
+  /** Discard: every alt draft goes back to what it was; what is already in flight cannot be taken back. */
+  const discardAltDrafts = useCallback(() => {
+    const urls = new Set([...dirtyUrlsRef.current, ...failedAltUrlsRef.current]);
+    // Only what the merchant is looking at is taken back: a save queued for
+    // another product, language or market (pressed Save, then switched) is
+    // not this Discard's -- the same image can have a queued save in another
+    // language under the very same url.
+    const view = { productId, locale: currentLanguage, marketId: foreignMarketId };
+    // Carried-over drafts of this view are not in flight yet: they go too.
+    releaseDeferredAlts((_url, d) => altSaveInView(d.draft, view), false);
+    if (urls.size === 0) return;
+    const restored = restoreAltDrafts(localAltTextsRef.current, altBaselinesRef.current, urls);
+    localAltTextsRef.current = restored;
+    setLocalAltTexts(restored);
+    dirtyUrlsRef.current.clear();
+    failedAltUrlsRef.current.clear();
+    altBaselinesRef.current.clear();
+    altEditOrderRef.current.clear();
+    dropQueuedAltSaves((q) => urls.has(resolveAltUrl(q.url)) && altSaveInView(q, view));
+    syncAltSaving();
+    syncAltDirty();
+  }, [syncAltDirty, productId, currentLanguage, foreignMarketId]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (altDraftApiRef) {
+    altDraftApiRef.current = {
+      flush: flushAltDrafts,
+      discard: discardAltDrafts,
+      hasUnsentDrafts: () => unsentAltDrafts(
+        dirtyUrlsRef.current,
+        localAltTextsRef.current,
+        [
+          ...pendingAltSaves().map((p) => ({ ...p, url: resolveAltUrl(p.url), aliases: p.aliases?.map((a) => ({ ...a, url: resolveAltUrl(a.url) })) })),
+          ...[...deferredAltRef.current.values()].map((d) => d.draft),
+        ],
+      ).length > 0,
+    };
+  }
+  useEffect(() => () => {
+    if (altDraftApiRef) altDraftApiRef.current = null;
+    // Unmounted with drafts: they are gone, so the page's dirty flag must not outlive them.
+    onDirtyChange?.(false);
+    onAltSavingChange?.(false);
+    onImmediateAltSavingChange?.(false);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // url -> media GID over both galleries (the variant tiles' fileUrlMap inverse
+  // overlaid by the product gallery's own map), for "is this medium's alt dirty".
+  const altGidLookup = useMemo(() => {
+    const lookup: Record<string, string> = {};
+    for (const [gid, url] of Object.entries(fileUrlMap)) if (url) lookup[url] = gid;
+    return Object.assign(lookup, urlToGid);
+  }, [fileUrlMap, urlToGid]);
+  /** True while the PRIMARY alt of this image (on any of its tiles) is an unsaved draft. */
+  const isPrimaryAltDirty = (url: string): boolean => {
+    if (dirtyUrlsRef.current.has(url)) return true;
+    const gid = gidForUrl(altGidLookup, url);
+    if (!gid) return false;
+    for (const d of dirtyUrlsRef.current) if (gidForUrl(altGidLookup, d) === gid) return true;
+    return false;
+  };
+
+  /** True while this tile carries an unsaved alt draft of the view on screen. */
+  const isAltDraftDirty = (url: string) => dirtyUrlsRef.current.has(url);
+
+  /** Why ✨ / 🌍 cannot run for this tile right now: an image with no media id
+   *  yet (an unsaved upload) has nothing its immediate save could address. */
+  const altAiBlockedHint = (url: string | null | undefined): string | undefined => {
+    if (!url) return undefined;
+    const gid = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    return gid && gid.startsWith("gid://")
+      ? undefined
+      : String(t.imageManager?.aiNeedsSavedImage ?? "Save the image first — only then can the AI write or translate its alt text.");
+  };
+
+  /** The SAVED primary alt of the medium behind a tile, or `undefined` when it
+   *  is not KNOWN here: a variant-gallery tile can be a media-library file that
+   *  is not one of the product's images, and nothing in this component holds
+   *  its primary alt. Unknown never locks a box or disables a button -- the
+   *  server reads the alt and answers (noSource / noPrimary) itself. */
+  const primaryAltForUrl = (url: string): string | undefined =>
+    knownPrimaryAlt({ url, gid: urlToGid[url] ?? gidForUrl(altGidLookup, url), images: effectiveProductImages });
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
+    if (imageIndex < 0) return;
+    // Backstop for the disabled button: the result is saved at once, and an
+    // image without a media id cannot be saved to.
+    const blocked = altAiBlockedHint(url);
+    if (blocked) {
+      showInfoBox(blocked, "warning");
+      return;
+    }
+    altAiRequestRef.current = { url, mediaId: urlToGid[url], locale: currentLanguage, marketId: foreignMarketId, productId };
     const form = new FormData();
     form.append("action", "generateAltText");
     form.append("itemId", productId);
     form.append("productId", productId);
-    form.append("imageIndex", String(Math.max(0, imageIndex)));
+    form.append("imageIndex", String(imageIndex));
     form.append("imageUrl", url);
     form.append("productTitle", productTitle ?? "");
     form.append("mainLanguage", primaryLocale ?? "en");
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher]);
+  }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher, urlToGid, currentLanguage, foreignMarketId, altGidLookup, showInfoBox, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
+  // Translates the image's SAVED primary-language alt into the language on
+  // screen -- never the foreign field's own text: that is already the target
+  // language (a typed draft or an existing translation) or empty, and sending
+  // it made the AI answer in prose, the reply unparseable and every retry fail
+  // the same way. No primary alt = nothing to translate: refused here, with
+  // the reason, before any AI call (the button is disabled for it too).
+  const handleTranslateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
-    if (!currentLanguage) return;
+    const mediaId = urlToGid[url] ?? gidForUrl(altGidLookup, url);
+    if (!currentLanguage || (imageIndex < 0 && !mediaId)) return;
+    const blocked = altAiBlockedHint(url);
+    if (blocked) {
+      showInfoBox(blocked, "warning");
+      return;
+    }
+    // Refused here only where the primary alt is KNOWN to be empty; a library
+    // file's is not known here, and the server reads it (and refuses with the
+    // same noSource answer when it is empty).
+    const knownPrimary = primaryAltForUrl(url);
+    const sourceAltText = altTranslateSourceText(knownPrimary);
+    if (knownPrimary !== undefined && sourceAltText === null) {
+      showInfoBox(String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet."), "warning");
+      return;
+    }
+    altAiRequestRef.current = { url, mediaId, locale: currentLanguage, marketId: foreignMarketId, productId };
     const form = new FormData();
     form.append("action", "translateAltText");
     form.append("itemId", productId);
     form.append("productId", productId);
-    form.append("imageIndex", String(Math.max(0, imageIndex)));
-    form.append("sourceAltText", sourceAltText);
+    form.append("imageIndex", String(Math.max(imageIndex, 0)));
+    // The server takes the source from its own cache by this id.
+    if (mediaId) form.append("mediaId", mediaId);
+    form.append("sourceAltText", sourceAltText ?? "");
     form.append("targetLocale", currentLanguage);
+    if (primaryLocale) form.append("primaryLocale", primaryLocale);
+    form.append("productTitle", productTitle ?? "");
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher]);
+  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher, urlToGid, foreignMarketId, altGidLookup, showInfoBox, t, imageMetas, primaryLocale, productTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // GLOBAL layer by design, like the editor's own "translate to all languages":
+  // it never carries a market. The image is named by its MEDIA id -- a position
+  // in this live list is not one in the database, and the server refuses an id
+  // it cannot find instead of writing to another image.
   const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
+    const mediaId = urlToGid[url] ?? effectiveProductImages[imageIndex]?.mediaId;
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) return;
+    // An unsaved primary alt: the translations would be written from the draft
+    // and its own Save would then delete them again (a primary change purges or
+    // re-translates). The button is disabled for that; this is the backstop.
+    if (isPrimaryAltDirty(url)) {
+      showInfoBox(String(t.imageManager?.translateAltAllSaveFirst ?? "Save the alt text first, then translate it."), "warning");
+      return;
+    }
+    if (!mediaId || !mediaId.startsWith("gid://")) {
+      setMediaError(t.imageManager.altImageNotFound);
+      return;
+    }
+    altAiRequestRef.current = { url, mediaId, locale: currentLanguage, productId };
     const form = new FormData();
     form.append("action", "translateAltTextToAllLocales");
     form.append("itemId", productId);
     form.append("productId", productId);
-    form.append("imageIndex", String(Math.max(0, imageIndex)));
+    form.append("mediaId", mediaId);
+    if (imageIndex >= 0) form.append("imageIndex", String(imageIndex));
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocales", JSON.stringify(targetLocales));
     form.append("productTitle", productTitle ?? "");
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, effectiveProductImages, enabledLanguages, primaryLocale, altTextFetcher]);
+  }, [productId, effectiveProductImages, urlToGid, enabledLanguages, primaryLocale, altTextFetcher, t, currentLanguage, altGidLookup, showInfoBox]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
@@ -2452,12 +3496,85 @@ export function VariantImageManager({
   const productCurrentAltText = productSingleSelected
     ? (isPrimaryLocale
       ? (localAltTexts[productSingleSelected] ?? imageMetas[productSingleSelected]?.altText ?? "")
-      : (localAltTexts[productSingleSelected] ?? ""))
+      : altFieldView({
+        own: localAltTexts[productSingleSelected],
+        inherited: inheritedAltTexts[productSingleSelected],
+        primaryAlt: "", fallbackPlaceholder: "",
+      }).value)
+    : "";
+  const productInheritedAlt = productSingleSelected && !isPrimaryLocale
+    ? (inheritedAltTexts[productSingleSelected] ?? "")
     : "";
   const productPrimaryAltText = productSingleSelected ? (imageMetas[productSingleSelected]?.altText ?? "") : "";
+  // Translating to every language is offered only for a SAVED primary alt.
+  const productAltDirty = productSingleSelected ? isPrimaryAltDirty(productSingleSelected) : false;
+  const productAltAiBlocked = altAiBlockedHint(productSingleSelected);
+  // Translating needs a SAVED primary alt to start from (it is the source).
+  const productTranslateAltBlocked = productAltAiBlocked
+    ?? (productSingleSelected && altTranslateSourceText(productPrimaryAltText) === null
+      ? String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet.")
+      : undefined);
+  // A FOREIGN alt can only be stored where the image has a saved primary alt
+  // (Shopify offers nothing to translate otherwise): the box is locked with the
+  // reason rather than collecting a draft no Save could ever store.
+  const altNeedsPrimaryHint = String(
+    t.products?.altTextNeedsPrimaryHint
+      ?? "Enter and save an alt text in the main language first — then it can be translated.",
+  );
+  const productAltLocked = !!productSingleSelected && foreignAltLocked({
+    isPrimaryLocale,
+    primaryAlt: productPrimaryAltText,
+    own: localAltTexts[productSingleSelected],
+    dirty: dirtyUrlsRef.current.has(productSingleSelected),
+  });
+  const translateAltAllSaveFirstHint = String(t.imageManager?.translateAltAllSaveFirst ?? "Save the alt text first, then translate it.");
   const productHasTranslation = productSingleSelected
     ? (localAltTexts[productSingleSelected] !== undefined && localAltTexts[productSingleSelected] !== "")
     : false;
+
+  // Per-language replacement (foreign language only, product gallery only):
+  // a tile whose medium has one SHOWS it in place of the original, with the
+  // corner symbol that flips it back to the original. The selected, SAVED
+  // medium gets the replace button next to its alt-text controls. An unsaved
+  // tile has no GID and is not offered; a still-processing one is said to be
+  // unavailable by the button. Tiles stay keyed by the ORIGINAL's URL.
+  const localizedMedia = localizedMediaState;
+  // Resolved per SHOWN tile url (exact, then without the `?v=` query -- the same
+  // lookup the replace button uses), never by walking the url->gid map: a tile
+  // whose url is not a key of that map got no replacement although its button
+  // worked, so a pick (draft) or a saved replacement never showed on it.
+  // Memoised on the provider's STABLE members (tileOf / mediaById are
+  // memoised there), never on the whole state object, which is new every render.
+  const lmActive = !!localizedMedia?.active;
+  const lmTileOf = localizedMedia?.tileOf;
+  const lmMediaById = localizedMedia?.mediaById;
+  const replacementsByUrl = useMemo(() => {
+    if (!lmActive || !lmTileOf) return {} as Record<string, LocalizedMediaTile>;
+    return tilesByUrl(displayedProductUrls, urlToGid, (gid) => lmTileOf(gid));
+  }, [lmActive, lmTileOf, urlToGid, displayedProductUrls]);
+  // The variant galleries show the SAME replacement on a tile of the same
+  // product medium (one entry per medium GID, so both galleries stay coupled
+  // and the symbol's flip state is shared). Variant tiles are keyed by
+  // fileUrlMap[gid]; the url->gid lookup is the fileUrlMap inverse overlaid by
+  // the product gallery's own map, with the same exact-then-without-`?v=` rule.
+  const variantReplacementsByUrl = useMemo(() => {
+    if (!lmActive || !lmTileOf) return {} as Record<string, LocalizedMediaTile>;
+    return fileTilesByUrl(fileUrlMap, urlToGid, (gid) => lmTileOf(gid));
+  }, [lmActive, lmTileOf, urlToGid, fileUrlMap]);
+  // The product's OWN media (what a replacement can be set for), from what
+  // the SERVER reports for this product: the fetched media map, the cached
+  // product images, the media this product's saves created (settling), and the
+  // localized-media read of the product's live media. Never the client-side
+  // meta map, which a library pick from another product pre-fills.
+  const productMediaIds = useMemo(() => {
+    const ids = new Set<string>(Object.keys(shopifyMediaMap));
+    for (const img of effectiveProductImages) if (img.mediaId) ids.add(img.mediaId);
+    for (const m of settlingMedia ?? []) if (m.productId === productId) ids.add(m.mediaId);
+    if (lmMediaById) for (const id of lmMediaById.keys()) ids.add(id);
+    return ids;
+  }, [shopifyMediaMap, effectiveProductImages, settlingMedia, productId, lmMediaById]);
+  // Only a real GID: a url (an unsaved tile) is never handed on as a media id.
+  const productSingleSelectedGid = productSingleSelected ? gidForUrl(urlToGid, productSingleSelected) : null;
 
   return (
     <DndContext
@@ -2497,6 +3614,11 @@ export function VariantImageManager({
           paddingRight: isExpanded ? 0 : 4,
         }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {mediaError && (
+        <Banner tone="critical" onDismiss={() => setMediaError(null)}>
+          <p>{mediaError}</p>
+        </Banner>
+      )}
       {webpError && (
         <Banner tone="critical" onDismiss={() => setWebpError(null)}>
           <p>{webpError}</p>
@@ -2622,6 +3744,7 @@ export function VariantImageManager({
               onOpenPicker={() => setPickerTarget({ mode: "product" })}
               localAltTexts={localAltTexts}
               isPrimaryLocale={isPrimaryLocale}
+              replacements={replacementsByUrl}
             />
           </div>
           {(productGalleryHasOverflow || isProductGalleryExpanded) && (
@@ -2670,6 +3793,11 @@ export function VariantImageManager({
             >
               {activeAction === "move" ? t.imageManager.moveActive : t.imageManager.move}
             </Button>
+            {/* The replacement buttons of the ONE selected medium (foreign language
+                only) sit between "move" and "delete"; nothing renders otherwise. */}
+            {productSingleSelectedGid && (isModel3dGid(productSingleSelectedGid)
+              ? <LocalizedMediaNotReplaceable reason="model3d" />
+              : <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />)}
             {productSelectedUrls.length > 0 && (
               <Button
                 size="slim"
@@ -2752,18 +3880,21 @@ export function VariantImageManager({
               </Text>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <input
-                type="text"
+              <AutoGrowTextarea
                 value={productCurrentAltText}
-                onChange={(e) => handleAltTextChange(productSingleSelected, e.target.value)}
-                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : (productPrimaryAltText || t.imageManager.altTextPlaceholder)}
+                readOnly={productAltLocked}
+                aria-readonly={productAltLocked || undefined}
+                title={productAltLocked ? altNeedsPrimaryHint : undefined}
+                onValueChange={(next) => { if (!productAltLocked) handleAltTextChange(productSingleSelected, next); }}
+                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: productCurrentAltText, inherited: productInheritedAlt, primaryAlt: productPrimaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                 style={{
                   flex: "1 1 200px",
                   minWidth: 180,
-                  // As tall as the buttons beside it (responsive.css token).
-                  height: "var(--app-control-height)",
-                  boxSizing: "border-box",
-                  padding: "0 8px",
+                  // Height and vertical padding come from AutoGrowTextarea's
+                  // class (button height at rest, 44px on touch); a long alt
+                  // text wraps and grows instead of scrolling sideways.
+                  paddingLeft: 8,
+                  paddingRight: 8,
                   fontSize: 13,
                   border: "1px solid var(--app-field-border-color)",
                   borderRadius: "var(--app-field-border-radius)",
@@ -2774,54 +3905,53 @@ export function VariantImageManager({
                 onBlur={(e) => {
                   e.target.style.borderColor = "var(--app-field-border-color)";
                   e.target.style.background = !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white";
-                  if (productGalleryBlurSkipRef.current) {
-                    productGalleryBlurSkipRef.current = false;
-                    return;
-                  }
-                  handleSaveAltText(productSingleSelected, e.target.value);
+                  // No save here: the text is a draft until the editor's save bar writes it.
                 }}
               />
               <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                 {isPrimaryLocale && (
-                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
+                  <DisabledActionTooltip hint={productAltAiBlocked}>
                     <Button
                       size="slim"
-                      disabled={altTextFetcher.state !== "idle"}
+                      disabled={altTextFetcher.state !== "idle" || !!productAltAiBlocked}
                       loading={altTextFetcher.state !== "idle"}
                       onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
                     >
                       {`✨ ${t.imageManager.aiGenerate}`}
                     </Button>
-                  </div>
+                  </DisabledActionTooltip>
                 )}
                 {isPrimaryLocale && (
-                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
-                    <DisabledActionTooltip hint={singleLocaleHint}>
-                      <Button
-                        size="slim"
-                        disabled={altTextFetcher.state !== "idle" || !!singleLocaleHint}
-                        loading={altTextFetcher.state !== "idle"}
-                        onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
-                      >
-                        {`🌍 ${t.imageManager.translateAltAll}`}
-                      </Button>
-                    </DisabledActionTooltip>
-                  </div>
-                )}
-                {!isPrimaryLocale && (
-                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
+                  <DisabledActionTooltip hint={singleLocaleHint ?? (productAltDirty ? translateAltAllSaveFirstHint : undefined)}>
                     <Button
                       size="slim"
-                      disabled={altTextFetcher.state !== "idle"}
+                      disabled={altTextFetcher.state !== "idle" || !!singleLocaleHint || productAltDirty}
                       loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
+                      onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
+                    >
+                      {`🌍 ${t.imageManager.translateAltAll}`}
+                    </Button>
+                  </DisabledActionTooltip>
+                )}
+                {!isPrimaryLocale && (
+                  <DisabledActionTooltip hint={productTranslateAltBlocked}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle" || !!productTranslateAltBlocked}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleTranslateAltTextForImage(productSingleSelected)}
                     >
                       {`🌍 ${t.imageManager.translateAlt}`}
                     </Button>
-                  </div>
+                  </DisabledActionTooltip>
                 )}
               </div>
             </div>
+            {productAltLocked && (
+              <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                {altNeedsPrimaryHint}
+              </div>
+            )}
             {!isPrimaryLocale && productPrimaryAltText && (
               <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
                 <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
@@ -2830,6 +3960,7 @@ export function VariantImageManager({
             )}
           </div>
         )}
+        <LocalizedMediaOrphanNotice />
       </div>
 
       <Divider />
@@ -2932,10 +4063,14 @@ export function VariantImageManager({
                 localAltTexts={localAltTexts}
                 isAltTextLoading={altTextFetcher.state !== "idle"}
                 onAltTextChange={handleAltTextChange}
-                onSaveAltText={handleSaveAltText}
+                inheritedAltTexts={inheritedAltTexts}
                 onGenerateAltText={handleGenerateAltTextForImage}
                 onTranslateAltText={handleTranslateAltTextForImage}
                 onTranslateAltToAllLocales={handleTranslateAltTextToAllLocales}
+                isAltDirty={isPrimaryAltDirty}
+                isAltDraftDirty={isAltDraftDirty}
+                altAiBlockedHint={altAiBlockedHint}
+                primaryAltForUrl={primaryAltForUrl}
                 enabledLanguages={enabledLanguages}
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}
@@ -2947,6 +4082,8 @@ export function VariantImageManager({
                 threeDModelUrls={pendingVariant3dModels[v.id] ?? v.threeDModelUrls ?? []}
                 onRemoveThreeDModelUrl={handleRemoveThreeDModelUrl}
                 onBrowseLibrary={() => setPickerTarget({ mode: "variant", variantId: v.id })}
+                replacements={variantReplacementsByUrl}
+                productMediaIds={productMediaIds}
               />
               );
             })

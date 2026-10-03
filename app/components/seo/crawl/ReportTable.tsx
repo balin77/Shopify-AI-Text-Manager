@@ -18,6 +18,8 @@
  * computed in the loader and passed in.
  */
 
+import { gatedAwareError } from "../../../utils/gated-error.shared";
+import { useI18n } from "../../../contexts/I18nContext";
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useFetcher } from "react-router";
 import { Box, BlockStack, InlineStack, Badge, Banner, Button, Text, Tooltip } from "@shopify/polaris";
@@ -191,6 +193,7 @@ export function AiFixButton({
   startedLabel: string;
   errorLabel: string;
 }) {
+  const { t } = useI18n();
   const fetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
   const started = fetcher.state === "idle" && fetcher.data?.success;
   const failed = fetcher.state === "idle" && fetcher.data && !fetcher.data.success;
@@ -217,7 +220,7 @@ export function AiFixButton({
         <Text as="span" variant="bodySm" tone="subdued">{caveat}</Text>
       </InlineStack>
       {started && <Banner tone="success">{startedLabel}</Banner>}
-      {failed && <Banner tone="critical">{fetcher.data?.error || errorLabel}</Banner>}
+      {failed && <Banner tone="critical">{gatedAwareError(fetcher.data?.error, t.content.upgradeRequired, errorLabel)}</Banner>}
     </BlockStack>
   );
 }

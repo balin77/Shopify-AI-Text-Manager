@@ -45,6 +45,7 @@ import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModa
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
 import { FieldLabel } from "../unified/FieldChrome";
+import { SingleLineTextField } from "../unified/SingleLineTextField";
 import { ToggleRow } from "../ToggleRow";
 import { TaxonomyValuePicker } from "../metaobjects/TaxonomyValueField";
 import { HexColorInput } from "../metaobjects/HexColorInput";
@@ -826,11 +827,10 @@ export function CreateItemModal({
               )}
             </InlineStack>
             {image && (
-              <TextField
+              <SingleLineTextField
                 label={t.altText || "Alt text"}
                 value={image.alt}
                 onChange={(v) => setImage((prev) => (prev ? { ...prev, alt: v } : prev))}
-                autoComplete="off"
                 // §2.5c — says WHY the field is about to fill itself. A value
                 // appearing with no explanation reads as a glitch.
                 helpText={ai.altBusy ? t.altTextGenerating || "Writing alt text…" : undefined}
@@ -903,12 +903,11 @@ export function CreateItemModal({
 
       case "handle":
         return (
-          <TextField
+          <SingleLineTextField
             key={field.key}
             label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
-            autoComplete="off"
             error={errorText}
             // The suggestion is a hint, never a promise: Shopify decides, and
             // on a collision it appends "-1" (§1.7). The post-create box
@@ -923,12 +922,11 @@ export function CreateItemModal({
       // fill the field in.
       case "keyword":
         return (
-          <TextField
+          <SingleLineTextField
             key={field.key}
             label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
-            autoComplete="off"
             maxLength={field.maxLength}
             error={errorText}
           />
@@ -1014,14 +1012,15 @@ export function CreateItemModal({
           />
         );
 
+      // Every remaining kind is a one-line "text" (title, SEO title, a
+      // metaobject's text field): it wraps instead of scrolling sideways.
       default:
         return (
-          <TextField
+          <SingleLineTextField
             key={field.key}
             label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
-            autoComplete="off"
             maxLength={field.maxLength}
             error={errorText}
           />

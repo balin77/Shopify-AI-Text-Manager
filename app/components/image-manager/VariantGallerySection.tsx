@@ -1,6 +1,7 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
+import { altFieldView } from "./alt-market-layer";
 import { useI18n } from "../../contexts/I18nContext";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -8,6 +9,11 @@ import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { parseExternalVideoUrl } from "../../utils/mediaKind";
 import type { VariantWithGallery, ImageMeta } from "./types";
+import { variantTileReplaceState, variantTileAltEditable } from "./url-gid";
+import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../localized-images/LocalizedMediaReplaceButton";
+import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
+import { altTranslateSourceText, foreignAltLocked } from "../../services/alt-text-feedback.shared";
+import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
 
 interface VariantGallerySectionProps {
   variant: VariantWithGallery;
@@ -26,12 +32,23 @@ interface VariantGallerySectionProps {
   skipDndContext?: boolean;
   hasMainImage?: boolean;
   localAltTexts?: Record<string, string>;
+  /** Values a selected market inherits from the global layer (placeholder only). */
+  inheritedAltTexts?: Record<string, string>;
   isAltTextLoading?: boolean;
   onAltTextChange?: (url: string, value: string) => void;
-  onSaveAltText?: (url: string, altText: string) => void;
   onGenerateAltText?: (url: string) => void;
-  onTranslateAltText?: (url: string, sourceAltText: string) => void;
+  /** Translates the tile's SAVED primary alt into the language on screen (the handler reads the source itself). */
+  onTranslateAltText?: (url: string) => void;
   onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
+  /** True while this tile's medium has an unsaved PRIMARY alt: translating it to every language waits for its Save. */
+  isAltDirty?: (url: string) => boolean;
+  /** True while this tile carries an unsaved alt draft of the view on screen (keeps a foreign box open while it is being cleared). */
+  isAltDraftDirty?: (url: string) => boolean;
+  /** Why ✨ / 🌍 cannot run for this tile (undefined = they can): their result
+   *  is saved at once, and an image without a media id cannot be saved to. */
+  altAiBlockedHint?: (url: string) => string | undefined;
+  /** The SAVED primary alt of the medium behind a tile; `undefined` = not known here (see VariantImageManager). */
+  primaryAltForUrl?: (url: string) => string | undefined;
   enabledLanguages?: string[];
   currentLanguage?: string;
   primaryLocale?: string;
@@ -49,6 +66,14 @@ interface VariantGallerySectionProps {
    *  parent owns the modal so its selection callback can update pending
    *  gallery state without re-mounting on every variant. */
   onBrowseLibrary?: () => void;
+  /**
+   * Per tile URL: the per-language replacement its medium shows (foreign
+   * language only). The SAME entries as the product gallery's: one replacement
+   * per product medium, so both galleries show and set it alike.
+   */
+  replacements?: Record<string, LocalizedMediaTile>;
+  /** GIDs of the product's own media; a tile outside it cannot get a replacement. */
+  productMediaIds?: ReadonlySet<string>;
 }
 
 export function VariantGallerySection({
@@ -68,12 +93,16 @@ export function VariantGallerySection({
   skipDndContext = false,
   hasMainImage = true,
   localAltTexts,
+  inheritedAltTexts,
   isAltTextLoading,
   onAltTextChange,
-  onSaveAltText,
   onGenerateAltText,
   onTranslateAltText,
   onTranslateAltToAllLocales,
+  altAiBlockedHint,
+  primaryAltForUrl,
+  isAltDirty,
+  isAltDraftDirty,
   enabledLanguages = [],
   currentLanguage,
   primaryLocale,
@@ -90,6 +119,8 @@ export function VariantGallerySection({
   // videos. Parent inspects the URL pattern (.glb) to route to the right
   // metafield.
   onBrowseLibrary,
+  replacements,
+  productMediaIds,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   // No foreign locale → alt-text translation is greyed out instead of hidden.
@@ -104,7 +135,6 @@ export function VariantGallerySection({
   // Parallel array to effectiveThreeDModelUrls: index N is the preview JPG
   // URL for the model at index N. Comes from custom.variant_3d_previews.
   const effectiveThreeDPreviewUrls = variant.threeDPreviewUrls ?? [];
-  const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
     .map(gid => fileUrlMap[gid])
@@ -220,16 +250,71 @@ export function VariantGallerySection({
   const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
 
   const singleSelectedUrl = localSelectedUrls.length === 1 ? localSelectedUrls[0] : null;
+  // The selected tile's product medium (null for a file that lives only in
+  // the variant gallery, or a YouTube/Vimeo link stored on the variant).
+  // An unsaved upload (or a settling one without its own key yet) offers
+  // nothing, like the product gallery; a 3D model says it cannot be replaced.
+  const replaceState = singleSelectedUrl
+    ? variantTileReplaceState({
+      url: singleSelectedUrl,
+      galleryFileGids: variant.galleryFileGids,
+      fileUrlMap,
+      urlToGid,
+      externalVideoUrls: effectiveExternalVideoUrls,
+      threeDModelUrls: effectiveThreeDModelUrls,
+      productMediaIds,
+    })
+    : null;
+  // A link or 3D model stored on the variant is not a medium: no alt text can
+  // be stored for it, so its box says so instead of collecting a draft that
+  // no Save could ever send.
+  const altEditable = singleSelectedUrl
+    ? variantTileAltEditable({
+      url: singleSelectedUrl,
+      galleryFileGids: variant.galleryFileGids,
+      fileUrlMap,
+      urlToGid,
+      externalVideoUrls: effectiveExternalVideoUrls,
+      threeDModelUrls: effectiveThreeDModelUrls,
+    })
+    : false;
+  const altDirty = !!singleSelectedUrl && !!isAltDirty?.(singleSelectedUrl);
+  const aiBlocked = singleSelectedUrl ? altAiBlockedHint?.(singleSelectedUrl) : undefined;
   // In foreign locale don't fall back to primary locale value (would show wrong content)
   const currentAltText = singleSelectedUrl
     ? (isPrimaryLocale
       ? (localAltTexts?.[singleSelectedUrl] ?? imageMetas[singleSelectedUrl]?.altText ?? "")
       : (localAltTexts?.[singleSelectedUrl] ?? ""))
     : "";
-  const primaryAltText = singleSelectedUrl ? (imageMetas[singleSelectedUrl]?.altText ?? "") : "";
+  // The tile's SAVED primary alt, `undefined` when it is not KNOWN (a media-
+  // library file that is not one of the product's images): unknown locks
+  // nothing and disables nothing -- the server reads it and answers.
+  const knownPrimaryAltText: string | undefined = singleSelectedUrl
+    ? (primaryAltForUrl ? primaryAltForUrl(singleSelectedUrl) : (imageMetas[singleSelectedUrl]?.altText ?? ""))
+    : undefined;
+  const primaryAltText = knownPrimaryAltText ?? "";
+  const primaryAltKnown = knownPrimaryAltText !== undefined;
+  // Translating starts from the SAVED primary alt; without one there is nothing to translate.
+  const translateAltBlocked = aiBlocked
+    ?? (singleSelectedUrl && primaryAltKnown && altTranslateSourceText(primaryAltText) === null
+      ? String(t.imageManager?.translateAltNoPrimary ?? "This image has no saved alt text in the primary language yet.")
+      : undefined);
   const hasTranslation = singleSelectedUrl
     ? (localAltTexts?.[singleSelectedUrl] !== undefined && localAltTexts[singleSelectedUrl] !== "")
     : false;
+  // A FOREIGN alt can only be stored where the image has a saved primary alt:
+  // the box is locked with the reason instead of collecting a draft no Save
+  // could ever store.
+  const altLocked = !!singleSelectedUrl && primaryAltKnown && foreignAltLocked({
+    isPrimaryLocale,
+    primaryAlt: primaryAltText,
+    own: localAltTexts?.[singleSelectedUrl],
+    dirty: !!isAltDraftDirty?.(singleSelectedUrl),
+  });
+  const altNeedsPrimaryHint = String(
+    t.products?.altTextNeedsPrimaryHint
+      ?? "Enter and save an alt text in the main language first — then it can be translated.",
+  );
 
   const variantTitlePulseStyle = useMemo<React.CSSProperties | undefined>(() => {
     if (!hasMainImage) {
@@ -305,9 +390,16 @@ export function VariantGallerySection({
             hasMainImage={hasMainImage}
             localAltTexts={localAltTexts}
             isPrimaryLocale={isPrimaryLocale}
+            replacements={replacements}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {/* The replacement buttons of the ONE selected medium (foreign
+                language only; nothing renders otherwise), before "remove" like
+                in the product gallery. They write the same entry as there. */}
+            {replaceState?.kind === "replace" && <LocalizedMediaReplaceButtons mediaId={replaceState.mediaId} />}
+            {replaceState?.kind === "notProductMedium" && <LocalizedMediaNotReplaceable />}
+            {replaceState?.kind === "model3d" && <LocalizedMediaNotReplaceable reason="model3d" />}
             {hasLocalSelection && (
               <Button
                 size="slim"
@@ -326,7 +418,14 @@ export function VariantGallerySection({
           </div>
 
           {/* Alt text editor — only when exactly 1 image is selected */}
-          {singleSelectedUrl && onSaveAltText && (
+          {singleSelectedUrl && onAltTextChange && !altEditable && (
+            <div style={{ marginTop: 10, padding: "10px 12px", background: "#f6f6f7", borderRadius: 6, border: "1px solid #e1e3e5" }}>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.imageManager.altNotAvailableForLink ?? "Alt texts can only be stored for images and videos in the gallery, not for a YouTube/Vimeo link or a 3D model added to this variant."}
+              </Text>
+            </div>
+          )}
+          {singleSelectedUrl && onAltTextChange && altEditable && (
             <div style={{
               marginTop: 10,
               padding: "10px 12px",
@@ -340,15 +439,20 @@ export function VariantGallerySection({
                 </Text>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                <input
-                  type="text"
+                <AutoGrowTextarea
                   value={currentAltText}
-                  onChange={(e) => onAltTextChange?.(singleSelectedUrl, e.target.value)}
-                  placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : (primaryAltText || t.imageManager.altTextPlaceholder)}
+                  readOnly={altLocked}
+                  aria-readonly={altLocked || undefined}
+                  title={altLocked ? altNeedsPrimaryHint : undefined}
+                  onValueChange={(next) => { if (!altLocked) onAltTextChange?.(singleSelectedUrl, next); }}
+                  placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: currentAltText, inherited: singleSelectedUrl ? inheritedAltTexts?.[singleSelectedUrl] : undefined, primaryAlt: primaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
                   style={{
                     flex: "1 1 200px",
                     minWidth: 180,
-                    padding: "5px 8px",
+                    // Height and vertical padding: AutoGrowTextarea's class
+                    // (button height at rest, 44px on touch).
+                    paddingLeft: 8,
+                    paddingRight: 8,
                     fontSize: 13,
                     border: "1px solid var(--app-field-border-color)",
                     borderRadius: 4,
@@ -359,54 +463,55 @@ export function VariantGallerySection({
                   onBlur={(e) => {
                     e.target.style.borderColor = "var(--app-field-border-color)";
                     e.target.style.background = !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white";
-                    if (skipNextBlurRef.current) {
-                      skipNextBlurRef.current = false;
-                      return;
-                    }
-                    onSaveAltText(singleSelectedUrl, e.target.value);
+                    // No save here: the text is a draft until the editor's save bar writes it.
                   }}
                 />
                 <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                   {isPrimaryLocale && onGenerateAltText && (
-                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                    <DisabledActionTooltip hint={aiBlocked}>
                       <Button
                         size="slim"
-                        disabled={isAltTextLoading}
+                        disabled={isAltTextLoading || !!aiBlocked}
                         loading={isAltTextLoading}
                         onClick={() => onGenerateAltText(singleSelectedUrl)}
                       >
                         {`✨ ${t.imageManager.aiGenerate}`}
                       </Button>
-                    </div>
+                    </DisabledActionTooltip>
                   )}
                   {isPrimaryLocale && onTranslateAltToAllLocales && (
-                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
-                      <DisabledActionTooltip hint={singleLocaleHint}>
+                    <>
+                      <DisabledActionTooltip hint={singleLocaleHint ?? (altDirty ? t.imageManager.translateAltAllSaveFirst : undefined)}>
                         <Button
                           size="slim"
-                          disabled={isAltTextLoading || !!singleLocaleHint}
+                          disabled={isAltTextLoading || !!singleLocaleHint || altDirty}
                           loading={isAltTextLoading}
                           onClick={() => onTranslateAltToAllLocales(singleSelectedUrl, currentAltText)}
                         >
                           {`🌍 ${t.imageManager.translateAltAll}`}
                         </Button>
                       </DisabledActionTooltip>
-                    </div>
+                    </>
                   )}
                   {!isPrimaryLocale && onTranslateAltText && (
-                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                    <DisabledActionTooltip hint={translateAltBlocked}>
                       <Button
                         size="slim"
-                        disabled={isAltTextLoading}
+                        disabled={isAltTextLoading || !!translateAltBlocked}
                         loading={isAltTextLoading}
-                        onClick={() => onTranslateAltText(singleSelectedUrl, currentAltText)}
+                        onClick={() => onTranslateAltText(singleSelectedUrl)}
                       >
                         {`🌍 ${t.imageManager.translateAlt}`}
                       </Button>
-                    </div>
+                    </DisabledActionTooltip>
                   )}
                 </div>
               </div>
+              {altLocked && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                  {altNeedsPrimaryHint}
+                </div>
+              )}
               {!isPrimaryLocale && primaryAltText && (
                 <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
                   <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>

@@ -54,6 +54,59 @@ export interface CompletedResult {
 
 const STALE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
+/**
+ * How long the editor waits for a "translate all" run before it gives up on
+ * the answer (useUnifiedContentEditor.submitTranslateRun). Shorter than the
+ * stale purge, so the purge never drops the spinner of a run still out.
+ */
+export const TRANSLATE_RUN_DEADLINE_MS = STALE_TIMEOUT_MS - 30_000;
+
+/**
+ * The client operation key a server Task row (`/api/running-field-tasks`)
+ * stands for, or `null` when the row cannot be mapped unambiguously (then it
+ * is not seeded). A per-field task names its client key in `fieldType`
+ * (`title`, `altText_<i>`, ...). A whole-item "translate all" task has
+ * `fieldType: "all"`, type `bulkTranslation`: with ONE target locale it is
+ * "translate all for that language", with none it is "translate all" into
+ * every language. Mapping both to `__translateAll__` deleted a running
+ * per-language spinner on re-select, or seeded a "translate all" that refused
+ * "clear all" in every language. An "all" row with a locale LIST is a legacy
+ * single-image alt translate-to-all (now written as `altText_<i>`): unmapped.
+ */
+export function taskOperationKey(task: {
+  fieldType?: string | null;
+  targetLocale?: string | null;
+  type?: string | null;
+}): string | null {
+  if (!task.fieldType) return null;
+  if (task.fieldType !== "all") return task.fieldType;
+  if (task.type && task.type !== "bulkTranslation") return null;
+  const target = task.targetLocale ?? "";
+  if (!target) return "__translateAll__";
+  if (target.includes(",")) return null;
+  return `__translateAllForLocale__${target}`;
+}
+
+/**
+ * Whether a running task should SHOW as busy in the view of `currentLanguage`.
+ * A per-field task of another language must not spin (and block) the same
+ * field here; a run keyed by its own locale, an every-language run and a task
+ * with no target locale show everywhere. A per-field every-language task (a
+ * locale LIST) is started from the primary view and shows there.
+ */
+export function taskShowsInView(
+  task: { targetLocale?: string | null },
+  operationKey: string,
+  currentLanguage: string,
+  primaryLocale: string,
+): boolean {
+  if (operationKey === "__translateAll__" || operationKey.startsWith("__translateAllForLocale__")) return true;
+  const target = task.targetLocale ?? "";
+  if (!target) return true;
+  if (target.includes(",")) return currentLanguage === primaryLocale;
+  return target === currentLanguage;
+}
+
 /** Composite key: `${resourceId}::${fieldKey}` */
 const activeOps = new Map<string, ActiveOperation>();
 const completedResults = new Map<string, CompletedResult>();
@@ -118,6 +171,28 @@ function purgeStale() {
 /** Check if an operation is currently active (non-reactive, for imperative guards). */
 export function isOperationActive(resourceId: string, fieldKey: string): boolean {
   return activeOps.has(makeKey(resourceId, fieldKey));
+}
+
+/**
+ * Whether a run is writing translations INTO `locale` of this resource right
+ * now: "translate all" for that language or for every language, or the
+ * alt-text translate of either. A run for another language does not count.
+ */
+export function isTranslateIntoLocaleRunning(resourceId: string, locale: string): boolean {
+  return (
+    isOperationActive(resourceId, `__translateAllForLocale__${locale}`) ||
+    isOperationActive(resourceId, "__translateAll__") ||
+    isOperationActive(resourceId, `allAltTextsTranslate_${locale}`) ||
+    isOperationActive(resourceId, "allAltTextsTranslate")
+  );
+}
+
+/** Whether any active operation of `resourceId` has one of `actions`. */
+export function hasActiveOperationWithAction(resourceId: string, actions: readonly string[]): boolean {
+  for (const op of activeOps.values()) {
+    if (op.resourceId === resourceId && actions.includes(op.action)) return true;
+  }
+  return false;
 }
 
 export function markOperationActive(
@@ -195,11 +270,15 @@ export function getCompletedResultsForResource(resourceId: string): CompletedRes
 export function reconcileWithServer(
   resourceId: string,
   serverActiveFieldKeys: Set<string>,
+  /** Operations this client knows are still out (a request awaiting its
+   *  answer): the server may not have created their Task row yet. */
+  keep?: (fieldKey: string) => boolean,
 ) {
   purgeStale(); // opportunistic cleanup on write (safe — not in render path)
   let changed = false;
   for (const [key, op] of activeOps) {
     if (op.resourceId !== resourceId) continue;
+    if (keep?.(op.fieldKey)) continue;
     if (!serverActiveFieldKeys.has(op.fieldKey)) {
       activeOps.delete(key);
       changed = true;

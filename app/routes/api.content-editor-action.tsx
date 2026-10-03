@@ -1,27 +1,38 @@
 /**
  * A content page's own action, answered as JSON.
  *
- * The editor's "copy to all languages" saves (a field, an alt text) fire one
- * plain `fetch` per locale. Posted to the page route they were answered with
- * the rendered HTML document -- a full page render per locale, and an answer
- * nobody could read, so a failed save was reported as copied. See
+ * The editor's plain-`fetch` saves (a field or an alt text copied to all
+ * languages, the product editor's option / metafield translations) fire one
+ * `fetch` per locale or per resource. Posted to the page route they were
+ * answered with the rendered HTML document -- a full page render each, and an
+ * answer nobody could read, so a failed save was reported as copied. See
  * content-action-endpoint.shared.ts.
  *
  * This route runs the page's OWN exported `action` -- not a copy of it, so
- * every page keeps its exact checks (plan, managed AI, theme scope, resource
- * id) -- on a request rebuilt for the page's URL, and hands back whatever it
- * returns. A resource route (no default export) serialises that as JSON.
+ * every page keeps its exact checks -- on a request rebuilt for the page's URL,
+ * and hands back whatever it returns. Those checks live in the action
+ * factories every listed page is built with: the plan gate by content type
+ * (`makeContentRouteAction` / `makeThemeContentRouteAction` in app/utils, and
+ * the cookie banner's own `updateContent` branch), plus managed AI, theme
+ * scope and resource id inside the shared handlers. This route adds no gate of
+ * its own and needs none: it can only reach an action that already has one.
+ * A resource route (no default export) serialises that as JSON.
  *
  * It is not a second door to the editors: only the pages in the shared list,
- * and only `updateContent`, which is what both callers send.
+ * and per page only `updateContent`, the editor's "translate all" runs on
+ * every listed page (`CONTENT_EDITOR_EVERY_PAGE_ACTIONS`: `translateAll`,
+ * `translateAllForLocale` -- their own request so a save never queues behind
+ * an AI run on the editor's one fetcher), plus the actions that page's
+ * plain-fetch callers send (`CONTENT_EDITOR_EXTRA_ACTIONS`).
  */
 
 import { data as json, type ActionFunctionArgs } from "react-router";
 import {
-  CONTENT_EDITOR_FETCH_ACTION,
+  contentEditorActionAllowed,
   contentEditorActionPage,
   type ContentEditorActionPage,
 } from "~/services/editor/content-action-endpoint.shared";
+import { apiAuthBounceRejection } from "~/utils/api-auth-bounce.server";
 
 type PageModule = { action: (args: ActionFunctionArgs) => unknown };
 
@@ -50,10 +61,6 @@ export const action = async (args: ActionFunctionArgs) => {
   const { request } = args;
   const formData = await request.formData();
 
-  if (formData.get("action") !== CONTENT_EDITOR_FETCH_ACTION) {
-    return json({ success: false, error: "Unsupported action" }, { status: 400 });
-  }
-
   // `_page` is the page's path plus its query. Only the path is matched
   // against the list; the query rides along so the action sees its own URL.
   const rawPage = String(formData.get("_page") ?? "");
@@ -66,6 +73,11 @@ export const action = async (args: ActionFunctionArgs) => {
     : null;
   if (!page) {
     return json({ success: false, error: "Unknown page" }, { status: 400 });
+  }
+  // Per page: `updateContent` everywhere, plus the page's own fetch-sent
+  // actions (the product editor's sub-resource translations).
+  if (!contentEditorActionAllowed(page, String(formData.get("action") ?? ""))) {
+    return json({ success: false, error: "Unsupported action" }, { status: 400 });
   }
 
   const { action: pageAction } = await PAGE_ACTIONS[page]();
@@ -82,5 +94,16 @@ export const action = async (args: ActionFunctionArgs) => {
     body: formData,
     signal: request.signal,
   });
-  return pageAction({ ...args, request: pageRequest });
+  try {
+    return await pageAction({ ...args, request: pageRequest });
+  } catch (error) {
+    // The page action authenticates against the PAGE's URL (`/app/...`), so
+    // the `/api/*` bounce conversion in enhancedAuthenticate.admin does not
+    // recognise it: a fetch that arrived without a session token got the App
+    // Bridge bounce page (200 HTML) back through this door. Judged here
+    // against the ORIGINAL `/api` request, which is what the browser sent --
+    // same 401 + retry header and the same warn line as every other `/api`
+    // route. Anything else (a redirect, a real error) is re-thrown unchanged.
+    throw apiAuthBounceRejection(error, request) ?? error;
+  }
 };

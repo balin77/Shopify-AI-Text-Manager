@@ -36,17 +36,15 @@
  * the deep link from the product editor opened a blank page.
  */
 
+import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import {
   resolveMetaobjectSelection,
   type MetaobjectTypeItem,
 } from "../services/metaobject-select.shared";
-import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
-import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { METAOBJECTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -163,28 +161,7 @@ export const loader = createContentLoader({
 // ACTION - Handle all actions via unified handler
 // ============================================================================
 
-export const action = async (args: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(args.request);
-  const formData = await args.request.formData();
-
-  // Load AI settings
-  const { db } = await import("../db.server");
-  const [aiSettings, aiInstructions] = await Promise.all([
-    db.aISettings.findUnique({ where: { shop: session.shop } }),
-    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
-  ]);
-
-  // Use unified action handler
-  return handleUnifiedContentActions({
-    admin,
-    session,
-    formData,
-    contentConfig: METAOBJECTS_CONFIG,
-    db,
-    aiSettings,
-    aiInstructions,
-  });
-};
+export const action = makeContentRouteAction({ config: METAOBJECTS_CONFIG, planContentType: "metaobjects" });
 
 // ============================================================================
 // COMPONENT

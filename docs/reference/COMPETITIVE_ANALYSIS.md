@@ -46,7 +46,7 @@
 | Automatische Nachübersetzung bei Textänderungen | ✅ Max | In der App, im Shopify-Admin, durch Importe; Tageslimit + Wiederholungsliste |
 | Sprachen & Märkte verwalten | ✅ | Sprachen hinzufügen/entfernen/veröffentlichen, Märkte zuweisen, Markt-Adressen (Unterordner), Märkte anlegen/aktivieren |
 | Sprachumschalter | ✅ | Storefront-Embed |
-| Bilder je Sprache | ❌ | Offen |
+| Bilder und Videos je Sprache | ✅ ab Pro | **Ausgeliefert 2026-10-02.** Produktbilder und Produktvideos (Shopify-Videos, YouTube/Vimeo-Links) pro Sprache und optional pro Markt ersetzen, 1:1 (Bild ↔ Bild, Video ↔ Video gleicher Art), direkt in der Produktgalerie und den Variantengalerien; Tausch der Produktgalerie (inkl. Vorschaubilder und Lightbox) per App-Embed „Media per language“; das Teilen-Bild (nur Hauptbild) braucht zusätzlich das Embed „Open Graph / Twitter“, das Schema-Bild das Embed „JSON-LD Structured Data“. Theme-Bilder (Banner, Logo, Slideshow) pro Sprache und Markt im Theme-Editor der App (Inhalte → Theme), über Shopifys eigene Theme-Übersetzung, ohne Embed — ob die Storefront das Bild ausliefert, hängt vom Theme ab (Shopify-Funktion, auf der Storefront nicht gemessen). Kein eigenes Kontingent, gilt für alle Produkte des Plans (500 / 2.500). Nicht abgedeckt: Kollektionskarten, Warenkorb, Verkaufskanal-Feeds; Kollektions-/Artikelbilder. Roadmap `localized-images`, Plan [PLAN_LOCALIZED_IMAGES.md](../plans/PLAN_LOCALIZED_IMAGES.md); KI-Übersetzung von Text IM Bild (OCR) bleibt Stufe 2 (`image-translation`), nicht gebaut |
 | Eigene Währungsumrechnung | ❌ (bewusst) | Shopify Markets rechnet nativ um |
 
 ### 1.3 Massenbearbeitung
@@ -62,6 +62,7 @@
 | Feature | Status | Details |
 |---------|--------|---------|
 | Bild-Manager + Variantengalerien | ✅ Pro+ | Mehrere Bilder pro Variante, Storefront-Galerie mit Lightbox/Zoom |
+| Bilder und Videos je Sprache/Markt | ✅ Pro+ | Seit 2026-10-02, siehe §1.2 |
 | Massen-Upload mit Auto-Zuweisung | ✅ | Dateiname ↔ SKU/Image-Key |
 | KI-Alt-Texte + Übersetzung | ✅ | Inkl. Vorlagen |
 | WebP-Umwandlung | ✅ Pro+ | |
@@ -130,7 +131,7 @@ Legende: ✅ ja · ⚠️ teilweise · ❌ nein · ? keine klare Angabe (≠ nei
 | KI-Sichtbarkeit (Schema, agents.md) | ⚠️ Gratis teilweise, voll ab Basic | ❌ | ❌ | ❌ | ❌ |
 | KI-Alt-Texte | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Variantengalerien / Bild-Manager | ✅ ab Pro | ❌ | ❌ | ❌ | ❌ |
-| Bilder je Sprache | ❌ | ⚠️ nur Theme-Medien | ✅ alle („Media translation“) | ✅ ab Regional (10 → 50 → 100 → ∞ Produkte) | ? |
+| Bilder je Sprache | ✅ ab Pro (Produktbilder + -videos, Theme-Bilder; je Sprache **und Markt**; kein eigenes Produktlimit (gilt für alle Produkte des Plans: 500 / 2.500)) | ⚠️ nur Theme-Medien | ✅ alle („Media translation“) | ✅ ab Regional (10 → 50 → 100 → ∞ Produkte) | ? |
 | Eigene Währungsumrechnung | ❌ (Shopify Markets) | ❌ (Markets) | ❌ | ✅ ab Local Plus (1 → 3 → 15 → 50 → 168) | ✅ alle (156 Währungen) |
 | Standorterkennung / Geolocation | ❌ | ✅ (Markets) | ✅ alle | ✅ ab Continental | ✅ ab Standard |
 | Menschliche Übersetzer | ❌ | ❌ | ✅ ab Starter | ? | ✅ alle („Agency translation“) |
@@ -146,7 +147,7 @@ Legende: ✅ ja · ⚠️ teilweise · ❌ nein · ? keine klare Angabe (≠ nei
 |---|---|---|---|
 | Free | 0 | 50 | 5 Kollektionen, Produkte + Kollektionen, Glossar, KI-Texte |
 | Basic | €9.90 | 100 | 50 Kollektionen, 20 Seiten, Richtlinien, Bilder/Optionen/Metafelder, Bulk-Editor, 25 Keywords, KI-Sichtbarkeit |
-| Pro | €19.90 | 500 | Blogs/Artikel, Theme & Checkout, Menüs, Metaobjekte, eigene KI-Anweisungen, Bild-Manager, Crawl, GSC, Sitemap, IndexNow, CSV-Import |
+| Pro | €19.90 | 500 | Blogs/Artikel, Theme & Checkout, Menüs, Metaobjekte, eigene KI-Anweisungen, Bild-Manager, Bilder/Videos je Sprache, Crawl, GSC, Sitemap, IndexNow, CSV-Import |
 | Max | €59.90 | 2.500 | Texte anderer Apps, automatische Nachübersetzung, wöchentlicher Crawl/Audit, 1.000 Keywords |
 
 **Weglot** (App Store USD bzw. Website EUR, 14 Tage Test, Preis nach Wörtern/Sprachen, alle Pläne mit KI-Übersetzung, Glossar, Media-Übersetzung, Weiterleitung nach Besuchersprache):
@@ -204,6 +205,7 @@ Website zeigt zusätzlich Jahrespreise (z. B. Local Plus $11.90/Monat jährlich,
 
 **Wo wir klar vorne liegen**
 - **Sprachen:** unbegrenzt ab dem Gratisplan. Alle anderen staffeln genau danach (Weglot 1/1/3/5, LangShop 1/1/3/5, Transcy 1/1/3/15). Für einen Shop mit 3+ Sprachen sind wir ab €9.90 dabei, die anderen ab $29–40.
+- **Bilder und Videos je Sprache (seit 2026-10-02):** ab Pro für alle Produkte des Plans (500, Max 2.500) ohne eigenes Kontingent — Transcy gibt Bilder für 10 Produkte ab $29 und erst im obersten Plan ∞, zusätzlich je **Markt** und auch für **Videos** (Shopify-Videos, YouTube/Vimeo) — Translate & Adapt kann nur Theme-Medien.
 - **Alles außer Übersetzung:** KI-Texte, Tabellen-Editor, SEO-Werkzeuge, KI-Sichtbarkeit, Alt-Texte und Bild-Manager hat kein Konkurrent. Das ist das Argument „eine App statt drei“.
 - **Wahl des KI-Anbieters auf allen Plänen** — Transcy erst ab $14.90 (eigener Key erst ab $69), LangShop ab $40.
 - **Glossar auf allen Plänen** — Transcy ab $29, LangShop ab $10.
@@ -213,7 +215,7 @@ Website zeigt zusätzlich Jahrespreise (z. B. Local Plus $11.90/Monat jährlich,
 - **Texte anderer Apps nur im Max (€59.90):** Transcy übersetzt sie schon im Gratisplan, LangShop ab $40, Weglot immer. Auf der Stufen-Ansicht zeigt das bei uns bis Stufe 2 „Höherer Plan“. **Kandidat, um die Funktion in Pro zu verschieben.**
 - **Automatische Nachübersetzung nur im Max:** Transcy ab $29, Weglot immer (Proxy). Gleiches Argument.
 - **KI-Kosten:** Bei uns kommt der eigene KI-Key dazu (für den Händler ein zweiter Vertrag). Transcy (Tokens), Weglot und LangShop rechnen alles in einer Rechnung ab. Die geplante „+ AI“-Variante (Branch `claude/provided-api-key-pricing-vq2tu6`, €21.90/€39.90/€99.90) schließt das — sobald auf `develop`, als zweiter Preis in `COMPARE_PRICES` nachtragen.
-- **Währung, Geolocation, Bilder je Sprache, menschliche Übersetzer:** fehlen bei uns. Währung und Geolocation erledigt Shopify Markets nativ (kein echter Gap, siehe Fußnote ¹); **Bilder je Sprache** ist der einzige echte Funktions-Gap in der Übersetzung.
+- **Währung, Geolocation, menschliche Übersetzer:** fehlen bei uns. Währung und Geolocation erledigt Shopify Markets nativ (kein echter Gap, siehe Fußnote ¹). **Bilder je Sprache** war bis 2026-10-02 der einzige echte Funktions-Gap in der Übersetzung — **geschlossen** (siehe oben). Was bleibt, ist die KI-Übersetzung von Text **im** Bild (OCR, Transcy), Roadmap-Stufe 2 `image-translation`, nicht gebaut. Ehrlich nennen: Kollektionskarten, Warenkorb und Verkaufskanal-Feeds zeigen weiter das Original, Kollektions- und Artikelbilder lassen sich noch nicht ersetzen.
 
 **Offen**
 - LangShop: Bilder je Sprache — nicht feststellbar (Hilfe-Center nicht mehr öffentlich; alte Auszüge sagen „nur im LangShop-Theme“, nicht prüfbar). Seite zeigt „Keine Angabe“.
@@ -1324,6 +1326,7 @@ Je Punkt die belegende URL in den drei Belegdateien:
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-10-02 | **Bilder und Videos je Sprache ausgeliefert** (Roadmap `localized-images`): §1.2/§1.4 auf ✅ ab Pro; §2.1-Vergleichszeile ❌ → ✅ (Produktbilder + -videos je Sprache und Markt, Theme-Bilder, kein eigenes Kontingent — gilt für alle Produkte des Plans, 500 / 2.500); Fazit D: der einzige echte Funktions-Gap in der Übersetzung ist geschlossen, offen bleibt OCR-Bildübersetzung (`image-translation`, Stufe 2). |
 | 2026-10-01 | **§2.2, §2.3, §2.4 neu erhoben** gegen App Store, Preisseiten und Hilfe-Center (Agent, Rohtext, Aufträge aus `docs/marketing/compare-research-prompts.md`), je mit Planstufen und „ab Plan“; volle Belege unter `competitive-research/2026-10-01-*.md`. Befunde: **Yoast** (176 Bewertungen) ist keine große SEO-App mehr → durch **Avada AI SEO** ersetzt (nachrecherchiert); **Smartli/WritePilot** fallen aus den Top 5 der KI-Text-Apps (die sind Avada Blog, Profitonium, Tapita, Essential, StoreYa — drei davon reine Blog-Apps); **OP Color Swatch** (798) ist größer als NS → ersetzt NS (nachrecherchiert). Nicht eingetragen werden Yoast, NS, Smartli, WritePilot (Belege bleiben, markiert). Bei keiner SEO-App belegt: KI-Crawler in robots.txt, GTIN-Check, Nutzer-Ladezeiten, echter Link-Crawl. §2.4: SA hat Drag & Drop, SA und GG sind Built for Shopify. |
 | 2026-09-30 | T Lab, Langify und GTranslate ergänzt (§2.1 Nachtrag), geprüft gegen App Store, Preisseiten und Hilfe-Center; auf `/compare` per `+` zuschaltbar |
 | 2026-01-27 | Initiale Erstellung der Wettbewerbsanalyse |

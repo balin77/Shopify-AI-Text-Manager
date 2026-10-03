@@ -3,13 +3,14 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
-import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
+import { registerThemeResourceTranslations } from "~/utils/cookie-banner-availability.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { isThemeMediaValue } from "~/utils/theme-image-reference.shared";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
 import { aiServiceFor } from "~/services/ai/ai-credentials.server";
-import { aiRefusalResponse } from "~/routes/api-ai-handlers/shared";
-import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
+import { aiRefusalFor, managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 
 export async function handleTranslateAll(
   ctx: TemplatesActionContext,
@@ -30,7 +31,9 @@ export async function handleTranslateAll(
   // Deduplicate
   const uniqueContent = new Map<string, TranslatableField>();
   for (const item of allContent) {
-    if (!uniqueContent.has(item.key) && item.value) {
+    // An image reference is a file choice, not text: the AI's answer would be
+    // a broken reference written to the storefront (theme-image-reference.shared.ts).
+    if (!uniqueContent.has(item.key) && item.value && !isThemeMediaValue(item.value)) {
       uniqueContent.set(item.key, item);
     }
   }
@@ -38,7 +41,7 @@ export async function handleTranslateAll(
   // Compliance gate: whose key, consent, kill switch and budget — before a
   // Task row exists (same as templates-translate-field).
   const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-  const refusal = await aiRefusalResponse(settings, session.shop);
+  const refusal = await aiRefusalFor(settings, session.shop, { actionType });
   if (refusal) {
     return refusal;
   }
@@ -116,11 +119,23 @@ export async function handleTranslateAll(
       }
     >();
     const shopifySkippedKeys: string[] = [];
+    // Keys that were translated but are NOT stored (no digest, unechoed, failed
+    // batch), per locale. Reported in the shape the client already renders
+    // (`rejectedFields`); they never stay in `translations`.
+    const rejectedFields: Record<string, string[]> = {};
+    const reject = (locale: string, key: string) => {
+      (rejectedFields[locale] ||= []);
+      if (!rejectedFields[locale].includes(key)) rejectedFields[locale].push(key);
+      delete translations[locale]?.[key];
+    };
+    const skippedByLocale = new Map<string, string[]>();
 
     for (const { key, locale, value, resId } of pendingUpserts) {
       const digest = digestMap.get(key);
       if (!digest) {
         shopifySkippedKeys.push(key);
+        reject(locale, key);
+        skippedByLocale.set(locale, [...(skippedByLocale.get(locale) ?? []), key]);
         continue;
       }
       const batchKey = `${resId}::${locale}`;
@@ -140,35 +155,52 @@ export async function handleTranslateAll(
 
     const successfulUpserts: Array<{ key: string; locale: string; value: string; resId: string }> = [];
     const failedBatches: string[] = [];
+    for (const [locale, keys] of skippedByLocale) {
+      failedBatches.push(
+        `no translatable-content digest (${locale}) [${keys.slice(0, 5).join(", ")}]`,
+      );
+    }
 
     for (const [, batch] of shopifyBatches) {
       try {
-        const response = await admin.graphql(TRANSLATE_CONTENT, {
-          variables: { resourceId: batch.resId, translations: batch.inputs },
-        });
-        const data = await response.json();
-
-        if (data.data?.translationsRegister?.userErrors?.length > 0) {
-          const errors = data.data.translationsRegister.userErrors;
-          logger.error("[TEMPLATES] translateAll: Shopify rejected translations", {
+        // Verified: only keys Shopify ECHOED are confirmed, userErrors or not.
+        const verified = await registerThemeResourceTranslations(admin, session, batch.resId, batch.inputs);
+        const unconfirmed = batch.inputs.filter((input) => !verified.confirmedKeys.has(input.key));
+        if (unconfirmed.length > 0) {
+          const reason = verified.userErrors[0]?.message ?? "not stored by Shopify";
+          logger.error("[TEMPLATES] translateAll: Shopify did not confirm every translation", {
             context: "Templates",
-            errors,
+            errors: verified.userErrors,
             resourceId: batch.resId,
             locale: batch.locale,
+            unconfirmedKeys: unconfirmed.map((i) => i.key),
           });
-          failedBatches.push(`${batch.resId} (${batch.locale}): ${errors[0].message}`);
-        } else {
+          failedBatches.push(
+            `${batch.resId} (${batch.locale}): ${reason} [${unconfirmed.slice(0, 5).map((i) => i.key).join(", ")}]`,
+          );
+        }
+        const confirmed = batch.inputs.filter((input) => verified.confirmedKeys.has(input.key));
+        if (confirmed.length > 0) {
           logger.info("[TEMPLATES] translateAll: Shopify translations registered", {
             context: "Templates",
             resourceId: batch.resId,
             locale: batch.locale,
-            fieldCount: batch.inputs.length,
+            fieldCount: confirmed.length,
           });
-          for (const input of batch.inputs) {
-            const resId = keyToResourceId.get(input.key) || resourceId;
-            successfulUpserts.push({ key: input.key, locale: input.locale, value: input.value, resId });
-          }
+          markTranslationSaved(batch.resId);
         }
+        for (const input of confirmed) {
+          const resId = keyToResourceId.get(input.key) || resourceId;
+          successfulUpserts.push({
+            key: input.key,
+            locale: input.locale,
+            value: verified.confirmedValues.get(input.key) ?? input.value,
+            resId,
+          });
+          // The response reports what Shopify stored.
+          translations[input.locale][input.key] = verified.confirmedValues.get(input.key) ?? input.value;
+        }
+        for (const input of unconfirmed) reject(input.locale, input.key);
       } catch (shopifyError) {
         const errorMsg = shopifyError instanceof Error ? shopifyError.message : String(shopifyError);
         logger.error("[TEMPLATES] translateAll: translationsRegister failed", {
@@ -178,6 +210,7 @@ export async function handleTranslateAll(
           locale: batch.locale,
         });
         failedBatches.push(`${batch.resId} (${batch.locale}): ${errorMsg}`);
+        for (const input of batch.inputs) reject(input.locale, input.key);
       }
     }
 
@@ -219,12 +252,26 @@ export async function handleTranslateAll(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: failedBatches.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: `Translated ${uniqueContent.size} fields to ${targetLocales.length} locales`,
+        ...(failedBatches.length > 0 ? { error: failedBatches.join("; ").substring(0, 1000) } : {}),
       },
     });
+    // A locale that had entries to store but got none confirmed is a failed
+    // locale for the client; partially stored locales are reported per field.
+    const locales = new Set(pendingUpserts.map((u) => u.locale));
+    const failedLocales = [...locales].filter(
+      (l) => !successfulUpserts.some((u) => u.locale === l),
+    );
+    const failures = failedBatches.length > 0
+      ? {
+          failures: failedBatches,
+          rejectedFields,
+          ...(failedLocales.length > 0 ? { failedLocales } : {}),
+        }
+      : {};
 
     if (actionType === "translateAllForLocale") {
       return json({
@@ -232,18 +279,19 @@ export async function handleTranslateAll(
         actionType: "translateAllForLocale",
         translations: translations[targetLocale] || {},
         targetLocale,
+        ...failures,
       });
     }
 
-    return json({ success: true, actionType: "translateAll", translations });
+    return json({ success: true, actionType: "translateAll", translations, ...failures });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     await db.task.update({
       where: { id: task.id },
       data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
     });
-    const refused = managedRefusalResponseFromError(error, settings);
+    const refused = managedRefusalResponseFromError(error, settings, { actionType });
     if (refused) return refused;
-    return json({ success: false, error: msg }, { status: 500 });
+    return json({ success: false, error: msg, actionType }, { status: 500 });
   }
 }

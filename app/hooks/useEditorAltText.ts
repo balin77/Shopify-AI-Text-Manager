@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { overlayWritesFromTranslations, applyAltTranslateAllAnswer, forLocaleAltResults } from "../services/alt-text-feedback.shared";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
@@ -29,12 +30,33 @@ import type {
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
+import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
+import { buildOwnSaveForm, isUnsavedPrimaryAlt } from "../services/editor/own-field-save.shared";
+import type { PartialSave } from "./useUiDataLoader";
+
+/**
+ * The medium behind an image tile, as a form field. The server resolves the
+ * image to write by this id when it is sent (a position in the editor's list is
+ * not a position in the DB order); collections and articles carry none and
+ * keep the index.
+ */
+function mediaIdField(image: unknown): { mediaId?: string } {
+  const id = (image as { mediaId?: unknown } | null | undefined)?.mediaId;
+  return typeof id === "string" && id.startsWith("gid://") ? { mediaId: id } : {};
+}
 
 // ---------------------------------------------------------------------------
 // Prop / return types
 // ---------------------------------------------------------------------------
 
 interface UseEditorAltTextProps {
+  /** Refuses (message, true) an own alt save of (item, locale) while a
+   *  "translate all" run blocks it; asked before anything is staged. */
+  refuseOwnSave?: (itemId: string | null, locale: string, opts?: { notStarted?: boolean }) => boolean;
+  /** The same rule, silent. */
+  isOwnSaveBlocked?: (itemId: string | null, locale: string) => boolean;
+  /** "Saved; the translation into the other languages was skipped". */
+  sayTranslateToOthersSkipped?: () => void;
   selectedItem: any;
   selectedItemId: string | null;
   selectedItemRef: React.MutableRefObject<any>;
@@ -57,8 +79,12 @@ interface UseEditorAltTextProps {
    * leaves it at 0.
    */
   backgroundRefreshVersion?: number;
+  /** Success text staged right before the save is submitted; `safeSubmit` binds it to that request. */
+  pendingAltTranslateToastRef: React.MutableRefObject<string | null>;
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
+  /** Item the in-flight save belongs to; the save-response handler bails without it. */
+  savedItemIdRef: React.MutableRefObject<string | null>;
   savedLocaleRef: React.MutableRefObject<string | null>;
   savedMarketIdRef: React.MutableRefObject<string>;
   isSavePendingRef: React.MutableRefObject<boolean>;
@@ -74,6 +100,9 @@ interface UseEditorAltTextProps {
   t: TranslationStrings;
   /** Item + locale + market this editor is showing — the key AI suggestions are stored under. */
   suggestionScope: SuggestionScope;
+  /** Staged right before `safeSubmit` for a save that carries only SOME alt
+   *  texts (an AI or copy button's own result); see PartialSave.altIndices. */
+  partialSaveRef: React.MutableRefObject<PartialSave | null>;
 }
 
 interface UseEditorAltTextReturn {
@@ -108,10 +137,23 @@ interface UseEditorAltTextReturn {
   handleTranslateAllAltTexts: () => void;
   /** Ref to pending copy index so save-response handler can clear loading state */
   pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
+  /** Failed copy: drop the optimistic overlay entry if it still holds the copied value. */
+  rollbackCopyAltText: () => void;
+  discardCopyAltRecord: () => void;
+  /** `source` overrides the live field map for the indices it names (what a
+   *  partial save SENT — see altValuesForSaveResponse). */
+  altBaselineSnapshot: (failedIndices?: number[], source?: Record<number, string>) => Record<number, string>;
+  getPendingCopyAltItemId: () => string | null;
   handleTranslateAllAltTextsForLocale: () => void;
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
   handleRejectAltTextSuggestion: (imageIndex: number) => void;
+  /** The primary alt of this image is an unsaved draft (copy/translate-to-all
+   *  would take it as their source, and its own Save would then purge what
+   *  they wrote). Always false on a foreign locale. */
+  isPrimaryAltUnsaved: (imageIndex: number) => boolean;
+  /** Any primary alt is an unsaved draft ("translate all alt texts"). */
+  hasUnsavedPrimaryAlts: () => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +162,9 @@ interface UseEditorAltTextReturn {
 
 export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltTextReturn {
   const {
+    refuseOwnSave,
+    isOwnSaveBlocked,
+    sayTranslateToOthersSkipped,
     selectedItem,
     selectedItemId,
     selectedItemRef,
@@ -130,11 +175,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     shopLocales,
     config,
     enabledLanguages,
-    editableValues,
-    editableValuesRef,
     backgroundRefreshVersion = 0,
-    buildFieldsForSave,
+    pendingAltTranslateToastRef,
     safeSubmit,
+    savedItemIdRef,
     savedLocaleRef,
     savedMarketIdRef,
     isSavePendingRef,
@@ -144,6 +188,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     showInfoBox,
     t,
     suggestionScope,
+    partialSaveRef,
   } = props;
 
   // ============================================================================
@@ -160,11 +205,23 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
   const imageAltTextsRef = useLatestRef(imageAltTexts);
   const originalAltTextsRef = useLatestRef(originalAltTexts);
+  const currentLanguageRef = useLatestRef(currentLanguage);
+  const selectedMarketIdRefAlt = useLatestRef(selectedMarketId);
 
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
   // Track image index of an in-flight copy save so save-response handler can clear loading
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
+  // What the in-flight copy wrote into the overlay, so a failure can undo exactly that.
+  const copyOverlayRollbackRef = useRef<{
+    itemId: string;
+    key: string;
+    index: number;
+    value: string;
+    prevField: string | undefined;
+    prevOriginal: string | undefined;
+    prevOverlay: string | undefined;
+  } | null>(null);
   // Per-locale overlay for copy operations — eliminates stale window on locale switch
   // structure: { locale: { imageIndex: altText } }
   const localAltTextOverlayRef = useRef<Record<string, Record<number, string>>>({});
@@ -196,6 +253,118 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (item?.images && item.images[index]) return item.images[index];
     if (index === 0 && item?.featuredImage) return item.featuredImage;
     return null;
+  };
+
+  const isPrimaryAltUnsaved = (imageIndex: number): boolean =>
+    isUnsavedPrimaryAlt({
+      currentLanguage,
+      primaryLocale,
+      value: imageAltTexts[imageIndex],
+      original: originalAltTexts[imageIndex],
+    });
+
+  const hasUnsavedPrimaryAlts = (): boolean => {
+    if (currentLanguage !== primaryLocale) return false;
+    const keys = new Set([...Object.keys(imageAltTexts), ...Object.keys(originalAltTexts)]);
+    for (const key of keys) if (isPrimaryAltUnsaved(Number(key))) return true;
+    return false;
+  };
+
+  const refuseUnsavedSource = (): void => {
+    showInfoBox(
+      String(t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes."),
+      "warning",
+    );
+  };
+
+  /**
+   * Save exactly these alt texts — an AI or copy button's OWN result — and
+   * nothing else. The text fields and every other alt the merchant typed stay
+   * drafts for their own Save (the save is PARTIAL, so its response moves only
+   * these indices' baselines, and a failed index stays dirty).
+   *
+   * On the primary locale an index whose text really changed travels as
+   * `changedAltTextIndices` (the merchant's purge / auto-translate policy then
+   * applies exactly as if they had typed it and pressed Save), unless the
+   * caller is about to write the translations itself (`markChanged: false`,
+   * the accept-and-translate flow).
+   */
+  const submitOwnAltSave = (opts: {
+    itemId: string;
+    locale: string;
+    /** The market the save is scoped to ("" = global; ignored on primary). */
+    marketId: string;
+    alts: Record<number, string>;
+    markChanged?: boolean;
+    fromTranslate?: boolean;
+    successToast?: string;
+    /** Record the save under this locale for the response handling (defaults
+     *  to `locale`). The foreign accept-and-translate flow writes the PRIMARY
+     *  alt while the merchant views `L`, and must not process it as primary. */
+    trackLocale?: string | null;
+    /** The alt indices of the VIEW this save stands for (default: the ones it sends). */
+    viewAltIndices?: number[];
+  }): boolean => {
+    // Before the overlay drop and the item mutation below.
+    if (refuseOwnSave?.(opts.itemId, opts.locale)) return false;
+    const isPrimary = opts.locale === primaryLocale;
+    const item = selectedItemRef.current;
+    const indices = Object.keys(opts.alts).map(Number);
+    const changed =
+      isPrimary && opts.markChanged !== false
+        ? indices.filter((i) => (opts.alts[i] ?? "") !== (getImageAtIndex(item, i)?.altText || ""))
+        : [];
+    const form = buildOwnSaveForm({
+      itemId: opts.itemId,
+      locale: opts.locale,
+      primaryLocale,
+      marketId: isPrimary ? "" : opts.marketId,
+      altTexts: opts.alts,
+      changedAltTextIndices: changed,
+      policyType: config.resourceType === "ShopPolicy" ? item?.type : undefined,
+    });
+    if (changed.length > 0) {
+      // The server deletes these images' foreign alt translations (global AND
+      // market layer) — drop them here too, exactly like the page Save does,
+      // or the editor keeps rendering a deleted alt and writes it back.
+      for (const key of Object.keys(localAltTextOverlayRef.current)) {
+        if (key === primaryLocale) continue;
+        for (const index of changed) delete localAltTextOverlayRef.current[key][index];
+      }
+      for (const index of changed) {
+        const img = getImageAtIndex(item, index) as { altTextTranslations?: Array<{ locale: string }> } | null;
+        if (img?.altTextTranslations) {
+          img.altTextTranslations = img.altTextTranslations.filter((tr) => tr.locale === primaryLocale);
+        }
+      }
+    }
+    const viewIndices = opts.viewAltIndices ?? indices;
+    const sentForView: Record<number, string> = {};
+    for (const i of viewIndices) if (opts.alts[i] !== undefined) sentForView[i] = opts.alts[i];
+    partialSaveRef.current = {
+      locale: currentLanguageRef.current,
+      marketId: selectedMarketIdRefAlt.current,
+      values: {},
+      altIndices: viewIndices,
+      altValues: sentForView,
+    };
+    if (opts.successToast) pendingAltTranslateToastRef.current = opts.successToast;
+    savedItemIdRef.current = opts.itemId;
+    if (opts.trackLocale !== null) {
+      savedLocaleRef.current = opts.trackLocale ?? opts.locale;
+      savedMarketIdRef.current = isPrimary ? "" : opts.marketId;
+    }
+    isSavePendingRef.current = true;
+    if (opts.fromTranslate) isSaveFromTranslateRef.current = true;
+    safeSubmit(form, { method: "POST" });
+    return true;
+  };
+
+  /** An AI alt result that arrived while its own save is blocked: a plain
+   *  draft through the typing path, nothing staged. */
+  const applyAltAsDraft = (imageIndex: number, value: string) => {
+    handleAltTextChange(imageIndex, value);
+    clearAltTextSuggestion(suggestionScope, imageIndex);
   };
 
   /**
@@ -242,6 +411,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       ? selectedItem.images
       : selectedItem?.featuredImage ? [selectedItem.featuredImage] : [];
     if (!selectedItem || allImages.length === 0) return;
+    // Its result is saved at once (primary alts): not even requested while a
+    // run of the item is out.
+    if (refuseOwnSave?.(selectedItem.id, primaryLocale, { notStarted: true })) return;
 
     const requestItemId = selectedItem.id;
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
@@ -262,13 +434,18 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         // Guard: discard if user switched to a different item during the request.
         if (selectedItemIdRef.current !== requestItemId) return;
         if (result.generatedAltTexts) {
-          const newAltTexts = {
-            ...imageAltTexts,
-            ...result.generatedAltTexts
-          };
-          setImageAltTexts(newAltTexts);
-          setOriginalAltTexts(newAltTexts);
-          pendingAltTextAutoSaveRef.current = newAltTexts;
+          // Only the GENERATED alts are written into the fields and saved; an
+          // alt the merchant typed for another image stays their draft. The
+          // baseline moves once the save confirms them (partial alt save).
+          const generated = result.generatedAltTexts as Record<number, string>;
+          // A run of the item started meanwhile: drafts only, nothing saved
+          // or staged (the auto-save below would purge foreign alts).
+          if (refuseOwnSave?.(requestItemId, primaryLocale)) {
+            for (const [index, value] of Object.entries(generated)) handleAltTextChange(Number(index), String(value));
+            return;
+          }
+          setImageAltTexts((prev) => ({ ...prev, ...generated }));
+          pendingAltTextAutoSaveRef.current = { ...generated };
         }
       }
     );
@@ -276,6 +453,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   const handleCopyAltText = (imageIndex: number) => {
     if (!selectedItem || !selectedItemId) return;
+    if (refuseOwnSave?.(selectedItemId, currentLanguage, { notStarted: true })) return;
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
@@ -288,9 +466,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       return;
     }
 
-    const newAltTexts = { ...imageAltTexts, [imageIndex]: sourceAltText };
-    setImageAltTexts(newAltTexts);
-    setOriginalAltTexts(newAltTexts);
+    const prevField = imageAltTexts[imageIndex];
+    const prevOriginal = originalAltTexts[imageIndex];
+    setImageAltTexts((prev) => ({ ...prev, [imageIndex]: sourceAltText }));
+    // Only THIS image's baseline: another alt the merchant typed stays a draft.
+    setOriginalAltTexts((prev) => ({ ...prev, [imageIndex]: sourceAltText }));
 
     // Write to overlay (market-folded) so switching away and back to this
     // locale/market shows the correct value immediately.
@@ -298,37 +478,117 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!localAltTextOverlayRef.current[copyOverlayKey]) {
       localAltTextOverlayRef.current[copyOverlayKey] = {};
     }
+    const prevOverlay = localAltTextOverlayRef.current[copyOverlayKey][imageIndex];
     localAltTextOverlayRef.current[copyOverlayKey][imageIndex] = sourceAltText;
+    copyOverlayRollbackRef.current = {
+      itemId: selectedItemId,
+      key: copyOverlayKey,
+      index: imageIndex,
+      value: sourceAltText,
+      prevField,
+      prevOriginal,
+      prevOverlay,
+    };
 
     markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
     pendingCopyAltTextIndexRef.current = imageIndex;
 
-    const formDataObj: Record<string, string> = {
-      action: "updateContent",
+    // ONLY this image's alt: unsaved text fields and other alts stay drafts.
+    submitOwnAltSave({
       itemId: selectedItemId,
       locale: currentLanguage,
-      primaryLocale,
+      marketId: selectedMarketId,
+      alts: { [imageIndex]: sourceAltText },
+      fromTranslate: true,
+    });
+
+    // Feedback is deferred to the save-response handler (see
+    // pendingCopyAltTextIndexRef in useUnifiedContentEditor.ts), so the box
+    // reflects the actual Shopify result and not an optimistic guess.
+  };
+
+  // The visible field and baseline may be restored only while the screen still
+  // shows the item, locale and market the copy ran on, and the index still
+  // holds the copied value (a later edit stays).
+  const canRestoreVisibleCopy = (
+    pending: NonNullable<typeof copyOverlayRollbackRef.current>,
+  ) =>
+    selectedItemIdRef.current === pending.itemId &&
+    buildLocaleKey(currentLanguageRef.current, selectedMarketIdRefAlt.current) === pending.key;
+
+  /** Item the in-flight alt copy was started for (independent of savedItemIdRef). */
+  const getPendingCopyAltItemId = () => copyOverlayRollbackRef.current?.itemId ?? null;
+
+  /** Baseline snapshot for a save response: current alt texts, except that an
+   *  index whose copy FAILED (and will be rolled back) keeps its previous
+   *  original, so the later non-functional baseline write cannot override
+   *  the rollback. */
+  const altBaselineSnapshot = (failedIndices: number[] = [], source?: Record<number, string>): Record<number, string> => {
+    const base = { ...(source ?? imageAltTextsRef.current) };
+    const pending = copyOverlayRollbackRef.current;
+    if (
+      pending &&
+      // Only while that copy is still the save being answered: a record left
+      // over from an earlier copy must never rewrite a later save's baseline.
+      pendingCopyAltTextIndexRef.current === pending.index &&
+      failedIndices.includes(pending.index) &&
+      canRestoreVisibleCopy(pending) &&
+      base[pending.index] === pending.value
+    ) {
+      if (pending.prevOriginal === undefined) delete base[pending.index];
+      else base[pending.index] = pending.prevOriginal;
+    }
+    return base;
+  };
+
+  /** A copy that LANDED: forget its rollback record, or a later unrelated
+   *  save would still be read through it. */
+  const discardCopyAltRecord = () => {
+    copyOverlayRollbackRef.current = null;
+  };
+
+  const rollbackCopyAltText = () => {
+    const pending = copyOverlayRollbackRef.current;
+    copyOverlayRollbackRef.current = null;
+    if (!pending) return;
+    const entry = localAltTextOverlayRef.current[pending.key];
+    // Only undo our own write: a later edit or copy under the same key stays.
+    if (entry && entry[pending.index] === pending.value) {
+      if (pending.prevOverlay === undefined) delete entry[pending.index];
+      else entry[pending.index] = pending.prevOverlay;
+    }
+    // Item or locale/market changed: the visible state belongs to someone else.
+    if (!canRestoreVisibleCopy(pending)) return;
+    const restore = (
+      prev: Record<number, string>,
+      previous: string | undefined,
+    ): Record<number, string> => {
+      if (prev[pending.index] !== pending.value) return prev;
+      const next = { ...prev };
+      if (previous === undefined) delete next[pending.index];
+      else next[pending.index] = previous;
+      return next;
     };
-    if (selectedMarketId) formDataObj.marketId = selectedMarketId;
-    Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
-    formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
-
-    savedLocaleRef.current = currentLanguage;
-    savedMarketIdRef.current = selectedMarketId;
-    isSavePendingRef.current = true;
-    isSaveFromTranslateRef.current = true;
-    safeSubmit(formDataObj, { method: "POST" });
-
-    showInfoBox(t.common?.copied ?? "Copied", "success");
+    setImageAltTexts((prev) => restore(prev, pending.prevField));
+    setOriginalAltTexts((prev) => restore(prev, pending.prevOriginal));
   };
 
   const handleCopyAltTextToAllLocales = (imageIndex: number) => {
     if (!selectedItem || !selectedItemId) return;
+    // Every language: any run of the item refuses it, before the overlay.
+    if (refuseOwnSave?.(selectedItemId, primaryLocale, { notStarted: true })) return;
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) return;
+
+    // Backstop for the disabled button: copying an unsaved primary alt into
+    // every language, then saving it, would purge what was just copied.
+    if (isPrimaryAltUnsaved(imageIndex)) {
+      refuseUnsavedSource();
+      return;
+    }
 
     const sourceAltText = imageAltTexts[imageIndex] || image.altText || "";
     if (!sourceAltText) {
@@ -351,41 +611,29 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
     markOperationActive(capturedItemId, `altText_${imageIndex}`, "copyToAllLocales");
 
-    const saves = targetLocales.map(locale => {
+    // The answer is READ (content-action-endpoint.shared.ts), so a locale that
+    // did not save is named instead of reported as copied.
+    runPerLocaleSavesDetailed(targetLocales, (locale) => {
       const fd = new FormData();
       fd.set("action", "updateContent");
       fd.set("itemId", capturedItemId);
       fd.set("locale", locale);
       fd.set("primaryLocale", primaryLocale);
       fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
-      // The answer is READ now (content-action-endpoint.shared.ts), so a
-      // locale that did not save is named instead of reported as copied.
-      return postContentEditorSave(fd).then((ok) => (ok === false ? locale : null));
-    });
-
-    Promise.all(saves).then((results) => {
-      const failed = results.filter((l): l is string => l !== null);
-      if (failed.length > 0) {
-        // Take back what the copy wrote up front for those locales: the
-        // overlay outranks the loaded alt texts, so left in place the editor
-        // went on showing a value that was never saved. Only the copy's own
-        // value -- anything written there since is not ours to remove.
-        for (const locale of failed) {
-          const forLocale = localAltTextOverlayRef.current[locale];
-          if (forLocale && forLocale[imageIndex] === sourceAltText) {
-            delete forLocale[imageIndex];
-          }
+      return postContentEditorSave(fd);
+    }).then(({ failed, gated }) => {
+      // Take back what the copy wrote up front for those locales: the
+      // overlay outranks the loaded alt texts, so left in place the editor
+      // went on showing a value that was never saved. Only the copy's own
+      // value -- anything written there since is not ours to remove.
+      for (const locale of failed) {
+        const forLocale = localAltTextOverlayRef.current[locale];
+        if (forLocale && forLocale[imageIndex] === sourceAltText) {
+          delete forLocale[imageIndex];
         }
-        showInfoBox(
-          String(t.common?.copyFailedLocales ?? "Copying failed for: {locales}").replace(
-            "{locales}",
-            failed.map((l) => l.toUpperCase()).join(", "),
-          ),
-          "critical",
-        );
-      } else {
-        showInfoBox(t.common?.copied ?? "Copied", "success");
       }
+      const outcome = copyOutcomeMessage(failed, { ...(t.common ?? {}), upgradeRequired: String(t.content?.upgradeRequired ?? "") || undefined }, gated);
+      showInfoBox(outcome.text, outcome.tone);
     }).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);
       if (revalidatorRef.current.state === 'idle') {
@@ -409,6 +657,14 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       return;
     }
 
+    // The view the merchant ASKED from: the result is saved there even if they
+    // moved on, and only shown while they are still looking at it.
+    const requestItemId = selectedItem.id;
+    const requestLocale = currentLanguage;
+    const requestMarketId = selectedMarketId;
+    // Saved at once: not even requested while a run writes into this language.
+    if (refuseOwnSave?.(requestItemId, requestLocale, { notStarted: true })) return;
+
     submitAIAction(
       {
         action: "translateAltText",
@@ -417,62 +673,58 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         productTitle: selectedItem.title || "",
         imageIndex: String(imageIndex),
         sourceAltText,
-        targetLocale: currentLanguage,
+        targetLocale: requestLocale,
         primaryLocale
       },
       `altText_${imageIndex}`,
       (result) => {
-        // Handle success - directly apply the translated alt-text (no suggestion box)
-        if (result.translatedAltText) {
-          const translatedAltText = result.translatedAltText as string;
-
-          // Use functional update to avoid stale closure
-          setImageAltTexts(prev => {
-            const newAltTexts = { ...prev, [imageIndex]: translatedAltText };
-
-            // Skip next data load to prevent revalidation from overwriting
-
-
-            // Auto-save immediately
-            const itemId = selectedItemRef.current?.id;
-            if (itemId) {
-              const formDataObj: Record<string, string> = {
-                action: "updateContent",
-                itemId,
-                locale: currentLanguage,
-                primaryLocale,
-              };
-              if (selectedMarketId) formDataObj.marketId = selectedMarketId;
-              Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
-              formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
-
-              savedLocaleRef.current = currentLanguage;
-              savedMarketIdRef.current = selectedMarketId;
-              isSavePendingRef.current = true;
-              isSaveFromTranslateRef.current = true;
-              safeSubmit(formDataObj, { method: "POST" });
-            }
-
-            // Update original alt-texts so hasChanges becomes false
-            setOriginalAltTexts(newAltTexts);
-
-            return newAltTexts;
-          });
-
-          // Show success toast
+        // Directly apply the translated alt-text (no suggestion box) and save
+        // THIS image's alt immediately — and only it.
+        if (!result.translatedAltText) return;
+        if (selectedItemIdRef.current !== requestItemId) return;
+        const translatedAltText = result.translatedAltText as string;
+        // The save is answered against the view on screen (its baseline, its
+        // mirror of the alt): if the merchant switched language or market
+        // meanwhile there is no field for this result any more — say so
+        // rather than write it somewhere they are not looking.
+        const viewing =
+          currentLanguageRef.current === requestLocale && selectedMarketIdRefAlt.current === requestMarketId;
+        if (!viewing) {
           showInfoBox(
-            t.common?.fieldTranslatedAndSaved
-              ?.replace("{fieldType}", "Alt-Text")
-              || "Alt-Text translated and saved successfully",
-            "success"
+            String(
+              (t.imageManager as Record<string, unknown> | undefined)?.altAiResultDiscarded ??
+                "The generated alt text was not applied because you switched language or market.",
+            ),
+            "warning",
           );
+          return;
         }
+        // A run into this language started meanwhile: a draft, nothing saved.
+        if (refuseOwnSave?.(requestItemId, requestLocale)) {
+          handleAltTextChange(imageIndex, translatedAltText);
+          return;
+        }
+        setImageAltTexts((prev) => ({ ...prev, [imageIndex]: translatedAltText }));
+        submitOwnAltSave({
+          itemId: requestItemId,
+          locale: requestLocale,
+          marketId: requestMarketId,
+          alts: { [imageIndex]: translatedAltText },
+          fromTranslate: true,
+          // Success is reported by the save-response handler once Shopify
+          // confirmed the save; a failed save shows its own error instead.
+          successToast:
+            t.common?.fieldTranslatedAndSaved?.replace("{fieldType}", "Alt-Text") ||
+            "Alt-Text translated and saved successfully",
+        });
       }
     );
   };
 
   const handleTranslateAltTextToAllLocales = (imageIndex: number) => {
     if (!selectedItem) return;
+    // Every language: not even requested while any run of the item is out.
+    if (refuseOwnSave?.(selectedItem.id, primaryLocale, { notStarted: true })) return;
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
@@ -483,6 +735,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         t.common?.noTargetLanguagesSelected || "No target languages selected",
         "warning"
       );
+      return;
+    }
+
+    // Backstop for the disabled button: the primary alt is an unsaved draft,
+    // and its own Save would purge what this writes into every language.
+    if (isPrimaryAltUnsaved(imageIndex)) {
+      refuseUnsavedSource();
       return;
     }
 
@@ -503,6 +762,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         productId: selectedItem.id,
         productTitle: selectedItem.title || "",
         imageIndex: String(imageIndex),
+        ...mediaIdField(image),
         sourceAltText,
         targetLocales: JSON.stringify(targetLocales),
         primaryLocale
@@ -531,6 +791,18 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           );
         }
 
+        // The confirmed translations replace whatever an earlier copy-to-all
+        // left in the overlay (it outranks the loaded values), and the open
+        // language shows them at once.
+        for (const { locale, value } of overlayWritesFromTranslations(translatedAltTexts, failedLocales)) {
+          if (!localAltTextOverlayRef.current[locale]) localAltTextOverlayRef.current[locale] = {};
+          localAltTextOverlayRef.current[locale][imageIndex] = value;
+          if (locale === currentLanguageRef.current && !selectedMarketIdRefAlt.current) {
+            setImageAltTexts((prev) => ({ ...prev, [imageIndex]: value }));
+            setOriginalAltTexts((prev) => ({ ...prev, [imageIndex]: value }));
+          }
+        }
+
         // Revalidate to fetch fresh data from the database
         if (revalidatorRef.current.state === 'idle') {
           try {
@@ -556,6 +828,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         t.common?.noTargetLanguagesSelected || "No target languages selected",
         "warning"
       );
+      return;
+    }
+
+    // Backstop for the disabled button (see handleTranslateAltTextToAllLocales).
+    if (hasUnsavedPrimaryAlts()) {
+      refuseUnsavedSource();
       return;
     }
 
@@ -613,23 +891,26 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           );
         }
 
-        // Update UI state with translated alt texts for current language
-        if (result.translatedResults && currentLanguage !== primaryLocale) {
-          const translatedForCurrentLocale: Record<number, string> = {};
-          const results = result.translatedResults as Record<string, Record<string, string>>;
-          for (const [imgIdxStr, localeMap] of Object.entries(results)) {
-            const idx = parseInt(imgIdxStr, 10);
-            if (!failedImages.includes(idx) && localeMap[currentLanguage]) {
-              translatedForCurrentLocale[idx] = localeMap[currentLanguage];
-            }
-          }
-          if (Object.keys(translatedForCurrentLocale).length > 0) {
-            setImageAltTexts(prev => {
-              const updated = { ...prev, ...translatedForCurrentLocale };
-              setOriginalAltTexts(updated);
-              return updated;
-            });
-          }
+        // Confirmed values go into the overlay for EVERY locale, so a language
+        // switch (or a stale earlier copy) never shows older text — and the
+        // language on screen NOW (not the one the button was pressed in, which
+        // is always the primary) shows them at once.
+        const translatedForCurrentLocale = applyAltTranslateAllAnswer(
+          localAltTextOverlayRef.current,
+          result.translatedResults as Record<string, Record<string, string>> | undefined,
+          failedImages,
+          {
+            locale: currentLanguageRef.current,
+            marketId: selectedMarketIdRefAlt.current,
+            primaryLocale,
+            current: imageAltTextsRef.current,
+            original: originalAltTextsRef.current,
+          },
+        );
+        if (Object.keys(translatedForCurrentLocale).length > 0) {
+          setImageAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
+          // Only the translated indices are saved; anything else stays a draft.
+          setOriginalAltTexts(prev => ({ ...prev, ...translatedForCurrentLocale }));
         }
         if (revalidatorRef.current.state === 'idle') {
           try {
@@ -644,6 +925,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   // Translate ALL image alt-texts into ONE foreign language (foreign locale button)
   const handleTranslateAllAltTextsForLocale = () => {
+    const requestedLocale = currentLanguage;
+    const requestItemId = selectedItem?.id ?? null;
     const allImages: ContentImage[] = selectedItem?.images?.length > 0
       ? selectedItem.images
       : selectedItem?.featuredImage ? [selectedItem.featuredImage] : [];
@@ -682,23 +965,39 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       (result) => {
         const failedImages: number[] = (result.failedImages as number[]) || [];
 
-        // Only accept translations that were successfully saved to Shopify
-        if (result.translatedAltTexts) {
-          const translated: Record<number, string> = {};
-          Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
-            const idx = parseInt(indexStr, 10);
-            if (!failedImages.includes(idx)) {
-              translated[idx] = String(text);
-            }
-          });
-
+        // Only accept translations that were successfully saved to Shopify.
+        // The overlay and the fields belong to the item showing NOW: another
+        // item's answer is the server's business (its failure is still said).
+        if (result.translatedAltTexts && selectedItemIdRef.current === requestItemId) {
+          // Into the overlay too (the language-switch effect rebuilds from the
+          // stale item, so state alone vanished on the next switch), under the
+          // locale they were written for; shown only while that locale is on
+          // screen in the global view, and never over a typed draft.
+          const translated = applyAltTranslateAllAnswer(
+            localAltTextOverlayRef.current,
+            forLocaleAltResults(result.translatedAltTexts as Record<string, string>, requestedLocale),
+            failedImages,
+            {
+              locale: currentLanguageRef.current,
+              marketId: selectedMarketIdRefAlt.current ?? "",
+              primaryLocale,
+              current: imageAltTextsRef.current,
+              original: originalAltTextsRef.current,
+            },
+          );
           if (Object.keys(translated).length > 0) {
-            setImageAltTexts(prev => {
-              const updated = { ...prev, ...translated };
-              setOriginalAltTexts(updated);
-              return updated;
-            });
-            // No auto-save needed - server already saved to Shopify and DB
+            setImageAltTexts(prev => ({ ...prev, ...translated }));
+            // Only the translated indices are saved; anything else stays a draft.
+            setOriginalAltTexts(prev => ({ ...prev, ...translated }));
+          }
+          // The server already saved to Shopify and DB; reload so the item
+          // (and the missing-translation marker) catch up.
+          if (revalidatorRef.current.state === 'idle') {
+            try {
+              revalidatorRef.current.revalidate();
+            } catch (error) {
+              debugLog.revalidate(' Error during revalidation (ignored):', error);
+            }
           }
         }
 
@@ -717,19 +1016,28 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const handleAcceptAltTextSuggestion = (imageIndex: number) => {
     const suggestion = altTextSuggestions[imageIndex];
     if (!suggestion || !selectedItemId) return;
+    if (refuseOwnSave?.(selectedItemId, currentLanguage)) {
+      applyAltAsDraft(imageIndex, suggestion);
+      return;
+    }
 
-    // Create the new alt-texts with the accepted suggestion
-    const newAltTexts = {
-      ...imageAltTexts,
-      [imageIndex]: suggestion
-    };
+    setImageAltTexts((prev) => ({ ...prev, [imageIndex]: suggestion }));
+    clearAltTextSuggestion(suggestionScope, imageIndex);
 
-    // Update the UI state
-    setImageAltTexts(newAltTexts);
+    // Accepting an AI suggestion SAVES it — this image's alt only. The text
+    // fields and the other images' typed alts stay drafts for their own Save.
+    debugLog.altText('Accepting AI suggestion for image:', imageIndex, 'saving that alt only');
+    submitOwnAltSave({
+      itemId: selectedItemId,
+      locale: currentLanguage,
+      marketId: selectedMarketId,
+      alts: { [imageIndex]: suggestion },
+    });
 
     // Immediately update the in-memory item so the fallback display
     // (images[index]?.altText) shows the correct value even if imageAltTexts
-    // state gets cleared during revalidation cycles.
+    // state gets cleared during revalidation cycles. AFTER the save was built:
+    // the "did the primary alt change" question reads the item's old value.
     const item = selectedItemRef.current;
     if (currentLanguage === primaryLocale) {
       if (item?.images?.[imageIndex]) {
@@ -738,53 +1046,23 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         item.featuredImage.altText = suggestion;
       }
     }
-
-    clearAltTextSuggestion(suggestionScope, imageIndex);
-
-
-
-    // Auto-save immediately after accepting AI suggestion
-    debugLog.altText('Accepting AI suggestion for image:', imageIndex, 'auto-saving...');
-
-    // Build form data for save
-    const formDataObj: Record<string, string> = {
-      action: "updateContent",
-      itemId: selectedItemId,
-      locale: currentLanguage,
-      primaryLocale,
-    };
-    if (selectedMarketId) formDataObj.marketId = selectedMarketId;
-
-    // Add field values - for foreign locales, only send fields that actually changed
-    Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
-
-    // Add the new image alt-texts
-    formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
-
-    savedLocaleRef.current = currentLanguage;
-    savedMarketIdRef.current = selectedMarketId;
-    isSavePendingRef.current = true;
-    safeSubmit(formDataObj, { method: "POST" });
-
-    // Update original alt-texts so hasChanges becomes false after save completes
-    setOriginalAltTexts(newAltTexts);
   };
 
   const handleAcceptAndTranslateAltText = (imageIndex: number) => {
     const suggestion = altTextSuggestions[imageIndex];
     if (!suggestion || !selectedItemId) return;
+    // It writes the primary alt and every language: ANY run of the item
+    // blocks it, before the item, the overlay or a save is touched.
+    if (refuseOwnSave?.(selectedItemId, primaryLocale)) {
+      applyAltAsDraft(imageIndex, suggestion);
+      return;
+    }
 
     const item = selectedItemRef.current;
     if (!item) return;
 
-    // Create the new alt-texts with the accepted suggestion
-    const newAltTexts = {
-      ...imageAltTexts,
-      [imageIndex]: suggestion
-    };
-
     // Update the UI state
-    setImageAltTexts(newAltTexts);
+    setImageAltTexts((prev) => ({ ...prev, [imageIndex]: suggestion }));
 
     clearAltTextSuggestion(suggestionScope, imageIndex);
 
@@ -800,23 +1078,22 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (currentLanguage !== primaryLocale) {
       const L = currentLanguage;
       const requestItemId = selectedItemId;
-      setOriginalAltTexts(newAltTexts);
       const targetOthers = enabledLanguages.filter(l => l !== primaryLocale && l !== L);
 
-      // Persist the accepted foreign alt-text EXACTLY in `L`.
+      // Persist the accepted foreign alt-text EXACTLY in `L` — this image's
+      // alt only (globally, as this flow always has).
       const saveForeignExact = () => {
-        const foreignForm: Record<string, string> = {
-          action: "updateContent",
+        submitOwnAltSave({
           itemId: requestItemId,
           locale: L,
-          primaryLocale,
-        };
-        foreignForm.imageAltTexts = JSON.stringify(newAltTexts);
-        savedLocaleRef.current = L;
-        savedMarketIdRef.current = "";
-        isSavePendingRef.current = true;
-        isSaveFromTranslateRef.current = true;
-        safeSubmit(foreignForm, { method: "POST" });
+          marketId: "",
+          alts: { [imageIndex]: suggestion },
+          fromTranslate: true,
+          // Answered against the view: only while it is still `L` (global)
+          // does this save stand for the field on screen.
+          viewAltIndices:
+            currentLanguageRef.current === L && !selectedMarketIdRefAlt.current ? [imageIndex] : [],
+        });
       };
 
       // Translate the accepted foreign alt-text into the primary language.
@@ -835,6 +1112,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         `altText_${imageIndex}`,
         (result) => {
           if (selectedItemIdRef.current !== requestItemId) return;
+          // A run of the item started while the AI worked: none of the three
+          // steps below is made; the accepted text stays the field's draft.
+          if (refuseOwnSave?.(requestItemId, primaryLocale)) return;
           const primaryTranslated = ((result.translatedAltText as string) || "").trim();
 
           // 1. Save the accepted foreign alt-text exactly in `L`.
@@ -846,17 +1126,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           //    foreign alt saved one line above and the ones step 3 is about to
           //    write (shopify-content.service.ts, `featuredAltChanged`).
           if (primaryTranslated) {
-            const primaryForm: Record<string, string> = {
-              action: "updateContent",
-              itemId: requestItemId,
-              locale: primaryLocale,
-              primaryLocale,
-            };
-            primaryForm.imageAltTexts = JSON.stringify({ [imageIndex]: primaryTranslated });
-            // Products reject a primary-locale update without a non-empty title.
-            if (config.contentType === "products") {
-              primaryForm.title = getItemFieldValue(item, "title", primaryLocale, config);
-            }
             // Do NOT set savedLocaleRef to primaryLocale. Save A (locale L) was
             // submitted immediately and this save is queued behind it; the
             // save-response effect reads the single shared savedLocaleRef, and
@@ -864,9 +1133,19 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             // the FOREIGN alt-text (held in imageAltTextsRef) into the primary
             // in-memory image (a leak). The server still persists this as the
             // primary base alt-text via the form `locale` field.
-            isSavePendingRef.current = true;
-            isSaveFromTranslateRef.current = true;
-            safeSubmit(primaryForm, { method: "POST" });
+            // Same item as save A, which already claimed it. PARTIAL with no
+            // alt index of the `L` view: it writes the PRIMARY alt, so nothing
+            // on screen is saved by it.
+            submitOwnAltSave({
+              itemId: requestItemId,
+              locale: primaryLocale,
+              marketId: "",
+              alts: { [imageIndex]: primaryTranslated },
+              markChanged: false,
+              fromTranslate: true,
+              trackLocale: null,
+              viewAltIndices: [],
+            });
           }
 
           // 3. Translate into the OTHER foreign locales directly from `L`.
@@ -878,6 +1157,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
                 productId: item.id,
                 productTitle: item.title || "",
                 imageIndex: String(imageIndex),
+                ...mediaIdField(item.images?.[imageIndex]),
                 sourceAltText: suggestion,
                 targetLocales: JSON.stringify(targetOthers),
                 primaryLocale: L,
@@ -907,9 +1187,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Immediately update the in-memory item so the fallback display
     // (images[index]?.altText) shows the correct value even if imageAltTexts
     // state gets cleared during revalidation cycles.
-    if (item.images?.[imageIndex]) {
-      item.images[imageIndex].altText = suggestion;
-    }
+    // The in-memory item takes the new primary alt only once its own save
+    // went out (below) -- a refused save must leave the item untouched.
+    const mirrorPrimaryAlt = () => {
+      if (item.images?.[imageIndex]) item.images[imageIndex].altText = suggestion;
+    };
 
     // Check target locales first
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
@@ -918,21 +1200,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         t.common?.noTargetLanguagesEnabled || "No target languages enabled",
         "warning"
       );
-      // No translations needed, just save the primary text directly
-
-      const formDataObj: Record<string, string> = {
-        action: "updateContent",
+      // No translations needed, just save this primary alt directly.
+      if (submitOwnAltSave({
         itemId: selectedItemId,
         locale: primaryLocale,
-        primaryLocale,
-      };
-      Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
-      formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
-      savedLocaleRef.current = primaryLocale;
-      savedMarketIdRef.current = "";
-      isSavePendingRef.current = true;
-      safeSubmit(formDataObj, { method: "POST" });
-      setOriginalAltTexts(newAltTexts);
+        marketId: "",
+        alts: { [imageIndex]: suggestion },
+      })) mirrorPrimaryAlt();
       return;
     }
 
@@ -940,26 +1214,26 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
     debugLog.altText('Saving primary alt-text first, then will translate to all locales');
 
-    // Step 1: Save the primary alt-text first
-    const formDataObj: Record<string, string> = {
-      action: "updateContent",
+    // Step 1: Save the primary alt-text first — this image's alt only, and
+    // without `changedAltTextIndices`: step 2 writes its translations, which a
+    // purge of the same save would otherwise delete.
+    const savedPrimary = submitOwnAltSave({
       itemId: selectedItemId,
       locale: primaryLocale,
-      primaryLocale,
-    };
-    Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
-    formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
-    savedLocaleRef.current = primaryLocale;
-    savedMarketIdRef.current = "";
-    isSavePendingRef.current = true;
-    safeSubmit(formDataObj, { method: "POST" });
-    setOriginalAltTexts(newAltTexts);
+      marketId: "",
+      alts: { [imageIndex]: suggestion },
+      markChanged: false,
+    });
+    // Never translate an alt whose own save did not go out.
+    if (!savedPrimary) return;
+    mirrorPrimaryAlt();
 
     // Step 2: Translate to all locales
     safeSubmit({
       action: "translateAltTextToAllLocales",
       productId: item.id,
       imageIndex: String(imageIndex),
+      ...mediaIdField(item.images?.[imageIndex]),
       sourceAltText: suggestion,
       targetLocales: JSON.stringify(targetLocales)
     }, { method: "POST" });
@@ -1097,6 +1371,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleCopyAltText,
     handleCopyAltTextToAllLocales,
     pendingCopyAltTextIndexRef,
+    rollbackCopyAltText,
+    discardCopyAltRecord,
+    altBaselineSnapshot,
+    getPendingCopyAltItemId,
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts,
@@ -1104,5 +1382,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleAcceptAltTextSuggestion,
     handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
+    isPrimaryAltUnsaved,
+    hasUnsavedPrimaryAlts,
   };
 }

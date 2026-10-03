@@ -10,8 +10,9 @@
  *   from linked/metaobject options (excluded from primary editing)
  */
 
-import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
+import { Card, BlockStack, Text, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
 import { FieldClearOverlay, FieldLabel } from "./FieldChrome";
+import { SingleLineTextField } from "./SingleLineTextField";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
@@ -372,11 +373,10 @@ export function OptionsField({
                             onClear={() => onOptionNameChange(option.id, "")}
                             hasValue={!!translation.name}
                           >
-                            <TextField
+                            <SingleLineTextField
                               label={<FieldLabel label={t.optionNameLabel || `Name (${localeName})`} />}
                               value={translation.name || ""}
                               onChange={(value) => onOptionNameChange(option.id, value)}
-                              autoComplete="off"
                             />
                           </FieldClearOverlay>
                         </div>
@@ -423,7 +423,7 @@ export function OptionsField({
                                     onClear={() => onOptionValueChange(option.id, valueIndex, "")}
                                     hasValue={!!translation.values[valueIndex]}
                                   >
-                                    <TextField
+                                    <SingleLineTextField
                                       label={
                                         <FieldLabel
                                           label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
@@ -431,7 +431,6 @@ export function OptionsField({
                                       }
                                       value={translation.values[valueIndex] || ""}
                                       onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
-                                      autoComplete="off"
                                     />
                                   </FieldClearOverlay>
                                 </div>

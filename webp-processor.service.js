@@ -30,6 +30,7 @@ import sharp from "sharp";
 import crypto from "crypto";
 import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
 import { refundImageOperations } from "./image-op-refund.js";
+import { rekeyLocalizedMediaAfterConversion } from "./localized-media-rekey.js";
 import {
   WEBP_FAILURE_LIST_MAX,
   WEBP_FAILURE_MESSAGE_MAX,
@@ -929,6 +930,26 @@ export class WebPProcessorService {
             data: { url: resolvedUrl },
           }).catch(() => {});
         }
+      }
+
+      // 9b. Carry the per-language replacement images (custom.localized_media)
+      //     over to the new medium. Deliberately AFTER the new media exists, the
+      //     old one is deleted and its URL is resolved: the entry's filename
+      //     comes from the new CDN URL, and on every success path an entry then
+      //     points at a medium that exists. Best effort - never fails the
+      //     conversion; a failed re-key leaves orphans the editor lists.
+      if (mediaId && newMediaId) {
+        const outcome = await rekeyLocalizedMediaAfterConversion({
+          fetchFn: fetchWithTimeout,
+          shopifyApiUrl,
+          headers,
+          productId,
+          oldMediaId: mediaId,
+          newMediaId,
+          resolvedUrl,
+          fetchUrl: () => fetchNewMediaUrl(shopifyApiUrl, headers, newMediaId),
+        });
+        console.log(`[WebPProcessor] Localized media re-key for ${mediaId} -> ${newMediaId}: ${outcome}`);
       }
 
       // 10. Mark task as completed

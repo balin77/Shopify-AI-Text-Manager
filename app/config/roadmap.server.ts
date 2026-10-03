@@ -409,7 +409,25 @@ export const ROADMAP: RoadmapEntry[] = [
       de: "Hintergründe und Szenen für Produkte, von denen es nur ein Freisteller-Foto gibt.",
       es: "Fondos y escenas para productos de los que solo hay un recorte.",
     },
-    notes: "CATALOGUE imagery — the picture on the product page. The ad-suite entry also generates images, but those are campaign creatives. If both are ever built, one image-generation plumbing serves both; decide that once, not twice.",
+    notes: "CATALOGUE imagery — the picture on the product page. The ad-suite entry also generates images, but those are campaign creatives. If both are ever built, one image-generation plumbing serves both; decide that once, not twice. image-translation is the third consumer of that plumbing (2026-09-30).",
+  },
+  {
+    id: "image-translation",
+    visibility: "public",
+    status: "considering",
+    area: "media",
+    title: {
+      en: "Translate the text inside an image",
+      de: "Text im Bild übersetzen",
+      es: "Traducir el texto dentro de una imagen",
+    },
+    body: {
+      en: "The AI reads the text in a picture and creates a copy with that text in another language. You check it before it goes live, and it becomes that language's image.",
+      de: "Die KI liest den Text in einem Bild und erstellt eine Kopie mit diesem Text in einer anderen Sprache. Sie prüfen sie, bevor sie live geht, und sie wird das Bild dieser Sprache.",
+      es: "La IA lee el texto de una imagen y crea una copia con ese texto en otro idioma. Usted la revisa antes de publicarla y pasa a ser la imagen de ese idioma.",
+    },
+    notes: "PREPARED 2026-09-30 (not built): every custom.localized_media entry already carries origin `a` (manual|ai) and source stamp `s`; the product gallery panel shows \"original changed\" from the stamp and an AI badge from the origin; setLocalizedImage (localized-media.server.ts) takes `origin`, so this feature writes through the same echo-confirmed function with origin \"ai\" — the product page actions (localizedMediaSet) accept only manual. Theme images have no origin field (a translation value is just a reference); if AI-made theme images need marking, that is a decision for this stage. Stage 2 of localized-images (owner, 2026-09-30): comes with image generation, not before — it depends on BOTH that image-generation plumbing (merchant's own key, rotating providers, no vendor wired into the core) and the per-language image model localized-images builds; it only FILLS that model (origin: ai). Flow: vision pre-check whether the image carries text at all (the alt-text vision path exists) -> image edit with target locale + glossary -> preview -> merchant confirms -> staged upload -> assigned as the locale's replacement. Never unattended: prices, sizes, logos and legal text inside an image are exactly what a model gets wrong, and nothing in this app would ever re-read the result. Staleness from the source stamp (source file id + updatedAt) that localized-images stores from day one, same idea as the digest baselines. Competitor reference: one competitor offers OCR image translation (COMPETITIVE_ANALYSIS.md feature matrix).",
+    ref: "docs/plans/PLAN_LOCALIZED_IMAGES.md",
   },
   {
     id: "annual-plans",
@@ -502,6 +520,25 @@ export const ROADMAP: RoadmapEntry[] = [
   },
 
   // ── Shipped (newest first) ────────────────────────────────────────────
+  {
+    id: "localized-images",
+    visibility: "public",
+    status: "shipped",
+    area: "translations",
+    shippedOn: "2026-10-02",
+    title: {
+      en: "Different images and videos per language",
+      de: "Andere Bilder und Videos je Sprache",
+      es: "Imágenes y vídeos distintos por idioma",
+    },
+    body: {
+      en: "A product photo with Spanish labels for the Spanish shop, a dubbed product video for the French one, a banner with Italian text — per language, and per market if you like. Product images and videos (including YouTube and Vimeo links) are swapped in the product gallery — and, with the app’s Open Graph and structured-data embeds on, in the main image shown when sharing and the images search engines read; theme images such as banners and the logo are chosen per language in the app’s theme content editor. Collection cards, the cart and sales-channel feeds keep the original.",
+      de: "Ein Produktfoto mit spanischer Beschriftung für den spanischen Shop, ein vertontes Produktvideo für den französischen, ein Banner mit italienischem Text — pro Sprache und auf Wunsch pro Markt. Produktbilder und -videos (auch YouTube- und Vimeo-Links) werden in der Produktgalerie ausgetauscht — und mit den App-Einbettungen für Open Graph und strukturierte Daten auch im Hauptbild beim Teilen und in den Bildern, die Suchmaschinen lesen; Theme-Bilder wie Banner und Logo wählen Sie je Sprache unter Inhalte → Theme. Kollektionskarten, Warenkorb und Verkaufskanal-Feeds zeigen weiter das Original.",
+      es: "Una foto de producto con etiquetas en español para la tienda española, un vídeo de producto doblado para la francesa, un banner con texto en italiano — por idioma y, si lo desea, por mercado. Las imágenes y vídeos de producto (también enlaces de YouTube y Vimeo) se cambian en la galería de producto — y, con las inserciones de Open Graph y datos estructurados de la app, en la imagen principal al compartir y en las imágenes que leen los buscadores; las imágenes del tema, como banners y el logo, se eligen por idioma en Contenido → Tema. Las tarjetas de colección, el carrito y los feeds de canales de venta mantienen el original.",
+    },
+    notes: "SHIPPED 2026-10-02 (Pro and up, gated with the image manager via canAccessVariantImageManagerInEnv; theme images ride the theme editor, also Pro and up). Compare page row imagesPerLanguage flipped to yes, COMPETITIVE_ANALYSIS.md §1.2/§2.1 updated. Not covered: collection cards, cart, channel feeds; collection/article images; OCR stays image-translation. STATUS 2026-10-01: VIDEOS per language built too (owner request): product videos 1:1 within their kind — a Shopify-hosted video by another Video file, YouTube/Vimeo by another YouTube/Vimeo link — same metafield (`x` kind field), the asset swaps <video> sources and <iframe> embed addresses incl. inside <template>; theme video settings are kept away from the AI (isThemeMediaValue). Unmeasured: the hosted-video key (hash directory of the CDN sources) on a live storefront; JSON-LD VideoObject keeps the original (PLAN §4.21-26). STATUS 2026-09-30: Phases 0, 1a and 1b are BUILT on branch ccr-d2c55c90-urvm3n (owner: per language AND per market, products + theme only, 1:1 replacement only). Built: the AI guard for image values (isThemeImageReference in every theme AI path + survivesValuePrompt), the theme-image probe (Settings → Probes → Translation), the themeImage field in the theme editor (picker per language/market, saves through the ordinary theme save path), the product card + the products page actions localizedMediaLoad/Set/Remove (via /api/content-editor-action) writing custom.localized_media with echo confirmation (no DB mirror — the metafield is the one store), the localized-media app embed + asset and cp-localized-image snippet for og:image/JSON-LD. Deliberately NOT marked shipped: the theme half rests on the unmeasured changelog claim until the probe has answered YES on a live shop, and nothing is deployed. Flip to shipped (and the compare page row imagesPerLanguage) the day both are true. Original note: added 2026-09-30 as the one real functional gap in translation (COMPETITIVE_ANALYSIS.md §1.2 and the compare page's imagesPerLanguage row, which stays 'Not yet' until this ships). Two halves with different platform support, see the plan. (A) THEME images: image_picker settings are translatable through translationsRegister (value shopify://shop_images/<file>), per locale AND per market — native, no storefront trick. Our theme sync already picks them up as ordinary text keys; the UI must render them as an image picker and they must NEVER reach the AI (templates-translate-all sends every non-empty value today — check with a probe first whether this is a live bug). (B) PRODUCT media: not translatable in Shopify at all (MediaImage carries only `alt`, measured). Competitors swap per language in the storefront. Our advantage: variant-gallery-embed already replaces the native gallery, so the locale is one more branch there, and og:image + JSON-LD come from OUR blocks, so the localized image reaches social previews and search engines server-side — which a JS-only swap cannot. Data model: app-owned metaobject (locale, optional market, source media, replacement file_reference) referenced from the product, so Liquid gets a real image object for image_url. Logic in assets/, not blocks/ (100 KiB Liquid budget). Stated limits: channel feeds (Google, Shop app, AI channels) keep the primary image; collection cards/cart need a fragile JS swap and are a separate decision. Carry origin (manual/ai) and a source stamp from day one so image-translation only fills the model. No new scopes needed. Phase 0 is a MEASUREMENT (probe), not code.",
+    ref: "docs/plans/PLAN_LOCALIZED_IMAGES.md",
+  },
   {
     id: "public-website",
     visibility: "public",

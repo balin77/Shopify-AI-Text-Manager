@@ -80,6 +80,7 @@ export type PricingRowId =
   | "autoTranslate"
   | "productImages"
   | "imageSuite"
+  | "mediaPerLanguage"
   | "imageOperations"
   | "seoAudit"
   | "pageSpeed"
@@ -137,6 +138,10 @@ export const PRICING_GROUPS: ReadonlyArray<{ id: PricingGroupId; rows: PricingRo
     rows: [
       { id: "productImages", value: (l) => ({ text: l.productImages === "all" ? "allImages" : "featuredOnly" }) },
       { id: "imageSuite", value: (l) => l.variantImageManager },
+      // Images and videos per language/market: the product replacement is gated
+      // with the image manager (canAccessVariantImageManagerInEnv), theme images
+      // ride the theme editor, which is Pro and up as well.
+      { id: "mediaPerLanguage", value: (l) => l.variantImageManager },
       { id: "imageOperations", value: (l) => l.monthlyImageOperations },
     ],
   },

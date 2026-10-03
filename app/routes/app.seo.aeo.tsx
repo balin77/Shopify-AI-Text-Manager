@@ -73,6 +73,7 @@ import {
   type RobotsRuleImpact,
 } from "../services/seo/aeo.service";
 import type { DataResponse } from "~/types/data-response";
+import { appFetch } from "~/utils/app-fetch";
 
 /** Placeholder status for the plan-gated loader branch — see the shape note below. */
 const GATED_DISCOVERY_STATUS: AiDiscoveryStatus = {
@@ -435,7 +436,7 @@ function DiscoveryIntroEditor({
       fd.set("file", file);
       fd.set("instruction", instruction);
       fd.set("current", text);
-      const res = await fetch("/api/ai", { method: "POST", body: fd });
+      const res = await appFetch("/api/ai", { method: "POST", body: fd });
       const j = await res.json();
       if (!j?.success || typeof j.text !== "string" || !j.text) {
         setAiError(a.introAiFailed);
@@ -663,7 +664,7 @@ export default function SeoAeo() {
       // VALID_CONTENT_TYPES before it reaches the switch. Mirrors seoCrawl.
       fd.set("action", "seoRobotsAdvice");
       fd.set("contentType", "products");
-      const res = await fetch("/api/ai", { method: "POST", body: fd });
+      const res = await appFetch("/api/ai", { method: "POST", body: fd });
       const j = await res.json();
       if (!j?.success) {
         setAdviceError(a.aiFixFailed);

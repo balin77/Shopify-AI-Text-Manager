@@ -128,7 +128,8 @@ export const guideDe: GuideCopy = {
         {
           heading: "Speichern",
           paragraphs: [
-            "Nichts wird geschrieben, bevor Sie speichern. Sobald Sie etwas ändern, erscheint oben Shopifys Speicherleiste mit „Speichern“ und „Verwerfen“. Das gilt auch für Schalter in den Einstellungen: Eine Änderung ist ein Entwurf, bis Sie sie speichern.",
+            "Was Sie tippen, wird erst geschrieben, wenn Sie speichern. Sobald Sie etwas ändern, erscheint oben Shopifys Speicherleiste mit „Speichern“ und „Verwerfen“. Das gilt auch für Schalter in den Einstellungen: Eine Änderung ist ein Entwurf, bis Sie sie speichern.",
+            "Die Knöpfe für KI und Kopieren in den Editoren speichern dagegen sofort — aber nur das eine Feld, auf das sie wirken: ein übernommener KI-Vorschlag, eine Übersetzung in die gerade offene Sprache, ein kopierter Text. Was Sie in anderen Feldern getippt und noch nicht gespeichert haben, bleibt ein Entwurf. Solange ein solches Speichern noch läuft, wechselt die App nicht die Sprache, den Markt oder das Produkt, sondern bittet Sie, einen Moment zu warten und dann erneut zu wechseln. Knöpfe, die den Text der Hauptsprache in alle Sprachen kopieren oder übersetzen, sind gesperrt, solange dieser Text ungespeicherte Änderungen hat — speichern Sie ihn zuerst. Im Bulk-Editor bleibt alles ein Entwurf, bis Sie dort speichern.",
           ],
         },
         {
@@ -156,6 +157,7 @@ export const guideDe: GuideCopy = {
             "Varianten-Galerie — zeigt pro Variante die passenden Bilder.",
             "Sprach- und Länderauswahl — ein Umschalter auf Basis von Shopifys eigener Lokalisierung.",
             "Direktübersetzungen — übersetzt Texte anderer Apps.",
+            "Bilder und Videos je Sprache — zeigt die Produktbilder und -videos, die Sie pro Sprache oder Markt ersetzt haben.",
             "Web Vitals — misst die Ladezeit bei echten Besuchern.",
           ],
         },
@@ -251,7 +253,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Vorschlag annehmen",
           paragraphs: [
-            "Das Ergebnis landet als Vorschlag im Feld. Sie können ihn übernehmen, verwerfen oder weiter bearbeiten — nichts wird hinter Ihrem Rücken gespeichert. Mit „Übernehmen & übersetzen“ wird der akzeptierte Text gleich in alle Sprachen übertragen.",
+            "Das Ergebnis erscheint zuerst als Vorschlag über dem Feld. „Übernehmen“ setzt ihn ins Feld und speichert genau dieses eine Feld sofort — andere Felder, in denen Sie noch ungespeicherte Änderungen haben, bleiben davon unberührt. „Ablehnen“ lässt alles, wie es war. Mit „Übernehmen & übersetzen“ wird der akzeptierte Text gespeichert und gleich in alle Sprachen übertragen.",
           ],
         },
       ],
@@ -321,6 +323,7 @@ export const guideDe: GuideCopy = {
           heading: "Ein Feld oder alles",
           paragraphs: [
             "Wählen Sie oben eine Fremdsprache. Jedes Feld hat nun einen Übersetzen-Knopf, der den Text aus der Hauptsprache überträgt. In der Hauptsprache übersetzt der Weltkugel-Knopf ein Feld direkt in alle Sprachen; „Alles übersetzen“ in der Aktionsleiste übersetzt den ganzen Eintrag.",
+            "Beide übersetzen den gespeicherten Text. Haben Sie in der Hauptsprache etwas geändert und noch nicht gespeichert — ein Feld, einen Alt-Text oder ein Metafeld —, bleiben sie gesperrt, bis Sie speichern; der Hinweis am Knopf sagt es. Sonst würde das spätere Speichern die eben geschriebenen Übersetzungen wieder entfernen.",
             "Mit Strg+Klick (Mac: Cmd+Klick) auf einen Sprach-Knopf nehmen Sie eine Sprache aus solchen Läufen heraus, etwa wenn Sie sie selbst übersetzen lassen.",
           ],
         },
@@ -334,6 +337,9 @@ export const guideDe: GuideCopy = {
           heading: "Gespeichert heisst bestätigt",
           paragraphs: [
             "Eine Übersetzung gilt erst als gespeichert, wenn Shopify sie zurückmeldet. Nimmt Shopify eine Übersetzung nicht an, sehen Sie das am betroffenen Feld — statt einer Erfolgsmeldung über etwas, das nie angekommen ist.",
+            "Dasselbe gilt beim Leeren: Eine Übersetzung gilt erst als entfernt, wenn Shopify es bestätigt; sonst bleibt sie sichtbar, das Feld bleibt als geändert markiert, damit Sie erneut speichern können, und Sie werden darüber informiert. Bei Produktoptionen und Metafeldern wird eine von Shopify abgelehnte Sprache in der Aufgabe benannt, die dann „mit Fehlern abgeschlossen“ anzeigt.",
+            "„Alles löschen“ in einer Fremdsprache entfernt bei einem Produkt auch die Übersetzungen seiner Optionsnamen, Optionswerte und Metafelder in dieser Sprache — ist ein Markt gewählt, nur die dieses Marktes.",
+            "Während „Alles übersetzen“ für eine Sprache noch läuft, können Sie in eine andere Sprache wechseln und dort weiterarbeiten oder „Alles löschen“ nutzen — das Ergebnis erscheint später nur in der Sprache, für die Sie es gestartet haben. „Alles löschen“ in derselben Sprache ist erst wieder möglich, wenn deren Übersetzung fertig ist; bis dahin erhalten Sie einen Hinweis. Läuft „Alles übersetzen“ für alle Sprachen, gilt das für jede Sprache. Umgekehrt lässt sich „Alles übersetzen“ nicht starten, solange ein gerade gesendetes Speichern oder Löschen derselben Sprache (oder der Hauptsprache) noch unterwegs ist — Sie erhalten einen Hinweis und starten es einen Moment später erneut; für „Alles übersetzen“ in alle Sprachen gilt das für jede Sprache. Speichern Sie mit dem Speichern-Button in einer Sprache, die gerade übersetzt wird, wartet die Speicherung auf das Ende der Übersetzung. KI- und Kopier-Buttons, die sofort speichern, sind in dieser Zeit gesperrt — in einer Fremdsprache nur, solange in genau diese Sprache übersetzt wird, in der Hauptsprache während jeder Übersetzung dieses Eintrags. Sie erhalten einen Hinweis; Übersetzen und Kopieren starten dann gar nicht erst. Ein KI-Vorschlag, den Sie übernehmen, oder ein KI-Ergebnis, das gerade eintrifft, landet als ungespeicherte Änderung im Feld — Sie speichern es nach der Übersetzung mit dem Speichern-Button.",
           ],
         },
       ],
@@ -466,6 +472,67 @@ export const guideDe: GuideCopy = {
       ],
       tips: [
         "Ändern Sie einen Theme-Text in der Hauptsprache, werden seine Übersetzungen nach Ihrer Einstellung gelöscht oder neu übersetzt — genau wie bei Produkten.",
+        "Bilder im Theme erscheinen als Bildvorschau. Pro Sprache und Markt können Sie ein anderes Bild wählen — siehe „Andere Bilder und Videos je Sprache“.",
+      ],
+    },
+
+    "images-per-language": {
+      title: "Andere Bilder und Videos je Sprache",
+      summary:
+        "Zeigen Sie Kundinnen und Kunden in einer Sprache oder einem Markt ein anderes Bild — zum Beispiel ein Banner oder Produktfoto mit übersetzter Beschriftung.",
+      sections: [
+        {
+          heading: "Wofür",
+          paragraphs: [
+            "Texte lassen sich übersetzen, Text in einem Bild nicht. Ein Banner mit „Sale“ oder ein Produktfoto mit deutscher Beschriftung sieht in jeder Sprache gleich aus. Mit „Bilder und Videos je Sprache“ legen Sie für eine Sprache — und auf Wunsch nur für einen bestimmten Markt — ein anderes Bild fest. Es ersetzt das Original 1:1; alle anderen Sprachen sehen weiterhin das Originalbild.",
+          ],
+        },
+        {
+          heading: "Theme-Bilder",
+          paragraphs: [
+            "Bilder in Ihrem Theme (zum Beispiel ein Banner auf der Startseite) finden Sie unter Inhalte → Theme bei den Texten des jeweiligen Abschnitts. Statt eines Textfeldes sehen Sie dort eine Vorschau des Bildes.",
+            "Ob Ihr Theme das Bild der gewählten Sprache anzeigt, hängt vom Theme ab. Prüfen Sie nach dem Speichern Ihren Shop in dieser Sprache; manche Themes zeigen unter Umständen weiterhin das Originalbild.",
+          ],
+          steps: [
+            "Oben die Sprache wählen — und, falls das Bild nur in einem Markt anders sein soll, den Markt.",
+            "Beim Bild auf „Bild für diese Sprache wählen“ klicken und ein Bild aus Ihren Dateien wählen oder hochladen.",
+            "Speichern. Mit „Originalbild verwenden“ nehmen Sie die Auswahl wieder zurück.",
+          ],
+        },
+        {
+          heading: "Produktbilder",
+          paragraphs: [
+            "Ein Ersatzbild legen Sie direkt in der Bildergalerie des Produkts fest — auch wenn der Bild-Manager ausgeschaltet ist. In der Hauptsprache gibt es dafür nichts Besonderes. Schalten Sie auf eine Fremdsprache (und, wenn Sie wollen, auf einen Markt) um und wählen Sie ein Bild in der Galerie an: In der Zeile mit den Schaltflächen der Auswahl erscheint zwischen „Verschieben“ und „Löschen“ der Button „Ersatzbild hochladen“. Ein Klick öffnet Ihre Dateien, dort wählen Sie ein Bild aus oder laden ein neues hoch; angeboten wird nur, was das Original ersetzen kann. Das gewählte Bild erscheint sofort in der Galerie an der Stelle des Originals, markiert mit einem kleinen runden Symbol in der linken oberen Ecke. Gespeichert wird es erst, wenn Sie oben auf „Speichern“ drücken; das Ergebnis meldet die Info-Box. „Verwerfen“ nimmt die Wahl zurück. Ein Klick auf das Symbol zeigt Ihnen das Original (das Symbol wird grau), ein weiterer Klick wieder das Ersatzbild. „Ersatzbild entfernen“ lässt wieder das Original gelten — auch das wird erst mit „Speichern“ übernommen. Nehmen Sie ein Bild mit denselben Proportionen wie das Original — der Shop behält den Rahmen des Originals, ein anderes Format wird sonst beschnitten oder lässt Lücken.",
+            "Damit Ihr Shop die Ersatzbilder zeigt, aktivieren Sie einmalig die App-Einbettung „Media per language“ (solange sie noch aus ist, verlinkt die Meldung nach dem Speichern direkt dorthin). Ersetzt werden die Bilder in der Galerie der Produktseite (samt Vorschaubildern und Vollbildansicht). Nutzen Sie außerdem die App-Einbettungen „Open Graph / Twitter“ und „JSON-LD Structured Data“, werden auch das Hauptbild, das beim Teilen des Links erscheint, und die Bilder, die Suchmaschinen lesen, ersetzt.",
+          ],
+          list: [
+            "Ein Ersatzbild für einen bestimmten Markt geht dem Ersatzbild für „Alle Märkte“ vor.",
+            "Ihre Wahl gilt pro Sprache und Markt: Sie können in einer Sprache etwas wählen, zu einer anderen wechseln und am Ende alles mit einem Klick auf „Speichern“ übernehmen.",
+            "Löschen Sie ein Bild in der App, werden auch alle seine Ersatzbilder (in jeder Sprache und jedem Markt) mit gelöscht.",
+            "Im Bild-Manager zeigen auch die Variantengalerien das Ersatzbild an, und Sie können es dort ebenso festlegen: Wählen Sie das Bild in einer Variantengalerie an, erscheint dort derselbe Button. Es ist dasselbe Ersatzbild wie unter „Alle Bilder“ — was Sie an einer Stelle wählen, sehen Sie an beiden. Bilder, die nur in einer Variantengalerie liegen (nicht unter „Alle Bilder“), und YouTube- oder Vimeo-Links einer Variantengalerie lassen sich noch nicht ersetzen, 3D-Modelle gar nicht; der Button ist dort ausgegraut und nennt den Grund.",
+            "Enthält Ihr Tarif keine Ersatzbilder und -videos (mehr), zum Beispiel nach einem Tarifwechsel, zeigt Ihr Shop vorhandene Ersatzdateien weiterhin an. Sie sehen sie in der Galerie und können sie dort entfernen; neue Ersatzdateien lassen sich dann nicht mehr festlegen. Bei einem hochgeladenen Video kann Shopify einige Minuten zum Verarbeiten brauchen; die Datei liegt dann schon in Ihren Dateien und lässt sich von dort auswählen.",
+            "Gibt es Ersatzbilder, die zu nichts mehr gehören (zum Beispiel zu einem Markt oder einer Sprache, die es im Shop nicht mehr gibt), erscheint unter der Galerie eine Warnung, in der Sie sie entfernen können. Wandeln Sie ein Bild in WebP um, werden die Ersatzbilder des alten Bildes automatisch auf die neue Datei übertragen; nur wenn das nicht gelingt, erscheinen sie in dieser Warnung und müssen neu gesetzt werden. Ungespeicherte Ersatzbilder aus einer Fremdsprache bleiben beim Wechsel in die Hauptsprache erhalten; eine Zeile unter der Galerie nennt die Sprachen, in denen noch etwas auf „Speichern“ wartet.",
+          ],
+        },
+        {
+          heading: "Videos",
+          paragraphs: [
+            "Auf demselben Weg ersetzen Sie auch die Videos eines Produkts pro Sprache und Markt — zum Beispiel durch eine vertonte Fassung. Ein in Shopify hochgeladenes Video ersetzen Sie durch ein anderes hochgeladenes Video (aus Ihren Dateien oder neu hochgeladen), ein YouTube- oder Vimeo-Video durch einen anderen YouTube- oder Vimeo-Link. Haben Sie ein Video angewählt, heißt der Button entsprechend „Ersatzvideo hochladen“ beziehungsweise „Ersatzlink eingeben“. Ein Bild lässt sich nicht durch ein Video ersetzen und umgekehrt; 3D-Modelle werden nicht ersetzt.",
+            "Neu hochgeladene Videos verarbeitet Shopify einige Minuten lang. Erscheint ein Hinweis dazu, wählen Sie das Video kurz danach aus Ihren Dateien. Auch bei Videos gilt: Wahl und Entfernen werden erst mit „Speichern“ übernommen.",
+            "Videos in den Theme-Einstellungen (zum Beispiel ein Video-Abschnitt auf der Startseite) tragen Sie pro Sprache als anderen Link ein; die KI verändert sie nicht.",
+          ],
+        },
+        {
+          heading: "Was nicht ersetzt wird",
+          paragraphs: [
+            "Produktkacheln in Kollektionen, der Warenkorb sowie Feeds für Google Shopping, die Shop-App und andere Verkaufskanäle zeigen weiterhin das Original. Bei Videos bleibt die Beschreibung des Videos für Suchmaschinen beim Original. Für Kollektions- und Blogbilder gibt es diese Funktion noch nicht.",
+          ],
+        },
+      ],
+      tips: [
+        "Die KI übersetzt oder verändert keine Bilder. Bei Theme-Bildern bieten die Übersetzen-Knöpfe deshalb nichts an — ein Bild behalten Sie, bis Sie ein anderes wählen.",
+        "Ein Bild, das in einer Sprache gleich bleiben soll, zählt nicht als fehlende Übersetzung.",
+        "Andere Bilder und Videos je Sprache sind in den Plänen Pro und Max enthalten.",
       ],
     },
 
@@ -672,7 +739,7 @@ export const guideDe: GuideCopy = {
           ],
         },
       ],
-      tips: [
+      tips: ["Lässt sich eine Datei nicht hochladen, wird sie in einer Meldung genannt und nicht hinzugefügt — laden Sie sie danach erneut hoch.", 
         "Die Zuordnung passiert beim Hochladen. Spätere Umbenennungen der Dateien ändern an der Zuordnung nichts.",
       ],
     },
@@ -685,12 +752,13 @@ export const guideDe: GuideCopy = {
           heading: "Wo Alt-Texte stehen",
           paragraphs: [
             "Alt-Texte bearbeiten Sie am Bild im Image Variant Manager, im Editor bei Kollektions- und Artikelbildern, und gesammelt im Bulk-Editor, wo jede Zeile der Zeilenart „Bilder“ ein Bild ist — Produktbilder ebenso wie Bilder aus Ihrer Dateibibliothek.",
+            "Ein Alt-Text, den Sie im Image Variant Manager tippen, wird nicht gespeichert, wenn Sie das Feld verlassen: Er bleibt ein Entwurf, bis Sie oben auf „Speichern“ drücken — wie jede andere Änderung auf der Seite. „Verwerfen“ nimmt ihn zurück. Gelingt das Speichern bei einem Bild nicht, nennt die Info-Box den Grund, Ihr Text bleibt im Feld stehen und wird beim nächsten „Speichern“ erneut gesendet. Haben Sie einem Bild, das Sie gerade erst hinzugefügt haben, schon einen Alt-Text gegeben, speichert dasselbe „Speichern“ ihn mit, sobald Shopify das Bild angelegt hat. Wechseln Sie mit ungespeicherten Alt-Texten die Sprache, den Markt oder das Produkt, fragt die App zuerst nach; wird ein Alt-Text, den Sie mit einem KI-Knopf erzeugt oder übersetzt haben, gerade noch gespeichert, wechselt die App nicht, sondern bittet Sie, einen Moment zu warten und dann erneut zu wechseln. Alt-Texte, die Sie mit „Speichern“ abgeschickt haben, halten einen Wechsel nicht auf — sie werden für das Produkt, die Sprache und den Markt fertig gespeichert, für die Sie sie abgeschickt haben. In der Hauptsprache gelten die Alt-Texte für alle Märkte, deshalb fragt ein Marktwechsel dort nicht nach. Löschen Sie ein Bild, geht sein ungespeicherter Alt-Text mit. Ein YouTube-/Vimeo-Link oder ein 3D-Modell, das einer Variante hinzugefügt wurde, hat keinen Alt-Text — das Feld sagt das stattdessen.",
           ],
         },
         {
           heading: "Mit KI",
           paragraphs: [
-            "Die KI schreibt einen Alt-Text pro Bild. Ist die Bildfreigabe eingeschaltet, sieht sie dabei genau dieses eine Bild — und beschreibt nicht eines, das nur zufällig daneben liegt.",
+            "Die KI schreibt einen Alt-Text pro Bild. Das Ergebnis — ebenso eine Übersetzung in die gerade offene Sprache — steht danach im Feld und wird für dieses eine Bild sofort gespeichert; Alt-Texte, die Sie bei anderen Bildern getippt haben, bleiben Entwürfe. Bei einem Bild, das selbst noch nicht gespeichert ist, sind diese Knöpfe gesperrt, bis Sie es gespeichert haben. „Übersetzen“ in einer anderen Sprache geht immer vom gespeicherten Alt-Text der Hauptsprache aus, nicht vom Inhalt des Feldes — bei einem Bild ohne Alt-Text in der Hauptsprache ist der Button deshalb mit einem Hinweis gesperrt. Bei einer Datei aus der Mediathek, die nur in einer Varianten-Galerie liegt, kennt die Seite deren Alt-Text nicht: Dort bleibt der Button bedienbar, und fehlt der Alt-Text in der Hauptsprache, sagt es die Info-Box. „In alle Sprachen übersetzen“ schreibt sofort in die anderen Sprachen — deshalb ist der Button nur bedienbar, solange der Alt-Text der Hauptsprache keine ungespeicherten Änderungen hat. Ist die Bildfreigabe eingeschaltet, sieht sie dabei genau dieses eine Bild — und beschreibt nicht eines, das nur zufällig daneben liegt.",
           ],
         },
         {
@@ -702,7 +770,8 @@ export const guideDe: GuideCopy = {
         {
           heading: "Übersetzen",
           paragraphs: [
-            "Alt-Texte werden wie jedes andere Feld in alle Sprachen übersetzt und nach denselben Regeln aufgefrischt, wenn sich das Original ändert.",
+            "Alt-Texte werden wie jedes andere Feld in alle Sprachen übersetzt und nach denselben Regeln aufgefrischt, wenn sich das Original ändert. Ist im Editor ein Markt gewählt, zeigt der Bildmanager die Alt-Texte dieses Marktes (hat der Markt keinen eigenen, den der Sprache) und speichert Änderungen nur für diesen Markt. „In alle Sprachen übersetzen“ schreibt immer den Text der Sprache selbst, den auch Märkte ohne eigenen Text verwenden.",
+            "Übersetzen lässt sich nur ein Alt-Text, den es in der Hauptsprache gibt. Hat ein Bild dort noch keinen, ist sein Alt-Text-Feld in den anderen Sprachen gesperrt und sagt das — tragen Sie ihn zuerst in der Hauptsprache ein und speichern Sie.",
           ],
         },
       ],
@@ -776,6 +845,7 @@ export const guideDe: GuideCopy = {
           heading: "Übersicht",
           paragraphs: [
             "Unter SEO → Übersicht sehen Sie die Verteilung der Scores im ganzen Shop und die häufigsten Probleme — mit Sprung direkt in den betroffenen Eintrag und der Möglichkeit, Probleme per KI zu beheben.",
+            "Behebt die KI einen Text in der Hauptsprache, behandelt die App die Übersetzungen davon genauso wie beim Speichern im Editor: Je nach Ihrer Einstellung unter Einstellungen → Übersetzungen werden die alten Übersetzungen entfernt oder, bei aktiver automatischer Übersetzung, neu übersetzt. Ob ein Text wirklich bei Shopify angekommen ist, wird dabei geprüft — andernfalls gilt der Eintrag als fehlgeschlagen.",
           ],
         },
       ],

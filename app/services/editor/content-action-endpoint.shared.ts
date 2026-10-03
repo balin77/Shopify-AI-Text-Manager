@@ -15,10 +15,51 @@
  * for both, so a page the route knows is exactly a page the client sends.
  */
 
+import { PLAN_REFUSED, isPlanRefusal, saveAnswerFailed } from "./per-locale-saves.shared";
+// Import-free leaf too; sends the session token and retries one auth bounce.
+import { appFetch } from "../../utils/app-fetch";
+
 export const CONTENT_EDITOR_ACTION_ENDPOINT = "/api/content-editor-action";
 
-/** The only action this door takes: both callers save through `updateContent`. */
+/** The action every listed page accepts: the per-locale copy saves send it. */
 export const CONTENT_EDITOR_FETCH_ACTION = "updateContent";
+
+/**
+ * The extra actions a page's plain-`fetch` callers send, by page. Everything
+ * else is refused, so this door never becomes a way to the rest of a page's
+ * actions. The product editor's option / option-value / metafield translations
+ * run several at once and each needs its own lifecycle, so they fetch too.
+ */
+export const CONTENT_EDITOR_EXTRA_ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  "/app/products": [
+    "translateSubResources",
+    "translateSubResourceToAllLocales",
+    "saveSubResourceTranslations",
+    // "Images per language" card: load / set / remove one replacement.
+    "localizedMediaLoad",
+    "localizedMediaSet",
+    "localizedMediaRemove",
+  ],
+};
+
+/**
+ * Actions every listed page's editor sends through this door. "Translate all"
+ * (every language, or one) runs for seconds to minutes; on the editor's ONE
+ * fetcher it held every save behind it, so a "clear all" pressed in another
+ * language meanwhile sat queued with the save bar up and every switch asking
+ * about it until the AI had finished. As its own request it waits for nothing
+ * and nothing waits for it.
+ */
+export const CONTENT_EDITOR_EVERY_PAGE_ACTIONS: readonly string[] = ["translateAll", "translateAllForLocale"];
+
+/** Whether `action` may be posted for `page` through this door. */
+export function contentEditorActionAllowed(page: string, action: string): boolean {
+  return (
+    action === CONTENT_EDITOR_FETCH_ACTION ||
+    CONTENT_EDITOR_EVERY_PAGE_ACTIONS.includes(action) ||
+    (CONTENT_EDITOR_EXTRA_ACTIONS[page] ?? []).includes(action)
+  );
+}
 
 /** Every page whose editor saves with a plain fetch. */
 export const CONTENT_EDITOR_ACTION_PAGES = [
@@ -53,9 +94,23 @@ export function contentEditorActionPage(pathname: string): ContentEditorActionPa
 }
 
 /**
+ * Names the page whose action a plain-`fetch` request to the door should run
+ * (`_page`: the page's path plus its query), for callers that post themselves.
+ */
+export function setContentEditorPage(
+  formData: FormData,
+  page: ContentEditorActionPage,
+  search = typeof window !== "undefined" ? window.location.search : "",
+): FormData {
+  formData.set("_page", `${page}${search}`);
+  return formData;
+}
+
+/**
  * Posts one editor save and says whether it landed.
  *
- * `true` / `false` when the answer could be read; `null` when it cannot be
+ * `true` / `false` when the answer could be read (`PLAN_REFUSED` for the
+ * plan gate's 403); `null` when it cannot be
  * known -- a page this list does not name goes to its own route as before,
  * whose HTML answer says nothing, and a caller must not report THAT as a
  * failure. The page's own path and query travel along so the action runs on
@@ -64,7 +119,7 @@ export function contentEditorActionPage(pathname: string): ContentEditorActionPa
 export async function postContentEditorSave(
   formData: FormData,
   location: { pathname: string; search: string } = window.location,
-): Promise<boolean | null> {
+): Promise<boolean | null | typeof PLAN_REFUSED> {
   const page = contentEditorActionPage(location.pathname);
   if (!page) {
     try {
@@ -76,10 +131,12 @@ export async function postContentEditorSave(
   }
   formData.set("_page", `${page}${location.search}`);
   try {
-    const response = await fetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: formData });
-    if (!response.ok) return false;
-    const body = (await response.json().catch(() => null)) as { success?: unknown } | null;
-    return !!body && body.success !== false;
+    const response = await appFetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: formData });
+    if (!response.ok) return (await isPlanRefusal(response)) ? PLAN_REFUSED : false;
+    // A save can answer `success: true` and still name what it refused
+    // (`failedAltTextIndices`): that is a failure for the caller too.
+    const body = await response.json().catch(() => null);
+    return !saveAnswerFailed(body);
   } catch {
     return false;
   }

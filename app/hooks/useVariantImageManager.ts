@@ -31,6 +31,8 @@ export function useVariantImageManager() {
   const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(new Set());
   const [activeAction, setActiveAction] = useState<"copy" | "move" | null>(null);
   const [isApplying, setIsApplying] = useState(false);
+  // A product-image delete is in flight in VariantImageManager; the editor's Save is blocked meanwhile.
+  const [isDeletingImages, setIsDeletingImages] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<"seo" | "images">("seo");
   const [activeImageSubTab, setActiveImageSubTab] = useState<"bulkUpload" | "bulkAltText">("bulkUpload");
   const [variantReloadCounter, setVariantReloadCounter] = useState(0);
@@ -74,6 +76,13 @@ export function useVariantImageManager() {
   const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
+  // Alt saves already sent by a page Save and not answered yet (owned by the image manager).
+  const [isSavingAltTexts, setIsSavingAltTexts] = useState(false);
+  // The subset an AI button (generate / translate) saved IMMEDIATELY: the only
+  // alt saves a language/market/product switch waits for -- a page Save's
+  // alt saves carry their own product, language and market and finish on
+  // their own, so they never block a switch.
+  const [isSavingImmediateAltTexts, setIsSavingImmediateAltTexts] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
   const [variantsForBulk, setVariantsForBulk] = useState<VariantWithGallery[]>([]);
   const [missingMainImageProductIds, setMissingMainImageProductIds] = useState<Set<string>>(new Set());
@@ -282,7 +291,10 @@ export function useVariantImageManager() {
       });
       const data = await res.json();
       if (!data.success) {
-        return (data.errors as string[]).join(", ");
+        // The route answers `errors` (a list) for a refused write, but a transport or
+        // auth failure carries `error` (one string) or nothing readable at all.
+        if (Array.isArray(data.errors)) return (data.errors as string[]).join(", ");
+        return typeof data.error === "string" && data.error ? data.error : `HTTP ${res.status}`;
       }
       // Server may have rejected a subset of external-video URLs (client and
       // server validation can drift on edge cases — whitespace, trailing
@@ -401,11 +413,10 @@ export function useVariantImageManager() {
           return [...kept, ...additions];
         });
       }
-      // bulkItems / hasAltTextEdits aren't tied to the gallery render in the
+      // bulkItems aren't tied to the gallery render in the
       // same way (no optimistic-tile flicker risk) so clear them now.
       setBulkItems([]);
       setSelectedBulkIds(new Set());
-      setHasAltTextEdits(false);
       // Trigger the /api/product-variants refetch. When it returns,
       // handleVariantsLoaded reads postSaveDeferredClearRef and applies the
       // pending clears — at which point the new media is already on
@@ -450,7 +461,7 @@ export function useVariantImageManager() {
     setPendingVariant3dPreviews({});
     setPendingKnownModelGids({});
     setPendingGalleryOrder({});
-    setHasAltTextEdits(false);
+    // hasAltTextEdits is owned by the image manager (its alt drafts): Discard and a product switch reset it there.
     // Clear data derived from the previous product so the bulk panels never match
     // against stale variants/selection during the load window of the new product.
     // missingMainImageProductIds is intentionally NOT reset — it is cross-product
@@ -466,6 +477,8 @@ export function useVariantImageManager() {
     activeAction,
     setActiveAction,
     isApplying,
+    isDeletingImages,
+    setIsDeletingImages,
     activeRightTab,
     setActiveRightTab,
     activeImageSubTab,
@@ -481,6 +494,10 @@ export function useVariantImageManager() {
     resetCounter,
     hasAltTextEdits,
     setHasAltTextEdits,
+    isSavingAltTexts,
+    setIsSavingAltTexts,
+    isSavingImmediateAltTexts,
+    setIsSavingImmediateAltTexts,
     variantsForBulk,
     missingMainImageProductIds,
     selectedGalleryGids,

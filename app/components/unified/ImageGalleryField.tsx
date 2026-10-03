@@ -22,6 +22,9 @@ import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris"
 import { AIEditableField } from "../AIEditableField";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
+import { useLocalizedMediaContext } from "../localized-images/LocalizedMediaContext";
+import { ReplacedMediaBadge } from "../localized-images/ReplacedMediaBadge";
+import { LocalizedMediaReplaceButtons } from "../localized-images/LocalizedMediaReplaceButton";
 import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
 import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
 
@@ -38,6 +41,8 @@ export interface ImageData {
   altText?: string;
   altTextTranslations?: AltTextTranslation[];
   id?: string;
+  /** Shopify media GID (products): what a per-language replacement is keyed by. */
+  mediaId?: string | null;
 }
 
 interface ImageGalleryFieldProps {
@@ -85,6 +90,11 @@ interface ImageGalleryFieldProps {
 
   /** Callback to translate all alt-texts into the current foreign locale */
   onTranslateAllAltTextsForLocale?: () => void;
+  /** "Save first" reason for an image whose PRIMARY alt is an unsaved draft:
+   *  its copy/translate-to-all buttons are disabled with it. */
+  altSaveFirstHint?: (imageIndex: number) => string | undefined;
+  /** The same for "translate all alt texts" (any primary alt unsaved). */
+  translateAllAltsSaveFirstHint?: string;
 
   /** Callback to copy primary alt-text into current foreign locale */
   onCopyAltText?: (imageIndex: number) => void;
@@ -129,6 +139,8 @@ interface ImageGalleryFieldProps {
     availableInBasicPlan?: string;
     altBadge?: string;
     noAltBadge?: string;
+    /** Shown on a foreign alt field whose image has no main-language alt. */
+    altNeedsPrimaryHint?: string;
   };
 }
 
@@ -147,6 +159,8 @@ export function ImageGalleryField({
   onGenerateAllAltTexts,
   onTranslateAllAltTexts,
   onTranslateAllAltTextsForLocale,
+  altSaveFirstHint,
+  translateAllAltsSaveFirstHint,
   onCopyAltText,
   onCopyAltTextToAllLocales,
   onTranslateAltText,
@@ -162,6 +176,13 @@ export function ImageGalleryField({
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   // Single-language shop → nothing to translate alt-texts into.
   const singleLocaleHint = useSingleLocaleHint();
+  // Per-language replacement of a product's media (foreign language only; null
+  // on every other content type and below the plan).
+  const localized = useLocalizedMediaContext()?.state ?? null;
+  // The tile (or preview) of a medium that has a replacement shows it in place
+  // of the original, with the corner symbol that flips it back.
+  const tileOf = (img: ImageData | undefined) =>
+    localized?.active && img?.mediaId ? localized.tileOf(img.mediaId) : null;
 
   // Reset selected image when images change
   useEffect(() => {
@@ -171,6 +192,20 @@ export function ImageGalleryField({
       setSelectedImageIndex(0);
     }
   }, [images, selectedImageIndex]);
+
+  /**
+   * A FOREIGN alt text can only be stored where the image has one in the main
+   * language: Shopify offers an image's `alt` for translation only when it has
+   * a primary value, so a translation typed here would be refused on save and
+   * left as a draft nothing could ever store (the save bar stuck open). The
+   * field is locked with the reason instead. A value already there stays
+   * visible and can still be cleared.
+   */
+  const needsPrimaryAlt = (img: ImageData | null | undefined): boolean =>
+    !isPrimaryLocale && !!img && !(img.altText || "").trim();
+  const needsPrimaryHint =
+    t.altNeedsPrimaryHint ||
+    "Enter and save an alt text in the main language first — then it can be translated.";
 
   // Determine which image to show in preview
   const getPreviewImage = (): ImageData | null => {
@@ -187,6 +222,7 @@ export function ImageGalleryField({
   };
 
   const previewImage = getPreviewImage();
+  const previewTile = tileOf(images?.[selectedImageIndex]);
   const hasImages = (images && images.length > 0) || featuredImage;
 
   if (!hasImages) {
@@ -234,9 +270,9 @@ export function ImageGalleryField({
           >
             {previewImage && (
               <img
-                src={previewImage.url}
+                src={(!isFreePlan ? previewTile?.src : null) ?? previewImage.url}
                 alt={altTexts[selectedImageIndex] || previewImage.altText || t.featuredImage || "Image"}
-                title={extractFilename(previewImage.url)}
+                title={(!isFreePlan ? previewTile?.title : null) ?? extractFilename(previewImage.url)}
                 style={{
                   position: "absolute",
                   top: 0,
@@ -245,6 +281,17 @@ export function ImageGalleryField({
                   height: "100%",
                   objectFit: "cover",
                 }}
+              />
+            )}
+            {!isFreePlan && previewTile && (
+              <ReplacedMediaBadge
+                label={previewTile.label}
+                draft={previewTile.draft}
+                showingOriginal={previewTile.showingOriginal}
+                onToggle={previewTile.onToggle}
+                size={24}
+                top={8}
+                left={8}
               />
             )}
             {/* Alt-text status badge on preview */}
@@ -307,17 +354,19 @@ export function ImageGalleryField({
                   ? altTexts[index] !== ""
                   : (isPrimaryLocale && !!image.altText);
                 const isSelected = index === selectedImageIndex;
+                const tile = tileOf(image);
 
                 return (
+                  // The replacement symbol is a SIBLING of the tile button (a
+                  // button inside a button is invalid markup), positioned over it.
+                  <div key={index} style={{ position: "relative", width: "100%", minWidth: "61px", maxWidth: "134px", aspectRatio: "1" }}>
                   <button
-                    key={index}
                     onClick={() => setSelectedImageIndex(index)}
-                    title={extractFilename(image.url)}
+                    title={tile?.title ?? extractFilename(image.url)}
                     style={{
                       position: "relative",
                       width: "100%",
-                      minWidth: "61px",
-                      maxWidth: "134px",
+                      height: "100%",
                       minHeight: "61px",
                       maxHeight: "134px",
                       padding: 0,
@@ -331,7 +380,7 @@ export function ImageGalleryField({
                     }}
                   >
                     <img
-                      src={image.url}
+                      src={tile?.src ?? image.url}
                       alt={altTexts[index] || image.altText || `${t.image || "Image"} ${index + 1}`}
                       style={{
                         width: "100%",
@@ -358,6 +407,10 @@ export function ImageGalleryField({
                       {hasAltText ? (t.altBadge || "ALT") : (t.noAltBadge || "NO ALT")}
                     </div>
                   </button>
+                  {tile && (
+                    <ReplacedMediaBadge label={tile.label} draft={tile.draft} showingOriginal={tile.showingOriginal} onToggle={tile.onToggle} />
+                  )}
+                  </div>
                 );
               })}
             </div>
@@ -401,12 +454,12 @@ export function ImageGalleryField({
             </Button>
           )}
           {isPrimaryLocale && onTranslateAllAltTexts && (
-            <DisabledActionTooltip hint={singleLocaleHint}>
+            <DisabledActionTooltip hint={singleLocaleHint ?? translateAllAltsSaveFirstHint}>
               <Button
                 size="slim"
                 onClick={onTranslateAllAltTexts}
                 loading={isFieldLoading ? isFieldLoading(-1) : false}
-                disabled={!!singleLocaleHint}
+                disabled={!!singleLocaleHint || !!translateAllAltsSaveFirstHint}
               >
                 🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
               </Button>
@@ -432,6 +485,9 @@ export function ImageGalleryField({
             ? altTexts[selectedImageIndex]
             : (isPrimaryLocale ? (images[selectedImageIndex]?.altText || "") : "")}
           onChange={(value) => onAltTextChange(selectedImageIndex, value)}
+          readOnly={needsPrimaryAlt(images[selectedImageIndex])}
+          helpText={needsPrimaryAlt(images[selectedImageIndex]) ? needsPrimaryHint : undefined}
+          sourceTextAvailable={!needsPrimaryAlt(images[selectedImageIndex])}
           fieldType={`altText_${selectedImageIndex}`}
           fieldKey={`altText_${selectedImageIndex}`}
           helpKey="altText"
@@ -447,6 +503,7 @@ export function ImageGalleryField({
           onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(selectedImageIndex) : undefined}
           onTranslate={() => onTranslateAltText(selectedImageIndex)}
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(selectedImageIndex) : undefined}
+          saveFirstHint={altSaveFirstHint?.(selectedImageIndex)}
           onAcceptSuggestion={() => onAcceptSuggestion(selectedImageIndex)}
           onAcceptAndTranslate={onAcceptAndTranslateSuggestion ? () => onAcceptAndTranslateSuggestion(selectedImageIndex) : undefined}
           onRejectSuggestion={() => onRejectSuggestion(selectedImageIndex)}
@@ -459,6 +516,9 @@ export function ImageGalleryField({
             ? altTexts[0]
             : (isPrimaryLocale ? (featuredImage.altText || "") : "")}
           onChange={(value) => onAltTextChange(0, value)}
+          readOnly={needsPrimaryAlt(featuredImage)}
+          helpText={needsPrimaryAlt(featuredImage) ? needsPrimaryHint : undefined}
+          sourceTextAvailable={!needsPrimaryAlt(featuredImage)}
           fieldType="altText_0"
           fieldKey="altText_0"
           helpKey="altText"
@@ -474,12 +534,21 @@ export function ImageGalleryField({
           onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(0) : undefined}
           onTranslate={() => onTranslateAltText(0)}
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(0) : undefined}
+          saveFirstHint={altSaveFirstHint?.(0)}
           onAcceptSuggestion={() => onAcceptSuggestion(0)}
           onAcceptAndTranslate={onAcceptAndTranslateSuggestion ? () => onAcceptAndTranslateSuggestion(0) : undefined}
           onRejectSuggestion={() => onRejectSuggestion(0)}
           onClear={onClearAltText ? () => onClearAltText(0) : undefined}
         />
       ) : null)}
+
+      {/* Replacement for the selected image in this foreign language: one
+          button; the primary locale shows nothing of it. */}
+      {!isFreePlan && localized?.active && images && images[selectedImageIndex]?.mediaId && (
+        <InlineStack align="start">
+          <LocalizedMediaReplaceButtons mediaId={images[selectedImageIndex].mediaId as string} />
+        </InlineStack>
+      )}
     </BlockStack>
   );
 }

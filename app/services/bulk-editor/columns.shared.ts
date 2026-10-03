@@ -13,6 +13,7 @@
  */
 
 // zod-based pure validation helpers — no server-only imports (safe here).
+import { DIGEST_BATCH_CHUNK } from "../translations/translation-digest.shared";
 import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 // The enum vocabularies the create form and the single editor already offer.
 // From the import-FREE leaf module, never from create-fields.config: that file
@@ -1432,10 +1433,6 @@ const CLEARED_OPTION_VALUES_ESTIMATE = 10;
  * apply.server.ts) because estimateCalls needs it client-side. */
 export const METAFIELDS_SET_CHUNK = 25;
 
-/** Alias-batch size for the bulk digest query (Plan §6.1) — mirrors the
- * seo-bulk-fix DIGEST_BATCH_CHUNK. Client-safe because estimateCalls counts
- * the digest roundtrips; the actual query lives in translations.server.ts. */
-export const DIGEST_BATCH_CHUNK = 50;
 
 /** Budget for ESTIMATED Shopify calls of one save (Plan §10.1). Since a
  * product row can fan out into up to four mutations (§4.4) and a foreign

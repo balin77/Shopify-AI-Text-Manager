@@ -46,7 +46,8 @@ import {
   verticalListSortingStrategy,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
-import { Button, Text, TextField, Tooltip } from "@shopify/polaris";
+import { Button, Text, Tooltip } from "@shopify/polaris";
+import { SingleLineTextField } from "../unified/SingleLineTextField";
 import {
   MAX_MENU_DEPTH,
   dropIndexAmongSiblings,
@@ -503,14 +504,13 @@ export function MenuNodeTitleField({
   helpText?: string;
 }) {
   return (
-    <TextField
+    <SingleLineTextField
       label={label as string}
       value={value}
       onChange={onChange}
       disabled={disabled}
       error={error}
       helpText={helpText}
-      autoComplete="off"
     />
   );
 }

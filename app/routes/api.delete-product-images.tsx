@@ -2,6 +2,8 @@ import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { isValidShopifyGID } from "../utils/validation";
 import { db } from "../db.server";
+import { removeEntriesForDeletedMedia } from "../services/localized-media/localized-media.server";
+import { logger } from "../utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -39,9 +41,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const d = await r.json();
   const userErrors = d.data?.productDeleteMedia?.userErrors ?? [];
-  if (userErrors.length > 0) {
-    return json({ success: false, errors: userErrors.map((e: { message: string }) => e.message) }, { status: 422 });
+  // userErrors do not mean nothing was deleted: the mutation can echo the ids it
+  // did delete beside them, and those must be cleaned up and reported.
+  const deletedMediaIds: string[] = d.data?.productDeleteMedia?.deletedMediaIds ?? [];
+
+  // The originals are gone, so their per-language replacements (custom.localized_media,
+  // every language and market) go with them. Only what Shopify ECHOED as deleted
+  // counts. It never fails the delete: that has happened; a failure is reported.
+  let localizedMedia: { removed: number } | { failed: string } | undefined;
+  if (deletedMediaIds.length > 0) {
+    try {
+      const cleaned = await removeEntriesForDeletedMedia({
+        graphql: admin.graphql as unknown as Parameters<typeof removeEntriesForDeletedMedia>[0]["graphql"],
+        productId,
+        mediaIds: deletedMediaIds,
+      });
+      localizedMedia = cleaned.ok ? { removed: cleaned.removed } : { failed: cleaned.code };
+    } catch (error) {
+      logger.warn("[delete-product-images] localized media cleanup failed", { error: error instanceof Error ? error.message : String(error) });
+      localizedMedia = { failed: "readFailed" };
+    }
   }
 
-  return json({ success: true, deletedMediaIds: d.data?.productDeleteMedia?.deletedMediaIds ?? [] });
+  // Success is the ECHO, not an empty userErrors: every requested id has to come
+  // back as deleted. A partial answer says which ones did not (the originals
+  // that were deleted already had their replacements cleaned above).
+  const echoed = new Set(deletedMediaIds);
+  const failedMediaIds = (mediaIds as string[]).filter((id) => !echoed.has(id));
+  if (userErrors.length > 0 || failedMediaIds.length > 0) {
+    if (userErrors.length > 0) {
+      return json(
+        { success: false, errors: userErrors.map((e: { message: string }) => e.message), deletedMediaIds, failedMediaIds, localizedMedia },
+        { status: 422 },
+      );
+    }
+    return json({ success: false, error: "Not all media were deleted", deletedMediaIds, failedMediaIds, localizedMedia }, { status: 422 });
+  }
+
+  return json({ success: true, deletedMediaIds, localizedMedia });
 };

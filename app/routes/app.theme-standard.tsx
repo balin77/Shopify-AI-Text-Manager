@@ -15,7 +15,7 @@ import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/the
 const RESOURCE_TYPES = ["ONLINE_STORE_THEME_LOCALE_CONTENT", "ONLINE_STORE_THEME"];
 
 export const loader = makeThemeDomainLoader("theme", "THEME_STANDARD", RESOURCE_TYPES);
-export const action = makeThemeContentRouteAction("theme", RESOURCE_TYPES);
+export const action = makeThemeContentRouteAction("theme", "templates", RESOURCE_TYPES);
 
 export default function ThemeStandardPage() {
   const data = useLoaderData<typeof loader>();

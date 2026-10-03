@@ -96,6 +96,8 @@
  * what the in-app save path (`reconcileAfterPrimarySave`) has always done.
  */
 
+import { isThemeMediaValue } from "../../utils/theme-image-reference.shared";
+
 /**
  * The locales translations are KEPT and MADE for: every shop locale but the
  * primary one — published or not. An UNPUBLISHED locale is a language the
@@ -514,6 +516,9 @@ export function primaryDigestBaselineTarget(
  * value-level backstop for the surfaces where it is not.
  */
 export function survivesValuePrompt(value: string): boolean {
+  // A theme image reference (`shopify://shop_images/<file>`) is a file choice,
+  // not text: the prompt would "translate" it into a broken reference.
+  if (isThemeMediaValue(value)) return false;
   if (/[\r\n]/.test(value)) return false;
   // Opening AND closing tags, and HTML entities: a value carrying any of them
   // is markup the prompt has no rule to preserve, and matching only `<a…>`

@@ -4,11 +4,14 @@
  */
 
 import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION, UPDATE_BLOG, METAFIELDS_DELETE } from "../../app/graphql/content.mutations";
-import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
+import { GET_TRANSLATIONS, GET_TRANSLATIONS_WITH_DIGESTS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
 import { featuredAltLockId, marketLayerLockId } from '../../app/services/translations/translation-locks.shared';
+import { FIELD_TO_TRANSLATION_KEY, fieldTranslationKeyMap } from '../../app/services/translations/translation-keys.shared';
 import { collectRetranslationTaskIds } from '../../app/services/translations/retranslation-tasks.shared';
+import { echoComparisonKey, ECHO_PAIR_SEP } from '../../app/services/translations/translation-echo.shared';
+import type { VerifiedWriteResult, TranslationUserError } from '../../app/services/translations/verified-translations.server';
 import { isAuthError, isManagedRefusal, localeName } from './ai.service';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
@@ -48,16 +51,7 @@ export interface ShopifyAdminClient {
  *
  * See also: docs/reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
  */
-export const FIELD_TO_TRANSLATION_KEY: Readonly<Record<string, string>> = {
-  title: 'title',
-  description: 'body_html',
-  body: 'body_html',
-  handle: 'handle',
-  seoTitle: 'meta_title',
-  metaDescription: 'meta_description',
-  productType: 'product_type',
-  summary: 'summary_html',
-};
+export { FIELD_TO_TRANSLATION_KEY, fieldTranslationKeyMap };
 
 /**
  * One string, comparable to another that may have been through a sanitizer.
@@ -70,16 +64,7 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-/** The field→key map with the single ShopPolicy exception applied
- * (description/body → "body" instead of "body_html"). */
-export function fieldTranslationKeyMap(resourceType: string): Readonly<Record<string, string>> {
-  if (resourceType !== 'ShopPolicy') return FIELD_TO_TRANSLATION_KEY;
-  return { ...FIELD_TO_TRANSLATION_KEY, description: 'body', body: 'body' };
-}
 
-/** Composite key of the echo lookup — a translation is identified by BOTH its
- *  locale and its key, exactly as `registerAndVerify` identifies its own. */
-const ECHO_KEY_SEP = '\u0000';
 
 /**
  * What a `translationsRegister` response PROVES was stored.
@@ -157,7 +142,7 @@ function readTranslationEcho(data: any): TranslationEcho {
  * nothing to normalise and no reason to widen the match.
  */
 function echoKeyOf(locale: string, translationKey: string): string {
-  return `${locale.toLowerCase()}${ECHO_KEY_SEP}${translationKey}`;
+  return echoComparisonKey(locale, translationKey);
 }
 
 /** Did Shopify echo THIS (locale, key) back? `false` for an unknown echo, so
@@ -176,6 +161,56 @@ function echoConfirms(echo: TranslationEcho, locale: string, translationKey: str
  */
 function echoedValue(echo: TranslationEcho, locale: string, translationKey: string): string | null {
   return echo.stored.get(echoKeyOf(locale, translationKey)) ?? null;
+}
+
+/** What `saveTranslations` answers with -- see its throw contract. */
+export interface SaveTranslationsResult extends VerifiedWriteResult {
+  /** key -> the digest the write used. */
+  digests: Map<string, string>;
+  /** Keys that had no digest: NOT sent to Shopify, so not saved anywhere. */
+  noDigest: string[];
+  /** Keys that were sent and Shopify did not echo back. */
+  unconfirmedKeys: string[];
+}
+
+/** What `deleteAllTranslationsForKeys` answers with. */
+export interface DeleteTranslationsResult {
+  /** True only when EVERY (locale, key) asked for is confirmed removed. */
+  success: boolean;
+  /** Confirmed `${locale}\0${key}` pairs, keyed by the SENT locale spelling. */
+  confirmedPairs: Set<string>;
+  /** Pairs not confirmed (restricted to `localPairs` when the caller gave them). */
+  unconfirmedPairs: string[];
+  userErrors: TranslationUserError[];
+}
+
+/** `${locale}\0${key}` -- the pair spelling `removeAndVerify*` confirms by. */
+const localeKeyPair = (locale: string, key: string): string => `${locale}${ECHO_PAIR_SEP}${key}`;
+
+/**
+ * The echo rule for a collection's / article's FEATURED-IMAGE alt: the mutation
+ * answers `userErrors: []` for a call it accepted, and only the echoed
+ * `image.altText` says what Shopify STORED. Returns the problem (or null when
+ * the echo confirms the value) instead of throwing: the same mutation carries
+ * the title, body and SEO fields, which Shopify has already written by the
+ * time the echo is read, so throwing would fail a save that mostly succeeded
+ * and skip those fields' mirror, purge and repair. The caller leaves the ALT
+ * half unmirrored and unrepaired, so the cache never claims an alt Shopify
+ * does not hold and no translation repair runs for a primary that did not
+ * change. `""` and null are the same "no alt".
+ */
+function featuredAltEchoProblem(
+  resource: { image?: { altText?: string | null } | null } | null | undefined,
+  sent: string,
+): string | null {
+  if (!resource || !('image' in resource)) {
+    return 'Shopify did not confirm the image alt text (no echo) - please try again.';
+  }
+  const stored = (resource.image?.altText ?? '').trim();
+  if (stored !== (sent ?? '').trim()) {
+    return 'Shopify did not confirm the image alt text (it stored a different value) - please try again.';
+  }
+  return null;
 }
 
 export class ShopifyContentService {
@@ -204,6 +239,45 @@ export class ShopifyContentService {
       throw new Error(`GraphQL error in loadTranslations: ${data.errors[0].message}`);
     }
     return data.data?.translatableResource?.translations || [];
+  }
+
+  /**
+   * `loadTranslations` plus the digests of the SAME read, for a read-back
+   * mirror. A translation row carries no digest of its own: the digest that
+   * stale detection compares is the SOURCE's, so it comes from the
+   * `translatableContent` selected beside the translations. A row Shopify
+   * flags `outdated` was written against an OLDER source, so it gets NO digest
+   * (the current one would hide that it is stale). Rows with no value (Shopify
+   * answers a row per translatable key, `value: null` where the locale has
+   * nothing) are not translations and are dropped.
+   */
+  async loadTranslationsWithDigests(resourceId: string, locale: string, marketId: string = "") {
+    const response = await this.admin.graphql(GET_TRANSLATIONS_WITH_DIGESTS, {
+      variables: { resourceId, locale, marketId: marketId || null },
+    });
+    if (!response.ok) {
+      throw new Error(`Shopify API error: HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in loadTranslationsWithDigests: ${data.errors[0].message}`);
+    }
+    const resource = data.data?.translatableResource;
+    const digests: Record<string, string> = {};
+    for (const c of resource?.translatableContent ?? []) {
+      if (c?.key && c?.digest) digests[c.key] = c.digest;
+    }
+    const translations: Array<{ key: string; value: string; locale: string; digest: string | null }> = [];
+    for (const t of resource?.translations ?? []) {
+      if (typeof t?.value !== 'string' || t.value === '') continue;
+      translations.push({
+        key: t.key,
+        value: t.value,
+        locale: t.locale,
+        digest: t.outdated ? null : digests[t.key] ?? null,
+      });
+    }
+    return { translations, digests };
   }
 
   /**
@@ -238,56 +312,82 @@ export class ShopifyContentService {
   }
 
   /**
-   * Save translations for a resource
+   * Save translations for ONE locale of a resource and return the VERIFIED
+   * result (confirmed keys, the values Shopify stored, the digests used, the
+   * keys that had no digest and were never sent, the unconfirmed ones).
+   *
+   * THROW CONTRACT (docs/plans/PLAN_TRANSLATION_WRITE_UNIFICATION.md B+C):
+   *   - throws on a transport / top-level GraphQL error (nothing is known);
+   *   - does NOT throw on `userErrors` and does NOT throw when Shopify accepts
+   *     the call and echoes nothing: both are answers, not faults, and they
+   *     arrive as `unconfirmedKeys` (+ `userErrors`). It used to throw on
+   *     userErrors and return the raw echo, which every caller ignored -- so an
+   *     accepted-but-unechoed write was mirrored locally as a success. Callers
+   *     now read the result: they mirror ONLY `confirmedKeys` (with their
+   *     digest) and report `unconfirmedKeys` / `noDigest` as failed.
+   *   - one locale per call: the result is keyed by KEY, and a key echoed for
+   *     one locale would read as confirmed for the other. Mixed locales throw.
    */
   async saveTranslations(
     resourceId: string,
     translations: Array<{ key: string; value: string; locale: string }>,
     /** Market GID for a market-specific override; "" (default) = global (all markets). */
     marketId: string = "",
-  ) {
-    // Fetch digest map first
-    const { digestMap } = await this.loadTranslatableContent(resourceId);
+  ): Promise<SaveTranslationsResult> {
+    const locales = new Set(translations.map((t) => t.locale));
+    if (locales.size > 1) {
+      throw new Error('saveTranslations takes ONE locale per call');
+    }
+
+    // Fetch digest map first. The DETAILED read, because the plain one cannot
+    // tell an ABSENT resource (a deleted option / metafield GID) from one whose
+    // keys are all empty: both read as "no digest", i.e. notTranslatable, and a
+    // vanished resource was reported as merely untranslatable instead of failed.
+    const { fetchDigestsForResourceDetailed } = await import('../../app/services/translations/verified-translations.server');
+    const detailed = await fetchDigestsForResourceDetailed(
+      this.admin,
+      resourceId,
+      translations.map((t) => t.key),
+    );
+    if (!detailed.found) {
+      loggers.translation('warn', `[saveTranslations] Translatable resource ${resourceId} not found — nothing saved`);
+      return {
+        confirmedKeys: new Set(),
+        confirmedValues: new Map(),
+        userErrors: [{ message: `Translatable resource not found: ${resourceId}` }],
+        digests: new Map(),
+        noDigest: [],
+        unconfirmedKeys: [...new Set(translations.map((t) => t.key))],
+      };
+    }
+    const digestMap: Record<string, string> = Object.fromEntries(detailed.digests);
 
     // Add digests to translations, filtering out any without a valid digest.
     // When a market is selected, fold marketId onto each TranslationInput so
     // Shopify stores a market-specific override (omitting it = all markets/global).
-    const translationsWithDigests = translations
-      .map(t => ({
-        ...t,
-        translatableContentDigest: digestMap[t.key],
-        ...(marketId ? { marketId } : {}),
-      }))
-      .filter(t => {
-        if (!t.translatableContentDigest) {
-          loggers.translation('warn', `[saveTranslations] No digest for key '${t.key}' — skipping Shopify save for this field`);
-          return false;
-        }
-        return true;
-      });
-
-    if (translationsWithDigests.length === 0) {
-      loggers.translation('warn', '[saveTranslations] No translations with valid digests to save');
-      return [];
-    }
-
-    const response = await this.admin.graphql(TRANSLATE_CONTENT, {
-      variables: {
-        resourceId,
-        translations: translationsWithDigests
+    const digests = new Map<string, string>();
+    const noDigest: string[] = [];
+    const inputs: Array<{ key: string; value: string; locale: string; translatableContentDigest: string; marketId?: string }> = [];
+    for (const t of translations) {
+      const digest = digestMap[t.key];
+      if (!digest) {
+        loggers.translation('warn', `[saveTranslations] No digest for key '${t.key}' — skipping Shopify save for this field`);
+        if (!noDigest.includes(t.key)) noDigest.push(t.key);
+        continue;
       }
-    });
-
-    const data = await response.json();
-
-    if (data.errors?.length > 0) {
-      throw new Error(`GraphQL error in saveTranslations: ${data.errors[0].message}`);
-    }
-    if (data.data?.translationsRegister?.userErrors?.length > 0) {
-      throw new Error(data.data.translationsRegister.userErrors[0].message);
+      digests.set(t.key, digest);
+      inputs.push({ ...t, translatableContentDigest: digest, ...(marketId ? { marketId } : {}) });
     }
 
-    return data.data?.translationsRegister?.translations || [];
+    if (inputs.length === 0) {
+      loggers.translation('warn', '[saveTranslations] No translations with valid digests to save');
+      return { confirmedKeys: new Set(), confirmedValues: new Map(), userErrors: [], digests, noDigest, unconfirmedKeys: [] };
+    }
+
+    const { registerAndVerify } = await import('../../app/services/translations/verified-translations.server');
+    const verified = await registerAndVerify(this.admin, resourceId, inputs);
+    const unconfirmedKeys = [...new Set(inputs.map((i) => i.key))].filter((key) => !verified.confirmedKeys.has(key));
+    return { ...verified, digests, noDigest, unconfirmedKeys };
   }
 
   /**
@@ -621,7 +721,7 @@ export class ShopifyContentService {
       const locales = [...foreignLocales];
       const { ShopifyApiGateway } = await import("../../app/services/shopify-api-gateway.service");
       const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
-        "../../app/services/bulk-editor/translations.server"
+        "../../app/services/translations/verified-translations.server"
       );
       const gateway = new ShopifyApiGateway(this.admin, shop);
 
@@ -735,7 +835,7 @@ export class ShopifyContentService {
     altText: string;
     shop: string;
     db: PrismaClient;
-  }): Promise<{ saved: boolean; reason?: 'no-digest' | 'shopify-error' | 'error' }> {
+  }): Promise<{ saved: boolean; reason?: 'no-digest' | 'no-image' | 'shopify-error' | 'error' }> {
     const { resourceId, resourceType, locale, altText, shop, db } = params;
     try {
       // Shopify's *Image translatable resource is keyed by the image's OWN id
@@ -746,19 +846,27 @@ export class ShopifyContentService {
 
       if (!imageResourceId) {
         loggers.translation('warn', `[saveImageAltTextTranslation] ${resourceType} has no image.id — cannot translate alt text`, { resourceId });
-        return { saved: false, reason: 'no-digest' };
+        // Its own reason: the image is GONE (or the lookup failed), which is a
+        // different problem from "no primary alt" and needs different advice.
+        return { saved: false, reason: 'no-image' };
       }
 
-      const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
-      const altDigest = imageDigestMap['alt'];
+      const verifiedModule = await import('../../app/services/translations/verified-translations.server');
 
       if (altText.trim() === '') {
-        if (altDigest) {
-          await this.deleteAllTranslationsForKeys({
-            resourceId: imageResourceId,
-            translationKeys: ['alt'],
-            foreignLocales: [locale],
-          });
+        // A resource with no `alt` digest carries nothing to remove on Shopify.
+        const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
+        if (imageDigestMap['alt']) {
+          // VERIFIED (echo, then the re-read on a gap -- a DB-only row Shopify
+          // never held is cleared that way): the parent's local row goes ONLY
+          // when the removal is confirmed. A refusal keeps it and says so.
+          const removal = await verifiedModule.removeMediaAltAndVerify(this.admin, imageResourceId, locale);
+          if (!removal.confirmed) {
+            loggers.translation('error', `[saveImageAltTextTranslation] Shopify did not confirm removing the alt translation`, {
+              resourceType, locale, errors: removal.userErrors,
+            });
+            return { saved: false, reason: 'shopify-error' };
+          }
         }
         markTranslationSaved(featuredAltLockId(resourceId));
         await db.contentTranslation.deleteMany({
@@ -769,31 +877,23 @@ export class ShopifyContentService {
 
       // Shopify is the source of truth for alt-text translations. If the
       // ArticleImage/CollectionImage translatable resource has no digest, or
-      // Shopify rejects the translation, fail loudly — do NOT write locally,
-      // otherwise the editor would show a value that does not exist on the
-      // storefront and the next sync would be misleading.
-      if (!altDigest) {
+      // Shopify rejects or does not echo the translation, fail loudly -- do NOT
+      // write locally, otherwise the editor would show a value that does not
+      // exist on the storefront and the next sync would be misleading.
+      const verified = await verifiedModule.registerMediaAltAndVerify(this.admin, imageResourceId, locale, altText);
+      if (verified.noDigest) {
         loggers.translation('warn', `[saveImageAltTextTranslation] No 'alt' digest on ${resourceType} image translatable resource`, { imageResourceId });
         return { saved: false, reason: 'no-digest' };
       }
-
-      const translateResponse = await this.admin.graphql(TRANSLATE_CONTENT, {
-        variables: {
-          resourceId: imageResourceId,
-          translations: [{
-            key: 'alt',
-            value: altText,
-            locale,
-            translatableContentDigest: altDigest,
-          }],
-        },
-      });
-      const translateData = await translateResponse.json() as any;
-      const userErrors = translateData.data?.translationsRegister?.userErrors || [];
-      if (userErrors.length > 0) {
-        loggers.translation('error', `[saveImageAltTextTranslation] Shopify userErrors`, { resourceType, errors: userErrors });
+      if (!verified.confirmed || !verified.digest) {
+        loggers.translation('error', `[saveImageAltTextTranslation] Shopify did not confirm storing the alt translation`, {
+          resourceType, errors: verified.userErrors,
+        });
         return { saved: false, reason: 'shopify-error' };
       }
+      const altDigest = verified.digest;
+      // What Shopify STORED, where it said so.
+      const storedAlt = verified.storedValue ?? altText;
 
       // Claim the key the featured-alt repair runs under (see
       // translation-locks.shared.ts). The parent's own lock belongs to its
@@ -803,8 +903,8 @@ export class ShopifyContentService {
 
       await db.contentTranslation.upsert({
         where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: 'image_alt_text', locale, marketId: "" } },
-        update: { value: altText, digest: altDigest, resourceType },
-        create: { shop, resourceId, resourceType, key: 'image_alt_text', value: altText, locale, digest: altDigest },
+        update: { value: storedAlt, digest: altDigest, resourceType },
+        create: { shop, resourceId, resourceType, key: 'image_alt_text', value: storedAlt, locale, digest: altDigest },
       });
       return { saved: true };
     } catch (err: unknown) {
@@ -838,7 +938,21 @@ export class ShopifyContentService {
   }
 
   /**
-   * Delete all translations for specific keys across all foreign locales
+   * Remove translations for specific keys across foreign locales -- VERIFIED.
+   *
+   * Returns which (locale, key) pairs Shopify CONFIRMED gone; callers delete
+   * the local row ONLY for those (CLAUDE.md: an unconfirmed removal keeps the
+   * row). One locale goes through `removeAndVerify` (echo, then the re-read on
+   * a gap); several go through ONE `removeAndVerifyAcrossLocales` and then the
+   * re-read ONLY for a locale with a gap (`removeVerifiedWithGapReread`). The
+   * re-read is what lets a DB-only mirror row (digest null, written on purpose
+   * by `updateContent`) be cleared: Shopify echoes nothing for a key it never
+   * held.
+   *
+   * THROWS on a transport / GraphQL error. It does NOT throw on `userErrors`:
+   * they come back in the result and the caller keeps the row (a re-read can
+   * still confirm the key is gone). It used to throw there and otherwise report
+   * success whether or not anything was removed.
    */
   async deleteAllTranslationsForKeys(params: {
     resourceId: string;
@@ -851,55 +965,45 @@ export class ShopifyContentService {
      * global translation survives.
      */
     marketId?: string;
-  }) {
+    /** `${locale}\0${key}` pairs that have a local row: a gap outside it is not
+     *  re-read (nothing to delete locally). Omit to re-read every gap. */
+    localPairs?: ReadonlySet<string>;
+  }): Promise<DeleteTranslationsResult> {
     const { resourceId, translationKeys, foreignLocales } = params;
     const marketId = params.marketId || "";
 
     if (translationKeys.length === 0 || foreignLocales.length === 0) {
-      return { success: true };
+      return { success: true, confirmedPairs: new Set(), unconfirmedPairs: [], userErrors: [] };
     }
 
     loggers.translation('info', 'Deleting translations for keys', { translationKeys, foreignLocales, marketId: marketId || '(global)' });
 
-    const response = await this.admin.graphql(
-      `#graphql
-        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
-          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
-            userErrors {
-              field
-              message
-            }
-            translations {
-              key
-              locale
-            }
-          }
-        }`,
-      {
-        variables: {
-          resourceId,
-          translationKeys,
-          locales: foreignLocales,
-          // Omit (null) for global removal; a single-element array for a
-          // market-specific removal.
-          marketIds: marketId ? [marketId] : null,
-        },
-      }
+    const { removeVerifiedWithGapReread } = await import('../../app/services/translations/verified-translations.server');
+    const removal = await removeVerifiedWithGapReread(
+      this.admin,
+      resourceId,
+      translationKeys,
+      foreignLocales,
+      marketId,
+      { localPairs: params.localPairs },
     );
 
-    const data = await response.json();
-
-    if (data.errors?.length > 0) {
-      loggers.translation('error', 'GraphQL error in deleteAllTranslationsForKeys', { errors: data.errors });
-      throw new Error(`GraphQL error: ${data.errors[0].message}`);
+    if (removal.userErrors.length > 0) {
+      loggers.translation('error', 'Error deleting translations', { errors: removal.userErrors });
     }
-    if (data.data?.translationsRemove?.userErrors?.length > 0) {
-      loggers.translation('error', 'Error deleting translations', { errors: data.data.translationsRemove.userErrors });
-      throw new Error(data.data.translationsRemove.userErrors[0].message);
+    if (removal.unconfirmedPairs.length > 0) {
+      loggers.translation('warn', 'Shopify did not confirm every removal -- local rows kept', {
+        resourceId, unconfirmed: removal.unconfirmedPairs.length,
+      });
+    } else {
+      loggers.translation('info', 'Successfully deleted translations');
     }
-
-    loggers.translation('info', 'Successfully deleted translations');
-    return { success: true };
+    return {
+      success: removal.unconfirmedPairs.length === 0,
+      confirmedPairs: removal.confirmedPairs,
+      unconfirmedPairs: removal.unconfirmedPairs,
+      userErrors: removal.userErrors,
+    };
   }
 
   /**
@@ -1055,6 +1159,16 @@ export class ShopifyContentService {
      * always global (Shopify forbids market-specific primary content).
      */
     marketId?: string;
+    /**
+     * A bulk caller's budget of detached re-translation runs (the SEO "Fix with
+     * AI" task - repair-budget.server.ts). Absent for the editor: one save, one
+     * run. When the budget is spent a group starts NO run and the save follows
+     * the deletion answer the bulk editor uses for a refused group: a
+     * Collection's own fields keep their translations
+     * (`purgeOnPrimaryChange`, forced off by auto-translate), every other
+     * surface the merchant's stored answer (`purgeUnreconciledSurfaces`).
+     */
+    repairBudget?: { take(kind: string, ownerId: string, variant?: string): boolean };
   }) {
     const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType, changedFields, changedAltTextIndices } = params;
     const marketId = params.marketId || "";
@@ -1067,6 +1181,10 @@ export class ShopifyContentService {
       const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
       const translationsToDelete: string[] = [];
       const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
+      /** Shopify translation key -> the FIELD key that carried it, for reporting. */
+      const fieldOfTranslationKey: Record<string, string> = {};
+      /** FIELD keys the save deliberately did not write (a handle equal to the primary one). */
+      const skippedFields: string[] = [];
 
       // Map UI field names to Shopify translatable content keys — the ONE
       // canonical map (see FIELD_TO_TRANSLATION_KEY at the top of this file
@@ -1076,11 +1194,15 @@ export class ShopifyContentService {
       for (const [field, value] of Object.entries(updates)) {
         const translationKey = keyMapping[field];
         if (!translationKey) continue;
+        fieldOfTranslationKey[translationKey] = field;
 
         // Reject handle translations that are identical to the primary locale handle —
         // duplicate slugs across locales cause Shopify routing conflicts.
         if (field === 'handle' && value && valueMap['handle'] && value.trim() === valueMap['handle'].trim()) {
           loggers.translation('warn', `[updateContent] Skipping handle for locale '${locale}' — same as primary locale handle`);
+          // Reported, not swallowed: the field stays dirty on the page and the
+          // merchant is told why (localized there, from this field key).
+          skippedFields.push(field);
           continue;
         }
 
@@ -1207,13 +1329,26 @@ export class ShopifyContentService {
       // selected market: with marketId set, only the market-specific override is
       // removed (the global translation survives and the field falls back to it);
       // without it, the global translation is removed.
+      //
+      // VERIFIED: the local row goes ONLY for a key Shopify confirmed removed --
+      // by its echo, or by the re-read that finds the key carries nothing in
+      // this locale/layer any more (the way a DB-only mirror row, digest null,
+      // is ever cleared). An unconfirmed key keeps its row and is reported.
+      const confirmedDeleteKeys: string[] = [];
+      const unconfirmedRemovals: string[] = [];
+      let removalError = '';
       if (translationsToDelete.length > 0) {
-        await this.deleteAllTranslationsForKeys({
+        const removal = await this.deleteAllTranslationsForKeys({
           resourceId,
           translationKeys: translationsToDelete,
           foreignLocales: [locale],
           marketId,
         });
+        for (const key of translationsToDelete) {
+          if (removal.confirmedPairs.has(localeKeyPair(locale, key))) confirmedDeleteKeys.push(key);
+          else unconfirmedRemovals.push(key);
+        }
+        removalError = removal.userErrors[0]?.message ?? '';
       }
 
       // Mark this resource as recently saved so webhook syncs don't overwrite.
@@ -1305,7 +1440,7 @@ export class ShopifyContentService {
           // Delete cleared translations from database (single batch call).
           // Scoped to the current market so clearing a market-specific value does
           // not touch the global row (and vice-versa).
-          if (translationsToDelete.length > 0) {
+          if (confirmedDeleteKeys.length > 0) {
             await tx.contentTranslation.deleteMany({
               where: {
                 shop,
@@ -1313,7 +1448,7 @@ export class ShopifyContentService {
                 resourceType,
                 locale,
                 marketId,
-                key: { in: translationsToDelete },
+                key: { in: confirmedDeleteKeys },
               },
             });
           }
@@ -1346,8 +1481,19 @@ export class ShopifyContentService {
 
       // Article/Collection image alt-text translations live on a separate translatable
       // resource (ArticleImage / CollectionImage). Best-effort: failures don't fail the save.
+      let featuredAltFailed = false;
+      // The featured image carries no PRIMARY alt text, so Shopify offers no
+      // `alt` key to translate (translatableContent lists only keys that have
+      // a primary value) and nothing could be registered. Said by name, so the
+      // page can tell the merchant what to do instead of "please try again",
+      // which can never succeed.
+      let featuredAltNoPrimary = false;
+      // The featured image could not be found any more (removed meanwhile, or
+      // its lookup failed): reported apart from "no primary alt", whose advice
+      // ("save a main-language alt first") would be wrong here.
+      let featuredAltNoImage = false;
       if (updates.imageAltText !== undefined && (resourceType === 'Collection' || resourceType === 'Article')) {
-        await this.saveImageAltTextTranslation({
+        const altResult = await this.saveImageAltTextTranslation({
           resourceId,
           resourceType,
           locale,
@@ -1355,6 +1501,18 @@ export class ShopifyContentService {
           shop,
           db,
         });
+        // The rest of the save is real, so this is a warning and not a failure,
+        // but a register Shopify did not echo (or a clear it did not confirm)
+        // is never reported as a clean save.
+        if (!altResult.saved) {
+          // Reported through the SAME channel a product's failed alt uses
+          // (`failedAltTextIndices`, index 0 = the featured image): the page
+          // words it in the merchant's language and keeps that alt dirty.
+          featuredAltFailed = true;
+          if (altResult.reason === 'no-digest') featuredAltNoPrimary = true;
+          if (altResult.reason === 'no-image') featuredAltNoImage = true;
+          loggers.translation('warn', '[updateContent] Featured image alt translation not saved', { resourceId, locale, reason: altResult.reason });
+        }
       }
 
       // What the merchant hears. This path has exactly two channels and both
@@ -1378,8 +1536,18 @@ export class ShopifyContentService {
         warnings.push(`Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`);
       }
 
+      // FIELD keys of the writes Shopify did not echo, mapped back from the
+      // translation keys through the canonical map. The page keeps exactly
+      // these dirty with the typed text and words the message in the
+      // merchant's language from its own field labels; a key that maps to no
+      // field falls back to the English text below.
+      const unconfirmedFields = [
+        ...new Set(unconfirmedKeys.map((key) => fieldOfTranslationKey[key]).filter((f): f is string => !!f)),
+      ];
+      const unmappedUnconfirmedKeys = unconfirmedKeys.filter((key) => !fieldOfTranslationKey[key]);
+
       if (unconfirmedKeys.length > 0) {
-        const names = unconfirmedKeys.join(", ");
+        const names = (unmappedUnconfirmedKeys.length > 0 ? unmappedUnconfirmedKeys : unconfirmedKeys).join(", ");
         const message = `Shopify accepted the save but did not confirm storing (${names}). Those fields were NOT saved and were not cached locally — please try again.`;
         if (confirmedTranslations.length === 0) {
           // A digest-less local row on the same save is not evidence that
@@ -1387,17 +1555,50 @@ export class ShopifyContentService {
           // never went there — so it does not soften this verdict. It is
           // carried into the message rather than dropped, because the merchant
           // is about to re-save and needs to know which half went where.
+          return { success: false, error: [message, ...warnings].join(" "), ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}) };
+        }
+        // Fully mapped ⇒ the page words it (localized); the English text is
+        // only the fallback for keys no field owns.
+        if (unmappedUnconfirmedKeys.length > 0) warnings.unshift(message);
+      }
+
+      // A removal Shopify did not confirm: the local row was KEPT, so the field
+      // the merchant just cleared will still show its old translation after a
+      // reload. Said out loud rather than reported as a clean save.
+      if (unconfirmedRemovals.length > 0) {
+        const names = unconfirmedRemovals.join(", ");
+        const message = `Shopify did not confirm removing the translation of (${names}). It was kept — please try again.${removalError ? ` (${removalError})` : ''}`;
+        if (confirmedTranslations.length === 0 && confirmedDeleteKeys.length === 0) {
           return { success: false, error: [message, ...warnings].join(" ") };
         }
         warnings.unshift(message);
       }
 
-      if (warnings.length > 0) return { success: true, warning: warnings.join(" ") };
+      if (warnings.length > 0 || unconfirmedFields.length > 0 || skippedFields.length > 0 || featuredAltFailed) {
+        // FIELD keys whose clear Shopify did not confirm: the page keeps them
+        // dirty instead of caching them as saved-empty.
+        const unconfirmedClearedFields = unconfirmedRemovals
+          .map((key) => fieldOfTranslationKey[key])
+          .filter((field): field is string => !!field);
+        return {
+          success: true,
+          ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
+          ...(unconfirmedClearedFields.length > 0 ? { unconfirmedClearedFields } : {}),
+          ...(unconfirmedFields.length > 0 ? { unconfirmedFields } : {}),
+          ...(skippedFields.length > 0 ? { skippedFields } : {}),
+          ...(featuredAltFailed ? { failedAltTextIndices: [0] } : {}),
+          ...(featuredAltNoPrimary ? { altTextNoPrimaryIndices: [0] } : {}),
+          ...(featuredAltNoImage ? { altTextNoImageIndices: [0] } : {}),
+        };
+      }
 
       return { success: true };
     } else {
       // Update primary locale
       let updatedResource;
+      // Set when Shopify's echo did not confirm the featured-image alt (see
+      // featuredAltEchoProblem). The rest of the save stands.
+      let featuredAltEchoError: string | null = null;
 
       // ── PLAN §Phase 3 merchandising attributes ──────────────────────────
       // Built ONCE, from the same flat update map as everything else, and
@@ -1501,6 +1702,9 @@ export class ShopifyContentService {
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
           ...attributeInput,
         });
+        if (updates.imageAltText !== undefined) {
+          featuredAltEchoError = featuredAltEchoProblem(updatedResource, updates.imageAltText);
+        }
 
         // Update database
         await db.article.update({
@@ -1514,7 +1718,7 @@ export class ShopifyContentService {
             summary: updates.summary,
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
-            ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
+            ...(updates.imageAltText !== undefined && !featuredAltEchoError ? { imageAltText: updates.imageAltText || null } : {}),
             ...attributeMirror(updatedResource),
             lastSyncedAt: new Date(),
           },
@@ -1530,6 +1734,9 @@ export class ShopifyContentService {
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
           ...attributeInput,
         });
+        if (updates.imageAltText !== undefined) {
+          featuredAltEchoError = featuredAltEchoProblem(updatedResource, updates.imageAltText);
+        }
 
         // Update database
         await db.collection.update({
@@ -1542,7 +1749,7 @@ export class ShopifyContentService {
             descriptionHtml: updates.description,
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
-            ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
+            ...(updates.imageAltText !== undefined && !featuredAltEchoError ? { imageAltText: updates.imageAltText || null } : {}),
             ...attributeMirror(updatedResource),
             lastSyncedAt: new Date(),
           },
@@ -1598,6 +1805,7 @@ export class ShopifyContentService {
       // reason `changedFields` exists beside it.
       const featuredAltChanged =
         updates.imageAltText !== undefined &&
+        !featuredAltEchoError &&
         !!changedAltTextIndices?.includes(0) &&
         (resourceType === 'Collection' || resourceType === 'Article');
       const changePolicy =
@@ -1628,20 +1836,10 @@ export class ShopifyContentService {
       const { IN_APP_RETRANSLATED_RESOURCE_TYPES } = await import(
         "../../app/services/translations/stale-translation-sync.server"
       );
-      const selfRetranslated =
+      const repairWanted =
         !!changePolicy?.autoTranslateExternalChanges &&
-        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType);
-      // With the repair in force the stored deletion answer is superseded by
-      // `purgeOnPrimaryChange` (which that switch forces off); without it the
-      // resource is unreconciled and the merchant's own answer stands. The
-      // `|| resourceType === 'Collection'` this used to carry is gone with the
-      // exclusion it belonged to — a collection is `selfRetranslated` now.
-      const purgeChangedFields = !!changePolicy && (
-        selfRetranslated
-          ? changePolicy.purgeOnPrimaryChange
-          : changePolicy.purgeUnreconciledSurfaces
-      );
-
+        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType) &&
+        fieldsChanged;
       // Map UI field names to Shopify translation keys — the ONE canonical map
       // (FIELD_TO_TRANSLATION_KEY, top of this file).
       const changedTranslationKeys = fieldsChanged
@@ -1662,8 +1860,14 @@ export class ShopifyContentService {
       // — repeating the write. A stale translation is visible and repairable;
       // "your text was not saved" about text that was is neither.
       const needsForeignLocales =
-        (purgeChangedFields && changedTranslationKeys.length > 0) ||
-        (selfRetranslated && changedTranslationKeys.length > 0) ||
+        // The budget slot is taken only AFTER the locales are known (a run
+        // starts only with foreign locales), so the question here is asked of
+        // `repairWanted` and the policy, not of the budget's verdict.
+        (!!changePolicy &&
+          (repairWanted ||
+            changePolicy.purgeOnPrimaryChange ||
+            changePolicy.purgeUnreconciledSurfaces) &&
+          changedTranslationKeys.length > 0) ||
         // BOTH featured-alt outcomes need the locales — the deletion to scope
         // it, the re-translation to know what to translate into. Asking only
         // about the deletion left a shop with auto-translate ON and the stored
@@ -1686,9 +1890,31 @@ export class ShopifyContentService {
         }
       }
 
+      // The bulk caller's budget is asked only where a run would really start.
+      const contentBudgetRefused =
+        repairWanted && changedTranslationKeys.length > 0 && foreignLocales.length > 0 && !!params.repairBudget && !params.repairBudget.take('content', resourceId);
+      const selfRetranslated =
+        !!changePolicy?.autoTranslateExternalChanges &&
+        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType) &&
+        !contentBudgetRefused;
+      // With the repair in force the stored deletion answer is superseded by
+      // `purgeOnPrimaryChange` (which that switch forces off); without it the
+      // resource is unreconciled and the merchant's own answer stands. The
+      // `|| resourceType === 'Collection'` this used to carry is gone with the
+      // exclusion it belonged to — a collection is `selfRetranslated` now.
+      const purgeChangedFields = !!changePolicy && (
+        selfRetranslated ||
+        // A refused collection group loses nothing (see `repairBudget`).
+        (contentBudgetRefused && resourceType === 'Collection')
+          ? changePolicy.purgeOnPrimaryChange
+          : changePolicy.purgeUnreconciledSurfaces
+      );
+
+
       // Delete translations for changed fields across ALL foreign locales.
       // With the purge off the old translations stay and Shopify flags them
       // "outdated" in its own editor instead.
+      let purgeWarning: string | undefined;
       if (purgeChangedFields && changedTranslationKeys.length > 0 && foreignLocales.length > 0) {
         // The MARKET overrides of the same keys. Nothing re-translates one — the
         // repair writes global rows only, deliberately — so once the primary
@@ -1719,29 +1945,65 @@ export class ShopifyContentService {
           });
         }
 
-        // Delete from Shopify
-        await this.deleteAllTranslationsForKeys({
-          resourceId,
-          translationKeys: changedTranslationKeys,
-          foreignLocales,
-        });
-
-        // Delete from database (single batch call instead of N×M loop).
-        // Scoped to global (marketId "") because that is what the removal above
-        // sent; the MARKET layer was handled separately, before it, and needs
-        // its own echo per market to be deleted safely.
-        await db.contentTranslation.deleteMany({
-          where: {
-            shop,
+        // Delete from Shopify, VERIFIED: one multi-locale call, then the re-read
+        // only for a locale that has a gap AND a local row (a DB-only mirror row
+        // -- digest null, written on purpose -- is never echoed, and this is how
+        // it is ever cleared). The local delete below covers ONLY the confirmed
+        // (locale, key) pairs: an unconfirmed removal keeps its row.
+        // The primary write above already SUCCEEDED: a transport / GraphQL
+        // error here must not turn it into a failed save. The rows stay (an
+        // unconfirmed removal never deletes locally) and the merchant is told.
+        try {
+          let localPairs: Set<string> | undefined;
+          try {
+            const localRows: Array<{ locale: string; key: string }> = await db.contentTranslation.findMany({
+              where: {
+                shop,
+                resourceId,
+                resourceType,
+                marketId: "",
+                key: { in: changedTranslationKeys },
+                locale: { in: foreignLocales },
+              },
+              select: { locale: true, key: true },
+            });
+            localPairs = new Set(localRows.map((row) => localeKeyPair(row.locale, row.key)));
+          } catch {
+            // Unknown local rows: every gap is re-read instead.
+            localPairs = undefined;
+          }
+          const removal = await this.deleteAllTranslationsForKeys({
             resourceId,
-            resourceType,
-            marketId: "",
-            key: { in: changedTranslationKeys },
-            locale: { in: foreignLocales },
-          },
-        });
+            translationKeys: changedTranslationKeys,
+            foreignLocales,
+            localPairs,
+          });
 
-        loggers.translation('info', `Deleted translations for fields: ${changedFields!.join(', ')}`);
+          // Delete from database (single batch call instead of N×M loop).
+          // Scoped to global (marketId "") because that is what the removal above
+          // sent; the MARKET layer was handled separately, before it, and needs
+          // its own echo per market to be deleted safely.
+          const { confirmedPairsWhere } = await import('../../app/services/translations/verified-translations.server');
+          const confirmedWhere = confirmedPairsWhere(removal.confirmedPairs, changedTranslationKeys, foreignLocales);
+          if (confirmedWhere) {
+            await db.contentTranslation.deleteMany({
+              where: { shop, resourceId, resourceType, marketId: "", ...confirmedWhere },
+            });
+          }
+          if (removal.unconfirmedPairs.length > 0) {
+            loggers.translation('warn', '[updateContent] Primary-change purge: Shopify did not confirm every removal — those rows stay', {
+              resourceId, resourceType, unconfirmed: removal.unconfirmedPairs.length,
+            });
+          }
+
+          loggers.translation('info', `Deleted translations for fields: ${changedFields!.join(', ')}`);
+        } catch (purgeError: unknown) {
+          purgeWarning = 'Saved, but the old translations of the changed fields could not be removed in Shopify. They were kept.';
+          loggers.translation('error', '[updateContent] Primary-change purge failed — saved primary kept, translation rows kept', {
+            resourceId, resourceType,
+            error: purgeError instanceof Error ? purgeError.message : String(purgeError),
+          });
+        }
       }
 
       // §6.6 for the FEATURED-IMAGE ALT — the third translation shape
@@ -1764,7 +2026,8 @@ export class ShopifyContentService {
         featuredAltChanged &&
         !!changePolicy?.autoTranslateExternalChanges &&
         foreignLocales.length > 0 &&
-        !!primaryLocale;
+        !!primaryLocale &&
+        (!params.repairBudget || params.repairBudget.take('featuredAlt', resourceId));
       const purgeFeaturedAlt = retranslateFeaturedAlt
         ? !!changePolicy?.purgeOnPrimaryChange
         : !!changePolicy?.purgeUnreconciledSurfaces;
@@ -1896,11 +2159,23 @@ export class ShopifyContentService {
       // A rejected attribute is NOT a failed save — everything else went
       // through — but it is not a silent drop either. Saying nothing is how a
       // merchant discovers weeks later that a sort order never took.
+      const primaryWarnings: string[] = [];
       if (rejectedAttributes && rejectedAttributes.length > 0) {
+        primaryWarnings.push(`Saved, but these details could not be applied because their value was not recognised: ${rejectedAttributes.join(", ")}.`);
+      }
+      if (purgeWarning) primaryWarnings.push(purgeWarning);
+      if (featuredAltEchoError) {
+        primaryWarnings.push(`Saved, but the image alt text was not: ${featuredAltEchoError}`);
+      }
+      // The featured alt is index 0 - the same channel a product's failed alt
+      // uses, so the page keeps it dirty and words it in the merchant's language.
+      const failedAltTextIndices = featuredAltEchoError ? { failedAltTextIndices: [0] } : {};
+      if (primaryWarnings.length > 0) {
         return {
           success: true,
           item: updatedResource,
-          warning: `Saved, but these details could not be applied because their value was not recognised: ${rejectedAttributes.join(", ")}.`,
+          warning: primaryWarnings.join(" "),
+          ...failedAltTextIndices,
           retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
         };
       }

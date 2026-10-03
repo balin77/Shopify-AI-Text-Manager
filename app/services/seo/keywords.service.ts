@@ -10,6 +10,7 @@
 // TYPE-ONLY Prisma imports — this module is imported CLIENT-SIDE (ItemSidebar
 // uses analyzeOnPage), so a value import of @prisma/client would drag the
 // Prisma runtime into the browser bundle and break the vite build.
+import { FIELD_TO_TRANSLATION_KEY } from "../translations/translation-keys.shared";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { stripHtml } from "../../utils/seo-score";
 // Pure plan helpers — no Prisma, no server-only imports, so the client-side
@@ -1738,10 +1739,10 @@ export interface TranslationRow {
  *  (same four Shopify translation keys the sync pipeline writes for every
  *  audited resource type: Product, Collection, Article, Page). */
 const CONTENT_TRANSLATION_KEY: Record<keyof TranslatedItemContent, string> = {
-  title: "title",
-  seoTitle: "meta_title",
-  metaDescription: "meta_description",
-  bodyHtml: "body_html",
+  title: FIELD_TO_TRANSLATION_KEY.title,
+  seoTitle: FIELD_TO_TRANSLATION_KEY.seoTitle,
+  metaDescription: FIELD_TO_TRANSLATION_KEY.metaDescription,
+  bodyHtml: FIELD_TO_TRANSLATION_KEY.description,
 };
 
 export interface TranslatedItemContent {

@@ -1,0 +1,45 @@
+{%- comment -%}
+  Per-language / per-market product image replacement — the SERVER-SIDE half
+  (the storefront swap in the gallery is assets/localized-media.js).
+
+  Prints the replacement image URL for `src` in the visitor's language and
+  market, sized to `width`, or NOTHING when there is no replacement — so a
+  caller writes:
+
+    {%- capture lm -%}{%- render 'cp-localized-image', src: img_url, width: 1200 -%}{%- endcapture -%}
+    {%- if lm != blank -%}{%- assign img_url = lm -%}{%- endif -%}
+
+  The map is `custom.localized_media` (json), written ONLY by the app
+  (app/services/localized-media/*): { "v": 1, "e": [ { "o": original filename,
+  "l": locale (lowercase), "k": market numeric id or "" for every market,
+  "u": replacement CDN url } ] }. Matching is by FILENAME rather than by id:
+  `product.images` yields image ids and `product.media` media ids, the two are
+  different numbers for the same picture, and the filename is the one key both
+  (and the rendered <img> the JS half rewrites) carry.
+
+  Precedence: an entry for the visitor's market beats the all-markets entry of
+  the same language; no entry leaves the original untouched.
+{%- endcomment -%}
+{%- liquid
+  assign h = ''
+  assign fn = src | split: '?' | first | split: '/' | last
+  assign loc = request.locale.iso_code | downcase
+  assign mk = localization.market.id | append: ''
+  for e in product.metafields.custom.localized_media.value.e
+    if e.o == fn and e.l == loc and e.x == blank
+      if e.k == mk
+        assign h = e.u
+        break
+      elsif e.k == blank
+        assign h = e.u
+      endif
+    endif
+  endfor
+  if h != ''
+    if h contains '?'
+      echo h | append: '&width=' | append: width
+    else
+      echo h | append: '?width=' | append: width
+    endif
+  endif
+-%}

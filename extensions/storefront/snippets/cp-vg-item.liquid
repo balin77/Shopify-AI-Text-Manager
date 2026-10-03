@@ -1,0 +1,107 @@
+{%- comment -%}
+  ONE entry of the variant-gallery-embed JSON island, printed as a JSON object,
+  or NOTHING when the entry would not be emitted (no usable image URL, a video
+  without poster or sources, a model without a GLB source, a URL that is not a
+  YouTube/Vimeo link, ...).
+
+  Why a snippet. The island in blocks/variant-gallery-embed.liquid used to carry
+  the same object bodies nineteen times (one per call site and path). Copies
+  drift, and they cost the extension's 100 KiB Liquid budget every time.
+
+  Parameters (everything optional; what is missing is nil):
+    m        a Shopify media or image object (image, video, external video,
+             model) -- or nil for the URL and metafield-model modes
+    kind     forces the type of `m`; only 'image' is ever passed, for
+             variant.featured_image (an image object has no media_type)
+    alt      raw alt text (item.alt, media.alt) or nil
+    fb       fallback alt text (variant.title or product.title); the object's
+             alt is `alt | default: fb`
+    url      an external video URL: URL mode (parsed by cp-external-video, the
+             ONE Liquid URL parser)
+    model    a model URL from custom.variant_3d_models: metafield-model mode
+    preview  the preview image URL belonging to `model` (nil when there is none)
+
+  Precedence: url, then model, then kind / m.media_type.
+
+  Strictness: the callers decide WHICH entries reach this snippet. In particular
+  the file_reference loops (custom.variant_gallery) hand over only `image` and
+  `video` items -- Shopify's list.file_reference never yields external videos or
+  models, and the earlier code emitted nothing for them either.
+
+  ESCAPE RULE. The object is collected in `cp_i_out` and printed ONCE with `<`
+  and `>` replaced by their JSON escapes. That replaces the per-value replace on
+  the alt text (R3-H1: `| json` does not neutralise `<`, so an alt text with
+  `</script>` would close the island's <script> element) and has two
+  consequences, both wanted:
+    1. The output contains NO `<` and NO `>` at all. JSON structure never uses
+       them; they can only sit inside string values, where the escape is valid
+       JSON that JSON.parse turns back. So the caller's cut of Shopify's
+       "<!-- BEGIN app snippet ... -->" annotation provably cannot cut into the
+       object, and the island's fallback memo can use `<` and `>` as separators.
+    2. model_src and the video src, which were only `| json` before, can no
+       longer leave the <script> element either.
+
+  CALLERS MUST CUT SHOPIFY'S ANNOTATION from the captured output, exactly as for
+  cp-external-video (see its header; the cut is a no-op on an unannotated
+  value). Every call site is these two lines:
+
+    {%- capture cp_o -%}{%- render 'cp-vg-item', m: item, alt: item.alt, fb: variant.title -%}{%- endcapture -%}
+    {%- if cp_o contains '"type"' -%}{%- if cp_has_any %},{% endif -%}{{ cp_o | split: '-->' | last | split: '<!--' | first | strip }}{%- assign cp_has_any = true -%}{%- endif -%}
+
+  (Test for the type key, print the cut: no intermediate assign.)
+  The comma and `cp_has_any` stay with the caller: `render` is scope-isolated,
+  so this snippet knows no state.
+{%- endcomment -%}
+{%- capture cp_i_out -%}
+  {%- assign cp_i_alt = alt | default: fb | json -%}
+  {%- assign cp_i_kind = kind | default: m.media_type -%}
+  {%- if url != blank -%}
+    {%- capture cp_i_pair -%}{%- render 'cp-external-video', url: url -%}{%- endcapture -%}
+{%- assign cp_i_pair = cp_i_pair | split: '-->' | last | split: '<!--' | first | strip -%}
+    {%- assign cp_i_host = cp_i_pair | split: '|' | first | default: '' -%}
+    {%- assign cp_i_id = cp_i_pair | split: '|' | last | default: '' -%}
+    {%- comment -%} Only what cp-external-video can answer. The host is also interpolated into an embed URL by the controller, so anything else is refused here instead of trusted. {%- endcomment -%}
+    {%- if cp_i_host == 'youtube' or cp_i_host == 'vimeo' -%}
+      {%- if cp_i_id != blank -%}
+        {%- assign cp_i_thumb = '' -%}
+        {%- if cp_i_host == 'youtube' -%}
+          {%- assign cp_i_thumb = 'https://img.youtube.com/vi/' | append: cp_i_id | append: '/hqdefault.jpg' -%}
+        {%- endif -%}
+        {"type":"external_video","thumb":{{ cp_i_thumb | json }},"poster":{{ cp_i_thumb | json }},"w":0,"h":0,"alt":{{ cp_i_alt }},"host":{{ cp_i_host | json }},"external_id":{{ cp_i_id | json }}}
+      {%- endif -%}
+    {%- endif -%}
+  {%- elsif model != blank -%}
+    {%- assign cp_i_pv = preview | default: '' -%}
+    {"type":"model","thumb":{{ cp_i_pv | json }},"poster":{{ cp_i_pv | json }},"w":800,"h":800,"alt":{{ cp_i_alt }},"model_src":{{ model | json }}}
+  {%- elsif cp_i_kind == 'image' -%}
+    {%- assign cp_i_src = m | image_url: width: 800 -%}
+    {%- if cp_i_src != blank -%}
+      {%- assign cp_i_w = m.preview_image.width | default: m.width -%}
+      {%- assign cp_i_h = m.preview_image.height | default: m.height -%}
+      {"type":"image","src_400":{{ m | image_url: width: 400 | json }},"src_800":{{ cp_i_src | json }},"src_1200":{{ m | image_url: width: 1200 | json }},"thumb":{{ m | image_url: width: 160 | json }},"w":{{ cp_i_w | json }},"h":{{ cp_i_h | json }},"alt":{{ cp_i_alt }}}
+    {%- endif -%}
+  {%- elsif m.preview_image != blank -%}
+    {%- assign cp_i_pi = m.preview_image -%}
+    {%- capture cp_i_media -%}"thumb":{{ cp_i_pi | image_url: width: 160 | json }},"poster":{{ cp_i_pi | image_url: width: 1200 | json }},"w":{{ cp_i_pi.width | json }},"h":{{ cp_i_pi.height | json }},"alt":{{ cp_i_alt }}{%- endcapture -%}
+    {%- if cp_i_kind == 'video' and m.sources.size > 0 -%}
+      {"type":"video",{{ cp_i_media }},"sources":[
+      {%- for s in m.sources -%}
+        {%- unless forloop.first %},{% endunless -%}
+        {"src":{{ s.url | json }},"mime":{{ s.mime_type | json }}}
+      {%- endfor -%}
+      ]}
+    {%- elsif cp_i_kind == 'external_video' -%}
+      {"type":"external_video",{{ cp_i_media }},"host":{{ m.host | json }},"external_id":{{ m.external_id | json }}}
+    {%- elsif cp_i_kind == 'model' -%}
+      {%- assign cp_i_glb = '' -%}
+      {%- for s in m.sources -%}
+        {%- assign cp_i_fmt = s.format | downcase -%}
+        {%- if cp_i_fmt == 'glb' and cp_i_glb == blank -%}{%- assign cp_i_glb = s.url -%}{%- endif -%}
+      {%- endfor -%}
+      {%- if cp_i_glb != blank -%}
+        {"type":"model",{{ cp_i_media }},"model_src":{{ cp_i_glb | json }}}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endcapture -%}
+{{- cp_i_out | replace: "<", "\u003c" | replace: ">", "\u003e" -}}

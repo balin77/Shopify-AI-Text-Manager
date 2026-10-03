@@ -471,7 +471,7 @@ export async function handleMetaobjectUpdate(
 
       if (!policy.purgeUnreconciledSurfaces) return;
       const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
-        "~/services/bulk-editor/translations.server"
+        "~/services/translations/verified-translations.server"
       );
       // Skip Shopify entirely when there is nothing to invalidate — the common
       // case on a shop that never translated these fields. ONE query for the
@@ -582,7 +582,7 @@ export async function handleMetaobjectUpdate(
   // ── 3b. Foreign locale: translations, register/remove both echo-verified ─
   async function saveForeign(): Promise<number> {
     const { registerAndVerify, removeAndVerify, fetchDigestsForResource } = await import(
-      "~/services/bulk-editor/translations.server"
+      "~/services/translations/verified-translations.server"
     );
     let confirmedTotal = 0;
 

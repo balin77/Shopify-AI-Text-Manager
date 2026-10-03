@@ -70,7 +70,8 @@ import {
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP,
-} from "../bulk-editor/translations.server";
+  mirrorProductMediaAlt,
+} from "./verified-translations.server";
 import {
   loadTranslationChangePolicy,
   type TranslationChangePolicy,
@@ -573,14 +574,15 @@ export function productImageAltMirror(shop: string, productId: string): Translat
         }))
         .filter((row: { resourceId: string }) => !!row.resourceId);
     },
+    // remove / removeMarket / write go through `mirrorProductMediaAlt`: the
+    // translation lives on the ONE MediaImage, so every product's cache row of
+    // a shared medium is written or cleared, not only this product's.
     async remove(ref, locale) {
-      const imageId = (await resolve([ref.resourceId])).get(ref.resourceId);
       // No cache row ⇒ no rows to drop: `ProductImageAltTranslation` cascades
       // on `ProductImage`, so an image that is gone took its translations with
-      // it. A true no-op, unlike the write below, which would lose data.
-      if (!imageId) return;
+      // it. A true no-op ("imageGone"), unlike the write below.
       const { db } = await import("../../db.server");
-      await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId: "" } });
+      await mirrorProductMediaAlt(db, { shop, productId, mediaId: ref.resourceId, locale, marketId: "", value: "" });
     },
     async marketRows(refs, foreignLocales) {
       const byMedia = await resolve(refs.map((ref) => ref.resourceId));
@@ -605,28 +607,29 @@ export function productImageAltMirror(shop: string, productId: string): Translat
         .filter((row: { resourceId: string }) => !!row.resourceId);
     },
     async removeMarket(ref, locale, _keys, marketId) {
-      const imageId = (await resolve([ref.resourceId])).get(ref.resourceId);
-      if (!imageId) return;
+      if (!marketId) return;
       const { db } = await import("../../db.server");
-      await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId } });
+      await mirrorProductMediaAlt(db, { shop, productId, mediaId: ref.resourceId, locale, marketId, value: "" });
     },
     async write(ref, locale, _key, value) {
-      const imageId = (await resolve([ref.resourceId])).get(ref.resourceId);
+      const { db } = await import("../../db.server");
+      const mirrored = await mirrorProductMediaAlt(db, {
+        shop,
+        productId,
+        mediaId: ref.resourceId,
+        locale,
+        marketId: "",
+        value,
+      });
       // LOUD, never a silent return. Shopify has already confirmed this
       // translation by the time a mirror write runs, so "no row here" means the
       // storefront serves a value this app cannot show — the one outcome the
       // merchant reports as "the field stays empty".
-      if (!imageId) {
+      if (mirrored === "imageGone") {
         throw new Error(
           `No cached ProductImage row for ${ref.resourceId} on ${productId} — the alt translation is live on Shopify but could not be mirrored. Resync the product.`,
         );
       }
-      const { db } = await import("../../db.server");
-      await db.productImageAltTranslation.upsert({
-        where: { imageId_locale_marketId: { imageId, locale, marketId: "" } },
-        create: { imageId, locale, altText: value, marketId: "" },
-        update: { altText: value },
-      });
     },
   };
 }

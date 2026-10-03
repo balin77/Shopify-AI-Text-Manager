@@ -33,7 +33,11 @@ const removeAndVerifyAcrossLocales = vi.fn(async (_g: unknown, _id: string, _k: 
   userErrors: [],
 }));
 const removeAndVerify = vi.fn(async () => ({ confirmedKeys: new Set<string>(), userErrors: [] }));
-vi.mock("~/services/bulk-editor/translations.server", () => ({
+vi.mock("~/services/translations/verified-translations.server", async (importOriginal) => ({
+  // The REAL local mirror helper (it only touches the db it is handed).
+  mirrorProductMediaAlt: (
+    (await importOriginal()) as typeof import("~/services/translations/verified-translations.server")
+  ).mirrorProductMediaAlt,
   removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP: "\u0000",
@@ -53,6 +57,8 @@ function deps() {
       })),
     },
     db: {
+      // Every cache row of the shop carrying the medium (one here).
+      productImage: { findMany: vi.fn(async () => [{ id: "a" }]) },
       productImageAltTranslation: {
         deleteMany: vi.fn(async () => ({ count: 1 })),
         findMany: vi.fn(async () => [{ locale: "en" }]),
@@ -144,7 +150,57 @@ describe("repairChangedProductAlts", () => {
     expect(removeAndVerifyAcrossLocales).toHaveBeenCalledWith(gateway, "gid://shopify/MediaImage/1", ["alt"], ["en"], "");
     // Echo-confirmed ⇒ the local row goes.
     expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
-      where: { imageId: "a", marketId: "", locale: { in: ["en"] } },
+      where: { imageId: { in: ["a"] }, locale: "en", marketId: "" },
+    });
+  });
+
+  it("a confirmed removal of a SHARED medium clears every product's row of it", async () => {
+    const { gateway, db } = deps();
+    db.productImage.findMany.mockResolvedValue([{ id: "a" }, { id: "row-of-other-product" }]);
+    await repairChangedProductAlts({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      productId: "p",
+      productTitle: "Box",
+      changes: [{ imageId: "a", mediaId: "gid://shopify/MediaImage/1" }],
+      policy: { ...base, purgeUnreconciledSurfaces: true } as never,
+      foreignLocales: ["en"],
+      primaryLocale: "de",
+    });
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { imageId: { in: ["a", "row-of-other-product"] }, locale: "en", marketId: "" },
+    });
+  });
+
+  it("a locale held only on ANOTHER product's row of the medium is re-read too; one deleteMany clears all", async () => {
+    const { gateway, db } = deps();
+    db.productImage.findMany.mockResolvedValue([{ id: "a" }, { id: "row-of-other-product" }]);
+    // The fold confirms only "en"; "fr" sits on the other product's row only.
+    removeAndVerifyAcrossLocales.mockResolvedValueOnce({ confirmedPairs: new Set(["en\u0000alt"]), userErrors: [] });
+    db.productImageAltTranslation.findMany.mockResolvedValue([{ locale: "en" }, { locale: "fr" }, { locale: "fr" }]);
+    removeAndVerify.mockResolvedValueOnce({ confirmedKeys: new Set(["alt"]), userErrors: [] });
+    await repairChangedProductAlts({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      productId: "p",
+      productTitle: "Box",
+      changes: [{ imageId: "a", mediaId: "gid://shopify/MediaImage/1" }],
+      policy: { ...base, purgeUnreconciledSurfaces: true } as never,
+      foreignLocales: ["en", "fr"],
+      primaryLocale: "de",
+    });
+    // The local-row lookup spans every cache row of the medium in the shop.
+    expect((db.productImageAltTranslation.findMany.mock.calls as unknown as [[{ where: unknown }]])[0][0].where).toMatchObject({
+      image: { mediaId: "gid://shopify/MediaImage/1", product: { shop: "s" } },
+    });
+    expect(removeAndVerify).toHaveBeenCalledTimes(1);
+    expect(removeAndVerify).toHaveBeenCalledWith(gateway, "gid://shopify/MediaImage/1", ["alt"], "fr", "");
+    expect(db.productImage.findMany).toHaveBeenCalledTimes(1);
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { imageId: { in: ["a", "row-of-other-product"] }, locale: { in: ["en", "fr"] }, marketId: "" },
     });
   });
 
@@ -226,5 +282,40 @@ describe("repairAltsAfterWrite — the per-image paths", () => {
     });
     const call = (reconcileAfterPrimarySave.mock.calls[0] as unknown as [Record<string, unknown>])[0];
     expect(call.lockId).toBe("p1#altText:gid://shopify/MediaImage/1");
+  });
+
+  it("a spent repair budget starts NO run and follows the stored deletion answer", async () => {
+    const { gateway, db } = deps();
+    policy.purgeUnreconciledSurfaces = true;
+    const take = vi.fn(() => false);
+    const ids = await repairAltsAfterWrite({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      snapshot,
+      written: [{ mediaId: "gid://shopify/MediaImage/1", alt: "neu" }],
+      repairBudget: { take },
+    });
+    policy.purgeUnreconciledSurfaces = false;
+    // One group per (product, medium): the per-image save's own run.
+    expect(take).toHaveBeenCalledWith("productAlt", "p1", "gid://shopify/MediaImage/1");
+    expect(reconcileAfterPrimarySave).not.toHaveBeenCalled();
+    expect(ids).toEqual([]);
+    // The stored answer applied instead: the stale alt translations were purged.
+    expect(db.productImageAltTranslation.deleteMany).toHaveBeenCalled();
+  });
+
+  it("a budget with room changes nothing", async () => {
+    const { gateway, db } = deps();
+    const take = vi.fn(() => true);
+    const ids = await repairAltsAfterWrite({
+      gateway: gateway as never,
+      db: db as never,
+      shop: "s",
+      snapshot,
+      written: [{ mediaId: "gid://shopify/MediaImage/1", alt: "neu" }],
+      repairBudget: { take },
+    });
+    expect(ids).toEqual(["t1"]);
   });
 });
