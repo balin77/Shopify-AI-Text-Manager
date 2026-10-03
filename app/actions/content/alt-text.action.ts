@@ -1254,6 +1254,9 @@ export async function handleLoadImageAltTranslations(
     productRows as Array<{ altText: string; marketId: string; image: { mediaId: string | null; productId: string } | null }>,
     productId,
   );
+  // The product rows' own (media, layer) keys: a library row for the same key
+  // never replaces them.
+  const productKeys = new Set(rows.map((r) => `${r.mediaId}|${r.marketId}`));
 
   // The library half: a GID with NO ProductImage row anywhere in the shop is
   // mirrored in ContentTranslation("MediaImage") -- the same split the save
@@ -1264,7 +1267,12 @@ export async function handleLoadImageAltTranslations(
       select: { mediaId: true },
     });
     const backed = new Set(productBacked.map((r: { mediaId: string | null }) => r.mediaId));
-    const libraryIds = galleryMediaIds.filter((id) => !backed.has(id));
+    // Product-backed media are read too, as a FALLBACK per (media, layer):
+    // a file that became product-backed while its foreign alts still sit in
+    // the library store (the old template apply created the row) would
+    // otherwise show them empty. Product rows win; every writer retires the
+    // library rows of a product-backed medium (`mirrorProductMediaAlt`).
+    const libraryIds = galleryMediaIds;
     if (libraryIds.length > 0) {
       const libraryRows = await db.contentTranslation.findMany({
         where: {
@@ -1278,7 +1286,11 @@ export async function handleLoadImageAltTranslations(
         select: { resourceId: true, marketId: true, value: true },
       });
       for (const r of libraryRows) {
-        rows.push({ mediaId: r.resourceId, marketId: r.marketId ?? "", altText: r.value ?? "" });
+        const marketOfRow = r.marketId ?? "";
+        if (backed.has(r.resourceId) && productKeys.has(`${r.resourceId}|${marketOfRow}`)) continue;
+        // An empty value is no translation (null rows exist per key).
+        if (backed.has(r.resourceId) && !(r.value ?? "").trim()) continue;
+        rows.push({ mediaId: r.resourceId, marketId: marketOfRow, altText: r.value ?? "" });
       }
     }
   }

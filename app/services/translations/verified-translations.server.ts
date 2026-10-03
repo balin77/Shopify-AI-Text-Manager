@@ -911,7 +911,9 @@ export async function removeMediaAltAndVerify(
  * client and without the flag (api.apply-alt-text-templates.tsx).
  */
 export async function mirrorProductMediaAlt(
-  db: Pick<PrismaClient, "productImage" | "productImageAltTranslation">,
+  db: Pick<PrismaClient, "productImage" | "productImageAltTranslation"> & {
+    contentTranslation?: Pick<PrismaClient["contentTranslation"], "deleteMany">;
+  },
   params: {
     shop: string;
     mediaId: string;
@@ -940,10 +942,28 @@ export async function mirrorProductMediaAlt(
   if (!images || images.length === 0) return "imageGone";
   if (locales.length === 0) return "mirrored";
   const imageIds = images.map((image: { id: string }) => image.id);
+  // A medium with a ProductImage row is served from the PRODUCT store. Library
+  // rows (ContentTranslation "MediaImage") that survive from the time it was a
+  // library file are the same Shopify translation seen through the old store:
+  // retired here for every layer/locale this call writes or removes, so the
+  // read fallback in `loadImageAltTranslations` can never show a value Shopify
+  // no longer has. Only after the product store took the write.
+  const retireLibraryRows = async () => {
+    const lib = db.contentTranslation;
+    if (!lib || typeof lib.deleteMany !== "function") return;
+    try {
+      await lib.deleteMany({
+        where: { shop, resourceType: "MediaImage", resourceId: mediaId, key: MEDIA_ALT_KEY, locale: { in: locales }, marketId },
+      });
+    } catch (error: unknown) {
+      if (params.inTransaction) throw error;
+    }
+  };
   if (value.trim() === "") {
     await db.productImageAltTranslation.deleteMany({
       where: { imageId: { in: imageIds }, locale: locales.length === 1 ? locales[0] : { in: locales }, marketId },
     });
+    await retireLibraryRows();
     return "mirrored";
   }
   let written = 0;
@@ -969,6 +989,7 @@ export async function mirrorProductMediaAlt(
     }
     if (!rowGone) written += 1;
   }
+  if (written > 0) await retireLibraryRows();
   return written > 0 ? "mirrored" : "imageGone";
 }
 
