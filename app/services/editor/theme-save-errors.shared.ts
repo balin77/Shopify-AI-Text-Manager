@@ -62,8 +62,9 @@ export function themeSaveIssuesMessage(
     const more = issue.count && issue.count > labels.length ? ` (+${issue.count - labels.length})` : "";
     parts.push(
       template
-        .replace("{fields}", labels.join(", ") + more)
-        .replace("{detail}", issue.detail ?? ""),
+        // Replacer functions: a `$&` in Shopify's words or a label must stay literal.
+        .replace("{fields}", () => labels.join(", ") + more)
+        .replace("{detail}", () => issue.detail ?? ""),
     );
   }
   return parts.join(" ");
