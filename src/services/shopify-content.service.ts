@@ -1915,6 +1915,8 @@ export class ShopifyContentService {
       // With the purge off the old translations stay and Shopify flags them
       // "outdated" in its own editor instead.
       let purgeWarning: string | undefined;
+      // Keys whose MARKET overrides that purge cleared (reported to the page).
+      let marketPurgedKeys: string[] = [];
       if (purgeChangedFields && changedTranslationKeys.length > 0 && foreignLocales.length > 0) {
         // The MARKET overrides of the same keys. Nothing re-translates one — the
         // repair writes global rows only, deliberately — so once the primary
@@ -1930,6 +1932,7 @@ export class ShopifyContentService {
             "../../app/services/translations/stale-translation-sync.server"
           );
           const { ShopifyApiGateway } = await import("../../app/services/shopify-api-gateway.service");
+          const marketOutcome = { failedKeys: new Set<string>() };
           await purgeMarketOverrides({
             gateway: new ShopifyApiGateway(this.admin, shop),
             mirror: contentTranslationMirror(shop),
@@ -1937,7 +1940,9 @@ export class ShopifyContentService {
             locales: foreignLocales,
             keys: changedTranslationKeys,
             context: resourceType,
+            outcome: marketOutcome,
           });
+          marketPurgedKeys = changedTranslationKeys.filter((key) => !marketOutcome.failedKeys.has(key));
         } catch (marketError: unknown) {
           loggers.translation('warn', 'Market-override purge failed — those rows stay', {
             resourceId,
@@ -2170,18 +2175,29 @@ export class ShopifyContentService {
       // The featured alt is index 0 - the same channel a product's failed alt
       // uses, so the page keeps it dirty and words it in the merchant's language.
       const failedAltTextIndices = featuredAltEchoError ? { failedAltTextIndices: [0] } : {};
+      // EDITOR field keys whose market layer was purged: the page hides market
+      // values for exactly these.
+      const marketPurged = marketPurgedKeys.length > 0
+        ? {
+            marketPurgedFields: (changedFields ?? []).filter((field) =>
+              marketPurgedKeys.includes(fieldTranslationKeyMap(resourceType)[field] ?? ""),
+            ),
+          }
+        : {};
       if (primaryWarnings.length > 0) {
         return {
           success: true,
           item: updatedResource,
           warning: primaryWarnings.join(" "),
           ...failedAltTextIndices,
+          ...marketPurged,
           retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
         };
       }
       return {
         success: true,
         item: updatedResource,
+        ...marketPurged,
         retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
       };
     }
