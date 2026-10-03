@@ -1911,6 +1911,8 @@ export const de = {
     altSavedNotMirrored: "Der Alt-Text ist in Shopify gespeichert, konnte aber in der App nicht abgelegt werden. Nach einer Synchronisierung erscheint er wieder.",
     altDraftsSaved: "Alt-Texte gespeichert.",
     altAiResultDiscarded: "Der erzeugte Alt-Text wurde nicht übernommen, weil du Sprache oder Markt gewechselt hast.",
+    altSuggestionBusy: "Für dieses Bild läuft noch eine KI-Anfrage. Übernimm den Vorschlag, sobald sie fertig ist.",
+    altAcceptTranslateSkipped: "Der Alt-Text wurde gespeichert, die Übersetzung in die anderen Sprachen wurde aber nicht gestartet. Nutze den Übersetzen-Button, sobald die laufende Anfrage fertig ist.",
     altDraftNotSavableYet: "Der Alt-Text eines noch nicht gespeicherten Bildes kann erst nach dem Bild selbst gespeichert werden. Speichere noch einmal, sobald das Bild hochgeladen ist.",
     altDraftDroppedNoImage: "Ein Alt-Text für ein Bild, das vor dem Speichern wieder entfernt wurde, wurde verworfen.",
     altDraftDroppedImageGone: "Ein Alt-Text-Entwurf wurde verworfen, weil sein Bild nicht mehr existiert (es wurde gelöscht oder ersetzt, z. B. bei der WebP-Umwandlung).",
