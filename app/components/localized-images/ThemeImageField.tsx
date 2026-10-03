@@ -33,6 +33,7 @@ import {
   themeImageFilename,
   themeImageReferenceFor,
   rememberThemeImagePick,
+  isSafeThemeImageFilename,
 } from "../../utils/theme-image-reference.shared";
 
 // One lookup per filename per page session: a theme group can carry dozens of
@@ -74,6 +75,8 @@ export interface ThemeImageFieldProps {
   onChange: (value: string) => void;
   isPrimaryLocale: boolean;
   readOnly?: boolean;
+  /** The original has no theme file the app can write (an app-embed setting): read-only in the primary language. */
+  primaryUnsavable?: boolean;
   currentLanguage?: string;
 }
 
@@ -84,6 +87,7 @@ export function ThemeImageField({
   onChange,
   isPrimaryLocale,
   readOnly,
+  primaryUnsavable,
   currentLanguage,
 }: ThemeImageFieldProps) {
   const { t, locale: appLocale } = useI18n();
@@ -129,6 +133,10 @@ export function ThemeImageField({
     // A theme reference names the file as Files knows it, i.e. decoded.
     let name = raw;
     try { name = decodeURIComponent(raw); } catch { /* keep raw */ }
+    if (!isSafeThemeImageFilename(name)) {
+      setError(tx.fileFailed.replace("{error}", "unsupported file name"));
+      return;
+    }
     urlCache.set(name, Promise.resolve(picked.url));
     const reference = themeImageReferenceFor(name);
     rememberThemeImagePick(reference, picked.fileId);
@@ -170,14 +178,21 @@ export function ThemeImageField({
           <Text as="span" variant="bodySm" tone="subdued" breakWord>
             {shownFilename ?? ""}
           </Text>
-          {isPrimaryLocale && readOnly ? (
+          {isPrimaryLocale && (readOnly || primaryUnsavable) ? (
             <Text as="p" variant="bodySm" tone="subdued">{tx.primaryReadOnly}</Text>
           ) : isPrimaryLocale ? (
             <InlineStack gap="200">
               <Button size="slim" onClick={() => setPickerOpen(true)} disabled={busy} loading={busy}>
                 {tx.changeImage}
               </Button>
-              {changedFromSaved && <Badge tone="attention">{tx.unsavedSuffix.replace(/[()]/g, "")}</Badge>}
+              {changedFromSaved && (
+                <>
+                  <Badge tone="attention">{tx.unsavedBadge}</Badge>
+                  <Button size="slim" variant="plain" onClick={() => onChange(primaryValue)} disabled={busy}>
+                    {tx.resetToSaved}
+                  </Button>
+                </>
+              )}
             </InlineStack>
           ) : (
             <InlineStack gap="200">
@@ -192,7 +207,7 @@ export function ThemeImageField({
             </InlineStack>
           )}
           {!isPrimaryLocale && <Text as="p" variant="bodySm" tone="subdued">{tx.themeFieldHint}</Text>}
-          {isPrimaryLocale && !readOnly && <Text as="p" variant="bodySm" tone="subdued">{tx.primaryHint}</Text>}
+          {isPrimaryLocale && !readOnly && !primaryUnsavable && <Text as="p" variant="bodySm" tone="subdued">{tx.primaryHint}</Text>}
         </BlockStack>
       </InlineStack>
       {error && <Banner tone="critical" onDismiss={() => setError(null)}><Text as="p">{error}</Text></Banner>}

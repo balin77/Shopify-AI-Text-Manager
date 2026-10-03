@@ -17,18 +17,28 @@
  */
 
 const PREFIX = "shopify://shop_images/";
-const REFERENCE = /^shopify:\/\/shop_images\/([^\s/?#]+)$/;
+// The file name as Files knows it (decoded): a space or an umlaut is fine,
+// path separators, control characters, quotes and angle brackets are not (the
+// name ends up in a JSON file and in markup the theme renders).
+const NAME_CHARS = "[^\\u0000-\\u001f\\u007f\\u2028\\u2029/\\\\?#\"'<>]+";
+const REFERENCE = new RegExp(`^shopify:\\/\\/shop_images\\/(${NAME_CHARS})$`);
+const SAFE_NAME = new RegExp(`^${NAME_CHARS}$`);
+
+/** A decoded Files filename that may be written into a shop_images reference. */
+export function isSafeThemeImageFilename(name: unknown): name is string {
+  return typeof name === "string" && name.length <= 255 && name === name.trim() && name !== "." && name !== ".." && SAFE_NAME.test(name);
+}
 
 /** True for a whole value that is exactly one theme image reference. */
 export function isThemeImageReference(value: unknown): boolean {
-  return typeof value === "string" && REFERENCE.test(value.trim());
+  return themeImageFilename(value) !== null;
 }
 
 /** The filename a reference points at, or null for anything else. */
 export function themeImageFilename(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const m = REFERENCE.exec(value.trim());
-  return m ? m[1] : null;
+  return m && isSafeThemeImageFilename(m[1]) ? m[1] : null;
 }
 
 /**
@@ -94,17 +104,18 @@ export function themeImageReferenceFor(filename: string): string {
 
 /**
  * Whether a PRIMARY change of a theme value leaves the foreign values of that
- * key alone. A foreign value of an image (or video) setting is not a
- * translation of the original: it is a per-language (and per-market) choice
- * the merchant made deliberately, so a new original never makes it stale
- * (owner, 2026-10-03: the replacement images of the other languages stay when
- * the original changes). True when the value the key held was a media choice,
- * or the value now written is an image reference. THE one rule for the
- * server's purge / market purge / re-translation and for the client's
+ * key alone. A foreign value of an IMAGE setting is not a translation of the
+ * original: it is a per-language (and per-market) choice the merchant made
+ * deliberately, so a new original never makes it stale (owner, 2026-10-03).
+ * Decided by the FIELD's type (`isImageField`: the key is rendered as a
+ * `themeImage` picker) AND the value it held being an image reference - a text
+ * or url setting that merely holds a link or text of that shape is text. THE
+ * one rule for the server's purge / market purge / re-translation (where the
+ * client's list of image keys can only narrow it) and the client's
  * invalidation, so the two cannot disagree.
  */
-export function keepsForeignMediaOnPrimaryChange(oldValue: unknown, newValue: unknown): boolean {
-  return isThemeMediaValue(oldValue) || isThemeImageReference(newValue);
+export function keepsForeignMediaOnPrimaryChange(isImageField: boolean, oldValue: unknown): boolean {
+  return isImageField && isThemeImageReference(oldValue);
 }
 
 /** The id of a Files image, the only thing a theme image pick may name. */

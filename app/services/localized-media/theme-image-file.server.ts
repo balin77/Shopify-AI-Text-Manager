@@ -12,10 +12,11 @@ import { logger } from "~/utils/logger.server";
 import {
   THEME_IMAGE_FILE_ID,
   filenameFromCdnUrl,
+  isSafeThemeImageFilename,
   isThemeImageReference,
   themeImageReferenceFor,
 } from "~/utils/theme-image-reference.shared";
-import { isSafeFilename, isShopifyCdnUrl } from "./localized-media.shared";
+import { isShopifyCdnUrl } from "./localized-media.shared";
 
 export type ThemeImageFileCode = "invalidFile" | "fileNotReady" | "readFailed";
 
@@ -55,11 +56,13 @@ export async function resolveThemeImageReference(admin: Admin, fileId: unknown):
   const url = node.image?.url;
   if (!url) return { ok: false, code: "fileNotReady" };
   const raw = filenameFromCdnUrl(url);
-  if (!isShopifyCdnUrl(url) || !raw || !isSafeFilename(raw)) return { ok: false, code: "invalidFile" };
+  if (!isShopifyCdnUrl(url) || !raw) return { ok: false, code: "invalidFile" };
   // A reference names the file as Files knows it, i.e. decoded.
   let filename = raw;
   try { filename = decodeURIComponent(raw); } catch { /* keep raw */ }
   const reference = themeImageReferenceFor(filename);
-  if (!isSafeFilename(filename) || !isThemeImageReference(reference)) return { ok: false, code: "invalidFile" };
+  // A space or an umlaut is a legitimate name; separators, control characters,
+  // quotes and angle brackets are not.
+  if (!isSafeThemeImageFilename(filename) || !isThemeImageReference(reference)) return { ok: false, code: "invalidFile" };
   return { ok: true, reference, filename };
 }

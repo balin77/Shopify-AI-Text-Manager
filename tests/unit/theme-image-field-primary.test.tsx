@@ -77,7 +77,22 @@ describe("ThemeImageField, primary language", () => {
       <ThemeImageField label="Logo" value="shopify://shop_images/new-logo.png" primaryValue={ORIGINAL} onChange={vi.fn()} isPrimaryLocale currentLanguage="de" />,
     );
     expect(screen.getByText("new-logo.png")).toBeTruthy();
-    expect(screen.getByText("not saved yet")).toBeTruthy();
+    expect(screen.getByText(en.localizedImages.unsavedBadge)).toBeTruthy();
+  });
+
+  it("offers a way back to the loaded value, so an unsavable pick never forces Discard-all", () => {
+    const onChange = vi.fn();
+    render(
+      <ThemeImageField label="Logo" value="shopify://shop_images/new-logo.png" primaryValue={ORIGINAL} onChange={onChange} isPrimaryLocale currentLanguage="de" />,
+    );
+    fireEvent.click(screen.getByText(en.localizedImages.resetToSaved));
+    expect(onChange).toHaveBeenCalledWith(ORIGINAL);
+  });
+
+  it("shows an original that no theme file can hold read-only, with the explanation and no picker", () => {
+    render(<ThemeImageField label="Logo" value={ORIGINAL} primaryValue={ORIGINAL} onChange={vi.fn()} isPrimaryLocale primaryUnsavable currentLanguage="de" />);
+    expect(screen.getByText(en.localizedImages.primaryReadOnly)).toBeTruthy();
+    expect(screen.queryByText(en.localizedImages.changeImage)).toBeNull();
   });
 
   it("keeps the old explanation, and no picker, where the primary value is read-only", () => {

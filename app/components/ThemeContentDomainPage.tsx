@@ -28,6 +28,7 @@ import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
 import { upsertThemeRow, applyThemeSaveToRows, themeRowValue } from "~/services/theme-translation-cache.shared";
+import { detectFieldType } from "~/utils/templates-field-factory";
 import { keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
 
 /**
@@ -773,7 +774,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             if (currentValues[item.key] !== undefined && currentValues[item.key] !== item.value) {
               // The server leaves the foreign values of an image/video setting
               // alone (per-language choices, not translations): so does the cache.
-              if (keepsForeignMediaOnPrimaryChange(item.value, currentValues[item.key])) return;
+              if (keepsForeignMediaOnPrimaryChange(detectFieldType(item.value ?? "") === "themeImage", item.value)) return;
               changedKeys.add(item.key);
             }
           });

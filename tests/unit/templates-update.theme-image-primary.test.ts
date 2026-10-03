@@ -43,6 +43,9 @@ function makeCtx(opts: {
   edits: Record<string, { old: string; next: string; type: string }>;
   fileIds?: Record<string, string>;
   changed?: string[];
+  /** Keys rendered as image pickers; defaults to every edit whose old value is an image reference. */
+  imageKeys?: string[];
+  translationRows?: any[];
 }) {
   const admin = {
     graphql: vi.fn(async (query: string, o?: { variables?: any }) => {
@@ -54,6 +57,19 @@ function makeCtx(opts: {
             data: {
               themeFilesUpsert: {
                 upsertedThemeFiles: (o?.variables?.files ?? []).map((f: any) => ({ filename: f.filename })),
+                userErrors: [],
+              },
+            },
+          }),
+        };
+      }
+      if (query.includes("translationsRemove") && o?.variables) {
+        const v = o.variables;
+        return {
+          json: async () => ({
+            data: {
+              translationsRemove: {
+                translations: v.translationKeys.flatMap((key: string) => v.locales.map((locale: string) => ({ key, locale }))),
                 userErrors: [],
               },
             },
@@ -78,7 +94,7 @@ function makeCtx(opts: {
     themeTranslation: {
       deleteMany: vi.fn(async () => ({ count: 0 })),
       upsert: vi.fn(async () => ({})),
-      findMany: vi.fn(async () => []),
+      findMany: vi.fn(async () => opts.translationRows ?? []),
     },
   };
   const formData = new FormData();
@@ -86,6 +102,8 @@ function makeCtx(opts: {
   formData.set("primaryLocale", "de");
   for (const [key, edit] of Object.entries(opts.edits)) formData.set(key, edit.next);
   formData.set("changedFields", JSON.stringify(opts.changed ?? Object.keys(opts.edits)));
+  const imageKeys = opts.imageKeys ?? Object.entries(opts.edits).filter(([, e]) => e.old.startsWith("shopify://shop_images/")).map(([k]) => k);
+  if (imageKeys.length > 0) formData.set("themeImageFieldKeys", JSON.stringify(imageKeys));
   if (opts.fileIds) formData.set("themeImageFileIds", JSON.stringify(opts.fileIds));
   const group = {
     groupId: "g",
@@ -250,7 +268,145 @@ describe("primary theme image save", () => {
     const result = (await handleUpdateContent(ctx)) as any;
     const body = result?.data ?? result;
     expect(body.success).toBe(false);
+    expect(body.errorKey).toBe("themeImageAmbiguous");
     expect(upserts).toEqual([]);
+  });
+
+  it("two blocks holding the SAME old image, both changed in one save: refused, never s2 = s1's image", async () => {
+    // Reproduction of the review finding: occurrences == keys let the save through,
+    // and both keys (same property name) then hit the first slot.
+    const k1 = "section.index.json.s1.image";
+    const k2 = "section.index.json.s2.image";
+    const files = [themeFile("templates/index.json", { sections: { s1: { settings: { image: OLD } }, s2: { settings: { image: OLD } } } })];
+    const { ctx } = makeCtx({
+      files,
+      edits: {
+        [k1]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_JSON_TEMPLATE" },
+        [k2]: { old: OLD, next: "shopify://shop_images/two.png", type: "ONLINE_STORE_THEME_JSON_TEMPLATE" },
+      },
+      fileIds: { [k1]: FILE_ID, [k2]: FILE_ID },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    const body = result?.data ?? result;
+    expect(body.success).toBe(false);
+    expect(body.errorKey).toBe("themeImageAmbiguous");
+    expect(upserts).toEqual([]);
+  });
+
+  it("an ambiguous image blocks the WHOLE save, text keys included", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD, footer_logo: OLD, headline: "Alt" } })],
+      edits: {
+        [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" },
+        "general.headline": { old: "Alt", next: "Neu", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" },
+      },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+    });
+    const body = ((await handleUpdateContent(ctx)) as any);
+    expect((body?.data ?? body).errorKey).toBe("themeImageAmbiguous");
+    expect(upserts).toEqual([]);
+  });
+
+  it("an image whose old value is not in the theme file blocks the save with its own message", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: "shopify://shop_images/other.png" } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+    });
+    const body = ((await handleUpdateContent(ctx)) as any);
+    expect((body?.data ?? body).errorKey).toBe("themeImageNotLocated");
+    expect(upserts).toEqual([]);
+  });
+
+  it("a file name with a space or an umlaut is written as Files knows it", async () => {
+    fileAnswer = readyFile("https://cdn.shopify.com/s/files/1/0001/files/M%C3%BCller%20Logo.png?v=1");
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: "shopify://shop_images/Müller Logo.png", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+      imageKeys: [SETTINGS_KEY],
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    expect(JSON.parse(upserts[0].value).current.logo).toBe("shopify://shop_images/Müller Logo.png");
+  });
+
+  it("an unsafe decoded name (separator, quote, newline) is an invalid file - never 'cannot clear'", async () => {
+    for (const name of ["a%2Fb.png", "a%22b.png", "a%0Ab.png"]) {
+      fileAnswer = readyFile(`https://cdn.shopify.com/s/files/1/0001/files/${name}?v=1`);
+      const { ctx } = makeCtx({
+        files: [themeFile("config/settings_data.json", { current: { logo: OLD } })],
+        edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+        fileIds: { [SETTINGS_KEY]: FILE_ID },
+      });
+      const body = ((await handleUpdateContent(ctx)) as any);
+      expect((body?.data ?? body).errorKey).toBe("themeImageInvalid");
+    }
+    expect(upserts).toEqual([]);
+  });
+
+  it("a text setting holding an image-shaped value or a YouTube link is TEXT: no file read, purged like text", async () => {
+    for (const [old, next] of [
+      [OLD, "shopify://shop_images/typed.png"],
+      ["https://youtu.be/abcdefghijk", "https://youtu.be/zzzzzzzzzzz"],
+    ]) {
+      queries = [];
+      upserts = [];
+      const { ctx } = makeCtx({
+        files: [themeFile("config/settings_data.json", { current: { link: old } })],
+        edits: { "general.link": { old, next, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+        imageKeys: [],
+      });
+      const result = (await handleUpdateContent(ctx)) as any;
+      expect((result?.data ?? result).success).toBe(true);
+      expect(JSON.parse(upserts[0].value).current.link).toBe(next);
+      expect(queries.some((q) => q.includes("themeImageFile"))).toBe(false);
+      expect(queries.some((q) => q.includes("translationsRemove"))).toBe(true);
+    }
+  });
+
+  it("removes foreign COPIES of the old original (global and market), keeps replacements that differ", async () => {
+    const R = "gid://shopify/OnlineStoreThemeSettingsCategory/1";
+    const { ctx, db } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+      translationRows: [
+        { resourceId: R, key: SETTINGS_KEY, locale: "en", marketId: "", value: OLD },
+        { resourceId: R, key: SETTINGS_KEY, locale: "en", marketId: "gid://shopify/Market/1", value: OLD },
+        { resourceId: R, key: SETTINGS_KEY, locale: "fr", marketId: "", value: "shopify://shop_images/fr-own.png" },
+      ],
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    const calls = ((ctx as any).admin.graphql.mock.calls as any[][]).filter((c) => String(c[0]).includes("translationsRemove"));
+    expect(calls.map((c) => JSON.stringify([c[1].variables.locales, c[1].variables.marketIds])).sort()).toEqual(
+      [JSON.stringify([["en"], null]), JSON.stringify([["en"], ["gid://shopify/Market/1"]])].sort(),
+    );
+    for (const c of calls) expect(c[1].variables.translationKeys).toEqual([SETTINGS_KEY]);
+    expect(db.themeTranslation.deleteMany).toHaveBeenCalledTimes(2);
+    for (const c of db.themeTranslation.deleteMany.mock.calls as any[][]) expect(c[0].where.locale).toBe("en");
+  });
+
+  it("keeps a copy's local row when Shopify does not confirm the removal", async () => {
+    const R = "gid://shopify/OnlineStoreThemeSettingsCategory/1";
+    const { ctx, db } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { logo: OLD } })],
+      edits: { [SETTINGS_KEY]: { old: OLD, next: NEW, type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+      fileIds: { [SETTINGS_KEY]: FILE_ID },
+      translationRows: [{ resourceId: R, key: SETTINGS_KEY, locale: "en", marketId: "", value: OLD }],
+    });
+    const original = (ctx as any).admin.graphql;
+    (ctx as any).admin.graphql = vi.fn(async (q: string, o?: any) =>
+      q.includes("translationsRemove")
+        ? { json: async () => ({ data: { translationsRemove: { translations: [], userErrors: [{ message: "nope" }] } } }) }
+        : original(q, o),
+    );
+    const result = (await handleUpdateContent(ctx)) as any;
+    const body = result?.data ?? result;
+    expect(body.success).toBe(true);
+    expect(body.warnings).toContain("translationPurgeUnconfirmed");
+    expect(db.themeTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
   it("does NOT purge the foreign replacement images (or ask Shopify to), while a text key still is", async () => {

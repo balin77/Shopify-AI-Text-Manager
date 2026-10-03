@@ -7,7 +7,7 @@ import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { TRANSLATE_CONTENT, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
 import { GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
-import { keyToFilename, replaceValuesInJson, countStringOccurrences } from "~/utils/templates/templates.utils";
+import { keyToFilename, replaceValuesInJson, countStringOccurrences, LOCALE_CONTENT_RESOURCE_TYPES, SETTINGS_DATA_RESOURCE_TYPES } from "~/utils/templates/templates.utils";
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
@@ -49,7 +49,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   // / general.* keys, same default locale file), so legacy rows of that type route
   // to the same file — this also makes resolution deterministic when a key exists
   // under both types (keyToResourceType's "last group wins" no longer matters).
-  const LOCALE_CONTENT_TYPES = new Set(["ONLINE_STORE_THEME_LOCALE_CONTENT", "ONLINE_STORE_THEME"]);
+  const LOCALE_CONTENT_TYPES = LOCALE_CONTENT_RESOURCE_TYPES;
   const resolveFilename = (key: string): string | null => {
     const templateFile = keyToFilename(key);
     if (templateFile) return templateFile;
@@ -70,10 +70,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // both were reported as unmapped and never pushed (the silent-drop bug). Route
     // both by resource type. replaceValuesInJson locates the value anywhere in the
     // file by old-value + last-segment keyHint, so the exact nesting is irrelevant.
-    if (
-      resourceType === "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS" ||
-      resourceType === "ONLINE_STORE_THEME_SETTINGS_CATEGORY"
-    ) {
+    if (SETTINGS_DATA_RESOURCE_TYPES.has(resourceType)) {
       return "config/settings_data.json";
     }
     return null;
@@ -105,7 +102,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
   const metadataKeys = new Set([
     "action", "itemId", "locale", "primaryLocale", "changedFields",
-    "imageAltTexts", "changedAltTextIndices", "contentType", "marketId", "themeImageFileIds",
+    "imageAltTexts", "changedAltTextIndices", "contentType", "marketId", "themeImageFileIds", "themeImageFieldKeys",
   ]);
   let formFieldCount = 0;
   formData.forEach((_value, key) => { if (!metadataKeys.has(key)) formFieldCount++; });
@@ -157,19 +154,26 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
   // ─── Theme IMAGE settings in the PRIMARY language ─────────────────────────
   // The original image of an `image_picker` setting is chosen in the app too.
-  // Three rules, each a false success if dropped:
+  // Rules, each a false success if dropped:
+  //  0. Which keys are image settings is decided by the FIELD's type, not by the
+  //     shape of a value: the client names the keys it renders as pickers
+  //     (`themeImageFieldKeys`) and the value the key held must also be an image
+  //     reference. The list can only NARROW the rule - a text or url setting
+  //     that holds a link or text of that shape stays text.
   //  1. The reference written into the theme file is derived HERE from a fresh
-  //     read of the picked file (READY, a MediaImage, on Shopify's CDN) — the
+  //     read of the picked file (READY, a MediaImage, on Shopify's CDN) - the
   //     client names only the file id, never the text that lands in the theme.
   //  2. A key no theme file is known for (an app-embed setting, a resource
-  //     type resolveFilename does not map) is refused up front with its own
-  //     message instead of dropping out of the push.
+  //     type resolveFilename does not map) is refused up front.
   //  3. An image is never CLEARED here: a primary value saved empty makes
   //     Shopify remove the setting for good (the check above), and an image
   //     slot never takes anything but a reference.
-  // `keepForeignKeys` is every key whose foreign values are per-language
-  // choices rather than translations: a new original must not purge them.
+  // `keepForeignKeys` is every image key: its foreign values are per-language
+  // choices rather than translations, so a new original must not purge them.
+  // `imagePathKeys` are those whose original really changes in this save.
   const keepForeignKeys = new Set<string>();
+  const imagePathKeys = new Set<string>();
+  const oldImageRefByKey = new Map<string, string>();
   if (locale === primaryLocale) {
     const oldPrimary = new Map<string, string>();
     for (const group of themeGroups) {
@@ -177,15 +181,16 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         if (item.value !== undefined && !oldPrimary.has(item.key)) oldPrimary.set(item.key, item.value);
       }
     }
+    const fieldKeysRaw = getFormJSON<unknown>(formData, "themeImageFieldKeys");
+    const imageFieldKeys = new Set<string>(
+      Array.isArray(fieldKeysRaw) ? fieldKeysRaw.filter((k): k is string => typeof k === "string") : [],
+    );
     const fileIds = getFormJSON<Record<string, unknown>>(formData, "themeImageFileIds") ?? {};
     for (const [key, next] of Object.entries(updatedFields)) {
       const old = oldPrimary.get(key);
-      if (!keepsForeignMediaOnPrimaryChange(old, next)) continue;
+      if (!keepsForeignMediaOnPrimaryChange(imageFieldKeys.has(key), old)) continue;
       keepForeignKeys.add(key);
       if (old === next) continue;
-      // A video setting edited as text keeps its foreign choices but is an
-      // ordinary text save otherwise.
-      if (!isThemeImageReference(old) && !isThemeImageReference(next)) continue;
       if (domain !== "theme" || !ENABLE_THEME_PRIMARY_EDIT) continue; // answered by the checks below
       const refuse = (errorKey: string, detail?: unknown) => {
         logger.warn("[TEMPLATES] Primary theme image save refused", { context: "Templates", key, errorKey, detail });
@@ -205,6 +210,10 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         );
       }
       updatedFields[key] = resolved.reference;
+      if (resolved.reference !== old) {
+        imagePathKeys.add(key);
+        oldImageRefByKey.set(key, old as string);
+      }
     }
   }
 
@@ -889,23 +898,20 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           }
 
           // An IMAGE reference is often used in several places at once (the same
-          // logo in two sections). The replacement finds the value, not its path,
-          // so where the old reference occurs in more places than this save names
-          // keys for it, the right one cannot be told: refuse rather than rewrite
-          // another setting's image.
-          const ambiguousKeys: string[] = [];
-          {
-            const keysPerValue = new Map<string, number>();
-            for (const { oldValue } of replacements.values()) {
-              if (isThemeImageReference(oldValue)) keysPerValue.set(oldValue, (keysPerValue.get(oldValue) ?? 0) + 1);
-            }
-            for (const [key, { oldValue }] of [...replacements]) {
-              if (!isThemeImageReference(oldValue)) continue;
-              if (countStringOccurrences(fileJson, oldValue) > (keysPerValue.get(oldValue) ?? 0)) {
-                ambiguousKeys.push(key);
-                replacements.delete(key);
-              }
-            }
+          // logo in two slideshow blocks). The replacement finds the VALUE, not
+          // its path, so an image is written only when its old reference occurs
+          // EXACTLY ONCE in this file and exactly one key of the save carries
+          // it - otherwise two keys with the same property name would both hit
+          // the first slot and push the wrong image live. Refused BEFORE any
+          // write; the caller refuses the whole save.
+          const ambiguousKeys = keys.filter((key) => {
+            if (!imagePathKeys.has(key)) return false;
+            const old = oldValueMap.get(key) || "";
+            const sameOldInSave = [...imagePathKeys].filter((other) => oldValueMap.get(other) === old).length;
+            return sameOldInSave !== 1 || countStringOccurrences(fileJson, old) > 1;
+          });
+          if (ambiguousKeys.length > 0) {
+            return { replacedKeys: [], missedKeys: [], ambiguousKeys, pushedValues: new Map() };
           }
 
           let replacedKeys: Set<string>;
@@ -916,7 +922,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           } else {
             replacedKeys = replaceValuesInJson(fileJson, replacements);
           }
-          const missedKeys = keys.filter((k) => !replacedKeys.has(k) && !ambiguousKeys.includes(k));
+          const missedKeys = keys.filter((k) => !replacedKeys.has(k));
 
           // Record the value that actually went into the file (post-normalization)
           // for every replaced key, so STEP 2b can mirror the exact same value.
@@ -949,7 +955,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                 }
               : undefined;
 
-          return { entry, replacedKeys: Array.from(replacedKeys), missedKeys, ambiguousKeys, pushedValues };
+          return { entry, replacedKeys: Array.from(replacedKeys), missedKeys, pushedValues };
         };
 
         const runUpsert = async (
@@ -1001,8 +1007,19 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             });
           }
         }
+        let imageBlock: string | null = null;
         for (const { filename, keys, resolved } of passes) {
           const result = buildFileEntry(filename, keys, richtextMode === "normalize", resolved);
+          // An image key in this file that is ambiguous, missed or in an
+          // unreadable file blocks the WHOLE save: for an image a partial push
+          // is not acceptable (nothing has been written yet).
+          if (keys.some((k) => imagePathKeys.has(k))) {
+            if (result.ambiguousKeys && result.ambiguousKeys.length > 0) {
+              imageBlock = "themeImageAmbiguous";
+            } else if (result.error || result.missedKeys.some((k) => imagePathKeys.has(k))) {
+              imageBlock = imageBlock ?? "themeImageNotLocated";
+            }
+          }
           if (result.error) {
             fileShopifyErrors.push(result.error);
             failedPrimaryKeys.push(...keys);
@@ -1025,22 +1042,20 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               `Could not locate the current value in the theme file for: ${result.missedKeys.slice(0, 5).join(", ")} (reload the content and try again)`
             );
           }
-          if (result.ambiguousKeys && result.ambiguousKeys.length > 0) {
-            logger.warn("[TEMPLATES] Image reference occurs in more places than named - not rewritten", {
-              context: "Templates",
-              filename,
-              ambiguousKeys: result.ambiguousKeys,
-            });
-            failedPrimaryKeys.push(...result.ambiguousKeys);
-            primarySaveErrors.push(
-              `The same image is used in several places of the theme, so this one could not be told apart: ${result.ambiguousKeys.slice(0, 5).join(", ")}. Change it in the Shopify theme editor.`
-            );
-          }
           if (result.entry) {
             stagedKeys.push(...result.replacedKeys);
             filesToUpsert.push(result.entry);
             for (const [k, v] of result.pushedValues) pushedValueByKey.set(k, v);
           }
+        }
+
+        if (imageBlock) {
+          logger.warn("[TEMPLATES] Primary theme image save refused before any write", {
+            context: "Templates",
+            errorKey: imageBlock,
+            imageKeys: [...imagePathKeys],
+          });
+          return json({ success: false, errorKey: imageBlock, actionType: "updateContent" }, { status: 400 });
         }
 
         if (filesToUpsert.length > 0) {
@@ -1386,6 +1401,79 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       unconfirmedKeys = unconfirmedPurgeKeys(purgeWarnings, changedKeysByResource, savedChangedFields);
     } else {
       logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
+    }
+
+    // A foreign value that EQUALS the old original is not a deliberate
+    // replacement but a copy of the original (it never differed): once the
+    // original moves it is stale. Exactly those are removed - global and market,
+    // echo-verified, a row only deleted locally where Shopify confirmed - and
+    // every foreign value that differs from the old original stays. Known from
+    // the local mirror (a copy written in Shopify's own editor and not synced
+    // yet is not seen). The merchant's purge switch applies, like every purge.
+    const pushedImageKeys = [...imagePathKeys].filter((k) => pushedPrimaryKeys.has(k));
+    if (pushedImageKeys.length > 0) {
+      try {
+        const imagePolicy = await loadTranslationChangePolicy(session.shop, db);
+        if (imagePolicy.purgeUnreconciledSurfaces) {
+          const rows: Array<{ resourceId: string; key: string; locale: string; marketId: string | null; value: string | null }> =
+            await db.themeTranslation.findMany({
+              where: { shop: session.shop, groupId, domain, key: { in: pushedImageKeys } },
+              select: { resourceId: true, key: true, locale: true, marketId: true, value: true },
+            });
+          const staleCopies = rows.filter(
+            (row) =>
+              row.locale !== primaryLocale &&
+              typeof row.value === "string" &&
+              row.value.trim() === (oldImageRefByKey.get(row.key) ?? "").trim(),
+          );
+          const byLayer = new Map<string, { resourceId: string; locale: string; marketId: string; keys: string[] }>();
+          for (const row of staleCopies) {
+            const marketId = row.marketId ?? "";
+            const id = [row.resourceId, row.locale, marketId].join("|");
+            const entry = byLayer.get(id) ?? { resourceId: row.resourceId, locale: row.locale, marketId, keys: [] };
+            entry.keys.push(row.key);
+            byLayer.set(id, entry);
+          }
+          for (const layer of byLayer.values()) {
+            try {
+              const removal = await removeVerifiedWithGapReread(admin, layer.resourceId, layer.keys, [layer.locale], layer.marketId, {
+                localPairs: new Set(layer.keys.map((k) => `${layer.locale}${LOCALE_KEY_SEP}${k}`)),
+              });
+              const confirmed = layer.keys.filter((k) => removal.confirmedPairs.has(`${layer.locale}${LOCALE_KEY_SEP}${k}`));
+              if (confirmed.length > 0) {
+                await db.themeTranslation.deleteMany({
+                  where: {
+                    shop: session.shop,
+                    groupId,
+                    domain,
+                    resourceId: layer.resourceId,
+                    locale: layer.locale,
+                    marketId: layer.marketId,
+                    key: { in: confirmed },
+                  },
+                });
+              }
+              if (removal.unconfirmedPairs.length > 0) {
+                purgeWarnings.push(layer.resourceId);
+                unconfirmedKeys.push(...layer.keys.filter((k) => !confirmed.includes(k)));
+              }
+            } catch (layerError) {
+              purgeWarnings.push(layer.resourceId);
+              unconfirmedKeys.push(...layer.keys);
+              logger.warn("[TEMPLATES] Removing stale copies of the old original image failed - rows kept", {
+                context: "Templates",
+                error: layerError instanceof Error ? layerError.message : String(layerError),
+              });
+            }
+          }
+        }
+      } catch (copyError) {
+        purgeWarnings.push("local");
+        logger.warn("[TEMPLATES] Stale image copies could not be looked up - rows kept", {
+          context: "Templates",
+          error: copyError instanceof Error ? copyError.message : String(copyError),
+        });
+      }
     }
 
     // …or REPLACE them. One group for the whole save: a theme group's keys can

@@ -323,7 +323,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         // translations go stale: a new original leaves the foreign replacements
         // standing, so it is never announced as a change that purges them. The
         // server applies the same rule (keepsForeignMediaOnPrimaryChange).
-        if (isThemeContentType(config.contentType) && keepsForeignMediaOnPrimaryChange(originalValue, currentValue)) {
+        if (isThemeContentType(config.contentType) && keepsForeignMediaOnPrimaryChange(field.type === "themeImage", originalValue)) {
           return;
         }
         debugLog.fields(`Field "${field.key}" changed: "${originalValue}" -> "${currentValue}"`);
@@ -344,6 +344,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
   ): Record<string, string> => {
     const result: Record<string, string> = {};
     const fileIds: Record<string, string> = {};
+    const imageFieldKeys: string[] = [];
     effectiveFieldDefinitions.forEach((field) => {
       if (locale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
         return;
@@ -359,10 +360,14 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       // The original image is named to the server by the id of the file that
       // was picked; the reference written into the theme is derived there.
       if (locale === primaryLocale && field.type === "themeImage") {
+        imageFieldKeys.push(field.key);
         const fileId = fileIdForThemeImage(value);
         if (fileId) fileIds[field.key] = fileId;
       }
     });
+    // The keys rendered as image pickers: the server decides "image setting"
+    // by the field's type, never by the shape of a value alone.
+    if (imageFieldKeys.length > 0) result.themeImageFieldKeys = JSON.stringify(imageFieldKeys);
     if (Object.keys(fileIds).length > 0) result.themeImageFileIds = JSON.stringify(fileIds);
     return result;
   }, [effectiveFieldDefinitions, primaryLocale]);

@@ -496,6 +496,8 @@ export const en: Translation = {
     themeImageInvalid: "The chosen image could not be used. Choose a different image file. Nothing was saved.",
     themeImageNotReady: "Shopify is still processing the chosen image. Try again in a moment. Nothing was saved.",
     themeImageReadFailed: "Shopify could not be reached just now, so the image could not be checked. Please try again. Nothing was saved.",
+    themeImageAmbiguous: "The same image is used in several places of the theme, so it is not clear which one you are changing. Change it in Shopify's theme editor. Nothing was saved.",
+    themeImageNotLocated: "The current image was not found in the theme file (its content has probably changed). Reload the content and try again. Nothing was saved.",
     // Clear all modal
     clearAllConfirmTitle: "Clear All Fields?",
     clearAllConfirm: "Clear All",
@@ -5508,6 +5510,8 @@ export const en: Translation = {
     primaryReadOnly: "The original image is chosen in Shopify's theme editor. Here you set a different image per language and market.",
     primaryHint: "This is the original image for all languages. Replacement images you set for other languages or markets stay in place when you change it.",
     primaryPickerTitle: "Choose original image",
+    unsavedBadge: "Not saved yet",
+    resetToSaved: "Undo choice",
     usingOriginal: "Original image",
     replaced: "Own image",
     previewUnavailable: "No preview",

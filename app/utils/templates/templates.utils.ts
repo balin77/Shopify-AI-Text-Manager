@@ -105,3 +105,26 @@ export function countStringOccurrences(obj: unknown, value: string): number {
   }
   return count;
 }
+
+/** Resource types whose keys live in the theme's default locale file. */
+export const LOCALE_CONTENT_RESOURCE_TYPES: ReadonlySet<string> = new Set([
+  "ONLINE_STORE_THEME_LOCALE_CONTENT",
+  "ONLINE_STORE_THEME",
+]);
+
+/** Resource types whose values live in config/settings_data.json. */
+export const SETTINGS_DATA_RESOURCE_TYPES: ReadonlySet<string> = new Set([
+  "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS",
+  "ONLINE_STORE_THEME_SETTINGS_CATEGORY",
+]);
+
+/**
+ * Whether a key's PRIMARY value has a theme file the app can write. The one
+ * answer behind the primary save's file routing and the editor's decision to
+ * offer a primary picker at all (an app-embed image setting has no such file).
+ */
+export function hasPrimaryThemeFile(key: string, resourceType: string | null | undefined): boolean {
+  if (keyToFilename(key)) return true;
+  const type = resourceType ?? "";
+  return LOCALE_CONTENT_RESOURCE_TYPES.has(type) || SETTINGS_DATA_RESOURCE_TYPES.has(type);
+}
