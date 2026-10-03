@@ -27,7 +27,9 @@ import type { FetcherData, TranslatableContentItem, ContentEditorConfig, ShopLoc
 import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
-import { upsertThemeRow, applyThemeSaveToRows, themeRowValue, rowsAfterPrimarySave } from "~/services/theme-translation-cache.shared";
+import { upsertThemeRow, applyThemeSaveToRows, themeRowValue, removeThemeLayers, rowsAfterPrimarySave } from "~/services/theme-translation-cache.shared";
+import { detectFieldType } from "~/utils/templates-field-factory";
+import { keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
 
 /**
  * Put a GLOBAL translation into one locale's cached rows (in place). Only a row
@@ -696,7 +698,25 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   // Update caches after successful save
   useEffect(() => {
     if (!fetcher.data || typeof fetcher.data !== 'object') return;
-    if (!('success' in fetcher.data) || !fetcher.data.success) return;
+    // A save that failed only in part can still have removed stale copies of an
+    // old original image (the server reports them on the failure answer too):
+    // those layers leave the cache whatever else the answer says.
+    if ('success' in fetcher.data && !fetcher.data.success) {
+      const removedOnFailure = (fetcher.data as { removedImageCopies?: Array<{ key: string; locale: string; marketId?: string }> }).removedImageCopies;
+      if (removedOnFailure && removedOnFailure.length > 0 && selectedGroupId && processedSaveRef.current !== fetcher.data) {
+        processedSaveRef.current = fetcher.data;
+        setLoadedTranslations(prev => {
+          const groupCache = prev[selectedGroupId];
+          return groupCache ? { ...prev, [selectedGroupId]: removeThemeLayers(groupCache, removedOnFailure) } : prev;
+        });
+        const refGroup = loadedTranslationsRef.current[selectedGroupId];
+        if (refGroup) {
+          loadedTranslationsRef.current = { ...loadedTranslationsRef.current, [selectedGroupId]: removeThemeLayers(refGroup, removedOnFailure) };
+        }
+      }
+      return;
+    }
+    if (!('success' in fetcher.data)) return;
 
     // Only process content update saves, not translations or AI responses
     if ('translatedValue' in fetcher.data || 'generatedContent' in fetcher.data || 'translations' in fetcher.data) return;
@@ -770,6 +790,9 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           const changedKeys = new Set<string>();
           themeData.translatableContent.forEach((item: TranslatableField) => {
             if (currentValues[item.key] !== undefined && currentValues[item.key] !== item.value) {
+              // The server leaves the foreign values of an image/video setting
+              // alone (per-language choices, not translations): so does the cache.
+              if (keepsForeignMediaOnPrimaryChange(detectFieldType(item.value ?? "") === "themeImage", item.value)) return;
               changedKeys.add(item.key);
             }
           });
@@ -782,6 +805,26 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           const invalidated = saveData.foreignRowsInvalidated === false
             ? new Set<string>()
             : keysSafeToInvalidate(changedKeys, saveData.unconfirmedPurgeKeys);
+
+          // Stale copies of the old original image the server removed (confirmed):
+          // exactly those layers leave the cache, so a deleted copy is not shown
+          // as that language's own replacement. Real replacements stay.
+          const removedCopies = (fetcher.data as { removedImageCopies?: Array<{ key: string; locale: string; marketId?: string }> })
+            .removedImageCopies;
+          if (removedCopies && removedCopies.length > 0) {
+            setLoadedTranslations(prev => {
+              const groupCache = prev[selectedGroupId];
+              if (!groupCache) return prev;
+              return { ...prev, [selectedGroupId]: removeThemeLayers(groupCache, removedCopies) };
+            });
+            const refGroupCopies = loadedTranslationsRef.current[selectedGroupId];
+            if (refGroupCopies) {
+              loadedTranslationsRef.current = {
+                ...loadedTranslationsRef.current,
+                [selectedGroupId]: removeThemeLayers(refGroupCopies, removedCopies),
+              };
+            }
+          }
 
           if (invalidated.size > 0) {
             setLoadedTranslations(prev => {

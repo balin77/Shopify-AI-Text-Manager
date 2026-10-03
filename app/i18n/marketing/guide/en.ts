@@ -468,6 +468,7 @@ export const guideEn: GuideCopy = {
       tips: [
         "If you change a theme text in the primary language, its translations are deleted or re-translated according to your setting — just like products.",
         "Images in the theme appear as an image preview. You can choose a different image per language and market — see “Different images and videos per language”.",
+        "If the same text appears in several places of the theme and the app cannot tell which one you mean, it asks you to change that one in Shopify's theme editor.",
       ],
     },
 
@@ -486,6 +487,7 @@ export const guideEn: GuideCopy = {
           heading: "Theme images",
           paragraphs: [
             "Images in your theme (for example a banner on the home page) are under Content → Theme, among the texts of their section. Instead of a text field you see a preview of the image.",
+            "You change the original image right here: switch to the main language, click “Choose another image” at the image and pick a file or upload one. Your choice only applies after “Save”. The original image can be replaced but not removed. Replacement images you set for other languages or markets stay in place — a new original does not delete them. A language that only has a copy of the previous original follows the new original. An image that appears in several places of the theme is still changed in Shopify's theme editor.",
             "Whether your theme shows the image of the chosen language depends on the theme. After saving, check your store in that language; some themes may keep showing the original image.",
           ],
           steps: [

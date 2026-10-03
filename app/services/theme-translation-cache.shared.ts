@@ -41,6 +41,25 @@ export function removeThemeRow(rows: ThemeCacheRow[], key: string, marketId: str
 }
 
 /**
+ * Drop exactly the named LAYERS (key, locale, market) from one group's cache
+ * (a locale -> rows map); every other layer, key and locale is untouched.
+ * Used for what the server confirmed removed (stale copies of an old original
+ * image), where a lookup by key alone would take a real replacement with it.
+ */
+export function removeThemeLayers<T extends ThemeCacheRow>(
+  groupCache: Record<string, T[]>,
+  removed: ReadonlyArray<{ key: string; locale: string; marketId?: string }>,
+): Record<string, T[]> {
+  const next: Record<string, T[]> = {};
+  for (const [locale, rows] of Object.entries(groupCache)) {
+    next[locale] = rows.filter(
+      (row) => !removed.some((r) => r.locale === locale && r.key === row.key && (r.marketId ?? "") === layerOf(row)),
+    );
+  }
+  return next;
+}
+
+/**
  * What a foreign save wrote: non-empty values are upserted, empty ones are
  * REMOVED (a kept "" row would count as a translation), all in the layer the
  * save was made for. Returns a new list.
