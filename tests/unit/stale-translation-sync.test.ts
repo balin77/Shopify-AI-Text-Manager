@@ -1109,6 +1109,22 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     });
   });
 
+  it("a market HANDLE override is never purged when no global handle row is (handle opt-in off)", async () => {
+    const MARKET = "gid://shopify/Market/5";
+    policy.autoTranslateHandles = false;
+    shopifyHas = {};
+    primaryContent = { [PAGE]: { handle: { value: "neu", digest: NEW } } };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [] : [{ resourceId: PAGE, key: "handle", locale: "de", marketId: MARKET }],
+    );
+    shopify.removeMarkets.length = 0;
+    const result = await reconcileAfterPrimarySave(saveParams({ changed: [{ key: "handle" }] }));
+    await awaitDetachedRetranslations();
+    expect(shopify.removeMarkets).toEqual([]);
+    expect(result.marketPurgedPairs).toBeUndefined();
+    expect(result.marketPurgedKeys).toBeUndefined();
+  });
+
   it("a CLEARED field no locale ever translated still loses its market override, and is reported", async () => {
     // Nothing global is stale, so the repair never starts - but the caller has
     // stood its own purge down, and the override would otherwise survive.
@@ -1612,6 +1628,31 @@ describe("a group spanning several resources (sub-resources)", () => {
       { resourceId: OPTION, key: "name" },
       { resourceId: METAFIELD, key: "value" },
     ]);
+  });
+
+  it("a DECLINED value (multi-line) with no global row keeps its market override unless the merchant's purge switch is on", async () => {
+    const M1 = "gid://shopify/Metafield/41";
+    const MARKET = "gid://shopify/Market/5";
+    translated = {};
+    primary = { [M1]: { value: { value: "Zeile 1\nZeile 2", digest: NEW } } };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [] : [{ resourceId: M1, key: "value", locale: "fr", marketId: MARKET }],
+    );
+    const run = () =>
+      reconcileAfterPrimarySave(groupParams({ changed: [{ resourceId: M1, resourceType: "Metafield", key: "value" }] }));
+
+    policy.purgeUnreconciledSurfaces = false;
+    shopify.removeMarkets.length = 0;
+    const off = await run();
+    await awaitDetachedRetranslations();
+    expect(shopify.removeMarkets).toEqual([]);
+    expect(off.marketPurgedPairs).toBeUndefined();
+
+    policy.purgeUnreconciledSurfaces = true;
+    const on = await run();
+    await awaitDetachedRetranslations();
+    expect(shopify.removeMarkets).toEqual([MARKET]);
+    expect(on.marketPurgedPairs).toEqual([{ resourceId: M1, key: "value" }]);
   });
 
   it("reports the market purge PER RESOURCE: a declined sibling of the same key is neither purged nor reported", async () => {

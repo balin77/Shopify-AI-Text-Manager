@@ -2267,6 +2267,8 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // unechoed no-op would be logged as an unconfirmed removal for every locale
     // the merchant never translated.
     const stale: StaleTranslation[] = [];
+    /** `${resourceId}${PAIR_SEP}${key}` the repair would DECLINE. */
+    const declinedPairs = new Set<string>();
     /** Candidates that would be REMOVED or DECLINED rather than translated —
      *  only worth keeping if a translation is really there. */
     const needEvidence: StaleTranslation[] = [];
@@ -2322,16 +2324,18 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
           // The verdict comes from the SAME classifier the repair partitions
           // with, so "will this be translated" cannot drift from what actually
           // happens to it.
-          if (
-            classifyStaleTranslation(candidate, true, {
-              anyKey: !!params.translateAs,
-              // The SAME options the partition uses, or the two answers drift:
-              // without this a handle reads as a removal here, pays the
-              // per-locale evidence sweep this branch exists to avoid, and is
-              // then re-translated by the partition anyway.
-              translateHandles: policy.autoTranslateHandles,
-            }) === "retranslate"
-          ) {
+          const verdict = classifyStaleTranslation(candidate, true, {
+            anyKey: !!params.translateAs,
+            // The SAME options the partition uses, or the two answers drift:
+            // without this a handle reads as a removal here, pays the
+            // per-locale evidence sweep this branch exists to avoid, and is
+            // then re-translated by the partition anyway.
+            translateHandles: policy.autoTranslateHandles,
+          });
+          // What WE refuse to try keeps the merchant's stored answer on the
+          // MARKET layer as well - also where no global row exists to be kept.
+          if (verdict === "declined") declinedPairs.add(`${itemResourceId}${PAIR_SEP}${key}`);
+          if (verdict === "retranslate") {
             stale.push(candidate);
           } else {
             needEvidence.push(candidate);
@@ -2449,7 +2453,11 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
           if (!primary) continue;
           const eligible = new Set<string>();
           for (const key of keys) {
-            if (removeOnly.has(`${id}${PAIR_SEP}${key}`)) continue;
+            // A market `handle` is a URL nothing can re-translate or redirect;
+            // no global handle row is purged on this path, so it stays.
+            if (!params.translateAs && key === "handle") continue;
+            // Declined keys keep the merchant's stored answer on both layers.
+            if (declinedPairs.has(`${id}${PAIR_SEP}${key}`) && !policy.purgeUnreconciledSurfaces) continue;
             const want = expected.get(`${id}${PAIR_SEP}${key}`);
             if (want !== undefined && !sameWrittenValue(primary[key]?.value ?? "", want)) continue;
             eligible.add(key);
@@ -2519,7 +2527,18 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
       locales: [...foreignLocales],
       // Each resource's OWN keys: a union over the group would purge an
       // override of a key this resource did not change.
-      keysByResource: new Map([...wantedKeys].map(([id, keys]) => [id, keys] as const)),
+      // Minus what this resource DECLINED under a "don't delete" answer: with
+      // no global row beside it the repair's own declined list never sees it.
+      keysByResource: new Map(
+        [...wantedKeys].map(([id, keys]) => [
+          id,
+          new Set(
+            [...keys].filter(
+              (key) => policy.purgeUnreconciledSurfaces || !declinedPairs.has(`${id}${PAIR_SEP}${key}`),
+            ),
+          ),
+        ] as const),
+      ),
     });
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Post-save re-translation failed — translations kept", {
@@ -3161,7 +3180,7 @@ async function repairStaleTranslations(
       const marketKeySet = new Set(marketKeys);
       const keysByResource = new Map<string, Set<string>>();
       for (const id of refsById.keys()) {
-        const own = scope.keysByResource?.get(id) ?? marketKeySet;
+        const own = scope.keysByResource ? (scope.keysByResource.get(id) ?? new Set<string>()) : marketKeySet;
         const keys = new Set<string>();
         for (const key of own) {
           if (!marketKeySet.has(key)) continue;
