@@ -756,3 +756,82 @@ describe("review fixes: claimed slots, literal 'block' ids, structural strings",
     expect(written.order).toEqual(["s"]);
   });
 });
+
+describe("more structural strings are never searched", () => {
+  it("the top-level type and name of a section group are not setting values", async () => {
+    const key = "section.sections/header-group.json.q.heading";
+    for (const old of ["header", "Header"]) {
+      upserts = [];
+      const { ctx } = makeCtx({
+        files: [themeFile("sections/header-group.json", { type: "header", name: "Header", sections: { h: { type: "announcement-bar", settings: {} } }, order: ["h"] })],
+        edits: { [key]: { old, next: "Changed", type: "ONLINE_STORE_THEME_SECTION_GROUP" } },
+      });
+      const result = (await handleUpdateContent(ctx)) as any;
+      expect((result?.data ?? result).success).toBe(false);
+      expect(upserts).toEqual([]);
+    }
+  });
+
+  it("an app embed's type under current.blocks is not a setting value", async () => {
+    const appType = "shopify://apps/some-app/blocks/embed/0123-uuid";
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { blocks: { b1: { type: appType, disabled: false, settings: {} } } } })],
+      edits: { "general.nope": { old: appType, next: "Changed", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(false);
+    expect(upserts).toEqual([]);
+  });
+
+  it("a template's layout and wrapper and a node's custom_css are not setting values either", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { layout: "theme", wrapper: "main", sections: { s: { type: "t", custom_css: ["theme"], settings: {} } } })],
+      edits: { "section.index.json.q.heading": { old: "theme", next: "Changed", type: "ONLINE_STORE_THEME_JSON_TEMPLATE" } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(false);
+    expect(upserts).toEqual([]);
+  });
+});
+
+describe("primary save failures are answered as structured, localisable issues", () => {
+  const errorsOf = (r: any) => (r?.data ?? r).errors;
+
+  it("an unmapped key: notEditable with the key, plus the English fallback", async () => {
+    const { ctx } = makeCtx({
+      files: [],
+      edits: { "x.y": { old: "A", next: "B", type: "SOME_UNMAPPED_TYPE" } },
+      imageKeys: [],
+    });
+    const r = (await handleUpdateContent(ctx)) as any;
+    expect((r?.data ?? r).success).toBe(false);
+    expect(errorsOf(r)).toEqual([{ errorKey: "themeSaveNotEditable", fields: ["x.y"], count: 1 }]);
+    expect((r?.data ?? r).error).toMatch(/not editable in the primary language/);
+  });
+
+  it("a value that is not in the file: notLocated with the key", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { headline: "Changed meanwhile" } })],
+      edits: { "general.headline": { old: "Hi", next: "Ho", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+    });
+    const r = (await handleUpdateContent(ctx)) as any;
+    expect(errorsOf(r)).toEqual([{ errorKey: "themeSaveNotLocated", fields: ["general.headline"], count: 1 }]);
+  });
+
+  it("Shopify's userErrors travel as detail inside a localisable issue", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: { headline: "Hi" } })],
+      edits: { "general.headline": { old: "Hi", next: "Ho", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+    });
+    const original = (ctx as any).admin.graphql;
+    (ctx as any).admin.graphql = vi.fn(async (q: string, o?: any) =>
+      q.includes("themeFilesUpsert")
+        ? { json: async () => ({ data: { themeFilesUpsert: { upsertedThemeFiles: [], userErrors: [{ message: "Liquid syntax error" }] } } }) }
+        : original(q, o),
+    );
+    const r = (await handleUpdateContent(ctx)) as any;
+    expect((r?.data ?? r).success).toBe(false);
+    expect(errorsOf(r)).toEqual([{ errorKey: "themeSaveShopifyRejected", detail: "Liquid syntax error" }]);
+    expect((r?.data ?? r).error).toContain("Liquid syntax error");
+  });
+});
