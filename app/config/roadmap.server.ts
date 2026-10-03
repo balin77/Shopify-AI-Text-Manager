@@ -116,7 +116,8 @@ export const ROADMAP: RoadmapEntry[] = [
   {
     id: "managed-ai-key",
     visibility: "public",
-    status: "in-progress",
+    status: "shipped",
+    shippedOn: "2026-10",
     area: "ai",
     title: {
       en: "Use the AI without your own API key",
@@ -124,9 +125,9 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "Usar la IA sin su propia clave API",
     },
     body: {
-      en: "Today every AI feature needs a key you first fetch from a provider. A plan with AI included becomes selectable instead: a fixed monthly volume, no key, no separate provider invoice. You can try it before you decide — a one-time free trial of about 350 AI actions, on any plan including the free one. Your own key stays available — unlimited, and at no extra charge.",
-      de: "Heute braucht jede KI-Funktion einen Schlüssel, den Sie zuerst beim Anbieter holen. Stattdessen wird ein Tarif mit enthaltener KI wählbar: ein festes Monatsvolumen, ohne Schlüssel und ohne separate Anbieterrechnung. Sie können es vorher ausprobieren — einmalig rund 350 KI-Aktionen gratis, in jedem Tarif, auch im kostenlosen. Ihr eigener Schlüssel bleibt verfügbar — unbegrenzt und ohne Aufpreis.",
-      es: "Hoy cada función de IA necesita una clave que usted obtiene antes en un proveedor. En su lugar podrá elegir un plan con IA incluida: un volumen mensual fijo, sin clave y sin factura aparte del proveedor. Puede probarlo antes de decidir: unas 350 acciones de IA gratis, una sola vez, en cualquier plan, incluido el gratuito. Su propia clave sigue disponible, ilimitada y sin recargo.",
+      en: "Choose a plan with AI included and start right away: no account with an AI provider, no key to copy, one invoice for everything. Want to try it first? Every shop gets a one-time set of free AI actions, on any plan. If you prefer your own key, that still works too, without limits and at no extra cost.",
+      de: "Wählen Sie einen Tarif mit enthaltener KI und legen Sie sofort los: kein Konto bei einem KI-Anbieter, kein Schlüssel zum Kopieren, eine Rechnung für alles. Erst ausprobieren? Jeder Shop bekommt einmalig KI-Aktionen gratis, in jedem Tarif. Wer lieber den eigenen Schlüssel nutzt, kann das weiterhin tun, unbegrenzt und ohne Aufpreis.",
+      es: "Elija un plan con IA incluida y empiece al momento: sin cuenta en un proveedor de IA, sin clave que copiar, una sola factura para todo. ¿Quiere probarlo antes? Cada tienda recibe una vez acciones de IA gratis, en cualquier plan. Si prefiere su propia clave, también sigue siendo posible, sin límites y sin coste adicional.",
     },
     notes: "Added 2026-09-17, deliberately SECOND in this list: it is the only entry here that removes an obstacle standing BEFORE the first use of the product. Bring-your-own-key was never a product decision — it was the cheapest fix for compliance finding B4, which names a second acceptable fix (an explicit, logged consent gate) that nobody has built. Everything hard about this is on the internal entries: metering (the app does not know today what one operation costs — every SDK's `usage` object is discarded in `_executeAIRequestInner`), the price ladder, and the rails a SHARED key needs that a merchant key never did. What is PUBLIC here is only the promise, and the promise deliberately keeps BYO first-class: a heavy shop is cheaper on its own key and must never be pushed off it. Free gets a one-time taster sized at one full pass over what the tier entitles (~350 actions) — not a monthly allowance, which at the proposed 2 EUR/month would have out-granted paid Basic. STATUS 2026-09-20: Phases 0-4 of the plan are built and merged — meter, resolver, consent gate, budgets, billing variants, UI, ops rails, failover, and the taster. It is deliberately NOT marked shipped: MANAGED_AI_ENABLED is the rollout control and is unset everywhere, and the three managed Shopify subscription products (21.90 / 39.90 / 99.90) do not exist yet. Flipping this entry to shipped is ONE word here, and it belongs to the day the switch goes on with the variants in place — a public roadmap card saying a merchant can buy something they cannot buy is the one failure mode a roadmap has. The taster is in the public body because it is the half that needs no purchase, and because the body is what the App Store listing is written from.",
     ref: "docs/plans/PLAN_MANAGED_AI_KEY.md",
@@ -521,6 +522,74 @@ export const ROADMAP: RoadmapEntry[] = [
 
   // ── Shipped (newest first) ────────────────────────────────────────────
   {
+    id: "languages-markets",
+    visibility: "public",
+    status: "shipped",
+    area: "translations",
+    shippedOn: "2026-09",
+    title: {
+      en: "Languages and markets, managed in the app",
+      de: "Sprachen und Märkte direkt in der App",
+      es: "Idiomas y mercados, gestionados en la app",
+    },
+    body: {
+      en: "Add a language, prepare it in peace while customers don't see it yet, and publish it when it's ready. Choose in which markets a language appears, give a market its own web address (for example /fr-ch/), add new markets or remove ones you no longer need. Removing anything asks you to confirm by typing its name first.",
+      de: "Fügen Sie eine Sprache hinzu, bereiten Sie sie in Ruhe vor, solange Kunden sie noch nicht sehen, und veröffentlichen Sie sie, wenn sie fertig ist. Legen Sie fest, in welchen Märkten eine Sprache erscheint, geben Sie einem Markt eine eigene Adresse (zum Beispiel /fr-ch/), legen Sie neue Märkte an oder entfernen Sie solche, die Sie nicht mehr brauchen. Vor jedem Entfernen bestätigen Sie mit dem Namen.",
+      es: "Añada un idioma, prepárelo con calma mientras los clientes aún no lo ven y publíquelo cuando esté listo. Elija en qué mercados aparece un idioma, dé a un mercado su propia dirección (por ejemplo /fr-ch/), cree mercados nuevos o elimine los que ya no necesite. Antes de eliminar algo, lo confirma escribiendo su nombre.",
+    },
+  },
+  {
+    id: "auto-translate-everything",
+    visibility: "public",
+    status: "shipped",
+    area: "translations",
+    shippedOn: "2026-09",
+    title: {
+      en: "Automatic translation reaches everything",
+      de: "Automatische Übersetzung erreicht alles",
+      es: "La traducción automática llega a todo",
+    },
+    body: {
+      en: "Change a text, and every language gets the new version, including languages that never had a translation before. This also works when you edit in the Shopify admin, in another app or through an import: pages, blog posts and policies are checked every night. You can set a daily limit, and anything that could not be translated is tried again later on its own.",
+      de: "Ändern Sie einen Text, und alle Sprachen bekommen die neue Fassung, auch Sprachen, die bisher gar keine Übersetzung hatten. Das gilt auch, wenn Sie im Shopify-Admin, in einer anderen App oder per Import ändern: Seiten, Blogartikel und Richtlinien werden jede Nacht geprüft. Sie können ein Tageslimit festlegen, und was nicht übersetzt werden konnte, wird später von selbst erneut versucht.",
+      es: "Cambie un texto y todos los idiomas reciben la nueva versión, incluso los que nunca tuvieron traducción. También funciona cuando edita en el admin de Shopify, en otra app o mediante una importación: las páginas, entradas de blog y políticas se revisan cada noche. Puede fijar un límite diario, y lo que no se pudo traducir se vuelve a intentar más tarde por sí solo.",
+    },
+  },
+  {
+    id: "ai-buttons-save",
+    visibility: "public",
+    status: "shipped",
+    area: "ai",
+    shippedOn: "2026-10",
+    title: {
+      en: "AI suggestions you accept with one click",
+      de: "KI-Vorschläge mit einem Klick übernehmen",
+      es: "Sugerencias de IA que se aceptan con un clic",
+    },
+    body: {
+      en: "The AI shows its suggestion first, for texts and alt texts alike. Accept it, and it's saved at once; accept and translate, and every other language gets it too. Translating or copying a single field also saves right away. What you type yourself stays a draft until you press Save.",
+      de: "Die KI zeigt ihren Vorschlag zuerst, bei Texten wie bei Alt-Texten. Übernehmen speichert ihn sofort, Übernehmen & übersetzen bringt ihn zusätzlich in alle anderen Sprachen. Auch das Übersetzen oder Übertragen eines einzelnen Felds speichert gleich. Was Sie selbst tippen, bleibt ein Entwurf, bis Sie auf Speichern drücken.",
+      es: "La IA muestra primero su sugerencia, tanto en textos como en textos alternativos. Al aceptarla se guarda al instante; con aceptar y traducir llega además a todos los demás idiomas. Traducir o copiar un solo campo también se guarda enseguida. Lo que usted escribe sigue siendo un borrador hasta que pulsa Guardar.",
+    },
+  },
+  {
+    id: "ai-sees-images",
+    visibility: "public",
+    status: "shipped",
+    area: "ai",
+    shippedOn: "2026-09",
+    title: {
+      en: "Let the AI look at your pictures",
+      de: "Die KI darf Ihre Bilder ansehen",
+      es: "Deje que la IA vea sus imágenes",
+    },
+    body: {
+      en: "One setting decides whether the AI may look at your product images when it writes, and how many it looks at. Product descriptions then mention what is really in the picture, and alt texts describe the actual image.",
+      de: "Eine Einstellung legt fest, ob die KI beim Schreiben Ihre Produktbilder ansehen darf und wie viele. Produktbeschreibungen nennen dann, was wirklich auf dem Bild ist, und Alt-Texte beschreiben das tatsächliche Bild.",
+      es: "Un ajuste decide si la IA puede mirar sus imágenes de producto al escribir y cuántas. Así las descripciones mencionan lo que realmente aparece en la foto y los textos alternativos describen la imagen real.",
+    },
+  },
+  {
     id: "localized-images",
     visibility: "public",
     status: "shipped",
@@ -532,9 +601,9 @@ export const ROADMAP: RoadmapEntry[] = [
       es: "Imágenes y vídeos distintos por idioma",
     },
     body: {
-      en: "A product photo with Spanish labels for the Spanish shop, a dubbed product video for the French one, a banner with Italian text — per language, and per market if you like. Product images and videos (including YouTube and Vimeo links) are swapped in the product gallery — and, with the app’s Open Graph and structured-data embeds on, in the main image shown when sharing and the images search engines read; theme images such as banners and the logo are chosen per language in the app’s theme content editor. Collection cards, the cart and sales-channel feeds keep the original.",
-      de: "Ein Produktfoto mit spanischer Beschriftung für den spanischen Shop, ein vertontes Produktvideo für den französischen, ein Banner mit italienischem Text — pro Sprache und auf Wunsch pro Markt. Produktbilder und -videos (auch YouTube- und Vimeo-Links) werden in der Produktgalerie ausgetauscht — und mit den App-Einbettungen für Open Graph und strukturierte Daten auch im Hauptbild beim Teilen und in den Bildern, die Suchmaschinen lesen; Theme-Bilder wie Banner und Logo wählen Sie je Sprache unter Inhalte → Theme. Kollektionskarten, Warenkorb und Verkaufskanal-Feeds zeigen weiter das Original.",
-      es: "Una foto de producto con etiquetas en español para la tienda española, un vídeo de producto doblado para la francesa, un banner con texto en italiano — por idioma y, si lo desea, por mercado. Las imágenes y vídeos de producto (también enlaces de YouTube y Vimeo) se cambian en la galería de producto — y, con las inserciones de Open Graph y datos estructurados de la app, en la imagen principal al compartir y en las imágenes que leen los buscadores; las imágenes del tema, como banners y el logo, se eligen por idioma en Contenido → Tema. Las tarjetas de colección, el carrito y los feeds de canales de venta mantienen el original.",
+      en: "A product photo with Spanish labels for the Spanish shop, a dubbed product video for the French one, a banner with Italian text: per language, and per market if you like. You swap product images and videos right in the product gallery, and theme images such as banners and the logo in the theme section, where you can now also change the original image itself. The replacement also appears when someone shares the product and in search results. Collection overviews and the cart keep showing the original.",
+      de: "Ein Produktfoto mit spanischer Beschriftung für den spanischen Shop, ein vertontes Produktvideo für den französischen, ein Banner mit italienischem Text: pro Sprache und auf Wunsch pro Markt. Produktbilder und -videos tauschen Sie direkt in der Produktgalerie aus, Theme-Bilder wie Banner und Logo im Theme-Bereich, wo Sie jetzt auch das Originalbild selbst ändern können. Das Ersatzbild erscheint auch, wenn jemand das Produkt teilt, und in den Suchergebnissen. Kollektionsübersichten und der Warenkorb zeigen weiterhin das Original.",
+      es: "Una foto de producto con etiquetas en español para la tienda española, un vídeo de producto doblado para la francesa, un banner con texto en italiano: por idioma y, si lo desea, por mercado. Las imágenes y vídeos de producto se cambian directamente en la galería del producto, y las imágenes del tema, como banners y el logo, en la sección del tema, donde ahora también puede cambiar la imagen original. La imagen de reemplazo también aparece cuando alguien comparte el producto y en los resultados de búsqueda. Las vistas de colección y el carrito siguen mostrando el original.",
     },
     notes: "SHIPPED 2026-10-02 (Pro and up, gated with the image manager via canAccessVariantImageManagerInEnv; theme images ride the theme editor, also Pro and up). Compare page row imagesPerLanguage flipped to yes, COMPETITIVE_ANALYSIS.md §1.2/§2.1 updated. Not covered: collection cards, cart, channel feeds; collection/article images; OCR stays image-translation. STATUS 2026-10-01: VIDEOS per language built too (owner request): product videos 1:1 within their kind — a Shopify-hosted video by another Video file, YouTube/Vimeo by another YouTube/Vimeo link — same metafield (`x` kind field), the asset swaps <video> sources and <iframe> embed addresses incl. inside <template>; theme video settings are kept away from the AI (isThemeMediaValue). Unmeasured: the hosted-video key (hash directory of the CDN sources) on a live storefront; JSON-LD VideoObject keeps the original (PLAN §4.21-26). STATUS 2026-09-30: Phases 0, 1a and 1b are BUILT on branch ccr-d2c55c90-urvm3n (owner: per language AND per market, products + theme only, 1:1 replacement only). Built: the AI guard for image values (isThemeImageReference in every theme AI path + survivesValuePrompt), the theme-image probe (Settings → Probes → Translation), the themeImage field in the theme editor (picker per language/market, saves through the ordinary theme save path), the product card + the products page actions localizedMediaLoad/Set/Remove (via /api/content-editor-action) writing custom.localized_media with echo confirmation (no DB mirror — the metafield is the one store), the localized-media app embed + asset and cp-localized-image snippet for og:image/JSON-LD. Deliberately NOT marked shipped: the theme half rests on the unmeasured changelog claim until the probe has answered YES on a live shop, and nothing is deployed. Flip to shipped (and the compare page row imagesPerLanguage) the day both are true. Original note: added 2026-09-30 as the one real functional gap in translation (COMPETITIVE_ANALYSIS.md §1.2 and the compare page's imagesPerLanguage row, which stays 'Not yet' until this ships). Two halves with different platform support, see the plan. (A) THEME images: image_picker settings are translatable through translationsRegister (value shopify://shop_images/<file>), per locale AND per market — native, no storefront trick. Our theme sync already picks them up as ordinary text keys; the UI must render them as an image picker and they must NEVER reach the AI (templates-translate-all sends every non-empty value today — check with a probe first whether this is a live bug). (B) PRODUCT media: not translatable in Shopify at all (MediaImage carries only `alt`, measured). Competitors swap per language in the storefront. Our advantage: variant-gallery-embed already replaces the native gallery, so the locale is one more branch there, and og:image + JSON-LD come from OUR blocks, so the localized image reaches social previews and search engines server-side — which a JS-only swap cannot. Data model: app-owned metaobject (locale, optional market, source media, replacement file_reference) referenced from the product, so Liquid gets a real image object for image_url. Logic in assets/, not blocks/ (100 KiB Liquid budget). Stated limits: channel feeds (Google, Shop app, AI channels) keep the primary image; collection cards/cart need a fragile JS swap and are a separate decision. Carry origin (manual/ai) and a source stamp from day one so image-translation only fills the model. No new scopes needed. Phase 0 is a MEASUREMENT (probe), not code.",
     ref: "docs/plans/PLAN_LOCALIZED_IMAGES.md",
