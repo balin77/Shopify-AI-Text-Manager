@@ -682,3 +682,77 @@ describe("primary theme TEXT save: by path first, value search only as the fallb
     expect(written.presets.Other.sections.x.settings.t).toBe("Hi");
   });
 });
+
+describe("review fixes: claimed slots, literal 'block' ids, structural strings", () => {
+  const TYPE = "ONLINE_STORE_THEME_JSON_TEMPLATE";
+
+  it("a searched key can never claim the slot of a path-resolved key (S never reported as saved)", async () => {
+    // P resolves by path to c1 ("Column"); S has the same old value and NO path.
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { mc: { settings: {}, blocks: { c1: { settings: { title: "Column" } } } } } })],
+      edits: {
+        "section.index.json.mc.c1.title": { old: "Column", next: "P-new", type: TYPE },
+        "section.index.json.zz.title": { old: "Column", next: "S-new", type: TYPE },
+      },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    const body = result?.data ?? result;
+    expect(body.success).toBe(false);
+    expect(upserts).toEqual([]);
+  });
+
+  it("a literal 'block' id is a real block when only that reading matches", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { s: { settings: { title: "Other" }, blocks: { block: { settings: { title: "Hi" } } } } } })],
+      edits: { "section.index.json.s.block.title": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    expect((result?.data ?? result).success).toBe(true);
+    const written = JSON.parse(upserts[0].value).sections.s;
+    expect(written.blocks.block.settings.title).toBe("Ho");
+    expect(written.settings.title).toBe("Other");
+  });
+
+  it("when BOTH readings of a literal 'block' segment hold the old value, nothing is guessed: refused", async () => {
+    const { ctx } = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { s: { settings: { title: "Hi" }, blocks: { block: { settings: { title: "Hi" } } } } } })],
+      edits: { "section.index.json.s.block.title": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const result = (await handleUpdateContent(ctx)) as any;
+    const body = result?.data ?? result;
+    expect(body.success).toBe(false);
+    expect(body.errorKey).toBe("themeTextAmbiguous");
+    expect(upserts).toEqual([]);
+  });
+
+  it("the search never rewrites the preset pointer or a section/block `type`", async () => {
+    // settings_data: current = "Default" and the old value of an unresolvable key is "Default"
+    const a = makeCtx({
+      files: [themeFile("config/settings_data.json", { current: "Default", presets: { Default: { headline: "x" } } })],
+      edits: { "general.nope": { old: "Default", next: "Changed", type: "ONLINE_STORE_THEME_SETTINGS_CATEGORY" } },
+    });
+    const ra = (await handleUpdateContent(a.ctx)) as any;
+    expect((ra?.data ?? ra).success).toBe(false);
+    expect(upserts).toEqual([]);
+
+    // a template section whose `type` equals the old value of an unresolvable key
+    const b = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { s: { type: "Hi", settings: {} } }, order: ["s"] })],
+      edits: { "section.index.json.q.heading": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const rb = (await handleUpdateContent(b.ctx)) as any;
+    expect((rb?.data ?? rb).success).toBe(false);
+    expect(upserts).toEqual([]);
+
+    // ...while the same value under `settings` is still found by the search
+    const c = makeCtx({
+      files: [themeFile("templates/index.json", { sections: { s: { type: "Hi", settings: { t: "Hi" } } }, order: ["s"] })],
+      edits: { "section.index.json.q.heading": { old: "Hi", next: "Ho", type: TYPE } },
+    });
+    const rc = (await handleUpdateContent(c.ctx)) as any;
+    expect((rc?.data ?? rc).success).toBe(true);
+    const written = JSON.parse(upserts[0].value);
+    expect(written.sections.s).toEqual({ type: "Hi", settings: { t: "Ho" } });
+    expect(written.order).toEqual(["s"]);
+  });
+});

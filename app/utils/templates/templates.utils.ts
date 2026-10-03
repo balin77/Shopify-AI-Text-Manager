@@ -184,25 +184,37 @@ function walkSection(root: unknown, sectionsPath: string[], segs: string[]): str
   const sectionId = segs[0];
   const rest = segs.slice(1);
   const last = rest[rest.length - 1];
-  const middle = rest.slice(0, -1).filter((x) => x !== "block" && x !== "blocks");
+  // A literal `block`/`blocks` segment may be a marker OR a real block id: both
+  // readings are built, and the caller uses one only if exactly one of them
+  // exists with the expected value.
+  const middleRaw = rest.slice(0, -1);
+  const middleFiltered = middleRaw.filter((x) => x !== "block" && x !== "blocks");
+  const middles = middleFiltered.length === middleRaw.length ? [middleRaw] : [middleRaw, middleFiltered];
   const variants: Array<{ setting: string; extra: string[] }> = [{ setting: last, extra: [] }];
   if (last.includes(":")) {
     const [setting, id] = last.split(":");
     if (setting && id) variants.push({ setting, extra: [id] });
   }
   const out: string[][] = [];
-  for (const v of variants) {
-    let path = [...sectionsPath, sectionId];
-    let ok = isObj(sections[sectionId]);
-    for (const id of [...middle, ...v.extra]) {
-      if (!ok) break;
-      const blocks = getAtPath(root, [...path, "blocks"]);
-      if (!isObj(blocks) || !isObj(blocks[id])) { ok = false; break; }
-      path = [...path, "blocks", id];
+  const seen = new Set<string>();
+  for (const middle of middles) {
+    for (const v of variants) {
+      let path = [...sectionsPath, sectionId];
+      let ok = isObj(sections[sectionId]);
+      for (const id of [...middle, ...v.extra]) {
+        if (!ok) break;
+        const blocks = getAtPath(root, [...path, "blocks"]);
+        if (!isObj(blocks) || !isObj(blocks[id])) { ok = false; break; }
+        path = [...path, "blocks", id];
+      }
+      if (!ok) continue;
+      const candidate = [...path, "settings", v.setting];
+      const id = candidate.join("\u0000");
+      if (typeof getAtPath(root, candidate) === "string" && !seen.has(id)) {
+        seen.add(id);
+        out.push(candidate);
+      }
     }
-    if (!ok) continue;
-    const candidate = [...path, "settings", v.setting];
-    if (typeof getAtPath(root, candidate) === "string") out.push(candidate);
   }
   return out;
 }
@@ -225,4 +237,50 @@ export function resolveKeyJsonPaths(key: string, filename: string, fileJson: unk
     return setting && typeof getAtPath(fileJson, path) === "string" ? [path] : [];
   }
   return [];
+}
+
+/**
+ * Hides everything that is NOT a setting value from a value search, in place:
+ * the preset pointer (`current` as a string), the `type` of every section and
+ * block, and the order arrays. Returns the function that puts the originals
+ * back (the file is pushed afterwards). With this the search can only ever
+ * touch values under `settings` or top-level settings of `current`.
+ */
+export function maskStructuralStrings(fileJson: unknown, filename: string): () => void {
+  const MASK = "\u0000structural";
+  const undo: Array<() => void> = [];
+  const maskKey = (obj: Json, key: string) => {
+    const original = obj[key];
+    if (typeof original === "string") {
+      obj[key] = MASK;
+      undo.push(() => { obj[key] = original; });
+    } else if (Array.isArray(original)) {
+      const copy = [...original];
+      obj[key] = copy.map((v) => (typeof v === "string" ? MASK : v));
+      undo.push(() => { obj[key] = original; });
+    }
+  };
+  const visitNode = (node: unknown) => {
+    if (!isObj(node)) return;
+    maskKey(node, "type");
+    maskKey(node, "block_order");
+    if (isObj(node.blocks)) for (const block of Object.values(node.blocks)) visitNode(block);
+  };
+  const visitSections = (sections: unknown) => {
+    if (isObj(sections)) for (const section of Object.values(sections)) visitNode(section);
+  };
+  if (!isObj(fileJson)) return () => {};
+  if (filename === "config/settings_data.json") {
+    const base = settingsDataLiveBase(fileJson); // before the pointer is masked
+    maskKey(fileJson, "current");
+    const live = getAtPath(fileJson, base);
+    if (isObj(live)) {
+      visitSections(live.sections);
+      maskKey(live, "content_for_index");
+    }
+  } else {
+    maskKey(fileJson, "order");
+    visitSections(fileJson.sections);
+  }
+  return () => { for (const fn of undo.reverse()) fn(); };
 }

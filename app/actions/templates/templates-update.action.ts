@@ -7,7 +7,7 @@ import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { TRANSLATE_CONTENT, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
 import { GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
-import { keyToFilename, replaceValuesInJson, countStringOccurrences, LOCALE_CONTENT_RESOURCE_TYPES, SETTINGS_DATA_RESOURCE_TYPES, resolveKeyJsonPaths, getAtPath, setAtPath, settingsDataLiveBase } from "~/utils/templates/templates.utils";
+import { keyToFilename, replaceValuesInJson, countStringOccurrences, LOCALE_CONTENT_RESOURCE_TYPES, SETTINGS_DATA_RESOURCE_TYPES, resolveKeyJsonPaths, maskStructuralStrings, getAtPath, setAtPath, settingsDataLiveBase } from "~/utils/templates/templates.utils";
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
@@ -933,21 +933,34 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           // path (locale files, the path above) are exempt. Other presets of
           // settings_data.json are not live values: neither counted nor written
           // (the live preset is, when `current` names one).
+          // The search may only ever touch SETTING values: structural strings
+          // (the preset pointer, section/block `type`, order arrays) and the slots
+          // already claimed by a path-resolved key are masked for its duration and
+          // restored / finally written below. The masks go in BEFORE the search
+          // view is built (the view copies top-level primitives).
+          const CLAIMED = "\u0000claimed-by-path";
+          const isStructuredFile = /^(templates|sections)\/.+\.json$/.test(actualFilename) || actualFilename === SETTINGS_DATA_FILE;
+          const liveBase = settingsDataLiveBase(fileJson); // read before the pointer is masked
+          const restoreStructure = isStructuredFile ? maskStructuralStrings(fileJson, actualFilename) : () => {};
+          for (const path of pathAssignments.values()) setAtPath(fileJson, path, CLAIMED);
           const searchTree: unknown = (() => {
             if (actualFilename !== SETTINGS_DATA_FILE || !fileJson || typeof fileJson !== "object" || Array.isArray(fileJson)) return fileJson;
             const file = fileJson as Record<string, unknown>;
             const rest = Object.fromEntries(Object.entries(file).filter(([k]) => k !== "presets"));
-            const base = settingsDataLiveBase(file);
+            const base = liveBase;
             return base[0] === "presets" ? { ...rest, presets: { [base[1]]: getAtPath(file, base) } } : rest;
           })();
           const searchedKeys = searchEligible.filter((k) => !pathAssignments.has(k));
           const ambiguousKeys = searchedKeys.filter((key) => {
             const old = oldValueMap.get(key) || "";
             if (!old) return false;
-            const sameOldInFile = searchedKeys.filter((other) => (oldValueMap.get(other) || "") === old).length;
+            // EVERY key of the file carrying this old value counts, the
+            // path-resolved ones too: their slot still holds it.
+            const sameOldInFile = searchEligible.filter((other) => (oldValueMap.get(other) || "") === old).length;
             return sameOldInFile !== 1 || countStringOccurrences(searchTree, old) > 1;
           });
           if (ambiguousKeys.length > 0) {
+            restoreStructure();
             return { replacedKeys: [], missedKeys: [], ambiguousKeys, pushedValues: new Map() };
           }
 
@@ -962,6 +975,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               new Map([...replacements].filter(([k]) => !pathAssignments.has(k))),
             );
           }
+          restoreStructure();
           for (const [key, path] of pathAssignments) {
             if (setAtPath(fileJson, path, replacements.get(key)!.newValue)) replacedKeys.add(key);
           }
