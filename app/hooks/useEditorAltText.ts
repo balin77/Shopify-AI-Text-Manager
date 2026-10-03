@@ -1229,8 +1229,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     mirrorPrimaryAlt();
 
     // Step 2: Translate to all locales
+    // `itemId` names the item the request belongs to: the editor's "translate
+    // all" refusal counts this request (queued behind step 1's save, then in
+    // flight) by it, because it is not in the operations store.
     safeSubmit({
       action: "translateAltTextToAllLocales",
+      itemId: selectedItemId,
       productId: item.id,
       imageIndex: String(imageIndex),
       ...mediaIdField(item.images?.[imageIndex]),

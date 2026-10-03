@@ -2137,6 +2137,7 @@ export const de = {
     ownSaveRefusedWhilePrimarySaveWaits: "Eine Speicherung der Hauptsprache dieses Eintrags ist noch nicht abgeschlossen – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn das erledigt ist.",
     primaryTextSkippedWhileBusy: "Die Übersetzungen in den Fremdsprachen sind gespeichert. Nur der Text der Hauptsprache wurde nicht gespeichert, weil für diesen Eintrag noch eine Übersetzung oder Speicherung läuft – übernehmen Sie ihn erneut, wenn das fertig ist.",
     translateToOthersSkippedWhileTranslating: "Gespeichert. Die Übersetzung in die anderen Sprachen wurde übersprungen, weil für diesen Eintrag noch eine Übersetzung oder Speicherung läuft – starten Sie sie erneut, wenn das fertig ist.",
+    productTypeTranslateSkippedWhileBusy: "Der Produkttyp wurde nicht in die anderen Sprachen übersetzt, weil für diesen Eintrag noch eine Übersetzung oder Speicherung läuft. Starten Sie die Übersetzung später mit der Übersetzen-Schaltfläche des Feldes für alle Sprachen.",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
     fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons
