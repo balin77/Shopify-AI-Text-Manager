@@ -48,6 +48,7 @@ import {
   serializeMetaobjectTaxonomyValues,
 } from "~/services/metaobject-fields.shared";
 import type { FieldRenderProps } from "~/types/content-editor.types";
+import { appFetch } from "../../utils/app-fetch";
 
 interface TaxonomyPayload {
   success: boolean;
@@ -80,7 +81,7 @@ function fetchList(type: string, fieldKey: string): Promise<TaxonomyPayload> {
   const key = `${type}|${fieldKey}`;
   const existing = listRequests.get(key);
   if (existing) return existing;
-  const request = fetch(
+  const request = appFetch(
     `/api/metaobject-taxonomy?type=${encodeURIComponent(type)}&field=${encodeURIComponent(fieldKey)}`,
   )
     .then((res) => res.json() as Promise<TaxonomyPayload>)
@@ -130,7 +131,7 @@ async function fetchNames(type: string, fieldKey: string, ids: string[]): Promis
   const existing = nameRequests.get(key);
   const request =
     existing ??
-    fetch(
+    appFetch(
       `/api/metaobject-taxonomy?mode=names&type=${encodeURIComponent(type)}&field=${encodeURIComponent(
         fieldKey,
       )}&ids=${encodeURIComponent(wanted.join(","))}`,

@@ -4,6 +4,7 @@ import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { meetsPlan, getPlanDisplayName, type Plan } from "../utils/planUtils";
 import { SettingsLanguageTab } from "./SettingsLanguageTab";
+import { appFetch } from "../utils/app-fetch";
 
 interface WebhookEntry {
   topic: string;
@@ -79,7 +80,7 @@ export function SettingsSetupTab({
     setWebhookData(null);
 
     try {
-      const response = await fetch("/api/setup-webhooks", {
+      const response = await appFetch("/api/setup-webhooks", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -105,7 +106,7 @@ export function SettingsSetupTab({
     setSyncTriggerError("");
     setSyncTriggerLoading(true);
     try {
-      const response = await fetch("/api/sync-trigger", { method: "POST" });
+      const response = await appFetch("/api/sync-trigger", { method: "POST" });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

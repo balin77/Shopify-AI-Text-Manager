@@ -15,6 +15,8 @@ import {
   Select,
 } from "@shopify/polaris";
 import { useI18n } from "../../contexts/I18nContext";
+import { appFetch, isAuthError } from "../../utils/app-fetch";
+import { translateErrorMessage } from "../../utils/editor-error-messages";
 import { classifyFile, parseExternalVideoUrl, ALL_UPLOADABLE_MIME_TYPES, IMAGE_MIME_TYPES, VIDEO_MIME_TYPES } from "../../utils/mediaKind";
 import type { MediaKind } from "./types";
 
@@ -265,7 +267,7 @@ export function FilePickerModal({
       params.set("first", String(PAGE_SIZE));
       if (opts.append && endCursor) params.set("after", endCursor);
       if (usedByProductId) params.set("usedByProductId", usedByProductId);
-      const res = await fetch(`/api/files?${params.toString()}`);
+      const res = await appFetch(`/api/files?${params.toString()}`);
       if (!res.ok) throw new Error(`Failed (${res.status})`);
       const data = await res.json();
       const incoming: ApiFile[] = data.files ?? [];
@@ -273,11 +275,11 @@ export function FilePickerModal({
       setEndCursor(data.pageInfo?.endCursor ?? null);
       setHasNextPage(Boolean(data.pageInfo?.hasNextPage));
     } catch (err: any) {
-      setError(err?.message ?? "Could not load files");
+      setError(isAuthError(err) ? translateErrorMessage(err.message, t as never) : (err?.message ?? "Could not load files"));
     } finally {
       setIsLoading(false);
     }
-  }, [query, kind, endCursor, usedByProductId]);
+  }, [query, kind, endCursor, usedByProductId, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -299,7 +301,7 @@ export function FilePickerModal({
   const loadProducts = useCallback(async () => {
     setProductListLoading(true);
     try {
-      const res = await fetch(`/api/products-list?first=200`);
+      const res = await appFetch(`/api/products-list?first=200`);
       const data = await res.json();
       setProductList(data.products ?? []);
     } catch {
@@ -379,7 +381,7 @@ export function FilePickerModal({
     await Promise.all(accepted.map(async (file, i) => {
       const item = newItems[i];
       try {
-        const res = await fetch("/api/staged-upload", {
+        const res = await appFetch("/api/staged-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
@@ -457,8 +459,9 @@ export function FilePickerModal({
         // Model3d.preview generation runs on save anyway and handles
         // arbitrarily large files without occupying the merchant's
         // browser tab.
-      } catch {
+      } catch (err) {
         setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
+        if (isAuthError(err)) setError(translateErrorMessage(err.message, t as never));
       }
     }));
   }, [uploadCommitMode, onAdd, t, disallowModel, onlyKind]);

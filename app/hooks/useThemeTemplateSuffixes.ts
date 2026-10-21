@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import type { ThemeTemplateResource } from "~/services/theme-templates.shared";
 import type { ThemeTemplatesResponse } from "~/routes/api.theme-templates";
+import { appFetch } from "../utils/app-fetch";
 
 export type ThemeTemplatesLoaded = { ok: true; suffixes: string[] } | { ok: false };
 
@@ -33,7 +34,7 @@ export function loadThemeTemplateSuffixes(
   const cached = inFlight.get(resource);
   if (cached) return cached;
 
-  const request = fetch(`/api/theme-templates?resource=${encodeURIComponent(resource)}`)
+  const request = appFetch(`/api/theme-templates?resource=${encodeURIComponent(resource)}`)
     .then((r) => r.json() as Promise<ThemeTemplatesResponse>)
     .then((data): ThemeTemplatesLoaded =>
       data?.success ? { ok: true, suffixes: data.suffixes ?? [] } : { ok: false },

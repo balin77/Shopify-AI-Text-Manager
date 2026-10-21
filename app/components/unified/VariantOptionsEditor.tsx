@@ -121,6 +121,7 @@ import {
   type OptionValueSwatch,
 } from "../../services/product-option-swatch.shared";
 import type { OptionData } from "./OptionsField";
+import { appFetch } from "../../utils/app-fetch";
 import "../../styles/AIEditableField.css";
 
 /**
@@ -492,7 +493,7 @@ export function VariantOptionsEditor({
   useEffect(() => {
     if (!productId) return;
     let cancelled = false;
-    fetch(`/api/product-option-details?productId=${encodeURIComponent(productId)}`)
+    appFetch(`/api/product-option-details?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
       .then((body) => {
         if (cancelled) return;
@@ -515,7 +516,7 @@ export function VariantOptionsEditor({
     if (!openOptionId || impact !== null || !productId) return;
 
     let cancelled = false;
-    fetch(`/api/product-option-details?productId=${encodeURIComponent(productId)}&include=counts`)
+    appFetch(`/api/product-option-details?productId=${encodeURIComponent(productId)}&include=counts`)
       .then((r) => r.json())
       .then((body) => {
         if (cancelled) return;
@@ -678,7 +679,7 @@ export function VariantOptionsEditor({
         setChoices((prev) => ({ ...prev, [option.id]: null }));
         return;
       }
-      fetch(`/api/metaobject-choices?metaobjectId=${encodeURIComponent(anchor)}`)
+      appFetch(`/api/metaobject-choices?metaobjectId=${encodeURIComponent(anchor)}`)
         .then((r) => r.json())
         .then((body) => {
           setChoices((prev) => ({

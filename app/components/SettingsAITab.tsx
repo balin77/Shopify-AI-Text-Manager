@@ -29,6 +29,7 @@ import {
   type ApiKeyField,
   type ApiKeyStatusMap,
 } from "../utils/api-key-storage.shared";
+import { appFetch } from "../utils/app-fetch";
 
 // Responsive label component that shows short version on small screens
 function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; shortText: string; helpKey?: string }) {
@@ -154,7 +155,7 @@ export function SettingsAITab({
       return [...options, { label: model, value: model }];
     };
     try {
-      const response = await fetch(`/api/ai-models?provider=${providerToFetch}`);
+      const response = await appFetch(`/api/ai-models?provider=${providerToFetch}`);
       const data = await response.json();
       if (data.success && data.models) {
         const options: Array<{ label: string; value: string }> = data.models.map((m: { id: string; name: string }) => ({

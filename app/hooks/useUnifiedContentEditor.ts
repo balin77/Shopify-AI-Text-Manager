@@ -1664,7 +1664,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        const res = await fetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
+        const res = await appFetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
           headers: { Accept: "application/json" },
         });
         if (!res.ok) {

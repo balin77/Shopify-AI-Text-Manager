@@ -30,6 +30,7 @@ import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content
 import { upsertThemeRow, applyThemeSaveToRows, themeRowValue, removeThemeLayers, rowsAfterPrimarySave } from "~/services/theme-translation-cache.shared";
 import { detectFieldType } from "~/utils/templates-field-factory";
 import { keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
+import { appFetch } from "../utils/app-fetch";
 
 /**
  * Put a GLOBAL translation into one locale's cached rows (in place). Only a row
@@ -1218,7 +1219,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
       if (themeId === selectedThemeId) return;
       const formData = new FormData();
       formData.append("themeId", themeId);
-      fetch("/api/select-theme", { method: "POST", body: formData })
+      appFetch("/api/select-theme", { method: "POST", body: formData })
         .then((r) => r.json())
         .then((res) => {
           if (!res?.success) {

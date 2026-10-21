@@ -9,6 +9,7 @@
 import { useCallback, useState } from "react";
 import { Banner, BlockStack, Button, Card, InlineStack, Text } from "@shopify/polaris";
 import type { ThemeImageProbeReport } from "../services/localized-media/theme-image-probe.shared";
+import { appFetch } from "../utils/app-fetch";
 
 export function ThemeImageProbeCard() {
   const [loading, setLoading] = useState<"read" | "write" | null>(null);
@@ -22,7 +23,7 @@ export function ThemeImageProbeCard() {
       const fd = new FormData();
       fd.set("kind", "themeImage");
       if (withWrite) fd.set("confirm", "true");
-      const r = await fetch("/api/translation-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/translation-probe", { method: "POST", body: fd });
       const j = (await r.json()) as { report?: ThemeImageProbeReport; error?: string };
       if (!r.ok || !j.report) throw new Error(j.error || `HTTP ${r.status}`);
       setReport(j.report);

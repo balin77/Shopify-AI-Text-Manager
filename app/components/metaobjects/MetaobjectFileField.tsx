@@ -25,6 +25,7 @@ import { Banner, BlockStack, Button, InlineStack, Text } from "@shopify/polaris"
 import { FieldClearOverlay, FieldLabel } from "../unified/FieldChrome";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
 import type { FieldRenderProps } from "~/types/content-editor.types";
+import { appFetch } from "../../utils/app-fetch";
 
 interface Props extends FieldRenderProps {
   /** Thumbnail for the CURRENT value, when the shop's media cache knows it. */
@@ -80,7 +81,7 @@ export function MetaobjectFileField({
           // JSON, not FormData: the route parses with `request.json()` and
           // reads exactly `resourceUrl` and `alt`. A multipart body reaches it
           // as an unparseable string and every upload fails.
-          const res = await fetch("/api/create-shopify-file", {
+          const res = await appFetch("/api/create-shopify-file", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ resourceUrl: item.resourceUrl, alt: item.fileName }),

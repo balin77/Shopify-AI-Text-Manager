@@ -9,6 +9,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Banner, BlockStack, Button, Card, InlineStack, Text, TextField } from "@shopify/polaris";
 import { ToggleRow } from "./ToggleRow";
+import { appFetch } from "../utils/app-fetch";
 
 // Mirrors the report in api.market-probe.tsx — re-declared rather than
 // imported, because that module is a server route.
@@ -77,7 +78,7 @@ export function MarketProbeCard() {
       const fd = new FormData();
       fd.set("confirm", "true");
       if (countries.trim()) fd.set("countries", countries);
-      const r = await fetch("/api/market-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/market-probe", { method: "POST", body: fd });
       const j = (await r.json()) as { report?: MarketProbeReport; error?: string };
       if (!r.ok || !j.report) throw new Error(j.error || `HTTP ${r.status}`);
       setReport(j.report);
