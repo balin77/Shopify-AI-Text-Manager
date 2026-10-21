@@ -31,7 +31,8 @@ import { formatNumber } from "../utils/format";
 import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
 import { MANAGED_BILLING_PLANS } from "../config/billing";
 import { ToggleRow } from "./ToggleRow";
-import { appFetch } from "../utils/app-fetch";
+import { appFetch, isAuthError } from "../utils/app-fetch";
+import { translateErrorMessage } from "../utils/editor-error-messages";
 
 /**
  * Wraps a plan-card value in <strong> when the row differs from the tier below.
@@ -159,7 +160,7 @@ export function SettingsPlanTab({
       revalidator.revalidate();
       setPlanLoading(null);
     } catch (err) {
-      setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
+      setPlanError(isAuthError(err) ? translateErrorMessage(err.message, t as never) : err instanceof Error ? err.message : t.settings.errorOccurred);
       setPlanLoading(null);
     }
   };
@@ -191,7 +192,7 @@ export function SettingsPlanTab({
         window.open(data.confirmationUrl, "_top");
       }
     } catch (err) {
-      setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
+      setPlanError(isAuthError(err) ? translateErrorMessage(err.message, t as never) : err instanceof Error ? err.message : t.settings.errorOccurred);
       setPlanLoading(null);
     }
   };

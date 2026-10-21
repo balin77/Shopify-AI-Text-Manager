@@ -25,7 +25,8 @@ import { Banner, BlockStack, Button, InlineStack, Text } from "@shopify/polaris"
 import { FieldClearOverlay, FieldLabel } from "../unified/FieldChrome";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
 import type { FieldRenderProps } from "~/types/content-editor.types";
-import { appFetch } from "../../utils/app-fetch";
+import { appFetch, isAuthError } from "../../utils/app-fetch";
+import { translateErrorMessage } from "../../utils/editor-error-messages";
 
 interface Props extends FieldRenderProps {
   /** Thumbnail for the CURRENT value, when the shop's media cache knows it. */
@@ -103,7 +104,7 @@ export function MetaobjectFileField({
           setLocalPreview(data.url || item.previewUrl || null);
           setOpen(false);
         } catch (e) {
-          setError(e instanceof Error ? e.message : String(e));
+          setError(isAuthError(e) ? translateErrorMessage(e.message, (t ?? {}) as never) : e instanceof Error ? e.message : String(e));
         } finally {
           setBusy(false);
         }
@@ -118,7 +119,7 @@ export function MetaobjectFileField({
     // `content` is a dependency because the two messages above are read out of
     // it — a callback pinned to the first render would keep answering in the
     // language the page was opened in after a language switch.
-    [onChange, content],
+    [onChange, content, t],
   );
 
   const shownPreview = localPreview ?? previewUrl ?? null;

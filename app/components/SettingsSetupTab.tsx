@@ -4,7 +4,8 @@ import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { meetsPlan, getPlanDisplayName, type Plan } from "../utils/planUtils";
 import { SettingsLanguageTab } from "./SettingsLanguageTab";
-import { appFetch } from "../utils/app-fetch";
+import { appFetch, isAuthError } from "../utils/app-fetch";
+import { translateErrorMessage } from "../utils/editor-error-messages";
 
 interface WebhookEntry {
   topic: string;
@@ -96,7 +97,7 @@ export function SettingsSetupTab({
         setWebhookStatus(`✗ Error: ${data.error}`);
       }
     } catch (error: unknown) {
-      setWebhookStatus(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
+      setWebhookStatus(`✗ Error: ${isAuthError(error) ? translateErrorMessage(error.message, t as never) : error instanceof Error ? error.message : String(error)}`);
     } finally {
       setWebhookLoading(false);
     }
@@ -112,7 +113,7 @@ export function SettingsSetupTab({
       }
       setSyncTriggered(true);
     } catch (error: unknown) {
-      setSyncTriggerError(error instanceof Error ? error.message : String(error));
+      setSyncTriggerError(isAuthError(error) ? translateErrorMessage(error.message, t as never) : error instanceof Error ? error.message : String(error));
     } finally {
       setSyncTriggerLoading(false);
     }
