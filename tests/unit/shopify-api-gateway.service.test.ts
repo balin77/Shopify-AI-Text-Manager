@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { GraphqlQueryError } from '@shopify/shopify-api';
 import { isThrownRateLimitError, ShopifyApiGateway } from '~/services/shopify-api-gateway.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
@@ -108,13 +109,58 @@ describe('ShopifyApiGateway — thrown rate-limit errors', () => {
     expect(isThrownRateLimitError(Object.assign(new Error('Too Many Requests'), { response: { code: 429 } }))).toBe(true);
     expect(isThrownRateLimitError(Object.assign(new Error('x'), { name: 'HttpThrottlingError' }))).toBe(true);
     // GraphqlQueryError for an HTTP-200 THROTTLED answer
+    // (the raw response's `errors` array form, kept for callers that pass it)
     expect(
-      isThrownRateLimitError({ message: 'Throttled', body: { errors: [{ extensions: { code: 'THROTTLED' } }] } }),
+      isThrownRateLimitError({ message: 'x', body: { errors: [{ extensions: { code: 'THROTTLED' } }] } }),
     ).toBe(true);
     expect(isThrownRateLimitError(new Error('rate limit exceeded'))).toBe(true);
     expect(isThrownRateLimitError(Object.assign(new Error('Unauthorized'), { response: { code: 401 } }))).toBe(false);
     expect(isThrownRateLimitError(new Error('boom'))).toBe(false);
     expect(isThrownRateLimitError(null)).toBe(false);
+  });
+
+  it('recognises the REAL GraphqlQueryError the library throws for an HTTP-200 THROTTLED answer', () => {
+    // Shape built exactly as @shopify/shopify-api clients/common throwFailedRequest
+    // does: `body` is the graphql-client response, whose `errors` is an OBJECT
+    // (message, graphQLErrors, networkStatusCode, response) and NOT an array.
+    const response = new Response('{}', { status: 200 });
+    const real = new GraphqlQueryError({
+      message: 'Throttled',
+      response: response as never,
+      headers: {},
+      body: {
+        errors: {
+          message: 'GraphQL Client: An error occurred while fetching from the API. Review \'graphQLErrors\' for details.',
+          graphQLErrors: [
+            { message: 'Throttled', extensions: { code: 'THROTTLED', documentation: 'https://shopify.dev/api/usage/rate-limits' } },
+          ],
+          networkStatusCode: 200,
+          response,
+        },
+      } as never,
+    });
+    expect(isThrownRateLimitError(real)).toBe(true);
+
+    // The extension code alone is enough, whatever the message says.
+    const codeOnly = new GraphqlQueryError({
+      message: 'Something else',
+      response: response as never,
+      headers: {},
+      body: { errors: { graphQLErrors: [{ message: 'x', extensions: { code: 'THROTTLED' } }] } } as never,
+    });
+    expect(isThrownRateLimitError(codeOnly)).toBe(true);
+
+    // ...and the message "Throttled" alone too (case-insensitive).
+    expect(isThrownRateLimitError(new Error('THROTTLED'))).toBe(true);
+
+    // A different GraphQL error is not a rate limit.
+    const other = new GraphqlQueryError({
+      message: 'Field x does not exist',
+      response: response as never,
+      headers: {},
+      body: { errors: { graphQLErrors: [{ message: 'Field x does not exist', extensions: { code: 'undefinedField' } }] } } as never,
+    });
+    expect(isThrownRateLimitError(other)).toBe(false);
   });
 
   it('retries a thrown HttpThrottlingError-shaped 429 as a rate limit', async () => {

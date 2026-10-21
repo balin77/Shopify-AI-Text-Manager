@@ -261,12 +261,24 @@ export function isThrownRateLimitError(error: unknown): boolean {
   if (e.status === 429) return true;
   if (e.response?.code === 429 || e.response?.status === 429) return true;
   if (e.name === "HttpThrottlingError") return true;
+  // The library's GraphqlQueryError (clients/common throwFailedRequest) carries
+  // the graphql-client's error OBJECT on `body.errors`:
+  // `{ message, graphQLErrors: [...], networkStatusCode, response }`, and its
+  // own message is `graphQLErrors[0].message` ("Throttled"). A bare array is
+  // kept for callers that hand over the raw response's `errors`.
   const bodyErrors = e.body?.errors;
+  const graphQLErrors: unknown[] = Array.isArray(bodyErrors)
+    ? bodyErrors
+    : bodyErrors && typeof bodyErrors === "object" &&
+        Array.isArray((bodyErrors as { graphQLErrors?: unknown }).graphQLErrors)
+      ? ((bodyErrors as { graphQLErrors: unknown[] }).graphQLErrors)
+      : [];
   if (
-    Array.isArray(bodyErrors) &&
-    bodyErrors.some((x) => (x as { extensions?: { code?: string } })?.extensions?.code === "THROTTLED")
+    graphQLErrors.some((x) => (x as { extensions?: { code?: string } } | null)?.extensions?.code === "THROTTLED")
   ) {
     return true;
   }
-  return typeof e.message === "string" && e.message.includes("rate limit");
+  if (typeof e.message !== "string") return false;
+  const msg = e.message.toLowerCase();
+  return msg.includes("rate limit") || msg.trim() === "throttled";
 }
