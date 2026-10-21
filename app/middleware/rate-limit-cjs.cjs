@@ -95,40 +95,61 @@ const contentActionRateLimit = rateLimit({
 });
 
 /**
- * Webhook guard — throttles only requests that FAIL verification, per IP.
+ * Webhook failure OBSERVER — counts requests that FAIL verification, per IP,
+ * and only ever LOGS. It never refuses, delays or 429s anything.
  *
- * History, because both earlier shapes were wrong. The first SKIPPED every
- * request carrying an `x-shopify-hmac-sha256` header — unverified, so a junk
- * value bypassed it. The second counted EVERY request in a bucket keyed on the
- * `x-shopify-shop-domain` header — also unverified, so ~1000 junk requests a
- * minute naming `victim.myshopify.com` had every REAL delivery for that shop
- * answered 429 (app/uninstalled and the GDPR topics included), and a large
- * legitimate bulk import could trip it on its own.
+ * /webhooks deliberately has NO throttle at all, and every earlier shape of
+ * one was an attack surface:
+ *  - a skip for requests carrying `x-shopify-hmac-sha256` (unverified, so a
+ *    junk value bypassed it);
+ *  - a bucket keyed on `x-shopify-shop-domain` (unverified, so junk requests
+ *    naming `victim.myshopify.com` got that shop's REAL deliveries 429'd —
+ *    app/uninstalled and the GDPR topics included);
+ *  - a per-IP block after N failed verifications. Shopify delivers every app's
+ *    webhooks from SHARED egress IPs, so an attacker with their own Partner app
+ *    can subscribe a webhook to our URL, signed with THEIR secret: every one of
+ *    those deliveries fails our HMAC check, arrives from Shopify's IPs, and the
+ *    block then refuses Shopify's genuine deliveries for every merchant.
  *
- * So valid deliveries are never counted at all. The HMAC is verified by the
- * route (`authenticate.webhook`, which reads the body React Router needs, so it
- * cannot be verified here without buffering the raw body first); a failure
- * surfaces as a thrown Response — 401 for a bad HMAC, 400 for missing Shopify
- * headers, 405 for a non-POST. This middleware watches the RESPONSE status on
- * `finish` and counts exactly those per client IP (`trust proxy` is 1, so
- * `req.ip` is the address Railway's edge saw, not a header the sender wrote).
- * An IP past `WEBHOOK_FAILURE_LIMIT` failures in the window is refused with 429
- * BEFORE the route runs. Shopify's own addresses never fail the HMAC check, so
- * they are never blocked, however many deliveries they carry. 404 is NOT
- * counted: a stale subscription pointing at a removed route would otherwise get
- * Shopify's shared IPs blocked for every shop. In-memory, per instance, like
- * every limiter in this file.
+ * Any IP- or header-keyed throttle can be aimed at Shopify's shared delivery
+ * IPs or at a victim shop, and none is needed: every unverified request is
+ * rejected cheaply by the route's `authenticate.webhook` HMAC check (one HMAC
+ * over the body, no DB work). The same goes for an edge/CDN layer in front of
+ * this app: it must not rate-limit /webhooks by IP either (the deployment
+ * assumes Railway's edge passes /webhooks straight through, `trust proxy` 1,
+ * so `req.ip` is the address that edge saw). And a misconfiguration on OUR
+ * side — a rotated API secret, the platform-adapter regression described in
+ * CLAUDE.md ("Deploy-critical gotchas", every delivery answered 400) — must
+ * keep surfacing as 401/400 in the Partner Dashboard's delivery log; a 429
+ * would hide the real cause behind "rate limited".
+ *
+ * What this middleware does: on the response's `finish` (or `close` when the
+ * connection dropped before `finish`, counted once), a 400/401/405 increments
+ * a per-IP counter in a bounded in-memory map, and the FIRST time an IP crosses
+ * `threshold` within a window one warn line is written — so a spike is visible
+ * in the logs without being acted on. 404 and 5xx are not counted.
  */
 const WEBHOOK_FAILURE_WINDOW_MS = 60 * 1000;
-const WEBHOOK_FAILURE_LIMIT = 60;
+const WEBHOOK_FAILURE_WARN_THRESHOLD = 60;
 const WEBHOOK_FAILURE_STATUSES = new Set([400, 401, 405]);
 const WEBHOOK_FAILURE_MAX_KEYS = 50000;
 
-function createWebhookFailureLimiter(options = {}) {
+function defaultWebhookWarn(message) {
+  try {
+    // Lazily, so a broken logger can never take the middleware down.
+    const { serverLogger } = require('./server-logger.cjs');
+    serverLogger.warn(message);
+  } catch {
+    console.warn(message);
+  }
+}
+
+function createWebhookFailureObserver(options = {}) {
   const windowMs = options.windowMs ?? WEBHOOK_FAILURE_WINDOW_MS;
-  const limit = options.limit ?? WEBHOOK_FAILURE_LIMIT;
+  const threshold = options.threshold ?? WEBHOOK_FAILURE_WARN_THRESHOLD;
   const now = options.now ?? (() => Date.now());
-  /** @type {Map<string, { count: number, resetAt: number }>} */
+  const warn = options.warn ?? defaultWebhookWarn;
+  /** @type {Map<string, { count: number, resetAt: number, warned: boolean }>} */
   const failures = new Map();
 
   function prune(t) {
@@ -147,7 +168,7 @@ function createWebhookFailureLimiter(options = {}) {
     return entry;
   }
 
-  function recordFailure(key) {
+  function recordFailure(key, status) {
     const t = now();
     let entry = current(key, t);
     if (!entry) {
@@ -157,25 +178,33 @@ function createWebhookFailureLimiter(options = {}) {
         const oldest = failures.keys().next().value;
         if (oldest !== undefined) failures.delete(oldest);
       }
-      entry = { count: 0, resetAt: t + windowMs };
+      entry = { count: 0, resetAt: t + windowMs, warned: false };
       failures.set(key, entry);
     }
     entry.count += 1;
+    if (!entry.warned && entry.count >= threshold) {
+      entry.warned = true;
+      try {
+        warn(
+          `[webhooks] ${entry.count} failed webhook verifications (last status ${status}) from ${key} ` +
+            `within ${Math.round(windowMs / 1000)}s — observed only, nothing is throttled`,
+        );
+      } catch {
+        // Logging must never affect the request.
+      }
+    }
   }
 
   function middleware(req, res, next) {
     const key = normalizedIpKey(req);
-    const t = now();
-    const entry = current(key, t);
-    if (entry && entry.count >= limit) {
-      const retryAfter = Math.max(1, Math.ceil((entry.resetAt - t) / 1000));
-      res.setHeader('Retry-After', String(retryAfter));
-      res.status(429).json({ error: 'Too many failed webhook requests', retryAfter });
-      return;
-    }
-    res.on('finish', () => {
-      if (WEBHOOK_FAILURE_STATUSES.has(res.statusCode)) recordFailure(key);
-    });
+    let counted = false;
+    const observe = () => {
+      if (counted) return;
+      counted = true;
+      if (WEBHOOK_FAILURE_STATUSES.has(res.statusCode)) recordFailure(key, res.statusCode);
+    };
+    res.on('finish', observe);
+    res.on('close', observe);
     next();
   }
 
@@ -184,7 +213,7 @@ function createWebhookFailureLimiter(options = {}) {
   return middleware;
 }
 
-const webhookRateLimit = createWebhookFailureLimiter();
+const webhookFailureObserver = createWebhookFailureObserver();
 
 /**
  * Auth Rate Limit — 5 requests per 15 minutes per IP.
@@ -233,8 +262,8 @@ module.exports = {
   apiRateLimit,
   aiActionRateLimit,
   contentActionRateLimit,
-  webhookRateLimit,
-  createWebhookFailureLimiter,
+  webhookFailureObserver,
+  createWebhookFailureObserver,
   authRateLimit,
   strictRateLimit,
   bulkOperationRateLimit,

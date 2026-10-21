@@ -40,7 +40,64 @@ import { isValidLocale } from "../utils/validation";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
+/**
+ * Hard cap on the request body, enforced BEFORE it is parsed. The route is
+ * reachable by any storefront visitor and the token check needs the parsed
+ * body, so without a cap an anonymous caller could make the server buffer an
+ * arbitrarily large body. Derived from the field caps rather than a round
+ * number: 1500 + 5000 characters at up to 4 UTF-8 bytes each (a Japanese or
+ * emoji translation is 3-4 bytes per character) plus JSON framing and the
+ * token. 16 KB would refuse a legitimate long CJK translation.
+ */
+export const MAX_DIRECT_ADD_BODY_BYTES = 32 * 1024;
+
+type CappedBody = { ok: true; text: string } | { ok: false; tooLarge: boolean };
+
+/**
+ * Reads the body as text and gives up as soon as it passes `maxBytes`, so a
+ * missing or lying Content-Length cannot make the server buffer more than the
+ * cap (the stream is cancelled, not drained).
+ */
+async function readBodyCapped(request: Request, maxBytes: number): Promise<CappedBody> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const n = Number(declared);
+    if (Number.isFinite(n) && n > maxBytes) return { ok: false, tooLarge: true };
+  }
+  if (!request.body) return { ok: true, text: "" };
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        void reader.cancel().catch(() => {});
+        return { ok: false, tooLarge: true };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { ok: false, tooLarge: false };
+  }
+  const buf = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    buf.set(c, offset);
+    offset += c.byteLength;
+  }
+  return { ok: true, text: new TextDecoder().decode(buf) };
+}
+
 export async function action({ request }: ActionFunctionArgs) {
+  // A declared oversize body is refused before anything else runs.
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_DIRECT_ADD_BODY_BYTES) {
+    return json({ ok: false, error: "Body too large" }, { status: 413, headers: NO_STORE });
+  }
+
   const { session, admin } = await authenticate.public.appProxy(request);
   if (!session) return json({ ok: false }, { status: 200 });
 
@@ -51,8 +108,14 @@ export async function action({ request }: ActionFunctionArgs) {
     locale?: unknown;
     targetText?: unknown;
   };
+  const raw = await readBodyCapped(request, MAX_DIRECT_ADD_BODY_BYTES);
+  if (!raw.ok) {
+    return raw.tooLarge
+      ? json({ ok: false, error: "Body too large" }, { status: 413, headers: NO_STORE })
+      : json({ ok: false, error: "Invalid JSON" }, { status: 400, headers: NO_STORE });
+  }
   try {
-    body = await request.json();
+    body = JSON.parse(raw.text);
   } catch {
     return json({ ok: false, error: "Invalid JSON" }, { status: 400, headers: NO_STORE });
   }

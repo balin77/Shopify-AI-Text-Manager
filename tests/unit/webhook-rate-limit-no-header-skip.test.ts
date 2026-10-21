@@ -1,11 +1,11 @@
 /**
- * The webhook guard counts only requests that FAILED verification (401 bad
- * HMAC, 400 missing Shopify headers, 405 non-POST), keyed by client IP. It
- * must never throttle a genuine delivery: neither by a header-presence skip
- * (junk HMAC bypass) nor by a bucket keyed on the UNVERIFIED shop-domain header
- * (an attacker naming a victim shop got that shop's real deliveries 429'd).
+ * /webhooks is never throttled. The observer counts requests that FAILED
+ * verification (401 bad HMAC, 400 missing Shopify headers, 405 non-POST) per
+ * client IP and only LOGS a spike: a per-IP block could be aimed at Shopify's
+ * shared delivery IPs (an attacker's own Partner app subscribing a webhook to
+ * our URL, signed with their secret), a header-keyed bucket at a victim shop.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const sourcePath = join(__dirname, "..", "..", "app/middleware/rate-limit-cjs.cjs");
 const source = readFileSync(sourcePath, "utf8");
-const { createWebhookFailureLimiter } = require(sourcePath);
+const { createWebhookFailureObserver } = require(sourcePath);
 
 function makeRes() {
   const res = new EventEmitter() as EventEmitter & {
@@ -42,60 +42,113 @@ function makeRes() {
   return res;
 }
 
-/** Runs one request through the guard; returns whether the route was reached. */
-function send(guard: any, ip: string, routeStatus: number, headers: Record<string, string> = {}) {
+/** Runs one request through the observer; returns whether the route was reached. */
+function send(
+  guard: any,
+  ip: string,
+  routeStatus: number,
+  headers: Record<string, string> = {},
+  events: string[] = ["finish", "close"],
+) {
   const req = { ip, headers };
   const res = makeRes();
   let reached = false;
   guard(req, res, () => {
     reached = true;
     res.statusCode = routeStatus;
-    res.emit("finish");
+    for (const e of events) res.emit(e);
   });
   return { reached, res };
 }
 
-describe("webhook guard", () => {
-  it("is not keyed on the shop header and has no header-presence skip", () => {
-    const block = source.slice(source.indexOf("function createWebhookFailureLimiter"), source.indexOf("const webhookRateLimit"));
+describe("webhook failure observer", () => {
+  it("is not keyed on the shop header, has no header-presence skip and never answers 429", () => {
+    const block = source.slice(
+      source.indexOf("function createWebhookFailureObserver"),
+      source.indexOf("const webhookFailureObserver"),
+    );
     expect(block).not.toContain("x-shopify-shop-domain");
     expect(block).not.toContain("x-shopify-hmac-sha256");
+    expect(block).not.toContain("429");
+    expect(block).not.toContain(".status(");
     expect(source).not.toContain("skipVerifiedWebhook");
   });
 
   it("never throttles valid deliveries, however many", () => {
-    let t = 0;
-    const guard = createWebhookFailureLimiter({ limit: 3, now: () => t });
+    const warn = vi.fn();
+    const guard = createWebhookFailureObserver({ threshold: 3, now: () => 0, warn });
     for (let i = 0; i < 5000; i++) {
-      expect(send(guard, "1.1.1.1", 200, { "x-shopify-shop-domain": "victim.myshopify.com" }).reached).toBe(true);
+      const r = send(guard, "1.1.1.1", 200, { "x-shopify-shop-domain": "victim.myshopify.com" });
+      expect(r.reached).toBe(true);
+      expect(r.res.statusCode).toBe(200);
     }
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it("blocks an IP after too many HMAC failures, without touching other IPs", () => {
-    let t = 0;
-    const guard = createWebhookFailureLimiter({ limit: 3, windowMs: 60_000, now: () => t });
-    for (let i = 0; i < 3; i++) {
-      expect(send(guard, "6.6.6.6", 401, { "x-shopify-shop-domain": "victim.myshopify.com" }).reached).toBe(true);
+  it("never produces a 429, however many failures an IP piles up", () => {
+    const warn = vi.fn();
+    const guard = createWebhookFailureObserver({ threshold: 3, now: () => 0, warn });
+    for (let i = 0; i < 1000; i++) {
+      const r = send(guard, "6.6.6.6", 401);
+      expect(r.reached).toBe(true);
+      expect(r.res.statusCode).toBe(401);
+      expect(r.res.headers["Retry-After"]).toBeUndefined();
     }
-    const blocked = send(guard, "6.6.6.6", 200);
-    expect(blocked.reached).toBe(false);
-    expect(blocked.res.statusCode).toBe(429);
-    expect(blocked.res.headers["Retry-After"]).toBeDefined();
-    // Shopify's genuine delivery for the same shop, from its own IP, still goes through.
-    expect(send(guard, "1.1.1.1", 200, { "x-shopify-shop-domain": "victim.myshopify.com" }).reached).toBe(true);
-    // The window ends.
+    // A genuine delivery from the same (shared) IP still goes through untouched.
+    const ok = send(guard, "6.6.6.6", 200);
+    expect(ok.reached).toBe(true);
+    expect(ok.res.statusCode).toBe(200);
+    expect(guard.failureCount("6.6.6.6")).toBe(1000);
+  });
+
+  it("warns once per IP per window past the threshold", () => {
+    let t = 0;
+    const warn = vi.fn();
+    const guard = createWebhookFailureObserver({ threshold: 3, windowMs: 60_000, now: () => t, warn });
+    send(guard, "6.6.6.6", 401);
+    send(guard, "6.6.6.6", 401);
+    expect(warn).not.toHaveBeenCalled();
+    send(guard, "6.6.6.6", 401);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("6.6.6.6");
+    for (let i = 0; i < 50; i++) send(guard, "6.6.6.6", 400);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // Another IP has its own count.
+    send(guard, "7.7.7.7", 401);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // A new window warns again.
     t = 60_001;
-    expect(send(guard, "6.6.6.6", 200).reached).toBe(true);
+    for (let i = 0; i < 3; i++) send(guard, "6.6.6.6", 401);
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 
   it("counts 400 and 405 but not 404 or 500", () => {
-    const guard = createWebhookFailureLimiter({ limit: 2, now: () => 0 });
+    const guard = createWebhookFailureObserver({ threshold: 100, now: () => 0, warn: () => {} });
     send(guard, "2.2.2.2", 404);
     send(guard, "2.2.2.2", 500);
     expect(guard.failureCount("2.2.2.2")).toBe(0);
     send(guard, "2.2.2.2", 400);
     send(guard, "2.2.2.2", 405);
     expect(guard.failureCount("2.2.2.2")).toBe(2);
-    expect(send(guard, "2.2.2.2", 200).reached).toBe(false);
+  });
+
+  it("counts on close when finish never fired, and never twice", () => {
+    const guard = createWebhookFailureObserver({ threshold: 100, now: () => 0, warn: () => {} });
+    send(guard, "3.3.3.3", 401, {}, ["close"]);
+    expect(guard.failureCount("3.3.3.3")).toBe(1);
+    send(guard, "3.3.3.3", 401, {}, ["finish", "close"]);
+    expect(guard.failureCount("3.3.3.3")).toBe(2);
+  });
+
+  it("a throwing logger never affects the request", () => {
+    const guard = createWebhookFailureObserver({
+      threshold: 1,
+      now: () => 0,
+      warn: () => {
+        throw new Error("logger down");
+      },
+    });
+    expect(() => send(guard, "4.4.4.4", 401)).not.toThrow();
+    expect(guard.failureCount("4.4.4.4")).toBe(1);
   });
 });

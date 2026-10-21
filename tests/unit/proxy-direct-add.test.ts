@@ -31,6 +31,7 @@ vi.mock("../../app/services/direct-translation-ai.server", () => ({ translateIte
 
 const { action } = await import("../../app/routes/proxy.direct-add");
 const { mintCaptureToken } = await import("../../app/services/direct-capture-token.server");
+const { MAX_DIRECT_ADD_BODY_BYTES } = await import("../../app/routes/proxy.direct-add");
 const { directAddRateLimiter, MAX_ITEMS_PER_SHOP } = await import("../../app/services/direct-translation.server");
 
 const SHOP = "test.myshopify.com";
@@ -120,6 +121,70 @@ describe("proxy.direct-add", () => {
       expect((await run({ sourceText: "Hello" })).status).toBe(403);
     }
     const res = await run({ sourceText: "Hello", captureToken: mintCaptureToken(SHOP) });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+});
+
+describe("proxy.direct-add body cap", () => {
+  async function runRequest(request: Request) {
+    const response = await action({ request, params: {}, context: {} } as never);
+    const envelope = response as unknown as { data: Record<string, unknown>; init?: { status?: number } };
+    return { status: envelope.init?.status ?? 200, body: envelope.data };
+  }
+
+  it("refuses a declared oversize body with 413 before authenticating", async () => {
+    // happy-dom's Request drops a caller-set Content-Length (a forbidden
+    // header), so the declared length rides on a minimal stand-in.
+    const request = {
+      method: "POST",
+      url: "https://app.example/apps/contentpilot/direct-add",
+      headers: new Headers({
+        "Content-Type": "application/json",
+        "Content-Length": String(MAX_DIRECT_ADD_BODY_BYTES + 1),
+      }),
+      body: null,
+    } as unknown as Request;
+    const res = await runRequest(request);
+    expect(res.status).toBe(413);
+    expect(authenticate.public.appProxy).not.toHaveBeenCalled();
+    expect(directTranslationItem.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses an oversize streamed body without a Content-Length and stops reading", async () => {
+    let pulled = 0;
+    const chunk = new TextEncoder().encode("a".repeat(4096));
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        if (pulled > 1000) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    });
+    const request = new Request("https://app.example/apps/contentpilot/direct-add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(request.headers.get("content-length")).toBeNull();
+    const res = await runRequest(request);
+    expect(res.status).toBe(413);
+    // Stopped soon after the cap, never drained the whole 4 MB.
+    expect(pulled).toBeLessThan(MAX_DIRECT_ADD_BODY_BYTES / 4096 + 5);
+    expect(directTranslationItem.upsert).not.toHaveBeenCalled();
+  });
+
+  it("accepts a legitimate maximum-size CJK translation", async () => {
+    const res = await run({
+      sourceText: "Hello",
+      captureToken: mintCaptureToken(SHOP),
+      locale: "ja",
+      targetText: "\u3042".repeat(5000),
+    });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
