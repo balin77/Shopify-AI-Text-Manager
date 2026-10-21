@@ -14,6 +14,7 @@ import { isEncrypted } from "./encryption.server";
 import {
   getOfflineAdmin,
   invalidateOfflineAdmin,
+  markSelfRefreshingAdminClient,
   OfflineAdminUnavailableError,
 } from "./offline-admin.server";
 
@@ -87,7 +88,9 @@ async function legacyOnlineTokenClient(shop: string): Promise<ShopifyGraphQLClie
     );
   }
   logger.warn("[AdminClient] No offline session — falling back to an online session token", { shop });
-  return createAdminClient(shop, session.accessToken);
+  // Also handed back unchanged by `backgroundAdmin`: there is no offline
+  // session for the refreshing client to load, so swapping it would only fail.
+  return markSelfRefreshingAdminClient(createAdminClient(shop, session.accessToken));
 }
 
 /**
@@ -97,7 +100,9 @@ async function legacyOnlineTokenClient(shop: string): Promise<ShopifyGraphQLClie
  * a reload of the stored session.
  */
 function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
-  return {
+  // Marked so `backgroundAdmin` hands it back unchanged rather than swapping
+  // its raw contract for the library client's (see offline-admin.server.ts).
+  return markSelfRefreshingAdminClient({
     graphql: async (query: string, options?: { variables?: any }) => {
       const token = (await getOfflineAdmin(shop)).session.accessToken!;
       const first = await rawGraphql(shop, token, query, options);
@@ -107,7 +112,7 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
       const fresh = (await getOfflineAdmin(shop, { forceReload: true })).session.accessToken!;
       return checkOk(await rawGraphql(shop, fresh, query, options));
     },
-  };
+  });
 }
 
 /**

@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ShopifyApiGateway } from '~/services/shopify-api-gateway.service';
+import { isThrownRateLimitError, ShopifyApiGateway } from '~/services/shopify-api-gateway.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +95,43 @@ describe('ShopifyApiGateway — rate-limit detection (isRateLimitError)', () => 
 
     expect(result.ok).toBe(true);
     expect(admin.graphql).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ShopifyApiGateway — thrown rate-limit errors', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('recognises every thrown 429 shape the clients produce', () => {
+    expect(isThrownRateLimitError({ status: 429 })).toBe(true);
+    // @shopify/shopify-api HttpResponseError / HttpThrottlingError (the refreshing offline client)
+    expect(isThrownRateLimitError(Object.assign(new Error('Too Many Requests'), { response: { code: 429 } }))).toBe(true);
+    expect(isThrownRateLimitError(Object.assign(new Error('x'), { name: 'HttpThrottlingError' }))).toBe(true);
+    // GraphqlQueryError for an HTTP-200 THROTTLED answer
+    expect(
+      isThrownRateLimitError({ message: 'Throttled', body: { errors: [{ extensions: { code: 'THROTTLED' } }] } }),
+    ).toBe(true);
+    expect(isThrownRateLimitError(new Error('rate limit exceeded'))).toBe(true);
+    expect(isThrownRateLimitError(Object.assign(new Error('Unauthorized'), { response: { code: 401 } }))).toBe(false);
+    expect(isThrownRateLimitError(new Error('boom'))).toBe(false);
+    expect(isThrownRateLimitError(null)).toBe(false);
+  });
+
+  it('retries a thrown HttpThrottlingError-shaped 429 as a rate limit', async () => {
+    const throttled = Object.assign(new Error('Too Many Requests'), {
+      name: 'HttpThrottlingError',
+      response: { code: 429, statusText: 'Too Many Requests' },
+    });
+    const graphql = vi
+      .fn()
+      .mockRejectedValueOnce(throttled)
+      .mockResolvedValueOnce({ json: async () => ({ data: { shop: { name: 'Test' } } }) });
+    const gateway = new ShopifyApiGateway({ graphql } as never, 'test-shop.myshopify.com');
+    const promise = gateway.graphql('{ shop { name } }');
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(graphql).toHaveBeenCalledTimes(2);
   });
 });
 

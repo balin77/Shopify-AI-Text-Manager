@@ -51,6 +51,7 @@ export const es: Translation = {
     optionWarningNameEmpty: "Una variante necesita un nombre.",
     optionWarningValueEmpty: "Una variante necesita al menos un valor.",
     optionWarningLastOne: "La última variante no se puede quitar.",
+    metafieldWarningValueBlank: "Un metacampo no puede contener solo espacios. Vacía el campo por completo para eliminar el valor.",
     title: "Productos",
     loading: "Cargando productos...",
     count: "Productos",

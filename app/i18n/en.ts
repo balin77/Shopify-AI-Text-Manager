@@ -55,6 +55,7 @@ export const en: Translation = {
     optionWarningNameEmpty: "A variant needs a name.",
     optionWarningValueEmpty: "A variant needs at least one value.",
     optionWarningLastOne: "The last variant cannot be removed.",
+    metafieldWarningValueBlank: "A metafield cannot consist of spaces only. Empty the field completely to remove the value.",
     title: "Products",
     loading: "Loading Products...",
     count: "Products",

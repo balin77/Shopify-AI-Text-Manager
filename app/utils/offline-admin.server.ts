@@ -28,7 +28,8 @@
  * - `getOfflineAccessToken(shop)` — the raw token for the few raw-fetch callers
  *   (cookie banner, the root-JS workers through `globalThis.__getShopAccessToken`).
  * - `maybeMigrateToExpiringToken(shop)` — the lazy, double-gated migration of a
- *   shop's NON-expiring offline token. Never throws.
+ *   shop's NON-expiring offline token, fired from the background only (see its
+ *   comment for why never from a request). Never throws.
  *
  * Residuals, stated: the single-flight is per PROCESS — two instances can still
  * refresh the same shop at once, and the loser's refresh is refused; we then
@@ -114,15 +115,25 @@ function cacheIsFresh(entry: { ctx: OfflineAdminContext; loadedAt: number } | un
   return true;
 }
 
-/** Drop the cached context (after a 401, a migration, a reinstall). */
+/** Bumped by every invalidation; an acquisition caches only if none happened while it was out. */
+const generation = new Map<string, number>();
+
+/**
+ * Drop the cached context (after a 401, a migration, a reinstall, an
+ * uninstall). An acquisition still in flight keeps answering the callers
+ * already waiting on it (single-flight is not broken), but what it read can no
+ * longer land in the cache — it may predate the event that invalidated it.
+ */
 export function invalidateOfflineAdmin(shop: string): void {
   cache.delete(shop);
+  generation.set(shop, (generation.get(shop) ?? 0) + 1);
 }
 
 /** Test seam. */
 export function __resetOfflineAdminForTests(): void {
   cache.clear();
   inflight.clear();
+  generation.clear();
   migrationsInFlight.clear();
   migrationBackoff.clear();
   migrationSettled.clear();
@@ -189,11 +200,28 @@ export async function getOfflineAdmin(
   if (!options.forceReload) {
     const cached = cache.get(shop);
     if (cacheIsFresh(cached)) return cached!.ctx;
+    const running = inflight.get(shop);
+    if (running) return running;
+    return startAcquisition(shop);
   }
+  // A forced reload follows a 401: an acquisition already in flight may have
+  // read storage BEFORE that 401 (and so hand back the very token that was just
+  // refused). Let it settle, then join or start one that began AFTER it —
+  // still single-flight: every forced caller waiting on the same old
+  // acquisition joins the one fresh acquisition the first of them starts.
   const running = inflight.get(shop);
-  if (running) return running;
+  if (running) {
+    await running.catch(() => undefined);
+    const next = inflight.get(shop);
+    if (next && next !== running) return next;
+  }
+  cache.delete(shop);
+  return startAcquisition(shop);
+}
 
-  const promise = (async () => {
+function startAcquisition(shop: string): Promise<OfflineAdminContext> {
+  const startedGeneration = generation.get(shop) ?? 0;
+  const promise: Promise<OfflineAdminContext> = (async () => {
     let ctx: OfflineAdminContext;
     try {
       ctx = await acquireOnce(shop);
@@ -222,7 +250,9 @@ export async function getOfflineAdmin(
         throw second;
       }
     }
-    cache.set(shop, { ctx, loadedAt: Date.now() });
+    // An invalidation (uninstall, reinstall, 401) that landed while this
+    // acquisition was out must not be undone by caching what it read before.
+    if ((generation.get(shop) ?? 0) === startedGeneration) cache.set(shop, { ctx, loadedAt: Date.now() });
     return ctx;
   })().finally(() => {
     if (inflight.get(shop) === promise) inflight.delete(shop);
@@ -277,7 +307,32 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
  */
 export function backgroundAdmin<T>(shop: string, captured: T): T {
   if (!expiringOfflineTokensEnabled()) return captured;
+  // A raw client from admin-client.server.ts already asks for a fresh token per
+  // call, and its callers rely on its RAW contract (the HTTP-200 body returned
+  // as-is, GraphQL `errors` included). Swapping it for the library client would
+  // turn those `errors` into thrown GraphqlQueryErrors — so it stays as it is.
+  if (isSelfRefreshingAdminClient(captured)) return captured;
   return createRefreshingAdmin(shop) as unknown as T;
+}
+
+/**
+ * Marks a client that re-acquires its token on every call by itself (the raw
+ * clients of admin-client.server.ts). `backgroundAdmin` returns such a client
+ * unchanged. A `Symbol.for` key, so two bundled copies of this module agree.
+ */
+export const SELF_REFRESHING_ADMIN = Symbol.for("contentpilot.selfRefreshingAdminClient");
+
+export function markSelfRefreshingAdminClient<T extends object>(client: T): T {
+  Object.defineProperty(client, SELF_REFRESHING_ADMIN, { value: true, enumerable: false });
+  return client;
+}
+
+export function isSelfRefreshingAdminClient(client: unknown): boolean {
+  return (
+    !!client &&
+    typeof client === "object" &&
+    (client as Record<symbol, unknown>)[SELF_REFRESHING_ADMIN] === true
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +377,20 @@ export const MIGRATION_BACKOFF_MS = 60 * 60 * 1000;
  *
  * Shopify revokes the old token on migration (documented; not measured here),
  * so a client still holding it gets a 401: the refreshing clients reload and
- * retry; a client captured inside a running request does not (residual).
+ * retry.
+ *
+ * It is called from the BACKGROUND only (the sync scheduler's cycle), never
+ * from `authenticate.admin`: a request's captured admin/session still holds
+ * the old token, and a 401 on it makes the library's `handleClientError` store
+ * that OLD session with `accessToken: undefined` — which, landing after this
+ * migration stored the new pair, would overwrite it. Firing it from the request
+ * itself made that collision the common case. A shop is therefore migrated when
+ * its scheduler runs (i.e. after the merchant has opened the app); a shop that
+ * never opens it keeps its non-expiring token, which keeps working. Residual:
+ * a merchant request in flight at the moment a scheduler cycle migrates can
+ * still hit that collision — it self-heals, because the 401 answer makes App
+ * Bridge retry with a fresh session token and token exchange recreates the
+ * session, but background calls fail (`no_token`) until that happens.
  */
 export async function maybeMigrateToExpiringToken(shop: string): Promise<MigrationOutcome> {
   if (!migrateToExpiringTokensEnabled()) return "disabled";

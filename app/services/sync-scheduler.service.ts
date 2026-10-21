@@ -14,6 +14,9 @@ import { logger } from "~/utils/logger.server";
 import { backgroundAdmin, createRefreshingAdmin, maybeMigrateToExpiringToken } from "~/utils/offline-admin.server";
 import { expiringOfflineTokensEnabled } from "~/utils/offline-token-flags.server";
 
+/** The scheduler's first minute is left alone by the token migration (see runSyncCycle). */
+export const MIGRATION_SETTLE_MS = 60 * 1000;
+
 interface SyncTimer {
   timer: NodeJS.Timeout;
   shop: string;
@@ -159,8 +162,16 @@ class SyncSchedulerService {
       const { db } = await import("../db.server");
 
       // Lazy token migration for shops the scheduler keeps alive (double-gated
-      // by env, a no-op by default, never throws).
-      void maybeMigrateToExpiringToken(shop);
+      // by env, a no-op by default, never throws). This background cycle is
+      // the ONLY trigger — never the request path, whose captured session
+      // still holds the old token (see maybeMigrateToExpiringToken). Not on
+      // the cycles of the first minute either: the scheduler is started BY a
+      // request, and the initial cycle fires ~5s later, while that request may
+      // still be using the old token. A shop is therefore migrated once its
+      // scheduler has run for a minute, i.e. after the merchant opened the app.
+      if (!syncTimer || Date.now() - syncTimer.startedAt.getTime() >= MIGRATION_SETTLE_MS) {
+        void maybeMigrateToExpiringToken(shop);
+      }
 
       // Branch on the "initial full sync completed" marker:
       //  - marker set  → incremental BackgroundSyncService.syncAll() (existing

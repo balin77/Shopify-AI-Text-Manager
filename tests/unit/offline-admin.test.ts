@@ -21,7 +21,9 @@ import {
   createRefreshingAdmin,
   getOfflineAccessToken,
   getOfflineAdmin,
+  invalidateOfflineAdmin,
   isUnauthorizedError,
+  markSelfRefreshingAdminClient,
   maybeMigrateToExpiringToken,
   OfflineAdminUnavailableError,
   registerShopAccessTokenHook,
@@ -156,6 +158,58 @@ describe("getOfflineAdmin", () => {
   });
 });
 
+describe("forced reload and invalidation", () => {
+  it("a forced reload does not hand back an acquisition that was already in flight", async () => {
+    let releaseFirst!: (v: unknown) => void;
+    const first = new Promise((r) => (releaseFirst = r)).then(() => adminFor("pre-401"));
+    const d = deps({
+      unauthenticatedAdmin: vi
+        .fn()
+        .mockReturnValueOnce(first)
+        .mockResolvedValueOnce(adminFor("post-401")),
+    });
+    configureOfflineAdmin(d);
+    const plain = getOfflineAdmin(SHOP);
+    const forcedA = getOfflineAdmin(SHOP, { forceReload: true });
+    const forcedB = getOfflineAdmin(SHOP, { forceReload: true });
+    releaseFirst(undefined);
+    expect((await plain).session.accessToken).toBe("pre-401");
+    const [a, b] = await Promise.all([forcedA, forcedB]);
+    expect(a.session.accessToken).toBe("post-401");
+    // Still single-flight: both forced callers share ONE fresh acquisition.
+    expect(b).toBe(a);
+    expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidation drops the cache, and an acquisition that was out does not refill it", async () => {
+    let release!: (v: unknown) => void;
+    const slow = new Promise((r) => (release = r)).then(() => adminFor("before-reinstall"));
+    const d = deps({
+      unauthenticatedAdmin: vi
+        .fn()
+        .mockReturnValueOnce(slow)
+        .mockResolvedValueOnce(adminFor("after-reinstall")),
+    });
+    configureOfflineAdmin(d);
+    const pending = getOfflineAdmin(SHOP);
+    invalidateOfflineAdmin(SHOP);
+    release(undefined);
+    expect((await pending).session.accessToken).toBe("before-reinstall");
+    expect(await getOfflineAccessToken(SHOP)).toBe("after-reinstall");
+    expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidation makes the next caller read storage again", async () => {
+    const d = deps({
+      unauthenticatedAdmin: vi.fn().mockResolvedValueOnce(adminFor("old")).mockResolvedValueOnce(adminFor("new")),
+    });
+    configureOfflineAdmin(d);
+    expect(await getOfflineAccessToken(SHOP)).toBe("old");
+    invalidateOfflineAdmin(SHOP);
+    expect(await getOfflineAccessToken(SHOP)).toBe("new");
+  });
+});
+
 describe("expired without a refresh token", () => {
   it("is reported, never handed out as a token", async () => {
     const expired = { session: session("dead", new Date(Date.now() - 1000)), admin: {} as never };
@@ -216,6 +270,15 @@ describe("backgroundAdmin", () => {
     await admin.graphql("q" as never);
     expect(captured.graphql).not.toHaveBeenCalled();
     expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("backgroundAdmin with a self-refreshing raw client", () => {
+  it("returns a marked raw client unchanged even with the flag ON", () => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    configureOfflineAdmin(deps());
+    const raw = markSelfRefreshingAdminClient({ graphql: vi.fn() });
+    expect(backgroundAdmin(SHOP, raw)).toBe(raw);
   });
 });
 

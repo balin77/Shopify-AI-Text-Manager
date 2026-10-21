@@ -30,6 +30,7 @@ const h = vi.hoisted(() => {
     isShopActive: vi.fn().mockResolvedValue(true),
     syncAll: vi.fn(),
     reconcile: vi.fn().mockResolvedValue(undefined),
+    migrate: vi.fn().mockResolvedValue('disabled'),
     get resolveSync() {
       return resolveSync;
     },
@@ -57,7 +58,12 @@ vi.mock('~/utils/logger.server', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { syncScheduler } from '~/services/sync-scheduler.service';
+vi.mock('~/utils/offline-admin.server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/utils/offline-admin.server')>();
+  return { ...actual, maybeMigrateToExpiringToken: (...a: unknown[]) => h.migrate(...a) };
+});
+
+import { MIGRATION_SETTLE_MS, syncScheduler } from '~/services/sync-scheduler.service';
 
 const shop = 'concurrency.myshopify.com';
 const admin = {} as never;
@@ -162,6 +168,29 @@ describe('runSyncCycle — R4 concurrency-guard identity check', () => {
     // next interval tick is allowed to run.
     expect(entryA.isRunning).toBe(false);
     expect(sched.activeTimers.get(shop)).toBe(entryA);
+  });
+});
+
+describe('runSyncCycle — token migration trigger', () => {
+  it('does not migrate in the scheduler\'s first minute (the starting request may still hold the old token)', async () => {
+    const entry = makeEntry();
+    sched.activeTimers.set(shop, entry);
+    const p = sched.runSyncCycle(shop, admin);
+    await waitForSyncAll();
+    h.resolveSync({ total: 0, duration: 0 });
+    await p;
+    expect(h.migrate).not.toHaveBeenCalled();
+  });
+
+  it('migrates from a later background cycle', async () => {
+    const entry = makeEntry();
+    entry.startedAt = new Date(Date.now() - MIGRATION_SETTLE_MS - 1000);
+    sched.activeTimers.set(shop, entry);
+    const p = sched.runSyncCycle(shop, admin);
+    await waitForSyncAll();
+    h.resolveSync({ total: 0, duration: 0 });
+    await p;
+    expect(h.migrate).toHaveBeenCalledWith(shop);
   });
 });
 

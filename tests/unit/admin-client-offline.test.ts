@@ -29,7 +29,7 @@ vi.mock("~/utils/offline-admin.server", async (importOriginal) => {
 });
 
 import { createAdminClientFromShop } from "~/utils/admin-client.server";
-import { OfflineAdminUnavailableError } from "~/utils/offline-admin.server";
+import { isSelfRefreshingAdminClient, OfflineAdminUnavailableError } from "~/utils/offline-admin.server";
 
 const SHOP = "test-shop.myshopify.com";
 const ctx = (token: string) => ({ session: { accessToken: token }, admin: {} });
@@ -57,6 +57,12 @@ describe("createAdminClientFromShop", () => {
     expect(tokenSent(0)).toBe("t1");
     expect(tokenSent(1)).toBe("t2");
     expect(String(fetchMock.mock.calls[0][0])).toBe(`https://${SHOP}/admin/api/2026-07/graphql.json`);
+  });
+
+  it("marks its client as self-refreshing, so backgroundAdmin keeps it", async () => {
+    h.getOfflineAdmin.mockResolvedValue(ctx("t0"));
+    const client = await createAdminClientFromShop(SHOP);
+    expect(isSelfRefreshingAdminClient(client)).toBe(true);
   });
 
   it("retries once on 401 with a forced reload", async () => {

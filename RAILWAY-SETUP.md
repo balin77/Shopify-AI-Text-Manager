@@ -124,7 +124,7 @@ sich die App exakt wie vorher.
 | Variable | Bedeutung |
 |---|---|
 | `SHOPIFY_EXPIRING_OFFLINE_TOKENS` | Nur `"true"` schaltet an. Setzt `future.expiringOfflineAccessTokens`: neue Token-Exchanges (Installation, Re-Auth, abgelaufene Session) bekommen ablaufende Offline-Tokens, und alle Langläufer nutzen den sich selbst erneuernden Client statt des Clients ihres Requests. Bestehende, NICHT ablaufende Tokens bleiben unverändert und funktionieren weiter. |
-| `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS` | Nur `"true"`, und **nur wirksam, solange die erste Variable an ist**. Tauscht das bestehende, nicht ablaufende Offline-Token eines Shops gegen ein ablaufendes — lazy, pro Shop, beim nächsten App-Aufruf des Merchants bzw. im nächsten Sync-Zyklus, single-flight, mit 1 h Backoff nach einem Fehler, wirft nie in den Request. Shopify widerruft dabei das alte Token (laut Doku; hier nicht gemessen). |
+| `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS` | Nur `"true"`, und **nur wirksam, solange die erste Variable an ist**. Tauscht das bestehende, nicht ablaufende Offline-Token eines Shops gegen ein ablaufendes — lazy, pro Shop, **nur im Hintergrund**: im Sync-Zyklus eines Shops, frühestens eine Minute nachdem sein Scheduler gestartet wurde (also nachdem der Merchant die App geöffnet hat) — nie im Request selbst, weil ein laufender Request das alte Token noch hält und ein 401 darauf das migrierte Paar überschreiben würde. Ein Shop, der die App nie öffnet, behält sein nicht ablaufendes Token (funktioniert weiter). Single-flight, mit 1 h Backoff nach einem Fehler, wirft nie in den Request. Shopify widerruft dabei das alte Token (laut Doku; hier nicht gemessen). |
 
 Beim Start loggt die App `[SHOPIFY.SERVER] Expiring offline tokens: ON|OFF … migration …: ON|OFF`.
 

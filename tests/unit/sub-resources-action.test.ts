@@ -911,7 +911,7 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
   it('an empty value goes through metafieldsDelete (echo-confirmed), drops the row and its translations', async () => {
     const w = installAdmin();
     const db = makeDb();
-    const result = body(await save(db, w.admin, { [METAFIELD]: '  ' }));
+    const result = body(await save(db, w.admin, { [METAFIELD]: '' }));
 
     expect(w.of('metafieldsSet')).toHaveLength(0);
     expect(w.of('metafieldsDelete')[0].variables.metafields).toEqual([{ ownerId: PRODUCT, namespace: 'custom', key: 'k13' }]);
@@ -922,6 +922,19 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       where: { shop: SHOP, resourceId: METAFIELD, resourceType: 'Metafield' },
     });
     // Nothing left to purge on Shopify.
+    expect(w.of('remove')).toHaveLength(0);
+  });
+
+  it('a whitespace-only value is REFUSED (named), never read as a clear: no delete, no set, the row stays', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: '   ' }));
+    expect(w.of('metafieldsDelete')).toHaveLength(0);
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(result.optionWarnings).toContain('metafieldValueBlank');
+    expect(result.removedMetafieldIds).toBeUndefined();
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
     expect(w.of('remove')).toHaveLength(0);
   });
 

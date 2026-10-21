@@ -555,6 +555,7 @@ export default function ProductsPage() {
       optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
       optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
       optionWarning_optionLastOne: t.products.optionWarningLastOne,
+      optionWarning_metafieldValueBlank: t.products.metafieldWarningValueBlank,
     },
   });
 

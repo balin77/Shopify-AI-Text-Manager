@@ -50,6 +50,7 @@ export const de = {
     optionWarningNameEmpty: "Eine Variante braucht einen Namen.",
     optionWarningValueEmpty: "Eine Variante braucht mindestens einen Wert.",
     optionWarningLastOne: "Die letzte Variante kann nicht entfernt werden.",
+    metafieldWarningValueBlank: "Ein Metafeld kann nicht nur aus Leerzeichen bestehen. Leere das Feld ganz, um den Wert zu entfernen.",
     title: "Produkte",
     loading: "Lade Produkte...",
     count: "Produkte",

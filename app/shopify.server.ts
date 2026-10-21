@@ -27,7 +27,7 @@ import {
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./utils/offline-token-flags.server";
 import {
   configureOfflineAdmin,
-  maybeMigrateToExpiringToken,
+  invalidateOfflineAdmin,
   registerShopAccessTokenHook,
 } from "./utils/offline-admin.server";
 
@@ -149,6 +149,10 @@ const shopify = shopifyApp({
       logger.debug(`[SHOPIFY.SERVER]  - Session ID: ${session.id}`);
       logger.debug(`[SHOPIFY.SERVER]  - Has Access Token: ${session.accessToken ? true : false}`);
       logger.debug(`[SHOPIFY.SERVER]  - Scopes: ${session.scope}`);
+
+      // A (re)install or token exchange stored a new offline session: drop
+      // the background token cache so nothing keeps serving the previous one.
+      invalidateOfflineAdmin(session.shop);
 
       // Stop any stale SyncScheduler that was bound to the previous OAuth token.
       // Without this, a reinstalled shop keeps running background sync with the old
@@ -279,12 +283,11 @@ const enhancedAuthenticate = {
     }
     const { admin, session } = authenticated;
 
-    // Lazy migration of a non-expiring offline token (both env switches; a
-    // no-op otherwise). Fire-and-forget and never throws: it must not cost the
-    // request anything.
-    if (session && !session.isOnline && !session.expires) {
-      void maybeMigrateToExpiringToken(session.shop);
-    }
+    // The lazy token migration is deliberately NOT fired from here: this
+    // request's captured admin/session still holds the old token, and a 401 on
+    // it makes the library store that old session with no token over the
+    // migrated pair. It runs from the sync scheduler's background cycle only
+    // (see maybeMigrateToExpiringToken).
 
     // Track activity for this shop (fire-and-forget — must not block the response)
     trackActivity(session.shop).catch(err => {

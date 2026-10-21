@@ -1187,9 +1187,21 @@ export async function handleSavePrimarySubResources(
           continue;
         }
         const value = metafieldChanges[metafieldId];
-        if (value.trim() === "") {
+        if (value === "") {
           // metafieldsSet rejects "" ("Value can't be blank"): a clear is a delete.
           deletes.push({ metafieldId, identifier: { ownerId: productId, namespace: row.namespace, key: row.key } });
+        } else if (value.trim() === "") {
+          // Whitespace only is REFUSED, never read as a clear. A delete is the
+          // expensive direction: the metafield is gone on Shopify with its
+          // translations, and the card lists metafields from the cached rows,
+          // so the field disappears from the editor until a sync — a stray
+          // space must not do that. Only an explicitly emptied field ("")
+          // deletes. Shopify would refuse the value itself as blank too.
+          logger.warn("[UnifiedContent] Primary metafield save: whitespace-only value refused", {
+            context: "UnifiedContent", metafieldId,
+          });
+          failedMetafields.push(metafieldId);
+          optionWarnings.push("metafieldValueBlank");
         } else {
           sets.push({
             metafieldId,
