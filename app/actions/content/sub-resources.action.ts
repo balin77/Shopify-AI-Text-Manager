@@ -48,6 +48,9 @@ function markSubResourceSyncShield(productId: string | null | undefined): void {
 // LOAD SUB-RESOURCE TRANSLATIONS (Options + Metafields)
 // ============================================================================
 
+/** Upper bound on the ids one loadSubResourceTranslations request may name. */
+export const MAX_LOAD_SUB_RESOURCE_IDS = 5000;
+
 export async function handleLoadSubResourceTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
@@ -61,7 +64,19 @@ export async function handleLoadSubResourceTranslations(
 
   try {
     const resourceIdsJson = getFormString(formData, "resourceIds");
-    const resourceIds: string[] = resourceIdsJson ? JSON.parse(resourceIdsJson) : [];
+    const parsedIds: unknown = resourceIdsJson ? JSON.parse(resourceIdsJson) : [];
+    if (!Array.isArray(parsedIds) || parsedIds.some((rid) => typeof rid !== "string")) {
+      return json({ success: false, actionType: "loadSubResourceTranslations", error: "Invalid resource IDs" }, { status: 400 });
+    }
+    const resourceIds: string[] = parsedIds;
+    // A product carries at most 3 options, their values (bounded by Shopify's
+    // 2048-variant limit, so ~2050 values at most) and its metafields. The
+    // client only sends the ids missing from the DB preload, so a real request
+    // stays far below this; the cap bounds what a direct POST can make this
+    // handler read and fetch from Shopify.
+    if (resourceIds.length > MAX_LOAD_SUB_RESOURCE_IDS) {
+      return json({ success: false, actionType: "loadSubResourceTranslations", error: "Too many resource IDs" }, { status: 400 });
+    }
 
     if (resourceIds.length === 0) {
       return json({
@@ -87,6 +102,7 @@ export async function handleLoadSubResourceTranslations(
     // overlay, so scope to marketId "" for a deterministic global read.
     const dbTranslations = await db.contentTranslation.findMany({
       where: {
+        shop: session.shop,
         resourceId: { in: resourceIds },
         locale,
         marketId: "",
@@ -922,10 +938,16 @@ function safeParseList<T>(raw: string): T[] {
  */
 async function cachedOptionValueIds(
   db: ContentActionHandlerContext["db"],
+  shop: string,
   optionId: string,
 ): Promise<string[]> {
   try {
-    const row = await db.productOption.findUnique({ where: { id: optionId }, select: { values: true } });
+    // Shop-scoped: the option id comes from the form, and the ids read here
+    // drive a translation-row delete further down.
+    const row = await db.productOption.findFirst({
+      where: { id: optionId, product: { shop } },
+      select: { values: true },
+    });
     const parsed: unknown = JSON.parse(row?.values ?? "[]");
     if (!Array.isArray(parsed)) return [];
     // The legacy `["string"]` shape carries no ids, so it yields none rather
@@ -1042,7 +1064,7 @@ export async function handleSavePrimarySubResources(
       if (!isValidShopifyGID(optionId)) continue;
       // Read the value ids BEFORE the delete: afterwards the cache row is gone
       // and nothing could name the translation rows they leave behind.
-      const cachedValueIds = await cachedOptionValueIds(db, optionId);
+      const cachedValueIds = await cachedOptionValueIds(db, session.shop, optionId);
       const warning = await deleteOption(admin, db, session.shop, {
         productId,
         optionId,
@@ -1051,7 +1073,7 @@ export async function handleSavePrimarySubResources(
         // Keyed by the GID: that is what `Product.id` holds, and a numeric id
         // matches no row at all -- which counted 0 and refused every delete as
         // "the last option".
-        remainingCount: await db.productOption.count({ where: { productId } }),
+        remainingCount: await db.productOption.count({ where: { productId, product: { shop: session.shop } } }),
       });
       if (warning) {
         optionWarnings.push(warning);
@@ -1132,7 +1154,12 @@ export async function handleSavePrimarySubResources(
           // post-save revalidation reads the fresh value (see option mirror above).
           for (const [mfId, value] of Object.entries(metafieldChanges)) {
             try {
-              await db.productMetafield.update({ where: { id: mfId }, data: { value } });
+              // Shop-scoped: the ids come from the form, so a plain update by
+              // id could touch another shop's cached row.
+              await db.productMetafield.updateMany({
+                where: { id: mfId, product: { shop: session.shop } },
+                data: { value },
+              });
             } catch (err) {
               logger.error(`[UnifiedContent] Failed to mirror primary metafield ${mfId} into DB`, {
                 context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
@@ -1430,7 +1457,7 @@ export async function handleSavePrimarySubResources(
         changedMetafieldIds.length > 0
           ? (
               await db.productMetafield.findMany({
-                where: { productId, id: { in: changedMetafieldIds } },
+                where: { productId, product: { shop: session.shop }, id: { in: changedMetafieldIds } },
                 select: { id: true, type: true },
               })
             ).map((row: { id: string; type: string }) => [row.id, row.type])
@@ -1517,12 +1544,12 @@ export async function handleSavePrimarySubResources(
       try {
         if (removedOptionIds.length > 0) {
           await db.contentTranslation.deleteMany({
-            where: { resourceId: { in: removedOptionIds }, resourceType: "ProductOption" },
+            where: { shop: session.shop, resourceId: { in: removedOptionIds }, resourceType: "ProductOption" },
           });
         }
         if (removedValueIds.length > 0) {
           await db.contentTranslation.deleteMany({
-            where: { resourceId: { in: removedValueIds }, resourceType: "ProductOptionValue" },
+            where: { shop: session.shop, resourceId: { in: removedValueIds }, resourceType: "ProductOptionValue" },
           });
         }
       } catch (err) {

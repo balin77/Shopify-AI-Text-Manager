@@ -21,6 +21,7 @@
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
 import { WEBP_ITEM_TASK_TYPE, WEBP_PARENT_TASK_TYPE } from "./app/config/webp-tasks.js";
+import { adminGraphqlUrl } from "./app/config/admin-api-version.js";
 
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
@@ -70,7 +71,7 @@ async function fetchWithTimeout(url, options) {
 }
 
 async function fetchProductMediaIds(shop, accessToken, productGid) {
-  const res = await fetchWithTimeout(`https://${shop}/admin/api/2025-04/graphql.json`, {
+  const res = await fetchWithTimeout(adminGraphqlUrl(shop), {
     method: "POST",
     headers: {
       "X-Shopify-Access-Token": accessToken,

@@ -8,6 +8,7 @@ import {
   WEBP_PARENT_TASK_TYPE,
 } from "../config/webp-tasks.js";
 import { taskTitleOrFallback } from "../services/tasks/resource-title.server";
+import { isAllowedWebpSourceUrl } from "../config/webp-source-url.js";
 
 interface ConvertWebpBody {
   productId: string;
@@ -46,6 +47,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "Product not found for this shop" }, { status: 404 });
   }
 
+  // The SOURCE url is downloaded by the worker, so it is never taken on the
+  // client's word alone: a url outside the Shopify CDN (an internal address,
+  // a metadata endpoint) is refused for the whole batch before anything is
+  // charged — the client only ever sends CDN urls, so one that is not is a
+  // tampered request, not a merchant mistake. The worker re-checks every hop
+  // of the download against the same rule (app/config/webp-source-url.js).
+  if (images.some(i => !i || typeof i !== "object" || !isAllowedWebpSourceUrl(i.url))) {
+    return json(
+      { error: "Image source must be a Shopify CDN url", code: "INVALID_SOURCE_URL" },
+      { status: 400 },
+    );
+  }
+
   // Only a MediaImage can be converted. Every other product medium — Video,
   // Model3d, ExternalVideo — is reported to the client under its POSTER url
   // (a .jpg on the Shopify CDN), so "the URL does not end in .webp" is not
@@ -58,6 +72,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const mediaIds = [...new Set(images.map(i => i.mediaId).filter((id): id is string => !!id))];
   if (mediaIds.length > 0) {
     let kinds: Record<string, string>;
+    // The url Shopify itself reports for each MediaImage, read in the same
+    // query (no extra round trip). Where it is known it REPLACES the client's
+    // url below, so the job downloads the medium it names and nothing else.
+    let shopifyUrls: Record<string, string>;
     try {
       const res = await admin.graphql(
         `#graphql
@@ -65,6 +83,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           nodes(ids: $ids) {
             id
             __typename
+            ... on MediaImage { image { url } }
           }
         }`,
         { variables: { ids: mediaIds } },
@@ -74,6 +93,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!Array.isArray(nodes)) throw new Error("nodes query returned no data");
       kinds = Object.fromEntries(
         nodes.filter((n: any) => n?.id).map((n: any) => [n.id, n.__typename]),
+      );
+      shopifyUrls = Object.fromEntries(
+        nodes
+          .filter((n: any) => n?.id && typeof n?.image?.url === "string")
+          .map((n: any) => [n.id, n.image.url as string]),
       );
     } catch (err: any) {
       // An unverified kind is never treated as "it is an image" — a throttled
@@ -103,7 +127,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         `[api.convert-webp] dropped ${images.length - convertible.length} non-image medium/media from the batch`,
       );
     }
-    images = convertible;
+    // A MediaImage still processing has no url yet (and an unresolvable id has
+    // no node): those keep the client's url, which passed the allowlist above.
+    // A Shopify url that somehow fails the allowlist is not substituted.
+    images = convertible.map(i => {
+      const reported = i.mediaId ? shopifyUrls[i.mediaId] : undefined;
+      return reported && isAllowedWebpSourceUrl(reported) ? { ...i, url: reported } : i;
+    });
     if (images.length === 0) {
       return json({ error: "No convertible images in the request", code: "NO_CONVERTIBLE_IMAGES" }, { status: 400 });
     }

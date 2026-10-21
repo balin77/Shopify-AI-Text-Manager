@@ -18,7 +18,8 @@
   editor can register/position the app block.
 {%- endcomment -%}
 {%- comment -%}
-  R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
+  R3-H1: `| json` escapes JSON syntax; whether Shopify's `json` also escapes
+  `<` is NOT measured, so this block assumes it does not: an attacker-influenced
   variant.title containing `</script><script>…` would break out of this
   JSON island and inject script regardless of the JS-side _esc(). Every
   free-text value interpolated below MUST additionally neutralise `<`/`>`

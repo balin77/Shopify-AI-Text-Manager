@@ -102,6 +102,7 @@ import {
   handleSavePrimarySubResources,
   handleTranslateSubResources,
   handleTranslateSubResourceToAllLocales,
+  MAX_LOAD_SUB_RESOURCE_IDS,
 } from '../../app/actions/content/sub-resources.action';
 
 const SHOP = 'test.myshopify.com';
@@ -206,8 +207,8 @@ function makeDb() {
       create: vi.fn().mockResolvedValue({ id: 'task-1' }),
       update: vi.fn().mockResolvedValue({}),
     },
-    productMetafield: { update: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
-    productOption: { findUnique: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(2) },
+    productMetafield: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findMany: vi.fn().mockResolvedValue([]) },
+    productOption: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(2) },
     product: { findFirst: vi.fn().mockResolvedValue({ title: 'Shirt' }) },
   } as any;
 }
@@ -817,6 +818,69 @@ describe('handleLoadSubResourceTranslations — read-back backfill', () => {
     expect(created.value).toMatchObject({ shop: SHOP, resourceId: METAFIELD, resourceType: 'Metafield', value: 'Rouge', locale: 'fr', digest: 'dg-read' });
     // An OUTDATED row was written against an older source: no digest, or it would hide that it is stale.
     expect(created.name.digest).toBeNull();
+  });
+});
+
+describe('tenant isolation: every cache read/write is scoped to the session shop', () => {
+  it('load: the DB preload is filtered by the session shop', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify([METAFIELD]) }));
+    expect(db.contentTranslation.findMany.mock.calls[0][0].where).toMatchObject({
+      shop: SHOP, resourceId: { in: [METAFIELD] }, locale: 'fr', marketId: '',
+    });
+  });
+
+  it('load: more ids than the cap is refused with 400 before any read', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const ids = Array.from({ length: MAX_LOAD_SUB_RESOURCE_IDS + 1 }, (_, i) => `gid://shopify/Metafield/${i + 1}`);
+    const r: any = await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify(ids) }));
+    expect(r?.init?.status).toBe(400);
+    expect(body(r)).toMatchObject({ success: false, actionType: 'loadSubResourceTranslations' });
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('load: a non-array resourceIds payload is refused with 400', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const r: any = await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify({ a: METAFIELD }) }));
+    expect(r?.init?.status).toBe(400);
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('primary save: the metafield mirror and the type lookup are scoped through the product shop', async () => {
+    // The type lookup runs on the auto-translate (repair) path only.
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    const w = installAdmin();
+    const db = makeDb();
+    await handleSavePrimarySubResources(
+      makeCtx(w.admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: JSON.stringify({ [METAFIELD]: 'new' }) }),
+    );
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: METAFIELD, product: { shop: SHOP } },
+      data: { value: 'new' },
+    });
+    expect(db.productMetafield.findMany.mock.calls[0][0].where).toMatchObject({ productId: PRODUCT, product: { shop: SHOP } });
+  });
+
+  it('primary save: deleting an option reads its values and cleans translations within the session shop only', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productOption.findFirst.mockResolvedValue({ values: JSON.stringify([{ id: VALUE, name: 'Rot' }]) });
+    await handleSavePrimarySubResources(
+      makeCtx(w.admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: '{}', optionsToDelete: JSON.stringify([OPTION]) }),
+    );
+    expect(db.productOption.findFirst.mock.calls[0][0].where).toEqual({ id: OPTION, product: { shop: SHOP } });
+    expect(db.productOption.count.mock.calls[0][0].where).toEqual({ productId: PRODUCT, product: { shop: SHOP } });
+    const cleanup = db.contentTranslation.deleteMany.mock.calls.map((c: any[]) => c[0].where);
+    expect(cleanup).toEqual(expect.arrayContaining([
+      expect.objectContaining({ shop: SHOP, resourceId: { in: [OPTION] }, resourceType: 'ProductOption' }),
+      expect.objectContaining({ shop: SHOP, resourceId: { in: [VALUE] }, resourceType: 'ProductOptionValue' }),
+    ]));
   });
 });
 

@@ -31,6 +31,8 @@ import crypto from "crypto";
 import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
 import { refundImageOperations } from "./image-op-refund.js";
 import { rekeyLocalizedMediaAfterConversion } from "./localized-media-rekey.js";
+import { isAllowedWebpSourceUrl, webpSourceHostForMessage } from "./app/config/webp-source-url.js";
+import { adminGraphqlUrl } from "./app/config/admin-api-version.js";
 import {
   WEBP_FAILURE_LIST_MAX,
   WEBP_FAILURE_MESSAGE_MAX,
@@ -166,7 +168,54 @@ async function fetchNewMediaUrl(shopifyApiUrl, headers, mediaId) {
   }
 }
 
-async function downloadImageAsBuffer(url) {
+/** Most redirects a source download follows — each hop is re-checked. */
+const DOWNLOAD_MAX_REDIRECTS = 3;
+
+/**
+ * A download refused by the source-URL allowlist, or one that cannot succeed
+ * by retrying (a non-retryable HTTP status, a bad redirect). Never retried.
+ */
+class WebPDownloadRefused extends Error {}
+
+/**
+ * ONE request of a download, following redirects BY HAND so every hop is
+ * checked against the allowlist (`app/config/webp-source-url.js`) before it is
+ * requested. `redirect: "follow"` would let an allowlisted URL bounce the
+ * worker to any address at all — the guard on the first URL alone is no guard.
+ * Messages name the HOST only: they land in `Task.error`, and a refused
+ * address may be an internal one.
+ */
+async function fetchSourceOnce(url, fetchFn, signal) {
+  let current = url;
+  for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
+    if (!isAllowedWebpSourceUrl(current)) {
+      throw new WebPDownloadRefused(
+        `Image source not allowed (host ${webpSourceHostForMessage(current)}); only the Shopify CDN is accepted`,
+      );
+    }
+    const response = await fetchFn(current, { signal, redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers?.get?.("location");
+      if (!location) {
+        throw new WebPDownloadRefused(`Failed to download image: redirect ${response.status} without a location`);
+      }
+      try {
+        current = new URL(location, current).toString();
+      } catch {
+        throw new WebPDownloadRefused(`Failed to download image: redirect ${response.status} to an invalid location`);
+      }
+      continue;
+    }
+    return response;
+  }
+  throw new WebPDownloadRefused(`Failed to download image: more than ${DOWNLOAD_MAX_REDIRECTS} redirects`);
+}
+
+/**
+ * Download a conversion source. Exported (with injectable fetch/sleep) for the
+ * allowlist tests; the worker calls it with the defaults.
+ */
+export async function downloadImageAsBuffer(url, { fetchFn = fetch, sleepFn = sleep } = {}) {
   for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
     const isLastAttempt = attempt === DOWNLOAD_MAX_ATTEMPTS;
     const controller = new AbortController();
@@ -174,17 +223,20 @@ async function downloadImageAsBuffer(url) {
 
     let retryReason;
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetchSourceOnce(url, fetchFn, controller.signal);
       if (response.ok) return Buffer.from(await response.arrayBuffer());
 
       if (RETRYABLE_STATUS.has(response.status) && !isLastAttempt) {
         retryReason = `HTTP ${response.status}`;
       } else {
-        throw new Error(`Failed to download image: ${response.status} ${url}`);
+        throw new WebPDownloadRefused(
+          `Failed to download image: HTTP ${response.status} from ${webpSourceHostForMessage(url)}`,
+        );
       }
     } catch (err) {
-      // Network error or timeout — retry until last attempt; HTTP errors above re-throw directly.
-      if (isLastAttempt || err.message?.startsWith("Failed to download image:")) throw err;
+      // Network error or timeout — retry until last attempt; refusals and
+      // non-retryable HTTP errors re-throw directly.
+      if (isLastAttempt || err instanceof WebPDownloadRefused) throw err;
       retryReason = err.name === "AbortError" ? `timeout after ${DOWNLOAD_TIMEOUT_MS}ms` : err.message;
     } finally {
       clearTimeout(timeout);
@@ -192,10 +244,10 @@ async function downloadImageAsBuffer(url) {
 
     const delay = DOWNLOAD_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
     console.warn(`[WebPProcessor] Download attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS} failed (${retryReason}) for ${url} — retrying in ${delay}ms`);
-    await sleep(delay);
+    await sleepFn(delay);
   }
   // Unreachable: loop either returns or throws.
-  throw new Error(`Failed to download image after ${DOWNLOAD_MAX_ATTEMPTS} attempts: ${url}`);
+  throw new Error(`Failed to download image after ${DOWNLOAD_MAX_ATTEMPTS} attempts`);
 }
 
 async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
@@ -647,7 +699,7 @@ export class WebPProcessorService {
         originalAltText = productImage?.altText || null;
       }
 
-      const shopifyApiUrl = `https://${task.shop}/admin/api/2025-04/graphql.json`;
+      const shopifyApiUrl = adminGraphqlUrl(task.shop);
       const headers = {
         "X-Shopify-Access-Token": accessToken,
         "Content-Type": "application/json",

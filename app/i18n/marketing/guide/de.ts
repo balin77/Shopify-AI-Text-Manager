@@ -559,6 +559,13 @@ export const guideDe: GuideCopy = {
             "Texte übersetzen, einzeln oder per KI, und speichern.",
           ],
         },
+        {
+          heading: "Texte per Klick erfassen",
+          paragraphs: [
+            "Statt Texte abzutippen, können Sie sie im Theme-Editor anklicken. Klicken Sie dazu unter Inhalte → Direktübersetzungen auf „Erfassungsmodus öffnen“. Der Theme-Editor öffnet sich, und ein Klick auf einen Text in der Vorschau übernimmt ihn in die Liste — auf Wunsch gleich in alle Sprachen übersetzt.",
+            "Der Erfassungsmodus gilt 8 Stunden; danach öffnen Sie ihn in der App erneut. Fragt das Erfassungsfenster nach einem Code, holen Sie ihn sich mit „Erfassungscode anzeigen“ aus der App. Geben Sie diesen Code nicht weiter. Besucher Ihres Shops sehen vom Erfassungsmodus nichts.",
+          ],
+        },
       ],
       tips: [
         "Anders als sonst werden hier auch Texte in der Hauptsprache angeboten: Ein Text einer anderen App kann in einer beliebigen Sprache vorliegen.",

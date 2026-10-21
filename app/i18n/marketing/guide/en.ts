@@ -554,6 +554,13 @@ export const guideEn: GuideCopy = {
             "Translate the entries, one by one or with AI, and save.",
           ],
         },
+        {
+          heading: "Capture texts by clicking",
+          paragraphs: [
+            "Instead of typing texts in, you can click them in the theme editor. Under Content → Direct translations, click “Open capture mode”. The theme editor opens, and clicking a text in the preview adds it to the list — translated into every language right away if you like.",
+            "Capture mode is valid for 8 hours; after that, open it again from the app. If the capture panel asks for a code, get it from the app with “Show capture code”. Do not share that code. Visitors to your shop see nothing of capture mode.",
+          ],
+        },
       ],
       tips: [
         "Unlike everywhere else, the primary language is offered as a target here too: another app's text can be in any language.",

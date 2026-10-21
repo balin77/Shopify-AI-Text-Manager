@@ -16,6 +16,7 @@
 
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
+import { createShopRateLimiter } from "../utils/shop-rate-limiter.server";
 
 /** Collapse whitespace + trim so rendered DOM text matches stored sources. */
 export function normalizeSource(text: string): string {
@@ -62,6 +63,41 @@ export const MAX_CANDIDATES_PER_REQUEST = 100;
 export const MAX_CANDIDATES_PER_SHOP = 1000;
 /** Max source strings translated per AI prompt (keeps prompts within limits). */
 export const AI_BATCH_SIZE = 50;
+
+/**
+ * Per-shop limits for the two anonymous app-proxy write entrances. The
+ * capture endpoint is a merchant clicking texts one by one (and may start an
+ * AI run per click), so its bucket is small; the collector fires once per
+ * storefront page load and only samples, so drops there cost nothing.
+ */
+export const directAddRateLimiter = createShopRateLimiter({ capacity: 30, refillPerMin: 20 });
+export const collectStringsRateLimiter = createShopRateLimiter({ capacity: 120, refillPerMin: 60 });
+
+/** Max length of a source string added from the storefront (same bound as the collector). */
+export const MAX_CAPTURE_SOURCE_LENGTH = 1500;
+/** Max length of a translation sent along with a storefront capture. */
+export const MAX_CAPTURE_TARGET_LENGTH = 5000;
+/**
+ * Max items a shop may hold before the STOREFRONT capture refuses new ones.
+ * Only the app-proxy entrance is capped: the admin page is the merchant
+ * deciding, the capture endpoint is reachable from the internet.
+ */
+export const MAX_ITEMS_PER_SHOP = 2000;
+
+/**
+ * May the storefront capture add `sourceText`? True when it already exists
+ * (createItem is idempotent and adds no row) or the shop is under the cap.
+ */
+export async function captureItemCapAllows(db: Db, shop: string, sourceText: string): Promise<boolean> {
+  const normalized = normalizeSource(sourceText);
+  const existing = await db.directTranslationItem.findUnique({
+    where: { shop_sourceHash: { shop, sourceHash: sourceHash(normalized) } },
+    select: { id: true },
+  });
+  if (existing) return true;
+  const total = await db.directTranslationItem.count({ where: { shop } });
+  return total < MAX_ITEMS_PER_SHOP;
+}
 
 /**
  * Heuristic: is a rendered string worth collecting as a translation candidate?

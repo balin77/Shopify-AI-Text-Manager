@@ -15,7 +15,10 @@
  *
  * In the theme editor (Shopify.designMode) a visual capture mode lets the
  * merchant click rendered text to add it directly as an item. It is NEVER
- * shown on a live storefront — real visitors must not see the panel.
+ * shown on a live storefront — real visitors must not see the panel. The
+ * designMode gate is UI only: the server refuses every capture that does not
+ * carry the short-lived capture token minted by the admin page (see
+ * readCaptureToken below and app/services/direct-capture-token.server.ts).
  *
  * Limitations: client-side only (no SEO); cannot reach cross-origin iframes.
  */
@@ -326,13 +329,77 @@
   }
 
   // ---- Visual capture mode (theme editor) ---------------------------------
+  // Capture token: the server refuses every capture without one (the app
+  // proxy cannot tell the merchant from an anonymous visitor). The admin page
+  // mints it and hands it over through the "open capture mode" deep link
+  // (?cp_capture=<token> on the preview URL) or as a code the merchant pastes
+  // into the panel. Kept in localStorage until it expires, so navigating
+  // inside the editor preview (which drops the query) keeps it.
+  var CAPTURE_PARAM = "cp_capture";
+  var captureTokenKey = "contentpilot_dt_capture_token";
+
+  function tokenExpiry(token) {
+    try {
+      var body = String(token).split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+      while (body.length % 4) body += "=";
+      var data = JSON.parse(atob(body));
+      return typeof data.e === "number" ? data.e : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function usableToken(token) {
+    return typeof token === "string" && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) &&
+      token.length <= 512 && tokenExpiry(token) > Date.now();
+  }
+
+  function storeToken(token) {
+    try { localStorage.setItem(captureTokenKey, token); } catch (e) {}
+  }
+
+  function clearToken() {
+    try { localStorage.removeItem(captureTokenKey); } catch (e) {}
+  }
+
+  function readCaptureToken() {
+    // A token on the URL wins (fresh from the app); strip it from the address
+    // bar right away so it is not left in the history or copied along.
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var fromUrl = params.get(CAPTURE_PARAM);
+      if (fromUrl) {
+        params.delete(CAPTURE_PARAM);
+        var qs = params.toString();
+        try {
+          history.replaceState(history.state, "", window.location.pathname + (qs ? "?" + qs : "") + window.location.hash);
+        } catch (e) {}
+        if (usableToken(fromUrl)) {
+          storeToken(fromUrl);
+          return fromUrl;
+        }
+      }
+    } catch (e) {}
+    var stored = null;
+    try { stored = localStorage.getItem(captureTokenKey); } catch (e) {}
+    if (usableToken(stored)) return stored;
+    if (stored) clearToken();
+    return null;
+  }
+
+  var captureToken = designMode ? readCaptureToken() : null;
+
   function postAdd(sourceText, translateAll) {
     return fetch(addEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       credentials: "omit",
-      body: JSON.stringify({ sourceText: sourceText, translateAll: !!translateAll }),
-    }).then(function (r) { return r.ok ? r.json() : null; });
+      body: JSON.stringify({ sourceText: sourceText, translateAll: !!translateAll, captureToken: captureToken || "" }),
+    }).then(function (r) {
+      if (r.status === 403) return { ok: false, tokenRejected: true };
+      if (r.status === 429) return { ok: false, rateLimited: true };
+      return r.json().catch(function () { return null; });
+    });
   }
 
   // Theme-editor only: when the merchant lands on the editor but the shop
@@ -376,16 +443,48 @@
     // it. The merchant turns the whole tool off via the embed checkbox.
     panel.innerHTML =
       '<div style="font-weight:600;margin-bottom:6px">ContentPilot — Direktübersetzungen</div>' +
+      '<div id="cp-cap-token" style="display:none"></div>' +
       '<div id="cp-cap-hint" style="opacity:.7;font-size:12px">Klicke einen beliebigen Text auf der Seite, um ihn zu erfassen.</div>' +
       '<div id="cp-cap-form" style="display:none;margin-top:10px"></div>';
 
     document.body.appendChild(panel);
-    // designMode is already enforced by the captureRequested gate above; the
-    // panel + cursor + click interception only ever run in the theme editor.
-    document.documentElement.style.cursor = "crosshair";
 
+    var tokenEl = panel.querySelector("#cp-cap-token");
     var hint = panel.querySelector("#cp-cap-hint");
     var formEl = panel.querySelector("#cp-cap-form");
+
+    // designMode is already enforced by the captureRequested gate above; the
+    // panel + cursor + click interception only ever run in the theme editor,
+    // and the click capture only while a capture token is present.
+    function setCaptureActive(active) {
+      document.documentElement.style.cursor = active ? "crosshair" : "";
+      tokenEl.style.display = active ? "none" : "block";
+      hint.style.display = active ? "block" : "none";
+      if (!active) formEl.style.display = "none";
+    }
+
+    function showTokenPrompt(message) {
+      tokenEl.innerHTML =
+        '<div style="opacity:.85;font-size:12px">' + escapeHtml(message) + '</div>' +
+        '<input id="cp-cap-code" type="text" autocomplete="off" spellcheck="false" placeholder="Erfassungscode einfügen" ' +
+        'style="width:100%;box-sizing:border-box;margin-top:8px;border-radius:6px;border:0;padding:6px;color:#111">' +
+        btn("cp-cap-code-ok", "Code übernehmen", true) +
+        '<div id="cp-cap-code-status" style="margin-top:6px;font-size:12px;opacity:.85"></div>';
+      setCaptureActive(false);
+      tokenEl.querySelector("#cp-cap-code-ok").addEventListener("click", function () {
+        var code = String(tokenEl.querySelector("#cp-cap-code").value || "").trim();
+        if (!usableToken(code)) {
+          tokenEl.querySelector("#cp-cap-code-status").textContent = "Ungültiger oder abgelaufener Code.";
+          return;
+        }
+        captureToken = code;
+        storeToken(code);
+        setCaptureActive(true);
+      });
+    }
+
+    var NEED_TOKEN_TEXT =
+      "Öffne den Erfassungsmodus in ContentPilot unter „Direktübersetzungen“ → „Erfassungsmodus öffnen“, oder füge den dort kopierten Code hier ein.";
 
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, function (c) {
@@ -416,6 +515,20 @@
         statusEl.textContent = "Speichern …";
         postAdd(src, translateAll)
           .then(function (res) {
+            if (res && res.tokenRejected) {
+              captureToken = null;
+              clearToken();
+              showTokenPrompt("Der Erfassungscode ist abgelaufen oder ungültig. " + NEED_TOKEN_TEXT);
+              return;
+            }
+            if (res && res.rateLimited) {
+              statusEl.textContent = "Zu viele Anfragen — bitte einen Moment warten.";
+              return;
+            }
+            if (res && res.error === "itemLimitReached") {
+              statusEl.textContent = "Die Höchstzahl an Direktübersetzungen ist erreicht.";
+              return;
+            }
             statusEl.textContent = res && res.ok
               ? (translateAll ? "✓ Hinzugefügt — Übersetzung in alle Sprachen läuft …" : "✓ Hinzugefügt")
               : "Fehler beim Speichern";
@@ -431,6 +544,7 @@
       "click",
       function (e) {
         if (panel.contains(e.target)) return;
+        if (!captureToken) return; // no proof yet → the page behaves normally
         e.preventDefault();
         e.stopPropagation();
         var text = normalize(e.target.textContent || "");
@@ -439,7 +553,10 @@
       true,
     );
 
-    log("capture mode ready (designMode)");
+    if (captureToken) setCaptureActive(true);
+    else showTokenPrompt(NEED_TOKEN_TEXT);
+
+    log("capture mode ready (designMode)", captureToken ? "with token" : "waiting for token");
   }
 
   function start() {

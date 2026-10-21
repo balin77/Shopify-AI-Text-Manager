@@ -94,10 +94,25 @@ export const loader = createContentLoader({
 
   async extraData(ctx: LoaderContext) {
     const dt = await import("../services/direct-translation.server");
-    const [settings, newCandidateCount] = await Promise.all([
+    const [settings, newCandidateCount, available] = await Promise.all([
       dt.getSettings(ctx.db, ctx.session.shop),
       dt.countNewCandidates(ctx.db, ctx.session.shop),
+      dt.isDirectTranslationsAvailable(ctx.db, ctx.session.shop),
     ]);
+    // Capture mode proof: the storefront capture endpoint refuses every write
+    // without a token only this authenticated loader mints (shop-bound,
+    // short-lived — see direct-capture-token.server.ts). It travels to the
+    // theme editor preview as ?cp_capture=<token> on the deep link's
+    // previewPath, and is shown as a code to paste for when that does not
+    // reach the preview. Not minted for a shop the plan gate keeps out.
+    let captureToken: string | null = null;
+    let captureEditorUrl: string | null = null;
+    if (available) {
+      const { mintCaptureToken } = await import("../services/direct-capture-token.server");
+      captureToken = mintCaptureToken(ctx.session.shop);
+      const previewPath = `/?cp_capture=${encodeURIComponent(captureToken)}`;
+      captureEditorUrl = `https://${ctx.session.shop}/admin/themes/current/editor?previewPath=${encodeURIComponent(previewPath)}`;
+    }
     // All shop locales (incl. primary, published or not) are valid targets:
     // the source text is auto-detected per item, so an EN string on a
     // DE-primary store needs a DE translation for the German storefront.
@@ -114,6 +129,8 @@ export const loader = createContentLoader({
       // domains aren't fetched (extra round-trip not worth it; the .myshopify
       // domain works on every shop).
       shopUrl: `https://${ctx.session.shop}`,
+      captureToken,
+      captureEditorUrl,
     };
   },
 });
@@ -349,7 +366,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, primaryLocale, targetLocales, markets, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, error } =
+  const { items, primaryLocale, targetLocales, markets, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, captureToken, captureEditorUrl, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
@@ -361,6 +378,8 @@ export default function DirectTranslationsPage() {
       filterByLanguage: boolean;
       newCandidateCount: number;
       shopUrl: string;
+      captureToken: string | null;
+      captureEditorUrl: string | null;
       error: string | null;
     };
   const { t, locale: appLocale } = useI18n();
@@ -419,6 +438,7 @@ export default function DirectTranslationsPage() {
   const [baseTarget, setBaseTarget] = useState("");
   const [candidatesOpen, setCandidatesOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [captureCodeOpen, setCaptureCodeOpen] = useState(false);
   // Bumped whenever a translation row is added/edited/deleted so the language
   // bar's pulse memo (keyed on validationVersion) re-runs even when the
   // translations-array length is unchanged (e.g. edit-in-place).
@@ -1011,6 +1031,62 @@ export default function DirectTranslationsPage() {
                             {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
                           </Button>
                         </InlineStack>
+                      </BlockStack>
+                    </>
+                  )}
+
+                  {/* Capture mode in the theme editor. The storefront capture
+                      endpoint only accepts a write carrying the short-lived
+                      token this page's loader minted, so the mode is started
+                      HERE: the deep link hands the token to the editor preview,
+                      and the code is the fallback to paste into the panel. */}
+                  {captureEditorUrl && captureToken && (
+                    <>
+                      <Divider />
+                      <BlockStack gap="200">
+                        <Text as="h3" variant="headingSm">{tt.captureTitle}</Text>
+                        <Text as="p" tone="subdued" variant="bodySm">{tt.captureExplain}</Text>
+                        <InlineStack gap="200" wrap blockAlign="center">
+                          <Button url={captureEditorUrl} target="_blank" external>
+                            {tt.captureOpen}
+                          </Button>
+                          <Button
+                            variant="plain"
+                            onClick={() => setCaptureCodeOpen((v) => !v)}
+                            ariaExpanded={captureCodeOpen}
+                            ariaControls="dt-capture-code"
+                          >
+                            {tt.captureShowCode}
+                          </Button>
+                        </InlineStack>
+                        <Collapsible id="dt-capture-code" open={captureCodeOpen}>
+                          <BlockStack gap="200">
+                            <TextField
+                              label={tt.captureCodeLabel}
+                              value={captureToken}
+                              readOnly
+                              selectTextOnFocus
+                              autoComplete="off"
+                              helpText={tt.captureCodeHelp}
+                            />
+                            <InlineStack align="start">
+                              <Button
+                                size="slim"
+                                onClick={() => {
+                                  const done = () => showInfoBox(tt.captureCodeCopied, "success");
+                                  const fail = () => showInfoBox(tt.captureCodeCopyFailed, "warning");
+                                  try {
+                                    void navigator.clipboard.writeText(captureToken).then(done, fail);
+                                  } catch {
+                                    fail();
+                                  }
+                                }}
+                              >
+                                {tt.captureCopyCode}
+                              </Button>
+                            </InlineStack>
+                          </BlockStack>
+                        </Collapsible>
                       </BlockStack>
                     </>
                   )}

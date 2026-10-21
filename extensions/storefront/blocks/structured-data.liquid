@@ -3,8 +3,15 @@
   page using NATIVE Liquid objects (product / collection / article / shop), so
   rich-snippet markup is produced automatically with no admin API call. Every
   dynamic value is passed through the `json` filter, which JSON-encodes the
-  string AND escapes `<` (so a value containing "</script>" cannot break out
-  of the surrounding <script> element). Absolute URLs are built from
+  string. Whether Shopify's `json` ALSO escapes `<` is NOT measured (the
+  variant-gallery blocks assume it does not; liquidjs, used by the tests, does
+  not), so every value additionally goes through `replace: '<', '\u003c'`:
+  a value containing "</script>" or "<!--" then cannot break out of the
+  surrounding <script> element, and JSON parsing restores the `<` unchanged.
+  `>` cannot end a script element on its own and is left alone (budget).
+  Shopify's Liquid takes a quoted literal verbatim (the 6 bytes \u003c);
+  liquidjs decodes it to `<`, so the tests pin these bytes statically.
+  Absolute URLs are built from
   `shop.url` (canonical, no trailing slash) + the object's root-relative
   `.url`. Enable once - no placement needed.
 {%- endcomment -%}
@@ -41,9 +48,9 @@
 {
   "@context": "https://schema.org",
   "@type": "Organization",
-  "name": {{ shop.name | json }},
-  "url": {{ shop.url | json }}
-  {%- if logo_url != '' -%}, "logo": {{ logo_url | json }}{%- endif -%}
+  "name": {{ shop.name | json | replace: '<', '\u003c' }},
+  "url": {{ shop.url | json | replace: '<', '\u003c' }}
+  {%- if logo_url != '' -%}, "logo": {{ logo_url | json | replace: '<', '\u003c' }}{%- endif -%}
   {%- assign social_lines = block.settings.social_urls | newline_to_br | split: '<br />' -%}
   {%- assign social_clean = '' -%}
   {%- for s in social_lines -%}
@@ -55,7 +62,7 @@
   {%- if social_clean != '' -%}
     , "sameAs": [
     {%- assign parts = social_clean | split: '|' -%}
-    {%- for p in parts -%}{{ p | json }}{%- unless forloop.last -%}, {%- endunless -%}{%- endfor -%}
+    {%- for p in parts -%}{{ p | json | replace: '<', '\u003c' }}{%- unless forloop.last -%}, {%- endunless -%}{%- endfor -%}
     ]
   {%- endif -%}
 }
@@ -239,7 +246,7 @@
       {%- if img_lm != blank -%}{%- assign img_url = img_lm -%}{%- endif -%}
       {%- assign img_scheme = img_url | slice: 0, 2 -%}
       {%- if img_scheme == '//' -%}{%- assign img_url = img_url | prepend: 'https:' -%}{%- endif -%}
-      {%- if img_printed > 0 -%},{%- endif -%}{{ img_url | json }}
+      {%- if img_printed > 0 -%},{%- endif -%}{{ img_url | json | replace: '<', '\u003c' }}
       {%- assign img_printed = img_printed | plus: 1 -%}
     {%- endfor -%}
   {%- endcapture -%}
@@ -261,14 +268,14 @@
     {%- if variant_count > max_variant_offers -%}
       {
         "@type": "AggregateOffer",
-        "priceCurrency": {{ p_currency | json }},
-        "lowPrice": {{ agg_low | divided_by: 100.0 | round: 2 | append: '' | json }},
-        "highPrice": {{ agg_high | divided_by: 100.0 | round: 2 | append: '' | json }},
+        "priceCurrency": {{ p_currency | json | replace: '<', '\u003c' }},
+        "lowPrice": {{ agg_low | divided_by: 100.0 | round: 2 | append: '' | json | replace: '<', '\u003c' }},
+        "highPrice": {{ agg_high | divided_by: 100.0 | round: 2 | append: '' | json | replace: '<', '\u003c' }},
         "offerCount": {{ variant_count }},
-        "availability": {{ agg_availability | json }},
+        "availability": {{ agg_availability | json | replace: '<', '\u003c' }},
         "itemCondition": "https://schema.org/NewCondition",
-        "url": {{ p_url | json }}
-        {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json }}{%- endif -%}
+        "url": {{ p_url | json | replace: '<', '\u003c' }}
+        {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json | replace: '<', '\u003c' }}{%- endif -%}
       }
     {%- else -%}
     [
@@ -306,15 +313,15 @@
         {%- if off_printed > 0 -%},{%- endif -%}
         {
           "@type": "Offer",
-          "@id": {{ v_id | json }},
-          "price": {{ v.price | divided_by: 100.0 | round: 2 | append: '' | json }},
-          "priceCurrency": {{ p_currency | json }},
-          "availability": {{ v_avail | json }},
+          "@id": {{ v_id | json | replace: '<', '\u003c' }},
+          "price": {{ v.price | divided_by: 100.0 | round: 2 | append: '' | json | replace: '<', '\u003c' }},
+          "priceCurrency": {{ p_currency | json | replace: '<', '\u003c' }},
+          "availability": {{ v_avail | json | replace: '<', '\u003c' }},
           "itemCondition": "https://schema.org/NewCondition",
-          "url": {{ v_url | json }}
-          {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json }}{%- endif -%}
-          {%- if v.sku != blank -%}, "sku": {{ v.sku | json }}{%- endif -%}
-          {%- if v_gtin_key != '' -%}, "{{ v_gtin_key }}": {{ v_gtin | json }}{%- endif -%}
+          "url": {{ v_url | json | replace: '<', '\u003c' }}
+          {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json | replace: '<', '\u003c' }}{%- endif -%}
+          {%- if v.sku != blank -%}, "sku": {{ v.sku | json | replace: '<', '\u003c' }}{%- endif -%}
+          {%- if v_gtin_key != '' -%}, "{{ v_gtin_key }}": {{ v_gtin | json | replace: '<', '\u003c' }}{%- endif -%}
         }
         {%- assign off_printed = off_printed | plus: 1 -%}
       {%- endfor -%}
@@ -325,10 +332,10 @@
 {
   "@context": "https://schema.org",
   "@type": "Product",
-  "@id": {{ p_id | json }},
-  "name": {{ product.title | json }},
-  "url": {{ p_url | json }}
-  {%- if p_desc != '' -%}, "description": {{ p_desc | json }}{%- endif -%}
+  "@id": {{ p_id | json | replace: '<', '\u003c' }},
+  "name": {{ product.title | json | replace: '<', '\u003c' }},
+  "url": {{ p_url | json | replace: '<', '\u003c' }}
+  {%- if p_desc != '' -%}, "description": {{ p_desc | json | replace: '<', '\u003c' }}{%- endif -%}
   {%- if img_printed > 0 -%}, "image": [{{ p_images | strip }}]{%- endif -%}
   {%- comment -%}
     SKU and GTIN sit on the OFFERS, not here: with several variants a
@@ -338,11 +345,11 @@
     unambiguous and Merchant Center reads them most reliably.
   {%- endcomment -%}
   {%- if id_variant -%}
-    {%- if id_variant.sku != blank -%}, "sku": {{ id_variant.sku | json }}{%- endif -%}
-    {%- if id_gtin_key != '' -%}, "{{ id_gtin_key }}": {{ id_gtin | json }}{%- endif -%}
+    {%- if id_variant.sku != blank -%}, "sku": {{ id_variant.sku | json | replace: '<', '\u003c' }}{%- endif -%}
+    {%- if id_gtin_key != '' -%}, "{{ id_gtin_key }}": {{ id_gtin | json | replace: '<', '\u003c' }}{%- endif -%}
   {%- endif -%}
-  {%- if p_mpn != blank -%}, "mpn": {{ p_mpn | json }}{%- endif -%}
-  , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
+  {%- if p_mpn != blank -%}, "mpn": {{ p_mpn | json | replace: '<', '\u003c' }}{%- endif -%}
+  , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json | replace: '<', '\u003c' }} }
   , "offers": {{ p_offers | strip }}
   {%- if r_obj and r_obj.rating and r_count and r_count > 0 -%}
   , "aggregateRating": {
@@ -376,10 +383,10 @@
         {%- if faq_printed > 0 -%},{%- endif -%}
         {
           "@type": "Question",
-          "name": {{ faq_item.question | json }},
+          "name": {{ faq_item.question | json | replace: '<', '\u003c' }},
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": {{ faq_item.answer | json }}
+            "text": {{ faq_item.answer | json | replace: '<', '\u003c' }}
           }
         }
         {%- assign faq_printed = faq_printed | plus: 1 -%}
@@ -409,9 +416,9 @@
 {
   "@context": "https://schema.org",
   "@type": "CollectionPage",
-  "name": {{ collection.title | json }},
-  "url": {{ c_url | json }}
-  {%- if c_desc != '' -%}, "description": {{ c_desc | json }}{%- endif -%}
+  "name": {{ collection.title | json | replace: '<', '\u003c' }},
+  "url": {{ c_url | json | replace: '<', '\u003c' }}
+  {%- if c_desc != '' -%}, "description": {{ c_desc | json | replace: '<', '\u003c' }}{%- endif -%}
 }
 </script>
 {%- endif -%}
@@ -433,19 +440,19 @@
 {
   "@context": "https://schema.org",
   "@type": "BlogPosting",
-  "headline": {{ article.title | json }},
-  "url": {{ a_url | json }},
-  "mainEntityOfPage": {{ a_url | json }},
-  "datePublished": {{ article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
-  "dateModified": {{ article.updated_at | default: article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
-  "author": { "@type": "Person", "name": {{ article.author | default: shop.name | json }} },
+  "headline": {{ article.title | json | replace: '<', '\u003c' }},
+  "url": {{ a_url | json | replace: '<', '\u003c' }},
+  "mainEntityOfPage": {{ a_url | json | replace: '<', '\u003c' }},
+  "datePublished": {{ article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json | replace: '<', '\u003c' }},
+  "dateModified": {{ article.updated_at | default: article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json | replace: '<', '\u003c' }},
+  "author": { "@type": "Person", "name": {{ article.author | default: shop.name | json | replace: '<', '\u003c' }} },
   "publisher": {
     "@type": "Organization",
-    "name": {{ shop.name | json }}
-    {%- if logo_url != '' -%}, "logo": { "@type": "ImageObject", "url": {{ logo_url | json }} }{%- endif -%}
+    "name": {{ shop.name | json | replace: '<', '\u003c' }}
+    {%- if logo_url != '' -%}, "logo": { "@type": "ImageObject", "url": {{ logo_url | json | replace: '<', '\u003c' }} }{%- endif -%}
   }
-  {%- if a_desc != '' -%}, "description": {{ a_desc | json }}{%- endif -%}
-  {%- if a_img != '' -%}, "image": {{ a_img | json }}{%- endif -%}
+  {%- if a_desc != '' -%}, "description": {{ a_desc | json | replace: '<', '\u003c' }}{%- endif -%}
+  {%- if a_img != '' -%}, "image": {{ a_img | json | replace: '<', '\u003c' }}{%- endif -%}
 }
 </script>
 {%- endif -%}
@@ -591,13 +598,13 @@
 {
   "@context": "https://schema.org",
   "@type": "VideoObject",
-  "name": {{ v_media.alt | default: product.title | json }},
-  "thumbnailUrl": [{{ v_thumb | json }}]
-  {%- if v_desc != blank -%}, "description": {{ v_desc | json }}{%- endif -%}
-  {%- if v_upload != blank -%}, "uploadDate": {{ v_upload | json }}{%- endif -%}
-  {%- if v_content != blank -%}, "contentUrl": {{ v_content | json }}{%- endif -%}
-  {%- if v_embed != blank -%}, "embedUrl": {{ v_embed | json }}{%- endif -%}
-  {%- if v_duration != blank -%}, "duration": {{ v_duration | json }}{%- endif -%}
+  "name": {{ v_media.alt | default: product.title | json | replace: '<', '\u003c' }},
+  "thumbnailUrl": [{{ v_thumb | json | replace: '<', '\u003c' }}]
+  {%- if v_desc != blank -%}, "description": {{ v_desc | json | replace: '<', '\u003c' }}{%- endif -%}
+  {%- if v_upload != blank -%}, "uploadDate": {{ v_upload | json | replace: '<', '\u003c' }}{%- endif -%}
+  {%- if v_content != blank -%}, "contentUrl": {{ v_content | json | replace: '<', '\u003c' }}{%- endif -%}
+  {%- if v_embed != blank -%}, "embedUrl": {{ v_embed | json | replace: '<', '\u003c' }}{%- endif -%}
+  {%- if v_duration != blank -%}, "duration": {{ v_duration | json | replace: '<', '\u003c' }}{%- endif -%}
 }
 </script>
         {%- assign v_printed = v_printed | plus: 1 -%}
@@ -705,11 +712,11 @@
 {
   "@context": "https://schema.org",
   "@type": "VideoObject",
-  "name": {{ product.title | json }},
-  "thumbnailUrl": [{{ 'https://img.youtube.com/vi/' | append: v_gid | append: '/hqdefault.jpg' | json }}],
-  "embedUrl": {{ 'https://www.youtube.com/embed/' | append: v_gid | json }}
-  {%- if v_desc != blank -%}, "description": {{ v_desc | json }}{%- endif -%}
-  {%- if v_upload_override != blank -%}, "uploadDate": {{ v_upload_override | json }}{%- endif -%}
+  "name": {{ product.title | json | replace: '<', '\u003c' }},
+  "thumbnailUrl": [{{ 'https://img.youtube.com/vi/' | append: v_gid | append: '/hqdefault.jpg' | json | replace: '<', '\u003c' }}],
+  "embedUrl": {{ 'https://www.youtube.com/embed/' | append: v_gid | json | replace: '<', '\u003c' }}
+  {%- if v_desc != blank -%}, "description": {{ v_desc | json | replace: '<', '\u003c' }}{%- endif -%}
+  {%- if v_upload_override != blank -%}, "uploadDate": {{ v_upload_override | json | replace: '<', '\u003c' }}{%- endif -%}
 }
 </script>
           {%- assign v_printed = v_printed | plus: 1 -%}
@@ -722,7 +729,7 @@
 {%- comment -%}
   Breadcrumb: each ListItem is emitted inline (no join/split round-trip) so a
   title containing a "|" cannot corrupt positions or JSON. Every name/url is
-  `| json`-escaped.
+  `| json`-encoded and `<`-escaped (see the header).
 {%- endcomment -%}
 {%- if want_breadcrumb and request.page_type == 'product' and product -%}
 <script type="application/ld+json" data-contentpilot="breadcrumb">
@@ -730,8 +737,8 @@
   "@context": "https://schema.org",
   "@type": "BreadcrumbList",
   "itemListElement": [
-    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
-    { "@type": "ListItem", "position": 2, "name": {{ product.title | json }}, "item": {{ shop.url | append: product.url | json }} }
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json | replace: '<', '\u003c' }} },
+    { "@type": "ListItem", "position": 2, "name": {{ product.title | json | replace: '<', '\u003c' }}, "item": {{ shop.url | append: product.url | json | replace: '<', '\u003c' }} }
   ]
 }
 </script>
@@ -741,8 +748,8 @@
   "@context": "https://schema.org",
   "@type": "BreadcrumbList",
   "itemListElement": [
-    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
-    { "@type": "ListItem", "position": 2, "name": {{ collection.title | json }}, "item": {{ shop.url | append: collection.url | json }} }
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json | replace: '<', '\u003c' }} },
+    { "@type": "ListItem", "position": 2, "name": {{ collection.title | json | replace: '<', '\u003c' }}, "item": {{ shop.url | append: collection.url | json | replace: '<', '\u003c' }} }
   ]
 }
 </script>
@@ -752,9 +759,9 @@
   "@context": "https://schema.org",
   "@type": "BreadcrumbList",
   "itemListElement": [
-    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
-    { "@type": "ListItem", "position": 2, "name": {{ blog.title | json }}, "item": {{ shop.url | append: blog.url | json }} },
-    { "@type": "ListItem", "position": 3, "name": {{ article.title | json }}, "item": {{ shop.url | append: article.url | json }} }
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json | replace: '<', '\u003c' }} },
+    { "@type": "ListItem", "position": 2, "name": {{ blog.title | json | replace: '<', '\u003c' }}, "item": {{ shop.url | append: blog.url | json | replace: '<', '\u003c' }} },
+    { "@type": "ListItem", "position": 3, "name": {{ article.title | json | replace: '<', '\u003c' }}, "item": {{ shop.url | append: article.url | json | replace: '<', '\u003c' }} }
   ]
 }
 </script>

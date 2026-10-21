@@ -554,6 +554,13 @@ export const guideEs: GuideCopy = {
             "Traduce las entradas, una a una o con IA, y guarda.",
           ],
         },
+        {
+          heading: "Capturar textos con un clic",
+          paragraphs: [
+            "En lugar de escribir los textos, puedes hacer clic en ellos en el editor de temas. En Contenido → Traducciones directas, haz clic en «Abrir modo captura». Se abre el editor de temas, y al hacer clic en un texto de la vista previa se añade a la lista — si quieres, traducido a todos los idiomas al momento.",
+            "El modo captura es válido 8 horas; después, vuelve a abrirlo desde la app. Si el panel de captura pide un código, obtenlo en la app con «Mostrar código de captura». No compartas ese código. Los visitantes de tu tienda no ven nada del modo captura.",
+          ],
+        },
       ],
       tips: [
         "A diferencia del resto, aquí también se ofrece el idioma principal como destino: el texto de otra app puede estar en cualquier idioma.",
