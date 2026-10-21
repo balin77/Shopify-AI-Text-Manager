@@ -75,6 +75,7 @@ export const guideEn: GuideCopy = {
           heading: "Your own key",
           paragraphs: [
             "ContentPilot AI writes with the AI provider you connect: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok or HuggingFace. You enter your own API key — so the cost and the choice of model stay with you.",
+            "For security, a stored key is never shown again: the field stays empty and only shows \"Stored\" with the last four characters, so you can recognise the key. Leave the field empty to keep the key; type a new one to replace it. To delete it, click \"Remove key\" and save.",
           ],
           steps: [
             "Create an account with a provider and generate an API key.",

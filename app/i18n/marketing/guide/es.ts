@@ -75,6 +75,7 @@ export const guideEs: GuideCopy = {
           heading: "Tu propia clave",
           paragraphs: [
             "ContentPilot AI escribe con el proveedor de IA que conectes: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok o HuggingFace. Introduces tu propia clave API, así que el coste y la elección del modelo siguen siendo tuyos.",
+            "Por seguridad, una clave guardada no se vuelve a mostrar: el campo queda vacío y solo indica \"Guardada\" con los cuatro últimos caracteres, para que reconozcas la clave. Deja el campo vacío para conservarla; escribe una nueva para reemplazarla. Para borrarla, pulsa \"Eliminar clave\" y guarda.",
           ],
           steps: [
             "Crea una cuenta en un proveedor y genera una clave API.",

@@ -448,6 +448,9 @@ export function SettingsAITab({
           placeholder={placeholder}
           onChange={(v) => {
             setValue(v);
+            // Typing a new key replaces the stored one — a pending removal
+            // of the same key is superseded.
+            if (v.trim() !== "") setRemoveKeys((current) => current.filter((f) => f !== field));
             dismissCorruptedFor(keyProvider);
           }}
           type={show ? "text" : "password"}

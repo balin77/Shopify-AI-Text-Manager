@@ -25,12 +25,12 @@
   "endpoint": "/apps/contentpilot/dynamic-translations",
   "collectEndpoint": "/apps/contentpilot/collect-strings",
   "addEndpoint": "/apps/contentpilot/direct-add",
-  "locale": {{ request.locale.iso_code | json }},
-  "primaryLocale": {{ shop.locale | json }},
-  "market": {{ localization.market.id | json }},
-  "marketHandle": {{ localization.market.handle | json }},
-  "captureTool": {{ block.settings.capture_tool | json }},
-  "debug": {{ block.settings.debug | default: false | json }}
+  "locale": {{ request.locale.iso_code | json | replace: '<', '\u003c' }},
+  "primaryLocale": {{ shop.locale | json | replace: '<', '\u003c' }},
+  "market": {{ localization.market.id | json | replace: '<', '\u003c' }},
+  "marketHandle": {{ localization.market.handle | json | replace: '<', '\u003c' }},
+  "captureTool": {{ block.settings.capture_tool | json | replace: '<', '\u003c' }},
+  "debug": {{ block.settings.debug | default: false | json | replace: '<', '\u003c' }}
 }
 </script>
 <script src="{{ 'direct-translation.js' | asset_url }}" defer></script>

@@ -76,6 +76,7 @@ export const guideDe: GuideCopy = {
           heading: "Ihr eigener Schlüssel",
           paragraphs: [
             "ContentPilot AI schreibt mit dem KI-Anbieter, den Sie verbinden: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok oder HuggingFace. Sie hinterlegen dafür Ihren eigenen API-Schlüssel — die Kosten und die Wahl des Modells bleiben damit bei Ihnen.",
+            "Ein gespeicherter Schlüssel wird aus Sicherheitsgründen nie wieder angezeigt: Das Feld bleibt leer und zeigt nur „Gespeichert“ mit den letzten vier Zeichen, damit Sie den Schlüssel wiedererkennen. Lassen Sie das Feld leer, bleibt der Schlüssel erhalten; tippen Sie einen neuen ein, ersetzt er den alten. Zum Löschen klicken Sie „Schlüssel entfernen“ und speichern.",
           ],
           steps: [
             "Bei einem Anbieter ein Konto anlegen und einen API-Schlüssel erzeugen.",
