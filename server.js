@@ -232,7 +232,8 @@ app.use((req, res, next) => {
 });
 
 // Apply granular rate limiting
-// Webhook rate limiting (high limit for Shopify bursts)
+// Webhook guard: throttles only requests that FAIL HMAC verification, per IP
+// (see rate-limit-cjs.cjs) — genuine Shopify deliveries are never counted.
 app.use('/webhooks', webhookRateLimit);
 
 // Auth rate limiting (strict to prevent brute force)

@@ -110,6 +110,11 @@ export const loader = createContentLoader({
     if (available) {
       const { mintCaptureToken } = await import("../services/direct-capture-token.server");
       captureToken = mintCaptureToken(ctx.session.shop);
+      // UNMEASURED: that Shopify's theme editor carries a query string on
+      // `previewPath` through to the preview iframe's URL (the token arrives
+      // only if it does). The pasted code (`captureToken`, "Show capture code"
+      // in the page and in the guide) is the fallback that always works, and
+      // the storefront panel asks for it when no token arrived.
       const previewPath = `/?cp_capture=${encodeURIComponent(captureToken)}`;
       captureEditorUrl = `https://${ctx.session.shop}/admin/themes/current/editor?previewPath=${encodeURIComponent(previewPath)}`;
     }

@@ -15,7 +15,8 @@
  * therefore present a capture token (direct-capture-token.server.ts) that only
  * the authenticated admin page mints, bound to this shop and short-lived; a
  * request without a valid one is refused with 403 before anything is written.
- * On top of that: a per-shop rate limit, length caps and an item cap. The captured
+ * On top of that: a per-shop rate limit (applied AFTER the token check, so
+ * anonymous traffic cannot drain it), length caps and an item cap. The captured
  * source string is exactly the rendered DOM text, so it is guaranteed to match.
  * When `translateAll` is set, a Task-tracked AI translation into all published
  * target locales is kicked off in the background.
@@ -43,11 +44,6 @@ export async function action({ request }: ActionFunctionArgs) {
   const { session, admin } = await authenticate.public.appProxy(request);
   if (!session) return json({ ok: false }, { status: 200 });
 
-  // Rate-limit BEFORE any DB work or body parsing.
-  if (!directAddRateLimiter.allow(session.shop)) {
-    return json({ ok: false, error: "rateLimited" }, { status: 429, headers: NO_STORE });
-  }
-
   let body: {
     sourceText?: unknown;
     captureToken?: unknown;
@@ -68,6 +64,15 @@ export async function action({ request }: ActionFunctionArgs) {
   // learns nothing about the shop and costs no DB query.
   if (!verifyCaptureToken(body.captureToken, session.shop)) {
     return json({ ok: false, error: "captureTokenInvalid" }, { status: 403, headers: NO_STORE });
+  }
+
+  // Per-shop rate limit — only for requests that carry the merchant's token.
+  // It used to run BEFORE the token check, so anonymous token-less POSTs
+  // (any storefront visitor can send them) drained the shop's bucket and
+  // locked the merchant out of capture mode. A refused request costs a JSON
+  // parse and one HMAC, no DB work, so it needs no bucket of its own.
+  if (!directAddRateLimiter.allow(session.shop)) {
+    return json({ ok: false, error: "rateLimited" }, { status: 429, headers: NO_STORE });
   }
 
   // Max-plan only.

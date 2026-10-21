@@ -195,6 +195,12 @@ async function fetchSourceOnce(url, fetchFn, signal) {
     }
     const response = await fetchFn(current, { signal, redirect: "manual" });
     if (response.status >= 300 && response.status < 400) {
+      // Release the redirect's body so its connection is not held open.
+      try {
+        await response.body?.cancel?.();
+      } catch {
+        // already consumed or not cancelable — nothing to release
+      }
       const location = response.headers?.get?.("location");
       if (!location) {
         throw new WebPDownloadRefused(`Failed to download image: redirect ${response.status} without a location`);

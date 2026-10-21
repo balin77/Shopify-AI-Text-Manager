@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { FetcherWithComponents } from "react-router";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -298,7 +298,7 @@ export function SettingsAITab({
     grokApiKey: grokKey,
     deepseekApiKey: deepseekKey,
   };
-  const keySetters: Record<ApiKeyField, (v: string) => void> = {
+  const keySetters: Record<ApiKeyField, Dispatch<SetStateAction<string>>> = {
     huggingfaceApiKey: setHuggingfaceKey,
     geminiApiKey: setGeminiKey,
     claudeApiKey: setClaudeKey,
@@ -318,7 +318,9 @@ export function SettingsAITab({
     if (!fetcher.data.success) return;
     for (const field of API_KEY_FIELDS) {
       const typed = sent.typed[field];
-      if (typed !== "") keySetters[field]("");
+      // Only a field still holding exactly what was sent: a value typed
+      // while the save was in flight was not written and stays a draft.
+      if (typed !== "") keySetters[field]((current) => (current === typed ? "" : current));
     }
     setRemoveKeys((current) => current.filter((f) => !sent.removed.includes(f)));
     // keySetters are stable useState setters.

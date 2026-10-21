@@ -559,7 +559,7 @@ export const guideEn: GuideCopy = {
           heading: "Capture texts by clicking",
           paragraphs: [
             "Instead of typing texts in, you can click them in the theme editor. Under Content → Direct translations, click “Open capture mode”. The theme editor opens, and clicking a text in the preview adds it to the list — translated into every language right away if you like.",
-            "Capture mode is valid for 8 hours; after that, open it again from the app. If the capture panel asks for a code, get it from the app with “Show capture code”. Do not share that code. Visitors to your shop see nothing of capture mode.",
+            "Capture mode is valid for 2 hours and ends when you close the theme editor; after that, open it again from the app. If the capture panel in the theme editor asks for a code, copy it in the app with “Show capture code” and paste it there — this always works, even if capture mode does not switch on by itself when the editor opens. Do not share that code. Visitors to your shop see nothing of capture mode.",
           ],
         },
       ],

@@ -8,7 +8,8 @@
  * `SHOPIFY_API_VERSION` when it names a supported version, the same default
  * otherwise. They used to hardcode `2025-04`, i.e. talk to a different (and
  * end-of-life) version than every other request of the same process.
- * `tests/unit/admin-api-version-parity.test.ts` keeps the list and the default
+ * `tests/unit/webp-source-url-guard.test.ts` ("admin-api-version.js mirrors
+ * app/utils/api-version.ts") keeps the list and the default
  * in step with the TS module.
  */
 

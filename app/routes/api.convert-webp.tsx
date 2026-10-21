@@ -18,10 +18,38 @@ interface ConvertWebpBody {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  const { productId, productTitle, images: requestedImages }: ConvertWebpBody = await request.json();
-  let images = requestedImages;
+  let parsed: unknown;
+  try {
+    parsed = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  // Directly POST-reachable: a malformed body is the caller's error (400),
+  // never a TypeError further down (500).
+  if (!parsed || typeof parsed !== "object") {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const { productId, productTitle, images: requestedImages } = parsed as Partial<ConvertWebpBody>;
+  if (typeof productId !== "string" || !productId) {
+    return json({ error: "productId is required" }, { status: 400 });
+  }
+  if (!Array.isArray(requestedImages)) {
+    return json({ error: "images must be an array" }, { status: 400 });
+  }
+  const shapeOk = requestedImages.every(
+    (i) =>
+      !!i &&
+      typeof i === "object" &&
+      typeof i.url === "string" &&
+      (i.mediaId === undefined || i.mediaId === null || typeof i.mediaId === "string") &&
+      (i.productImageId === undefined || i.productImageId === null || typeof i.productImageId === "string"),
+  );
+  if (!shapeOk) {
+    return json({ error: "Malformed image entry" }, { status: 400 });
+  }
+  let images: ConvertWebpBody["images"] = requestedImages;
 
-  if (!images?.length) {
+  if (!images.length) {
     return json({ error: "No images provided" }, { status: 400 });
   }
 
@@ -172,7 +200,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Tasks card renders the numeric id and the Shopify deep link off
   // `resourceId` itself, so a GID stored here is that fact spelled unreadably.
   const runResourceTitle = await taskTitleOrFallback(
-    db, session.shop, "product", productId, productTitle,
+    db, session.shop, "product", productId, typeof productTitle === "string" ? productTitle : undefined,
   );
 
   const parent = await db.task.create({

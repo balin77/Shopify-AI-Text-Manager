@@ -564,7 +564,7 @@ export const guideDe: GuideCopy = {
           heading: "Texte per Klick erfassen",
           paragraphs: [
             "Statt Texte abzutippen, können Sie sie im Theme-Editor anklicken. Klicken Sie dazu unter Inhalte → Direktübersetzungen auf „Erfassungsmodus öffnen“. Der Theme-Editor öffnet sich, und ein Klick auf einen Text in der Vorschau übernimmt ihn in die Liste — auf Wunsch gleich in alle Sprachen übersetzt.",
-            "Der Erfassungsmodus gilt 8 Stunden; danach öffnen Sie ihn in der App erneut. Fragt das Erfassungsfenster nach einem Code, holen Sie ihn sich mit „Erfassungscode anzeigen“ aus der App. Geben Sie diesen Code nicht weiter. Besucher Ihres Shops sehen vom Erfassungsmodus nichts.",
+            "Der Erfassungsmodus gilt 2 Stunden und endet, wenn Sie den Theme-Editor schließen; danach öffnen Sie ihn in der App erneut. Fragt das Erfassungsfenster im Theme-Editor nach einem Code, kopieren Sie ihn in der App mit „Erfassungscode anzeigen“ und fügen Sie ihn dort ein — das funktioniert immer, auch wenn sich der Erfassungsmodus beim Öffnen nicht von selbst einschaltet. Geben Sie diesen Code nicht weiter. Besucher Ihres Shops sehen vom Erfassungsmodus nichts.",
           ],
         },
       ],

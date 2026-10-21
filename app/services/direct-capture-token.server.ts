@@ -22,8 +22,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const CAPTURE_TOKEN_PURPOSE = "direct-capture";
-/** 8 hours: one working session in the theme editor. */
-export const CAPTURE_TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
+/** 2 hours: one editing session in the theme editor — short, because the token is a bearer credential handed to a storefront page. */
+export const CAPTURE_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
 function baseSecret(): string {
   const secret = (process.env.SHOPIFY_API_SECRET || process.env.ENCRYPTION_KEY || "").trim();

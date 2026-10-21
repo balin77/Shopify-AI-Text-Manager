@@ -105,13 +105,23 @@ describe("proxy.direct-add", () => {
     expect(directTranslationItem.upsert).not.toHaveBeenCalled();
   });
 
-  it("rate-limits per shop", async () => {
+  it("rate-limits per shop for token-carrying requests", async () => {
+    const token = mintCaptureToken(SHOP);
     let limited = 0;
     for (let i = 0; i < 40; i++) {
-      const res = await run({ sourceText: "Hello" });
+      const res = await run({ sourceText: "Hello", captureToken: token });
       if (res.status === 429) limited++;
     }
     expect(limited).toBeGreaterThan(0);
+  });
+
+  it("anonymous token-less requests cannot drain the merchant's bucket", async () => {
+    for (let i = 0; i < 200; i++) {
+      expect((await run({ sourceText: "Hello" })).status).toBe(403);
+    }
+    const res = await run({ sourceText: "Hello", captureToken: mintCaptureToken(SHOP) });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
   });
 });
 

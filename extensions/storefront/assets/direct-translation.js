@@ -25,6 +25,24 @@
 (function () {
   "use strict";
 
+  // Capture token on the URL (?cp_capture=<token>, from the admin's deep
+  // link): taken off the address bar FIRST, synchronously and unconditionally
+  // (live storefront included, config missing or not), so it is never left in
+  // the history, a copied link or a Referer — whatever else this script does.
+  var CAPTURE_PARAM = "cp_capture";
+  var urlCaptureToken = null;
+  try {
+    var startParams = new URLSearchParams(window.location.search);
+    if (startParams.has(CAPTURE_PARAM)) {
+      urlCaptureToken = startParams.get(CAPTURE_PARAM);
+      startParams.delete(CAPTURE_PARAM);
+      var startQs = startParams.toString();
+      try {
+        history.replaceState(history.state, "", window.location.pathname + (startQs ? "?" + startQs : "") + window.location.hash);
+      } catch (e) {}
+    }
+  } catch (e) {}
+
   var cfgEl = document.getElementById("contentpilot-dt-config");
   if (!cfgEl) return;
 
@@ -333,9 +351,10 @@
   // proxy cannot tell the merchant from an anonymous visitor). The admin page
   // mints it and hands it over through the "open capture mode" deep link
   // (?cp_capture=<token> on the preview URL) or as a code the merchant pastes
-  // into the panel. Kept in localStorage until it expires, so navigating
-  // inside the editor preview (which drops the query) keeps it.
-  var CAPTURE_PARAM = "cp_capture";
+  // into the panel. Kept in sessionStorage (this tab only, gone when it
+  // closes) until it expires, so navigating inside the editor preview (which
+  // drops the query) keeps it — never localStorage, which every storefront
+  // script can read and which outlives the editing session.
   var captureTokenKey = "contentpilot_dt_capture_token";
 
   function tokenExpiry(token) {
@@ -355,33 +374,25 @@
   }
 
   function storeToken(token) {
-    try { localStorage.setItem(captureTokenKey, token); } catch (e) {}
+    try { sessionStorage.setItem(captureTokenKey, token); } catch (e) {}
   }
 
   function clearToken() {
-    try { localStorage.removeItem(captureTokenKey); } catch (e) {}
+    try { sessionStorage.removeItem(captureTokenKey); } catch (e) {}
   }
 
+  // Earlier builds kept the token in localStorage; drop any such copy.
+  try { localStorage.removeItem(captureTokenKey); } catch (e) {}
+
   function readCaptureToken() {
-    // A token on the URL wins (fresh from the app); strip it from the address
-    // bar right away so it is not left in the history or copied along.
-    try {
-      var params = new URLSearchParams(window.location.search);
-      var fromUrl = params.get(CAPTURE_PARAM);
-      if (fromUrl) {
-        params.delete(CAPTURE_PARAM);
-        var qs = params.toString();
-        try {
-          history.replaceState(history.state, "", window.location.pathname + (qs ? "?" + qs : "") + window.location.hash);
-        } catch (e) {}
-        if (usableToken(fromUrl)) {
-          storeToken(fromUrl);
-          return fromUrl;
-        }
-      }
-    } catch (e) {}
+    // A token on the URL wins (fresh from the app); it was already stripped
+    // from the address bar at script start.
+    if (usableToken(urlCaptureToken)) {
+      storeToken(urlCaptureToken);
+      return urlCaptureToken;
+    }
     var stored = null;
-    try { stored = localStorage.getItem(captureTokenKey); } catch (e) {}
+    try { stored = sessionStorage.getItem(captureTokenKey); } catch (e) {}
     if (usableToken(stored)) return stored;
     if (stored) clearToken();
     return null;

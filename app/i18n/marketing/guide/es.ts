@@ -559,7 +559,7 @@ export const guideEs: GuideCopy = {
           heading: "Capturar textos con un clic",
           paragraphs: [
             "En lugar de escribir los textos, puedes hacer clic en ellos en el editor de temas. En Contenido → Traducciones directas, haz clic en «Abrir modo captura». Se abre el editor de temas, y al hacer clic en un texto de la vista previa se añade a la lista — si quieres, traducido a todos los idiomas al momento.",
-            "El modo captura es válido 8 horas; después, vuelve a abrirlo desde la app. Si el panel de captura pide un código, obtenlo en la app con «Mostrar código de captura». No compartas ese código. Los visitantes de tu tienda no ven nada del modo captura.",
+            "El modo captura es válido 2 horas y termina al cerrar el editor de temas; después, vuelve a abrirlo desde la app. Si el panel de captura del editor de temas pide un código, cópialo en la app con «Mostrar código de captura» y pégalo allí; esto funciona siempre, aunque el modo captura no se active solo al abrir el editor. No compartas ese código. Los visitantes de tu tienda no ven nada del modo captura.",
           ],
         },
       ],
