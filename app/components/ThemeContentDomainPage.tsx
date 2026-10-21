@@ -272,7 +272,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         formData.append("locale", locale.locale);
         appendResourceTypes(formData);
 
-        const response = await fetch(`${apiBasePath}/${groupId}`, {
+        const response = await appFetch(`${apiBasePath}/${groupId}`, {
           method: "POST",
           body: formData,
         });
@@ -336,7 +336,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         ...(search && { search })
       });
 
-      const response = await fetch(`${apiBasePath}/${groupId}?${params}${rtQuerySuffix}`);
+      const response = await appFetch(`${apiBasePath}/${groupId}?${params}${rtQuerySuffix}`);
       if (!response.ok) throw new Error('Failed to load theme data');
 
       const data = await response.json();
@@ -519,7 +519,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           limit: String(DEFAULT_FIELDS_PER_PAGE),
         });
 
-        fetch(`${apiBasePath}/${theme.groupId}?${params}${rtQuerySuffix}`)
+        appFetch(`${apiBasePath}/${theme.groupId}?${params}${rtQuerySuffix}`)
           .then(response => {
             if (!response.ok) throw new Error('Failed to load theme data');
             return response.json();
@@ -989,7 +989,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           formData.append("action", "loadTranslations");
           formData.append("locale", locale);
           appendResourceTypes(formData);
-          const response = await fetch(`${apiBasePath}/${groupId}`, { method: "POST", body: formData });
+          const response = await appFetch(`${apiBasePath}/${groupId}`, { method: "POST", body: formData });
           // A failed load says nothing about the translations; the cached ones
           // stay rather than being replaced by an empty list.
           if (!response.ok) throw new Error(`loadTranslations failed (${response.status})`);
@@ -1082,7 +1082,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         ...(search && { search })
       });
 
-      const res = await fetch(`${apiBasePath}/${groupId}?${params}${rtQuerySuffix}`);
+      const res = await appFetch(`${apiBasePath}/${groupId}?${params}${rtQuerySuffix}`);
       if (!res.ok) throw new Error('Failed to reload theme data');
       const data = await res.json();
 
@@ -1132,7 +1132,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         formData.append("locale", currentLanguage);
         appendResourceTypes(formData);
 
-        const transResponse = await fetch(`${apiBasePath}/${groupId}`, {
+        const transResponse = await appFetch(`${apiBasePath}/${groupId}`, {
           method: "POST",
           body: formData,
         });

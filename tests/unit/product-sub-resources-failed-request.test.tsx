@@ -22,6 +22,14 @@ vi.mock("react-router", () => ({
 import { useProductSubResources } from "~/hooks/useProductSubResources";
 import { markSubResourceActive, markSubResourceCompleted, isOperationActive } from "~/hooks/useAIOperationsStore";
 
+// appFetch adds the session token and reads auth headers off the answer; the
+// plain-object fetch mocks below carry no headers, so pass straight through to
+// the stubbed global fetch with exactly the caller's arguments.
+vi.mock("../../app/utils/app-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../app/utils/app-fetch")>()),
+  appFetch: (input: string, init?: RequestInit) => (init === undefined ? fetch(input) : fetch(input, init)),
+}));
+
 const ITEM_ID = "gid://shopify/Product/42";
 const OPTION = "gid://shopify/ProductOption/1";
 const item = {

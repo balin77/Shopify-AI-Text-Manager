@@ -47,6 +47,7 @@ import {
   type LocalizedMediaDraft,
   type LocalizedMediaItem,
 } from "./localized-media-view.shared";
+import { appFetch } from "../../utils/app-fetch";
 
 /**
  * Talks to the product page's own actions (`localizedMediaLoad`,
@@ -70,7 +71,7 @@ async function callLocalizedMedia(action: string, fields: Record<string, string>
   fd.set("action", action);
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   setContentEditorPage(fd, "/app/products");
-  const res = await fetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: fd });
+  const res = await appFetch(CONTENT_EDITOR_ACTION_ENDPOINT, { method: "POST", body: fd });
   const body = (await res.json().catch(() => ({}))) as DoorAnswer;
   return { status: res.status, body };
 }

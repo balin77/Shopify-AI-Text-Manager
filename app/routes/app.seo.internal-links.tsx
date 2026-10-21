@@ -87,6 +87,7 @@ import {
   type FilterType,
   type View,
 } from "../services/seo/internal-links-query";
+import { appFetch } from "../utils/app-fetch";
 
 /** Suggestions per page (both views). Server-side — see the header note. */
 export const PAGE_SIZE = 20;
@@ -424,7 +425,7 @@ export default function SeoInternalLinks() {
   const post = async (fields: Record<string, string>): Promise<ActionResult | null> => {
     const formData = new FormData();
     for (const [key, value] of Object.entries(fields)) formData.set(key, value);
-    const resp = await fetch(INTERNAL_LINKS_API, { method: "POST", body: formData });
+    const resp = await appFetch(INTERNAL_LINKS_API, { method: "POST", body: formData });
     return (await resp.json().catch(() => null)) as ActionResult | null;
   };
 
