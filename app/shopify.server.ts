@@ -13,6 +13,7 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
+import { LogSeverity, shopifyApi, type Session } from "@shopify/shopify-api";
 import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
 import { EncryptedPrismaSessionStorage } from "./utils/encrypted-session-storage.server";
@@ -23,6 +24,12 @@ import {
   resolveApiVersionString,
   type ShopifyApiVersionString,
 } from "./utils/api-version";
+import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./utils/offline-token-flags.server";
+import {
+  configureOfflineAdmin,
+  maybeMigrateToExpiringToken,
+  registerShopAccessTokenHook,
+} from "./utils/offline-admin.server";
 
 /**
  * Map the pinned version STRING onto the SDK's ApiVersion enum.
@@ -97,6 +104,17 @@ logger.info(`[SHOPIFY.SERVER] Parsed scopes (${scopes.length}): ${scopes.join(",
 // 2026-04 inventory rework cost every stock write before anyone could see it.
 logger.info(`[SHOPIFY.SERVER] Using API version: ${selectedApiVersion}`);
 
+// Expiring offline access tokens (see offline-admin.server.ts). Logged at INFO
+// for the same reason as the API version: whether this process asks Shopify for
+// ~1h tokens is a dashboard env var, and a 401 an hour after deploy is always a
+// question about it.
+const useExpiringOfflineTokens = expiringOfflineTokensEnabled();
+logger.info(
+  `[SHOPIFY.SERVER] Expiring offline tokens: ${useExpiringOfflineTokens ? "ON" : "OFF"} ` +
+    `(SHOPIFY_EXPIRING_OFFLINE_TOKENS), migration of existing tokens: ${migrateToExpiringTokensEnabled() ? "ON" : "OFF"} ` +
+    `(SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS, only honoured while the first is ON)`,
+);
+
 const shopify = shopifyApp({
   apiKey,
   apiSecretKey,
@@ -106,6 +124,11 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
+  // Default OFF. With it ON, token exchange issues EXPIRING offline tokens and
+  // the library refreshes them when a context is created — which is why every
+  // background caller goes through offline-admin.server.ts instead of keeping a
+  // client or a token past one request.
+  future: { expiringOfflineAccessTokens: useExpiringOfflineTokens },
   // `future.unstable_newEmbeddedAuthStrategy: true` used to live here. In
   // @shopify/shopify-app-react-router v2 the flag is gone because the strategy
   // it opted into IS the only strategy — the auth-code-flow implementation was
@@ -183,6 +206,37 @@ const shopify = shopifyApp({
 
 logger.info(`[SHOPIFY.SERVER] Shopify App initialized`);
 
+// The migration call lives on @shopify/shopify-api's `auth`, which the
+// react-router wrapper does not expose. A second, minimal api instance is built
+// LAZILY — only the first time a migration actually runs (both env switches on).
+let migrationApi: ReturnType<typeof shopifyApi> | null = null;
+function getMigrationApi(): ReturnType<typeof shopifyApi> {
+  if (!migrationApi) {
+    const url = new URL(appUrl);
+    migrationApi = shopifyApi({
+      apiKey,
+      apiSecretKey,
+      apiVersion: selectedApiVersion,
+      scopes,
+      hostName: url.host,
+      hostScheme: url.protocol.replace(":", "") as "http" | "https",
+      isEmbeddedApp: true,
+      isCustomStoreApp: false,
+      logger: { level: LogSeverity.Error },
+    });
+  }
+  return migrationApi;
+}
+
+configureOfflineAdmin({
+  unauthenticatedAdmin: (shop) => shopify.unauthenticated.admin(shop),
+  loadOfflineSession: (shop) => shopify.sessionStorage!.loadSession(`offline_${shop}`),
+  storeSession: (session: Session) => shopify.sessionStorage!.storeSession(session),
+  migrateToExpiringToken: (params) => getMigrationApi().auth.migrateToExpiringToken(params),
+});
+// Root-JS workers (webp-processor, stale-image-cleanup) get their token here.
+registerShopAccessTokenHook();
+
 // Import activity tracking and sync scheduler
 import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
@@ -224,6 +278,13 @@ const enhancedAuthenticate = {
       throw hostParamRejection(error, request) ?? apiAuthBounceRejection(error, request) ?? error;
     }
     const { admin, session } = authenticated;
+
+    // Lazy migration of a non-expiring offline token (both env switches; a
+    // no-op otherwise). Fire-and-forget and never throws: it must not cost the
+    // request anything.
+    if (session && !session.isOnline && !session.expires) {
+      void maybeMigrateToExpiringToken(session.shop);
+    }
 
     // Track activity for this shop (fire-and-forget — must not block the response)
     trackActivity(session.shop).catch(err => {

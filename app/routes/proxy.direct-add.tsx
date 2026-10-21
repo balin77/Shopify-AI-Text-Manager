@@ -37,6 +37,7 @@ import {
 import { translateItemsIntoAllLocales } from "../services/direct-translation-ai.server";
 import { verifyCaptureToken } from "../services/direct-capture-token.server";
 import { isValidLocale } from "../utils/validation";
+import { declaresBodyLargerThan, readBodyCapped } from "../utils/read-body-capped.server";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -51,56 +52,9 @@ const NO_STORE = { "Cache-Control": "no-store" };
  */
 export const MAX_DIRECT_ADD_BODY_BYTES = 32 * 1024;
 
-type CappedBody = { ok: true; text: string } | { ok: false; tooLarge: boolean };
-
-/**
- * Reads the body as text and gives up as soon as it passes `maxBytes`, so a
- * missing or lying Content-Length cannot make the server buffer more than the
- * cap. A DECLARED oversize body never gets here (the action refuses it first).
- *
- * On overflow the reader is RELEASED, never cancelled: in production the body
- * is @react-router/node's `createReadableStreamFromReadable(req)`, whose
- * `cancel` destroys the IncomingMessage socket — the 413 would then never reach
- * the client (ECONNRESET) and the response write could log write-after-destroy.
- * Releasing just stops reading; the caller answers with `Connection: close`
- * so Node does not try to keep the half-read connection alive.
- */
-async function readBodyCapped(request: Request, maxBytes: number): Promise<CappedBody> {
-  if (!request.body) return { ok: true, text: "" };
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        try {
-          reader.releaseLock();
-        } catch {
-          // Nothing to do: we only stop reading.
-        }
-        return { ok: false, tooLarge: true };
-      }
-      chunks.push(value);
-    }
-  } catch {
-    return { ok: false, tooLarge: false };
-  }
-  const buf = new Uint8Array(total);
-  let offset = 0;
-  for (const c of chunks) {
-    buf.set(c, offset);
-    offset += c.byteLength;
-  }
-  return { ok: true, text: new TextDecoder().decode(buf) };
-}
-
 export async function action({ request }: ActionFunctionArgs) {
   // A declared oversize body is refused before anything else runs.
-  const declaredLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_DIRECT_ADD_BODY_BYTES) {
+  if (declaresBodyLargerThan(request, MAX_DIRECT_ADD_BODY_BYTES)) {
     return json({ ok: false, error: "Body too large" }, { status: 413, headers: NO_STORE });
   }
 

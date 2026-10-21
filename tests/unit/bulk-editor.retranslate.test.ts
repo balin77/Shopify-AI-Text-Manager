@@ -267,7 +267,7 @@ function mockDb() {
       // The Task row is named after the row, not after its GID.
       findMany: vi.fn(async () => [{ id: PRODUCT_ID, title: "Kumiko-Box" }]),
     },
-    productMetafield: { upsert: vi.fn(async () => ({})), deleteMany: vi.fn(async () => ({ count: 0 })), findMany: vi.fn(async () => []) },
+    productMetafield: { findUnique: vi.fn(async () => null), create: vi.fn(async () => ({})), update: vi.fn(async () => ({})), deleteMany: vi.fn(async () => ({ count: 0 })), findMany: vi.fn(async () => []) },
     productOption: { findMany: vi.fn(async () => []) },
     contentTranslation: {
       findMany: vi.fn(async () => [{ key: "value", locale: LOCALE }]),
@@ -506,7 +506,9 @@ describe("applyBulkDiff with auto-translate on", () => {
     });
     const db = mockDb();
     (db as Record<string, unknown>).productMetafield = {
-      upsert: vi.fn(async () => ({})),
+      findUnique: vi.fn(async () => null),
+      create: vi.fn(async () => ({})),
+      update: vi.fn(async () => ({})),
       deleteMany: vi.fn(async () => ({ count: 0 })),
       findMany: vi.fn(async () => [
         { id: "gid://shopify/Metafield/1", productId: PRODUCT_ID, namespace: "custom", key: "care" },
@@ -659,7 +661,9 @@ describe("applyBulkDiff with auto-translate on", () => {
     });
     const db = mockDb();
     (db as Record<string, unknown>).productMetafield = {
-      upsert: vi.fn(async () => ({})),
+      findUnique: vi.fn(async () => null),
+      create: vi.fn(async () => ({})),
+      update: vi.fn(async () => ({})),
       deleteMany: vi.fn(async () => ({ count: 0 })),
       findMany: vi.fn(async () => [
         { id: "gid://shopify/Metafield/1", productId: PRODUCT_ID, namespace: "custom", key: "care" },

@@ -89,7 +89,6 @@ export default function ClearSessionPage() {
                     <li>Go to Shopify Admin → Apps</li>
                     <li>Click ContentPilot AI</li>
                     <li>The app will re-authenticate with new scopes</li>
-                    <li>Check /app/debug-scopes to verify scopes</li>
                   </ol>
                 </BlockStack>
               </Banner>

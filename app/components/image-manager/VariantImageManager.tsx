@@ -24,6 +24,7 @@ import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./typ
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import { uploadToStagedTarget } from "../../utils/staged-upload.client";
+import { appFetch } from "../../utils/app-fetch";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
 import { planAltFlush, planImmediateAltSave, hasImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
@@ -908,7 +909,7 @@ export function VariantImageManager({
       setLocallyExcludedMainGids(new Set());
     }
 
-    fetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
+    appFetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(({ variants: raw, mediaMap, mediaMetaMap: mmm, error }) => {
         // A newer product was selected while this request was in flight — drop the
@@ -1143,7 +1144,7 @@ export function VariantImageManager({
 
     webpPollRef.current = setInterval(async () => {
       try {
-        const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(pid)}`);
+        const r = await appFetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(pid)}`);
         const { tasks } = await r.json();
         // The per-IMAGE rows, and only those: a conversion run also has one
         // aggregate row on the same product (`imageWebpConversion` with a
@@ -1174,7 +1175,7 @@ export function VariantImageManager({
         // Shopify to finish processing a recently converted image.
         if (completedGids.size > 0 || imagesAwaitingSync) {
           try {
-            const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
+            const imgR = await appFetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
             const imgData = await imgR.json();
             if (imgData.success && Array.isArray(imgData.images)) {
               const newImages: ProductImageRef[] = mapApiImagesToRefs(imgData.images);
@@ -1309,7 +1310,7 @@ export function VariantImageManager({
       setIsConvertingWebP(true);
       (async () => {
         try {
-          const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(productId)}`);
+          const r = await appFetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(productId)}`);
           const { tasks } = await r.json();
           if (cancelled) return;
           const webpTasks = (tasks ?? []).filter(isWebpWorkRow);
@@ -1324,7 +1325,7 @@ export function VariantImageManager({
             const placeholderGids = new Set<string>(productImages.map(p => p.mediaId).filter(Boolean));
             setConvertingImageUrls(placeholderGids);
             try {
-              const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
+              const imgR = await appFetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
               const imgData = await imgR.json();
               if (!cancelled && imgData.success && Array.isArray(imgData.images)) {
                 const fresh = mapApiImagesToRefs(imgData.images);
@@ -1348,7 +1349,7 @@ export function VariantImageManager({
           setConvertingImageUrls(gids);
           prevConvertingGidsRef.current = gids;
           try {
-            const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
+            const imgR = await appFetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
             const imgData = await imgR.json();
             if (!cancelled && imgData.success && Array.isArray(imgData.images)) {
               const fresh = mapApiImagesToRefs(imgData.images);
@@ -1388,7 +1389,7 @@ export function VariantImageManager({
     let cancelled = false;
     (async () => {
       try {
-        const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
+        const imgR = await appFetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
         const imgData = await imgR.json();
         if (!cancelled && imgData.success && Array.isArray(imgData.images)) {
           const fresh = mapApiImagesToRefs(imgData.images);
@@ -2672,7 +2673,7 @@ export function VariantImageManager({
         deleteOk = true;
         failedGids = [];
       } else {
-        const deleteRes = await fetch("/api/delete-product-images", {
+        const deleteRes = await appFetch("/api/delete-product-images", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ productId: startedProductId, mediaIds: gids }),
@@ -2699,7 +2700,7 @@ export function VariantImageManager({
         .map(v => v.id);
       if (clearMainImageIds.length > 0) {
         try {
-          const clearRes = await fetch("/api/update-variant-galleries", {
+          const clearRes = await appFetch("/api/update-variant-galleries", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ productId: startedProductId, clearVariantMainImages: clearMainImageIds }),
@@ -2836,7 +2837,7 @@ export function VariantImageManager({
     const effectiveOrder = pendingProductImageOrder ?? productImages.map(p => p.url);
 
     try {
-      const res = await fetch("/api/convert-webp", {
+      const res = await appFetch("/api/convert-webp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2875,7 +2876,7 @@ export function VariantImageManager({
     const failedFiles: string[] = [];
     for (const file of files) {
       try {
-        const res = await fetch("/api/staged-upload", {
+        const res = await appFetch("/api/staged-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
@@ -2926,7 +2927,7 @@ export function VariantImageManager({
         // (which is typed as Array<{resourceUrl, kind, previewUrl?}>) and
         // (b) dispatch the upload XHR correctly per Shopify's resource type.
         const kind: MediaKind = (classifyFile(file.type, file.name) ?? "image");
-        const res = await fetch("/api/staged-upload", {
+        const res = await appFetch("/api/staged-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
@@ -3802,7 +3803,7 @@ export function VariantImageManager({
               setThumbSize(val);
               if (thumbSaveTimer.current) clearTimeout(thumbSaveTimer.current);
               thumbSaveTimer.current = setTimeout(() => {
-                fetch("/api/image-manager-settings", {
+                appFetch("/api/image-manager-settings", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ thumbSize: val }),
