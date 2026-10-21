@@ -140,6 +140,41 @@ describe("webhook failure observer", () => {
     expect(guard.failureCount("3.3.3.3")).toBe(2);
   });
 
+  it("counts once when close fires before finish with the failure status already set", () => {
+    const guard = createWebhookFailureObserver({ threshold: 100, now: () => 0, warn: () => {} });
+    send(guard, "3.3.3.4", 401, {}, ["close", "finish"]);
+    expect(guard.failureCount("3.3.3.4")).toBe(1);
+  });
+
+  it("a full map sweeps at most once per window and otherwise evicts the oldest key", () => {
+    let t = 0;
+    const guard = createWebhookFailureObserver({
+      threshold: 1000,
+      windowMs: 60_000,
+      maxKeys: 10,
+      now: () => t,
+      warn: () => {},
+    });
+    for (let i = 0; i < 10; i++) send(guard, `10.0.0.${i}`, 401);
+    expect(guard.trackedKeys()).toBe(10);
+    expect(guard.pruneRuns()).toBe(0);
+    // Many new IPs against a full map within one window: one sweep, then O(1) evictions.
+    for (let i = 0; i < 500; i++) {
+      t = 1 + i;
+      send(guard, `11.0.${i >> 8}.${i & 255}`, 401);
+    }
+    expect(guard.pruneRuns()).toBe(1);
+    expect(guard.trackedKeys()).toBe(10);
+    // Oldest evicted first: the earliest IPs are gone, the newest remain.
+    expect(guard.failureCount("10.0.0.0")).toBe(0);
+    expect(guard.failureCount("11.0.1.243")).toBe(1); // i = 499
+    // A new window allows one more sweep.
+    t = 60_001 + 500;
+    for (let i = 0; i < 50; i++) send(guard, `12.0.0.${i}`, 401);
+    expect(guard.pruneRuns()).toBe(2);
+    expect(guard.trackedKeys()).toBe(10);
+  });
+
   it("a throwing logger never affects the request", () => {
     const guard = createWebhookFailureObserver({
       threshold: 1,

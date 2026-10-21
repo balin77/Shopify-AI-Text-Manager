@@ -129,8 +129,15 @@ describe("proxy.direct-add", () => {
 describe("proxy.direct-add body cap", () => {
   async function runRequest(request: Request) {
     const response = await action({ request, params: {}, context: {} } as never);
-    const envelope = response as unknown as { data: Record<string, unknown>; init?: { status?: number } };
-    return { status: envelope.init?.status ?? 200, body: envelope.data };
+    const envelope = response as unknown as {
+      data: Record<string, unknown>;
+      init?: { status?: number; headers?: HeadersInit };
+    };
+    return {
+      status: envelope.init?.status ?? 200,
+      body: envelope.data,
+      headers: new Headers(envelope.init?.headers),
+    };
   }
 
   it("refuses a declared oversize body with 413 before authenticating", async () => {
@@ -153,6 +160,7 @@ describe("proxy.direct-add body cap", () => {
 
   it("refuses an oversize streamed body without a Content-Length and stops reading", async () => {
     let pulled = 0;
+    let cancelled = false;
     const chunk = new TextEncoder().encode("a".repeat(4096));
     const stream = new ReadableStream<Uint8Array>({
       pull(controller) {
@@ -162,6 +170,9 @@ describe("proxy.direct-add body cap", () => {
           return;
         }
         controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
       },
     });
     const request = new Request("https://app.example/apps/contentpilot/direct-add", {
@@ -173,8 +184,13 @@ describe("proxy.direct-add body cap", () => {
     expect(request.headers.get("content-length")).toBeNull();
     const res = await runRequest(request);
     expect(res.status).toBe(413);
+    expect(res.headers.get("Connection")).toBe("close");
     // Stopped soon after the cap, never drained the whole 4 MB.
     expect(pulled).toBeLessThan(MAX_DIRECT_ADD_BODY_BYTES / 4096 + 5);
+    // Released, not cancelled: cancelling the production body stream destroys
+    // the socket and the 413 would never reach the client.
+    expect(cancelled).toBe(false);
+    expect(stream.locked).toBe(false);
     expect(directTranslationItem.upsert).not.toHaveBeenCalled();
   });
 

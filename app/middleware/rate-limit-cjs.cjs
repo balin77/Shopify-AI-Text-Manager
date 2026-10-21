@@ -149,10 +149,20 @@ function createWebhookFailureObserver(options = {}) {
   const threshold = options.threshold ?? WEBHOOK_FAILURE_WARN_THRESHOLD;
   const now = options.now ?? (() => Date.now());
   const warn = options.warn ?? defaultWebhookWarn;
+  const maxKeys = options.maxKeys ?? WEBHOOK_FAILURE_MAX_KEYS;
   /** @type {Map<string, { count: number, resetAt: number, warned: boolean }>} */
   const failures = new Map();
 
+  // A full sweep costs O(map size). It runs at most ONCE PER WINDOW: with the
+  // map full, every failure from a new IP would otherwise scan all entries
+  // (50k) per request — a cheap way to burn CPU. Between sweeps the oldest key
+  // (Map insertion order) is evicted instead, which is O(1).
+  let lastPruneAt = -Infinity;
+  let pruneRuns = 0;
+
   function prune(t) {
+    lastPruneAt = t;
+    pruneRuns += 1;
     for (const [key, entry] of failures) {
       if (entry.resetAt <= t) failures.delete(key);
     }
@@ -172,9 +182,10 @@ function createWebhookFailureObserver(options = {}) {
     const t = now();
     let entry = current(key, t);
     if (!entry) {
-      if (failures.size >= WEBHOOK_FAILURE_MAX_KEYS) prune(t);
-      // Still full after pruning: drop the oldest key rather than grow without bound.
-      if (failures.size >= WEBHOOK_FAILURE_MAX_KEYS) {
+      if (failures.size >= maxKeys && t - lastPruneAt >= windowMs) prune(t);
+      // Still full (or a sweep ran within this window): drop the oldest key
+      // rather than grow without bound.
+      if (failures.size >= maxKeys) {
         const oldest = failures.keys().next().value;
         if (oldest !== undefined) failures.delete(oldest);
       }
@@ -210,6 +221,9 @@ function createWebhookFailureObserver(options = {}) {
 
   middleware.recordFailure = recordFailure;
   middleware.failureCount = (key) => current(key, now())?.count ?? 0;
+  /** Test seam: how many full sweeps have run, and how many keys are tracked. */
+  middleware.pruneRuns = () => pruneRuns;
+  middleware.trackedKeys = () => failures.size;
   return middleware;
 }
 

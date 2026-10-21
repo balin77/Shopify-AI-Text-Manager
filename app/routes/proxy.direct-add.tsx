@@ -56,14 +56,16 @@ type CappedBody = { ok: true; text: string } | { ok: false; tooLarge: boolean };
 /**
  * Reads the body as text and gives up as soon as it passes `maxBytes`, so a
  * missing or lying Content-Length cannot make the server buffer more than the
- * cap (the stream is cancelled, not drained).
+ * cap. A DECLARED oversize body never gets here (the action refuses it first).
+ *
+ * On overflow the reader is RELEASED, never cancelled: in production the body
+ * is @react-router/node's `createReadableStreamFromReadable(req)`, whose
+ * `cancel` destroys the IncomingMessage socket — the 413 would then never reach
+ * the client (ECONNRESET) and the response write could log write-after-destroy.
+ * Releasing just stops reading; the caller answers with `Connection: close`
+ * so Node does not try to keep the half-read connection alive.
  */
 async function readBodyCapped(request: Request, maxBytes: number): Promise<CappedBody> {
-  const declared = request.headers.get("content-length");
-  if (declared !== null) {
-    const n = Number(declared);
-    if (Number.isFinite(n) && n > maxBytes) return { ok: false, tooLarge: true };
-  }
   if (!request.body) return { ok: true, text: "" };
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -74,7 +76,11 @@ async function readBodyCapped(request: Request, maxBytes: number): Promise<Cappe
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        void reader.cancel().catch(() => {});
+        try {
+          reader.releaseLock();
+        } catch {
+          // Nothing to do: we only stop reading.
+        }
         return { ok: false, tooLarge: true };
       }
       chunks.push(value);
@@ -111,7 +117,10 @@ export async function action({ request }: ActionFunctionArgs) {
   const raw = await readBodyCapped(request, MAX_DIRECT_ADD_BODY_BYTES);
   if (!raw.ok) {
     return raw.tooLarge
-      ? json({ ok: false, error: "Body too large" }, { status: 413, headers: NO_STORE })
+      ? json(
+          { ok: false, error: "Body too large" },
+          { status: 413, headers: { ...NO_STORE, Connection: "close" } },
+        )
       : json({ ok: false, error: "Invalid JSON" }, { status: 400, headers: NO_STORE });
   }
   try {
