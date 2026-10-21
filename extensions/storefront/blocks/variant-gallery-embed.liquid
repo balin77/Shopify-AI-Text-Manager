@@ -358,7 +358,7 @@
       var data = JSON.parse(el.textContent);
       var id = null;
       try { id = new URL(window.location.href).searchParams.get('variant'); } catch (e) {}
-      if (!id) id = {{ product.selected_or_first_available_variant.id | json }};
+      if (!id) id = {{ product.selected_or_first_available_variant.id | json | replace: '<', '\u003c' }};
       if (id == null) return;
       var imgs = data[String(id)];
       if (!(imgs && imgs.length)) return;
@@ -399,7 +399,7 @@
 <cp-embed-gallery
   id="cp-embed-gallery-{{ block.id }}"
   class="cp-embed-gallery"
-  style="--cp-thumb-size: {{ block.settings.thumbnail_size }}px; display: none;"
+  style="--cp-thumb-size: {{ block.settings.thumbnail_size | default: 80 | plus: 0 }}px; display: none;"
   data-block-id="{{ block.id }}"
   data-native-selector="{{ block.settings.native_gallery_selector | escape }}"
   data-scope-selector="{{ block.settings.scope_selector | escape }}"
