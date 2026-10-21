@@ -112,7 +112,7 @@ describe("downloadImageAsBuffer (worker)", () => {
   });
 
   it("refuses a redirect to another host without requesting it", async () => {
-    const fetchFn = vi.fn(async (url: string) =>
+    const fetchFn = vi.fn(async (url: any) =>
       url === CDN ? res(302, { location: "http://169.254.169.254/latest/meta-data/" }) : res(200, {}, "secret"),
     );
     await expect(downloadImageAsBuffer(CDN, { fetchFn, sleepFn: noSleep })).rejects.toThrow(/not allowed/);
@@ -120,7 +120,7 @@ describe("downloadImageAsBuffer (worker)", () => {
   });
 
   it("follows a redirect that stays on the CDN, relative location included", async () => {
-    const fetchFn = vi.fn(async (url: string) =>
+    const fetchFn = vi.fn(async (url: any) =>
       url === CDN ? res(301, { location: "/s/files/1/0001/files/shirt-2.png" }) : res(200, {}, "moved"),
     );
     const buf = await downloadImageAsBuffer(CDN, { fetchFn, sleepFn: noSleep });

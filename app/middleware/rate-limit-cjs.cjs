@@ -51,16 +51,6 @@ const standardHandler = (req, res) => {
 };
 
 /**
- * Returns true for Shopify webhook requests that carry a valid HMAC header.
- * The actual HMAC verification is done by the webhook handler; here we only
- * gate on header presence so legitimate Shopify bursts are not throttled.
- *
- * @param {import('express').Request} req
- * @returns {boolean}
- */
-const skipVerifiedWebhook = (req) => !!req.headers['x-shopify-hmac-sha256'];
-
-/**
  * General API Rate Limit — 100 requests per minute per IP.
  * Applied as a catch-all to /api/* (excluding explicitly excluded paths in server.js).
  */
@@ -106,8 +96,22 @@ const contentActionRateLimit = rateLimit({
 
 /**
  * Webhook Rate Limit — 1 000 requests per minute per shop domain.
- * Requests from Shopify that carry an HMAC header are skipped entirely;
- * the webhook handler verifies the HMAC, making double-counting unnecessary.
+ *
+ * It used to SKIP every request carrying an `x-shopify-hmac-sha256` header,
+ * on the reasoning that the webhook handler verifies the HMAC. But the skip
+ * checked only that the header was PRESENT, so anyone could bypass the
+ * limiter by sending a junk value — and every such request still reached the
+ * route, read its body and ran the HMAC check. Verifying here would mean
+ * buffering the raw body in express before React Router reads it, so the
+ * limiter applies to every request instead.
+ *
+ * Why that does not throttle legitimate bursts: the key is the SHOP domain,
+ * not the IP (Shopify delivers from a shared pool of addresses, so one IP
+ * carries many shops), and 1 000 per minute per shop is far above what one
+ * shop's admin activity produces. A delivery that is refused anyway gets a
+ * 429, which Shopify RETRIES with back-off — a delay, not a lost event.
+ * Stated residual: a sender that rotates the (unverified) shop header gets a
+ * fresh bucket per value; each such request still fails the HMAC check.
  */
 const webhookRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -116,12 +120,13 @@ const webhookRateLimit = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
   message: 'Too many webhook requests',
-  skip: skipVerifiedWebhook,
   keyGenerator: (req) => {
     // Prefer shop-domain key; fall back to normalised IP so the limiter
-    // still applies when the header is absent (e.g. during load testing).
+    // still applies when the header is absent.
     const shop = req.headers['x-shopify-shop-domain'];
-    return shop ? `shop:${shop}` : normalizedIpKey(req);
+    return typeof shop === 'string' && shop.trim()
+      ? `shop:${shop.trim().toLowerCase()}`
+      : normalizedIpKey(req);
   },
 });
 
