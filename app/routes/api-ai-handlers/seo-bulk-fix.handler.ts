@@ -43,6 +43,7 @@ import { readDataPayload } from "~/utils/data-response";
 // per-TASK budget of this bulk fix (repair-budget.server.ts).
 import { MAX_REPAIR_GROUPS } from "~/services/bulk-editor/retranslate.server";
 import { createRepairBudget, type RepairBudget } from "~/services/translations/repair-budget.server";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
@@ -243,13 +244,16 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
   //
   // altText fans out per image inside the runner and reports its own
   // progress differently — see runAltTextBulkFix.
+  // The run outlives this request: with expiring offline tokens it must not
+  // keep the request's client (offline-admin.server.ts).
+  const taskAdmin = backgroundAdmin(session.shop, admin);
   const runner =
     field === "altText"
       ? runAltTextBulkFix(task.id, {
           db,
           settings,
           shop: session.shop,
-          admin,
+          admin: taskAdmin,
           items,
           foreignLocale: localeResolution.foreignLocale,
           writtenLocale: localeResolution.writtenLocale,
@@ -259,7 +263,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
           db,
           settings,
           shop: session.shop,
-          admin,
+          admin: taskAdmin,
           field,
           problemCode,
           items,
@@ -444,7 +448,7 @@ async function handleFixAllForItem(
     db,
     settings,
     shop: session.shop,
-    admin,
+    admin: backgroundAdmin(session.shop, admin),
     itemId,
     itemType: itemType as AuditType,
     codes: applicableCodes,

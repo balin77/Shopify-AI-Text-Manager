@@ -110,6 +110,47 @@ wird er grundsätzlich nicht ausgeliefert — AUSSER mit dem Test-Schalter unten
 | `ALERT_WEBHOOK_URL` (Web-Dienst) | Derselbe Discord-/Slack-Webhook wie beim DB-Alarm. Die enthaltene KI meldet dorthin: ein Modell oder Schlüssel, der beim Start oder bei der täglichen Prüfung nicht antwortet (und wann es wieder geht), den Wechsel auf den Ausweichanbieter, einen gesperrten Anbieter, das Ausfall-Budget bei 50 / 90 / 100 % und ein Gesamtbudget ab 50 %. Höchstens eine Meldung pro Ursache und Stunde; die Umgebung steht in jeder Meldung. Fehlt er, wird nur geloggt. |
 | `MANAGED_AI_ALLOW_DEV_BUILD` | Nur `"true"` und nur im Dev-Build (Dev-Client-ID, `APP_ENV` ≠ `production`): Managed AI darf dort zum **Testen** laufen. Hebt zwei Regeln auf, die genau diesen Build betreffen: die Sperre des Operator-Keys im Dev-Build und die Regel „zahlt nichts ⇒ nur Schnupperkontingent" (Entwicklungsshops, Test-Abos, Dev-Plan-Override, Trial) — sonst wäre ein „+ KI"-Plan dort nie testbar. Da der Dev-Build keine Billing-API hat, gilt die „+ KI"-Wahl im Planwechsel als Kauf (`AISettings.devForcedManagedAi`), mit einem einmal gesetzten Abrechnungsende, das wie eine echte Verlängerung alle 30 Tage weiterläuft. `validate-env` verweigert den Start, wenn dabei `MANAGED_AI_POOL_MICROS`, `MANAGED_AI_TASTER_POOL_MICROS` oder `MANAGED_AI_FAILOVER_POOL_MICROS` fehlt (und zur Laufzeit bleibt der Schalter ohne alle drei wirkungslos, auch unter `npm run dev`) — jeder Cent hier ist Ausgabe ohne Umsatz. In jedem anderen Build ist die Variable wirkungslos (und `validate-env` warnt). |
 
+### Env-Variablen für ablaufende Offline-Tokens (Shopify „expiring offline access tokens")
+
+Shopify stellt Apps auf **ablaufende Offline-Tokens** um (~1 h gültig, dazu ein
+rotierender Refresh-Token). Die App ist dafür vorbereitet
+([app/utils/offline-admin.server.ts](app/utils/offline-admin.server.ts)): jeder
+Hintergrund-Aufruf (Webhooks, Scheduler, Sweeps, detached Tasks, WebP-Worker)
+holt sich sein Token pro Aufruf, die Library erneuert es kurz vor Ablauf, und
+ein 401 wird einmal mit frisch geladener Session wiederholt. Beides ist per
+Env-Variable geschaltet und **standardmäßig AUS** — ohne die Variablen verhält
+sich die App exakt wie vorher.
+
+| Variable | Bedeutung |
+|---|---|
+| `SHOPIFY_EXPIRING_OFFLINE_TOKENS` | Nur `"true"` schaltet an. Setzt `future.expiringOfflineAccessTokens`: neue Token-Exchanges (Installation, Re-Auth, abgelaufene Session) bekommen ablaufende Offline-Tokens, und alle Langläufer nutzen den sich selbst erneuernden Client statt des Clients ihres Requests. Bestehende, NICHT ablaufende Tokens bleiben unverändert und funktionieren weiter. |
+| `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS` | Nur `"true"`, und **nur wirksam, solange die erste Variable an ist**. Tauscht das bestehende, nicht ablaufende Offline-Token eines Shops gegen ein ablaufendes — lazy, pro Shop, beim nächsten App-Aufruf des Merchants bzw. im nächsten Sync-Zyklus, single-flight, mit 1 h Backoff nach einem Fehler, wirft nie in den Request. Shopify widerruft dabei das alte Token (laut Doku; hier nicht gemessen). |
+
+Beim Start loggt die App `[SHOPIFY.SERVER] Expiring offline tokens: ON|OFF … migration …: ON|OFF`.
+
+**Reihenfolge beim Rollout — nicht abkürzen:**
+
+1. Deploy des Codes (beide Variablen ungesetzt). Nichts ändert sich; prüfen, dass
+   die Startzeile `Expiring offline tokens: OFF` zeigt.
+2. `SHOPIFY_EXPIRING_OFFLINE_TOKENS=true` setzen (erst Development, dann
+   Production). Nur Shops, deren Session neu ausgestellt wird, bekommen
+   ablaufende Tokens.
+3. **Beobachten** — mindestens einige Stunden, besser einen Tag: keine 401 in
+   Webhooks / Sweeps / Tasks, im Log `[OfflineAdmin]`-Zeilen nur als seltene
+   Refreshs, keine `Offline token unavailable`-Fehler. Ein Fehlerbild hier heißt:
+   Variable wieder entfernen — bereits ausgestellte ablaufende Tokens werden
+   dann allerdings NICHT mehr erneuert, betroffene Shops müssen die App einmal
+   öffnen (Token-Exchange stellt ein neues aus).
+4. Erst dann `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS=true` setzen. Danach im Log auf
+   `Migrated offline token to an expiring one` bzw. `Token migration failed`
+   achten. Die Migration ist einseitig — einen migrierten Shop zurück auf ein
+   nicht ablaufendes Token bringt nur ein Re-Install.
+
+Grenze, ehrlich benannt: das Single-Flight um den Refresh gilt pro **Prozess**
+(passt zur EINEN Web-Instanz oben). Bei mehreren Instanzen kann ein Refresh am
+bereits rotierten Refresh-Token scheitern; die App liest dann einmal die
+gespeicherte Session neu, was den Fall meist auffängt, aber nicht garantiert.
+
 ### Env-Variablen des Cron-Service `Db Space Checker`
 
 [scripts/db-alert.mjs](scripts/db-alert.mjs) misst `pg_database_size` + WAL und

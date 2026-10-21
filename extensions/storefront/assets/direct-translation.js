@@ -417,6 +417,76 @@
   // isn't on the Max plan, render a one-line notice instead of silently doing
   // nothing — otherwise the embed feels broken ("I enabled it, why does it
   // not work?"). Customers on the live storefront never see this.
+  // Texts of the theme-editor capture panel and the plan notice, in the
+  // language the preview is showing (`request.locale.iso_code`, the config's
+  // `locale`) — the closest thing to the merchant's language that Liquid can
+  // see. Kept here rather than in the block, because the block counts against
+  // the extension's 100 KiB Liquid budget and this asset does not. Unknown
+  // languages fall back to English.
+  var UI_STRINGS = {
+    de: {
+      title: "ContentPilot — Direktübersetzungen",
+      planGate: "Diese Funktion erfordert den Max-Plan. Im App-Admin auf einen passenden Plan upgraden, dann lädt das Embed automatisch.",
+      hint: "Klicke einen beliebigen Text auf der Seite, um ihn zu erfassen.",
+      codePlaceholder: "Erfassungscode einfügen",
+      codeApply: "Code übernehmen",
+      codeInvalid: "Ungültiger oder abgelaufener Code.",
+      needToken: "Öffne den Erfassungsmodus in ContentPilot unter „Direktübersetzungen“ → „Erfassungsmodus öffnen“, oder füge den dort kopierten Code hier ein.",
+      tokenExpired: "Der Erfassungscode ist abgelaufen oder ungültig. ",
+      source: "Quelle",
+      add: "Zur Übersetzungsliste hinzufügen",
+      addAll: "Hinzufügen und in alle Sprachen übersetzen",
+      sourceEmpty: "Quelle ist leer",
+      saving: "Speichern …",
+      rateLimited: "Zu viele Anfragen — bitte einen Moment warten.",
+      itemLimit: "Die Höchstzahl an Direktübersetzungen ist erreicht.",
+      addedAll: "✓ Hinzugefügt — Übersetzung in alle Sprachen läuft …",
+      added: "✓ Hinzugefügt",
+      saveError: "Fehler beim Speichern",
+    },
+    en: {
+      title: "ContentPilot — Direct translations",
+      planGate: "This feature requires the Max plan. Upgrade to a suitable plan in the app admin, and the embed loads automatically.",
+      hint: "Click any text on the page to capture it.",
+      codePlaceholder: "Paste capture code",
+      codeApply: "Use code",
+      codeInvalid: "Invalid or expired code.",
+      needToken: "Open capture mode in ContentPilot under “Direct translations” → “Open capture mode”, or paste the code copied there.",
+      tokenExpired: "The capture code has expired or is invalid. ",
+      source: "Source",
+      add: "Add to translation list",
+      addAll: "Add and translate into all languages",
+      sourceEmpty: "Source is empty",
+      saving: "Saving …",
+      rateLimited: "Too many requests — please wait a moment.",
+      itemLimit: "The maximum number of direct translations has been reached.",
+      addedAll: "✓ Added — translating into all languages …",
+      added: "✓ Added",
+      saveError: "Could not save",
+    },
+    es: {
+      title: "ContentPilot — Traducciones directas",
+      planGate: "Esta función requiere el plan Max. Cambia a un plan adecuado en el panel de la app y el embed se cargará automáticamente.",
+      hint: "Haz clic en cualquier texto de la página para capturarlo.",
+      codePlaceholder: "Pega el código de captura",
+      codeApply: "Usar código",
+      codeInvalid: "Código no válido o caducado.",
+      needToken: "Abre el modo captura en ContentPilot en «Traducciones directas» → «Abrir modo captura», o pega aquí el código copiado allí.",
+      tokenExpired: "El código de captura ha caducado o no es válido. ",
+      source: "Origen",
+      add: "Añadir a la lista de traducciones",
+      addAll: "Añadir y traducir a todos los idiomas",
+      sourceEmpty: "El origen está vacío",
+      saving: "Guardando …",
+      rateLimited: "Demasiadas solicitudes: espera un momento.",
+      itemLimit: "Se ha alcanzado el número máximo de traducciones directas.",
+      addedAll: "✓ Añadido: traduciendo a todos los idiomas …",
+      added: "✓ Añadido",
+      saveError: "Error al guardar",
+    },
+  };
+  var T = UI_STRINGS[localeKey.split("-")[0]] || UI_STRINGS.en;
+
   function maybeShowPlanGateNotice() {
     if (!designMode || featureAvailable) return;
     if (document.getElementById("contentpilot-plan-gate")) return;
@@ -431,8 +501,8 @@
       "padding:10px 12px", "max-width:320px", "box-sizing:border-box",
     ].join(";");
     notice.innerHTML =
-      '<div style="font-weight:600;margin-bottom:4px">ContentPilot — Direktübersetzungen</div>' +
-      '<div style="opacity:.85">Diese Funktion erfordert den Max-Plan. Im App-Admin auf einen passenden Plan upgraden, dann lädt das Embed automatisch.</div>';
+      '<div style="font-weight:600;margin-bottom:4px">' + T.title + '</div>' +
+      '<div style="opacity:.85">' + T.planGate + '</div>';
     document.body.appendChild(notice);
   }
 
@@ -453,9 +523,9 @@
     // Always-on selection: no start step. Clicking any text on the page captures
     // it. The merchant turns the whole tool off via the embed checkbox.
     panel.innerHTML =
-      '<div style="font-weight:600;margin-bottom:6px">ContentPilot — Direktübersetzungen</div>' +
+      '<div style="font-weight:600;margin-bottom:6px">' + T.title + '</div>' +
       '<div id="cp-cap-token" style="display:none"></div>' +
-      '<div id="cp-cap-hint" style="opacity:.7;font-size:12px">Klicke einen beliebigen Text auf der Seite, um ihn zu erfassen.</div>' +
+      '<div id="cp-cap-hint" style="opacity:.7;font-size:12px">' + T.hint + '</div>' +
       '<div id="cp-cap-form" style="display:none;margin-top:10px"></div>';
 
     document.body.appendChild(panel);
@@ -477,15 +547,15 @@
     function showTokenPrompt(message) {
       tokenEl.innerHTML =
         '<div style="opacity:.85;font-size:12px">' + escapeHtml(message) + '</div>' +
-        '<input id="cp-cap-code" type="text" autocomplete="off" spellcheck="false" placeholder="Erfassungscode einfügen" ' +
+        '<input id="cp-cap-code" type="text" autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(T.codePlaceholder) + '" ' +
         'style="width:100%;box-sizing:border-box;margin-top:8px;border-radius:6px;border:0;padding:6px;color:#111">' +
-        btn("cp-cap-code-ok", "Code übernehmen", true) +
+        btn("cp-cap-code-ok", T.codeApply, true) +
         '<div id="cp-cap-code-status" style="margin-top:6px;font-size:12px;opacity:.85"></div>';
       setCaptureActive(false);
       tokenEl.querySelector("#cp-cap-code-ok").addEventListener("click", function () {
         var code = String(tokenEl.querySelector("#cp-cap-code").value || "").trim();
         if (!usableToken(code)) {
-          tokenEl.querySelector("#cp-cap-code-status").textContent = "Ungültiger oder abgelaufener Code.";
+          tokenEl.querySelector("#cp-cap-code-status").textContent = T.codeInvalid;
           return;
         }
         captureToken = code;
@@ -494,8 +564,7 @@
       });
     }
 
-    var NEED_TOKEN_TEXT =
-      "Öffne den Erfassungsmodus in ContentPilot unter „Direktübersetzungen“ → „Erfassungsmodus öffnen“, oder füge den dort kopierten Code hier ein.";
+    var NEED_TOKEN_TEXT = T.needToken;
 
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, function (c) {
@@ -512,39 +581,39 @@
       hint.style.display = "none";
       formEl.style.display = "block";
       formEl.innerHTML =
-        '<label style="display:block;opacity:.7;margin-bottom:4px">Quelle</label>' +
+        '<label style="display:block;opacity:.7;margin-bottom:4px">' + T.source + '</label>' +
         '<textarea id="cp-cap-src" rows="2" style="width:100%;box-sizing:border-box;border-radius:6px;border:0;padding:6px;color:#111">' + escapeHtml(source) + "</textarea>" +
-        btn("cp-cap-add", "Zur Übersetzungsliste hinzufügen", true) +
-        btn("cp-cap-add-all", "Hinzufügen und in alle Sprachen übersetzen", false) +
+        btn("cp-cap-add", T.add, true) +
+        btn("cp-cap-add-all", T.addAll, false) +
         '<div id="cp-cap-status" style="margin-top:8px;font-size:12px;opacity:.85"></div>';
 
       var statusEl = formEl.querySelector("#cp-cap-status");
 
       function run(translateAll) {
         var src = formEl.querySelector("#cp-cap-src").value;
-        if (!normalize(src)) { statusEl.textContent = "Quelle ist leer"; return; }
-        statusEl.textContent = "Speichern …";
+        if (!normalize(src)) { statusEl.textContent = T.sourceEmpty; return; }
+        statusEl.textContent = T.saving;
         postAdd(src, translateAll)
           .then(function (res) {
             if (res && res.tokenRejected) {
               captureToken = null;
               clearToken();
-              showTokenPrompt("Der Erfassungscode ist abgelaufen oder ungültig. " + NEED_TOKEN_TEXT);
+              showTokenPrompt(T.tokenExpired + NEED_TOKEN_TEXT);
               return;
             }
             if (res && res.rateLimited) {
-              statusEl.textContent = "Zu viele Anfragen — bitte einen Moment warten.";
+              statusEl.textContent = T.rateLimited;
               return;
             }
             if (res && res.error === "itemLimitReached") {
-              statusEl.textContent = "Die Höchstzahl an Direktübersetzungen ist erreicht.";
+              statusEl.textContent = T.itemLimit;
               return;
             }
             statusEl.textContent = res && res.ok
-              ? (translateAll ? "✓ Hinzugefügt — Übersetzung in alle Sprachen läuft …" : "✓ Hinzugefügt")
-              : "Fehler beim Speichern";
+              ? (translateAll ? T.addedAll : T.added)
+              : T.saveError;
           })
-          .catch(function () { statusEl.textContent = "Fehler beim Speichern"; });
+          .catch(function () { statusEl.textContent = T.saveError; });
       }
 
       formEl.querySelector("#cp-cap-add").addEventListener("click", function () { run(false); });

@@ -33,6 +33,7 @@ import { refundImageOperations } from "./image-op-refund.js";
 import { rekeyLocalizedMediaAfterConversion } from "./localized-media-rekey.js";
 import { isAllowedWebpSourceUrl, webpSourceHostForMessage } from "./app/config/webp-source-url.js";
 import { adminGraphqlUrl } from "./app/config/admin-api-version.js";
+import { resolveShopAccessToken } from "./app/utils/shop-access-token.js";
 import {
   WEBP_FAILURE_LIST_MAX,
   WEBP_FAILURE_MESSAGE_MAX,
@@ -678,22 +679,15 @@ export class WebPProcessorService {
       const { buffer, filename } = await convertToWebP(sourceBuffer, sourceUrl);
       await db.task.update({ where: { id: task.id }, data: { progress: 50 } });
 
-      // 3. Get Shopify session for this shop
-      const session = await db.session.findFirst({
-        where: { shop: task.shop, isOnline: false },
-        orderBy: { lastActivityAt: "desc" },
-      });
-
-      if (!session?.accessToken) {
-        await this.failTask(task, "No valid session found for shop");
+      // 3. Get the shop's OFFLINE token — through the app (refreshed when it is
+      // an expiring token) when the bundle has registered its hook, otherwise
+      // read directly as before (app/utils/shop-access-token.js).
+      const resolved = await resolveShopAccessToken(task.shop, { db, decryptToken, logPrefix: "[WebPProcessor]" });
+      if (!resolved.token) {
+        await this.failTask(task, resolved.reason);
         return;
       }
-
-      const accessToken = decryptToken(session.accessToken);
-      if (!accessToken) {
-        await this.failTask(task, "Failed to decrypt session access token");
-        return;
-      }
+      const accessToken = resolved.token;
 
       // Use altText passed from the client; fall back to DB lookup if not present
       let originalAltText = taskAltText ?? null;

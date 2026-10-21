@@ -125,6 +125,7 @@ export function __resetOfflineAdminForTests(): void {
   inflight.clear();
   migrationsInFlight.clear();
   migrationBackoff.clear();
+  migrationSettled.clear();
   deps = null;
 }
 
@@ -149,6 +150,17 @@ async function acquireOnce(shop: string): Promise<OfflineAdminContext> {
     const ctx = await unauthenticatedAdmin(shop);
     if (!ctx?.session?.accessToken) {
       throw new OfflineAdminUnavailableError(shop, "no_token", `Offline session for ${shop} has no access token`);
+    }
+    // The library only refreshes a session that CARRIES a refresh token; an
+    // expired one without it comes back as it is. Sending it would be a 401
+    // that reads like a revoked install, so it is reported as what it is.
+    const expires = ctx.session.expires;
+    if (expires && expires.getTime() <= Date.now()) {
+      throw new OfflineAdminUnavailableError(
+        shop,
+        "refresh_failed",
+        `Offline token for ${shop} has expired and could not be refreshed (no refresh token)`,
+      );
     }
     return ctx;
   } catch (error) {
@@ -297,6 +309,8 @@ export type MigrationOutcome =
 
 const migrationsInFlight = new Map<string, Promise<MigrationOutcome>>();
 const migrationBackoff = new Map<string, number>();
+/** Shops known to hold an expiring token already — not asked again this process. */
+const migrationSettled = new Set<string>();
 /** After a failed migration the shop is not tried again for this long. */
 export const MIGRATION_BACKOFF_MS = 60 * 60 * 1000;
 
@@ -312,6 +326,7 @@ export const MIGRATION_BACKOFF_MS = 60 * 60 * 1000;
  */
 export async function maybeMigrateToExpiringToken(shop: string): Promise<MigrationOutcome> {
   if (!migrateToExpiringTokensEnabled()) return "disabled";
+  if (migrationSettled.has(shop)) return "not_needed";
   const running = migrationsInFlight.get(shop);
   if (running) return running;
   const failedAt = migrationBackoff.get(shop);
@@ -322,7 +337,10 @@ export async function maybeMigrateToExpiringToken(shop: string): Promise<Migrati
       const d = await resolveDeps();
       const current = await d.loadOfflineSession(shop);
       if (!current?.accessToken) return "no_session";
-      if (current.expires) return "not_needed";
+      if (current.expires) {
+        migrationSettled.add(shop);
+        return "not_needed";
+      }
 
       const { session } = await d.migrateToExpiringToken({
         shop,
@@ -345,6 +363,7 @@ export async function maybeMigrateToExpiringToken(shop: string): Promise<Migrati
       }
       invalidateOfflineAdmin(shop);
       migrationBackoff.delete(shop);
+      migrationSettled.add(shop);
       logger.info("[OfflineAdmin] Migrated offline token to an expiring one", {
         shop,
         expires: session.expires.toISOString(),
