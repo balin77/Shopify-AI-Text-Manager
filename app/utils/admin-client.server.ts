@@ -109,7 +109,7 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
       if (first.status !== 401) return checkOk(first);
       logger.warn("[AdminClient] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);
-      const fresh = (await getOfflineAdmin(shop, { forceReload: true })).session.accessToken!;
+      const fresh = (await getOfflineAdmin(shop, { forceReload: true, refusedToken: token })).session.accessToken!;
       return checkOk(await rawGraphql(shop, fresh, query, options));
     },
   });

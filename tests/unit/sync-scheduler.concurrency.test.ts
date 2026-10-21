@@ -31,6 +31,8 @@ const h = vi.hoisted(() => {
     syncAll: vi.fn(),
     reconcile: vi.fn().mockResolvedValue(undefined),
     migrate: vi.fn().mockResolvedValue('disabled'),
+    mayNeed: vi.fn().mockReturnValue(true),
+    lastActivity: vi.fn(),
     get resolveSync() {
       return resolveSync;
     },
@@ -45,6 +47,7 @@ vi.mock('~/db.server', () => ({
 }));
 vi.mock('~/middleware/activity-tracker.middleware', () => ({
   isShopActive: (...a: unknown[]) => h.isShopActive(...a),
+  getLastActivity: (...a: unknown[]) => h.lastActivity(...a),
 }));
 vi.mock('~/services/background-sync.service', () => ({
   BackgroundSyncService: class {
@@ -60,10 +63,14 @@ vi.mock('~/utils/logger.server', () => ({
 
 vi.mock('~/utils/offline-admin.server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/utils/offline-admin.server')>();
-  return { ...actual, maybeMigrateToExpiringToken: (...a: unknown[]) => h.migrate(...a) };
+  return {
+    ...actual,
+    maybeMigrateToExpiringToken: (...a: unknown[]) => h.migrate(...a),
+    migrationMayBeNeeded: (...a: unknown[]) => h.mayNeed(...a),
+  };
 });
 
-import { MIGRATION_SETTLE_MS, syncScheduler } from '~/services/sync-scheduler.service';
+import { MIGRATION_QUIET_MS, MIGRATION_SETTLE_MS, syncScheduler } from '~/services/sync-scheduler.service';
 
 const shop = 'concurrency.myshopify.com';
 const admin = {} as never;
@@ -120,6 +127,9 @@ beforeEach(async () => {
   // Incremental path: marker set.
   h.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: new Date() });
   h.isShopActive.mockResolvedValue(true);
+  h.mayNeed.mockReturnValue(true);
+  // Default: the merchant has been quiet long enough.
+  h.lastActivity.mockResolvedValue(new Date(Date.now() - MIGRATION_QUIET_MS - 1000));
   // syncAll stays pending until we resolve it.
   h.syncAll.mockImplementation(
     () => new Promise((res) => { h.resolveSync = res as typeof h.resolveSync; }),
@@ -182,15 +192,48 @@ describe('runSyncCycle — token migration trigger', () => {
     expect(h.migrate).not.toHaveBeenCalled();
   });
 
-  it('migrates from a later background cycle', async () => {
-    const entry = makeEntry();
-    entry.startedAt = new Date(Date.now() - MIGRATION_SETTLE_MS - 1000);
-    sched.activeTimers.set(shop, entry);
+  async function runSettledCycle(withEntry = true) {
+    if (withEntry) {
+      const entry = makeEntry();
+      entry.startedAt = new Date(Date.now() - MIGRATION_SETTLE_MS - 1000);
+      sched.activeTimers.set(shop, entry);
+    }
     const p = sched.runSyncCycle(shop, admin);
     await waitForSyncAll();
     h.resolveSync({ total: 0, duration: 0 });
     await p;
+  }
+
+  it('migrates from a later background cycle once the shop has been quiet', async () => {
+    await runSettledCycle();
+    expect(h.lastActivity).toHaveBeenCalledWith(shop);
     expect(h.migrate).toHaveBeenCalledWith(shop);
+  });
+
+  it('does not migrate while the merchant made a request within the quiet window', async () => {
+    h.lastActivity.mockResolvedValue(new Date(Date.now() - 5000));
+    await runSettledCycle();
+    expect(h.migrate).not.toHaveBeenCalled();
+  });
+
+  it('does not migrate when the last activity is unknown (failed lookup)', async () => {
+    h.lastActivity.mockResolvedValue(null);
+    await runSettledCycle();
+    expect(h.migrate).not.toHaveBeenCalled();
+  });
+
+  it('does not migrate from a cycle with NO timer entry (stopped scheduler)', async () => {
+    sched.activeTimers.clear();
+    await runSettledCycle(false);
+    expect(h.migrate).not.toHaveBeenCalled();
+    expect(h.lastActivity).not.toHaveBeenCalled();
+  });
+
+  it('skips the activity lookup when no migration can be needed', async () => {
+    h.mayNeed.mockReturnValue(false);
+    await runSettledCycle();
+    expect(h.lastActivity).not.toHaveBeenCalled();
+    expect(h.migrate).not.toHaveBeenCalled();
   });
 });
 

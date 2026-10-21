@@ -34,6 +34,7 @@ import {
   MAX_CAPTURE_SOURCE_LENGTH,
   MAX_CAPTURE_TARGET_LENGTH,
 } from "../services/direct-translation.server";
+import { MAX_DIRECT_ADD_BODY_BYTES } from "../services/direct-translation-limits.shared";
 import { translateItemsIntoAllLocales } from "../services/direct-translation-ai.server";
 import { verifyCaptureToken } from "../services/direct-capture-token.server";
 import { isValidLocale } from "../utils/validation";
@@ -41,16 +42,8 @@ import { declaresBodyLargerThan, readBodyCapped } from "../utils/read-body-cappe
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
-/**
- * Hard cap on the request body, enforced BEFORE it is parsed. The route is
- * reachable by any storefront visitor and the token check needs the parsed
- * body, so without a cap an anonymous caller could make the server buffer an
- * arbitrarily large body. Derived from the field caps rather than a round
- * number: 1500 + 5000 characters at up to 4 UTF-8 bytes each (a Japanese or
- * emoji translation is 3-4 bytes per character) plus JSON framing and the
- * token. 16 KB would refuse a legitimate long CJK translation.
- */
-export const MAX_DIRECT_ADD_BODY_BYTES = 32 * 1024;
+// Body cap: see MAX_DIRECT_ADD_BODY_BYTES in direct-translation-limits.shared.ts
+// (kept out of this file: a route may export only its route values).
 
 export async function action({ request }: ActionFunctionArgs) {
   // A declared oversize body is refused before anything else runs.

@@ -9,13 +9,22 @@
 
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { BackgroundSyncService } from "./background-sync.service";
-import { isShopActive } from "../middleware/activity-tracker.middleware";
+import { getLastActivity, isShopActive } from "../middleware/activity-tracker.middleware";
 import { logger } from "~/utils/logger.server";
-import { backgroundAdmin, createRefreshingAdmin, maybeMigrateToExpiringToken } from "~/utils/offline-admin.server";
+import { backgroundAdmin, createRefreshingAdmin, maybeMigrateToExpiringToken, migrationMayBeNeeded } from "~/utils/offline-admin.server";
 import { expiringOfflineTokensEnabled } from "~/utils/offline-token-flags.server";
 
 /** The scheduler's first minute is left alone by the token migration (see runSyncCycle). */
 export const MIGRATION_SETTLE_MS = 60 * 1000;
+/**
+ * ...and it only migrates while the shop has made no authenticated request for
+ * this long (`Session.lastActivityAt`, stamped by every `authenticate.admin`).
+ * The scheduler runs only while the merchant is active, so without this gate a
+ * migration would land in the middle of their clicking, and a request in
+ * flight then holds the revoked token and fails (see
+ * maybeMigrateToExpiringToken).
+ */
+export const MIGRATION_QUIET_MS = 20 * 1000;
 
 interface SyncTimer {
   timer: NodeJS.Timeout;
@@ -167,10 +176,21 @@ class SyncSchedulerService {
       // still holds the old token (see maybeMigrateToExpiringToken). Not on
       // the cycles of the first minute either: the scheduler is started BY a
       // request, and the initial cycle fires ~5s later, while that request may
-      // still be using the old token. A shop is therefore migrated once its
-      // scheduler has run for a minute, i.e. after the merchant opened the app.
-      if (!syncTimer || Date.now() - syncTimer.startedAt.getTime() >= MIGRATION_SETTLE_MS) {
-        void maybeMigrateToExpiringToken(shop);
+      // still be using the old token. And only in a QUIET moment: the
+      // scheduler runs only while the merchant is active, so a migration at
+      // any later cycle could still collide with a request in flight — it
+      // waits until the shop has made no authenticated request for
+      // MIGRATION_QUIET_MS. No timer entry (a cycle of a stopped scheduler) or
+      // an unknown last activity (failed lookup) migrates nothing.
+      if (
+        syncTimer &&
+        Date.now() - syncTimer.startedAt.getTime() >= MIGRATION_SETTLE_MS &&
+        migrationMayBeNeeded(shop)
+      ) {
+        const lastActivity = await getLastActivity(shop);
+        if (lastActivity && Date.now() - lastActivity.getTime() >= MIGRATION_QUIET_MS) {
+          void maybeMigrateToExpiringToken(shop);
+        }
       }
 
       // Branch on the "initial full sync completed" marker:

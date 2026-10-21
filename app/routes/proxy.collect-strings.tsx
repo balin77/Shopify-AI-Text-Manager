@@ -18,26 +18,18 @@ import {
   recordCandidates,
   isDirectTranslationsAvailable,
   collectStringsRateLimiter,
-  MAX_CANDIDATES_PER_REQUEST,
 } from "../services/direct-translation.server";
+import {
+  MAX_CANDIDATES_PER_REQUEST,
+  MAX_COLLECT_STRINGS_BODY_BYTES,
+} from "../services/direct-translation-limits.shared";
 import { isValidLocale } from "../utils/validation";
 import { declaresBodyLargerThan, readBodyCapped } from "../utils/read-body-capped.server";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
-/** Longest candidate the storefront collector reports (`isCollectible` in direct-translation.js). */
-const MAX_RAW_CANDIDATE_CHARS = 1500;
-
-/**
- * Hard cap on the request body, enforced BEFORE it is parsed — the route is
- * reachable by any storefront visitor. Derived from what a legitimate beacon
- * can carry: MAX_CANDIDATES_PER_REQUEST candidates of up to 1500 characters
- * (the collector's own `isCollectible` limit) at up to 4 UTF-8 bytes each,
- * plus per-item JSON framing and the locale. The storefront script sends at
- * most 50 items, so this leaves a 2x margin over a real payload.
- */
-export const MAX_COLLECT_STRINGS_BODY_BYTES =
-  MAX_CANDIDATES_PER_REQUEST * (MAX_RAW_CANDIDATE_CHARS * 4 + 64) + 4096;
+// Body cap: see MAX_COLLECT_STRINGS_BODY_BYTES in direct-translation-limits.shared.ts
+// (kept out of this file: a route may export only its route values).
 
 export async function action({ request }: ActionFunctionArgs) {
   // A declared oversize body is refused before anything else runs.

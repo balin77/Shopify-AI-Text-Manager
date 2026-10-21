@@ -22,9 +22,10 @@ const dbStub = {};
 vi.mock("~/db.server", () => ({ db: dbStub, default: dbStub }));
 vi.mock("../../app/db.server", () => ({ db: dbStub, default: dbStub }));
 
-const { action, MAX_COLLECT_STRINGS_BODY_BYTES } = await import("../../app/routes/proxy.collect-strings");
-const { collectStringsRateLimiter, MAX_CANDIDATES_PER_REQUEST } = await import(
-  "../../app/services/direct-translation.server"
+const { action } = await import("../../app/routes/proxy.collect-strings");
+const { collectStringsRateLimiter } = await import("../../app/services/direct-translation.server");
+const { MAX_COLLECT_STRINGS_BODY_BYTES, MAX_CANDIDATES_PER_REQUEST } = await import(
+  "../../app/services/direct-translation-limits.shared"
 );
 
 const SHOP = "test.myshopify.com";

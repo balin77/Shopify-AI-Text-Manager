@@ -25,6 +25,7 @@ import {
   isUnauthorizedError,
   markSelfRefreshingAdminClient,
   maybeMigrateToExpiringToken,
+  migrationMayBeNeeded,
   OfflineAdminUnavailableError,
   registerShopAccessTokenHook,
   type OfflineAdminDeps,
@@ -181,6 +182,37 @@ describe("forced reload and invalidation", () => {
     expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(2);
   });
 
+  it("a second wave of 401s joins a running acquisition that returns a DIFFERENT token than the refused one", async () => {
+    let release!: (v: unknown) => void;
+    const running = new Promise((r) => (release = r)).then(() => adminFor("fresh"));
+    const d = deps({
+      unauthenticatedAdmin: vi.fn().mockReturnValueOnce(running).mockResolvedValueOnce(adminFor("extra")),
+    });
+    configureOfflineAdmin(d);
+    // First wave's fresh acquisition is out...
+    const firstWave = getOfflineAdmin(SHOP);
+    // ...when a second caller's 401 on the OLD token arrives.
+    const secondWave = getOfflineAdmin(SHOP, { forceReload: true, refusedToken: "old" });
+    release(undefined);
+    expect((await firstWave).session.accessToken).toBe("fresh");
+    expect((await secondWave).session.accessToken).toBe("fresh");
+    expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(1);
+  });
+
+  it("a running acquisition that returns the REFUSED token is not reused", async () => {
+    let release!: (v: unknown) => void;
+    const running = new Promise((r) => (release = r)).then(() => adminFor("old"));
+    const d = deps({
+      unauthenticatedAdmin: vi.fn().mockReturnValueOnce(running).mockResolvedValueOnce(adminFor("new")),
+    });
+    configureOfflineAdmin(d);
+    void getOfflineAdmin(SHOP);
+    const forced = getOfflineAdmin(SHOP, { forceReload: true, refusedToken: "old" });
+    release(undefined);
+    expect((await forced).session.accessToken).toBe("new");
+    expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(2);
+  });
+
   it("invalidation drops the cache, and an acquisition that was out does not refill it", async () => {
     let release!: (v: unknown) => void;
     const slow = new Promise((r) => (release = r)).then(() => adminFor("before-reinstall"));
@@ -299,6 +331,7 @@ describe("maybeMigrateToExpiringToken", () => {
     expect(await maybeMigrateToExpiringToken(SHOP)).toBe("disabled");
     expect(d.loadOfflineSession).not.toHaveBeenCalled();
     expect(d.migrateToExpiringToken).not.toHaveBeenCalled();
+    expect(migrationMayBeNeeded(SHOP)).toBe(false);
   });
 
   describe("with both switches on", () => {
@@ -334,6 +367,21 @@ describe("maybeMigrateToExpiringToken", () => {
       expect(await maybeMigrateToExpiringToken(SHOP)).toBe("backoff");
       expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(1);
       expect(d.storeSession).not.toHaveBeenCalled();
+    });
+
+    it("migrationMayBeNeeded answers false once settled, while running and in backoff", async () => {
+      const d = deps();
+      configureOfflineAdmin(d);
+      expect(migrationMayBeNeeded(SHOP)).toBe(true);
+      const p = maybeMigrateToExpiringToken(SHOP);
+      expect(migrationMayBeNeeded(SHOP)).toBe(false); // in flight
+      expect(await p).toBe("migrated");
+      expect(migrationMayBeNeeded(SHOP)).toBe(false); // settled
+
+      __resetOfflineAdminForTests();
+      configureOfflineAdmin(deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(new Error("nope"))) }));
+      expect(await maybeMigrateToExpiringToken(SHOP)).toBe("failed");
+      expect(migrationMayBeNeeded(SHOP)).toBe(false); // backoff
     });
 
     it("does not store an exchange that came back without an expiry", async () => {

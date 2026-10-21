@@ -76,7 +76,7 @@ describe("createAdminClientFromShop", () => {
     expect(tokenSent(0)).toBe("old");
     expect(tokenSent(1)).toBe("new");
     expect(h.invalidateOfflineAdmin).toHaveBeenCalledWith(SHOP);
-    expect(h.getOfflineAdmin).toHaveBeenLastCalledWith(SHOP, { forceReload: true });
+    expect(h.getOfflineAdmin).toHaveBeenLastCalledWith(SHOP, { forceReload: true, refusedToken: "old" });
   });
 
   it("still throws on a non-2xx (unchanged contract)", async () => {

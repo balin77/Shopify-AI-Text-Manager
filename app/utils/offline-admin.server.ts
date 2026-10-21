@@ -195,7 +195,7 @@ async function acquireOnce(shop: string): Promise<OfflineAdminContext> {
  */
 export async function getOfflineAdmin(
   shop: string,
-  options: { forceReload?: boolean } = {},
+  options: { forceReload?: boolean; refusedToken?: string } = {},
 ): Promise<OfflineAdminContext> {
   if (!options.forceReload) {
     const cached = cache.get(shop);
@@ -209,9 +209,22 @@ export async function getOfflineAdmin(
   // refused). Let it settle, then join or start one that began AFTER it —
   // still single-flight: every forced caller waiting on the same old
   // acquisition joins the one fresh acquisition the first of them starts.
+  //
+  // With `refusedToken` (the token the 401 answered), a running acquisition is
+  // judged by what it RETURNS instead of when it started: one that hands back a
+  // DIFFERENT token is newer than the refusal and is used as it is — so a
+  // second wave of 401s, arriving while the first wave's fresh acquisition is
+  // still out, joins it rather than reading storage once more.
   const running = inflight.get(shop);
   if (running) {
-    await running.catch(() => undefined);
+    const result = await running.catch(() => undefined);
+    if (
+      options.refusedToken !== undefined &&
+      result?.session.accessToken &&
+      result.session.accessToken !== options.refusedToken
+    ) {
+      return result;
+    }
     const next = inflight.get(shop);
     if (next && next !== running) return next;
   }
@@ -287,14 +300,17 @@ export function isUnauthorizedError(error: unknown): boolean {
  */
 export function createRefreshingAdmin(shop: string): AdminApiContext {
   const graphql = async (query: unknown, options?: unknown) => {
-    const { admin } = await getOfflineAdmin(shop);
+    const { admin, session } = await getOfflineAdmin(shop);
     try {
       return await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
     } catch (error) {
       if (!isUnauthorizedError(error)) throw error;
       logger.warn("[OfflineAdmin] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);
-      const { admin: fresh } = await getOfflineAdmin(shop, { forceReload: true });
+      const { admin: fresh } = await getOfflineAdmin(shop, {
+        forceReload: true,
+        refusedToken: session.accessToken,
+      });
       return (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
     }
   };
@@ -370,6 +386,20 @@ const migrationSettled = new Set<string>();
 export const MIGRATION_BACKOFF_MS = 60 * 60 * 1000;
 
 /**
+ * Could `maybeMigrateToExpiringToken(shop)` do anything right now? Cheap and
+ * synchronous: lets the scheduler skip its activity lookup for a shop that is
+ * already migrated, backed off, being migrated, or with the switches off.
+ */
+export function migrationMayBeNeeded(shop: string): boolean {
+  if (!migrateToExpiringTokensEnabled()) return false;
+  if (migrationSettled.has(shop)) return false;
+  if (migrationsInFlight.has(shop)) return false;
+  const failedAt = migrationBackoff.get(shop);
+  if (failedAt !== undefined && Date.now() - failedAt < MIGRATION_BACKOFF_MS) return false;
+  return true;
+}
+
+/**
  * Exchange `shop`'s non-expiring offline token for an expiring one, once.
  * Gated on BOTH env switches (default: nothing happens). Single-flight per
  * shop, backed off after a failure, and it never throws — callers fire it from
@@ -386,11 +416,20 @@ export const MIGRATION_BACKOFF_MS = 60 * 60 * 1000;
  * migration stored the new pair, would overwrite it. Firing it from the request
  * itself made that collision the common case. A shop is therefore migrated when
  * its scheduler runs (i.e. after the merchant has opened the app); a shop that
- * never opens it keeps its non-expiring token, which keeps working. Residual:
- * a merchant request in flight at the moment a scheduler cycle migrates can
- * still hit that collision — it self-heals, because the 401 answer makes App
- * Bridge retry with a fresh session token and token exchange recreates the
- * session, but background calls fail (`no_token`) until that happens.
+ * never opens it keeps its non-expiring token, which keeps working. The
+ * scheduler only runs while the merchant is active, so it waits for a QUIET
+ * moment as well (no authenticated request of the shop for
+ * `MIGRATION_QUIET_MS`, sync-scheduler.service.ts) before it calls this.
+ *
+ * Residual, stated: a request that is still in flight at the moment of the
+ * migration (one that authenticated before the quiet window began and runs
+ * longer than it, or one that races the exchange) holds the revoked token. Its
+ * next Admin call gets a 401, the library stores its OLD session with
+ * `accessToken: undefined` over the migrated pair and answers with a bare 401
+ * that carries NO retry header (a document request is bounced instead) — so
+ * THAT request FAILS for the merchant; it is not retried. The NEXT request
+ * finds a session without a token and token exchange recreates it; background
+ * calls fail (`no_token`) until that happens.
  */
 export async function maybeMigrateToExpiringToken(shop: string): Promise<MigrationOutcome> {
   if (!migrateToExpiringTokensEnabled()) return "disabled";

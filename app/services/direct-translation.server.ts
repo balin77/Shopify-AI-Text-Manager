@@ -17,6 +17,9 @@
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { createShopRateLimiter } from "../utils/shop-rate-limiter.server";
+import { MAX_CANDIDATES_PER_REQUEST } from "./direct-translation-limits.shared";
+
+export { MAX_CANDIDATES_PER_REQUEST };
 
 /** Collapse whitespace + trim so rendered DOM text matches stored sources. */
 export function normalizeSource(text: string): string {
@@ -57,8 +60,6 @@ export async function isDirectTranslationsAvailable(
   return meetsPlan(plan, "max");
 }
 
-/** Max candidate strings accepted per collect request (defense against abuse). */
-export const MAX_CANDIDATES_PER_REQUEST = 100;
 /** Max distinct candidate rows kept per shop (oldest-untouched pruned). */
 export const MAX_CANDIDATES_PER_SHOP = 1000;
 /** Max source strings translated per AI prompt (keeps prompts within limits). */

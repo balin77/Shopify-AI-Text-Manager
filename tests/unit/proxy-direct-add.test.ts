@@ -31,7 +31,7 @@ vi.mock("../../app/services/direct-translation-ai.server", () => ({ translateIte
 
 const { action } = await import("../../app/routes/proxy.direct-add");
 const { mintCaptureToken } = await import("../../app/services/direct-capture-token.server");
-const { MAX_DIRECT_ADD_BODY_BYTES } = await import("../../app/routes/proxy.direct-add");
+const { MAX_DIRECT_ADD_BODY_BYTES } = await import("../../app/services/direct-translation-limits.shared");
 const { directAddRateLimiter, MAX_ITEMS_PER_SHOP } = await import("../../app/services/direct-translation.server");
 
 const SHOP = "test.myshopify.com";
