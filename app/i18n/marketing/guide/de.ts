@@ -76,6 +76,7 @@ export const guideDe: GuideCopy = {
           heading: "Ihr eigener Schlüssel",
           paragraphs: [
             "ContentPilot AI schreibt mit dem KI-Anbieter, den Sie verbinden: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok oder HuggingFace. Sie hinterlegen dafür Ihren eigenen API-Schlüssel — die Kosten und die Wahl des Modells bleiben damit bei Ihnen.",
+            "Ein gespeicherter Schlüssel wird aus Sicherheitsgründen nie wieder angezeigt: Das Feld bleibt leer und zeigt nur „Gespeichert“ mit den letzten vier Zeichen, damit Sie den Schlüssel wiedererkennen. Lassen Sie das Feld leer, bleibt der Schlüssel erhalten; tippen Sie einen neuen ein, ersetzt er den alten. Zum Löschen klicken Sie „Schlüssel entfernen“ und speichern.",
           ],
           steps: [
             "Bei einem Anbieter ein Konto anlegen und einen API-Schlüssel erzeugen.",
@@ -557,6 +558,13 @@ export const guideDe: GuideCopy = {
             "Unter Inhalte → Direktübersetzungen das Einsammeln einschalten und speichern.",
             "Die Storefront besuchen — die gefundenen Texte erscheinen danach in der Liste.",
             "Texte übersetzen, einzeln oder per KI, und speichern.",
+          ],
+        },
+        {
+          heading: "Texte per Klick erfassen",
+          paragraphs: [
+            "Statt Texte abzutippen, können Sie sie im Theme-Editor anklicken. Klicken Sie dazu unter Inhalte → Direktübersetzungen auf „Erfassungsmodus öffnen“. Der Theme-Editor öffnet sich, und ein Klick auf einen Text in der Vorschau übernimmt ihn in die Liste — auf Wunsch gleich in alle Sprachen übersetzt.",
+            "Der Erfassungsmodus gilt 2 Stunden und endet, wenn Sie den Theme-Editor schließen; danach öffnen Sie ihn in der App erneut. Fragt das Erfassungsfenster im Theme-Editor nach einem Code, kopieren Sie ihn in der App mit „Erfassungscode anzeigen“ und fügen Sie ihn dort ein — das funktioniert immer, auch wenn sich der Erfassungsmodus beim Öffnen nicht von selbst einschaltet. Geben Sie diesen Code nicht weiter. Besucher Ihres Shops sehen vom Erfassungsmodus nichts.",
           ],
         },
       ],

@@ -86,6 +86,7 @@ import "../styles/content-editor-global.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale, ContentImage } from "../types/content-editor.types";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
+import { appFetch } from "../utils/app-fetch";
 
 interface UnifiedContentEditorProps {
   /** Configuration for this content type */
@@ -545,7 +546,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     setIsDiscovering(true);
     setSyncFailure(null);
     try {
-      const res = await fetch(endpoint, { method: "POST" });
+      const res = await appFetch(endpoint, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json().catch(() => null)) as
         | {

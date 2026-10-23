@@ -36,6 +36,7 @@ import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
 import { LocalizedMediaProvider } from "~/components/localized-images/LocalizedMediaContext";
+import { appFetch } from "../utils/app-fetch";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -554,6 +555,7 @@ export default function ProductsPage() {
       optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
       optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
       optionWarning_optionLastOne: t.products.optionWarningLastOne,
+      optionWarning_metafieldValueBlank: t.products.metafieldWarningValueBlank,
     },
   });
 
@@ -626,7 +628,7 @@ export default function ProductsPage() {
     }
     const delays = [10000, 15000, 30000, 45000, 60000, 60000, 60000, 60000];
     try {
-      const r = await fetch("/api/refresh-3d-previews", {
+      const r = await appFetch("/api/refresh-3d-previews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, pendingModels }),

@@ -39,6 +39,7 @@ import { useCommerceReloadNonce, useRegisterCommerceSave } from "./CommerceSaveC
 import { groupPublications } from "../services/commerce-sync.shared";
 import { parseMoney } from "../services/bulk-editor/columns.shared";
 import type { CommerceChannelView, CommerceVariantView } from "../routes/api.product-commerce";
+import { appFetch } from "../utils/app-fetch";
 
 /** Shopify's `WeightUnit` enum — an unknown value fails at the SCHEMA level. */
 export const WEIGHT_UNITS = ["GRAMS", "KILOGRAMS", "OUNCES", "POUNDS"] as const;
@@ -231,7 +232,7 @@ export function CommerceDataProvider({
     setLoadError(null);
     setPlanBlocked(false);
     setData(null);
-    fetch(`/api/product-commerce?productId=${encodeURIComponent(productId)}`)
+    appFetch(`/api/product-commerce?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
       .then((body) => {
         if (token !== loadToken.current) return;
@@ -381,7 +382,7 @@ export function CommerceDataProvider({
   const post = useCallback(async (body: Record<string, string>): Promise<string[]> => {
     const form = new FormData();
     for (const [key, value] of Object.entries(body)) form.set(key, value);
-    const response = await fetch("/api/product-commerce", { method: "POST", body: form });
+    const response = await appFetch("/api/product-commerce", { method: "POST", body: form });
     const json = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     if (!json || json.success !== true) {
       throw new Error(typeof json?.error === "string" ? json.error : "failed");

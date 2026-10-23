@@ -3,6 +3,7 @@ import { authenticate } from "~/shopify.server";
 import { db } from "~/db.server";
 import { syncScheduler } from "~/services/sync-scheduler.service";
 import { logger } from "~/utils/logger.server";
+import { invalidateOfflineAdmin } from "~/utils/offline-admin.server";
 
 /**
  * APP_UNINSTALLED webhook handler
@@ -35,6 +36,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       error instanceof Error ? error.message : String(error),
     );
   }
+
+  // The sessions are gone (or about to be revoked anyway): background callers
+  // in this process must not keep serving the cached offline token. Done even
+  // when the delete failed — the token is revoked by Shopify either way.
+  invalidateOfflineAdmin(shop);
 
   // Stamp the uninstall time. This is the reliable "inactive since" anchor for
   // the 30-day reaper (shop-reaper.service), which finally purges all remaining

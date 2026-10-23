@@ -102,6 +102,7 @@ import {
   handleSavePrimarySubResources,
   handleTranslateSubResources,
   handleTranslateSubResourceToAllLocales,
+  MAX_LOAD_SUB_RESOURCE_IDS,
 } from '../../app/actions/content/sub-resources.action';
 
 const SHOP = 'test.myshopify.com';
@@ -120,6 +121,10 @@ interface WorldConfig {
   reread?: (variables: any) => any;
   /** Answer to the loadTranslations read-back (getTranslations). */
   readBack?: (variables: any) => any;
+  /** Answer to metafieldsSet; default = echo every input (realistic). */
+  metafieldsSet?: (variables: any) => any;
+  /** Answer to metafieldsDelete; default = echo every identifier. */
+  metafieldsDelete?: (variables: any) => any;
   locales?: Array<{ locale: string; primary: boolean; published: boolean }>;
 }
 
@@ -185,7 +190,23 @@ function installAdmin(config: WorldConfig = {}) {
     }
     if (query.includes('metafieldsSet')) {
       calls.push({ kind: 'metafieldsSet', variables });
-      return answer({ data: { metafieldsSet: { userErrors: [], metafields: [] } } });
+      if (config.metafieldsSet) return answer(config.metafieldsSet(variables));
+      return answer({
+        data: {
+          metafieldsSet: {
+            userErrors: [],
+            metafields: (variables.metafields as any[]).map((m, i) => ({
+              id: `gid://shopify/Metafield/echo-${i}`,
+              namespace: m.namespace, key: m.key, value: m.value, type: m.type, owner: { id: m.ownerId },
+            })),
+          },
+        },
+      });
+    }
+    if (query.includes('metafieldsDelete')) {
+      calls.push({ kind: 'metafieldsDelete', variables });
+      if (config.metafieldsDelete) return answer(config.metafieldsDelete(variables));
+      return answer({ data: { metafieldsDelete: { userErrors: [], deletedMetafields: variables.metafields } } });
     }
     if (query.includes('getMarkets')) return answer({ errors: [{ message: 'no markets in this test' }] });
     return answer({ data: {} });
@@ -206,8 +227,17 @@ function makeDb() {
       create: vi.fn().mockResolvedValue({ id: 'task-1' }),
       update: vi.fn().mockResolvedValue({}),
     },
-    productMetafield: { update: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
-    productOption: { findUnique: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(2) },
+    productMetafield: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      // The cached rows the primary save builds its metafieldsSet input from;
+      // honours the `id: { in }` filter so each test sees only what it asked for.
+      findMany: vi.fn(async (args: any) => {
+        const ids: string[] = args?.where?.id?.in ?? [];
+        return ids.map((id) => ({ id, namespace: 'custom', key: `k${id.split('/').pop()}`, type: 'single_line_text_field' }));
+      }),
+    },
+    productOption: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(2) },
     product: { findFirst: vi.fn().mockResolvedValue({ title: 'Shirt' }) },
   } as any;
 }
@@ -787,6 +817,149 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
 });
 
 // ---------------------------------------------------------------------------
+describe('handleSavePrimarySubResources — the primary metafield write', () => {
+  const save = (db: any, admin: any, metafieldChanges: any) =>
+    handleSavePrimarySubResources(
+      makeCtx(admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: JSON.stringify(metafieldChanges) }),
+    );
+  const MF2 = 'gid://shopify/Metafield/14';
+
+  it('sends MetafieldsSetInput built from the cached row: ownerId/namespace/key/type/value, NO id', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'new' }));
+
+    const sets = w.of('metafieldsSet');
+    expect(sets).toHaveLength(1);
+    expect(sets[0].variables.metafields).toEqual([
+      { ownerId: PRODUCT, namespace: 'custom', key: 'k13', type: 'single_line_text_field', value: 'new' },
+    ]);
+    expect(sets[0].variables.metafields[0]).not.toHaveProperty('id');
+    expect(result.savedMetafields).toEqual([METAFIELD]);
+    expect(result.failedMetafields).toEqual([]);
+  });
+
+  it('mirrors the ECHOED value (Shopify may normalise it), shop-scoped', async () => {
+    const w = installAdmin({
+      metafieldsSet: (v) => ({
+        data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any) => ({ ...m, id: METAFIELD, value: 'normalised', owner: { id: m.ownerId } })) } },
+      }),
+    });
+    const db = makeDb();
+    await save(db, w.admin, { [METAFIELD]: 'new' });
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: METAFIELD, product: { shop: SHOP } },
+      data: { value: 'normalised', type: 'single_line_text_field' },
+    });
+  });
+
+  it('a field Shopify did not echo is FAILED, not mirrored, and its translations are not purged', async () => {
+    const w = installAdmin({
+      metafieldsSet: (v) => ({
+        data: { metafieldsSet: { userErrors: [], metafields: [{ namespace: 'custom', key: 'k14', value: 'b', type: 'single_line_text_field', owner: { id: PRODUCT } }] } },
+      }),
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a', [MF2]: 'b' }));
+
+    expect(result.savedMetafields).toEqual([MF2]);
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(db.productMetafield.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.productMetafield.updateMany.mock.calls[0][0].where.id).toBe(MF2);
+    expect(w.of('remove').map((c) => c.variables.resourceId)).toEqual([MF2]);
+  });
+
+  it('userErrors fail the whole (atomic) call and mirror nothing', async () => {
+    const w = installAdmin({
+      metafieldsSet: () => ({ data: { metafieldsSet: { userErrors: [{ field: ['metafields', '0', 'value'], message: 'bad' }], metafields: [] } } }),
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a', [MF2]: 'b' }));
+    expect(result.savedMetafields).toEqual([]);
+    expect(result.failedMetafields.sort()).toEqual([METAFIELD, MF2].sort());
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+    expect(w.of('remove')).toHaveLength(0);
+  });
+
+  it('a schema-level refusal (admin.graphql throws) fails every field and mirrors nothing', async () => {
+    const w = installAdmin();
+    const original = w.admin.graphql.getMockImplementation()!;
+    w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+      if (q.includes('metafieldsSet')) throw new Error('GraphqlQueryError: unknown field');
+      return original(q, o);
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a' }));
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(result.savedMetafields).toEqual([]);
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('an id with no cached row of THIS product (shop) is failed without a Shopify call', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockResolvedValueOnce([]);
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a' }));
+    expect(db.productMetafield.findMany.mock.calls[0][0].where).toMatchObject({
+      id: { in: [METAFIELD] }, productId: PRODUCT, product: { shop: SHOP },
+    });
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+  });
+
+  it('an empty value goes through metafieldsDelete (echo-confirmed), drops the row and its translations', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: '' }));
+
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(w.of('metafieldsDelete')[0].variables.metafields).toEqual([{ ownerId: PRODUCT, namespace: 'custom', key: 'k13' }]);
+    expect(result.removedMetafieldIds).toEqual([METAFIELD]);
+    expect(result.failedMetafields).toEqual([]);
+    expect(db.productMetafield.deleteMany).toHaveBeenCalledWith({ where: { id: METAFIELD, product: { shop: SHOP } } });
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { shop: SHOP, resourceId: METAFIELD, resourceType: 'Metafield' },
+    });
+    // Nothing left to purge on Shopify.
+    expect(w.of('remove')).toHaveLength(0);
+  });
+
+  it('a whitespace-only value is REFUSED (named), never read as a clear: no delete, no set, the row stays', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: '   ' }));
+    expect(w.of('metafieldsDelete')).toHaveLength(0);
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(result.optionWarnings).toContain('metafieldValueBlank');
+    expect(result.removedMetafieldIds).toBeUndefined();
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+    expect(w.of('remove')).toHaveLength(0);
+  });
+
+  it('an unechoed delete is failed and keeps the row', async () => {
+    const w = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: { userErrors: [], deletedMetafields: [null] } } }) });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: '' }));
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(result.removedMetafieldIds).toBeUndefined();
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('batches more than 25 metafields into calls of at most 25', async () => {
+    policy.purgeUnreconciledSurfaces = false;
+    const w = installAdmin();
+    const db = makeDb();
+    const changes = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`gid://shopify/Metafield/${100 + i}`, `v${i}`]));
+    const result = body(await save(db, w.admin, changes));
+    const sets = w.of('metafieldsSet');
+    expect(sets.map((c) => c.variables.metafields.length)).toEqual([25, 5]);
+    expect(result.savedMetafields).toHaveLength(30);
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('handleLoadSubResourceTranslations — read-back backfill', () => {
   it('mirrors the translations Shopify holds for a resource with no local row, WITH the digest of the same read', async () => {
     const w = installAdmin({
@@ -817,6 +990,69 @@ describe('handleLoadSubResourceTranslations — read-back backfill', () => {
     expect(created.value).toMatchObject({ shop: SHOP, resourceId: METAFIELD, resourceType: 'Metafield', value: 'Rouge', locale: 'fr', digest: 'dg-read' });
     // An OUTDATED row was written against an older source: no digest, or it would hide that it is stale.
     expect(created.name.digest).toBeNull();
+  });
+});
+
+describe('tenant isolation: every cache read/write is scoped to the session shop', () => {
+  it('load: the DB preload is filtered by the session shop', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify([METAFIELD]) }));
+    expect(db.contentTranslation.findMany.mock.calls[0][0].where).toMatchObject({
+      shop: SHOP, resourceId: { in: [METAFIELD] }, locale: 'fr', marketId: '',
+    });
+  });
+
+  it('load: more ids than the cap is refused with 400 before any read', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const ids = Array.from({ length: MAX_LOAD_SUB_RESOURCE_IDS + 1 }, (_, i) => `gid://shopify/Metafield/${i + 1}`);
+    const r: any = await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify(ids) }));
+    expect(r?.init?.status).toBe(400);
+    expect(body(r)).toMatchObject({ success: false, actionType: 'loadSubResourceTranslations' });
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('load: a non-array resourceIds payload is refused with 400', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const r: any = await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify({ a: METAFIELD }) }));
+    expect(r?.init?.status).toBe(400);
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('primary save: the metafield mirror and the type lookup are scoped through the product shop', async () => {
+    // The type lookup runs on the auto-translate (repair) path only.
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    const w = installAdmin();
+    const db = makeDb();
+    await handleSavePrimarySubResources(
+      makeCtx(w.admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: JSON.stringify({ [METAFIELD]: 'new' }) }),
+    );
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: METAFIELD, product: { shop: SHOP } },
+      data: { value: 'new', type: 'single_line_text_field' },
+    });
+    expect(db.productMetafield.findMany.mock.calls[0][0].where).toMatchObject({ productId: PRODUCT, product: { shop: SHOP } });
+  });
+
+  it('primary save: deleting an option reads its values and cleans translations within the session shop only', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productOption.findFirst.mockResolvedValue({ values: JSON.stringify([{ id: VALUE, name: 'Rot' }]) });
+    await handleSavePrimarySubResources(
+      makeCtx(w.admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: '{}', optionsToDelete: JSON.stringify([OPTION]) }),
+    );
+    expect(db.productOption.findFirst.mock.calls[0][0].where).toEqual({ id: OPTION, product: { shop: SHOP } });
+    expect(db.productOption.count.mock.calls[0][0].where).toEqual({ productId: PRODUCT, product: { shop: SHOP } });
+    const cleanup = db.contentTranslation.deleteMany.mock.calls.map((c: any[]) => c[0].where);
+    expect(cleanup).toEqual(expect.arrayContaining([
+      expect.objectContaining({ shop: SHOP, resourceId: { in: [OPTION] }, resourceType: 'ProductOption' }),
+      expect.objectContaining({ shop: SHOP, resourceId: { in: [VALUE] }, resourceType: 'ProductOptionValue' }),
+    ]));
   });
 });
 

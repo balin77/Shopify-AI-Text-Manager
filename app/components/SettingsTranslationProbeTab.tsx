@@ -17,6 +17,7 @@ import { Card, Text, BlockStack, Button, Banner, InlineStack, Checkbox } from "@
 import { MarketProbeCard } from "./MarketProbeCard";
 import { ThemeImageProbeCard } from "./ThemeImageProbeCard";
 import { ImageStampProbeCard } from "./ImageStampProbeCard";
+import { appFetch } from "../utils/app-fetch";
 
 interface KeyStats {
   prefix: string;
@@ -523,7 +524,7 @@ function RedirectLocaleProbeCard() {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch("/api/redirect-locale-probe", { method: "POST" });
+      const r = await appFetch("/api/redirect-locale-probe", { method: "POST" });
       const j = (await r.json()) as { report?: RedirectLocaleProbeReport; error?: string };
       if (!r.ok || !j.report) {
         throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
@@ -805,7 +806,7 @@ function MenuTranslationProbeCard() {
     try {
       const fd = new FormData();
       if (includeWriteTest) fd.set("writeTest", "true");
-      const r = await fetch("/api/menu-translation-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/menu-translation-probe", { method: "POST", body: fd });
       const j = (await r.json()) as { report?: MenuTranslationProbeReport; error?: string };
       if (!r.ok || !j.report) {
         throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
@@ -1247,7 +1248,7 @@ function MenuWriteProbeCard() {
     try {
       const fd = new FormData();
       fd.set("confirm", "true");
-      const r = await fetch("/api/menu-write-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/menu-write-probe", { method: "POST", body: fd });
       const j = (await r.json()) as { report?: MenuWriteProbeReport; error?: string };
       if (!r.ok || !j.report) {
         throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
@@ -1351,7 +1352,7 @@ function IndexNowProbeCard() {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch("/api/indexnow-probe", { method: "POST" });
+      const r = await appFetch("/api/indexnow-probe", { method: "POST" });
       const j = (await r.json()) as { report?: IndexNowProbeReport; error?: string };
       if (!r.ok || !j.report) {
         throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
@@ -1444,7 +1445,7 @@ export function SettingsTranslationProbeTab() {
     try {
       const fd = new FormData();
       if (includeWriteTest) fd.set("writeTest", "true");
-      const r = await fetch("/api/translation-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/translation-probe", { method: "POST", body: fd });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = (await r.json()) as { success: boolean; report?: ProbeReport; error?: string };
       if (!j.success || !j.report) throw new Error(j.error || "Probe failed");

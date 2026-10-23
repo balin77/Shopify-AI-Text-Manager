@@ -21,6 +21,14 @@ import en from "@shopify/polaris/locales/en.json";
 import { VariantOptionsEditor } from "~/components/unified/VariantOptionsEditor";
 import { variantCountKey } from "~/services/product-options.shared";
 
+// appFetch adds the session token and reads auth headers off the answer; the
+// plain-object fetch mocks below carry no headers, so pass straight through to
+// the stubbed global fetch with exactly the caller's arguments.
+vi.mock("../../app/utils/app-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../app/utils/app-fetch")>()),
+  appFetch: (input: string, init?: RequestInit) => (init === undefined ? fetch(input) : fetch(input, init)),
+}));
+
 const OPTION = "gid://shopify/ProductOption/1";
 const SECOND = "gid://shopify/ProductOption/2";
 const THIRD = "gid://shopify/ProductOption/3";

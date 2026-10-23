@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { appFetch } from "../utils/app-fetch";
 
 /**
  * Global store that owns the manual reload lifecycle.
@@ -159,7 +160,7 @@ export async function startReload(
     formData.append("resourceType", resourceType);
     formData.append("locale", locale);
 
-    const res = await fetch("/api/sync-single-resource", {
+    const res = await appFetch("/api/sync-single-resource", {
       method: "POST",
       body: formData,
       signal: abort.signal,

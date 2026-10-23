@@ -44,6 +44,7 @@ import {
   summarizeMenuTarget,
   type MenuTargetSearchResult,
 } from "../../services/menu-targets.shared";
+import { appFetch } from "../../utils/app-fetch";
 
 export interface MenuTargetPickerStrings {
   label: string;
@@ -170,7 +171,7 @@ export function MenuTargetPicker({
     setLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/menu-targets?q=${encodeURIComponent(q)}`);
+        const response = await appFetch(`/api/menu-targets?q=${encodeURIComponent(q)}`);
         const data = (await response.json()) as MenuTargetSearchResult;
         if (!cancelled) setResults(data);
       } catch {

@@ -77,6 +77,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import type { DataResponse } from "~/types/data-response";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 /** Fields compact enough for the short-batch prompt — the subset
  * translateShortFieldsBatch accepts (productType runs its own grouped path). */
@@ -224,7 +225,8 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
   void runBulkEditorTranslate(task.id, {
     db,
     shop,
-    admin,
+    // Outlives the request — see offline-admin.server.ts.
+    admin: backgroundAdmin(shop, admin),
     settings,
     jobs,
     units,

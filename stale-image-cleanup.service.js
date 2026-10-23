@@ -21,6 +21,8 @@
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
 import { WEBP_ITEM_TASK_TYPE, WEBP_PARENT_TASK_TYPE } from "./app/config/webp-tasks.js";
+import { adminGraphqlUrl } from "./app/config/admin-api-version.js";
+import { resolveShopAccessToken } from "./app/utils/shop-access-token.js";
 
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
@@ -70,7 +72,7 @@ async function fetchWithTimeout(url, options) {
 }
 
 async function fetchProductMediaIds(shop, accessToken, productGid) {
-  const res = await fetchWithTimeout(`https://${shop}/admin/api/2025-04/graphql.json`, {
+  const res = await fetchWithTimeout(adminGraphqlUrl(shop), {
     method: "POST",
     headers: {
       "X-Shopify-Access-Token": accessToken,
@@ -189,28 +191,16 @@ export class StaleImageCleanupService {
     }
 
     for (const [shop, productIds] of byShop) {
-      const session = await prisma.session.findFirst({
-        where: { shop, isOnline: false },
-        orderBy: { lastActivityAt: "desc" },
-      });
-      if (!session?.accessToken) {
-        console.warn(`[StaleImageCleanup] No session for shop ${shop} — skipping ${productIds.length} product(s)`);
+      // Through the app (refreshed when it is an expiring token) when the
+      // bundle has registered its hook, a direct read otherwise
+      // (app/utils/shop-access-token.js).
+      const resolved = await resolveShopAccessToken(shop, { db: prisma, decryptToken, logPrefix: "[StaleImageCleanup]" });
+      if (!resolved.token) {
+        console.warn(`[StaleImageCleanup] ${resolved.reason} (${shop}) — skipping ${productIds.length} product(s)`);
         skipped += productIds.length;
         continue;
       }
-
-      let accessToken;
-      try {
-        accessToken = decryptToken(session.accessToken);
-      } catch (err) {
-        console.warn(`[StaleImageCleanup] Token decrypt failed for ${shop} — skipping:`, err.message);
-        skipped += productIds.length;
-        continue;
-      }
-      if (!accessToken) {
-        skipped += productIds.length;
-        continue;
-      }
+      const accessToken = resolved.token;
 
       for (const productId of productIds) {
         try {

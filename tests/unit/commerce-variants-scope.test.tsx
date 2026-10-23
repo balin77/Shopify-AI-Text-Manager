@@ -18,6 +18,14 @@ import en from "@shopify/polaris/locales/en.json";
 import { CommerceVariantsSection } from "~/components/unified/CommerceVariantsSection";
 import { CommerceDataProvider, useCommerceData } from "~/contexts/CommerceDataContext";
 
+// appFetch adds the session token and reads auth headers off the answer; the
+// plain-object fetch mocks below carry no headers, so pass straight through to
+// the stubbed global fetch with exactly the caller's arguments.
+vi.mock("../../app/utils/app-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../app/utils/app-fetch")>()),
+  appFetch: (input: string, init?: RequestInit) => (init === undefined ? fetch(input) : fetch(input, init)),
+}));
+
 /** Drives the provider's save the way the editor's one save bar does. */
 function SaveButton() {
   const commerce = useCommerceData();

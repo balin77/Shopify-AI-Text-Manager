@@ -24,6 +24,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Banner, Text } from "@shopify/polaris";
 import type { ProductMarketPublicationsView } from "../../routes/api.product-market-publications";
+import { appFetch } from "../../utils/app-fetch";
 
 interface MarketPublicationNoticeProps {
   /** "" ⇒ not a product (or nothing selected). Publications are a product thing. */
@@ -71,7 +72,7 @@ export function MarketPublicationNotice({
     setView(null);
     if (!productId || !marketSelected) return;
     const token = ++loadToken.current;
-    fetch(`/api/product-market-publications?productId=${encodeURIComponent(productId)}`)
+    appFetch(`/api/product-market-publications?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
       .then((body) => {
         if (token !== loadToken.current) return;
