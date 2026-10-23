@@ -10,7 +10,33 @@ import { z } from 'zod';
 import {
   parseJsonBody,
   SyncContentQuerySchema,
+  AISettingsSchema,
 } from '~/utils/validation';
+
+// ── AISettingsSchema: Gemini key formats ─────────────────────────────────────
+
+describe('AISettingsSchema geminiApiKey', () => {
+  const parse = (geminiApiKey: string) =>
+    AISettingsSchema.safeParse({ geminiApiKey, preferredProvider: 'gemini', appLanguage: 'de' });
+
+  it('accepts a classic AIzaSy key', () => {
+    expect(parse('AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q').success).toBe(true);
+  });
+
+  it('accepts an AQ. authentication key, dots included', () => {
+    expect(parse('AQ.Ab8RN6Kx_q-3ZpWv9TtYbLmNcDeFgHiJkLm.Op1').success).toBe(true);
+  });
+
+  it('accepts an empty value (no key)', () => {
+    expect(parse('').success).toBe(true);
+  });
+
+  it('rejects other prefixes and too-short keys', () => {
+    expect(parse('sk-abcdefghijklmnopqrstuvwxyz').success).toBe(false);
+    expect(parse('AQ.short').success).toBe(false);
+    expect(parse('AQ.has spaces in it which are invalid').success).toBe(false);
+  });
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
