@@ -18,9 +18,11 @@ import { z } from 'zod';
  */
 const API_KEY_PATTERNS = {
   huggingface: /^hf_[A-Za-z0-9]{20,}$/,
-  // Google API keys start with AIzaSy and are 39 chars total in practice,
-  // but tolerate length drift.
-  gemini: /^AIzaSy[A-Za-z0-9_-]{20,}$/,
+  // Two Google key shapes are in circulation: the older API keys (AIzaSy…,
+  // 39 chars in practice) and the "authentication keys" AI Studio has issued
+  // since 2026, which start with "AQ." and may carry further dots. AI Studio
+  // generates only the second kind now, so rejecting it locks new merchants out.
+  gemini: /^(?:AIzaSy[A-Za-z0-9_-]{20,}|AQ\.[A-Za-z0-9_.-]{20,})$/,
   // Anthropic keys are sk-ant-… and typically 100+ chars; keep a generous floor.
   claude: /^sk-ant-[A-Za-z0-9_-]{20,}$/,
   openai: /^sk-[A-Za-z0-9_-]{20,}$/,
