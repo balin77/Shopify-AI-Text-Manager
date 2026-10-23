@@ -75,6 +75,7 @@ export const guideEs: GuideCopy = {
           heading: "Tu propia clave",
           paragraphs: [
             "ContentPilot AI escribe con el proveedor de IA que conectes: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok o HuggingFace. Introduces tu propia clave API, así que el coste y la elección del modelo siguen siendo tuyos.",
+            "Por seguridad, una clave guardada no se vuelve a mostrar: el campo queda vacío y solo indica \"Guardada\" con los cuatro últimos caracteres, para que reconozcas la clave. Deja el campo vacío para conservarla; escribe una nueva para reemplazarla. Para borrarla, pulsa \"Eliminar clave\" y guarda.",
           ],
           steps: [
             "Crea una cuenta en un proveedor y genera una clave API.",
@@ -552,6 +553,13 @@ export const guideEs: GuideCopy = {
             "En Contenido → Traducciones directas, activa la recogida y guarda.",
             "Visita tu tienda — los textos encontrados aparecerán después en la lista.",
             "Traduce las entradas, una a una o con IA, y guarda.",
+          ],
+        },
+        {
+          heading: "Capturar textos con un clic",
+          paragraphs: [
+            "En lugar de escribir los textos, puedes hacer clic en ellos en el editor de temas. En Contenido → Traducciones directas, haz clic en «Abrir modo captura». Se abre el editor de temas, y al hacer clic en un texto de la vista previa se añade a la lista — si quieres, traducido a todos los idiomas al momento.",
+            "El modo captura es válido 2 horas y termina al cerrar el editor de temas; después, vuelve a abrirlo desde la app. Si el panel de captura del editor de temas pide un código, cópialo en la app con «Mostrar código de captura» y pégalo allí; esto funciona siempre, aunque el modo captura no se active solo al abrir el editor. No compartas ese código. Los visitantes de tu tienda no ven nada del modo captura.",
           ],
         },
       ],

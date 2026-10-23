@@ -9,8 +9,22 @@
 
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { BackgroundSyncService } from "./background-sync.service";
-import { isShopActive } from "../middleware/activity-tracker.middleware";
+import { getLastActivity, isShopActive } from "../middleware/activity-tracker.middleware";
 import { logger } from "~/utils/logger.server";
+import { backgroundAdmin, createRefreshingAdmin, maybeMigrateToExpiringToken, migrationMayBeNeeded } from "~/utils/offline-admin.server";
+import { expiringOfflineTokensEnabled } from "~/utils/offline-token-flags.server";
+
+/** The scheduler's first minute is left alone by the token migration (see runSyncCycle). */
+export const MIGRATION_SETTLE_MS = 60 * 1000;
+/**
+ * ...and it only migrates while the shop has made no authenticated request for
+ * this long (`Session.lastActivityAt`, stamped by every `authenticate.admin`).
+ * The scheduler runs only while the merchant is active, so without this gate a
+ * migration would land in the middle of their clicking, and a request in
+ * flight then holds the revoked token and fails (see
+ * maybeMigrateToExpiringToken).
+ */
+export const MIGRATION_QUIET_MS = 20 * 1000;
 
 interface SyncTimer {
   timer: NodeJS.Timeout;
@@ -134,8 +148,13 @@ class SyncSchedulerService {
    * Runs a single sync cycle for a shop
    * Checks activity and stops if shop is inactive
    */
-  private async runSyncCycle(shop: string, admin: AdminApiContext): Promise<void> {
+  private async runSyncCycle(shop: string, capturedAdmin: AdminApiContext): Promise<void> {
     const syncTimer = this.activeTimers.get(shop);
+    // The admin captured in the timer closure belongs to the request that
+    // started the scheduler. With expiring offline tokens it dies ~1h later
+    // while the timer keeps firing, so each cycle uses a client that asks for a
+    // (refreshed) token per call instead. Flag off: the captured one, as before.
+    const admin = backgroundAdmin(shop, capturedAdmin);
 
     // Skip if already running (concurrent protection)
     if (syncTimer?.isRunning) {
@@ -150,6 +169,29 @@ class SyncSchedulerService {
       }
 
       const { db } = await import("../db.server");
+
+      // Lazy token migration for shops the scheduler keeps alive (double-gated
+      // by env, a no-op by default, never throws). This background cycle is
+      // the ONLY trigger — never the request path, whose captured session
+      // still holds the old token (see maybeMigrateToExpiringToken). Not on
+      // the cycles of the first minute either: the scheduler is started BY a
+      // request, and the initial cycle fires ~5s later, while that request may
+      // still be using the old token. And only in a QUIET moment: the
+      // scheduler runs only while the merchant is active, so a migration at
+      // any later cycle could still collide with a request in flight — it
+      // waits until the shop has made no authenticated request for
+      // MIGRATION_QUIET_MS. No timer entry (a cycle of a stopped scheduler) or
+      // an unknown last activity (failed lookup) migrates nothing.
+      if (
+        syncTimer &&
+        Date.now() - syncTimer.startedAt.getTime() >= MIGRATION_SETTLE_MS &&
+        migrationMayBeNeeded(shop)
+      ) {
+        const lastActivity = await getLastActivity(shop);
+        if (lastActivity && Date.now() - lastActivity.getTime() >= MIGRATION_QUIET_MS) {
+          void maybeMigrateToExpiringToken(shop);
+        }
+      }
 
       // Branch on the "initial full sync completed" marker:
       //  - marker set  → incremental BackgroundSyncService.syncAll() (existing
@@ -313,9 +355,16 @@ class SyncSchedulerService {
         logger.info(`[SyncScheduler] Running INITIAL full sync for ${shop} (force=${!!st?.initialSyncForceRequested}, slots ${this.runningSyncs}/${this.SYNC_MAX_CONCURRENCY})`);
 
         // Use a FRESH admin context (not the one captured in the timer closure):
-        // the initial sync can run many minutes, longer than that token's life.
-        const { unauthenticated } = await import("../shopify.server");
-        const { admin: freshAdmin } = await unauthenticated.admin(shop);
+        // the initial sync can run many minutes — with expiring offline tokens
+        // HOURS past one token's life — so with the flag on the client
+        // re-acquires (and refreshes) its token per call.
+        let freshAdmin: AdminApiContext;
+        if (expiringOfflineTokensEnabled()) {
+          freshAdmin = createRefreshingAdmin(shop);
+        } else {
+          const { unauthenticated } = await import("../shopify.server");
+          ({ admin: freshAdmin } = await unauthenticated.admin(shop));
+        }
 
         const { runInitialFullSync } = await import("./initial-sync.service");
         const { stats, completed } = await runInitialFullSync(freshAdmin, shop, {

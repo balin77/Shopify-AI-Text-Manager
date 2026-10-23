@@ -11,7 +11,10 @@
   editor) can write this value too, so the <style> never trusts it: an `o`
   carrying a quote, an angle bracket or a backslash is skipped there (it could
   otherwise close the selector or the <style> element). The JSON island goes
-  through `json`, which escapes it.
+  through `json` AND `replace: '<', '\u003c'`: whether Shopify's `json` filter
+  escapes `<` is not measured, so it is assumed not to, and a value carrying
+  "</script>" would otherwise close the island. JSON.parse turns the escape
+  back into `<` (assets/localized-media.js reads the island that way).
 
   Videos (PLAN_LOCALIZED_IMAGES §7) ride the same island: the asset swaps a
   `<video>`'s sources and an `<iframe>`'s embed address. Only their POSTER is
@@ -61,7 +64,7 @@
 <style id="cp-lm-prehide">{{ sel | remove_first: ',' }}{visibility:hidden}</style>
 <script>setTimeout(function(){var s=document.getElementById('cp-lm-prehide');s&&s.remove()},3000)</script>
 {%- endif -%}
-<script type="application/json" id="cp-lm-data">{"l":{{ loc | json }},"k":{{ mk | json }},"e":{{ lm.e | json }}}</script>
+<script type="application/json" id="cp-lm-data">{"l":{{ loc | json | replace: '<', '\u003c' }},"k":{{ mk | json | replace: '<', '\u003c' }},"e":{{ lm.e | json | replace: '<', '\u003c' }}}</script>
 <script src="{{ 'localized-media.js' | asset_url }}" defer></script>
 {%- endif -%}
 {%- endif -%}

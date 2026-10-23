@@ -73,6 +73,9 @@ import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { meetsPlan } from "../utils/planUtils";
 import { useHydrated } from "../hooks/useHydrated";
 import { formatDateTime } from "../utils/format";
+// The preview renders the merchant's stored HTML (descriptionHtml / body),
+// which this app did not author: sanitize before it reaches the DOM.
+import { sanitizeHTML } from "../utils/sanitizer";
 import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { RESOURCE_ROUTE, INTERNAL_LINKS_API, BULK_ACCEPT_LIMIT } from "../services/seo/internal-links-routes";
@@ -84,6 +87,7 @@ import {
   type FilterType,
   type View,
 } from "../services/seo/internal-links-query";
+import { appFetch } from "../utils/app-fetch";
 
 /** Suggestions per page (both views). Server-side — see the header note. */
 export const PAGE_SIZE = 20;
@@ -421,7 +425,7 @@ export default function SeoInternalLinks() {
   const post = async (fields: Record<string, string>): Promise<ActionResult | null> => {
     const formData = new FormData();
     for (const [key, value] of Object.entries(fields)) formData.set(key, value);
-    const resp = await fetch(INTERNAL_LINKS_API, { method: "POST", body: formData });
+    const resp = await appFetch(INTERNAL_LINKS_API, { method: "POST", body: formData });
     return (await resp.json().catch(() => null)) as ActionResult | null;
   };
 
@@ -898,14 +902,14 @@ export default function SeoInternalLinks() {
                 <Text as="h4" variant="headingSm">{c.previewBeforeLabel}</Text>
                 <div
                   style={{ border: "1px solid var(--p-color-border)", borderRadius: 8, padding: "0.75rem" }}
-                  dangerouslySetInnerHTML={{ __html: previewData.before || "" }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHTML(previewData.before || "") }}
                 />
               </BlockStack>
               <BlockStack gap="100">
                 <Text as="h4" variant="headingSm">{c.previewAfterLabel}</Text>
                 <div
                   style={{ border: "1px solid var(--p-color-border-success)", borderRadius: 8, padding: "0.75rem" }}
-                  dangerouslySetInnerHTML={{ __html: previewData.after || "" }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHTML(previewData.after || "") }}
                 />
               </BlockStack>
             </BlockStack>

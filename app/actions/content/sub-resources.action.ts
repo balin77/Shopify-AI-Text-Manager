@@ -48,6 +48,9 @@ function markSubResourceSyncShield(productId: string | null | undefined): void {
 // LOAD SUB-RESOURCE TRANSLATIONS (Options + Metafields)
 // ============================================================================
 
+/** Upper bound on the ids one loadSubResourceTranslations request may name. */
+export const MAX_LOAD_SUB_RESOURCE_IDS = 5000;
+
 export async function handleLoadSubResourceTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
@@ -61,7 +64,19 @@ export async function handleLoadSubResourceTranslations(
 
   try {
     const resourceIdsJson = getFormString(formData, "resourceIds");
-    const resourceIds: string[] = resourceIdsJson ? JSON.parse(resourceIdsJson) : [];
+    const parsedIds: unknown = resourceIdsJson ? JSON.parse(resourceIdsJson) : [];
+    if (!Array.isArray(parsedIds) || parsedIds.some((rid) => typeof rid !== "string")) {
+      return json({ success: false, actionType: "loadSubResourceTranslations", error: "Invalid resource IDs" }, { status: 400 });
+    }
+    const resourceIds: string[] = parsedIds;
+    // A product carries at most 3 options, their values (bounded by Shopify's
+    // 2048-variant limit, so ~2050 values at most) and its metafields. The
+    // client only sends the ids missing from the DB preload, so a real request
+    // stays far below this; the cap bounds what a direct POST can make this
+    // handler read and fetch from Shopify.
+    if (resourceIds.length > MAX_LOAD_SUB_RESOURCE_IDS) {
+      return json({ success: false, actionType: "loadSubResourceTranslations", error: "Too many resource IDs" }, { status: 400 });
+    }
 
     if (resourceIds.length === 0) {
       return json({
@@ -87,6 +102,7 @@ export async function handleLoadSubResourceTranslations(
     // overlay, so scope to marketId "" for a deterministic global read.
     const dbTranslations = await db.contentTranslation.findMany({
       where: {
+        shop: session.shop,
         resourceId: { in: resourceIds },
         locale,
         marketId: "",
@@ -922,10 +938,16 @@ function safeParseList<T>(raw: string): T[] {
  */
 async function cachedOptionValueIds(
   db: ContentActionHandlerContext["db"],
+  shop: string,
   optionId: string,
 ): Promise<string[]> {
   try {
-    const row = await db.productOption.findUnique({ where: { id: optionId }, select: { values: true } });
+    // Shop-scoped: the option id comes from the form, and the ids read here
+    // drive a translation-row delete further down.
+    const row = await db.productOption.findFirst({
+      where: { id: optionId, product: { shop } },
+      select: { values: true },
+    });
     const parsed: unknown = JSON.parse(row?.values ?? "[]");
     if (!Array.isArray(parsed)) return [];
     // The legacy `["string"]` shape carries no ids, so it yields none rather
@@ -937,6 +959,9 @@ async function cachedOptionValueIds(
     return [];
   }
 }
+
+/** Shopify's per-call input limit for metafieldsSet and metafieldsDelete. */
+const METAFIELDS_PER_CALL = 25;
 
 export async function handleSavePrimarySubResources(
   ctx: ContentActionHandlerContext,
@@ -999,7 +1024,7 @@ export async function handleSavePrimarySubResources(
     const metafieldChanges: Record<string, string> = metafieldChangesJson
       ? JSON.parse(metafieldChangesJson) : {};
 
-    const { METAFIELDS_SET } = await import("~/graphql/content.mutations");
+    const { METAFIELDS_SET, METAFIELDS_DELETE } = await import("~/graphql/content.mutations");
 
     const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
     const gateway = new ShopifyApiGateway(admin, session.shop);
@@ -1042,7 +1067,7 @@ export async function handleSavePrimarySubResources(
       if (!isValidShopifyGID(optionId)) continue;
       // Read the value ids BEFORE the delete: afterwards the cache row is gone
       // and nothing could name the translation rows they leave behind.
-      const cachedValueIds = await cachedOptionValueIds(db, optionId);
+      const cachedValueIds = await cachedOptionValueIds(db, session.shop, optionId);
       const warning = await deleteOption(admin, db, session.shop, {
         productId,
         optionId,
@@ -1051,7 +1076,7 @@ export async function handleSavePrimarySubResources(
         // Keyed by the GID: that is what `Product.id` holds, and a numeric id
         // matches no row at all -- which counted 0 and refused every delete as
         // "the last option".
-        remainingCount: await db.productOption.count({ where: { productId } }),
+        remainingCount: await db.productOption.count({ where: { productId, product: { shop: session.shop } } }),
       });
       if (warning) {
         optionWarnings.push(warning);
@@ -1102,49 +1127,230 @@ export async function handleSavePrimarySubResources(
       }
     }
 
-    // 3. Update metafields using metafieldsSet mutation
+    // 3. Metafields: metafieldsSet for a value, metafieldsDelete for a clear.
+    //
+    // `MetafieldsSetInput` has NO `id` field (ownerId, namespace, key, type,
+    // value, compareDigest) -- this step used to send `{ id, value }`, which is
+    // a SCHEMA-level refusal: `admin.graphql` throws `GraphqlQueryError`, the
+    // mutation never runs, and every primary metafield edit failed. The input is
+    // built from the CACHED row instead (shop- and product-scoped, because the
+    // ids come from the form): ownerId = the product, plus the row's namespace,
+    // key and type. An id with no such row cannot be addressed and fails.
+    //
+    // A write counts only when Shopify ECHOES it (CLAUDE.md): a set by the
+    // echoed (owner, namespace, key) with a value, a delete by
+    // `deletedMetafields`. `userErrors: []` alone is not success, an unechoed
+    // field is reported failed and never mirrored, and the mirror takes the
+    // ECHOED value (Shopify may normalise it).
+    const removedMetafieldIds: string[] = [];
     if (Object.keys(metafieldChanges).length > 0) {
-      try {
-        const metafieldsInput = Object.entries(metafieldChanges).map(([metafieldId, value]) => ({
-          id: metafieldId,
-          value,
-        }));
+      const requestedIds = Object.keys(metafieldChanges);
+      const addressable = requestedIds.filter(
+        (id) => isValidShopifyGID(id) && typeof metafieldChanges[id] === "string",
+      );
+      for (const id of requestedIds) {
+        if (!addressable.includes(id)) failedMetafields.push(id);
+      }
 
-        const metafieldsResponse = await gateway.graphql(
-          METAFIELDS_SET,
-          {
-            variables: {
-              metafields: metafieldsInput,
-            },
-          }
-        );
-
-        const metafieldsData = await metafieldsResponse.json() as any;
-        if (metafieldsData.data?.metafieldsSet?.userErrors?.length > 0) {
-          logger.error("[UnifiedContent] metafieldsSet userErrors", {
-            context: "UnifiedContent", errors: metafieldsData.data.metafieldsSet.userErrors,
+      let cachedRows: Array<{ id: string; namespace: string; key: string; type: string }> = [];
+      if (addressable.length > 0) {
+        try {
+          cachedRows = await db.productMetafield.findMany({
+            where: { id: { in: addressable }, productId, product: { shop: session.shop } },
+            select: { id: true, namespace: true, key: true, type: true },
           });
-          Object.keys(metafieldChanges).forEach(mfId => failedMetafields.push(mfId));
-        } else {
-          Object.keys(metafieldChanges).forEach(mfId => savedMetafields.push(mfId));
+        } catch (err) {
+          logger.error("[UnifiedContent] Could not read cached metafields for the primary save", {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      const rowById = new Map(cachedRows.map((row) => [row.id, row]));
 
-          // Mirror saved metafield values into the local DB so the client's
-          // post-save revalidation reads the fresh value (see option mirror above).
-          for (const [mfId, value] of Object.entries(metafieldChanges)) {
+      type MetafieldSet = {
+        metafieldId: string;
+        input: { ownerId: string; namespace: string; key: string; type: string; value: string };
+      };
+      type MetafieldDelete = {
+        metafieldId: string;
+        identifier: { ownerId: string; namespace: string; key: string };
+      };
+      const sets: MetafieldSet[] = [];
+      const deletes: MetafieldDelete[] = [];
+      for (const metafieldId of addressable) {
+        const row = rowById.get(metafieldId);
+        if (!row || !row.namespace || !row.key || !row.type) {
+          logger.warn("[UnifiedContent] Primary metafield save: no cached row for this product", {
+            context: "UnifiedContent", metafieldId,
+          });
+          failedMetafields.push(metafieldId);
+          continue;
+        }
+        const value = metafieldChanges[metafieldId];
+        if (value === "") {
+          // metafieldsSet rejects "" ("Value can't be blank"): a clear is a delete.
+          deletes.push({ metafieldId, identifier: { ownerId: productId, namespace: row.namespace, key: row.key } });
+        } else if (value.trim() === "") {
+          // Whitespace only is REFUSED, never read as a clear. A delete is the
+          // expensive direction: the metafield is gone on Shopify with its
+          // translations, and the card lists metafields from the cached rows,
+          // so the field disappears from the editor until a sync — a stray
+          // space must not do that. Only an explicitly emptied field ("")
+          // deletes. Shopify would refuse the value itself as blank too.
+          logger.warn("[UnifiedContent] Primary metafield save: whitespace-only value refused", {
+            context: "UnifiedContent", metafieldId,
+          });
+          failedMetafields.push(metafieldId);
+          optionWarnings.push("metafieldValueBlank");
+        } else {
+          sets.push({
+            metafieldId,
+            input: { ownerId: productId, namespace: row.namespace, key: row.key, type: row.type, value },
+          });
+        }
+      }
+
+      for (let start = 0; start < sets.length; start += METAFIELDS_PER_CALL) {
+        const batch = sets.slice(start, start + METAFIELDS_PER_CALL);
+        try {
+          const response = await gateway.graphql(METAFIELDS_SET, {
+            variables: { metafields: batch.map((entry) => entry.input) },
+          });
+          const payload = (await response.json()) as {
+            data?: {
+              metafieldsSet?: {
+                metafields?: Array<{
+                  id?: string;
+                  namespace?: string;
+                  key?: string;
+                  value?: string | null;
+                  type?: string;
+                  owner?: { id?: string } | null;
+                } | null> | null;
+                userErrors?: Array<{ field?: string[] | string | null; message: string }>;
+              } | null;
+            } | null;
+            errors?: unknown;
+          };
+          const result = payload?.data?.metafieldsSet;
+          const userErrors = result?.userErrors ?? [];
+          if (!result || userErrors.length > 0) {
+            // metafieldsSet applies a call atomically: one refused input fails the batch.
+            logger.error("[UnifiedContent] metafieldsSet refused", {
+              context: "UnifiedContent",
+              errors: userErrors.length > 0 ? userErrors : payload?.errors ?? "no metafieldsSet payload",
+            });
+            for (const entry of batch) failedMetafields.push(entry.metafieldId);
+            continue;
+          }
+          const echoed = (result.metafields ?? []).filter(
+            (m): m is NonNullable<typeof m> => !!m,
+          );
+          for (const entry of batch) {
+            const echo = echoed.find(
+              (m) =>
+                m.namespace === entry.input.namespace &&
+                m.key === entry.input.key &&
+                // The owner is selected for Product owners; an echo that names a
+                // different owner is not this write.
+                (m.owner?.id === undefined || m.owner?.id === productId),
+            );
+            if (!echo || typeof echo.value !== "string") {
+              logger.warn("[UnifiedContent] metafieldsSet did not echo the write", {
+                context: "UnifiedContent", metafieldId: entry.metafieldId,
+              });
+              failedMetafields.push(entry.metafieldId);
+              continue;
+            }
+            savedMetafields.push(entry.metafieldId);
             try {
-              await db.productMetafield.update({ where: { id: mfId }, data: { value } });
+              // Shop-scoped: the ids come from the form.
+              await db.productMetafield.updateMany({
+                where: { id: entry.metafieldId, product: { shop: session.shop } },
+                data: { value: echo.value, ...(echo.type ? { type: echo.type } : {}) },
+              });
             } catch (err) {
-              logger.error(`[UnifiedContent] Failed to mirror primary metafield ${mfId} into DB`, {
+              // The write IS live on Shopify; the next sync corrects the mirror.
+              logger.error(`[UnifiedContent] Failed to mirror primary metafield ${entry.metafieldId} into DB`, {
                 context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
               });
             }
           }
+        } catch (err) {
+          // A schema-level refusal arrives here as a throw (GraphqlQueryError).
+          logger.error("[UnifiedContent] Failed to update metafields", {
+            context: "UnifiedContent", error: getFullErrorMessage(err),
+          });
+          for (const entry of batch) failedMetafields.push(entry.metafieldId);
         }
-      } catch (err) {
-        logger.error("[UnifiedContent] Failed to update metafields", {
-          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-        });
-        Object.keys(metafieldChanges).forEach(mfId => failedMetafields.push(mfId));
+      }
+
+      for (let start = 0; start < deletes.length; start += METAFIELDS_PER_CALL) {
+        const batch = deletes.slice(start, start + METAFIELDS_PER_CALL);
+        try {
+          const response = await gateway.graphql(METAFIELDS_DELETE, {
+            variables: { metafields: batch.map((entry) => entry.identifier) },
+          });
+          const payload = (await response.json()) as {
+            data?: {
+              metafieldsDelete?: {
+                deletedMetafields?: Array<{ ownerId?: string; namespace?: string; key?: string } | null> | null;
+                userErrors?: Array<{ field?: string[] | string | null; message: string }>;
+              } | null;
+            } | null;
+            errors?: unknown;
+          };
+          const result = payload?.data?.metafieldsDelete;
+          const userErrors = result?.userErrors ?? [];
+          if (!result || userErrors.length > 0) {
+            logger.error("[UnifiedContent] metafieldsDelete refused", {
+              context: "UnifiedContent",
+              errors: userErrors.length > 0 ? userErrors : payload?.errors ?? "no metafieldsDelete payload",
+            });
+            for (const entry of batch) failedMetafields.push(entry.metafieldId);
+            continue;
+          }
+          const deleted = (result.deletedMetafields ?? []).filter(
+            (d): d is NonNullable<typeof d> => !!d,
+          );
+          for (const entry of batch) {
+            const confirmed = deleted.some(
+              (d) =>
+                d.ownerId === entry.identifier.ownerId &&
+                d.namespace === entry.identifier.namespace &&
+                d.key === entry.identifier.key,
+            );
+            if (!confirmed) {
+              logger.warn("[UnifiedContent] metafieldsDelete did not echo the removal", {
+                context: "UnifiedContent", metafieldId: entry.metafieldId,
+              });
+              failedMetafields.push(entry.metafieldId);
+              continue;
+            }
+            // Saved, but NOT a changed source text: the metafield is gone, and
+            // its translations went with it on Shopify -- there is nothing left
+            // to purge or re-translate, so it stays out of `savedMetafields`
+            // (which feeds the purge below) and is reported on its own.
+            removedMetafieldIds.push(entry.metafieldId);
+            try {
+              await db.productMetafield.deleteMany({
+                where: { id: entry.metafieldId, product: { shop: session.shop } },
+              });
+              await db.contentTranslation.deleteMany({
+                where: { shop: session.shop, resourceId: entry.metafieldId, resourceType: "Metafield" },
+              });
+            } catch (err) {
+              logger.error(`[UnifiedContent] Failed to drop removed metafield ${entry.metafieldId} from the DB`, {
+                context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        } catch (err) {
+          logger.error("[UnifiedContent] Failed to delete metafields", {
+            context: "UnifiedContent", error: getFullErrorMessage(err),
+          });
+          for (const entry of batch) failedMetafields.push(entry.metafieldId);
+        }
       }
     }
 
@@ -1430,7 +1636,7 @@ export async function handleSavePrimarySubResources(
         changedMetafieldIds.length > 0
           ? (
               await db.productMetafield.findMany({
-                where: { productId, id: { in: changedMetafieldIds } },
+                where: { productId, product: { shop: session.shop }, id: { in: changedMetafieldIds } },
                 select: { id: true, type: true },
               })
             ).map((row: { id: string; type: string }) => [row.id, row.type])
@@ -1517,12 +1723,12 @@ export async function handleSavePrimarySubResources(
       try {
         if (removedOptionIds.length > 0) {
           await db.contentTranslation.deleteMany({
-            where: { resourceId: { in: removedOptionIds }, resourceType: "ProductOption" },
+            where: { shop: session.shop, resourceId: { in: removedOptionIds }, resourceType: "ProductOption" },
           });
         }
         if (removedValueIds.length > 0) {
           await db.contentTranslation.deleteMany({
-            where: { resourceId: { in: removedValueIds }, resourceType: "ProductOptionValue" },
+            where: { shop: session.shop, resourceId: { in: removedValueIds }, resourceType: "ProductOptionValue" },
           });
         }
       } catch (err) {
@@ -1551,6 +1757,9 @@ export async function handleSavePrimarySubResources(
       failedOptions,
       savedMetafields,
       failedMetafields,
+      // Cleared metafields Shopify confirmed DELETING (not in savedMetafields:
+      // there is no source text left whose translations could be stale).
+      ...(removedMetafieldIds.length > 0 ? { removedMetafieldIds } : {}),
       retranslationTaskIds: collectRetranslationTaskIds(retranslationTaskIds),
       ...(marketPurgedResourceIds.size > 0 ? { marketPurgedResourceIds: [...marketPurgedResourceIds] } : {}),
       ...(purgeUnconfirmed.length > 0

@@ -138,7 +138,7 @@ export class ShopifyApiGateway {
 
       } catch (error: unknown) {
         // Check if it's a rate limit error from HTTP status
-        if ((error as { status?: number }).status === 429 || (error instanceof Error && error.message.includes('rate limit'))) {
+        if (isThrownRateLimitError(error)) {
           logger.debug(`[ShopifyGateway] HTTP 429 rate limit error`);
           await this.handleRateLimitError(request);
         } else {
@@ -238,4 +238,47 @@ export class ShopifyApiGateway {
     this.requestQueue = [];
     logger.debug(`[ShopifyGateway] Cleared ${clearedCount} queued requests`);
   }
+}
+
+/**
+ * Is a THROWN error Shopify saying "slow down"? Three shapes reach the gateway:
+ * a plain `{ status: 429 }`, the library's `HttpThrottlingError` /
+ * `HttpResponseError` (`response.code === 429` — what the refreshing offline
+ * client throws, since it wraps the library client rather than raw fetch), and
+ * the library's `GraphqlQueryError` for an HTTP-200 `THROTTLED` answer, whose
+ * GraphQL `errors` ride on `body`. Matched by SHAPE, not class: two copies of
+ * @shopify/shopify-api can coexist in the bundle and `instanceof` misses one.
+ */
+export function isThrownRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as {
+    status?: number;
+    name?: string;
+    message?: string;
+    response?: { code?: number; status?: number };
+    body?: { errors?: unknown };
+  };
+  if (e.status === 429) return true;
+  if (e.response?.code === 429 || e.response?.status === 429) return true;
+  if (e.name === "HttpThrottlingError") return true;
+  // The library's GraphqlQueryError (clients/common throwFailedRequest) carries
+  // the graphql-client's error OBJECT on `body.errors`:
+  // `{ message, graphQLErrors: [...], networkStatusCode, response }`, and its
+  // own message is `graphQLErrors[0].message` ("Throttled"). A bare array is
+  // kept for callers that hand over the raw response's `errors`.
+  const bodyErrors = e.body?.errors;
+  const graphQLErrors: unknown[] = Array.isArray(bodyErrors)
+    ? bodyErrors
+    : bodyErrors && typeof bodyErrors === "object" &&
+        Array.isArray((bodyErrors as { graphQLErrors?: unknown }).graphQLErrors)
+      ? ((bodyErrors as { graphQLErrors: unknown[] }).graphQLErrors)
+      : [];
+  if (
+    graphQLErrors.some((x) => (x as { extensions?: { code?: string } } | null)?.extensions?.code === "THROTTLED")
+  ) {
+    return true;
+  }
+  if (typeof e.message !== "string") return false;
+  const msg = e.message.toLowerCase();
+  return msg.includes("rate limit") || msg.trim() === "throttled";
 }

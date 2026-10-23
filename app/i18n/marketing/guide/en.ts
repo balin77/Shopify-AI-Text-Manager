@@ -75,6 +75,7 @@ export const guideEn: GuideCopy = {
           heading: "Your own key",
           paragraphs: [
             "ContentPilot AI writes with the AI provider you connect: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok or HuggingFace. You enter your own API key — so the cost and the choice of model stay with you.",
+            "For security, a stored key is never shown again: the field stays empty and only shows \"Stored\" with the last four characters, so you can recognise the key. Leave the field empty to keep the key; type a new one to replace it. To delete it, click \"Remove key\" and save.",
           ],
           steps: [
             "Create an account with a provider and generate an API key.",
@@ -552,6 +553,13 @@ export const guideEn: GuideCopy = {
             "Under Content → Direct translations, switch on collection and save.",
             "Visit your storefront — the text found there then appears in the list.",
             "Translate the entries, one by one or with AI, and save.",
+          ],
+        },
+        {
+          heading: "Capture texts by clicking",
+          paragraphs: [
+            "Instead of typing texts in, you can click them in the theme editor. Under Content → Direct translations, click “Open capture mode”. The theme editor opens, and clicking a text in the preview adds it to the list — translated into every language right away if you like.",
+            "Capture mode is valid for 2 hours and ends when you close the theme editor; after that, open it again from the app. If the capture panel in the theme editor asks for a code, copy it in the app with “Show capture code” and paste it there — this always works, even if capture mode does not switch on by itself when the editor opens. Do not share that code. Visitors to your shop see nothing of capture mode.",
           ],
         },
       ],

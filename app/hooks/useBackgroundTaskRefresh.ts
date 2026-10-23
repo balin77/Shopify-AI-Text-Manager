@@ -6,6 +6,7 @@ import {
   classifyWatchedTasks,
   type TaskWatchUpdate,
 } from "../services/tasks/task-watch.shared";
+import { appFetch } from "../utils/app-fetch";
 
 export {
   MAX_TASK_STATUS_IDS,
@@ -113,7 +114,7 @@ export function useBackgroundTaskRefresh(
         // about the watch.
         for (let from = 0; from < ids.length; from += MAX_TASK_STATUS_IDS) {
           const chunk = ids.slice(from, from + MAX_TASK_STATUS_IDS);
-          const response = await fetch(
+          const response = await appFetch(
             `/api/task-status?ids=${encodeURIComponent(chunk.join(","))}`,
             { signal: controller.signal },
           );

@@ -27,6 +27,7 @@ import {
   Spinner,
   Text,
 } from "@shopify/polaris";
+import { appFetch } from "../utils/app-fetch";
 
 interface Finding {
   ok: boolean;
@@ -104,7 +105,7 @@ export function SettingsUnitPriceProbeTab() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/unit-price-probe")
+    appFetch("/api/unit-price-probe")
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
@@ -132,7 +133,7 @@ export function SettingsUnitPriceProbeTab() {
       body.set("productGid", productGid);
       body.set("variantGid", variantGid || variant?.gid || "");
       body.set("mode", mode);
-      const res = await fetch("/api/unit-price-probe", { method: "POST", body });
+      const res = await appFetch("/api/unit-price-probe", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
         setError(typeof data.error === "string" ? data.error : "The probe returned no report.");

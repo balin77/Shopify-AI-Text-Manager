@@ -124,6 +124,7 @@ import { useScrollLock } from "../../hooks/useScrollLock";
 import { leafNameOf } from "../../services/taxonomy-localization.shared";
 import { FieldClearOverlay, FieldLabel } from "./FieldChrome";
 import type { TaxonomyOption } from "../../routes/api.product-taxonomy";
+import { appFetch } from "../../utils/app-fetch";
 
 export interface TaxonomyFieldProps {
   /** The TaxonomyCategory GID, or "" when the product has none. */
@@ -325,7 +326,7 @@ export function TaxonomyField({
     const token = ++searchToken.current;
     setState("loading");
     const timer = setTimeout(() => {
-      fetch(`/api/product-taxonomy?kind=taxonomy&q=${encodeURIComponent(trimmedQuery)}`)
+      appFetch(`/api/product-taxonomy?kind=taxonomy&q=${encodeURIComponent(trimmedQuery)}`)
         .then((r) => r.json())
         .then((data) => {
           if (token !== searchToken.current) return;
@@ -361,7 +362,7 @@ export function TaxonomyField({
     setLevelState("loading");
     setLevel(null);
     setLevelTruncated(false);
-    fetch(`/api/product-taxonomy?kind=taxonomy-children&parent=${encodeURIComponent(parentId)}`)
+    appFetch(`/api/product-taxonomy?kind=taxonomy-children&parent=${encodeURIComponent(parentId)}`)
       .then((r) => r.json())
       .then((data) => {
         if (token !== levelToken.current) return;
@@ -434,7 +435,7 @@ export function TaxonomyField({
       return;
     }
     let current = true;
-    fetch(`/api/product-taxonomy?kind=taxonomy-name&id=${encodeURIComponent(value)}`)
+    appFetch(`/api/product-taxonomy?kind=taxonomy-name&id=${encodeURIComponent(value)}`)
       .then((r) => r.json())
       .then((data) => {
         if (!current) return;

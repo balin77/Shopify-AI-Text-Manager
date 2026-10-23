@@ -8,6 +8,7 @@
 import { useCallback, useState } from "react";
 import { Banner, BlockStack, Button, Card, Text } from "@shopify/polaris";
 import type { ImageStampProbeReport } from "../services/localized-media/image-stamp-probe.shared";
+import { appFetch } from "../utils/app-fetch";
 
 export function ImageStampProbeCard() {
   const [loading, setLoading] = useState(false);
@@ -21,7 +22,7 @@ export function ImageStampProbeCard() {
       const fd = new FormData();
       fd.set("kind", "imageStamp");
       fd.set("confirm", "true");
-      const r = await fetch("/api/translation-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/translation-probe", { method: "POST", body: fd });
       const j = (await r.json()) as { report?: ImageStampProbeReport; error?: string };
       if (!r.ok || !j.report) throw new Error(j.error || `HTTP ${r.status}`);
       setReport(j.report);

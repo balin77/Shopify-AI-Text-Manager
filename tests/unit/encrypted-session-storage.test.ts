@@ -197,3 +197,56 @@ describe('EncryptedPrismaSessionStorage – PII', () => {
     expect(loaded!.onlineAccessInfo).toBeUndefined();
   });
 });
+
+describe('EncryptedPrismaSessionStorage – undecryptable refresh token', () => {
+  // Valid-looking ciphertext (three base64 parts) that does not decrypt under
+  // the test key: what a rotated/wrong ENCRYPTION_KEY leaves behind.
+  const GARBAGE = 'AAAAAAAAAAAAAAAA:BBBBBBBBBBBBBBBBBBBBBA==:CCCCCCCCCCCC';
+
+  function offlineWithRefresh() {
+    return new Session({
+      id: 'offline_test-shop.myshopify.com',
+      shop: 'test-shop.myshopify.com',
+      state: '',
+      isOnline: false,
+      accessToken: 'offline-access-token',
+      expires: new Date(Date.now() + 3600_000),
+      refreshToken: 'refresh-token',
+    } as any);
+  }
+
+  it('treats the session as MISSING in loadSession (forces re-auth) and logs an error', async () => {
+    const { inner, store } = makeFakeInner();
+    const storage = new EncryptedPrismaSessionStorage(inner as unknown as PrismaSessionStorage<any>);
+    const s = offlineWithRefresh();
+    await storage.storeSession(s);
+    store.get(s.id)!.refreshToken = GARBAGE;
+
+    const { logger } = await import('~/utils/logger.server');
+    vi.mocked(logger.error).mockClear();
+    expect(await storage.loadSession(s.id)).toBeUndefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('treating the session as missing'),
+      expect.anything(),
+    );
+  });
+
+  it('still decrypts a healthy refresh token', async () => {
+    const { inner } = makeFakeInner();
+    const storage = new EncryptedPrismaSessionStorage(inner as unknown as PrismaSessionStorage<any>);
+    const s = offlineWithRefresh();
+    await storage.storeSession(s);
+    const loaded = await storage.loadSession(s.id);
+    expect(loaded!.refreshToken).toBe('refresh-token');
+  });
+
+  it('never hands ciphertext onward from findSessionsByShop', async () => {
+    const { inner, store } = makeFakeInner();
+    const storage = new EncryptedPrismaSessionStorage(inner as unknown as PrismaSessionStorage<any>);
+    const s = offlineWithRefresh();
+    await storage.storeSession(s);
+    store.get(s.id)!.refreshToken = GARBAGE;
+    const [found] = await storage.findSessionsByShop('test-shop.myshopify.com');
+    expect(found.refreshToken).toBeUndefined();
+  });
+});

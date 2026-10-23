@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { FetcherWithComponents } from "react-router";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -22,6 +22,14 @@ import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from ".
 import { CURATED_MODELS, DEFAULT_MODELS } from "../config/ai-models.config";
 import "../styles/RateLimitFields.css";
 import { ManagedAiCard, type ManagedAiCardProps } from "./ManagedAiCard";
+import {
+  API_KEY_FIELDS,
+  apiKeyUsable,
+  emptyApiKeyStatusMap,
+  type ApiKeyField,
+  type ApiKeyStatusMap,
+} from "../utils/api-key-storage.shared";
+import { appFetch } from "../utils/app-fetch";
 
 // Responsive label component that shows short version on small screens
 function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; shortText: string; helpKey?: string }) {
@@ -35,12 +43,12 @@ function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; s
 }
 
 interface Settings {
-  huggingfaceApiKey: string;
-  geminiApiKey: string;
-  claudeApiKey: string;
-  openaiApiKey: string;
-  grokApiKey: string;
-  deepseekApiKey: string;
+  /**
+   * Whether a key is stored per provider (+ its last four characters). The
+   * keys themselves never reach the browser — the fields below hold only what
+   * the merchant TYPES, and an empty field keeps the stored key.
+   */
+  apiKeyStatus?: ApiKeyStatusMap;
   preferredProvider: string;
   selectedModel: string;
   appLanguage: string;
@@ -98,12 +106,16 @@ export function SettingsAITab({
   ];
 
   const [keysWithheldAtMount] = useState(settings.apiKeysWithheld === true);
-  const [huggingfaceKey, setHuggingfaceKey] = useState(settings.huggingfaceApiKey);
-  const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey);
-  const [claudeKey, setClaudeKey] = useState(settings.claudeApiKey);
-  const [openaiKey, setOpenaiKey] = useState(settings.openaiApiKey);
-  const [grokKey, setGrokKey] = useState(settings.grokApiKey);
-  const [deepseekKey, setDeepseekKey] = useState(settings.deepseekApiKey);
+  const [huggingfaceKey, setHuggingfaceKey] = useState("");
+  const [geminiKey, setGeminiKey] = useState("");
+  const [claudeKey, setClaudeKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState("");
+  const [grokKey, setGrokKey] = useState("");
+  const [deepseekKey, setDeepseekKey] = useState("");
+  // Keys the merchant asked to REMOVE — a draft like every other change here,
+  // written only by the save bar (an empty field alone never deletes).
+  const [removeKeys, setRemoveKeys] = useState<ApiKeyField[]>([]);
+  const keyStatus: ApiKeyStatusMap = settings.apiKeyStatus ?? emptyApiKeyStatusMap();
   const [provider, setProvider] = useState(settings.preferredProvider);
   const [selectedModel, setSelectedModel] = useState(settings.selectedModel || '');
   const [availableModels, setAvailableModels] = useState<Array<{ label: string; value: string }>>([]);
@@ -143,7 +155,7 @@ export function SettingsAITab({
       return [...options, { label: model, value: model }];
     };
     try {
-      const response = await fetch(`/api/ai-models?provider=${providerToFetch}`);
+      const response = await appFetch(`/api/ai-models?provider=${providerToFetch}`);
       const data = await response.json();
       if (data.success && data.models) {
         const options: Array<{ label: string; value: string }> = data.models.map((m: { id: string; name: string }) => ({
@@ -239,12 +251,13 @@ export function SettingsAITab({
 
   useEffect(() => {
     const changed =
-      huggingfaceKey !== settings.huggingfaceApiKey ||
-      geminiKey !== settings.geminiApiKey ||
-      claudeKey !== settings.claudeApiKey ||
-      openaiKey !== settings.openaiApiKey ||
-      grokKey !== settings.grokApiKey ||
-      deepseekKey !== settings.deepseekApiKey ||
+      huggingfaceKey.trim() !== "" ||
+      geminiKey.trim() !== "" ||
+      claudeKey.trim() !== "" ||
+      openaiKey.trim() !== "" ||
+      grokKey.trim() !== "" ||
+      deepseekKey.trim() !== "" ||
+      removeKeys.length > 0 ||
       provider !== settings.preferredProvider ||
       selectedModel !== (settings.selectedModel || '') ||
       hfMaxTokensPerMinute !== String(settings.hfMaxTokensPerMinute) ||
@@ -264,7 +277,7 @@ export function SettingsAITab({
       onHasChangesChange(changed);
     }
   }, [
-    huggingfaceKey, geminiKey, claudeKey, openaiKey, grokKey, deepseekKey, provider, selectedModel,
+    huggingfaceKey, geminiKey, claudeKey, openaiKey, grokKey, deepseekKey, removeKeys, provider, selectedModel,
     hfMaxTokensPerMinute, hfMaxRequestsPerMinute,
     geminiMaxTokensPerMinute, geminiMaxRequestsPerMinute,
     claudeMaxTokensPerMinute, claudeMaxRequestsPerMinute,
@@ -275,9 +288,50 @@ export function SettingsAITab({
     onHasChangesChange
   ]);
 
+  // What the last saveAiKeys carried, so its answer can clear exactly the
+  // typed values it wrote (text typed while it was in flight stays a draft).
+  const submittedKeysRef = useRef<{ typed: Record<ApiKeyField, string>; removed: ApiKeyField[] } | null>(null);
+  const typedKeys: Record<ApiKeyField, string> = {
+    huggingfaceApiKey: huggingfaceKey,
+    geminiApiKey: geminiKey,
+    claudeApiKey: claudeKey,
+    openaiApiKey: openaiKey,
+    grokApiKey: grokKey,
+    deepseekApiKey: deepseekKey,
+  };
+  const keySetters: Record<ApiKeyField, Dispatch<SetStateAction<string>>> = {
+    huggingfaceApiKey: setHuggingfaceKey,
+    geminiApiKey: setGeminiKey,
+    claudeApiKey: setClaudeKey,
+    openaiApiKey: setOpenaiKey,
+    grokApiKey: setGrokKey,
+    deepseekApiKey: setDeepseekKey,
+  };
+
+  // A confirmed save: the typed keys are stored now (the loader reports them
+  // as "stored" with their hint), so the fields go back to empty — they never
+  // show a stored key. A failed save keeps everything as a draft.
+  useEffect(() => {
+    const sent = submittedKeysRef.current;
+    if (!sent || fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.actionType !== "saveAiKeys") return;
+    submittedKeysRef.current = null;
+    if (!fetcher.data.success) return;
+    for (const field of API_KEY_FIELDS) {
+      const typed = sent.typed[field];
+      // Only a field still holding exactly what was sent: a value typed
+      // while the save was in flight was not written and stays a draft.
+      if (typed !== "") keySetters[field]((current) => (current === typed ? "" : current));
+    }
+    setRemoveKeys((current) => current.filter((f) => !sent.removed.includes(f)));
+    // keySetters are stable useState setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.state, fetcher.data]);
+
   const handleSave = () => {
     if (!hasChanges) return;
 
+    submittedKeysRef.current = { typed: { ...typedKeys }, removed: [...removeKeys] };
     fetcher.submit(
       {
         actionType: "saveAiKeys",
@@ -290,6 +344,8 @@ export function SettingsAITab({
         openaiApiKey: openaiKey,
         grokApiKey: grokKey,
         deepseekApiKey: deepseekKey,
+        // Explicit removals only — an empty key field keeps the stored key.
+        removeApiKeys: JSON.stringify(removeKeys),
         preferredProvider: provider,
         selectedModel,
         appLanguage: settings.appLanguage,
@@ -311,12 +367,13 @@ export function SettingsAITab({
   };
 
   const handleDiscard = () => {
-    setHuggingfaceKey(settings.huggingfaceApiKey);
-    setGeminiKey(settings.geminiApiKey);
-    setClaudeKey(settings.claudeApiKey);
-    setOpenaiKey(settings.openaiApiKey);
-    setGrokKey(settings.grokApiKey);
-    setDeepseekKey(settings.deepseekApiKey);
+    setHuggingfaceKey("");
+    setGeminiKey("");
+    setClaudeKey("");
+    setOpenaiKey("");
+    setGrokKey("");
+    setDeepseekKey("");
+    setRemoveKeys([]);
     setProvider(settings.preferredProvider);
     setSelectedModel(settings.selectedModel || '');
     setHfMaxTokensPerMinute(String(settings.hfMaxTokensPerMinute));
@@ -334,17 +391,136 @@ export function SettingsAITab({
   };
 
   // Check if the preferred provider has an API key
+  // A provider "has a key" when one is typed, or a readable one is stored and
+  // not marked for removal — the stored key never reaches the browser, so its
+  // status flag stands in for it.
+  const effectiveKey = (field: ApiKeyField): string =>
+    typedKeys[field].trim() !== ""
+      ? typedKeys[field]
+      : apiKeyUsable(keyStatus[field]) && !removeKeys.includes(field)
+        ? "stored"
+        : "";
   const preferredProviderHasKey = hasApiKeyForProvider(
     {
-      huggingfaceApiKey: huggingfaceKey,
-      geminiApiKey: geminiKey,
-      claudeApiKey: claudeKey,
-      openaiApiKey: openaiKey,
-      grokApiKey: grokKey,
-      deepseekApiKey: deepseekKey,
+      huggingfaceApiKey: effectiveKey("huggingfaceApiKey"),
+      geminiApiKey: effectiveKey("geminiApiKey"),
+      claudeApiKey: effectiveKey("claudeApiKey"),
+      openaiApiKey: effectiveKey("openaiApiKey"),
+      grokApiKey: effectiveKey("grokApiKey"),
+      deepseekApiKey: effectiveKey("deepseekApiKey"),
     },
     provider as AIProvider
   );
+
+  const renderKeyField = ({
+    field,
+    provider: keyProvider,
+    value,
+    setValue,
+    show,
+    setShow,
+    help,
+    linkUrl,
+    linkLabel,
+  }: {
+    field: ApiKeyField;
+    provider: AIProvider;
+    value: string;
+    setValue: (v: string) => void;
+    show: boolean;
+    setShow: (v: boolean) => void;
+    help: string;
+    linkUrl: string;
+    linkLabel: string;
+  }) => {
+    const status = keyStatus[field];
+    const removing = removeKeys.includes(field);
+    const settingsT = t.settings as unknown as Record<string, string | undefined>;
+    const placeholder = !status.stored || removing
+      ? undefined
+      : status.corrupted
+        ? settingsT.apiKeyStoredCorruptedPlaceholder || "Stored key cannot be read – please enter it again"
+        : status.hint
+          ? (settingsT.apiKeyStoredPlaceholder || "Stored (•••• {hint}) – type a new key to replace it").replace("{hint}", status.hint)
+          : settingsT.apiKeyStoredPlaceholderNoHint || "Stored – type a new key to replace it";
+    return (
+      <BlockStack gap="200">
+        <TextField
+          label="API Key"
+          value={value}
+          placeholder={placeholder}
+          onChange={(v) => {
+            setValue(v);
+            // Typing a new key replaces the stored one — a pending removal
+            // of the same key is superseded.
+            if (v.trim() !== "") setRemoveKeys((current) => current.filter((f) => f !== field));
+            dismissCorruptedFor(keyProvider);
+          }}
+          type={show ? "text" : "password"}
+          autoComplete="off"
+          error={translateFieldError(fieldErrors[field])}
+          suffix={
+            <button
+              onClick={() => setShow(!show)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "0",
+                display: "flex",
+                alignItems: "center",
+              }}
+              type="button"
+            >
+              <Icon source={show ? HideIcon : ViewIcon} />
+            </button>
+          }
+          helpText={
+            <span>
+              {help}{" "}
+              <a href={linkUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#008060" }}>
+                {linkLabel}
+              </a>
+              {status.stored && !removing && (
+                <>
+                  {" "}
+                  {settingsT.apiKeyStoredHelp ||
+                    "For security, a stored key is never shown again. Leave the field empty to keep it."}
+                </>
+              )}
+            </span>
+          }
+        />
+        {status.stored &&
+          (removing ? (
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="span" variant="bodySm" tone="critical">
+                {settingsT.apiKeyRemovePending || "This key will be removed when you save."}
+              </Text>
+              <Button
+                variant="plain"
+                onClick={() => setRemoveKeys((current) => current.filter((f) => f !== field))}
+              >
+                {settingsT.apiKeyRemoveUndo || "Undo"}
+              </Button>
+            </InlineStack>
+          ) : (
+            <InlineStack>
+              <Button
+                variant="plain"
+                tone="critical"
+                onClick={() => {
+                  setValue("");
+                  setRemoveKeys((current) => (current.includes(field) ? current : [...current, field]));
+                }}
+              >
+                {settingsT.apiKeyRemove || "Remove key"}
+              </Button>
+            </InlineStack>
+          ))}
+      </BlockStack>
+    );
+  };
 
   // PLAN_MANAGED_AI_KEY §8a — in managed mode the six key fields, the provider
   // select, the model select and the per-provider rate limits are all noise:
@@ -479,43 +655,17 @@ export function SettingsAITab({
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">OpenAI</Text>
-                <TextField
-                  label="API Key"
-                  value={openaiKey}
-                  onChange={(v) => { setOpenaiKey(v); dismissCorruptedFor("openai"); }}
-                  type={showOpenaiKey ? "text" : "password"}
-                  autoComplete="off"
-                  error={translateFieldError(fieldErrors.openaiApiKey)}
-                  suffix={
-                    <button
-                      onClick={() => setShowOpenaiKey(!showOpenaiKey)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                      type="button"
-                    >
-                      <Icon source={showOpenaiKey ? HideIcon : ViewIcon} />
-                    </button>
-                  }
-                  helpText={
-                    <span>
-                      {t.settings.openaiHelp}{" "}
-                      <a
-                        href="https://platform.openai.com/api-keys"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "#008060" }}
-                      >
-                        OpenAI Platform
-                      </a>
-                    </span>
-                  }
-                />
+                {renderKeyField({
+                  field: "openaiApiKey",
+                  provider: "openai",
+                  value: openaiKey,
+                  setValue: setOpenaiKey,
+                  show: showOpenaiKey,
+                  setShow: setShowOpenaiKey,
+                  help: t.settings.openaiHelp,
+                  linkUrl: "https://platform.openai.com/api-keys",
+                  linkLabel: "OpenAI Platform",
+                })}
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
@@ -555,43 +705,17 @@ export function SettingsAITab({
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Google Gemini</Text>
-                <TextField
-                  label="API Key"
-                  value={geminiKey}
-                  onChange={(v) => { setGeminiKey(v); dismissCorruptedFor("gemini"); }}
-                  type={showGeminiKey ? "text" : "password"}
-                  autoComplete="off"
-                  error={translateFieldError(fieldErrors.geminiApiKey)}
-                  suffix={
-                    <button
-                      onClick={() => setShowGeminiKey(!showGeminiKey)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                      type="button"
-                    >
-                      <Icon source={showGeminiKey ? HideIcon : ViewIcon} />
-                    </button>
-                  }
-                  helpText={
-                    <span>
-                      {t.settings.geminiHelp}{" "}
-                      <a
-                        href="https://aistudio.google.com/app/apikey"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "#008060" }}
-                      >
-                        Google AI Studio
-                      </a>
-                    </span>
-                  }
-                />
+                {renderKeyField({
+                  field: "geminiApiKey",
+                  provider: "gemini",
+                  value: geminiKey,
+                  setValue: setGeminiKey,
+                  show: showGeminiKey,
+                  setShow: setShowGeminiKey,
+                  help: t.settings.geminiHelp,
+                  linkUrl: "https://aistudio.google.com/app/apikey",
+                  linkLabel: "Google AI Studio",
+                })}
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
@@ -631,43 +755,17 @@ export function SettingsAITab({
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Anthropic Claude</Text>
-                <TextField
-                  label="API Key"
-                  value={claudeKey}
-                  onChange={(v) => { setClaudeKey(v); dismissCorruptedFor("claude"); }}
-                  type={showClaudeKey ? "text" : "password"}
-                  autoComplete="off"
-                  error={translateFieldError(fieldErrors.claudeApiKey)}
-                  suffix={
-                    <button
-                      onClick={() => setShowClaudeKey(!showClaudeKey)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                      type="button"
-                    >
-                      <Icon source={showClaudeKey ? HideIcon : ViewIcon} />
-                    </button>
-                  }
-                  helpText={
-                    <span>
-                      {t.settings.claudeHelp}{" "}
-                      <a
-                        href="https://console.anthropic.com/settings/keys"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "#008060" }}
-                      >
-                        Anthropic Console
-                      </a>
-                    </span>
-                  }
-                />
+                {renderKeyField({
+                  field: "claudeApiKey",
+                  provider: "claude",
+                  value: claudeKey,
+                  setValue: setClaudeKey,
+                  show: showClaudeKey,
+                  setShow: setShowClaudeKey,
+                  help: t.settings.claudeHelp,
+                  linkUrl: "https://console.anthropic.com/settings/keys",
+                  linkLabel: "Anthropic Console",
+                })}
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
@@ -707,43 +805,17 @@ export function SettingsAITab({
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Hugging Face</Text>
-                <TextField
-                  label="API Key"
-                  value={huggingfaceKey}
-                  onChange={(v) => { setHuggingfaceKey(v); dismissCorruptedFor("huggingface"); }}
-                  type={showHuggingfaceKey ? "text" : "password"}
-                  autoComplete="off"
-                  error={translateFieldError(fieldErrors.huggingfaceApiKey)}
-                  suffix={
-                    <button
-                      onClick={() => setShowHuggingfaceKey(!showHuggingfaceKey)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                      type="button"
-                    >
-                      <Icon source={showHuggingfaceKey ? HideIcon : ViewIcon} />
-                    </button>
-                  }
-                  helpText={
-                    <span>
-                      {t.settings.huggingfaceHelp}{" "}
-                      <a
-                        href="https://huggingface.co/settings/tokens"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "#008060" }}
-                      >
-                        Hugging Face
-                      </a>
-                    </span>
-                  }
-                />
+                {renderKeyField({
+                  field: "huggingfaceApiKey",
+                  provider: "huggingface",
+                  value: huggingfaceKey,
+                  setValue: setHuggingfaceKey,
+                  show: showHuggingfaceKey,
+                  setShow: setShowHuggingfaceKey,
+                  help: t.settings.huggingfaceHelp,
+                  linkUrl: "https://huggingface.co/settings/tokens",
+                  linkLabel: "Hugging Face",
+                })}
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
@@ -783,43 +855,17 @@ export function SettingsAITab({
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Grok (X.AI)</Text>
-                <TextField
-                  label="API Key"
-                  value={grokKey}
-                  onChange={(v) => { setGrokKey(v); dismissCorruptedFor("grok"); }}
-                  type={showGrokKey ? "text" : "password"}
-                  autoComplete="off"
-                  error={translateFieldError(fieldErrors.grokApiKey)}
-                  suffix={
-                    <button
-                      onClick={() => setShowGrokKey(!showGrokKey)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                      type="button"
-                    >
-                      <Icon source={showGrokKey ? HideIcon : ViewIcon} />
-                    </button>
-                  }
-                  helpText={
-                    <span>
-                      {t.settings.grokHelp}{" "}
-                      <a
-                        href="https://console.x.ai"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "#008060" }}
-                      >
-                        X.AI Console
-                      </a>
-                    </span>
-                  }
-                />
+                {renderKeyField({
+                  field: "grokApiKey",
+                  provider: "grok",
+                  value: grokKey,
+                  setValue: setGrokKey,
+                  show: showGrokKey,
+                  setShow: setShowGrokKey,
+                  help: t.settings.grokHelp,
+                  linkUrl: "https://console.x.ai",
+                  linkLabel: "X.AI Console",
+                })}
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
@@ -859,43 +905,17 @@ export function SettingsAITab({
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">DeepSeek</Text>
-                <TextField
-                  label="API Key"
-                  value={deepseekKey}
-                  onChange={(v) => { setDeepseekKey(v); dismissCorruptedFor("deepseek"); }}
-                  type={showDeepseekKey ? "text" : "password"}
-                  autoComplete="off"
-                  error={translateFieldError(fieldErrors.deepseekApiKey)}
-                  suffix={
-                    <button
-                      onClick={() => setShowDeepseekKey(!showDeepseekKey)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                      type="button"
-                    >
-                      <Icon source={showDeepseekKey ? HideIcon : ViewIcon} />
-                    </button>
-                  }
-                  helpText={
-                    <span>
-                      {t.settings.deepseekHelp}{" "}
-                      <a
-                        href="https://platform.deepseek.com"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "#008060" }}
-                      >
-                        DeepSeek Platform
-                      </a>
-                    </span>
-                  }
-                />
+                {renderKeyField({
+                  field: "deepseekApiKey",
+                  provider: "deepseek",
+                  value: deepseekKey,
+                  setValue: setDeepseekKey,
+                  show: showDeepseekKey,
+                  setShow: setShowDeepseekKey,
+                  help: t.settings.deepseekHelp,
+                  linkUrl: "https://platform.deepseek.com",
+                  linkLabel: "DeepSeek Platform",
+                })}
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField

@@ -9,6 +9,7 @@ import {
 import { resourceTypeLabel } from "../../services/tasks/task-labels.shared";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { formatTime } from "../../utils/format";
+import { appFetch } from "../../utils/app-fetch";
 
 /**
  * The expanded half of a card on /app/tasks (PLAN_TASK_LIST_CLARITY §3.3/§3.4).
@@ -232,7 +233,7 @@ export function TaskDetailsPanel({
       lastFetchAtRef.current = Date.now();
       if (!cancelled) setFailed(false);
       try {
-        const res = await fetch(
+        const res = await appFetch(
           `/api/task-result?taskId=${encodeURIComponent(taskId)}&detail=1`,
           { headers: { Accept: "application/json" } },
         );

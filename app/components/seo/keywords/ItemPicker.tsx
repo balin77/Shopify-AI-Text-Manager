@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TextField, Select, Button, Spinner, Text, InlineStack, BlockStack } from "@shopify/polaris";
 import { SubNavBar, type SubNavBarItem } from "../../nav/SubNavBar";
+import { appFetch } from "../../../utils/app-fetch";
 
 export type PickerType = "Product" | "Collection" | "Article" | "Page";
 
@@ -123,7 +124,7 @@ export function ItemPicker({ selected, onChange, productTypes, locale, labels }:
         if (locale) params.set("locale", locale);
         if (cursor) params.set("cursor", cursor);
 
-        const res = await fetch(`/api/seo/item-picker?${params.toString()}`);
+        const res = await appFetch(`/api/seo/item-picker?${params.toString()}`);
         const data = (await res.json()) as PickerResponse;
 
         // A newer request superseded this one — drop the stale result.

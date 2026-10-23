@@ -69,14 +69,14 @@ try {
   serverLogger.error("[server.js] Failed to load rate-limit-cjs.cjs: " + e.message);
   // Provide no-op middleware so server can still start
   const noop = (req, res, next) => next();
-  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookRateLimit: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
+  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookFailureObserver: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
 }
 
 const {
   apiRateLimit,
   aiActionRateLimit,
   contentActionRateLimit,
-  webhookRateLimit,
+  webhookFailureObserver,
   authRateLimit,
   strictRateLimit,
   bulkOperationRateLimit,
@@ -232,8 +232,14 @@ app.use((req, res, next) => {
 });
 
 // Apply granular rate limiting
-// Webhook rate limiting (high limit for Shopify bursts)
-app.use('/webhooks', webhookRateLimit);
+// Webhooks are deliberately NOT throttled (see rate-limit-cjs.cjs): every
+// unverified request is rejected cheaply by authenticate.webhook's HMAC check,
+// while any IP- or header-keyed throttle can be aimed at Shopify's SHARED
+// delivery IPs or at a victim shop, and a 429 would hide our own misconfig
+// (rotated secret, adapter regression) behind "rate limited" in the Partner
+// Dashboard's delivery log. This only counts verification failures per IP and
+// logs a warn line when one IP spikes; it never refuses a request.
+app.use('/webhooks', webhookFailureObserver);
 
 // Auth rate limiting (strict to prevent brute force)
 app.use('/auth', authRateLimit);

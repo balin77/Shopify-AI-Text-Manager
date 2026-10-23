@@ -1305,18 +1305,35 @@ async function persistProductMetafields(
           failures.push(failureOf(group, "Shopify did not confirm the metafield write.", entry.columnId));
           continue;
         }
-        await db.productMetafield.upsert({
+        // Shop-scoped mirror: an upsert cannot carry a relation filter in its
+        // `where`, so the existing row is looked up WITH the shop first. A row
+        // under that id that belongs to another shop's product is never
+        // touched — the cell fails instead of writing across tenants.
+        const existingMetafield = await db.productMetafield.findUnique({
           where: { id: echo.id },
-          create: {
-            id: echo.id,
-            productId,
-            namespace: echo.namespace,
-            key: echo.key,
-            value: echo.value,
-            type: echo.type,
-          },
-          update: { value: echo.value, type: echo.type },
+          select: { id: true, product: { select: { shop: true } } },
         });
+        if (existingMetafield && existingMetafield.product?.shop !== shop) {
+          failures.push(failureOf(group, "Shopify confirmed the metafield, but its cache row belongs to another shop.", entry.columnId));
+          continue;
+        }
+        if (existingMetafield) {
+          await db.productMetafield.update({
+            where: { id: echo.id },
+            data: { value: echo.value, type: echo.type },
+          });
+        } else {
+          await db.productMetafield.create({
+            data: {
+              id: echo.id,
+              productId,
+              namespace: echo.namespace,
+              key: echo.key,
+              value: echo.value,
+              type: echo.type,
+            },
+          });
+        }
         // The metafield's own foreign translations are now stale (§6.6) — they
         // live on the METAFIELD gid, so they need their own invalidation.
         await invalidateStaleForeignTranslations(deps, "product", echo.id, ["value"], {
@@ -1370,7 +1387,12 @@ async function persistProductMetafields(
           // rows by gid; Shopify removed them with the metafield itself, so
           // there is nothing to confirm remotely.
           const removed = await db.productMetafield.findFirst({
-            where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
+            where: {
+              productId,
+              product: { shop },
+              namespace: entry.identifier.namespace,
+              key: entry.identifier.key,
+            },
             select: { id: true },
           });
           if (removed) {
@@ -1379,7 +1401,12 @@ async function persistProductMetafields(
             });
           }
           await db.productMetafield.deleteMany({
-            where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
+            where: {
+              productId,
+              product: { shop },
+              namespace: entry.identifier.namespace,
+              key: entry.identifier.key,
+            },
           });
         }
       }
@@ -1399,7 +1426,7 @@ async function persistProductOptions(
   cells: ProductCellGroups,
   deps: PersistDeps,
 ): Promise<BulkFailure[]> {
-  const { db, gateway } = deps;
+  const { db, shop, gateway } = deps;
   const productId = group.rowId;
   const failures: BulkFailure[] = [];
 
@@ -1413,7 +1440,7 @@ async function persistProductOptions(
       for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
     };
 
-    const option = await db.productOption.findFirst({ where: { productId, position } });
+    const option = await db.productOption.findFirst({ where: { productId, position, product: { shop } } });
     if (!option) {
       failAll(`This product has no option at position ${position}.`);
       continue;
@@ -1716,7 +1743,7 @@ async function persistProductImageAlt(
 
   // Main image = lowest position — the same image the loader resolved.
   const image = await db.productImage.findFirst({
-    where: { productId },
+    where: { productId, product: { shop } },
     orderBy: { position: "asc" },
   });
   if (!image) {

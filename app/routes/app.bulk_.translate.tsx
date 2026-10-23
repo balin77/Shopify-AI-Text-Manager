@@ -76,6 +76,7 @@ import {
 } from "../services/bulk-editor/missing-translations.server";
 import { LocaleToggleBar } from "../components/bulk-editor/LocaleToggleBar";
 import { MissingTranslationList } from "../components/bulk-editor/MissingTranslationList";
+import { appFetch } from "../utils/app-fetch";
 
 interface TranslateLoaderData {
   gated: boolean;
@@ -392,7 +393,7 @@ export default function BulkTranslateMissingPage() {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const res = await fetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
+        const res = await appFetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
           headers: { Accept: "application/json" },
         });
         if (!res.ok || cancelled) return;

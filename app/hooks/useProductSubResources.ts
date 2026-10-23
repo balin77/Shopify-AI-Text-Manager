@@ -65,6 +65,7 @@ import {
   subResourceSaveRacesRun,
 } from "../services/editor/sub-resource-clear.shared";
 import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
+import { appFetch } from "../utils/app-fetch";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -153,7 +154,7 @@ export function __resetSubResourceSpinnerHolds(): void {
  */
 async function postSubResourceRequest(fd: FormData): Promise<SubResourceFetcherData | null> {
   try {
-    const resp = await fetch(SUB_RESOURCE_ENDPOINT, {
+    const resp = await appFetch(SUB_RESOURCE_ENDPOINT, {
       method: "POST",
       body: setContentEditorPage(fd, "/app/products"),
     });

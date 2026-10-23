@@ -19,6 +19,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { Card, Text, BlockStack, Button, Banner, InlineStack, Checkbox, TextField } from "@shopify/polaris";
+import { appFetch } from "../utils/app-fetch";
 
 interface TypeShape {
   name: string;
@@ -157,7 +158,7 @@ export function SettingsCollectionModelProbeTab() {
       fd.set("apiVersion", apiVersion);
       if (includeWriteTest) fd.set("writeTest", "true");
       if (sourcesOverride.trim()) fd.set("sourcesToCreate", sourcesOverride.trim());
-      const r = await fetch("/api/collection-model-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/collection-model-probe", { method: "POST", body: fd });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = (await r.json()) as { success: boolean; report?: ProbeReport; error?: string };
       if (!j.success || !j.report) throw new Error(j.error || "Probe failed");
