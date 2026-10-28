@@ -14,7 +14,13 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { isManagedRefusal } from "../../src/services/ai.service";
+import {
+  isManagedRefusal,
+  isProviderKeyRejection,
+  isMissingAIKey,
+} from "../../src/services/ai.service";
+import { captureServerError } from "~/utils/sentry.server";
+import { getProviderDisplayName } from "~/utils/api-key-validation";
 import { targetPlanTypes, firstGatedTarget } from "~/utils/ai-target-plan";
 import { planGateRefusal } from "~/utils/content-route-action.server";
 import { aiRefusalFor } from "~/utils/ai-refusal-response.server";
@@ -25,7 +31,7 @@ import {
   errorMessage,
   errorStack,
   managedRefusalResponse,
-  isAuthError,
+  noAiKeyResponse,
   aiAuthErrorResponse,
   resolveSeoContext,
 } from "./api-ai-handlers/shared";
@@ -87,10 +93,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Hoisted so the catch below can phrase a mid-call managed refusal in the
   // merchant's language.
   let settings: AISettings | null = null;
+  // Hoisted so a crash reported from the catch names the action.
+  let actionType = "";
 
   try {
     const formData = await request.formData();
-    const actionType = getFormString(formData, "action");
+    actionType = getFormString(formData, "action");
     const rawContentType = getFormString(formData, "contentType") || "";
     // The theme-content family (system / delivery / sellingPlans /
     // onlineStoreExtras) shares the Templates ThemeContent data model, item id
@@ -230,7 +238,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // error — never as a generic 500 (or, worse, a silent success from a
     // handler that swallowed it). Handlers re-throw auth errors for exactly
     // this central translation into a clear INVALID_AI_KEY response.
-    if (isAuthError(error)) {
+    // Asked by the MARKER (`InvalidAIKeyError`, which `AIService` throws for
+    // every provider auth failure), never by the `isAuthError` heuristic: a
+    // Shopify GraphQL "401 Unauthorized" or any message containing
+    // "unauthorized" would otherwise tell the merchant their AI key is bad.
+    if (isProviderKeyRejection(error)) {
       logger.error("[API-AI] AI request failed — provider rejected the API key", {
         context: "AI",
         error: errorMessage(error),
@@ -251,6 +263,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         limitMicros: error.limitMicros,
       });
     }
+    // No usable key discovered mid-handler (e.g. a sub-call built its own
+    // service): the same answer the up-front gate gives, not a generic 500.
+    if (isMissingAIKey(error)) {
+      return noAiKeyResponse(settings, {
+        provider: error.provider,
+        displayName: getProviderDisplayName(error.provider),
+      });
+    }
+    // A real crash. It no longer escapes to `handleError` (the handlers are
+    // awaited inside this try), so report it to Sentry here — and only here,
+    // not for the control-flow branches above.
+    captureServerError(error, { route: "/api/ai", actionType, shop: session.shop });
     logger.error("[API-AI] Error processing AI request", {
       context: "AI",
       error: errorMessage(error),
