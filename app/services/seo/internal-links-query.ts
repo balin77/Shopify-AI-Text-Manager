@@ -38,3 +38,61 @@ export function suggestionWhere(shop: string, view: View, fromFilter: FilterType
     ...(toFilter ? { toResourceType: toFilter } : {}),
   };
 }
+
+/**
+ * What the page says about the latest finished generation run. Without it a
+ * run that found nothing, or one that failed, left the page exactly as it was
+ * — the merchant pressed "Generieren", watched the spinner and saw no result
+ * and no reason. Read from the run's own Task row (`result` is the runner's
+ * InternalLinksSummary JSON, `error` its failure text).
+ */
+export type LastRunOutcome =
+  | { status: "completed"; created: number; updated: number; sourcesScanned: number }
+  | { status: "failed"; error: string };
+
+/**
+ * How long the latest run's "found nothing" / "failed" banner stays up on its
+ * own. A weeks-old failure must not keep the page red for good; past this the
+ * banner only shows again after a generate started in the current session.
+ */
+export const LAST_RUN_BANNER_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether the latest finished run is recent enough for its outcome banner.
+ * Decided on the SERVER (the loader), so the first client render agrees with
+ * the server's HTML. `completedAt` first, `updatedAt` for a row a reaper
+ * closed without one; neither known ⇒ not recent.
+ */
+export function isRecentRun(
+  task: { completedAt?: Date | null; updatedAt?: Date | null } | null | undefined,
+  now: number,
+  windowMs: number = LAST_RUN_BANNER_WINDOW_MS,
+): boolean {
+  const finished = task?.completedAt ?? task?.updatedAt ?? null;
+  if (!finished) return false;
+  const at = finished.getTime();
+  if (!Number.isFinite(at)) return false;
+  return now - at <= windowMs;
+}
+
+export function parseLastRunOutcome(
+  task: { status: string; result: string | null; error: string | null } | null | undefined,
+): LastRunOutcome | null {
+  if (!task) return null;
+  if (task.status === "failed") return { status: "failed", error: (task.error || "").trim() };
+  if (task.status !== "completed") return null;
+  let summary: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = task.result ? JSON.parse(task.result) : null;
+    if (parsed && typeof parsed === "object") summary = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    status: "completed",
+    created: num(summary.created),
+    updated: num(summary.updated),
+    sourcesScanned: num(summary.sourcesScanned),
+  };
+}

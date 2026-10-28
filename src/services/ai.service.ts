@@ -300,6 +300,27 @@ export class InvalidAIKeyError extends Error {
 }
 
 /**
+ * True only for the error THIS service throws after a provider rejected the
+ * key ({@link InvalidAIKeyError}) — the marker, not the heuristic. Every
+ * provider call goes through `askAI`, which normalises a provider auth failure
+ * into that class, so a caller that must not mislabel an unrelated failure (a
+ * Shopify "401 Unauthorized", any message containing "unauthorized") as a bad
+ * AI key asks this instead of {@link isAuthError}. Recognised by `code` as well
+ * as `instanceof`, because the class crosses dynamic-import boundaries.
+ */
+export function isProviderKeyRejection(error: unknown): error is InvalidAIKeyError {
+  if (error instanceof InvalidAIKeyError) return true;
+  return (error as { code?: string } | null)?.code === 'INVALID_AI_KEY';
+}
+
+/** {@link MissingAIKeyError} by class or by its `code` (same reason as above). */
+export function isMissingAIKey(error: unknown): error is MissingAIKeyError {
+  if (error instanceof MissingAIKeyError) return true;
+  const e = error as { code?: string; provider?: unknown } | null;
+  return e?.code === 'NO_AI_KEY' && typeof e.provider === 'string';
+}
+
+/**
  * Returns true when an unknown thrown value looks like a provider authentication
  * failure (invalid/expired/unauthorized API key). Covers the OpenAI/Grok/DeepSeek
  * (OpenAI-compatible), Anthropic, Gemini and HuggingFace SDK shapes plus the

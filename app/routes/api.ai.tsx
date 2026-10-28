@@ -14,7 +14,13 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { isManagedRefusal } from "../../src/services/ai.service";
+import {
+  isManagedRefusal,
+  isProviderKeyRejection,
+  isMissingAIKey,
+} from "../../src/services/ai.service";
+import { captureServerError } from "~/utils/sentry.server";
+import { getProviderDisplayName } from "~/utils/api-key-validation";
 import { targetPlanTypes, firstGatedTarget } from "~/utils/ai-target-plan";
 import { planGateRefusal } from "~/utils/content-route-action.server";
 import { aiRefusalFor } from "~/utils/ai-refusal-response.server";
@@ -25,7 +31,7 @@ import {
   errorMessage,
   errorStack,
   managedRefusalResponse,
-  isAuthError,
+  noAiKeyResponse,
   aiAuthErrorResponse,
   resolveSeoContext,
 } from "./api-ai-handlers/shared";
@@ -87,10 +93,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Hoisted so the catch below can phrase a mid-call managed refusal in the
   // merchant's language.
   let settings: AISettings | null = null;
+  // Hoisted so a crash reported from the catch names the action.
+  let actionType = "";
 
   try {
     const formData = await request.formData();
-    const actionType = getFormString(formData, "action");
+    actionType = getFormString(formData, "action");
     const rawContentType = getFormString(formData, "contentType") || "";
     // The theme-content family (system / delivery / sellingPlans /
     // onlineStoreExtras) shares the Templates ThemeContent data model, item id
@@ -165,62 +173,76 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       itemId,
     };
 
+    // `return await`, never a bare `return handler(ctx)`: a promise returned
+    // from inside the `try` settles AFTER it, so a handler's rejection would
+    // skip the catch below entirely — the INVALID_AI_KEY translation, the
+    // managed-refusal answer and the Response re-throw were all dead code.
     switch (actionType) {
       case "translateField":
-        return handleTranslateField(ctx);
+        return await handleTranslateField(ctx);
       case "translateFieldToAllLocales":
-        return handleTranslateFieldToAllLocales(ctx);
+        return await handleTranslateFieldToAllLocales(ctx);
       case "formatField":
-        return handleFormatField(ctx);
+        return await handleFormatField(ctx);
       case "generateAIText":
-        return handleGenerateAIText(ctx);
+        return await handleGenerateAIText(ctx);
       case "formatAIText":
-        return handleFormatAIText(ctx);
+        return await handleFormatAIText(ctx);
       case "generateAltText":
-        return handleGenerateAltText(ctx);
+        return await handleGenerateAltText(ctx);
       case "generateAllAltTexts":
-        return handleGenerateAllAltTexts(ctx);
+        return await handleGenerateAllAltTexts(ctx);
       case "translateAltText":
-        return handleTranslateAltText(ctx);
+        return await handleTranslateAltText(ctx);
       case "translateAltTextToAllLocales":
-        return handleTranslateAltTextToAllLocales(ctx);
+        return await handleTranslateAltTextToAllLocales(ctx);
       case "translateAllAltTextsToAllLocales":
-        return handleTranslateAllAltTextsToAllLocales(ctx);
+        return await handleTranslateAllAltTextsToAllLocales(ctx);
       case "translateAllAltTextsForLocale":
-        return handleTranslateAllAltTextsForLocale(ctx);
+        return await handleTranslateAllAltTextsForLocale(ctx);
       case "seoBulkFix":
-        return handleSeoBulkFix(ctx);
+        return await handleSeoBulkFix(ctx);
       case "seoAudit":
-        return handleSeoAudit(ctx);
+        return await handleSeoAudit(ctx);
       case "seoBulkMeta":
-        return handleSeoBulkMeta(ctx);
+        return await handleSeoBulkMeta(ctx);
       case "seoJsonLdAudit":
-        return handleSeoJsonLdAudit(ctx);
+        return await handleSeoJsonLdAudit(ctx);
       case "seoCrawl":
-        return handleSeoCrawl(ctx);
+        return await handleSeoCrawl(ctx);
       case "seoInternalLinks":
-        return handleSeoInternalLinks(ctx);
+        return await handleSeoInternalLinks(ctx);
       case "bulkEditorTranslate":
-        return handleBulkEditorTranslate(ctx);
+        return await handleBulkEditorTranslate(ctx);
       case "distributeKeywords":
-        return handleDistributeKeywords(ctx);
+        return await handleDistributeKeywords(ctx);
       case "insertKeyword":
-        return handleInsertKeyword(ctx);
+        return await handleInsertKeyword(ctx);
       case "generateTemplateTitles":
-        return handleGenerateTemplateTitles(ctx);
+        return await handleGenerateTemplateTitles(ctx);
       case "seoRobotsAdvice":
-        return handleSeoRobotsAdvice(ctx);
+        return await handleSeoRobotsAdvice(ctx);
       case "aiDiscoveryIntro":
-        return handleAiDiscoveryIntro(ctx);
+        return await handleAiDiscoveryIntro(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }
   } catch (error: unknown) {
+    // A thrown `Response` is Shopify's auth control flow (e.g. the 401 with
+    // `X-Shopify-Retry-Invalid-Session-Request` that `getCachedShopLocales`
+    // re-throws so the request can re-authenticate), never an internal error.
+    // This is a resource route, so React Router serves a re-thrown Response
+    // as-is — turning it into a generic 500 would drop the retry header.
+    if (error instanceof Response) throw error;
     // An invalid/expired provider key must always surface as an actionable
     // error — never as a generic 500 (or, worse, a silent success from a
     // handler that swallowed it). Handlers re-throw auth errors for exactly
     // this central translation into a clear INVALID_AI_KEY response.
-    if (isAuthError(error)) {
+    // Asked by the MARKER (`InvalidAIKeyError`, which `AIService` throws for
+    // every provider auth failure), never by the `isAuthError` heuristic: a
+    // Shopify GraphQL "401 Unauthorized" or any message containing
+    // "unauthorized" would otherwise tell the merchant their AI key is bad.
+    if (isProviderKeyRejection(error)) {
       logger.error("[API-AI] AI request failed — provider rejected the API key", {
         context: "AI",
         error: errorMessage(error),
@@ -241,6 +263,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         limitMicros: error.limitMicros,
       });
     }
+    // No usable key discovered mid-handler (e.g. a sub-call built its own
+    // service): the same answer the up-front gate gives, not a generic 500.
+    if (isMissingAIKey(error)) {
+      return noAiKeyResponse(settings, {
+        provider: error.provider,
+        displayName: getProviderDisplayName(error.provider),
+      });
+    }
+    // A real crash. It no longer escapes to `handleError` (the handlers are
+    // awaited inside this try), so report it to Sentry here — and only here,
+    // not for the control-flow branches above.
+    captureServerError(error, { route: "/api/ai", actionType, shop: session.shop });
     logger.error("[API-AI] Error processing AI request", {
       context: "AI",
       error: errorMessage(error),

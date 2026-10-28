@@ -44,8 +44,7 @@
  * which is why it cannot be configured.
  */
 
-import { createRefreshingAdmin } from "~/utils/offline-admin.server";
-import { expiringOfflineTokensEnabled } from "~/utils/offline-token-flags.server";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 import { randomUUID } from "node:crypto";
 import { logger } from "../../utils/logger.server";
 import {
@@ -3291,11 +3290,14 @@ async function repairStaleTranslations(
         changedSince(lockId) || (!!entryResourceId && changedSince(entryResourceId));
       // This run outlives the request (and may have QUEUED behind another for
       // a long time). With expiring offline tokens the request's client is dead
-      // by then, so the run gets its own gateway over a client that refreshes
-      // its token per call. Flag off: the request's gateway, as before.
-      const runGateway = expiringOfflineTokensEnabled()
-        ? new ShopifyApiGateway(createRefreshingAdmin(shop), shop)
-        : gateway;
+      // by then, so `backgroundAdmin` decides what the run holds: a client
+      // that refreshes its token per call — or, for a raw self-refreshing
+      // client a webhook/sweep handed in (createAdminClientFromShop), that
+      // client unchanged, keeping its raw error contract and this gateway's
+      // queue. Flag off: the request's gateway, exactly as before.
+      const capturedAdmin = gateway.getAdmin();
+      const runAdmin = backgroundAdmin(shop, capturedAdmin);
+      const runGateway = runAdmin === capturedAdmin ? gateway : new ShopifyApiGateway(runAdmin, shop);
       try {
         const outcome = await retranslateStaleEntries(
           runGateway,

@@ -9,6 +9,7 @@ import {
 } from "../config/webp-tasks.js";
 import { taskTitleOrFallback } from "../services/tasks/resource-title.server";
 import { isAllowedWebpSourceUrl } from "../config/webp-source-url.js";
+import { nudgeWebpProcessor } from "../utils/webp-wake.server";
 
 interface ConvertWebpBody {
   productId: string;
@@ -290,6 +291,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       .update({ where: { id: parent.id }, data: { total: tasks.length } })
       .catch(() => {});
   }
+
+  // The rows exist: start them now rather than at the worker's next 10s tick.
+  // A no-op when the worker is not running here, and it never throws.
+  nudgeWebpProcessor();
 
   // `taskIds` stays the ITEM ids: it is what this route has always returned.
   // The only caller (`handleConvertToWebP` in VariantImageManager) ignores the
