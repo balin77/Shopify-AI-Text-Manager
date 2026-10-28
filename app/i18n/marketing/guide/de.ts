@@ -966,7 +966,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Wie es funktioniert",
           paragraphs: [
-            "Die App durchsucht Blog-Artikel, Seiten und Produktbeschreibungen nach Erwähnungen Ihrer Produkte und Kollektionen, die noch kein Link sind. Jeder Fund erscheint als Vorschlag mit dem Textausschnitt.",
+            "Die App durchsucht Blog-Artikel, Seiten und Produktbeschreibungen nach Erwähnungen Ihrer Produkte und Kollektionen, die noch kein Link sind. Jeder Fund erscheint als Vorschlag mit dem Textausschnitt. Nach jedem Scan steht oben, wie viele Vorschläge neu dazugekommen sind — oder, wenn keiner gefunden wurde oder der Scan fehlgeschlagen ist, warum.",
           ],
         },
         {

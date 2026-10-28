@@ -38,3 +38,36 @@ export function suggestionWhere(shop: string, view: View, fromFilter: FilterType
     ...(toFilter ? { toResourceType: toFilter } : {}),
   };
 }
+
+/**
+ * What the page says about the latest finished generation run. Without it a
+ * run that found nothing, or one that failed, left the page exactly as it was
+ * — the merchant pressed "Generieren", watched the spinner and saw no result
+ * and no reason. Read from the run's own Task row (`result` is the runner's
+ * InternalLinksSummary JSON, `error` its failure text).
+ */
+export type LastRunOutcome =
+  | { status: "completed"; created: number; updated: number; sourcesScanned: number }
+  | { status: "failed"; error: string };
+
+export function parseLastRunOutcome(
+  task: { status: string; result: string | null; error: string | null } | null | undefined,
+): LastRunOutcome | null {
+  if (!task) return null;
+  if (task.status === "failed") return { status: "failed", error: (task.error || "").trim() };
+  if (task.status !== "completed") return null;
+  let summary: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = task.result ? JSON.parse(task.result) : null;
+    if (parsed && typeof parsed === "object") summary = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    status: "completed",
+    created: num(summary.created),
+    updated: num(summary.updated),
+    sourcesScanned: num(summary.sourcesScanned),
+  };
+}

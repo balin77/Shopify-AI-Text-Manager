@@ -286,6 +286,12 @@ const GLOBAL_MAX_CONCURRENT = 8;
 export class WebPProcessorService {
   static instance = null;
   isRunning = false;
+  /** A poll is running right now (its `processPendingTasks` has not returned). */
+  pollInFlight = false;
+  /** A wake-up arrived while a poll was in flight: poll again as soon as it ends. */
+  pollAgain = false;
+  /** The timer of the next regular tick (exactly one is ever scheduled). */
+  nextTick = null;
 
   static getInstance() {
     if (!WebPProcessorService.instance) {
@@ -297,24 +303,66 @@ export class WebPProcessorService {
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
+    // The convert route (inside the React Router bundle, which cannot import
+    // this root module) nudges the worker through this hook right after it has
+    // created the task rows, so a conversion starts at once instead of waiting
+    // for the next 10s tick. Same pattern as `globalThis.__getShopAccessToken`.
+    globalThis.__wakeWebpProcessor = () => this.wake();
     this.poll();
     console.log("[WebPProcessor] Service started, polling every", POLL_INTERVAL_MS / 1000, "seconds");
   }
 
   stop() {
     this.isRunning = false;
+    if (this.nextTick) clearTimeout(this.nextTick);
+    this.nextTick = null;
+    this.pollAgain = false;
+    if (globalThis.__wakeWebpProcessor) delete globalThis.__wakeWebpProcessor;
+  }
+
+  /**
+   * Poll NOW rather than at the next tick. Never runs two polls at once: while
+   * one is in flight the wake-up is remembered and the poll runs again the
+   * moment the current one ends (its rows may have been created after that
+   * poll's queries ran). Never throws.
+   */
+  wake() {
+    if (!this.isRunning) return;
+    if (this.pollInFlight) {
+      this.pollAgain = true;
+      return;
+    }
+    this.poll().catch(() => {});
   }
 
   async poll() {
     if (!this.isRunning) return;
+    if (this.pollInFlight) {
+      // A tick and a wake-up can meet; the second one is folded into the first.
+      this.pollAgain = true;
+      return;
+    }
+    if (this.nextTick) clearTimeout(this.nextTick);
+    this.nextTick = null;
+    this.pollInFlight = true;
 
     try {
       await this.processPendingTasks();
     } catch (err) {
       console.error("[WebPProcessor] Poll error:", err);
+    } finally {
+      this.pollInFlight = false;
     }
 
-    setTimeout(() => this.poll(), POLL_INTERVAL_MS);
+    if (!this.isRunning) return;
+    if (this.pollAgain) {
+      this.pollAgain = false;
+      // Next macrotask, not a recursive call: keeps the stack flat and gives
+      // `stop()` a chance to land in between.
+      this.nextTick = setTimeout(() => this.poll(), 0);
+      return;
+    }
+    this.nextTick = setTimeout(() => this.poll(), POLL_INTERVAL_MS);
   }
 
   async processPendingTasks() {

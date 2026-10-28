@@ -204,9 +204,15 @@ export async function handleUpdateContent(
       // work that is not urgent.
       if (result.created && redirectResource === "blog" && previousHandle) {
         const nextBlogHandle = storedHandle || submittedHandle;
-        void import("~/services/seo/blog-article-redirects.server")
-          .then(({ redirectBlogArticles }) =>
-            redirectBlogArticles(admin, db, session.shop, {
+        // Detached: with expiring offline tokens the request's client may die
+        // mid-run (hundreds of calls), so it gets the refreshing one; flag
+        // off, the request's client exactly as before (offline-admin.server.ts).
+        void Promise.all([
+          import("~/services/seo/blog-article-redirects.server"),
+          import("~/utils/offline-admin.server"),
+        ])
+          .then(([{ redirectBlogArticles }, { backgroundAdmin }]) =>
+            redirectBlogArticles(backgroundAdmin(session.shop, admin), db, session.shop, {
               blogId: itemId,
               previousBlogHandle: previousHandle,
               nextBlogHandle,

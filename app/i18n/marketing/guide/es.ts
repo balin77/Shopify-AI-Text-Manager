@@ -953,7 +953,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Cómo funciona",
           paragraphs: [
-            "La app busca en artículos del blog, páginas y descripciones de producto menciones de tus productos y colecciones que todavía no son un enlace. Cada hallazgo aparece como sugerencia con el fragmento de texto.",
+            "La app busca en artículos del blog, páginas y descripciones de producto menciones de tus productos y colecciones que todavía no son un enlace. Cada hallazgo aparece como sugerencia con el fragmento de texto. Después de cada análisis, la página indica cuántas sugerencias nuevas se encontraron o, si no se encontró ninguna o el análisis falló, por qué.",
           ],
         },
         {

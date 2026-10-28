@@ -953,7 +953,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "How it works",
           paragraphs: [
-            "The app searches blog articles, pages and product descriptions for mentions of your products and collections that are not a link yet. Each find appears as a suggestion with the text excerpt.",
+            "The app searches blog articles, pages and product descriptions for mentions of your products and collections that are not a link yet. Each find appears as a suggestion with the text excerpt. After each scan the page tells you how many new suggestions were found — or, if none were found or the scan failed, why.",
           ],
         },
         {

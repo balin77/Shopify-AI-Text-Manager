@@ -84,7 +84,9 @@ import {
   parseView,
   parseTypeFilter,
   suggestionWhere,
+  parseLastRunOutcome,
   type FilterType,
+  type LastRunOutcome,
   type View,
 } from "../services/seo/internal-links-query";
 import { appFetch } from "../utils/app-fetch";
@@ -202,6 +204,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       gated: true,
       running: false,
       lastRun: null as string | null,
+      lastOutcome: null as LastRunOutcome | null,
       primaryLocale: "",
       hasForeignLocales: false,
       carryTranslations,
@@ -238,7 +241,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     db.task.findFirst({
       where: { shop, type: "seoInternalLinks", status: { in: ["completed", "failed"] } },
       orderBy: { completedAt: "desc" },
-      select: { completedAt: true },
+      select: { completedAt: true, status: true, result: true, error: true },
     }),
     db.seoInternalLinkSuggestion.count({ where }),
     db.seoInternalLinkSuggestion.count({ where: { shop, status: "pending" } }),
@@ -288,6 +291,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     gated: false,
     running: !!runningTask,
     lastRun: lastTask?.completedAt ? lastTask.completedAt.toISOString() : null,
+    lastOutcome: parseLastRunOutcome(lastTask),
     primaryLocale,
     hasForeignLocales,
     carryTranslations,
@@ -386,10 +390,21 @@ export default function SeoInternalLinks() {
     const interval = setInterval(() => revalidatorRef.current.revalidate(), 3000);
     return () => clearInterval(interval);
   }, [generating]);
+  // The started flag bridges the moment between "the action answered" and "the
+  // loader reports the run as running". It is dropped once the loader says the
+  // run is no longer running — after a 5 s grace, re-checked by a TIMER: a run
+  // that had already finished when the action answered never changes
+  // `data.running` again, so an effect keyed on it alone never fired a second
+  // time and the page stayed on "generating" (polling, button locked) for good.
   useEffect(() => {
     if (!generateStarted || data.running) return;
-    if (Date.now() - generateStartedAtRef.current > 5000) setGenerateStarted(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const remaining = 5000 - (Date.now() - generateStartedAtRef.current);
+    if (remaining <= 0) {
+      setGenerateStarted(false);
+      return;
+    }
+    const timer = setTimeout(() => setGenerateStarted(false), remaining);
+    return () => clearTimeout(timer);
   }, [data.running, generateStarted]);
 
   const handleGenerate = () => {
@@ -764,6 +779,28 @@ export default function SeoInternalLinks() {
             </Banner>
           )}
           {!banner && generating && <Banner tone="info">{c.generating}</Banner>}
+          {/* The latest finished run, so "Generieren" always ends in an answer:
+              a run that found nothing or failed used to leave the page exactly
+              as it was. */}
+          {!banner && !generating && data.lastOutcome?.status === "failed" && (
+            <Banner tone="critical">
+              {c.lastRunFailed}
+              {data.lastOutcome.error ? ` (${data.lastOutcome.error})` : ""}
+            </Banner>
+          )}
+          {!banner && !generating && data.lastOutcome?.status === "completed" &&
+            (data.lastOutcome.created + data.lastOutcome.updated === 0 ? (
+              <Banner tone="info">
+                {c.lastRunNoMatches.replace("{scanned}", String(data.lastOutcome.sourcesScanned))}
+              </Banner>
+            ) : (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {c.lastRunSummary
+                  .replace("{created}", String(data.lastOutcome.created))
+                  .replace("{updated}", String(data.lastOutcome.updated))
+                  .replace("{scanned}", String(data.lastOutcome.sourcesScanned))}
+              </Text>
+            ))}
         </BlockStack>
       </Card>
 

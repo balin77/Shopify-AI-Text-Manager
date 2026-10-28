@@ -13,7 +13,7 @@
  * convention); the module's own logic is real.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { db, shopify, ai, policy } = vi.hoisted(() => {
   const db = {
@@ -173,6 +173,7 @@ vi.mock("../../app/services/translations/verified-translations.server", async (i
   ),
   registerAndVerify: vi.fn(
     async (_gw: unknown, resourceId: string, inputs: Array<{ key: string; locale: string; value: string }>) => {
+      registerGateways.push(_gw);
       for (const input of inputs) {
         shopify.registerCalls.push(input);
         shopify.registerTargets.push(resourceId);
@@ -224,6 +225,19 @@ vi.mock("../../app/services/translations/handle-retranslation.server", () => ({
     return async (...args: unknown[]) => (factory.resolver ? factory.resolver(...args) : null);
   }),
 }));
+
+// The detached run's client. With expiring offline tokens it must NOT keep the
+// request's client (dead by the time a long or queued run writes); with them
+// off it must keep it, byte for byte (offline-admin.server.ts).
+const refreshing = vi.hoisted(() => ({ client: { graphql: async () => ({}) }, built: 0 }));
+vi.mock("../../app/utils/offline-admin.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../app/utils/offline-admin.server")>()),
+  createRefreshingAdmin: vi.fn(() => {
+    refreshing.built++;
+    return refreshing.client;
+  }),
+}));
+const registerGateways = vi.hoisted(() => [] as unknown[]);
 
 vi.mock("../../app/services/translations/translation-change-policy.server", () => ({
   loadTranslationChangePolicy: vi.fn(async () => policy),
@@ -795,6 +809,51 @@ describe("auto-translation path (Max)", () => {
  * nothing refreshed them, and a Max shop got the new text on a product and a
  * blank field on a page for the very same edit.
  */
+describe("the detached run's Shopify client", () => {
+  const ENV = "SHOPIFY_EXPIRING_OFFLINE_TOKENS";
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env[ENV];
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    registerGateways.length = 0;
+    refreshing.built = 0;
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
+      [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+    }));
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env[ENV];
+    else process.env[ENV] = saved;
+  });
+
+  it("flag ON: writes through a refreshing client, never the request's", async () => {
+    process.env[ENV] = "true";
+    const captured = { graphql: vi.fn() };
+    await reconcileStaleTranslations(baseParams({ client: captured as never }));
+    await awaitDetachedRetranslations();
+
+    expect(registerGateways.length).toBeGreaterThan(0);
+    expect(refreshing.built).toBe(1);
+    for (const gw of registerGateways) {
+      expect((gw as { admin: unknown }).admin).toBe(refreshing.client);
+    }
+  });
+
+  it("flag OFF: keeps the request's client exactly as before", async () => {
+    delete process.env[ENV];
+    const captured = { graphql: vi.fn() };
+    await reconcileStaleTranslations(baseParams({ client: captured as never }));
+    await awaitDetachedRetranslations();
+
+    expect(registerGateways.length).toBeGreaterThan(0);
+    expect(refreshing.built).toBe(0);
+    for (const gw of registerGateways) {
+      expect((gw as { admin: unknown }).admin).toBe(captured);
+    }
+  });
+});
+
 describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   const PAGE = "gid://shopify/Page/42";
 
