@@ -72,6 +72,7 @@ import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { meetsPlan } from "../utils/planUtils";
 import { useHydrated } from "../hooks/useHydrated";
+import { taskErrorText } from "../utils/task-error-text";
 import { formatDateTime } from "../utils/format";
 // The preview renders the merchant's stored HTML (descriptionHtml / body),
 // which this app did not author: sanitize before it reaches the DOM.
@@ -85,6 +86,7 @@ import {
   parseTypeFilter,
   suggestionWhere,
   parseLastRunOutcome,
+  isRecentRun,
   type FilterType,
   type LastRunOutcome,
   type View,
@@ -205,6 +207,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       running: false,
       lastRun: null as string | null,
       lastOutcome: null as LastRunOutcome | null,
+      lastOutcomeRecent: false,
       primaryLocale: "",
       hasForeignLocales: false,
       carryTranslations,
@@ -241,7 +244,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     db.task.findFirst({
       where: { shop, type: "seoInternalLinks", status: { in: ["completed", "failed"] } },
       orderBy: { completedAt: "desc" },
-      select: { completedAt: true, status: true, result: true, error: true },
+      select: { completedAt: true, updatedAt: true, status: true, result: true, error: true },
     }),
     db.seoInternalLinkSuggestion.count({ where }),
     db.seoInternalLinkSuggestion.count({ where: { shop, status: "pending" } }),
@@ -292,6 +295,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     running: !!runningTask,
     lastRun: lastTask?.completedAt ? lastTask.completedAt.toISOString() : null,
     lastOutcome: parseLastRunOutcome(lastTask),
+    lastOutcomeRecent: isRecentRun(lastTask, Date.now()),
     primaryLocale,
     hasForeignLocales,
     carryTranslations,
@@ -345,6 +349,9 @@ export default function SeoInternalLinks() {
   const previewFetcher = useFetcher<ActionResult>();
 
   const [generateStarted, setGenerateStarted] = useState(false);
+  // A generate pressed in THIS session always ends in an answer, however long
+  // the run took; otherwise the outcome banners show only for a recent run.
+  const [generatedThisSession, setGeneratedThisSession] = useState(false);
   const [banner, setBanner] = useState<{ tone: "critical" | "success"; message: string } | null>(null);
   const generateStartedAtRef = useRef(0);
 
@@ -381,6 +388,14 @@ export default function SeoInternalLinks() {
   }, [generateFetcher.state, generateFetcher.data]);
 
   const generating = data.running || generateStarted;
+  const showOutcomeBanner = data.lastOutcomeRecent || generatedThisSession;
+  // `Task.error` is a machine code for this detached runner (or the reaper's
+  // `task_timed_out`) — translated like on the Tasks tab. A string the helper
+  // does not recognise comes back verbatim, which here is raw provider/Prisma
+  // English: left out rather than shown.
+  const failedRaw = data.lastOutcome?.status === "failed" ? data.lastOutcome.error : "";
+  const failedText = failedRaw ? taskErrorText(failedRaw, t) : null;
+  const failedDetail = failedText && failedText !== failedRaw ? failedText : null;
 
   const revalidator = useRevalidator();
   const revalidatorRef = useRef(revalidator);
@@ -410,6 +425,7 @@ export default function SeoInternalLinks() {
   const handleGenerate = () => {
     if (data.gated || generating || generateFetcher.state !== "idle") return;
     setBanner(null);
+    setGeneratedThisSession(true);
     const formData = new FormData();
     formData.append("action", "seoInternalLinks");
     formData.append("contentType", "products");
@@ -782,15 +798,15 @@ export default function SeoInternalLinks() {
           {/* The latest finished run, so "Generieren" always ends in an answer:
               a run that found nothing or failed used to leave the page exactly
               as it was. */}
-          {!banner && !generating && data.lastOutcome?.status === "failed" && (
+          {!banner && !generating && showOutcomeBanner && data.lastOutcome?.status === "failed" && (
             <Banner tone="critical">
               {c.lastRunFailed}
-              {data.lastOutcome.error ? ` (${data.lastOutcome.error})` : ""}
+              {failedDetail ? ` (${failedDetail})` : ""}
             </Banner>
           )}
           {!banner && !generating && data.lastOutcome?.status === "completed" &&
             (data.lastOutcome.created + data.lastOutcome.updated === 0 ? (
-              <Banner tone="info">
+              showOutcomeBanner && <Banner tone="info">
                 {c.lastRunNoMatches.replace("{scanned}", String(data.lastOutcome.sourcesScanned))}
               </Banner>
             ) : (

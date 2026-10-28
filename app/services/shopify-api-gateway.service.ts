@@ -50,6 +50,14 @@ export class ShopifyApiGateway {
   }
 
   /**
+   * The client this gateway sends through. For code that outlives its request
+   * and has to decide (`backgroundAdmin`) whether that client may be kept.
+   */
+  getAdmin(): ShopifyGraphQLClient {
+    return this.admin;
+  }
+
+  /**
    * Execute a GraphQL query with rate limiting and retry logic
    */
   async graphql(query: string, options?: { variables?: Record<string, unknown> }): Promise<GraphQLResponse> {

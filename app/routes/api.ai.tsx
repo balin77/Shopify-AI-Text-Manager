@@ -165,57 +165,67 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       itemId,
     };
 
+    // `return await`, never a bare `return handler(ctx)`: a promise returned
+    // from inside the `try` settles AFTER it, so a handler's rejection would
+    // skip the catch below entirely — the INVALID_AI_KEY translation, the
+    // managed-refusal answer and the Response re-throw were all dead code.
     switch (actionType) {
       case "translateField":
-        return handleTranslateField(ctx);
+        return await handleTranslateField(ctx);
       case "translateFieldToAllLocales":
-        return handleTranslateFieldToAllLocales(ctx);
+        return await handleTranslateFieldToAllLocales(ctx);
       case "formatField":
-        return handleFormatField(ctx);
+        return await handleFormatField(ctx);
       case "generateAIText":
-        return handleGenerateAIText(ctx);
+        return await handleGenerateAIText(ctx);
       case "formatAIText":
-        return handleFormatAIText(ctx);
+        return await handleFormatAIText(ctx);
       case "generateAltText":
-        return handleGenerateAltText(ctx);
+        return await handleGenerateAltText(ctx);
       case "generateAllAltTexts":
-        return handleGenerateAllAltTexts(ctx);
+        return await handleGenerateAllAltTexts(ctx);
       case "translateAltText":
-        return handleTranslateAltText(ctx);
+        return await handleTranslateAltText(ctx);
       case "translateAltTextToAllLocales":
-        return handleTranslateAltTextToAllLocales(ctx);
+        return await handleTranslateAltTextToAllLocales(ctx);
       case "translateAllAltTextsToAllLocales":
-        return handleTranslateAllAltTextsToAllLocales(ctx);
+        return await handleTranslateAllAltTextsToAllLocales(ctx);
       case "translateAllAltTextsForLocale":
-        return handleTranslateAllAltTextsForLocale(ctx);
+        return await handleTranslateAllAltTextsForLocale(ctx);
       case "seoBulkFix":
-        return handleSeoBulkFix(ctx);
+        return await handleSeoBulkFix(ctx);
       case "seoAudit":
-        return handleSeoAudit(ctx);
+        return await handleSeoAudit(ctx);
       case "seoBulkMeta":
-        return handleSeoBulkMeta(ctx);
+        return await handleSeoBulkMeta(ctx);
       case "seoJsonLdAudit":
-        return handleSeoJsonLdAudit(ctx);
+        return await handleSeoJsonLdAudit(ctx);
       case "seoCrawl":
-        return handleSeoCrawl(ctx);
+        return await handleSeoCrawl(ctx);
       case "seoInternalLinks":
-        return handleSeoInternalLinks(ctx);
+        return await handleSeoInternalLinks(ctx);
       case "bulkEditorTranslate":
-        return handleBulkEditorTranslate(ctx);
+        return await handleBulkEditorTranslate(ctx);
       case "distributeKeywords":
-        return handleDistributeKeywords(ctx);
+        return await handleDistributeKeywords(ctx);
       case "insertKeyword":
-        return handleInsertKeyword(ctx);
+        return await handleInsertKeyword(ctx);
       case "generateTemplateTitles":
-        return handleGenerateTemplateTitles(ctx);
+        return await handleGenerateTemplateTitles(ctx);
       case "seoRobotsAdvice":
-        return handleSeoRobotsAdvice(ctx);
+        return await handleSeoRobotsAdvice(ctx);
       case "aiDiscoveryIntro":
-        return handleAiDiscoveryIntro(ctx);
+        return await handleAiDiscoveryIntro(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }
   } catch (error: unknown) {
+    // A thrown `Response` is Shopify's auth control flow (e.g. the 401 with
+    // `X-Shopify-Retry-Invalid-Session-Request` that `getCachedShopLocales`
+    // re-throws so the request can re-authenticate), never an internal error.
+    // This is a resource route, so React Router serves a re-thrown Response
+    // as-is — turning it into a generic 500 would drop the retry header.
+    if (error instanceof Response) throw error;
     // An invalid/expired provider key must always surface as an actionable
     // error — never as a generic 500 (or, worse, a silent success from a
     // handler that swallowed it). Handlers re-throw auth errors for exactly

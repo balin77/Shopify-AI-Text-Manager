@@ -69,6 +69,20 @@ describe("api.ai content-type plan gate", () => {
     expect(refusalFor).toHaveBeenCalledWith(expect.anything(), "t.myshopify.com", { actionType: "translateField", fieldType: "title" });
   });
 
+  it("re-throws a Response a handler threw instead of answering a generic 500", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
+    const reauth = new Response(null, { status: 401, headers: { "X-Shopify-Retry-Invalid-Session-Request": "1" } });
+    translateField.mockRejectedValueOnce(reauth);
+    await expect(run({ action: "translateField", contentType: "templates", fieldType: "title" })).rejects.toBe(reauth);
+  });
+
+  it("still answers a generic 500 for a non-Response failure", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
+    translateField.mockRejectedValueOnce(new Error("boom"));
+    const { status } = await run({ action: "translateField", contentType: "templates", fieldType: "title" });
+    expect(status).toBe(500);
+  });
+
   it("does not gate a shop-level action", async () => {
     aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "free" });
     const { status } = await run({ action: "unknownAction", contentType: "products" });

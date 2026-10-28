@@ -62,9 +62,20 @@ export async function handleSeoInternalLinks(ctx: AIActionContext): Promise<Data
   // (see RunInternalLinksDeps.primaryLocale). Resolved here, inside the
   // request, because the detached runner holds no admin client. A failed
   // lookup resolves [] and falls back to the provider's default language —
-  // the run still matches on titles and keywords.
-  const shopLocales = await getCachedShopLocales(admin, session.shop);
-  const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+  // the run still matches on titles and keywords. A thrown `Response` (the
+  // 401 the lookup re-throws to re-authenticate) is NOT a failed lookup and
+  // goes up to /api/ai, which re-throws it; anything else falls back to "".
+  let primaryLocale = "";
+  try {
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
+    primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+  } catch (error: unknown) {
+    if (error instanceof Response) throw error;
+    logger.warn("[API-AI] Internal links: shop locale lookup failed, using the provider default language", {
+      context: "AI",
+      error: errorMessage(error),
+    });
+  }
 
   const task = await db.task.create({
     data: {

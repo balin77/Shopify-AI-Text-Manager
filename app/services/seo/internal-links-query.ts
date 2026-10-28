@@ -50,6 +50,31 @@ export type LastRunOutcome =
   | { status: "completed"; created: number; updated: number; sourcesScanned: number }
   | { status: "failed"; error: string };
 
+/**
+ * How long the latest run's "found nothing" / "failed" banner stays up on its
+ * own. A weeks-old failure must not keep the page red for good; past this the
+ * banner only shows again after a generate started in the current session.
+ */
+export const LAST_RUN_BANNER_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether the latest finished run is recent enough for its outcome banner.
+ * Decided on the SERVER (the loader), so the first client render agrees with
+ * the server's HTML. `completedAt` first, `updatedAt` for a row a reaper
+ * closed without one; neither known ⇒ not recent.
+ */
+export function isRecentRun(
+  task: { completedAt?: Date | null; updatedAt?: Date | null } | null | undefined,
+  now: number,
+  windowMs: number = LAST_RUN_BANNER_WINDOW_MS,
+): boolean {
+  const finished = task?.completedAt ?? task?.updatedAt ?? null;
+  if (!finished) return false;
+  const at = finished.getTime();
+  if (!Number.isFinite(at)) return false;
+  return now - at <= windowMs;
+}
+
 export function parseLastRunOutcome(
   task: { status: string; result: string | null; error: string | null } | null | undefined,
 ): LastRunOutcome | null {
