@@ -2441,11 +2441,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 )}
 
                 {/* Metafields Card */}
+                {/* A cleared field (its metafield deleted on Shopify) is shown in
+                    the PRIMARY language only, so a product whose metafields are
+                    all cleared still gets the card there. */}
                 {config.contentType === "products" && subResourceState && subResourceHandlers &&
-                  selectedItem?.metafields && selectedItem.metafields.length > 0 && (
+                  ((selectedItem?.metafields?.length ?? 0) > 0 ||
+                    (state.currentLanguage === primaryLocale && (selectedItem?.clearedMetafields?.length ?? 0) > 0)) && (
                   <div style={{ marginTop: "1rem" }}>
                     <MetafieldsField
-                      metafields={selectedItem.metafields}
+                      metafields={selectedItem?.metafields ?? []}
+                      clearedMetafields={selectedItem?.clearedMetafields ?? []}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
                       translations={subResourceState.metafieldTranslations}
@@ -2460,6 +2465,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         notEditableInPrimary: t.products?.metafieldsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.metafieldsEditInstructionPrimary,
                         translateButton: t.products?.translateMetafield,
+                        listHint: t.products?.metafieldListHint,
+                        listReadOnly: t.products?.metafieldListReadOnly,
+                        clearedHint: t.products?.metafieldClearedHint,
+                        listErrorLine: t.products?.metafieldListErrorLine,
+                        listErrors: t.products?.metafieldListErrors,
                       }}
                     />
                   </div>

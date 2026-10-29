@@ -252,7 +252,8 @@ export const loader = createContentLoader({
       // Everything translation-shaped reads `metafields` only — a slot's id is
       // a deleted resource — and only the primary card reads both.
       ...(() => {
-        const editable = (p.metafields ?? [])
+        type CardMetafield = { id: string; namespace: string; key: string; value: string; type: string };
+        const editable: CardMetafield[] = (p.metafields ?? [])
           // Shared predicate — the bulk editor's metafield columns use the SAME
           // filter (isEditableProductMetafield), so both surfaces show the same
           // fields (Plan §4.1).
@@ -261,7 +262,7 @@ export const loader = createContentLoader({
             id: mf.id as string, namespace: mf.namespace as string, key: mf.key as string,
             value: (mf.value ?? "") as string, type: mf.type as string,
           }));
-        return splitClearedMetafieldSlots(editable);
+        return splitClearedMetafieldSlots<CardMetafield>(editable);
       })(),
       // Sub-resource translations loaded via same DB pipeline as main translations
       subResourceTranslations: (() => {

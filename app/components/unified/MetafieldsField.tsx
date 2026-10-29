@@ -12,6 +12,14 @@ import { Card, BlockStack, Text, TextField, Button, Divider, Badge } from "@shop
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
 import { SingleLineTextField } from "./SingleLineTextField";
+import { FieldClearButton } from "./FieldChrome";
+import {
+  isListMetafieldType,
+  isMetafieldValueEditable,
+  metafieldDisplayValue,
+  metafieldInputErrors,
+  type ListEntryError,
+} from "../../services/product-metafields.shared";
 import "../../styles/AIEditableField.css";
 
 /** A metafield whose value is multi-line by type; every other one is ONE line that wraps as it grows. */
@@ -30,6 +38,13 @@ export interface MetafieldData {
 interface MetafieldsFieldProps {
   /** Array of translatable metafields */
   metafields: MetafieldData[];
+
+  /**
+   * Metafields deleted on Shopify whose field is kept (cleared slots,
+   * product-metafields.shared.ts). Shown in the PRIMARY language only, empty,
+   * so a new value can be typed; never a translation target.
+   */
+  clearedMetafields?: MetafieldData[];
 
   /** Whether user is on primary locale */
   isPrimaryLocale: boolean;
@@ -69,7 +84,36 @@ interface MetafieldsFieldProps {
     translateButton?: string;
     originalLabel?: string;
     editInstructionPrimary?: string;
+    /** "One entry per line." — the list editor's placeholder. */
+    listHint?: string;
+    /** Why a list is shown read-only. */
+    listReadOnly?: string;
+    /** Under a field whose metafield was deleted (a cleared slot). */
+    clearedHint?: string;
+    /** "Line {line}: {message}" */
+    listErrorLine?: string;
+    /** One message per `ListEntryErrorCode`, `{entry}` = the refused entry. */
+    listErrors?: Partial<Record<ListEntryError["code"], string>>;
   };
+}
+
+/** Stable, locale-free order (codepoints — identical on server and client). */
+function byMetafieldKey(a: MetafieldData, b: MetafieldData): number {
+  const ka = `${a.namespace}.${a.key}`;
+  const kb = `${b.namespace}.${b.key}`;
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+}
+
+/** The entry errors of a list field, phrased for the field itself. */
+function listErrorMessages(errors: ListEntryError[], t: NonNullable<MetafieldsFieldProps["t"]>): string[] {
+  return errors.map((error) => {
+    const message = (t.listErrors?.[error.code] || error.code).replace("{entry}", error.entry);
+    return error.line > 0
+      ? (t.listErrorLine || "Line {line}: {message}")
+          .replace("{line}", String(error.line))
+          .replace("{message}", message)
+      : message;
+  });
 }
 
 /** Metafield type display names */
@@ -82,6 +126,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 export function MetafieldsField({
   metafields,
+  clearedMetafields = [],
   isPrimaryLocale,
   currentLanguage,
   translations,
@@ -96,7 +141,14 @@ export function MetafieldsField({
   // Single-language shop → the metafield translate button has no target locale.
   const singleLocaleHint = useSingleLocaleHint();
 
-  if (!metafields || metafields.length === 0) {
+  // The primary card shows the cleared fields too, in one order with the rest,
+  // so a field the merchant just emptied stays where it was.
+  const shown = isPrimaryLocale
+    ? [...(metafields ?? []), ...clearedMetafields].sort(byMetafieldKey)
+    : [...(metafields ?? [])].sort(byMetafieldKey);
+  const clearedIds = new Set(clearedMetafields.map((mf) => mf.id));
+
+  if (shown.length === 0) {
     return null;
   }
 
@@ -113,24 +165,74 @@ export function MetafieldsField({
             <Text as="p" variant="bodySm" tone="subdued">
               {t.editInstructionPrimary || "Edit the metafield values in the primary language."}
             </Text>
-            {metafields.map((mf, index) => {
-              const currentValue = primaryValues[mf.id] !== undefined ? primaryValues[mf.id] : mf.value;
+            {shown.map((mf, index) => {
+              const currentValue = primaryValues[mf.id] !== undefined ? primaryValues[mf.id] : metafieldDisplayValue(mf);
               const fieldId = mf.id;
+              const fieldLabel = `${mf.namespace}.${mf.key}`;
+              const isList = isListMetafieldType(mf.type);
+              const editable = isMetafieldValueEditable(mf);
+              const isCleared = clearedIds.has(mf.id);
+              const errors = editable ? listErrorMessages(metafieldInputErrors(mf.type, currentValue), t) : [];
+              const errorNode = errors.length > 0 ? (
+                <>
+                  {errors.map((message, i) => (
+                    <div key={i}>{message}</div>
+                  ))}
+                </>
+              ) : undefined;
 
               return (
                 <div key={mf.id}>
                   {index > 0 && <Divider />}
                   <Card>
                     <BlockStack gap="200">
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          {mf.namespace}.{mf.key}
-                        </Text>
-                        <Badge tone="info">{TYPE_LABELS[mf.type] || mf.type}</Badge>
+                      {/* The header row is the clear button's scope: the
+                          button sits on the label's line, the field below. */}
+                      <div
+                        className="app-field-clear-scope"
+                        style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "space-between" }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                          <Text as="p" variant="bodyMd" fontWeight="semibold">
+                            {fieldLabel}
+                          </Text>
+                          <Badge tone="info">{TYPE_LABELS[mf.type] || mf.type}</Badge>
+                        </div>
+                        {editable && currentValue !== "" && onPrimaryMetafieldChange && (
+                          <FieldClearButton
+                            onClear={() => onPrimaryMetafieldChange(mf.id, "")}
+                            fieldLabel={fieldLabel}
+                          />
+                        )}
                       </div>
-                      {isMultiLineMetafield(mf.type) ? (
+                      {!editable ? (
+                        // A list whose value the one-entry-per-line form could
+                        // not carry back unchanged: shown, never rewritten.
                         <TextField
-                          label={`${mf.namespace}.${mf.key}`}
+                          label={fieldLabel}
+                          labelHidden
+                          value={mf.value}
+                          onChange={() => {}}
+                          autoComplete="off"
+                          multiline={2}
+                          readOnly
+                          helpText={t.listReadOnly || "This list cannot be edited here without changing its value."}
+                        />
+                      ) : isList ? (
+                        <TextField
+                          label={fieldLabel}
+                          labelHidden
+                          value={currentValue}
+                          onChange={(value) => onPrimaryMetafieldChange?.(mf.id, value)}
+                          autoComplete="off"
+                          multiline={3}
+                          spellCheck={false}
+                          placeholder={t.listHint || "One entry per line."}
+                          error={errorNode}
+                        />
+                      ) : isMultiLineMetafield(mf.type) ? (
+                        <TextField
+                          label={fieldLabel}
                           labelHidden
                           value={currentValue}
                           onChange={(value) => onPrimaryMetafieldChange?.(mf.id, value)}
@@ -139,13 +241,18 @@ export function MetafieldsField({
                         />
                       ) : (
                         <SingleLineTextField
-                          label={`${mf.namespace}.${mf.key}`}
+                          label={fieldLabel}
                           labelHidden
                           value={currentValue}
                           onChange={(value) => onPrimaryMetafieldChange?.(mf.id, value)}
                         />
                       )}
-                      {onTranslate && (
+                      {isCleared && currentValue === "" && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.clearedHint || "This metafield no longer has a value. Enter a new value and save to set it again."}
+                        </Text>
+                      )}
+                      {onTranslate && !isCleared && (
                         <div className="ai-field-footer">
                           <div className="ai-field-footer-left" />
                           <div className="ai-field-footer-right">
@@ -174,7 +281,7 @@ export function MetafieldsField({
             <Text as="p" variant="bodySm" tone="subdued">
               {t.translateInstruction || `Translate the metafield values for ${currentLanguage}.`}
             </Text>
-            {metafields.map((mf, index) => {
+            {shown.map((mf, index) => {
               const translation = translations[mf.id] || "";
               const hasTranslation = !!translation;
               const fieldId = mf.id;
