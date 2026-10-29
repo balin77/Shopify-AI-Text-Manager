@@ -21,7 +21,7 @@
 
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isProviderKeyRejection } from "./shared";
+import { errorMessage, createAIService, isProviderKeyRejection, isManagedRefusal } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -299,9 +299,13 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
   const perBatchResults: DistributionSuggestion[][] = [];
   let failedBatches = 0;
   let authErrorSeen = false;
+  // A managed-AI refusal stops the run like a rejected key (every remaining
+  // batch would be refused too); its machine code becomes the Task error,
+  // rendered as a stand-down rather than a failure.
+  let managedRefusal: string | null = null;
 
   for (let i = 0; i < batches.length; i++) {
-    if (authErrorSeen) {
+    if (authErrorSeen || managedRefusal) {
       failedBatches += 1;
     } else {
       try {
@@ -332,6 +336,7 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
         // An invalid provider key fails every remaining batch identically —
         // stop burning calls (same guard as runSeoBulkFix).
         if (isProviderKeyRejection(err)) authErrorSeen = true;
+        if (isManagedRefusal(err)) managedRefusal = errorMessage(err);
       }
     }
 
@@ -386,11 +391,13 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
       // Machine codes, translated at render time by `taskErrorText`
       // (app/utils) — this runner has no merchant locale. The rejected-key
       // note rides as a flag argument rather than as appended English.
-      error: allFailed
-        ? `batches_all_failed:${batches.length}${authErrorSeen ? ":1" : ""}`
-        : failedBatches > 0
-          ? `batches_failed:${failedBatches}:${batches.length}`
-          : null,
+      error: managedRefusal
+        ? managedRefusal.substring(0, 1000)
+        : allFailed
+          ? `batches_all_failed:${batches.length}${authErrorSeen ? ":1" : ""}`
+          : failedBatches > 0
+            ? `batches_failed:${failedBatches}:${batches.length}`
+            : null,
     },
   });
 }

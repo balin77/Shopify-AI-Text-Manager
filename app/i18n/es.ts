@@ -3373,6 +3373,7 @@ export const es: Translation = {
       acceptSuccess: "Enlace guardado.",
       acceptSaveError: "Error al guardar. Inténtalo de nuevo.",
       carryTranslationsLabel: "Conservar las traducciones",
+      carryTranslationsUnsaved: "Sin guardar — aceptar está en pausa hasta que guardes o descartes este ajuste.",
       carryTranslationsHelp:
         "Recomendado. Insertar el enlace solo cambia el formato, no el texto: por eso tus traducciones existentes se conservan y reciben el mismo enlace con la URL localizada correspondiente. Sin esta opción, al guardar se eliminan todas las traducciones del campo editado, como en cualquier guardado de Shopify.",
       acceptTranslationsLinked: " El enlace también se añadió a {count} traducción(es).",

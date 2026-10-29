@@ -792,6 +792,7 @@ export const guideEn: GuideCopy = {
           heading: "How it works",
           paragraphs: [
             "In the Image Variant Manager you select images and start the conversion. It runs in the background; the converted image replaces the original wherever it is used, keeping its variant assignment and alt text.",
+            "A conversion usually takes a few seconds per image, and you can keep working in the meantime. If a conversion is still waiting to start after 24 hours, it is cancelled, the original stays unchanged and the image is credited back to your allowance.",
           ],
         },
       ],
@@ -1098,6 +1099,13 @@ export const guideEn: GuideCopy = {
           heading: "Translating options",
           paragraphs: [
             "Below every option in the variants section — even when it is collapsed — “Translate” translates the option name and its values into every language, and “Copy to all languages” copies them unchanged. On an open option, the two buttons sit between “Delete” and “Done”. An option with a blue background is still missing a translation in at least one language. If you changed an option, save first: the buttons stay locked until the change is saved, so the old text is never translated.",
+          ],
+        },
+        {
+          heading: "Metafields",
+          paragraphs: [
+            "In the “Metafields” section you edit, in the primary language, the values of the metafields you enabled under Settings → Metafields. A list field shows one entry per line; empty lines are ignored. If an entry does not match the list's type, the app marks that line on the field, and nothing is saved until you correct it.",
+            "If you empty a metafield and save, Shopify removes the value together with its translations. The field still stays in the editor: enter a new value later and save, and the metafield is created again. A field containing only spaces is not saved — empty it completely to remove the value.",
           ],
         },
         {

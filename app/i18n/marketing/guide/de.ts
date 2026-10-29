@@ -802,6 +802,7 @@ export const guideDe: GuideCopy = {
           heading: "So geht's",
           paragraphs: [
             "Im Image Variant Manager wählen Sie Bilder aus und starten die Umwandlung. Sie läuft im Hintergrund; das umgewandelte Bild ersetzt das Original an allen Stellen, an denen es verwendet wird, inklusive Varianten-Zuordnung und Alt-Text.",
+            "Pro Bild dauert die Umwandlung meist einige Sekunden; Sie können währenddessen weiterarbeiten. Wartet eine Umwandlung nach 24 Stunden noch immer auf ihren Start, wird sie abgebrochen, das Original bleibt unverändert und das Bild wird Ihrem Kontingent wieder gutgeschrieben.",
           ],
         },
       ],
@@ -1111,6 +1112,13 @@ export const guideDe: GuideCopy = {
           heading: "Optionen übersetzen",
           paragraphs: [
             "Unter jeder Option im Varianten-Bereich — auch im zugeklappten Zustand — übersetzt „Übersetzen“ den Optionsnamen und seine Werte in alle Sprachen; „In alle Sprachen übertragen“ übernimmt sie unverändert. Bei einer geöffneten Option stehen die beiden Buttons zwischen „Löschen“ und „Fertig“. Ist eine Option blau unterlegt, fehlt ihr in mindestens einer Sprache noch eine Übersetzung. Haben Sie eine Option geändert, speichern Sie zuerst: Bis die Änderung gespeichert ist, bleiben die Buttons gesperrt, damit nicht der alte Text übersetzt wird.",
+          ],
+        },
+        {
+          heading: "Metafelder",
+          paragraphs: [
+            "Im Bereich „Metafelder“ bearbeiten Sie in der Hauptsprache die Werte der Metafelder, die Sie unter Einstellungen → Metafields aktiviert haben. Ein Listenfeld zeigt einen Eintrag pro Zeile; leere Zeilen werden ignoriert. Passt ein Eintrag nicht zum Typ der Liste, markiert die App die Zeile am Feld, und es wird nichts gespeichert, bis Sie sie korrigieren.",
+            "Leeren Sie ein Metafeld und speichern, entfernt Shopify den Wert samt seinen Übersetzungen. Das Feld bleibt trotzdem im Editor stehen: Geben Sie später einen neuen Wert ein und speichern, wird das Metafeld wieder angelegt. Ein Feld nur aus Leerzeichen wird nicht gespeichert — leeren Sie es ganz, um den Wert zu entfernen.",
           ],
         },
         {

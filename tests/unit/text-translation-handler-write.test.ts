@@ -30,7 +30,7 @@ vi.mock("~/utils/translation-save-lock.server", async (orig) => ({
 }));
 
 import { handleTranslateFieldToAllLocales } from "../../app/routes/api-ai-handlers/text-translation.handler";
-import { InvalidAIKeyError } from "../../src/services/ai.service";
+import { InvalidAIKeyError, ManagedAiRefusedError } from "../../src/services/ai.service";
 
 const PRODUCT = "gid://shopify/Product/1";
 const META = "gid://shopify/Metaobject/9";
@@ -356,6 +356,28 @@ describe("abort decision of the sequential per-locale loop", () => {
     // Either surfaced as a throw or as a failed answer — never as success.
     if (r instanceof Error) expect(r).toBeInstanceOf(InvalidAIKeyError);
     else expect(body(r).success).not.toBe(true);
+  });
+
+  // A managed-AI refusal is the same abort: recorded per locale it read as
+  // "this language failed" and the loop asked again for every other one; it
+  // must reach the /api/ai catch, which answers it with the coded refusal.
+  it("aborts the loop on a managed refusal and propagates it", async () => {
+    aiMock.translateFieldsToLocalesChunked.mockRejectedValue(new Error("chunk parse failed"));
+    aiMock.translateContent.mockRejectedValue(new ManagedAiRefusedError("budgetExceeded"));
+    const { ctx, db } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx).catch((e: unknown) => e);
+    expect(r).toBeInstanceOf(ManagedAiRefusedError);
+    expect(aiMock.translateContent).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(shopify.registers).toHaveLength(0);
+  });
+
+  it("aborts at the batch on a managed refusal instead of falling back", async () => {
+    aiMock.translateFieldsToLocalesChunked.mockRejectedValue(new ManagedAiRefusedError("consentMissing"));
+    const { ctx } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx).catch((e: unknown) => e);
+    expect(r).toBeInstanceOf(ManagedAiRefusedError);
+    expect(aiMock.translateContent).not.toHaveBeenCalled();
   });
 
   it("aborts at the batch on InvalidAIKeyError instead of falling back", async () => {

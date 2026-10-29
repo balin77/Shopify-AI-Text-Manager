@@ -595,3 +595,54 @@ describe("translating an option never sends the text the merchant replaced", () 
     expect(showInfoBox).not.toHaveBeenCalledWith(expect.anything(), "critical");
   });
 });
+
+describe("saveSubResources — primary metafields (cleared fields and lists)", () => {
+  const MF = "gid://shopify/Metafield/7";
+  const LIST = "gid://shopify/Metafield/8";
+  const SLOT = "gid://shopify/Metafield/9";
+  const item = {
+    ...(selectedItem as object),
+    metafields: [
+      { id: MF, namespace: "custom", key: "material", value: "Wolle", type: "single_line_text_field" },
+      { id: LIST, namespace: "custom", key: "colors", value: '["Rot","Blau"]', type: "list.single_line_text_field" },
+    ],
+    clearedMetafields: [{ id: SLOT, namespace: "custom", key: "care", value: "", type: "single_line_text_field" }],
+  };
+
+  it("an emptied field is SENT as a clear (it used to be refused)", () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, ""));
+    act(() => result.current.handlers.saveSubResources());
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [MF]: "" });
+  });
+
+  it("spaces only are refused and nothing is sent", () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "   "));
+    act(() => result.current.handlers.saveSubResources());
+    expect(submit).not.toHaveBeenCalled();
+    expect(showInfoBox).toHaveBeenCalledWith(expect.any(String), "critical");
+  });
+
+  it("a cleared field takes a new value (re-created on the server)", () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(SLOT, "Handwäsche"));
+    act(() => result.current.handlers.saveSubResources());
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [SLOT]: "Handwäsche" });
+  });
+
+  it("a list is edited one entry per line and sent as JSON", () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(LIST, "Rot\n\n Grün \nBlau"));
+    act(() => result.current.handlers.saveSubResources());
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [LIST]: '["Rot","Grün","Blau"]' });
+  });
+
+  it("the same entries retyped are no change", () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(LIST, "Rot\nBlau\n"));
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.saveSubResources());
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [MF]: "Leinen" });
+  });
+});

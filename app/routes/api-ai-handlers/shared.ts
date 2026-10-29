@@ -3,7 +3,7 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider, isProviderKeyRejection } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, isProviderKeyRejection, isManagedRefusal } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
@@ -133,6 +133,22 @@ export function errorStack(err: unknown): string | undefined {
  * locale, not abort the whole run as if the merchant's AI key were invalid.
  */
 export { isProviderKeyRejection };
+
+/**
+ * A managed-AI refusal (`ManagedAiRefusedError`: budget spent, pool closed,
+ * consent withdrawn mid-run). Every handler loop that aborts on
+ * `isProviderKeyRejection` aborts on this too and lets it PROPAGATE, so the
+ * /api/ai catch answers it with the coded refusal response — recorded per
+ * locale or item instead, it read as "this one failed" and the loop spent the
+ * next call on the same refusal (CLAUDE.md, managed-AI rules: a refusal is an
+ * abort, never a failure that may lead to a purge).
+ */
+export { isManagedRefusal };
+
+/** Either of the two errors that must stop a whole run rather than one item. */
+export function isRunAbortingAIError(error: unknown): boolean {
+  return isProviderKeyRejection(error) || isManagedRefusal(error);
+}
 
 /**
  * Standard 401 response when the merchant's API key was rejected by the

@@ -153,6 +153,10 @@ function mockDb() {
       // A deleted metafield takes its translations with it — the apply path
       // looks the gid up to clear them.
       findFirst: vi.fn(async () => ({ id: "gid://shopify/Metafield/1" })),
+      // A confirmed delete keeps ONE row as a cleared slot (value "") — the
+      // rows of that namespace/key are read first.
+      findMany: vi.fn(async (_args?: unknown) => [{ id: "gid://shopify/Metafield/1", value: "Wool" }]),
+      updateMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
     },
     productOption: {
       findFirst: vi.fn(async (_args?: unknown) => ({
@@ -357,7 +361,8 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
     expect(deleteCalls).toHaveLength(2);
     expect((deleteCalls[0].variables?.metafields as unknown[]).length).toBe(METAFIELDS_SET_CHUNK);
     expect((deleteCalls[1].variables?.metafields as unknown[]).length).toBe(1);
-    expect(db.productMetafield.deleteMany).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
+    // Every confirmed removal keeps its row as a cleared slot.
+    expect(db.productMetafield.updateMany).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
   });
 
   it("clears a metafield cell via metafieldsDelete, NEVER metafieldsSet with '' (§14 no. 4)", async () => {
@@ -376,9 +381,41 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
     expect(deleteCalls[0].variables?.metafields).toEqual([
       { ownerId: PRODUCT_ID, namespace: "custom", key: "material" },
     ]);
-    // Local row removed only after Shopify confirmed the delete (echo check).
-    expect(db.productMetafield.deleteMany).toHaveBeenCalledWith({
+    // Only after Shopify confirmed the delete (echo check) is the local row
+    // turned into a cleared slot (kept, value ""), and its translations go.
+    expect(db.productMetafield.findMany).toHaveBeenCalledWith({
       where: { productId: PRODUCT_ID, product: { shop: SHOP }, namespace: "custom", key: "material" },
+      select: { id: true, value: true },
+    });
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: "gid://shopify/Metafield/1", product: { shop: SHOP } },
+      data: { value: "" },
+    });
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { shop: SHOP, resourceId: { in: ["gid://shopify/Metafield/1"] }, resourceType: "Metafield" },
+    });
+  });
+
+  it("a confirmed set drops a CLEARED SLOT of the same namespace/key (never the echoed row)", async () => {
+    const { admin } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([MATERIAL_SPEC]) },
+      [entry(metafieldColumnId("custom", "material"), "Linen")],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(db.productMetafield.deleteMany).toHaveBeenCalledWith({
+      where: {
+        productId: PRODUCT_ID,
+        product: { shop: SHOP },
+        namespace: "custom",
+        key: "material",
+        value: "",
+        id: { not: "gid://shopify/Metafield/1" },
+      },
     });
   });
 
@@ -397,6 +434,7 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
     );
 
     expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0].columnId).toBe(metafieldColumnId("custom", "material"));
   });
@@ -1003,8 +1041,8 @@ describe("applyBulkDiff — cache writes keyed by client-diff ids are shop-scope
     };
 
     const mf = await run([entry(metafieldColumnId("custom", "material"), "")], spec);
-    expect(where(mf.productMetafield.findFirst)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);
-    expect(where(mf.productMetafield.deleteMany)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);
+    expect(where(mf.productMetafield.findMany)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);
+    expect(where(mf.productMetafield.updateMany)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);
 
     const opt = await run([entry(optionColumnId(1, "values"), "Small | M")]);
     expect(where(opt.productOption.findFirst)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);

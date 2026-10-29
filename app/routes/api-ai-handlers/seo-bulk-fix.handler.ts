@@ -17,7 +17,7 @@ import { DIGEST_BATCH_CHUNK } from "../../services/translations/translation-dige
 import { FIELD_TO_TRANSLATION_KEY as CANONICAL_FIELD_TO_TRANSLATION_KEY } from "../../services/translations/translation-keys.shared";
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isProviderKeyRejection, CONTENT_CONFIGS } from "./shared";
+import { errorMessage, createAIService, isProviderKeyRejection, isManagedRefusal, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -696,11 +696,18 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
   const failed: { type: AuditType; id: string; error: string }[] = [];
   const total = items.length;
   let authErrorSeen = false;
+  // A managed-AI refusal (budget spent, pool closed, consent withdrawn) stops
+  // the run like a rejected key: every remaining item would be refused too.
+  // Its machine code (`managed_ai_refused:<reason>`) becomes the Task error,
+  // which the Tasks tab renders as a stand-down, not as a failure. The refused
+  // call wrote nothing, and nothing is purged over it; what earlier items
+  // already generated is still saved.
+  let managedRefusal: string | null = null;
 
   for (let i = 0; i < items.length; i++) {
     const { type, id } = items[i];
 
-    if (!authErrorSeen) {
+    if (!authErrorSeen && !managedRefusal) {
       const row = rows.get(id);
       if (!row) {
         failed.push({ type, id, error: "Item no longer exists in the content cache" });
@@ -815,10 +822,11 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
           // identically — stop burning AI-queue attempts and mark the rest
           // failed immediately instead of retrying item-by-item.
           if (isProviderKeyRejection(err)) authErrorSeen = true;
+          if (isManagedRefusal(err)) managedRefusal = errorMessage(err);
         }
       }
     } else {
-      failed.push({ type, id, error: "Skipped after provider API key was rejected" });
+      failed.push({ type, id, error: managedRefusal ?? "Skipped after provider API key was rejected" });
     }
 
     // Persist after every item so a crash only loses the current one — same
@@ -856,7 +864,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
       progress: 100,
       completedAt: new Date(),
       result: resultBlob(succeeded, failed, repairBudget),
-      error: failureSummary ? failureSummary.substring(0, 1000) : null,
+      error: (managedRefusal ?? failureSummary)?.substring(0, 1000) ?? null,
     },
   });
 }
@@ -960,6 +968,13 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
   const succeeded: { type: AuditType; id: string }[] = [];
   const failed: { type: AuditType; id: string; error: string }[] = [];
   let authErrorSeen = false;
+  // A managed-AI refusal (budget spent, pool closed, consent withdrawn) stops
+  // the run like a rejected key: every remaining item would be refused too.
+  // Its machine code (`managed_ai_refused:<reason>`) becomes the Task error,
+  // which the Tasks tab renders as a stand-down, not as a failure. The refused
+  // call wrote nothing, and nothing is purged over it; what earlier items
+  // already generated is still saved.
+  let managedRefusal: string | null = null;
 
   // First pass: enumerate every missing-alt image across every affected
   // content row so total/progress reflect IMAGES, not items — the same
@@ -1111,7 +1126,7 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
   for (let i = 0; i < jobs.length; i++) {
     const job = jobs[i];
 
-    if (!authErrorSeen) {
+    if (!authErrorSeen && !managedRefusal) {
       try {
         const sanitizedTitle = sanitizePromptInput(job.productTitle || "", { fieldType: "title" });
         let prompt = `Create an optimized alt text for a product image.\nProduct: ${sanitizedTitle}\nImage URL: ${job.imageUrl}`;
@@ -1177,12 +1192,13 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
           error: message,
         });
         if (isProviderKeyRejection(err)) authErrorSeen = true;
+        if (isManagedRefusal(err)) managedRefusal = errorMessage(err);
       }
     } else {
       failed.push({
         type: job.type,
         id: job.id,
-        error: "Skipped after provider API key was rejected",
+        error: managedRefusal ?? "Skipped after provider API key was rejected",
       });
     }
 
@@ -1218,7 +1234,7 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
       progress: 100,
       completedAt: new Date(),
       result: resultBlob(succeeded, failed, repairBudget),
-      error: failureSummary ? failureSummary.substring(0, 1000) : null,
+      error: (managedRefusal ?? failureSummary)?.substring(0, 1000) ?? null,
     },
   });
 }
@@ -1813,6 +1829,13 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
   const failed: { code: string; error: string }[] = [];
   const total = codes.length;
   let authErrorSeen = false;
+  // A managed-AI refusal (budget spent, pool closed, consent withdrawn) stops
+  // the run like a rejected key: every remaining item would be refused too.
+  // Its machine code (`managed_ai_refused:<reason>`) becomes the Task error,
+  // which the Tasks tab renders as a stand-down, not as a failure. The refused
+  // call wrote nothing, and nothing is purged over it; what earlier items
+  // already generated is still saved.
+  let managedRefusal: string | null = null;
   // The primary text fields generated so far, WRITTEN TOGETHER after the loop in
   // ONE editor save (see `persistFields`): one save per field would make each
   // follow-up repair's claim abort the previous one's run.
@@ -1823,8 +1846,8 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
     const code = codes[i];
     const field = FIXABLE_CODE_TO_FIELD[code];
 
-    if (authErrorSeen) {
-      failed.push({ code, error: "Skipped after provider API key was rejected" });
+    if (authErrorSeen || managedRefusal) {
+      failed.push({ code, error: managedRefusal ?? "Skipped after provider API key was rejected" });
     } else if (!field) {
       failed.push({ code, error: `Not AI-fixable: ${code}` });
     } else if (field === "altText") {
@@ -1849,6 +1872,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
       } catch (err: unknown) {
         failed.push({ code, error: errorMessage(err) });
         if (isProviderKeyRejection(err)) authErrorSeen = true;
+        if (isManagedRefusal(err)) managedRefusal = errorMessage(err);
       }
     } else {
       try {
@@ -1936,6 +1960,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
           error: errorMessage(err),
         });
         if (isProviderKeyRejection(err)) authErrorSeen = true;
+        if (isManagedRefusal(err)) managedRefusal = errorMessage(err);
       }
     }
 
@@ -1999,7 +2024,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
       progress: 100,
       completedAt: new Date(),
       result: resultBlob(succeeded, failed, repairBudget),
-      error: failureSummary ? failureSummary.substring(0, 1000) : null,
+      error: (managedRefusal ?? failureSummary)?.substring(0, 1000) ?? null,
     },
   });
 }
@@ -2216,6 +2241,9 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
         });
       }
     } catch (err: unknown) {
+      // A rejected key or a managed refusal hits every remaining image too —
+      // stop here and let the caller's catch stop the whole run.
+      if (isProviderKeyRejection(err) || isManagedRefusal(err)) throw err;
       failures.push(errorMessage(err));
     }
   }

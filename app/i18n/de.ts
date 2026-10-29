@@ -3400,6 +3400,7 @@ export const de = {
       acceptSuccess: "Link gespeichert.",
       acceptSaveError: "Speichern fehlgeschlagen. Bitte erneut versuchen.",
       carryTranslationsLabel: "Übersetzungen mitführen",
+      carryTranslationsUnsaved: "Ungespeichert — Annehmen ist gesperrt, bis du diese Einstellung speicherst oder verwirfst.",
       carryTranslationsHelp:
         "Empfohlen. Der eingefügte Link ändert nur die Formatierung, nicht den Text — deine bestehenden Übersetzungen bleiben deshalb erhalten und bekommen denselben Link mit der jeweils passenden fremdsprachigen URL. Ohne diese Option löscht Shopify beim Speichern wie üblich alle Übersetzungen des bearbeiteten Feldes.",
       acceptTranslationsLinked: " In {count} Übersetzung(en) wurde der Link ebenfalls gesetzt.",

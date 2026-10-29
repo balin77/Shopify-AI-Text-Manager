@@ -22,6 +22,7 @@ const handleUpdateProduct = vi.fn();
 const analyzeStore = vi.fn();
 const getCachedShopLocales = vi.fn();
 const serviceCtorArgs: unknown[] = [];
+const generateProductTitle = vi.fn<(...a: unknown[]) => Promise<string>>();
 
 vi.mock('~/actions/product/update.actions', () => ({
   handleUpdateProduct: (...a: unknown[]) => handleUpdateProduct(...a),
@@ -55,7 +56,7 @@ vi.mock('../../app/routes/api-ai-handlers/shared', async (importOriginal) => {
   return {
     ...actual,
     createAIService: () => ({
-      generateProductTitle: vi.fn(async () => 'Generated'),
+      generateProductTitle: (...a: unknown[]) => generateProductTitle(...a),
       generateProductDescription: vi.fn(async () => '<p>Generated</p>'),
       generateImageAltText: vi.fn(async () => 'Alt'),
     }),
@@ -122,6 +123,8 @@ beforeEach(() => {
   analyzeStore.mockReset();
   getCachedShopLocales.mockReset();
   serviceCtorArgs.length = 0;
+  generateProductTitle.mockReset();
+  generateProductTitle.mockResolvedValue('Generated');
   updateContent.mockResolvedValue({ success: true });
   getCachedShopLocales.mockResolvedValue([{ locale: 'de', primary: true, name: 'German', published: true }]);
 });
@@ -266,5 +269,54 @@ describe('a failed shop-locale lookup fails ONCE, up front', () => {
     expect(String(res.data?.error)).toMatch(/languages could not be loaded/);
     expect(db.task.create).not.toHaveBeenCalled();
     expect(updateContent).not.toHaveBeenCalled();
+  });
+});
+
+// A managed-AI refusal (budget spent, consent withdrawn, pool closed) stops a
+// detached run like a rejected key: nothing more is asked of the AI, nothing is
+// written for the refused item, and the Task error is the refusal's machine
+// code (rendered as a stand-down), never a per-item failure summary.
+describe('a managed-AI refusal stops the run', () => {
+  it('bulk run: no further AI call, no write for the refused item, Task error is the refusal code', async () => {
+    const { ManagedAiRefusedError } = await import('../../src/services/ai.service');
+    const ids = ['gid://shopify/Collection/1', 'gid://shopify/Collection/2', 'gid://shopify/Collection/3'];
+    analyzeStore.mockResolvedValue({
+      problems: [{ code: 'seoTitleMissing', items: ids.map((id) => ({ id, type: 'collection' })) }],
+    });
+    generateProductTitle
+      .mockResolvedValueOnce('Generated')
+      .mockRejectedValueOnce(new ManagedAiRefusedError('budgetExceeded'));
+    const { db, taskUpdates } = makeDb(ids);
+    await handleSeoBulkFix(ctxFor(db, { problemCode: 'seoTitleMissing' }));
+    const final = await finalUpdate(taskUpdates);
+
+    expect(generateProductTitle).toHaveBeenCalledTimes(2);
+    // Only the item generated before the refusal was saved.
+    expect(updateContent).toHaveBeenCalledTimes(1);
+    expect(final.error).toBe('managed_ai_refused:budgetExceeded');
+    const result = JSON.parse(final.result);
+    expect(result.succeeded).toHaveLength(1);
+    expect(result.failed).toHaveLength(2);
+  });
+
+  it('fixAllForItem: stops at the refusal and still saves what was generated before it', async () => {
+    const { ManagedAiRefusedError } = await import('../../src/services/ai.service');
+    const id = 'gid://shopify/Collection/1';
+    analyzeStore.mockResolvedValue({
+      problems: [
+        { code: 'titleLength', items: [{ id, type: 'collection' }] },
+        { code: 'seoTitleMissing', items: [{ id, type: 'collection' }] },
+      ],
+    });
+    generateProductTitle
+      .mockResolvedValueOnce('Generated')
+      .mockRejectedValueOnce(new ManagedAiRefusedError('consentMissing'));
+    const { db, taskUpdates } = makeDb([id]);
+    await handleSeoBulkFix(ctxFor(db, { fixAllForItem: 'true', itemId: id, itemType: 'collection' }));
+    const final = await finalUpdate(taskUpdates);
+
+    expect(final.error).toBe('managed_ai_refused:consentMissing');
+    expect(updateContent).toHaveBeenCalledTimes(1);
+    expect(Object.keys(updateContent.mock.calls[0][0].updates)).toHaveLength(1);
   });
 });
