@@ -31,7 +31,7 @@
 
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isAuthError } from "./shared";
+import { errorMessage, createAIService, isProviderKeyRejection } from "./shared";
 import type { AIService } from "../../../src/services/ai.service";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -527,7 +527,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
           );
         } catch (err: unknown) {
           // An invalid AI key fails every remaining row identically — abort.
-          if (isAuthError(err)) throw err;
+          if (isProviderKeyRejection(err)) throw err;
           failGroup(short, errorMessage(err));
         }
       }
@@ -547,7 +547,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             ),
           );
         } catch (err: unknown) {
-          if (isAuthError(err)) throw err;
+          if (isProviderKeyRejection(err)) throw err;
           failGroup(long, errorMessage(err));
         }
       }
@@ -566,7 +566,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             ),
           );
         } catch (err: unknown) {
-          if (isAuthError(err)) throw err;
+          if (isProviderKeyRejection(err)) throw err;
           failGroup([cell], errorMessage(err));
         }
       }
@@ -631,7 +631,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             // Only a run whose EVERY chunk failed throws; a single bad chunk
             // leaves its own entries empty instead. So this is the whole group's
             // failure, in every language it covered.
-            if (isAuthError(err)) throw err;
+            if (isProviderKeyRejection(err)) throw err;
             const message = errorMessage(err);
             for (const cell of cellsForSet) {
               for (const locale of localesForSet) {

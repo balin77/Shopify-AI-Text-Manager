@@ -17,7 +17,7 @@ import { DIGEST_BATCH_CHUNK } from "../../services/translations/translation-dige
 import { FIELD_TO_TRANSLATION_KEY as CANONICAL_FIELD_TO_TRANSLATION_KEY } from "../../services/translations/translation-keys.shared";
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isAuthError, CONTENT_CONFIGS } from "./shared";
+import { errorMessage, createAIService, isProviderKeyRejection, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -814,7 +814,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
           // An invalid/expired provider key fails every remaining item
           // identically — stop burning AI-queue attempts and mark the rest
           // failed immediately instead of retrying item-by-item.
-          if (isAuthError(err)) authErrorSeen = true;
+          if (isProviderKeyRejection(err)) authErrorSeen = true;
         }
       }
     } else {
@@ -1176,7 +1176,7 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
           id: job.id,
           error: message,
         });
-        if (isAuthError(err)) authErrorSeen = true;
+        if (isProviderKeyRejection(err)) authErrorSeen = true;
       }
     } else {
       failed.push({
@@ -1848,7 +1848,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
         succeeded.push({ code });
       } catch (err: unknown) {
         failed.push({ code, error: errorMessage(err) });
-        if (isAuthError(err)) authErrorSeen = true;
+        if (isProviderKeyRejection(err)) authErrorSeen = true;
       }
     } else {
       try {
@@ -1935,7 +1935,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
           code,
           error: errorMessage(err),
         });
-        if (isAuthError(err)) authErrorSeen = true;
+        if (isProviderKeyRejection(err)) authErrorSeen = true;
       }
     }
 

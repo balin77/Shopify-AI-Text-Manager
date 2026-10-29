@@ -41,6 +41,8 @@ import {
   WEBP_NON_TERMINAL_STATUS,
   WEBP_PARENT_ORPHAN_GRACE_MS,
   WEBP_PARENT_TASK_TYPE,
+  WEBP_EXPIRED_IN_QUEUE_ERROR,
+  isWebpItemExpiredInQueue,
   parseTaskResult,
   webpBatchStatus,
   webpParentTaskId,
@@ -665,6 +667,20 @@ export class WebPProcessorService {
   }
 
   async _processTaskItem(task) {
+    // A conversion replaces the merchant's original on Shopify, so it may only
+    // START close to the moment they asked for it. An item that waited past
+    // WEBP_QUEUE_MAX_AGE_MS (app/config/webp-tasks.js) is failed with a code
+    // and refunded through the ordinary `failTask`, never run. Checked before
+    // anything else and before the row is marked `running`: nothing has touched
+    // Shopify for it, so the refund is owed and the batch settles from it.
+    if (isWebpItemExpiredInQueue(task.createdAt)) {
+      console.warn(
+        `[WebPProcessor] Task ${task.id} waited in the queue since ${new Date(task.createdAt).toISOString()} — expired, not started`,
+      );
+      await this.failTask(task, WEBP_EXPIRED_IN_QUEUE_ERROR);
+      return;
+    }
+
     let taskData;
     try {
       taskData = JSON.parse(task.result || "{}");

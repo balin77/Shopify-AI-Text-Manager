@@ -87,6 +87,8 @@ import {
   suggestionWhere,
   parseLastRunOutcome,
   isRecentRun,
+  latestFinishedRun,
+  runFinishedAt,
   type FilterType,
   type LastRunOutcome,
   type View,
@@ -239,17 +241,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // nothing to carry, so the option is not shown at all.
   const hasForeignLocales = shopLocales.some((l) => l.published && !l.primary);
 
-  const [runningTask, lastTask, total, openCount, rejectedCount] = await Promise.all([
+  // The latest finished run is "newest by completedAt, else updatedAt" (the
+  // same time `isRecentRun` judges). Postgres sorts NULLs FIRST on a DESC
+  // order, so a single `completedAt desc` query let a run a reaper closed
+  // without `completedAt` hide every newer one — hence one query per half and
+  // `latestFinishedRun` choosing between them.
+  const finishedRunWhere = { shop, type: "seoInternalLinks", status: { in: ["completed", "failed"] } };
+  const lastRunSelect = { completedAt: true, updatedAt: true, status: true, result: true, error: true } as const;
+  const [runningTask, lastCompletedTask, lastUnstampedTask, total, openCount, rejectedCount] = await Promise.all([
     db.task.findFirst({ where: { shop, type: "seoInternalLinks", status: "running" }, select: { id: true } }),
     db.task.findFirst({
-      where: { shop, type: "seoInternalLinks", status: { in: ["completed", "failed"] } },
-      orderBy: { completedAt: "desc" },
-      select: { completedAt: true, updatedAt: true, status: true, result: true, error: true },
+      where: { ...finishedRunWhere, completedAt: { not: null } },
+      orderBy: [{ completedAt: "desc" }, { updatedAt: "desc" }],
+      select: lastRunSelect,
+    }),
+    db.task.findFirst({
+      where: { ...finishedRunWhere, completedAt: null },
+      orderBy: { updatedAt: "desc" },
+      select: lastRunSelect,
     }),
     db.seoInternalLinkSuggestion.count({ where }),
     db.seoInternalLinkSuggestion.count({ where: { shop, status: "pending" } }),
     db.seoInternalLinkSuggestion.count({ where: { shop, status: "dismissed" } }),
   ]);
+  const lastTask = latestFinishedRun([lastCompletedTask, lastUnstampedTask]);
+  const lastTaskFinishedAt = runFinishedAt(lastTask);
 
   // Clamp instead of 404ing: a page that existed before a reject/accept (or
   // before a filter change) must not leave the merchant on an empty list.
@@ -293,7 +309,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     gated: false,
     running: !!runningTask,
-    lastRun: lastTask?.completedAt ? lastTask.completedAt.toISOString() : null,
+    lastRun: lastTaskFinishedAt !== null ? new Date(lastTaskFinishedAt).toISOString() : null,
     lastOutcome: parseLastRunOutcome(lastTask),
     lastOutcomeRecent: isRecentRun(lastTask, Date.now()),
     primaryLocale,

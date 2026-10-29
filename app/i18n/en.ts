@@ -2362,6 +2362,7 @@ export const en: Translation = {
       aiEmptyValue: "The AI returned an empty value.",
       itemMissing: "This entry no longer exists in the content cache — reload it and try again.",
       webpBatchNotStarted: "The image conversion could not be started. No image was changed — please try again.",
+      webpExpiredInQueue: "Not converted: the conversion waited in the queue for too long and was not started any more. The image is unchanged and the image operation was credited back — start it again if you still want it.",
       slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
       invalidApiKey: "(the AI API key was rejected)",
       someFailed: "Some entries could not be processed — open the task for details.",

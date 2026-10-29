@@ -9,7 +9,7 @@
 import { data as json } from "react-router";
 import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
-import { AIService, isAuthError, isManagedRefusal } from "../../../src/services/ai.service";
+import { AIService, isProviderKeyRejection, isManagedRefusal } from "../../../src/services/ai.service";
 import { managedRefusalResponseFromError } from "~/utils/ai-refusal-response.server";
 import { getFormString } from "../../utils/form-data.utils";
 import { collectRetranslationTaskIds } from "~/services/translations/retranslation-tasks.shared";
@@ -755,7 +755,7 @@ export async function handleTranslateSubResourceToAllLocales(
         // reporting success with all locales failed hides the real cause.
         // A managed refusal (budget, taster, consent) aborts for the same
         // reason: every locale would be refused identically.
-        if (isAuthError(err) || isManagedRefusal(err)) throw err;
+        if (isProviderKeyRejection(err) || isManagedRefusal(err)) throw err;
         logger.error("[UnifiedContent] Failed to translate sub-resources", {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });

@@ -97,6 +97,7 @@ describe("taskErrorText — the runners' counted codes", () => {
     ["ai_empty_value", []],
     ["item_missing", []],
     ["webp_batch_not_started", []],
+    ["webp_expired_in_queue", []],
     ["slug_empty:pt-BR", ["pt-BR"]],
     // The auto-translation repair wrote on Shopify but not into the mirror —
     // the merchant sees an empty field, so the sentence has to reach them in

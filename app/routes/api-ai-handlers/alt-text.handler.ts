@@ -1,6 +1,6 @@
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isPrismaError, isAuthError } from "./shared";
+import { errorMessage, createAIService, isPrismaError, isProviderKeyRejection } from "./shared";
 import type { TranslatableContentItem } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { withUserInstruction } from "~/utils/ai-user-instruction.server";
@@ -655,7 +655,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       }
     } catch (error: unknown) {
       // Invalid API key: the per-locale fallback would 401 too — fail loudly.
-      if (isAuthError(error)) throw error;
+      if (isProviderKeyRejection(error)) throw error;
       logger.error("[API-AI] Alt-text batch translation failed, falling back to per-locale", {
         context: "AI",
         imageIndex,
@@ -668,7 +668,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
           aiResponses.push({ locale, response: value });
         } catch (innerError: unknown) {
           // Invalid key: abort the loop — every remaining locale would 401 too.
-          if (isAuthError(innerError)) throw innerError;
+          if (isProviderKeyRejection(innerError)) throw innerError;
           // Skip this locale — do NOT persist source-as-translation (N-H3).
           logger.error("[API-AI] Error translating alt-text to locale", {
             context: "AI",
@@ -851,7 +851,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
       );
     } catch (error: unknown) {
       // Invalid API key: fail loudly — every image/locale would 401 too.
-      if (isAuthError(error)) throw error;
+      if (isProviderKeyRejection(error)) throw error;
       logger.error("[API-AI] Error batch-translating alt-texts to all locales", {
         context: "AI", error: errorMessage(error),
       });
@@ -1036,7 +1036,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
       }
     } catch (error: unknown) {
       // Invalid API key: fail loudly — there is no per-image fallback here.
-      if (isAuthError(error)) throw error;
+      if (isProviderKeyRejection(error)) throw error;
       logger.error("[API-AI] Error batch-translating alt-texts for locale", {
         context: "AI", targetLocale, error: errorMessage(error),
       });

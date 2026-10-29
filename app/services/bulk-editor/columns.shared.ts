@@ -1171,17 +1171,29 @@ export function buildColumnsForType(
  */
 export const LIST_DISPLAY_SEPARATOR = " | ";
 
-/** JSON array string → `A | B | C` display value. Non-JSON input is shown
- * verbatim (defensive against malformed cache rows). */
-export function formatListMetafieldValue(raw: string): string {
-  if (!raw) return "";
+/** A stored list metafield value (a JSON array) as its entries, each as the
+ * string a merchant reads. `null` when the value is not a JSON array — the
+ * callers then show the raw text rather than guess. THE one reader of the
+ * stored list form: the grid's `A | B | C` cell and the product card's
+ * one-entry-per-line editor both go through it. */
+export function listMetafieldEntries(raw: string): string[] | null {
+  if (!raw) return [];
   try {
     const arr = JSON.parse(raw);
-    if (Array.isArray(arr)) return arr.map((v) => String(v)).join(LIST_DISPLAY_SEPARATOR);
+    if (Array.isArray(arr)) return arr.map((v) => String(v));
   } catch {
-    // fall through — show the raw value
+    // not JSON
   }
-  return raw;
+  return null;
+}
+
+/** JSON array string → `A | B | C` display value (or any other `separator`,
+ * e.g. one entry per line). Non-JSON input is shown verbatim (defensive
+ * against malformed cache rows). */
+export function formatListMetafieldValue(raw: string, separator: string = LIST_DISPLAY_SEPARATOR): string {
+  if (!raw) return "";
+  const entries = listMetafieldEntries(raw);
+  return entries === null ? raw : entries.join(separator);
 }
 
 /**
@@ -1209,7 +1221,16 @@ export function listValueContainsSeparator(raw: string): boolean {
 export function parseListMetafieldInput(
   display: string,
 ): { ok: true; values: string[] } | { ok: false; error: "emptyValue" } {
-  const values = display.split("|").map((v) => v.trim());
+  return parseListMetafieldEntries(display.split("|"));
+}
+
+/** The entry rule both list editors share: every entry is trimmed and none may
+ * be empty. The separator is the caller's business ("|" in the grid, a line
+ * break in the product card). */
+export function parseListMetafieldEntries(
+  entries: string[],
+): { ok: true; values: string[] } | { ok: false; error: "emptyValue" } {
+  const values = entries.map((v) => v.trim());
   if (values.some((v) => v === "")) return { ok: false, error: "emptyValue" };
   return { ok: true, values };
 }

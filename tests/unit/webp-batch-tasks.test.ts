@@ -750,3 +750,85 @@ describe("failTask needs the whole row", () => {
     expect(refunds).toEqual([]);
   });
 });
+
+describe("an item that waited too long in the queue is refused, not run", () => {
+  // The processor was not started in production until 2026-10 while the image
+  // manager kept queueing work. The first start after that must not swap
+  // images nobody is waiting for any more — the age guard fails such an item
+  // with a code and refunds it through the ordinary failTask.
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it("the predicate reads createdAt and only past the limit", async () => {
+    const { isWebpItemExpiredInQueue, WEBP_QUEUE_MAX_AGE_MS } = await import(
+      "../../app/config/webp-tasks.js"
+    );
+    const now = Date.parse("2026-10-29T12:00:00Z");
+    expect(WEBP_QUEUE_MAX_AGE_MS).toBe(DAY);
+    expect(isWebpItemExpiredInQueue(new Date(now - DAY - 1), now)).toBe(true);
+    expect(isWebpItemExpiredInQueue(new Date(now - 30 * DAY), now)).toBe(true);
+    expect(isWebpItemExpiredInQueue(new Date(now - DAY + 60_000), now)).toBe(false);
+    expect(isWebpItemExpiredInQueue(new Date(now - 60_000).toISOString(), now)).toBe(false);
+    // Unreadable is not expired: refusing on a value we cannot read would fail
+    // a fresh request; the stuck-task reaper still bounds that row.
+    expect(isWebpItemExpiredInQueue(null, now)).toBe(false);
+    expect(isWebpItemExpiredInQueue(undefined, now)).toBe(false);
+    expect(isWebpItemExpiredInQueue("not a date", now)).toBe(false);
+  });
+
+  it("a weeks-old queued item is failed with the code, refunded once, never started, and settles its batch", async () => {
+    const table = useTable([
+      {
+        id: "p1",
+        shop: "kumiko.myshopify.com",
+        type: WEBP_PARENT_TASK_TYPE,
+        status: "running",
+        total: 1,
+        processed: 0,
+        progress: 0,
+        resourceId: "gid://shopify/Product/9",
+        createdAt: new Date(Date.now() - 21 * DAY - 1000),
+        result: JSON.stringify({ total: 1 }),
+        error: null,
+      },
+      workItem("i1", {
+        status: "queued",
+        progress: 0,
+        resourceId: "gid://shopify/Product/9",
+        createdAt: new Date(Date.now() - 21 * DAY),
+      }),
+    ]);
+    const original = processor._runWebpSteps;
+    const steps = vi.fn(async () => {});
+    processor._runWebpSteps = steps;
+    try {
+      await processor.processTask({ ...row("i1") });
+    } finally {
+      processor._runWebpSteps = original;
+    }
+
+    expect(steps).not.toHaveBeenCalled();
+    expect(row("i1").status).toBe("failed");
+    expect(row("i1").error).toBe("webp_expired_in_queue");
+    expect(refunds).toEqual([{ n: 1, shop: "kumiko.myshopify.com" }]);
+    // The batch is closed from the item, all images failed ⇒ `failed`.
+    expect(table[0].status).toBe("failed");
+    expect(JSON.parse(table[0].result)).toMatchObject({ total: 1, converted: 0, failed: 1 });
+  });
+
+  it("a fresh queued item still runs", async () => {
+    useTable([
+      workItem("i1", { status: "pending", progress: 0, createdAt: new Date(Date.now() - 5 * 60_000) }),
+    ]);
+    const original = processor._runWebpSteps;
+    const steps = vi.fn(async () => {});
+    processor._runWebpSteps = steps;
+    try {
+      await processor._processTaskItem({ ...row("i1") });
+    } finally {
+      processor._runWebpSteps = original;
+    }
+    expect(steps).toHaveBeenCalledTimes(1);
+    expect(row("i1").status).toBe("pending");
+    expect(refunds).toEqual([]);
+  });
+});

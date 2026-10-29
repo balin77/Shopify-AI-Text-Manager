@@ -3,7 +3,7 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider, isAuthError } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, isProviderKeyRejection } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
@@ -124,10 +124,15 @@ export function errorStack(err: unknown): string | undefined {
 }
 
 /**
- * Re-export so api.ai handlers can detect provider auth failures (invalid key)
- * without each importing from the deep src/ path.
+ * Re-export so api.ai handlers can detect a REJECTED provider key without each
+ * importing from the deep src/ path. Deliberately the precise marker
+ * (`InvalidAIKeyError`, which `askAI` normalises every provider auth failure
+ * into) and NOT the `isAuthError` message heuristic: the handlers' loops wrap
+ * Shopify writes, DB calls and CDN fetches too, and a non-AI failure whose
+ * message merely contains "401" or "unauthorized" must fail its own item or
+ * locale, not abort the whole run as if the merchant's AI key were invalid.
  */
-export { isAuthError };
+export { isProviderKeyRejection };
 
 /**
  * Standard 401 response when the merchant's API key was rejected by the

@@ -21,7 +21,7 @@
 
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isAuthError } from "./shared";
+import { errorMessage, createAIService, isProviderKeyRejection } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -331,7 +331,7 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
         });
         // An invalid provider key fails every remaining batch identically —
         // stop burning calls (same guard as runSeoBulkFix).
-        if (isAuthError(err)) authErrorSeen = true;
+        if (isProviderKeyRejection(err)) authErrorSeen = true;
       }
     }
 

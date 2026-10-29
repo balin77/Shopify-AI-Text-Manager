@@ -2343,6 +2343,7 @@ export const es: Translation = {
       aiEmptyValue: "La IA devolvió un valor vacío.",
       itemMissing: "Esta entrada ya no está en la caché de contenido — vuelve a cargarla e inténtalo de nuevo.",
       webpBatchNotStarted: "No se pudo iniciar la conversión de imágenes. No se modificó ninguna imagen — inténtalo de nuevo.",
+      webpExpiredInQueue: "No convertida: la conversión esperó demasiado tiempo en la cola y ya no se inició. La imagen no ha cambiado y la operación de imagen se ha devuelto — vuelve a iniciarla si todavía la necesitas.",
       slugEmpty: "El slug de URL traducido para {language} quedó vacío y no se guardó.",
       invalidApiKey: "(la clave de API de IA fue rechazada)",
       someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",

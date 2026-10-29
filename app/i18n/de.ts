@@ -2364,6 +2364,7 @@ export const de = {
       aiEmptyValue: "Die KI hat einen leeren Wert zurückgegeben.",
       itemMissing: "Dieser Eintrag ist nicht mehr im Inhalts-Cache — bitte neu laden und erneut versuchen.",
       webpBatchNotStarted: "Die Bild-Konvertierung konnte nicht gestartet werden. Es wurde kein Bild verändert — bitte erneut versuchen.",
+      webpExpiredInQueue: "Nicht konvertiert: Die Konvertierung hat zu lange in der Warteschlange gewartet und wurde nicht mehr gestartet. Das Bild ist unverändert und die Bildoperation wurde gutgeschrieben — bitte bei Bedarf erneut starten.",
       slugEmpty: "Der übersetzte URL-Slug für {language} war leer und wurde nicht gespeichert.",
       invalidApiKey: "(der KI-API-Schlüssel wurde abgelehnt)",
       someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
