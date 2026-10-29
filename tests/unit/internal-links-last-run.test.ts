@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseLastRunOutcome, isRecentRun, LAST_RUN_BANNER_WINDOW_MS } from "../../app/services/seo/internal-links-query";
+import { parseLastRunOutcome, isRecentRun, latestFinishedRun, runFinishedAt, LAST_RUN_BANNER_WINDOW_MS } from "../../app/services/seo/internal-links-query";
 
 // The internal-links page reports the latest finished run, so "Generieren"
 // always ends in an answer — a run that found nothing or failed used to leave
@@ -59,5 +59,39 @@ describe("isRecentRun", () => {
   it("falls back to updatedAt for a row closed without completedAt", () => {
     expect(isRecentRun({ completedAt: null, updatedAt: new Date(now - 1000) }, now)).toBe(true);
     expect(isRecentRun({ completedAt: null, updatedAt: new Date(now - 30 * 86_400_000) }, now)).toBe(false);
+  });
+});
+
+// Postgres sorts NULLs FIRST on `completedAt desc`, so a failed run a reaper
+// closed without `completedAt` used to hide every newer run. The loader now
+// fetches the newest stamped and the newest unstamped row and picks between
+// them by the same finish time `isRecentRun` judges.
+describe("latestFinishedRun", () => {
+  const now = Date.parse("2026-10-28T12:00:00Z");
+
+  it("prefers a newer stamped run over an old unstamped failure", () => {
+    const stamped = { id: "new", completedAt: new Date(now - 60_000), updatedAt: new Date(now - 60_000) };
+    const unstamped = { id: "old", completedAt: null, updatedAt: new Date(now - 30 * 86_400_000) };
+    expect(latestFinishedRun([stamped, unstamped])?.id).toBe("new");
+  });
+
+  it("prefers a newer unstamped run over an older stamped one", () => {
+    const stamped = { id: "old", completedAt: new Date(now - 86_400_000), updatedAt: new Date(now - 86_400_000) };
+    const unstamped = { id: "new", completedAt: null, updatedAt: new Date(now - 1000) };
+    expect(latestFinishedRun([stamped, unstamped])?.id).toBe("new");
+  });
+
+  it("takes whichever exists, and nothing when neither does", () => {
+    const only = { id: "x", completedAt: null, updatedAt: new Date(now) };
+    expect(latestFinishedRun([null, only])?.id).toBe("x");
+    expect(latestFinishedRun([only, undefined])?.id).toBe("x");
+    expect(latestFinishedRun([null, null])).toBeNull();
+  });
+
+  it("reports the same finish time isRecentRun judges", () => {
+    expect(runFinishedAt({ completedAt: null, updatedAt: new Date(now) })).toBe(now);
+    expect(runFinishedAt({ completedAt: new Date(now - 5), updatedAt: new Date(now) })).toBe(now - 5);
+    expect(runFinishedAt({ completedAt: new Date(NaN), updatedAt: null })).toBeNull();
+    expect(runFinishedAt(null)).toBeNull();
   });
 });

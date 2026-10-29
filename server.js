@@ -462,34 +462,32 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to recover tasks", { error: String(error) });
   }
 
-  // Start WebP conversion task processor — gated while app is under Shopify review.
-  // Remove this guard once the Image Manager feature set is approved.
-  if (process.env.APP_ENV !== "production") {
-    try {
-      const { WebPProcessorService } = await import("./webp-processor.service.js");
-      const webpProcessor = WebPProcessorService.getInstance();
-      webpProcessor.start();
-      serverLogger.info("WebP processor service started");
-    } catch (error) {
-      serverLogger.error("Failed to start WebP processor service", { error: String(error) });
-    }
-  } else {
-    serverLogger.info("WebP processor service skipped (APP_ENV=production, feature gated for review)");
+  // Start the WebP conversion task processor — in EVERY environment. It used to
+  // be skipped under APP_ENV=production while the app was under Shopify review,
+  // but the image manager was never gated, so production merchants could queue
+  // conversions that never ran. Items that waited too long are refused rather
+  // than run (WEBP_QUEUE_MAX_AGE_MS in app/config/webp-tasks.js), so the first
+  // start after that gate cannot swap images nobody is waiting for any more.
+  // Started AFTER the task recovery above, on purpose (see the comment there).
+  try {
+    const { WebPProcessorService } = await import("./webp-processor.service.js");
+    const webpProcessor = WebPProcessorService.getInstance();
+    webpProcessor.start();
+    serverLogger.info("WebP processor service started");
+  } catch (error) {
+    serverLogger.error("Failed to start WebP processor service", { error: String(error) });
   }
 
-  // Start stale image cleanup service — gated while app is under Shopify review.
-  // Remove this guard once the Image Manager feature set is approved.
-  if (process.env.APP_ENV !== "production") {
-    try {
-      const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
-      const staleImageService = StaleImageCleanupService.getInstance();
-      staleImageService.start();
-      serverLogger.info("Stale image cleanup service started");
-    } catch (error) {
-      serverLogger.error("Failed to start stale image cleanup service", { error: String(error) });
-    }
-  } else {
-    serverLogger.info("Stale image cleanup service skipped (APP_ENV=production, feature gated for review)");
+  // Start the stale image cleanup service — in every environment, like the
+  // processor it tidies up after. It deletes only this app's local ProductImage
+  // CACHE rows, never anything on Shopify.
+  try {
+    const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+    const staleImageService = StaleImageCleanupService.getInstance();
+    staleImageService.start();
+    serverLogger.info("Stale image cleanup service started");
+  } catch (error) {
+    serverLogger.error("Failed to start stale image cleanup service", { error: String(error) });
   }
 });
 
@@ -539,15 +537,13 @@ async function gracefulShutdown(signal) {
       serverLogger.error("Error stopping stuck task monitoring", { error: String(error) });
     }
 
-    if (process.env.APP_ENV !== "production") {
-      try {
-        // Stop stale image cleanup service
-        const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
-        StaleImageCleanupService.getInstance().stop();
-        serverLogger.info("Stale image cleanup service stopped");
-      } catch (error) {
-        serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
-      }
+    try {
+      // Stop stale image cleanup service (started in every environment)
+      const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+      StaleImageCleanupService.getInstance().stop();
+      serverLogger.info("Stale image cleanup service stopped");
+    } catch (error) {
+      serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
     }
 
     try {

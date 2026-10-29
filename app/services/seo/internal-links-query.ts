@@ -68,11 +68,53 @@ export function isRecentRun(
   now: number,
   windowMs: number = LAST_RUN_BANNER_WINDOW_MS,
 ): boolean {
-  const finished = task?.completedAt ?? task?.updatedAt ?? null;
-  if (!finished) return false;
-  const at = finished.getTime();
-  if (!Number.isFinite(at)) return false;
+  const at = runFinishedAt(task);
+  if (at === null) return false;
   return now - at <= windowMs;
+}
+
+/**
+ * When a finished run finished, as epoch ms: `completedAt`, else `updatedAt`
+ * for a row a reaper closed without one; `null` when neither is a real date.
+ * The ONE answer to that question — `isRecentRun` and the choice of WHICH run
+ * is the latest (`latestFinishedRun`) both read it, so the banner can never be
+ * judged on one row while another one is reported.
+ */
+export function runFinishedAt(
+  task: { completedAt?: Date | null; updatedAt?: Date | null } | null | undefined,
+): number | null {
+  const finished = task?.completedAt ?? task?.updatedAt ?? null;
+  if (!finished) return null;
+  const at = finished.getTime();
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * The latest finished run out of the loader's candidates. The loader cannot
+ * ask Postgres for "ORDER BY COALESCE(completedAt, updatedAt) DESC" through
+ * Prisma, and a plain `completedAt desc` puts NULLs FIRST in Postgres — so a
+ * failed run a reaper closed without `completedAt`, weeks ago, outranked every
+ * newer run and the page reported that old failure as the latest outcome. The
+ * loader therefore fetches the newest row WITH `completedAt` and the newest
+ * row WITHOUT it, and this picks between them by `runFinishedAt`. Ties go to
+ * the earlier candidate (the one with a real `completedAt`).
+ */
+export function latestFinishedRun<T extends { completedAt?: Date | null; updatedAt?: Date | null }>(
+  candidates: ReadonlyArray<T | null | undefined>,
+): T | null {
+  let best: T | null = null;
+  let bestAt = -Infinity;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const at = runFinishedAt(candidate);
+    // A row with no usable time still beats having nothing at all.
+    const rank = at ?? -Infinity;
+    if (best === null || rank > bestAt) {
+      best = candidate;
+      bestAt = rank;
+    }
+  }
+  return best;
 }
 
 export function parseLastRunOutcome(

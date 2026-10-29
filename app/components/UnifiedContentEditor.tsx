@@ -776,11 +776,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // The whole-item "Translate all" on the primary locale translates the SAVED
   // values into every language; a primary draft would be saved later and that
   // Save purges what the button wrote. So it waits, like the per-field one.
+  // A landed primary save whose reload is still out blocks it too, but that
+  // is a moment's wait, not an unsaved change: it says so.
   const translateAllSaveFirstHint =
-    state.currentLanguage === primaryLocale &&
-    (helpers.hasUnsavedTranslateAllSource() || !!subResourceState?.translateAllSaveFirst)
-      ? saveFirstSourceHint
-      : undefined;
+    state.currentLanguage !== primaryLocale
+      ? undefined
+      : helpers.hasUnsavedTranslateAllSource() || !!subResourceState?.translateAllSaveFirst
+        ? saveFirstSourceHint
+        : subResourceState?.translateAllReloadPending
+          ? String(t.common?.sourceReloading || "One moment — the saved text is reloading.")
+          : undefined;
 
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
@@ -2441,11 +2446,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 )}
 
                 {/* Metafields Card */}
+                {/* A cleared field (its metafield deleted on Shopify) is shown in
+                    the PRIMARY language only, so a product whose metafields are
+                    all cleared still gets the card there. */}
                 {config.contentType === "products" && subResourceState && subResourceHandlers &&
-                  selectedItem?.metafields && selectedItem.metafields.length > 0 && (
+                  ((selectedItem?.metafields?.length ?? 0) > 0 ||
+                    (state.currentLanguage === primaryLocale && (selectedItem?.clearedMetafields?.length ?? 0) > 0)) && (
                   <div style={{ marginTop: "1rem" }}>
                     <MetafieldsField
-                      metafields={selectedItem.metafields}
+                      metafields={selectedItem?.metafields ?? []}
+                      clearedMetafields={selectedItem?.clearedMetafields ?? []}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
                       translations={subResourceState.metafieldTranslations}
@@ -2455,11 +2465,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onPrimaryMetafieldChange={subResourceHandlers.handlePrimaryMetafieldChange}
                       primaryValues={subResourceState.primaryMetafieldEdits}
                       translatingFieldIds={subResourceState.translatingFieldIds}
+                      translationBlocked={subResourceState.metafieldTranslationBlocked}
                       t={{
                         title: t.products?.productMetafields,
                         notEditableInPrimary: t.products?.metafieldsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.metafieldsEditInstructionPrimary,
                         translateButton: t.products?.translateMetafield,
+                        listHint: t.products?.metafieldListHint,
+                        listReadOnly: t.products?.metafieldListReadOnly,
+                        clearedHint: t.products?.metafieldClearedHint,
+                        listErrorLine: t.products?.metafieldListErrorLine,
+                        listErrors: t.products?.metafieldListErrors,
+                        saveFirstSource: t.common?.saveFirstSource,
+                        sourceReloading: t.common?.sourceReloading,
+                        typeNotTranslatable: t.products?.metafieldTypeNotTranslatable,
                       }}
                     />
                   </div>

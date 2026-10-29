@@ -30,6 +30,7 @@ vi.mock("~/utils/translation-save-lock.server", async (orig) => ({
 }));
 
 import { handleTranslateFieldToAllLocales } from "../../app/routes/api-ai-handlers/text-translation.handler";
+import { InvalidAIKeyError, ManagedAiRefusedError } from "../../src/services/ai.service";
 
 const PRODUCT = "gid://shopify/Product/1";
 const META = "gid://shopify/Metaobject/9";
@@ -320,5 +321,69 @@ describe("phase G review fixes", () => {
     const r = await handleTranslateFieldToAllLocales(ctx);
     expect(status(r)).toBe(502);
     expect(body(r).error).toBe("translateStoreFailedAll");
+  });
+});
+
+// The per-locale loop aborts only on a REJECTED AI KEY (InvalidAIKeyError, the
+// marker `askAI` normalises every provider auth failure into) — not on any
+// error whose message merely says "401" or "unauthorized" (a Shopify or CDN
+// failure), which must fail its own locale and let the rest continue.
+describe("abort decision of the sequential per-locale loop", () => {
+  const form = { fieldType: "description", sourceText: "Hallo", targetLocales: LOCALES, primaryLocale: "de" };
+
+  it("continues past a non-AI '401 Unauthorized' error, in the batch and per locale", async () => {
+    aiMock.translateFieldsToLocalesChunked.mockRejectedValue(new Error("GraphQL 401 Unauthorized"));
+    aiMock.translateContent.mockImplementation(async (_src: string, _from: string, to: string) => {
+      if (to === "en") throw new Error("[API] Request failed: 401 Unauthorized");
+      return "Salut";
+    });
+    const { ctx, db } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx);
+    expect(aiMock.translateContent).toHaveBeenCalledTimes(2);
+    expect(body(r).translations).toEqual({ fr: "Salut" });
+    expect(body(r).rejectedFields).toEqual({ en: ["description"] });
+    expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("still aborts the loop on InvalidAIKeyError", async () => {
+    aiMock.translateFieldsToLocalesChunked.mockRejectedValue(new Error("chunk parse failed"));
+    aiMock.translateContent.mockRejectedValue(new InvalidAIKeyError("401 invalid api key"));
+    const { ctx, db } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx).catch((e: unknown) => e);
+    expect(aiMock.translateContent).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(shopify.registers).toHaveLength(0);
+    // Either surfaced as a throw or as a failed answer — never as success.
+    if (r instanceof Error) expect(r).toBeInstanceOf(InvalidAIKeyError);
+    else expect(body(r).success).not.toBe(true);
+  });
+
+  // A managed-AI refusal is the same abort: recorded per locale it read as
+  // "this language failed" and the loop asked again for every other one; it
+  // must reach the /api/ai catch, which answers it with the coded refusal.
+  it("aborts the loop on a managed refusal and propagates it", async () => {
+    aiMock.translateFieldsToLocalesChunked.mockRejectedValue(new Error("chunk parse failed"));
+    aiMock.translateContent.mockRejectedValue(new ManagedAiRefusedError("budgetExceeded"));
+    const { ctx, db } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx).catch((e: unknown) => e);
+    expect(r).toBeInstanceOf(ManagedAiRefusedError);
+    expect(aiMock.translateContent).toHaveBeenCalledTimes(1);
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(shopify.registers).toHaveLength(0);
+  });
+
+  it("aborts at the batch on a managed refusal instead of falling back", async () => {
+    aiMock.translateFieldsToLocalesChunked.mockRejectedValue(new ManagedAiRefusedError("consentMissing"));
+    const { ctx } = makeCtx("products", PRODUCT, form);
+    const r = await handleTranslateFieldToAllLocales(ctx).catch((e: unknown) => e);
+    expect(r).toBeInstanceOf(ManagedAiRefusedError);
+    expect(aiMock.translateContent).not.toHaveBeenCalled();
+  });
+
+  it("aborts at the batch on InvalidAIKeyError instead of falling back", async () => {
+    aiMock.translateFieldsToLocalesChunked.mockRejectedValue(new InvalidAIKeyError("401"));
+    const { ctx } = makeCtx("products", PRODUCT, form);
+    await handleTranslateFieldToAllLocales(ctx).catch(() => undefined);
+    expect(aiMock.translateContent).not.toHaveBeenCalled();
   });
 });

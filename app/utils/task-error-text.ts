@@ -60,6 +60,8 @@ const FALLBACK: Record<string, string> = {
   aiEmptyValue: "The AI returned an empty value.",
   itemMissing: "This entry no longer exists in the content cache — reload it and try again.",
   webpBatchNotStarted: "The image conversion could not be started. No image was changed — please try again.",
+  webpExpiredInQueue:
+    "Not converted: the conversion waited in the queue for too long and was not started any more. The image is unchanged and the image operation was credited back — start it again if you still want it.",
   slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
   invalidApiKey: "(the AI API key was rejected)",
   someFailed: "Some entries could not be processed — open the task for details.",
@@ -264,6 +266,12 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // describe twenty conversions that never started.
     case "webp_batch_not_started":
       return phrase(t, "webpBatchNotStarted");
+    // One image of a WebP run that waited past WEBP_QUEUE_MAX_AGE_MS
+    // (app/config/webp-tasks.js) and was refused rather than run — its
+    // original was never touched. It reaches the merchant through the batch's
+    // failure list (TaskDetailsPanel), not as a row's own error.
+    case "webp_expired_in_queue":
+      return phrase(t, "webpExpiredInQueue");
     case "slug_empty": {
       // The locale code is the only thing the runner knows; a name would need a
       // shop lookup this module has no business doing.

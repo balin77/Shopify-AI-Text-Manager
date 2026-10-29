@@ -61,7 +61,6 @@ import {
   Banner,
   Select,
   Modal,
-  Checkbox,
   type ComplexAction,
 } from "@shopify/polaris";
 import { ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -70,6 +69,9 @@ import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
+import { ToggleRow } from "../components/ToggleRow";
+import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
+import { confirmNavigation } from "../hooks/useSaveBar";
 import { meetsPlan } from "../utils/planUtils";
 import { useHydrated } from "../hooks/useHydrated";
 import { taskErrorText } from "../utils/task-error-text";
@@ -87,6 +89,8 @@ import {
   suggestionWhere,
   parseLastRunOutcome,
   isRecentRun,
+  latestFinishedRun,
+  runFinishedAt,
   type FilterType,
   type LastRunOutcome,
   type View,
@@ -239,17 +243,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // nothing to carry, so the option is not shown at all.
   const hasForeignLocales = shopLocales.some((l) => l.published && !l.primary);
 
-  const [runningTask, lastTask, total, openCount, rejectedCount] = await Promise.all([
+  // The latest finished run is "newest by completedAt, else updatedAt" (the
+  // same time `isRecentRun` judges). Postgres sorts NULLs FIRST on a DESC
+  // order, so a single `completedAt desc` query let a run a reaper closed
+  // without `completedAt` hide every newer one — hence one query per half and
+  // `latestFinishedRun` choosing between them.
+  const finishedRunWhere = { shop, type: "seoInternalLinks", status: { in: ["completed", "failed"] } };
+  const lastRunSelect = { completedAt: true, updatedAt: true, status: true, result: true, error: true } as const;
+  const [runningTask, lastCompletedTask, lastUnstampedTask, total, openCount, rejectedCount] = await Promise.all([
     db.task.findFirst({ where: { shop, type: "seoInternalLinks", status: "running" }, select: { id: true } }),
     db.task.findFirst({
-      where: { shop, type: "seoInternalLinks", status: { in: ["completed", "failed"] } },
-      orderBy: { completedAt: "desc" },
-      select: { completedAt: true, updatedAt: true, status: true, result: true, error: true },
+      where: { ...finishedRunWhere, completedAt: { not: null } },
+      orderBy: [{ completedAt: "desc" }, { updatedAt: "desc" }],
+      select: lastRunSelect,
+    }),
+    db.task.findFirst({
+      where: { ...finishedRunWhere, completedAt: null },
+      orderBy: { updatedAt: "desc" },
+      select: lastRunSelect,
     }),
     db.seoInternalLinkSuggestion.count({ where }),
     db.seoInternalLinkSuggestion.count({ where: { shop, status: "pending" } }),
     db.seoInternalLinkSuggestion.count({ where: { shop, status: "dismissed" } }),
   ]);
+  const lastTask = latestFinishedRun([lastCompletedTask, lastUnstampedTask]);
+  const lastTaskFinishedAt = runFinishedAt(lastTask);
 
   // Clamp instead of 404ing: a page that existed before a reject/accept (or
   // before a filter change) must not leave the merchant on an empty list.
@@ -293,7 +311,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     gated: false,
     running: !!runningTask,
-    lastRun: lastTask?.completedAt ? lastTask.completedAt.toISOString() : null,
+    lastRun: lastTaskFinishedAt !== null ? new Date(lastTaskFinishedAt).toISOString() : null,
     lastOutcome: parseLastRunOutcome(lastTask),
     lastOutcomeRecent: isRecentRun(lastTask, Date.now()),
     primaryLocale,
@@ -369,12 +387,29 @@ export default function SeoInternalLinks() {
 
   // Persisted per shop (AISettings.seoLinksCarryTranslations), defaulting to on:
   // losing hand-written translations to a formatting-level edit is the
-  // surprising outcome, so it is the one the merchant has to opt INTO. Seeded
-  // from the loader and NOT re-synced from it afterwards — the local value is
-  // what the merchant just clicked, and a revalidation mid-toggle must not
-  // flip the box back under their cursor.
-  const [carryTranslations, setCarryTranslations] = useState(data.carryTranslations);
-  const carryActive = data.hasForeignLocales && carryTranslations;
+  // surprising outcome, so it is the one the merchant has to opt INTO.
+  //
+  // A DRAFT until the save bar's Save, like every setting in this app
+  // (CLAUDE.md, "a setting is never saved by the click that changes it"). It
+  // used to write on the click. `savedCarry` is what the shop has STORED — the
+  // value every accept sends — and `carryDraft` is what the switch shows. The
+  // two are re-seeded only when the loader's stored value itself changes, so
+  // the 3 s revalidation while a run generates never flips the switch under
+  // the merchant's cursor.
+  const [savedCarry, setSavedCarry] = useState(data.carryTranslations);
+  const [carryDraft, setCarryDraft] = useState(data.carryTranslations);
+  const [savingCarry, setSavingCarry] = useState(false);
+  useEffect(() => {
+    setSavedCarry(data.carryTranslations);
+    setCarryDraft(data.carryTranslations);
+  }, [data.carryTranslations]);
+  const carryChanged = data.hasForeignLocales && carryDraft !== savedCarry;
+  const carryActive = data.hasForeignLocales && savedCarry;
+  // An unsaved (or saving) draft changes what an accept would do, so every
+  // accept waits until it is saved or discarded — otherwise "flip the switch,
+  // then accept" would run with the stored setting while the switch claims
+  // the other one.
+  const acceptBlocked = carryChanged || savingCarry;
 
   useEffect(() => {
     if (generateFetcher.state !== "idle" || !generateFetcher.data) return;
@@ -488,31 +523,37 @@ export default function SeoInternalLinks() {
     return message;
   };
 
-  /** Every accept carries the toggle. Sent as an explicit flag rather than
-   *  relying on a server default, so the endpoint's behaviour always matches
-   *  what the checkbox on screen says — the stored preference only decides how
-   *  the box comes up, never what an in-flight accept does. */
+  /** Every accept carries the STORED setting as an explicit flag rather than
+   *  relying on a server default, so an in-flight accept never depends on a
+   *  preference write racing it. Accepts are blocked while a draft is open
+   *  (`acceptBlocked`), so the stored value is also what the switch shows. */
   const acceptFields = () => ({ carryTranslations: carryActive ? "1" : "0" });
 
-  /**
-   * Flip the box now, store the preference in the background. The checkbox is
-   * not a form field of the accepts (those send their own flag), so the write
-   * is allowed to lag; only a REJECTED write matters, and then the box goes
-   * back so it never shows a setting the shop does not actually have.
-   */
-  const changeCarryTranslations = async (checked: boolean) => {
-    setCarryTranslations(checked);
+  /** The save bar's Save. A refusal (the endpoint answers 403 below Pro) or a
+   *  failed request puts the switch back to the stored value and says so —
+   *  otherwise the bar would stick and the switch would assert a setting the
+   *  shop does not have. */
+  const saveCarryTranslations = async () => {
+    if (savingCarry || !carryChanged) return;
+    const next = carryDraft;
+    const stored = savedCarry;
+    setSavingCarry(true);
     try {
       const result = await post({
         actionType: "setCarryTranslations",
-        carryTranslations: checked ? "1" : "0",
+        carryTranslations: next ? "1" : "0",
       });
-      if (result?.success) return;
-      setCarryTranslations(!checked);
+      if (result?.success) {
+        setSavedCarry(next);
+        return;
+      }
+      setCarryDraft(stored);
       reportError(result?.error || c.actionError);
     } catch {
-      setCarryTranslations(!checked);
+      setCarryDraft(stored);
       reportError(c.actionError);
+    } finally {
+      setSavingCarry(false);
     }
   };
 
@@ -533,6 +574,7 @@ export default function SeoInternalLinks() {
   /** "Annehmen" in the list — one request; the endpoint inserts, saves and
    *  marks the suggestion accepted (see api.seo-internal-links). */
   const acceptSuggestion = async (row: SuggestionRow) => {
+    if (acceptBlocked) return;
     setBusy(row.id, true);
     try {
       const result = await post({ actionType: "accept", suggestionId: row.id, ...acceptFields() });
@@ -566,7 +608,7 @@ export default function SeoInternalLinks() {
    *  open) instead of in the page banner. */
   const confirmAccept = async () => {
     const row = previewRow;
-    if (!row || !previewFetcher.data?.success) return;
+    if (!row || !previewFetcher.data?.success || acceptBlocked) return;
 
     setConfirming(true);
     try {
@@ -599,6 +641,7 @@ export default function SeoInternalLinks() {
    *  set server-side (accept is capped per run — see BULK_ACCEPT_LIMIT). */
   const runBulk = async (kind: "accept" | "reject") => {
     setBulkConfirm(null);
+    if (kind === "accept" && acceptBlocked) return;
     setBulkRunning(kind);
     setBanner(null);
     try {
@@ -639,9 +682,13 @@ export default function SeoInternalLinks() {
     }
   };
 
-  const openInEditor = (type: FilterType, id: string) => {
+  // Leaves the page, so it asks the save bar first like the SEO chips do; the
+  // draft goes with the page's unmount once the merchant confirms.
+  const openInEditor = async (type: FilterType, id: string) => {
     const path = RESOURCE_ROUTE[type]?.path;
-    if (path) handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
+    if (!path) return;
+    await confirmNavigation();
+    handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
   };
 
   const rejectedView = data.view === "rejected";
@@ -728,7 +775,7 @@ export default function SeoInternalLinks() {
             size="slim"
             variant="primary"
             onClick={() => void acceptSuggestion(row)}
-            disabled={rowBusy(row)}
+            disabled={rowBusy(row) || acceptBlocked}
             loading={busyIds.includes(row.id)}
           >
             {c.accept}
@@ -780,14 +827,31 @@ export default function SeoInternalLinks() {
               "Alle annehmen" alike, which is why it sits with the operations
               and not inside a row. */}
           {data.hasForeignLocales && (
-            <Checkbox
-              label={c.carryTranslationsLabel}
-              helpText={c.carryTranslationsHelp}
-              checked={carryTranslations}
-              onChange={changeCarryTranslations}
-              disabled={bulkBusy}
-            />
+            <BlockStack gap="100">
+              <ToggleRow
+                layout="inline"
+                label={c.carryTranslationsLabel}
+                help={c.carryTranslationsHelp}
+                checked={carryDraft}
+                onChange={setCarryDraft}
+                disabled={bulkBusy || savingCarry}
+              />
+              {carryChanged && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {c.carryTranslationsUnsaved}
+                </Text>
+              )}
+            </BlockStack>
           )}
+          {/* The page's only save bar — the switch above is its only draft. */}
+          <SaveDiscardButtons
+            hasChanges={carryChanged}
+            onSave={() => void saveCarryTranslations()}
+            onDiscard={() => setCarryDraft(savedCarry)}
+            saveText={t.common?.save || "Save"}
+            discardText={t.content?.discardChanges || "Discard"}
+            isSavingCurrentItem={savingCarry}
+          />
 
           {banner && (
             <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>
@@ -865,7 +929,7 @@ export default function SeoInternalLinks() {
                 <Button
                   variant="primary"
                   onClick={() => setBulkConfirm("accept")}
-                  disabled={bulkBusy || data.total === 0}
+                  disabled={bulkBusy || data.total === 0 || acceptBlocked}
                   loading={bulkRunning === "accept"}
                 >
                   {c.bulkAccept.replace("{count}", String(data.total))}
@@ -932,7 +996,7 @@ export default function SeoInternalLinks() {
       title={c.previewModalTitle}
       primaryAction={{
         content: c.previewConfirm,
-        disabled: previewLoading || !previewData?.success,
+        disabled: previewLoading || !previewData?.success || acceptBlocked,
         loading: confirming,
         onAction: () => void confirmAccept(),
       }}

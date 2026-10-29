@@ -792,6 +792,7 @@ export const guideEs: GuideCopy = {
           heading: "Cómo funciona",
           paragraphs: [
             "En el Image Variant Manager seleccionas imágenes e inicias la conversión. Se ejecuta en segundo plano; la imagen convertida sustituye a la original allí donde se use, conservando su asignación a variantes y su texto alternativo.",
+            "La conversión suele tardar unos segundos por imagen, y mientras tanto puedes seguir trabajando. Si una conversión sigue esperando a empezar después de 24 horas, se cancela, la original no cambia y la imagen se te devuelve a tu cupo.",
           ],
         },
       ],
@@ -1098,6 +1099,13 @@ export const guideEs: GuideCopy = {
           heading: "Traducir opciones",
           paragraphs: [
             "Debajo de cada opción en la sección de variantes — también cuando está plegada — «Traducir» traduce el nombre de la opción y sus valores a todos los idiomas, y «Copiar a todos los idiomas» los copia sin cambios. En una opción abierta, los dos botones están entre «Eliminar» y «Hecho». Una opción con fondo azul aún no tiene traducción en al menos un idioma. Si has cambiado una opción, guarda primero: los botones permanecen bloqueados hasta que el cambio se guarda, para que nunca se traduzca el texto anterior.",
+          ],
+        },
+        {
+          heading: "Metacampos",
+          paragraphs: [
+            "En la sección «Metacampos» editas, en el idioma principal, los valores de los metacampos que activaste en Configuración → Metafields. Un campo de lista muestra una entrada por línea; las líneas vacías se ignoran. Si una entrada no coincide con el tipo de la lista, la app marca esa línea en el campo y no se guarda nada hasta que la corrijas.",
+            "Si vacías un metacampo y guardas, Shopify elimina el valor junto con sus traducciones. Aun así, el campo sigue en el editor hasta la próxima sincronización completa de tus productos: si antes introduces un valor nuevo y guardas, el metacampo se vuelve a crear. Si entretanto otra persona ha puesto un valor ahí —por ejemplo en el admin de Shopify o mediante otra app—, la app no lo sobrescribe: se te avisa y el campo muestra después el valor actual. 🌍 junto a un metacampo traduce su valor guardado a todos los idiomas; mientras hayas cambiado el campo sin guardar —y brevemente después de guardar, hasta que la página haya vuelto a cargar el valor guardado—, el botón está bloqueado. Los campos de varias líneas, las listas y el texto enriquecido no se traducen automáticamente, porque se perderían los saltos de línea o la lista; introduce su traducción a mano. Si al volver a crear un metacampo vaciado la app no puede comprobar si Shopify ya tiene un valor, no guarda nada y deja tu valor en el campo: simplemente vuelve a guardar. Un campo que solo contiene espacios no se guarda; vacíalo por completo para eliminar el valor.",
           ],
         },
         {
