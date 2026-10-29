@@ -568,7 +568,9 @@ export default function ProductsPage() {
       optionWarning_optionLastOne: t.products.optionWarningLastOne,
       optionWarning_metafieldValueBlank: t.products.metafieldWarningValueBlank,
       optionWarning_metafieldListInvalid: t.products.metafieldListInvalid,
+      optionWarning_metafieldExistsMeanwhile: t.products.metafieldWarningExistsMeanwhile,
       metafieldListInvalid: t.products.metafieldListInvalid,
+      saveFirstSource: t.common.saveFirstSource,
     },
   });
 

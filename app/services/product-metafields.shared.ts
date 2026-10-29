@@ -346,3 +346,15 @@ export function primaryMetafieldChange(original: MetafieldLike, display: string)
   if (parsed.value === original.value) return { kind: "unchanged" };
   return { kind: "value", value: parsed.value };
 }
+
+/**
+ * The field holds an UNSAVED primary edit (anything but "unchanged", a
+ * refused draft included). A translate-to-all started from it would write the
+ * SAVED value into every language, and the later Save would then purge or
+ * re-translate what it just wrote — so the card disables the button until
+ * Save (CLAUDE.md: a button whose SOURCE is an unsaved primary value).
+ */
+export function isPrimaryMetafieldUnsaved(original: MetafieldLike, edit: string | undefined): boolean {
+  if (edit === undefined) return false;
+  return primaryMetafieldChange(original, edit).kind !== "unchanged";
+}

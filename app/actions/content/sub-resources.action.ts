@@ -21,7 +21,11 @@ import {
   isListMetafieldType,
   storedListMetafieldValueProblem,
 } from "~/services/product-metafields.shared";
-import { dropSupersededMetafieldSlots, keepClearedMetafieldSlot } from "~/services/product-metafield-slots.server";
+import {
+  dropSupersededMetafieldSlots,
+  keepClearedMetafieldSlot,
+  readLiveSlotMetafields,
+} from "~/services/product-metafield-slots.server";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { marketLayerLockId, subResourceLockId, subResourceSyncShieldId } from "~/services/translations/translation-locks.shared";
@@ -1243,6 +1247,69 @@ export async function handleSavePrimarySubResources(
             isSlot,
             input: { ownerId: productId, namespace: row.namespace, key: row.key, type: row.type, value },
           });
+        }
+      }
+
+      // A slot is re-created by `metafieldsSet`, an UPSERT by owner/namespace/
+      // key — so a real metafield of that key that exists on Shopify by now
+      // (set elsewhere, or beyond a sync's window) would be overwritten
+      // silently. Ask Shopify first: an existing one is NOT written over, the
+      // slot gives way to it locally and the field is reported
+      // (`metafieldExistsMeanwhile`) so the reload shows the current value; a
+      // read that cannot tell refuses the write.
+      const slotSets = sets.filter((entry) => entry.isSlot);
+      if (slotSets.length > 0) {
+        const live = await readLiveSlotMetafields(
+          (query, options) => gateway.graphql(query, options),
+          productId,
+          slotSets.map((entry) => ({ namespace: entry.input.namespace, key: entry.input.key })),
+        );
+        const blocked = new Set<MetafieldSet>();
+        for (let i = 0; i < slotSets.length; i++) {
+          const entry = slotSets[i];
+          const state = live[i];
+          if (state.kind === "absent") continue;
+          blocked.add(entry);
+          failedMetafields.push(entry.metafieldId);
+          if (state.kind === "unknown") {
+            logger.warn("[UnifiedContent] Cleared metafield not re-created: Shopify could not be asked whether one exists", {
+              context: "UnifiedContent", metafieldId: entry.metafieldId,
+            });
+            continue;
+          }
+          logger.warn("[UnifiedContent] Cleared metafield not re-created: Shopify already holds one under that key", {
+            context: "UnifiedContent", metafieldId: entry.metafieldId, liveId: state.metafield.id,
+          });
+          optionWarnings.push("metafieldExistsMeanwhile");
+          try {
+            await db.productMetafield.upsert({
+              where: { id: state.metafield.id },
+              create: {
+                id: state.metafield.id,
+                productId,
+                namespace: state.metafield.namespace,
+                key: state.metafield.key,
+                value: state.metafield.value,
+                type: state.metafield.type,
+              },
+              update: { value: state.metafield.value, type: state.metafield.type },
+            });
+            await dropSupersededMetafieldSlots(db, {
+              shop: session.shop,
+              productId,
+              namespace: entry.input.namespace,
+              key: entry.input.key,
+              keepId: state.metafield.id,
+            });
+          } catch (err) {
+            // Nothing was written to Shopify; the next sync supersedes the slot.
+            logger.error(`[UnifiedContent] Failed to replace cleared metafield ${entry.metafieldId} by the live one`, {
+              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        if (blocked.size > 0) {
+          for (let i = sets.length - 1; i >= 0; i--) if (blocked.has(sets[i])) sets.splice(i, 1);
         }
       }
 

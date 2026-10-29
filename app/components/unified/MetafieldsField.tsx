@@ -16,6 +16,7 @@ import { FieldClearButton } from "./FieldChrome";
 import {
   isListMetafieldType,
   isMetafieldValueEditable,
+  isPrimaryMetafieldUnsaved,
   metafieldDisplayValue,
   metafieldInputErrors,
   type ListEntryError,
@@ -94,6 +95,8 @@ interface MetafieldsFieldProps {
     listErrorLine?: string;
     /** One message per `ListEntryErrorCode`, `{entry}` = the refused entry. */
     listErrors?: Partial<Record<ListEntryError["code"], string>>;
+    /** Why the primary translate button waits: the field has an unsaved edit. */
+    saveFirstSource?: string;
   };
 }
 
@@ -172,6 +175,11 @@ export function MetafieldsField({
               const isList = isListMetafieldType(mf.type);
               const editable = isMetafieldValueEditable(mf);
               const isCleared = clearedIds.has(mf.id);
+              // Translating to every language starts from the SAVED value: an
+              // unsaved edit would be purged or re-translated by its own Save.
+              const saveFirstHint = isPrimaryMetafieldUnsaved(mf, primaryValues[mf.id])
+                ? t.saveFirstSource || "Save first — the main-language text has unsaved changes."
+                : undefined;
               const errors = editable ? listErrorMessages(metafieldInputErrors(mf.type, currentValue), t) : [];
               const errorNode = errors.length > 0 ? (
                 <>
@@ -256,12 +264,12 @@ export function MetafieldsField({
                         <div className="ai-field-footer">
                           <div className="ai-field-footer-left" />
                           <div className="ai-field-footer-right">
-                            <DisabledActionTooltip hint={singleLocaleHint}>
+                            <DisabledActionTooltip hint={singleLocaleHint ?? saveFirstHint}>
                               <Button
                                 size="slim"
                                 onClick={() => onTranslate(mf.id)}
                                 loading={translatingFieldIds.has(fieldId)}
-                                disabled={!!singleLocaleHint}
+                                disabled={!!singleLocaleHint || !!saveFirstHint}
                               >
                                 🌍 {t.translateButton || "Translate"}
                               </Button>

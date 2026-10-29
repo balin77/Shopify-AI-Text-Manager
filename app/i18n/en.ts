@@ -56,6 +56,7 @@ export const en: Translation = {
     optionWarningValueEmpty: "A variant needs at least one value.",
     optionWarningLastOne: "The last variant cannot be removed.",
     metafieldWarningValueBlank: "A metafield cannot consist of spaces only. Empty the field completely to remove the value.",
+    metafieldWarningExistsMeanwhile: "A cleared metafield has a value on Shopify again (set in the Shopify admin or by another app, for example). It was not overwritten; the field now shows the current value.",
     metafieldListInvalid: "A list field contains entries that do not match its type. Correct the marked lines; nothing was saved.",
     metafieldListHint: "One entry per line. Empty lines are ignored.",
     metafieldListReadOnly: "This list cannot be edited here without changing its value. Edit it in the Shopify admin.",

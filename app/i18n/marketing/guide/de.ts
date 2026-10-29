@@ -1118,7 +1118,7 @@ export const guideDe: GuideCopy = {
           heading: "Metafelder",
           paragraphs: [
             "Im Bereich „Metafelder“ bearbeiten Sie in der Hauptsprache die Werte der Metafelder, die Sie unter Einstellungen → Metafields aktiviert haben. Ein Listenfeld zeigt einen Eintrag pro Zeile; leere Zeilen werden ignoriert. Passt ein Eintrag nicht zum Typ der Liste, markiert die App die Zeile am Feld, und es wird nichts gespeichert, bis Sie sie korrigieren.",
-            "Leeren Sie ein Metafeld und speichern, entfernt Shopify den Wert samt seinen Übersetzungen. Das Feld bleibt trotzdem im Editor stehen: Geben Sie später einen neuen Wert ein und speichern, wird das Metafeld wieder angelegt. Ein Feld nur aus Leerzeichen wird nicht gespeichert — leeren Sie es ganz, um den Wert zu entfernen.",
+            "Leeren Sie ein Metafeld und speichern, entfernt Shopify den Wert samt seinen Übersetzungen. Das Feld bleibt trotzdem im Editor stehen: Geben Sie später einen neuen Wert ein und speichern, wird das Metafeld wieder angelegt. Hat inzwischen jemand anderes — etwa im Shopify-Admin oder eine andere App — dort einen Wert gesetzt, überschreibt die App ihn nicht: Sie werden informiert, und das Feld zeigt danach den aktuellen Wert. Mit 🌍 neben einem Metafeld übersetzen Sie seinen gespeicherten Wert in alle Sprachen; solange Sie das Feld geändert und noch nicht gespeichert haben, ist der Knopf gesperrt. Ein Feld nur aus Leerzeichen wird nicht gespeichert — leeren Sie es ganz, um den Wert zu entfernen.",
           ],
         },
         {

@@ -1105,7 +1105,7 @@ export const guideEs: GuideCopy = {
           heading: "Metacampos",
           paragraphs: [
             "En la sección «Metacampos» editas, en el idioma principal, los valores de los metacampos que activaste en Configuración → Metafields. Un campo de lista muestra una entrada por línea; las líneas vacías se ignoran. Si una entrada no coincide con el tipo de la lista, la app marca esa línea en el campo y no se guarda nada hasta que la corrijas.",
-            "Si vacías un metacampo y guardas, Shopify elimina el valor junto con sus traducciones. Aun así, el campo sigue en el editor: introduce más tarde un valor nuevo y guarda, y el metacampo se vuelve a crear. Un campo que solo contiene espacios no se guarda; vacíalo por completo para eliminar el valor.",
+            "Si vacías un metacampo y guardas, Shopify elimina el valor junto con sus traducciones. Aun así, el campo sigue en el editor: introduce más tarde un valor nuevo y guarda, y el metacampo se vuelve a crear. Si entretanto otra persona ha puesto un valor ahí —por ejemplo en el admin de Shopify o mediante otra app—, la app no lo sobrescribe: se te avisa y el campo muestra después el valor actual. 🌍 junto a un metacampo traduce su valor guardado a todos los idiomas; mientras hayas cambiado el campo sin guardar, el botón está bloqueado. Un campo que solo contiene espacios no se guarda; vacíalo por completo para eliminar el valor.",
           ],
         },
         {

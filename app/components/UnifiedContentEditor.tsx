@@ -2470,6 +2470,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         clearedHint: t.products?.metafieldClearedHint,
                         listErrorLine: t.products?.metafieldListErrorLine,
                         listErrors: t.products?.metafieldListErrors,
+                        saveFirstSource: t.common?.saveFirstSource,
                       }}
                     />
                   </div>

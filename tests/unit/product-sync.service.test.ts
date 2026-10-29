@@ -263,7 +263,9 @@ describe('ProductSyncService', () => {
             key: 'material',
             value: 'Genuine Italian Leather',
           }),
-        ])
+        ]),
+        // The paged read reports whether it reached the last page.
+        { complete: expect.any(Boolean) },
       );
     });
 

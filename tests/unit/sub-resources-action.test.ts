@@ -126,6 +126,8 @@ interface WorldConfig {
   /** Answer to metafieldsDelete; default = echo every identifier. */
   metafieldsDelete?: (variables: any) => any;
   locales?: Array<{ locale: string; primary: boolean; published: boolean }>;
+  /** Answer to the live slot check (contentPilotSlotMetafields); default = no metafield under any key. */
+  slotRead?: (variables: any) => any;
 }
 
 function installAdmin(config: WorldConfig = {}) {
@@ -187,6 +189,16 @@ function installAdmin(config: WorldConfig = {}) {
       return answer({
         data: { translatableResource: { resourceId: variables.resourceId, translatableContent: rows.map((r) => ({ ...r, value: 'src', locale: 'de' })) } },
       });
+    }
+    if (query.includes('contentPilotSlotMetafields')) {
+      calls.push({ kind: 'slotRead', variables });
+      if (config.slotRead) return answer(config.slotRead(variables));
+      const product: Record<string, unknown> = { id: variables.id };
+      for (const name of Object.keys(variables)) {
+        const m = /^ns(\d+)$/.exec(name);
+        if (m) product[`m${m[1]}`] = null;
+      }
+      return answer({ data: { product } });
     }
     if (query.includes('metafieldsSet')) {
       calls.push({ kind: 'metafieldsSet', variables });
@@ -990,6 +1002,65 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       expect(changed).toEqual([
         { resourceId: NEW, resourceType: 'Metafield', key: 'value', retranslatable: true },
       ]);
+    });
+
+    it('asks Shopify LIVE for the namespace/key before re-creating (ASCII document, values in variables)', async () => {
+      const w = recreating();
+      const db = slotDb();
+      await save(db, w.admin, { [METAFIELD]: 'Baumwolle' });
+      const read = w.of('slotRead');
+      expect(read).toHaveLength(1);
+      expect(read[0].variables).toEqual({ id: PRODUCT, ns0: 'custom', key0: 'k13' });
+      const query = w.admin.graphql.mock.calls.find((c: any[]) => String(c[0]).includes('contentPilotSlotMetafields'))![0];
+      expect(/^[\x00-\x7F]*$/.test(query)).toBe(true);
+    });
+
+    it('a REAL metafield of that key on Shopify is NOT overwritten: the slot gives way to it and the field is reported', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      const w = installAdmin({
+        slotRead: (v) => ({
+          data: { product: { id: v.id, m0: { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' } } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+
+      expect(w.of('metafieldsSet')).toHaveLength(0);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.savedMetafields).toEqual([]);
+      expect(result.optionWarnings).toContain('metafieldExistsMeanwhile');
+      expect(db.productMetafield.upsert).toHaveBeenCalledWith({
+        where: { id: LIVE },
+        create: { id: LIVE, productId: PRODUCT, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' },
+        update: { value: 'Leinen', type: 'single_line_text_field' },
+      });
+      expect(db.productMetafield.deleteMany).toHaveBeenCalledWith({
+        where: { productId: PRODUCT, product: { shop: SHOP }, namespace: 'custom', key: 'k13', value: '', id: { not: LIVE } },
+      });
+      expect(result.recreatedMetafields).toBeUndefined();
+    });
+
+    it('a live read that FAILS refuses the write (nothing sent, nothing mirrored)', async () => {
+      const w = installAdmin({ slotRead: () => ({ errors: [{ message: 'Throttled' }] }) });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(w.of('metafieldsSet')).toHaveLength(0);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.optionWarnings ?? []).not.toContain('metafieldExistsMeanwhile');
+      expect(db.productMetafield.upsert).not.toHaveBeenCalled();
+    });
+
+    it('a live read that THROWS refuses the write too', async () => {
+      const w = installAdmin();
+      const original = w.admin.graphql.getMockImplementation()!;
+      w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('contentPilotSlotMetafields')) throw new Error('GraphqlQueryError');
+        return original(q, o);
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(w.of('metafieldsSet')).toHaveLength(0);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
     });
 
     it('a slot saved empty again sends nothing and is reported removed', async () => {

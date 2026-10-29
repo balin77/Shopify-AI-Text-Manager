@@ -1105,7 +1105,7 @@ export const guideEn: GuideCopy = {
           heading: "Metafields",
           paragraphs: [
             "In the “Metafields” section you edit, in the primary language, the values of the metafields you enabled under Settings → Metafields. A list field shows one entry per line; empty lines are ignored. If an entry does not match the list's type, the app marks that line on the field, and nothing is saved until you correct it.",
-            "If you empty a metafield and save, Shopify removes the value together with its translations. The field still stays in the editor: enter a new value later and save, and the metafield is created again. A field containing only spaces is not saved — empty it completely to remove the value.",
+            "If you empty a metafield and save, Shopify removes the value together with its translations. The field still stays in the editor: enter a new value later and save, and the metafield is created again. If someone else has set a value there in the meantime — in the Shopify admin or through another app, for example — the app does not overwrite it: you are told, and the field then shows the current value. 🌍 next to a metafield translates its saved value into every language; while you have changed the field and not saved yet, the button is locked. A field containing only spaces is not saved — empty it completely to remove the value.",
           ],
         },
         {

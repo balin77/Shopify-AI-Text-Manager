@@ -52,6 +52,7 @@ export const es: Translation = {
     optionWarningValueEmpty: "Una variante necesita al menos un valor.",
     optionWarningLastOne: "La última variante no se puede quitar.",
     metafieldWarningValueBlank: "Un metacampo no puede contener solo espacios. Vacía el campo por completo para eliminar el valor.",
+    metafieldWarningExistsMeanwhile: "Un metacampo vaciado vuelve a tener un valor en Shopify (establecido, por ejemplo, en el admin de Shopify o por otra app). No se ha sobrescrito; el campo muestra ahora el valor actual.",
     metafieldListInvalid: "Un campo de lista contiene entradas que no coinciden con su tipo. Corrige las líneas marcadas; no se ha guardado nada.",
     metafieldListHint: "Una entrada por línea. Las líneas vacías se ignoran.",
     metafieldListReadOnly: "Esta lista no se puede editar aquí sin cambiar su valor. Edítala en el admin de Shopify.",

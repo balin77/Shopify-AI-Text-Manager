@@ -51,6 +51,7 @@ export const de = {
     optionWarningValueEmpty: "Eine Variante braucht mindestens einen Wert.",
     optionWarningLastOne: "Die letzte Variante kann nicht entfernt werden.",
     metafieldWarningValueBlank: "Ein Metafeld kann nicht nur aus Leerzeichen bestehen. Leere das Feld ganz, um den Wert zu entfernen.",
+    metafieldWarningExistsMeanwhile: "Für ein geleertes Metafeld gibt es auf Shopify inzwischen wieder einen Wert (z. B. im Shopify-Admin oder von einer anderen App gesetzt). Er wurde nicht überschrieben; das Feld zeigt jetzt den aktuellen Wert.",
     metafieldListInvalid: "Ein Listenfeld enthält Einträge, die nicht zu seinem Typ passen. Korrigiere die markierten Zeilen; es wurde nichts gespeichert.",
     metafieldListHint: "Ein Eintrag pro Zeile. Leere Zeilen werden ignoriert.",
     metafieldListReadOnly: "Diese Liste kann hier nicht bearbeitet werden, ohne ihren Wert zu verändern. Bearbeite sie im Shopify-Admin.",

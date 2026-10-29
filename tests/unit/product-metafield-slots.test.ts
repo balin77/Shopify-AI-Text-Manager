@@ -94,7 +94,7 @@ describe("upsertProductMetafields (every product sync)", () => {
     const t = tx();
     await upsertProductMetafields(t as never, PRODUCT, [
       { id: "gid://shopify/Metafield/1", namespace: "custom", key: "a", value: "x", type: "single_line_text_field" },
-    ]);
+    ], { complete: true });
     expect(t.productMetafield.deleteMany).toHaveBeenNthCalledWith(1, {
       where: { productId: PRODUCT, value: { not: "" }, id: { notIn: ["gid://shopify/Metafield/1"] } },
     });
@@ -104,7 +104,7 @@ describe("upsertProductMetafields (every product sync)", () => {
     const t = tx();
     await upsertProductMetafields(t as never, PRODUCT, [
       { id: "gid://shopify/Metafield/1", namespace: "custom", key: "a", value: "x", type: "single_line_text_field" },
-    ]);
+    ], { complete: true });
     expect(t.productMetafield.deleteMany).toHaveBeenNthCalledWith(2, {
       where: { productId: PRODUCT, value: "", OR: [{ namespace: "custom", key: "a" }] },
     });
@@ -112,9 +112,29 @@ describe("upsertProductMetafields (every product sync)", () => {
 
   it("a product with no metafields keeps its slots and loses every real row", async () => {
     const t = tx();
-    await upsertProductMetafields(t as never, PRODUCT, []);
+    await upsertProductMetafields(t as never, PRODUCT, [], { complete: true });
     expect(t.productMetafield.deleteMany).toHaveBeenCalledTimes(1);
     expect(t.productMetafield.deleteMany).toHaveBeenCalledWith({ where: { productId: PRODUCT, value: { not: "" } } });
     expect(t.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("a TRUNCATED read drops every slot of the product (a real metafield may sit beyond the window)", async () => {
+    const t = tx();
+    await upsertProductMetafields(t as never, PRODUCT, [
+      { id: "gid://shopify/Metafield/1", namespace: "custom", key: "a", value: "x", type: "single_line_text_field" },
+    ], { complete: false });
+    expect(t.productMetafield.deleteMany).toHaveBeenNthCalledWith(1, {
+      where: { productId: PRODUCT, value: { not: "" }, id: { notIn: ["gid://shopify/Metafield/1"] } },
+    });
+    expect(t.productMetafield.deleteMany).toHaveBeenNthCalledWith(2, {
+      where: { productId: PRODUCT, value: "" },
+    });
+    expect(t.productMetafield.deleteMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("a truncated read with no metafields in the window still drops the slots", async () => {
+    const t = tx();
+    await upsertProductMetafields(t as never, PRODUCT, [], { complete: false });
+    expect(t.productMetafield.deleteMany).toHaveBeenNthCalledWith(2, { where: { productId: PRODUCT, value: "" } });
   });
 });

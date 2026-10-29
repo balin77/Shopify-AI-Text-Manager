@@ -66,7 +66,7 @@ import {
 } from "../services/editor/sub-resource-clear.shared";
 import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
 import { appFetch } from "../utils/app-fetch";
-import { primaryMetafieldChange } from "../services/product-metafields.shared";
+import { isPrimaryMetafieldUnsaved, primaryMetafieldChange } from "../services/product-metafields.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -389,6 +389,8 @@ interface UseProductSubResourcesStrings {
   metafieldValuesEmpty?: string;
   /** A list metafield with entries its element type refuses (the save is not sent). */
   metafieldListInvalid?: string;
+  /** A primary translate refused because its source field has an unsaved edit. */
+  saveFirstSource?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
@@ -1164,7 +1166,13 @@ export function useProductSubResources({
         pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
         // The part that WAS saved moved its text and purged its overrides too:
         // re-read, so the item stops carrying them.
-        if (partialSavedIds.length > 0 || (data.marketPurgedResourceIds ?? []).length > 0) requestRevalidate();
+        // A cleared field the server found filled on Shopify meanwhile was
+        // replaced locally by the live metafield: re-read so it shows.
+        if (
+          partialSavedIds.length > 0 ||
+          (data.marketPurgedResourceIds ?? []).length > 0 ||
+          (data.optionWarnings ?? []).includes("metafieldExistsMeanwhile")
+        ) requestRevalidate();
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
           // The warning codes carry the only specific reason there is (the
@@ -1870,10 +1878,20 @@ export function useProductSubResources({
   }, [selectedItem, runIndividualTranslate, optionTranslationBlockedIds]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
-    if (isPrimaryLocale || !selectedItem) return;
+    if (!selectedItem) return;
 
     const mf = selectedItem.metafields?.find(m => m.id === metafieldId);
     if (!mf) return;
+    // Primary: a translate to EVERY language, from the SAVED value. With an
+    // unsaved edit of the field its own Save would purge or re-translate what
+    // this writes — the card disables the button; this is the backstop.
+    if (isPrimaryLocale && isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[metafieldId])) {
+      showInfoBox?.(
+        stringsRef.current.saveFirstSource || "Save first — the main-language text has unsaved changes.",
+        "warning",
+      );
+      return;
+    }
 
     runIndividualTranslate(`${metafieldId}:value`, [{
       resourceId: mf.id,
@@ -1882,7 +1900,7 @@ export function useProductSubResources({
       value: mf.value,
       label: `${mf.namespace}.${mf.key}`,
     }]);
-  }, [isPrimaryLocale, selectedItem, runIndividualTranslate]);
+  }, [isPrimaryLocale, selectedItem, runIndividualTranslate, primaryMetafieldEdits, showInfoBox, stringsRef]);
 
   // Every granular spinner a translate-all covers, plus its global marker.
   const translateAllFieldIds = useCallback((item: TranslatableContentItem): string[] => {
