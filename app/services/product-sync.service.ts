@@ -1627,6 +1627,18 @@ export class ProductSyncService {
         break; // Stop pagination on error, but keep what we have
       }
 
+      // A page that answers without the connection (a null product, a
+      // throttled `data`) is not "no more metafields": stop with
+      // `hasNextPage` still true, so the read is reported as truncated and
+      // nothing past the pages actually read is treated as gone.
+      const nextConnection = nextData.data?.product?.metafields;
+      if (!nextConnection) {
+        logger.warn(`[ProductSync] Metafield page answered without metafields; read reported as truncated`, {
+          productId, fetched: allMetafields.length,
+        });
+        break;
+      }
+
       const nextPageMetafields = nextData.data?.product?.metafields?.edges?.map((edge: GraphQLEdge<ShopifyMetafield>) => edge.node) || [];
       allMetafields.push(...nextPageMetafields);
 

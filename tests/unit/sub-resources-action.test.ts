@@ -588,6 +588,34 @@ describe('handleTranslateSubResources', () => {
     expect(lastTaskUpdate(db).status).toBe('completed');
   });
 
+  it('REFUSES a metafield whose CACHED type is not single-line text (nothing translated, nothing written)', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id, type: 'multi_line_text_field' })),
+    );
+    const called = vi.fn();
+    ai.translateBatchValues = async (values) => { called(); return values.map(() => 'x'); };
+    const result = body(await handleTranslateSubResources(
+      makeCtx(w.admin, db),
+      form({ targetLocale: 'fr', primaryLocale: 'de', sourceData: JSON.stringify(sourceData) }),
+    ));
+    expect(called).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: false, errorCode: 'metafieldTypeNotTranslatable', refusedMetafields: [METAFIELD] });
+    expect(w.of('register')).toHaveLength(0);
+  });
+
+  it('a metafield the cache does not know is refused too (unknown = unsafe)', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockResolvedValue([]);
+    const result = body(await handleTranslateSubResources(
+      makeCtx(w.admin, db),
+      form({ targetLocale: 'fr', primaryLocale: 'de', sourceData: JSON.stringify(sourceData) }),
+    ));
+    expect(result.errorCode).toBe('metafieldTypeNotTranslatable');
+  });
+
   it('a refused resource also reports failedLocales (the client names the locale)', async () => {
     const w = installAdmin({
       register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'no' }], translations: [] } } }),
@@ -647,6 +675,23 @@ describe('handleTranslateSubResourceToAllLocales', () => {
     expect(data.status).toBe('completed_with_errors');
     expect(JSON.parse(data.result)).toMatchObject({ translatedLocales: ['fr'], failedLocales: ['it'], failedResources: [METAFIELD] });
     expect(db.contentTranslation.upsert.mock.calls.map((c: any[]) => c[0].create.locale)).toEqual(['fr']);
+  });
+
+  it('REFUSES a list metafield before any AI call', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id, type: 'list.single_line_text_field' })),
+    );
+    const called = vi.fn();
+    ai.translateBatchValuesToLocales = async () => { called(); return {}; };
+    const result = body(await handleTranslateSubResourceToAllLocales(
+      makeCtx(w.admin, db),
+      form({ primaryLocale: 'de', sourceData: JSON.stringify(sourceData) }),
+    ));
+    expect(called).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: false, errorCode: 'metafieldTypeNotTranslatable' });
+    expect(w.of('register')).toHaveLength(0);
   });
 
   it('an unechoed write in a locale is a failed locale too', async () => {
@@ -1047,6 +1092,9 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       expect(w.of('metafieldsSet')).toHaveLength(0);
       expect(result.failedMetafields).toEqual([METAFIELD]);
       expect(result.optionWarnings ?? []).not.toContain('metafieldExistsMeanwhile');
+      // The reason travels as its own code, and the field as a kept draft.
+      expect(result.optionWarnings).toContain('metafieldSlotUnverified');
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
       expect(db.productMetafield.upsert).not.toHaveBeenCalled();
     });
 

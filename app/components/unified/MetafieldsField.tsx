@@ -21,6 +21,7 @@ import {
   metafieldInputErrors,
   type ListEntryError,
 } from "../../services/product-metafields.shared";
+import { isBatchTranslatableValueType } from "../../services/metaobject-fields.shared";
 import "../../styles/AIEditableField.css";
 
 /** A metafield whose value is multi-line by type; every other one is ONE line that wraps as it grows. */
@@ -77,6 +78,13 @@ interface MetafieldsFieldProps {
   /** Set of field IDs currently being translated */
   translatingFieldIds?: Set<string>;
 
+  /**
+   * A primary save landed and the reload with the saved text has not: every
+   * 🌍 would translate the text from BEFORE the save
+   * (`SubResourceState.metafieldTranslationBlocked`).
+   */
+  translationBlocked?: boolean;
+
   /** Translation strings */
   t?: {
     title?: string;
@@ -97,6 +105,8 @@ interface MetafieldsFieldProps {
     listErrors?: Partial<Record<ListEntryError["code"], string>>;
     /** Why the primary translate button waits: the field has an unsaved edit. */
     saveFirstSource?: string;
+    /** Why a 🌍 is off for a metafield that is not single-line text. */
+    typeNotTranslatable?: string;
   };
 }
 
@@ -139,6 +149,7 @@ export function MetafieldsField({
   onPrimaryMetafieldChange,
   primaryValues = {},
   translatingFieldIds = new Set(),
+  translationBlocked = false,
   t = {},
 }: MetafieldsFieldProps) {
   // Single-language shop → the metafield translate button has no target locale.
@@ -177,9 +188,12 @@ export function MetafieldsField({
               const isCleared = clearedIds.has(mf.id);
               // Translating to every language starts from the SAVED value: an
               // unsaved edit would be purged or re-translated by its own Save.
-              const saveFirstHint = isPrimaryMetafieldUnsaved(mf, primaryValues[mf.id])
+              // After a landed save the same holds until the reload brings the
+              // saved text — the button would send the old one.
+              const saveFirstHint = translationBlocked || isPrimaryMetafieldUnsaved(mf, primaryValues[mf.id])
                 ? t.saveFirstSource || "Save first — the main-language text has unsaved changes."
                 : undefined;
+              const translateHint = singleLocaleHint ?? saveFirstHint ?? typeTranslateHint(mf.type, t);
               const errors = editable ? listErrorMessages(metafieldInputErrors(mf.type, currentValue), t) : [];
               const errorNode = errors.length > 0 ? (
                 <>
@@ -264,12 +278,12 @@ export function MetafieldsField({
                         <div className="ai-field-footer">
                           <div className="ai-field-footer-left" />
                           <div className="ai-field-footer-right">
-                            <DisabledActionTooltip hint={singleLocaleHint ?? saveFirstHint}>
+                            <DisabledActionTooltip hint={translateHint}>
                               <Button
                                 size="slim"
                                 onClick={() => onTranslate(mf.id)}
                                 loading={translatingFieldIds.has(fieldId)}
-                                disabled={!!singleLocaleHint || !!saveFirstHint}
+                                disabled={!!translateHint}
                               >
                                 🌍 {t.translateButton || "Translate"}
                               </Button>
@@ -293,6 +307,11 @@ export function MetafieldsField({
               const translation = translations[mf.id] || "";
               const hasTranslation = !!translation;
               const fieldId = mf.id;
+              // The source is the cached primary value: wrong while a primary
+              // save's reload is pending, unusable for a non-single-line type.
+              const foreignTranslateHint = translationBlocked
+                ? t.saveFirstSource || "Save first — the main-language text has unsaved changes."
+                : typeTranslateHint(mf.type, t);
 
               return (
                 <div key={mf.id}>
@@ -336,13 +355,16 @@ export function MetafieldsField({
                         <div className="ai-field-footer">
                           <div className="ai-field-footer-left" />
                           <div className="ai-field-footer-right">
-                            <Button
-                              size="slim"
-                              onClick={() => onTranslate(mf.id)}
-                              loading={translatingFieldIds.has(fieldId)}
-                            >
-                              🌍 {t.translateButton || "Translate"}
-                            </Button>
+                            <DisabledActionTooltip hint={foreignTranslateHint}>
+                              <Button
+                                size="slim"
+                                onClick={() => onTranslate(mf.id)}
+                                loading={translatingFieldIds.has(fieldId)}
+                                disabled={!!foreignTranslateHint}
+                              >
+                                🌍 {t.translateButton || "Translate"}
+                              </Button>
+                            </DisabledActionTooltip>
                           </div>
                         </div>
                       </div>
@@ -356,6 +378,17 @@ export function MetafieldsField({
       </BlockStack>
     </Card>
   );
+}
+
+/**
+ * Why the 🌍 of this metafield is off, or `undefined` when it may run. Only a
+ * single-line text survives the generic value translator: a multi-line value
+ * loses its line breaks there and a list or rich text its JSON structure
+ * (`isBatchTranslatableValueType`; the server refuses the same types).
+ */
+function typeTranslateHint(type: string, t: MetafieldsFieldProps["t"]): string | undefined {
+  if (isBatchTranslatableValueType(type)) return undefined;
+  return t?.typeNotTranslatable || "This metafield type cannot be translated automatically. Enter the translation by hand.";
 }
 
 function truncateValue(value: string, maxLength: number): string {

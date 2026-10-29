@@ -2460,6 +2460,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onPrimaryMetafieldChange={subResourceHandlers.handlePrimaryMetafieldChange}
                       primaryValues={subResourceState.primaryMetafieldEdits}
                       translatingFieldIds={subResourceState.translatingFieldIds}
+                      translationBlocked={subResourceState.metafieldTranslationBlocked}
                       t={{
                         title: t.products?.productMetafields,
                         notEditableInPrimary: t.products?.metafieldsNotEditableInPrimary,
@@ -2471,6 +2472,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         listErrorLine: t.products?.metafieldListErrorLine,
                         listErrors: t.products?.metafieldListErrors,
                         saveFirstSource: t.common?.saveFirstSource,
+                        typeNotTranslatable: t.products?.metafieldTypeNotTranslatable,
                       }}
                     />
                   </div>

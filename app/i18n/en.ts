@@ -57,6 +57,8 @@ export const en: Translation = {
     optionWarningLastOne: "The last variant cannot be removed.",
     metafieldWarningValueBlank: "A metafield cannot consist of spaces only. Empty the field completely to remove the value.",
     metafieldWarningExistsMeanwhile: "A cleared metafield has a value on Shopify again (set in the Shopify admin or by another app, for example). It was not overwritten; the field now shows the current value.",
+    metafieldWarningSlotUnverified: "For a cleared metafield we could not check whether Shopify already holds a value. Nothing was saved; your value stays in the field — please save again.",
+    metafieldTypeNotTranslatable: "This metafield type cannot be translated automatically (line breaks or lists would be lost). Please enter the translation by hand.",
     metafieldListInvalid: "A list field contains entries that do not match its type. Correct the marked lines; nothing was saved.",
     metafieldListHint: "One entry per line. Empty lines are ignored.",
     metafieldListReadOnly: "This list cannot be edited here without changing its value. Edit it in the Shopify admin.",

@@ -61,6 +61,55 @@ function markSubResourceSyncShield(productId: string | null | undefined): void {
 /** Upper bound on the ids one loadSubResourceTranslations request may name. */
 export const MAX_LOAD_SUB_RESOURCE_IDS = 5000;
 
+type SubResourceSource = { resourceId: string; resourceType: string; key: string; value: string; label: string };
+
+/**
+ * Drops every METAFIELD source whose cached type is not a single-line text.
+ * Both translate handlers send their values through the GENERIC value prompt
+ * (`translateBatchValues*`), which flattens newlines and rewrites JSON — a
+ * multi-line, list or rich-text metafield would come back corrupted AND be
+ * echo-confirmed (`isBatchTranslatableValueType`). The card disables those
+ * buttons; this is the server's own answer, because both actions take a
+ * direct POST. The type comes from the CACHE, never the client; a metafield
+ * the cache does not know counts as unsafe. A lookup that fails refuses every
+ * metafield (options are unaffected).
+ */
+async function dropUnsafeMetafieldSources(
+  db: ContentActionHandlerContext["db"],
+  shop: string,
+  productId: string,
+  sourceData: SubResourceSource[],
+): Promise<{ safe: SubResourceSource[]; refused: string[] }> {
+  const metafieldIds = [...new Set(sourceData.filter((s) => s.resourceType === "Metafield").map((s) => s.resourceId))];
+  if (metafieldIds.length === 0) return { safe: sourceData, refused: [] };
+  let types = new Map<string, string>();
+  try {
+    const rows: Array<{ id: string; type: string }> = await db.productMetafield.findMany({
+      where: { id: { in: metafieldIds }, productId, product: { shop } },
+      select: { id: true, type: true },
+    });
+    types = new Map(rows.map((row) => [row.id, row.type]));
+  } catch (err) {
+    logger.error("[UnifiedContent] Could not read metafield types for a translate; metafields refused", {
+      context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  const refused = metafieldIds.filter((id) => {
+    const type = types.get(id);
+    return !type || !isBatchTranslatableValueType(type);
+  });
+  if (refused.length === 0) return { safe: sourceData, refused };
+  logger.warn("[UnifiedContent] Metafields refused for the value translator (not single-line text)", {
+    context: "UnifiedContent", refused,
+  });
+  const refusedSet = new Set(refused);
+  return {
+    safe: sourceData.filter((s) => !(s.resourceType === "Metafield" && refusedSet.has(s.resourceId))),
+    refused,
+  };
+}
+
+
 export async function handleLoadSubResourceTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
@@ -438,10 +487,22 @@ export async function handleTranslateSubResources(
   }
 
   const sourceDataJson = getFormString(formData, "sourceData");
-  const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
-    sourceDataJson ? JSON.parse(sourceDataJson) : [];
+  const requestedSources: SubResourceSource[] = sourceDataJson ? JSON.parse(sourceDataJson) : [];
+  const { safe: sourceData, refused: refusedMetafields } = await dropUnsafeMetafieldSources(
+    db, session.shop, itemId, requestedSources,
+  );
 
   if (sourceData.length === 0) {
+    if (refusedMetafields.length > 0) {
+      return json({
+        actionType: "translateSubResources",
+        success: false,
+        fieldId: getFormString(formData, "fieldId"),
+        errorCode: "metafieldTypeNotTranslatable",
+        error: "This metafield type cannot be translated automatically.",
+        refusedMetafields,
+      });
+    }
     return json({ actionType: "translateSubResources", success: true, translations: {} });
   }
 
@@ -647,10 +708,22 @@ export async function handleTranslateSubResourceToAllLocales(
   const { admin, session, contentConfig, db, itemId, shopifyContentService, provider, serviceConfig, aiInstructions, translationMode, seoLimits } = ctx;
 
   const sourceDataJson = getFormString(formData, "sourceData");
-  const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
-    sourceDataJson ? JSON.parse(sourceDataJson) : [];
+  const requestedSources: SubResourceSource[] = sourceDataJson ? JSON.parse(sourceDataJson) : [];
+  const { safe: sourceData, refused: refusedMetafields } = await dropUnsafeMetafieldSources(
+    db, session.shop, itemId, requestedSources,
+  );
 
   if (sourceData.length === 0) {
+    if (refusedMetafields.length > 0) {
+      return json({
+        actionType: "translateSubResourceToAllLocales",
+        success: false,
+        fieldId: getFormString(formData, "fieldId"),
+        errorCode: "metafieldTypeNotTranslatable",
+        error: "This metafield type cannot be translated automatically.",
+        refusedMetafields,
+      });
+    }
     return json({ actionType: "translateSubResourceToAllLocales", success: true, translations: {} });
   }
 
@@ -1043,6 +1116,9 @@ export async function handleSavePrimarySubResources(
     const failedOptions: string[] = [];
     const savedMetafields: string[] = [];
     const failedMetafields: string[] = [];
+    /** Cleared-slot refills NOT written because Shopify could not be asked
+     *  whether a metafield of that key exists (a subset of `failedMetafields`). */
+    const unverifiedMetafields: string[] = [];
 
     // 1. Options: names, values, and — new — adding, deleting and reordering.
     //
@@ -1275,6 +1351,11 @@ export async function handleSavePrimarySubResources(
             logger.warn("[UnifiedContent] Cleared metafield not re-created: Shopify could not be asked whether one exists", {
               context: "UnifiedContent", metafieldId: entry.metafieldId,
             });
+            // Nothing was written: the client keeps the typed value as a
+            // draft (`unverifiedMetafields`) instead of reverting it, and the
+            // code says why, so a retry is the obvious next step.
+            unverifiedMetafields.push(entry.metafieldId);
+            optionWarnings.push("metafieldSlotUnverified");
             continue;
           }
           logger.warn("[UnifiedContent] Cleared metafield not re-created: Shopify already holds one under that key", {
@@ -1921,6 +2002,7 @@ export async function handleSavePrimarySubResources(
       failedOptions,
       savedMetafields,
       failedMetafields,
+      ...(unverifiedMetafields.length > 0 ? { unverifiedMetafields } : {}),
       // Cleared metafields Shopify confirmed DELETING (not in savedMetafields:
       // there is no source text left whose translations could be stale).
       ...(removedMetafieldIds.length > 0 ? { removedMetafieldIds } : {}),

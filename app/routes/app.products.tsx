@@ -569,6 +569,8 @@ export default function ProductsPage() {
       optionWarning_metafieldValueBlank: t.products.metafieldWarningValueBlank,
       optionWarning_metafieldListInvalid: t.products.metafieldListInvalid,
       optionWarning_metafieldExistsMeanwhile: t.products.metafieldWarningExistsMeanwhile,
+      optionWarning_metafieldSlotUnverified: t.products.metafieldWarningSlotUnverified,
+      metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
       metafieldListInvalid: t.products.metafieldListInvalid,
       saveFirstSource: t.common.saveFirstSource,
     },
@@ -776,6 +778,9 @@ export default function ProductsPage() {
   const hasPrimaryTranslateAllDrafts =
     editor.state.currentLanguage === primaryLocale &&
     (Object.keys(subResources.state.primaryMetafieldEdits).length > 0 ||
+      // A landed primary save whose reload is still out: the item still
+      // carries the metafield text from BEFORE it.
+      subResources.state.metafieldTranslationBlocked ||
       (showImageManager && imageManagerState.hasAltTextEdits));
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,

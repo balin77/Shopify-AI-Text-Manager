@@ -84,6 +84,49 @@ describe("MetafieldsField primary translate button", () => {
     renderField({ [MF]: "Baumwolle" });
     expect(isDisabled()).toBe(false);
   });
+
+  it("is DISABLED while a landed save's reload is pending", () => {
+    render(
+      <AppProvider i18n={en}>
+        <MetafieldsField
+          metafields={[mf]}
+          isPrimaryLocale
+          currentLanguage="de"
+          translations={{}}
+          onTranslate={vi.fn()}
+          onMetafieldChange={vi.fn()}
+          onPrimaryMetafieldChange={vi.fn()}
+          primaryValues={{}}
+          translationBlocked
+          t={{ translateButton: "Übersetzen", saveFirstSource: SAVE_FIRST }}
+        />
+      </AppProvider>,
+    );
+    expect(isDisabled()).toBe(true);
+  });
+
+  it("is DISABLED for a metafield that is not single-line text, in both directions", () => {
+    const multi = { ...mf, type: "multi_line_text_field", value: "a\nb" };
+    for (const primary of [true, false]) {
+      cleanup();
+      render(
+        <AppProvider i18n={en}>
+          <MetafieldsField
+            metafields={[multi]}
+            isPrimaryLocale={primary}
+            currentLanguage={primary ? "de" : "en"}
+            translations={{}}
+            onTranslate={vi.fn()}
+            onMetafieldChange={vi.fn()}
+            onPrimaryMetafieldChange={vi.fn()}
+            primaryValues={{}}
+            t={{ translateButton: "Übersetzen", saveFirstSource: SAVE_FIRST }}
+          />
+        </AppProvider>,
+      );
+      expect(isDisabled()).toBe(true);
+    }
+  });
 });
 
 describe("useProductSubResources.translateMetafield on the primary locale", () => {

@@ -646,3 +646,119 @@ describe("saveSubResources — primary metafields (cleared fields and lists)", (
     expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [MF]: "Leinen" });
   });
 });
+
+describe("translating a metafield never sends the text from before the save", () => {
+  // After a landed primary save the edits are cleared, but the item still
+  // carries the metafield value from BEFORE it until the reload lands — a 🌍
+  // in that window would write translations of the vanished text everywhere.
+  const MF = "gid://shopify/Metafield/77";
+  const itemWithMf = {
+    ...(selectedItem as object),
+    metafields: [{ id: MF, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+  };
+  const revalidator = { state: "idle", revalidate: vi.fn() };
+  const fetchSpy = vi.fn(() => new Promise(() => {}));
+
+  function setupMf(item: unknown = itemWithMf) {
+    return renderHook(
+      ({ current, reload }: { current: unknown; reload: string }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          revalidator: { ...revalidator, state: reload },
+          enabledLanguages: ["de", "en"],
+          strings: { saveFirstSource: "Erst speichern" },
+        } as never),
+      { initialProps: { current: item, reload: "idle" } },
+    );
+  }
+
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    revalidator.revalidate.mockClear();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function saveLanded(rerender: (p: { current: unknown; reload: string }) => void, result: { current: ReturnType<typeof useProductSubResources> }) {
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.saveSubResources());
+    fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+    rerender({ current: itemWithMf, reload: "idle" });
+  }
+
+  it("refuses right after the save, before the reload, and sends nothing", () => {
+    const { result, rerender } = setupMf();
+    saveLanded(rerender, result);
+    expect(result.current.state.primaryMetafieldEdits).toEqual({});
+    expect(result.current.state.metafieldTranslationBlocked).toBe(true);
+
+    act(() => result.current.handlers.translateMetafield(MF));
+    act(() => result.current.handlers.translateAllSubResourcesToAllLocales());
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(showInfoBox).toHaveBeenCalledWith("Erst speichern", "warning");
+  });
+
+  it("allows it again once the reload has landed, with the SAVED text", () => {
+    const { result, rerender } = setupMf();
+    saveLanded(rerender, result);
+    rerender({ current: itemWithMf, reload: "loading" });
+    const reloaded = {
+      ...itemWithMf,
+      metafields: [{ id: MF, namespace: "custom", key: "material", value: "Leinen", type: "single_line_text_field" }],
+    };
+    rerender({ current: reloaded, reload: "idle" });
+    expect(result.current.state.metafieldTranslationBlocked).toBe(false);
+
+    act(() => result.current.handlers.translateMetafield(MF));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const form = (fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }])[1].body;
+    expect(JSON.parse(String(form.get("sourceData")))[0]).toMatchObject({ resourceId: MF, value: "Leinen" });
+  });
+
+  it("never sends a metafield that is not single-line text", () => {
+    const multi = {
+      ...(selectedItem as object),
+      options: [],
+      metafields: [{ id: MF, namespace: "custom", key: "care", value: "a\nb", type: "multi_line_text_field" }],
+    };
+    const { result } = setupMf(multi);
+    act(() => result.current.handlers.translateMetafield(MF));
+    act(() => result.current.handlers.translateAllSubResourcesToAllLocales());
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps a refill Shopify could not be asked about as a DRAFT, with its reason", () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { optionWarning_metafieldSlotUnverified: "Could not check — nothing saved." },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.saveSubResources());
+    fetcher.data = {
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      optionWarnings: ["metafieldSlotUnverified"],
+    };
+    rerender({ current: itemWithMf });
+
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "Leinen" });
+    expect(result.current.state.hasChanges).toBe(true);
+    const message = String(showInfoBox.mock.calls.at(-1)?.[0]);
+    expect(message).toContain("Could not check — nothing saved.");
+    // Not the generic "reverted to original values" — nothing was reverted.
+    expect(message).not.toMatch(/reverted/);
+  });
+});

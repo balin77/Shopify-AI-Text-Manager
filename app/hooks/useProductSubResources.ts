@@ -67,6 +67,7 @@ import {
 import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
 import { appFetch } from "../utils/app-fetch";
 import { isPrimaryMetafieldUnsaved, primaryMetafieldChange } from "../services/product-metafields.shared";
+import { isBatchTranslatableValueType } from "../services/metaobject-fields.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -93,6 +94,9 @@ interface SubResourceFetcherData {
   notTranslatable?: string[];
   failedOptions?: string[];
   failedMetafields?: string[];
+  /** Cleared-slot refills not written: Shopify could not be asked whether one
+   *  exists (`metafieldSlotUnverified`). Kept as drafts, never reverted. */
+  unverifiedMetafields?: string[];
   /** Failure CODES from the option write paths; the client owns the wording. */
   optionWarnings?: string[];
   /** Create / delete / reorder failures, which carry no option id. */
@@ -258,6 +262,12 @@ export interface SubResourceState {
    * either window translates the text the merchant just replaced.
    */
   optionTranslationBlockedIds: Set<string>;
+  /**
+   * True from a landed PRIMARY save until the reload that follows it: every
+   * metafield translate would send the CACHED value, i.e. the text from before
+   * the save. The 🌍 buttons and the whole-item "Translate all" wait for it.
+   */
+  metafieldTranslationBlocked: boolean;
   /** Primary locale metafield edits keyed by metafield GID → value */
   primaryMetafieldEdits: Record<string, string>;
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
@@ -391,6 +401,8 @@ interface UseProductSubResourcesStrings {
   metafieldListInvalid?: string;
   /** A primary translate refused because its source field has an unsaved edit. */
   saveFirstSource?: string;
+  /** Why a metafield that is not single-line text is not translated. */
+  metafieldTypeNotTranslatable?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
@@ -1172,7 +1184,20 @@ export function useProductSubResources({
           partialSavedIds.length > 0 ||
           (data.marketPurgedResourceIds ?? []).length > 0 ||
           (data.optionWarnings ?? []).includes("metafieldExistsMeanwhile")
-        ) requestRevalidate();
+        ) {
+          // The saved part moved its source text: until the reload lands the
+          // item still carries the old text, which a translate would send.
+          if (partialSavedIds.length > 0 && isPrimaryLocale) setAwaitingOptionReload(true);
+          requestRevalidate();
+        }
+        // Cleared fields whose refill was NOT written because Shopify could
+        // not be asked whether one exists: nothing changed anywhere, so the
+        // typed value stays as a draft for the next Save instead of being
+        // reverted.
+        const unverifiedMetafields = new Set<string>(
+          Array.isArray(data.unverifiedMetafields) ? data.unverifiedMetafields.map(String) : [],
+        );
+        const onlyUnverified = unverifiedMetafields.size > 0 && totalFailed === unverifiedMetafields.size;
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
           // The warning codes carry the only specific reason there is (the
@@ -1184,7 +1209,9 @@ export function useProductSubResources({
             .join(" ");
           showInfoBox(
             [
-              (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
+              onlyUnverified
+                ? ""
+                : (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
               reasons,
               partialPurge.unconfirmed
                 ? strings.translationPurgeUnconfirmed ||
@@ -1212,6 +1239,8 @@ export function useProductSubResources({
             const restored = { ...prev };
 
             for (const metafieldId of failedMetafields) {
+              // Kept as a draft: nothing was written (see above).
+              if (unverifiedMetafields.has(String(metafieldId))) continue;
               // Remove the failed edit to restore original value
               delete restored[metafieldId];
             }
@@ -1235,7 +1264,8 @@ export function useProductSubResources({
         pendingPrimarySaveIdsRef.current = [];
         pendingPrimarySaveSentRef.current = null;
 
-        setHasChanges(false);
+        // A kept draft keeps the save bar up, so the next Save resends it.
+        setHasChanges(unverifiedMetafields.size > 0);
       } else {
         // Saved -- but removing the now-stale foreign translations may not have
         // been confirmed on Shopify. Those are still LIVE: say so, and keep what
@@ -1636,6 +1666,14 @@ export function useProductSubResources({
     if (!filterOptionId) {
       for (const mf of selectedItem.metafields || []) {
         if (filterMetafieldId && mf.id !== filterMetafieldId) continue;
+        // Left out like a blocked option: its cached text may not be the
+        // text the merchant just saved (reload pending) or typed (unsaved),
+        // and a type the value prompt would corrupt is never sent at all.
+        if (
+          awaitingOptionReload ||
+          isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[mf.id]) ||
+          !isBatchTranslatableValueType(mf.type)
+        ) continue;
         sourceData.push({
           resourceId: mf.id,
           resourceType: "Metafield",
@@ -1647,7 +1685,7 @@ export function useProductSubResources({
     }
 
     return sourceData;
-  }, [selectedItem, optionTranslationBlockedIds]);
+  }, [selectedItem, optionTranslationBlockedIds, awaitingOptionReload, primaryMetafieldEdits]);
 
   // Merge a translations map ({ resourceId: { key: value } }) into option/metafield
   // state, field by field (see `mergeOptionTranslations`).
@@ -1885,9 +1923,26 @@ export function useProductSubResources({
     // Primary: a translate to EVERY language, from the SAVED value. With an
     // unsaved edit of the field its own Save would purge or re-translate what
     // this writes — the card disables the button; this is the backstop.
-    if (isPrimaryLocale && isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[metafieldId])) {
+    // The same holds after a landed primary save until the reload brings the
+    // saved text: `mf.value` is still the text from BEFORE the save, and a
+    // translate would write translations of it (and claim the GID, so a
+    // running repair of the NEW text would abandon itself).
+    if (
+      awaitingOptionReload ||
+      (isPrimaryLocale && isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[metafieldId]))
+    ) {
       showInfoBox?.(
         stringsRef.current.saveFirstSource || "Save first — the main-language text has unsaved changes.",
+        "warning",
+      );
+      return;
+    }
+    // Only a single-line text survives the value prompt (multi-line loses its
+    // newlines, a list or rich text its JSON). The card disables the button.
+    if (!isBatchTranslatableValueType(mf.type)) {
+      showInfoBox?.(
+        stringsRef.current.metafieldTypeNotTranslatable ||
+          "This metafield type cannot be translated automatically. Enter the translation by hand.",
         "warning",
       );
       return;
@@ -1900,7 +1955,7 @@ export function useProductSubResources({
       value: mf.value,
       label: `${mf.namespace}.${mf.key}`,
     }]);
-  }, [isPrimaryLocale, selectedItem, runIndividualTranslate, primaryMetafieldEdits, showInfoBox, stringsRef]);
+  }, [isPrimaryLocale, selectedItem, runIndividualTranslate, primaryMetafieldEdits, awaitingOptionReload, showInfoBox, stringsRef]);
 
   // Every granular spinner a translate-all covers, plus its global marker.
   const translateAllFieldIds = useCallback((item: TranslatableContentItem): string[] => {
@@ -2769,6 +2824,7 @@ export function useProductSubResources({
       optionValueOrder,
       savedNonce,
       optionTranslationBlockedIds,
+      metafieldTranslationBlocked: awaitingOptionReload,
       primaryMetafieldEdits,
       translatingFieldIds,
       fallbackResourceIds,
