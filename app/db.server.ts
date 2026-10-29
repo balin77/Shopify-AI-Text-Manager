@@ -29,13 +29,30 @@ export async function upsertProductMetafields(
 ): Promise<void> {
   const metafieldIds = metafields.map((mf) => mf.id);
 
-  // Delete metafields no longer returned by Shopify
+  // Delete metafields no longer returned by Shopify — except a CLEARED SLOT
+  // (`value: ""`, product-metafields.shared.ts): Shopify never returns a
+  // metafield this app deleted, so dropping the slot here would make the field
+  // vanish from the editor's card on the next sync, which is exactly what the
+  // slot exists to prevent. Shopify never stores a blank value, so a returned
+  // metafield can never be mistaken for a slot.
   await tx.productMetafield.deleteMany({
     where: {
       productId,
+      value: { not: "" },
       ...(metafieldIds.length > 0 ? { id: { notIn: metafieldIds } } : {}),
     },
   });
+  // …but a slot whose namespace/key Shopify reports a real metafield for again
+  // (set in the Shopify admin, by another app, an import) is superseded.
+  if (metafields.length > 0) {
+    await tx.productMetafield.deleteMany({
+      where: {
+        productId,
+        value: "",
+        OR: metafields.map((mf) => ({ namespace: mf.namespace, key: mf.key })),
+      },
+    });
+  }
 
   // Bulk upsert via INSERT ... ON CONFLICT DO UPDATE (single atomic query)
   if (metafields.length > 0) {
