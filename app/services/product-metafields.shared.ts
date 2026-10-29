@@ -279,3 +279,70 @@ export function storedListMetafieldValueProblem(type: string, value: string): Li
   }
   return null;
 }
+
+// ─── The card's display form ────────────────────────────────────────────────
+
+interface MetafieldLike {
+  type: string;
+  value: string;
+}
+
+/**
+ * Whether the card may offer an editor for this metafield's value. A list is
+ * editable only where the one-entry-per-line form can carry its value back
+ * unchanged and its element type is one this editor checks; otherwise the
+ * stored value is shown read-only rather than rewritten on the next save.
+ */
+export function isMetafieldValueEditable(mf: MetafieldLike): boolean {
+  if (!isListMetafieldType(mf.type)) return true;
+  if (!(SUPPORTED_LIST_ELEMENT_TYPES as readonly string[]).includes(listElementType(mf.type))) return false;
+  return listValueSurvivesLines(mf.value);
+}
+
+/** The value as the card shows (and edits) it: a list one entry per line. */
+export function metafieldDisplayValue(mf: MetafieldLike): string {
+  return isListMetafieldType(mf.type) && listValueSurvivesLines(mf.value)
+    ? formatListMetafieldLines(mf.value)
+    : mf.value;
+}
+
+/**
+ * The entry errors of a list field's CURRENT text, for the field itself; `[]`
+ * for a non-list field or a valid list. The card shows them as the merchant
+ * types, the save refuses on them.
+ */
+export function metafieldInputErrors(type: string, display: string): ListEntryError[] {
+  if (!isListMetafieldType(type)) return [];
+  const parsed = parseListMetafieldLines(type, display);
+  return parsed.ok ? [] : parsed.errors;
+}
+
+export type PrimaryMetafieldChange =
+  | { kind: "unchanged" }
+  /** What to send; `""` = clear (the server deletes the metafield, keeps the field). */
+  | { kind: "value"; value: string }
+  | { kind: "refused"; reason: "blank" | "listInvalid"; errors: ListEntryError[] };
+
+/**
+ * One primary edit of the card (held in DISPLAY form) → what the save sends.
+ *
+ * Only an EXPLICITLY emptied field clears; spaces only are refused, because a
+ * clear deletes the metafield and its translations on Shopify. A list is
+ * compared by its stored JSON, so retyping the same entries is no change.
+ */
+export function primaryMetafieldChange(original: MetafieldLike, display: string): PrimaryMetafieldChange {
+  if (!isListMetafieldType(original.type)) {
+    if (display === original.value) return { kind: "unchanged" };
+    if (display === "") return { kind: "value", value: "" };
+    if (display.trim() === "") return { kind: "refused", reason: "blank", errors: [] };
+    return { kind: "value", value: display };
+  }
+  if (display === metafieldDisplayValue(original)) return { kind: "unchanged" };
+  const parsed = parseListMetafieldLines(original.type, display);
+  if (!parsed.ok) {
+    const blank = parsed.errors.some((e) => e.code === "blank");
+    return { kind: "refused", reason: blank ? "blank" : "listInvalid", errors: parsed.errors };
+  }
+  if (parsed.value === original.value) return { kind: "unchanged" };
+  return { kind: "value", value: parsed.value };
+}

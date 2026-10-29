@@ -66,6 +66,7 @@ import {
 } from "../services/editor/sub-resource-clear.shared";
 import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
 import { appFetch } from "../utils/app-fetch";
+import { primaryMetafieldChange } from "../services/product-metafields.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -386,6 +387,8 @@ interface UseProductSubResourcesStrings {
   optionNameEmpty?: string;
   optionValuesEmpty?: string;
   metafieldValuesEmpty?: string;
+  /** A list metafield with entries its element type refuses (the save is not sent). */
+  metafieldListInvalid?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
@@ -2107,22 +2110,32 @@ export function useProductSubResources({
       }
 
       // Collect metafield value changes with validation
+      // The edits are held in the card's DISPLAY form (a list one entry per
+      // line); `primaryMetafieldChange` turns each into what Shopify stores.
+      // A cleared field (a metafield deleted on Shopify, kept as a slot) is
+      // looked up too: typing into it re-creates the metafield.
       for (const [metafieldId, editValue] of Object.entries(primaryMetafieldEdits)) {
-        const originalMetafield = selectedItem.metafields?.find(m => m.id === metafieldId);
+        const originalMetafield =
+          selectedItem.metafields?.find(m => m.id === metafieldId) ??
+          selectedItem.clearedMetafields?.find(m => m.id === metafieldId);
         if (!originalMetafield) continue;
 
-        if (editValue !== originalMetafield.value) {
-          // VALIDATION: Prevent empty metafield values
-          if (editValue.trim() === "") {
-            if (showInfoBox) {
-              showInfoBox(strings.metafieldValuesEmpty || "Metafield values cannot be empty", "critical");
-            } else {
-              alert("Metafield values cannot be empty");
-            }
-            return;
-          }
-          metafieldChanges[metafieldId] = editValue;
+        const change = primaryMetafieldChange(originalMetafield, editValue);
+        if (change.kind === "unchanged") continue;
+        if (change.kind === "refused") {
+          // Nothing is sent: the field shows the reason itself (list entries),
+          // and this names it for the save that did not happen.
+          const message =
+            change.reason === "blank"
+              ? strings.optionWarning_metafieldValueBlank ||
+                "A metafield cannot consist of spaces only. Empty the field completely to remove the value."
+              : strings.metafieldListInvalid ||
+                "A list field contains entries that do not match its type. Correct the marked lines.";
+          if (showInfoBox) showInfoBox(message, "critical");
+          return;
         }
+        // "" = clear: the server deletes the metafield and keeps the field.
+        metafieldChanges[metafieldId] = change.value;
       }
 
       // The order counts as changed only if it DIFFERS from the saved one:

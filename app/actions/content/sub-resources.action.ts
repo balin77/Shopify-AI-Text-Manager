@@ -1298,9 +1298,19 @@ export async function handleSavePrimarySubResources(
               failedMetafields.push(entry.metafieldId);
               continue;
             }
+            const echoedId = typeof echo.id === "string" && isValidShopifyGID(echo.id) ? echo.id : null;
+            if (entry.isSlot && !echoedId) {
+              // A re-created metafield is only addressable under the GID
+              // Shopify gave it; without one the mirror would keep a value
+              // under the DELETED metafield's id.
+              logger.warn("[UnifiedContent] metafieldsSet re-created a cleared metafield without echoing its id", {
+                context: "UnifiedContent", metafieldId: entry.metafieldId,
+              });
+              failedMetafields.push(entry.metafieldId);
+              continue;
+            }
             savedMetafields.push(entry.metafieldId);
             savedMetafieldTypes.set(entry.metafieldId, echo.type || entry.input.type);
-            const echoedId = typeof echo.id === "string" && isValidShopifyGID(echo.id) ? echo.id : null;
             try {
               if (entry.isSlot && echoedId && echoedId !== entry.metafieldId) {
                 // Re-created: a NEW metafield under a new GID. The real row is
