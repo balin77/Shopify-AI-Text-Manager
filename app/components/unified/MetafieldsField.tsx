@@ -105,6 +105,8 @@ interface MetafieldsFieldProps {
     listErrors?: Partial<Record<ListEntryError["code"], string>>;
     /** Why the primary translate button waits: the field has an unsaved edit. */
     saveFirstSource?: string;
+    /** Why translating waits while a landed save's reload is still out. */
+    sourceReloading?: string;
     /** Why a 🌍 is off for a metafield that is not single-line text. */
     typeNotTranslatable?: string;
   };
@@ -190,9 +192,13 @@ export function MetafieldsField({
               // unsaved edit would be purged or re-translated by its own Save.
               // After a landed save the same holds until the reload brings the
               // saved text — the button would send the old one.
-              const saveFirstHint = translationBlocked || isPrimaryMetafieldUnsaved(mf, primaryValues[mf.id])
+              // An unsaved edit is named first (it still blocks after the
+              // reload); a reload alone only asks for a moment.
+              const saveFirstHint = isPrimaryMetafieldUnsaved(mf, primaryValues[mf.id])
                 ? t.saveFirstSource || "Save first — the main-language text has unsaved changes."
-                : undefined;
+                : translationBlocked
+                  ? t.sourceReloading || "One moment — the saved text is reloading."
+                  : undefined;
               const translateHint = singleLocaleHint ?? saveFirstHint ?? typeTranslateHint(mf.type, t);
               const errors = editable ? listErrorMessages(metafieldInputErrors(mf.type, currentValue), t) : [];
               const errorNode = errors.length > 0 ? (
@@ -310,7 +316,7 @@ export function MetafieldsField({
               // The source is the cached primary value: wrong while a primary
               // save's reload is pending, unusable for a non-single-line type.
               const foreignTranslateHint = translationBlocked
-                ? t.saveFirstSource || "Save first — the main-language text has unsaved changes."
+                ? t.sourceReloading || "One moment — the saved text is reloading."
                 : typeTranslateHint(mf.type, t);
 
               return (

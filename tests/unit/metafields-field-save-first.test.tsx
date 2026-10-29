@@ -6,7 +6,7 @@
  * the hook refuses it as a backstop.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { act, render, cleanup, renderHook, screen } from "@testing-library/react";
+import { act, render, cleanup, renderHook, screen, fireEvent } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 
@@ -26,6 +26,7 @@ const ITEM = "gid://shopify/Product/7";
 const MF = "gid://shopify/Metafield/9";
 const mf = { id: MF, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" };
 const SAVE_FIRST = "Erst speichern";
+const RELOADING = "Einen Moment";
 
 afterEach(() => {
   cleanup();
@@ -105,6 +106,49 @@ describe("MetafieldsField primary translate button", () => {
     expect(isDisabled()).toBe(true);
   });
 
+  // The hint is a Polaris tooltip: hovering its wrapper shows the text.
+  const hoverHint = async () => {
+    const wrapper = button().parentElement!.parentElement!;
+    fireEvent.mouseOver(wrapper);
+    fireEvent.mouseEnter(wrapper);
+    fireEvent.focus(wrapper);
+  };
+  const renderBlocked = (primary: boolean, primaryValues: Record<string, string> = {}) =>
+    render(
+      <AppProvider i18n={en}>
+        <MetafieldsField
+          metafields={[mf]}
+          isPrimaryLocale={primary}
+          currentLanguage={primary ? "de" : "en"}
+          translations={{}}
+          onTranslate={vi.fn()}
+          onMetafieldChange={vi.fn()}
+          onPrimaryMetafieldChange={vi.fn()}
+          primaryValues={primaryValues}
+          translationBlocked
+          t={{ translateButton: "Übersetzen", saveFirstSource: SAVE_FIRST, sourceReloading: RELOADING }}
+        />
+      </AppProvider>,
+    );
+
+  it("says 'one moment', not 'save first', while only the reload is pending", async () => {
+    for (const primary of [true, false]) {
+      cleanup();
+      renderBlocked(primary);
+      expect(isDisabled()).toBe(true);
+      await act(async () => { await hoverHint(); });
+      expect(await screen.findByText(RELOADING)).toBeTruthy();
+      expect(screen.queryByText(SAVE_FIRST)).toBeNull();
+    }
+  });
+
+  it("names the unsaved edit first when there is one beside the reload", async () => {
+    renderBlocked(true, { [MF]: "Leinen" });
+    await act(async () => { await hoverHint(); });
+    expect(await screen.findByText(SAVE_FIRST)).toBeTruthy();
+    expect(screen.queryByText(RELOADING)).toBeNull();
+  });
+
   it("is DISABLED for a metafield that is not single-line text, in both directions", () => {
     const multi = { ...mf, type: "multi_line_text_field", value: "a\nb" };
     for (const primary of [true, false]) {
@@ -158,6 +202,37 @@ describe("useProductSubResources.translateMetafield on the primary locale", () =
     const form = (fetchMock.mock.calls[0] as unknown as [string, { body: FormData }])[1].body;
     expect(form.get("action")).toBe("translateSubResourceToAllLocales");
     expect(JSON.parse(String(form.get("sourceData")))[0]).toMatchObject({ resourceId: MF, value: "Baumwolle" });
+  });
+
+  it("shows the localised type refusal for the server's errorCode, not its English text", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          success: false,
+          actionType: "translateSubResourceToAllLocales",
+          errorCode: "metafieldTypeNotTranslatable",
+          error: "This metafield type cannot be translated automatically.",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() =>
+      subResourcesModule.useProductSubResources({
+        selectedItem: { id: ITEM, title: "Shirt", options: [], metafields: [mf], subResourceTranslations: {} },
+        currentLanguage: "de",
+        primaryLocale: "de",
+        enabledLanguages: ["de", "en"],
+        showInfoBox,
+        strings: { metafieldTypeNotTranslatable: "Typ nicht übersetzbar" },
+      } as never),
+    );
+    await act(async () => {
+      result.current.handlers.translateMetafield(MF);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(showInfoBox).toHaveBeenCalledWith("Typ nicht übersetzbar", "warning");
+    expect(showInfoBox).not.toHaveBeenCalledWith(expect.stringContaining("cannot be translated"), expect.anything());
   });
 
   it("REFUSES (backstop) while the field holds an unsaved edit, and sends nothing", () => {

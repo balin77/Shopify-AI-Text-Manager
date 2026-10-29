@@ -2178,6 +2178,8 @@ export const en: Translation = {
     requiresSecondLanguage: "Your shop has only one language. Add another language in your Shopify settings to use translation.",
     // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
     saveFirstSource: "Save first — the main-language text has unsaved changes.",
+    // Tooltip / message while a landed primary save's reload is still out
+    sourceReloading: "One moment — the saved text is reloading.",
     switchWhileSaving: "Still saving – please wait a moment and then switch again.",
     clearWhileTranslating: "A translation into this language is still running – please wait until it has finished and then clear.",
     translateWhileSaving: "Still saving – please wait a moment and then translate again.",

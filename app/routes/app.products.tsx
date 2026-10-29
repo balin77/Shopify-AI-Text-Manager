@@ -573,6 +573,7 @@ export default function ProductsPage() {
       metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
       metafieldListInvalid: t.products.metafieldListInvalid,
       saveFirstSource: t.common.saveFirstSource,
+      sourceReloading: t.common.sourceReloading,
     },
   });
 
@@ -778,10 +779,11 @@ export default function ProductsPage() {
   const hasPrimaryTranslateAllDrafts =
     editor.state.currentLanguage === primaryLocale &&
     (Object.keys(subResources.state.primaryMetafieldEdits).length > 0 ||
-      // A landed primary save whose reload is still out: the item still
-      // carries the metafield text from BEFORE it.
-      subResources.state.metafieldTranslationBlocked ||
       (showImageManager && imageManagerState.hasAltTextEdits));
+  // A landed primary save whose reload is still out: the item still carries
+  // the metafield text from BEFORE it. Blocks too, but is no unsaved change.
+  const primaryTranslateAllReloadPending =
+    editor.state.currentLanguage === primaryLocale && subResources.state.metafieldTranslationBlocked;
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
@@ -796,7 +798,8 @@ export default function ProductsPage() {
     // waiting for a new image): the Save shows busy until they are answered.
     isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages || imageManagerState.isSavingAltTexts,
     translateAllSaveFirst: hasPrimaryTranslateAllDrafts,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts]);
+    translateAllReloadPending: primaryTranslateAllReloadPending,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts, primaryTranslateAllReloadPending]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
@@ -913,6 +916,10 @@ export default function ProductsPage() {
             String(t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes."),
             "warning",
           );
+          return;
+        }
+        if (primaryTranslateAllReloadPending) {
+          showInfoBox(String(t.common?.sourceReloading || "One moment — the saved text is reloading."), "info");
           return;
         }
         // Refused (a save it would race is still out): neither half runs.

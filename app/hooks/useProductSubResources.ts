@@ -104,6 +104,8 @@ interface SubResourceFetcherData {
   removedOptionIds?: string[];
   /** The server's sentence (or the plan refusal's code "gated") when `success` is false. */
   error?: string;
+  /** Machine code beside `error` (e.g. `metafieldTypeNotTranslatable`); the client owns the wording. */
+  errorCode?: string;
   /** Ids of detached repairs a save started, offered even when the save failed. */
   retranslationTaskIds?: string[];
   /** Sub-resources whose MARKET overrides the primary save's purge CONFIRMED removed. */
@@ -290,6 +292,12 @@ export interface SubResourceState {
    */
   translateAllSaveFirst?: boolean;
   /**
+   * Set by the products page: a landed PRIMARY save's reload is still out, so
+   * the whole-item "Translate all" would send the text from before it. Blocks
+   * the button like `translateAllSaveFirst`, but says "one moment" instead.
+   */
+  translateAllReloadPending?: boolean;
+  /**
    * Translations written by a copy / translate and not yet in the loaded item,
    * `{ locale: { resourceId: { key: value } } }` (market-folded keys for market
    * layers). Read-only for callers; `overlayVersion` changes when it does.
@@ -401,6 +409,8 @@ interface UseProductSubResourcesStrings {
   metafieldListInvalid?: string;
   /** A primary translate refused because its source field has an unsaved edit. */
   saveFirstSource?: string;
+  /** A translate refused because a landed primary save's reload is still out. */
+  sourceReloading?: string;
   /** Why a metafield that is not single-line text is not translated. */
   metafieldTypeNotTranslatable?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
@@ -870,6 +880,16 @@ export function useProductSubResources({
   // localised sentence. A save that failed still hands its task ids (a repair
   // some other resource of the same save may have started) to the watcher.
   const reportFailedRequest = (data: SubResourceFetcherData) => {
+    // A refusal the server answers with a code the client has its own
+    // localised sentence for: never the server's English fallback.
+    if (data.errorCode === "metafieldTypeNotTranslatable") {
+      showInfoBox?.(
+        strings.metafieldTypeNotTranslatable ||
+          "This metafield type cannot be translated automatically. Enter the translation by hand.",
+        "warning",
+      );
+      return;
+    }
     const raw = typeof data.error === "string" ? data.error : "";
     const translated = raw
       ? translateErrorMessage(raw, {
@@ -1187,7 +1207,9 @@ export function useProductSubResources({
         ) {
           // The saved part moved its source text: until the reload lands the
           // item still carries the old text, which a translate would send.
-          if (partialSavedIds.length > 0 && isPrimaryLocale) setAwaitingOptionReload(true);
+          // Keyed on the save's own action type, never on the tab now showing:
+          // a language switch while the save was out must not skip the lock.
+          if (partialSavedIds.length > 0) setAwaitingOptionReload(true);
           requestRevalidate();
         }
         // Cleared fields whose refill was NOT written because Shopify could
@@ -1197,7 +1219,12 @@ export function useProductSubResources({
         const unverifiedMetafields = new Set<string>(
           Array.isArray(data.unverifiedMetafields) ? data.unverifiedMetafields.map(String) : [],
         );
-        const onlyUnverified = unverifiedMetafields.size > 0 && totalFailed === unverifiedMetafields.size;
+        // Only the failures that were REVERTED get the "reverted" lead; a kept
+        // draft is explained by its own reason code, and a message that only
+        // reports kept drafts is a warning, not a failure.
+        const keptDraftCount = failedMetafields.filter((id: string) => unverifiedMetafields.has(String(id))).length;
+        const revertedCount = totalFailed - keptDraftCount;
+        const onlyUnverified = keptDraftCount > 0 && revertedCount === 0;
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
           // The warning codes carry the only specific reason there is (the
@@ -1209,16 +1236,16 @@ export function useProductSubResources({
             .join(" ");
           showInfoBox(
             [
-              onlyUnverified
-                ? ""
-                : (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
+              revertedCount > 0
+                ? (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(revertedCount))
+                : "",
               reasons,
               partialPurge.unconfirmed
                 ? strings.translationPurgeUnconfirmed ||
                   "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
                 : "",
             ].filter(Boolean).join(" "),
-            "critical"
+            onlyUnverified ? "warning" : "critical"
           );
         }
 
@@ -1313,9 +1340,10 @@ export function useProductSubResources({
         if (revalidator) {
           // Until it lands, the item still carries the text from BEFORE the
           // save, and that is what a translate would send as its source. Only
-          // a PRIMARY save moves that text; a foreign one changes nothing a
-          // translate reads.
-          if (isPrimaryLocale) setAwaitingOptionReload(true);
+          // a PRIMARY save moves that text (this branch only handles
+          // `savePrimarySubResources`); keyed on that, not on the tab now
+          // showing, so a language switch during the save still sets it.
+          setAwaitingOptionReload(true);
           // Queued behind a running reload (which may have read before this
           // write) instead of skipped.
           requestRevalidate();
@@ -1927,13 +1955,18 @@ export function useProductSubResources({
     // saved text: `mf.value` is still the text from BEFORE the save, and a
     // translate would write translations of it (and claim the GID, so a
     // running repair of the NEW text would abandon itself).
-    if (
-      awaitingOptionReload ||
-      (isPrimaryLocale && isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[metafieldId]))
-    ) {
+    // An unsaved edit is named first: after the reload it still blocks.
+    if (isPrimaryLocale && isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[metafieldId])) {
       showInfoBox?.(
         stringsRef.current.saveFirstSource || "Save first — the main-language text has unsaved changes.",
         "warning",
+      );
+      return;
+    }
+    if (awaitingOptionReload) {
+      showInfoBox?.(
+        stringsRef.current.sourceReloading || "One moment — the saved text is reloading.",
+        "info",
       );
       return;
     }

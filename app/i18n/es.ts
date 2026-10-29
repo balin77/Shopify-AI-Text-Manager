@@ -2158,6 +2158,8 @@ export const es: Translation = {
     requiresSecondLanguage: "Tu tienda solo tiene un idioma. Añade otro idioma en la configuración de Shopify para poder traducir.",
     // Tooltip on copy/translate-to-all while the primary SOURCE is an unsaved draft
     saveFirstSource: "Guarda primero: el texto del idioma principal tiene cambios sin guardar.",
+    // Tooltip / message while a landed primary save's reload is still out
+    sourceReloading: "Un momento: el texto guardado se está recargando.",
     switchWhileSaving: "Todavía se está guardando: espera un momento y vuelve a cambiar.",
     clearWhileTranslating: "Todavía se está traduciendo a este idioma: espera a que termine la traducción y luego borra.",
     translateWhileSaving: "Todavía se está guardando: espera un momento y vuelve a traducir.",
